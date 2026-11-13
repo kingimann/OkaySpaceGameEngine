@@ -382,6 +382,20 @@ constexpr std::size_t kMaxUnknownRecords = 256, kMaxUnknownRecordSize = 65536;
 template <class T>
 T* LastOf(const std::vector<T*>& v) { return v.empty() ? nullptr : v.back(); }
 
+// The component a follow-up record belongs to when the records of one type are not
+// grouped with it (the Nth `ikx aim` is the Nth Aim IK). One instance: N is 0, the first.
+template <class T>
+T* NthOf(GameObject* go, int& n) {
+    const std::vector<T*> all = go->GetComponents<T>();
+    const int i = n++;
+    return (i >= 0 && (std::size_t)i < all.size()) ? all[(std::size_t)i] : nullptr;
+}
+
+template <class T>
+T* AtComp(const std::vector<T*>& v, int i) {
+    return (i >= 0 && i < (int)v.size()) ? v[(std::size_t)i] : nullptr;
+}
+
 // An item name read from a scene, as an ItemDatabase id: legacy names / display
 // names map to their definition's id, and unknown names become loose definitions.
 std::string ItemId(const std::string& name) { return ItemDatabase::Get().Resolve(name); }
@@ -525,6 +539,30 @@ void ReadLimitKv(const KvIn& k, const std::string& p, IKJointLimit& l) {
         k.f((p + "HX").c_str(), l.hingeAxis.x); k.f((p + "HY").c_str(), l.hingeAxis.y); k.f((p + "HZ").c_str(), l.hingeAxis.z);
     }
 }
+// One trigger-filter line when every collider on the object shares it (a file from before
+// per-collider filters, applied to all of them on load). When they differ, one line per collider
+// that is set, with its index, so each keeps its own tag.
+template <class T>
+void WriteTriggerFilters(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    const T* sample = nullptr;
+    for (const T* c : cols)
+        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) { sample = c; break; }
+    bool mixed = false;
+    if (sample)
+        for (const T* c : cols)
+            if (c->triggerTag != sample->triggerTag || c->triggerLayers != sample->triggerLayers) { mixed = true; break; }
+    if (!mixed) {
+        if (sample)
+            out << "  " << rec << " " << Quote(sample->triggerTag) << " " << sample->triggerLayers << "\n";
+        return;
+    }
+    for (int i = 0; i < (int)cols.size(); ++i) {
+        const T* c = cols[(std::size_t)i];
+        if (c->triggerTag.empty() && c->triggerLayers == 0xFFFFFFFFu) continue;
+        out << "  " << rec << " " << Quote(c->triggerTag) << " " << c->triggerLayers << " " << i << "\n";
+    }
+}
+
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -655,20 +693,9 @@ static unsigned OwnSkipBits(const GameObject* g) {
     return f;
 }
 
-// Types the format saves more than one of per object (their writers loop over every
-// instance). Anything else is written once, from the first instance only.
-bool AllowsMultiple(const Component* c) {
-    return dynamic_cast<const ScriptComponent*>(c) || dynamic_cast<const VisualScriptComponent*>(c) ||
-           dynamic_cast<const ActionList*>(c) || dynamic_cast<const SyncVar*>(c) ||
-           dynamic_cast<const NetValidator*>(c) || dynamic_cast<const TweenAnimation*>(c) ||
-           dynamic_cast<const AnimStateMachine*>(c) ||
-           dynamic_cast<const Collider2D*>(c) || dynamic_cast<const Collider3D*>(c) ||   // compound colliders
-           dynamic_cast<const AudioSource*>(c) ||
-           dynamic_cast<const Joint2D*>(c) || dynamic_cast<const Joint3D*>(c) ||          // one joint per neighbour
-           dynamic_cast<const Spawner*>(c) || dynamic_cast<const Light*>(c) || dynamic_cast<const ParticleSystem*>(c) ||
-           dynamic_cast<const TriggerZone*>(c) || dynamic_cast<const UIAnimation*>(c) ||
-           dynamic_cast<const SequencePlayer*>(c) || dynamic_cast<const QuestTrigger*>(c) || dynamic_cast<const Volume*>(c);
-}
+// Every component the file knows is saved per instance (the writers loop, the reader adds one
+// component per record). A second record of a type this build does not save would still warn.
+bool AllowsMultiple(const Component*) { return true; }
 
 // `compoff` records for every component that is switched off (per-component flags
 // the individual records may not carry). Keyed by type name + occurrence.
@@ -807,7 +834,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     out << "  transform " << p.x << " " << p.y << " " << p.z << " "
         << q.x << " " << q.y << " " << q.z << " " << q.w << " "
         << s.x << " " << s.y << " " << s.z << "\n";
-    if (auto* sr = go->GetComponent<SpriteRenderer>()) {
+    for (auto* sr : go->GetComponents<SpriteRenderer>()) {
         out << "  sprite " << static_cast<int>(sr->glyph) << " "
             << sr->color.r << " " << sr->color.g << " " << sr->color.b << " "
             << sr->color.a << " " << sr->size.x << " " << sr->size.y << " "
@@ -819,7 +846,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << sr->sortingLayer
             << " " << (int)sr->texFilter << "\n";   // trailing (back-compatible)
     }
-    if (auto* cam = go->GetComponent<Camera>()) {
+    for (auto* cam : go->GetComponents<Camera>()) {
         out << "  camera " << (int)cam->projection << " " << cam->orthographicSize << " "
             << cam->fieldOfView << " "
             << cam->backgroundColor.r << " " << cam->backgroundColor.g << " "
@@ -839,8 +866,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
-    if (auto* mr = go->GetComponent<MeshRenderer>();
-        mr && !go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {   // a decal's mesh is cut from the scene again on load
+    if (!go->GetComponent<Terrain>() && !go->GetComponent<Character>() && !go->GetComponent<Decal>()) {  // a decal's mesh is cut from the scene again on load
+    for (auto* mr : go->GetComponents<MeshRenderer>()) {
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
             << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
@@ -976,8 +1003,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         // A hidden mesh (e.g. a Boolean modifier's cutter) stays hidden after a reload.
         if (!mr->enabled) out << "  meshenabled 0\n";
     }
+    }
     // Modifier stack: one header line, then one line per modifier (in order).
-    if (auto* mm = go->GetComponent<MeshModifiers>()) {
+    for (auto* mm : go->GetComponents<MeshModifiers>()) {
         out << "  modstack";
         KvOut{out}.b("on", mm->enabled)("count", (int)mm->modifiers.size());
         out << "\n";
@@ -997,9 +1025,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Skinned mesh: the bind-pose geometry + per-vertex bone weights + joint names +
     // inverse-bind matrices, so an imported rigged character survives save/reload
     // (the joints are re-resolved by name and the mesh re-skins at runtime).
-    if (auto* sm = go->GetComponent<SkinnedMesh>()) {
-        // Blend shapes morph the bind in place: store the unmorphed one.
-        const auto* bsh = go->GetComponent<BlendShapes>();
+    int skinBlendAt = 0;
+    const auto skinBlends = go->GetComponents<BlendShapes>();
+    for (auto* sm : go->GetComponents<SkinnedMesh>()) {
+        // Blend shapes morph the bind in place: store the unmorphed one. The Nth shape set
+        // belongs to the Nth skinned mesh; one of each is the first, as before.
+        const auto* bsh = skinBlendAt < (int)skinBlends.size() ? skinBlends[(std::size_t)skinBlendAt] : nullptr;
+        ++skinBlendAt;
         const Mesh& bm = (bsh && bsh->base.vertices.size() == sm->bind.vertices.size()) ? bsh->base : sm->bind;
         out << "  skinmesh " << bm.vertices.size();
         for (const Vec3& v : bm.vertices) out << " " << v.x << " " << v.y << " " << v.z;
@@ -1023,7 +1055,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (sm->method != 0) out << "  skinx " << sm->method << "\n";   // separate record: older builds skip it
     }
     // Blend shapes (after skinmesh, whose bind they apply to): sparse offsets.
-    if (auto* bs = go->GetComponent<BlendShapes>()) {
+    for (auto* bs : go->GetComponents<BlendShapes>()) {
         out << "  blendshapes " << bs->shapes.size();
         for (const auto& sh : bs->shapes) {
             const bool n = sh.dNrm.size() == sh.index.size() && !sh.index.empty();
@@ -1037,7 +1069,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Model animation library: every imported clip (idle/walk/run) as per-node tracks,
     // so a saved model keeps all its animations and the picker still works on reload.
-    if (auto* ma = go->GetComponent<ModelAnimator>()) {
+    for (auto* ma : go->GetComponents<ModelAnimator>()) {
         out << "  modelanim " << ma->active << " " << (ma->autoPlay ? 1 : 0)
             << " " << ma->speed << " " << (ma->loop ? 1 : 0) << " " << ma->clips.size();
         for (const auto& clip : ma->clips) {
@@ -1110,10 +1142,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
+    int asmAt = 0;
     for (AnimStateMachine* asm2 : go->GetComponents<AnimStateMachine>()) {
         // Layers (machines after the base) start with a header record; every
         // record that follows belongs to that machine until the next header.
-        if (asm2->layer > 0) {
+        // A second machine on layer 0 needs the header too, or its records would
+        // overwrite the first. One layer-0 machine still writes no header.
+        if (asmAt > 0 || asm2->layer > 0) {
             out << "  animsmlayer " << asm2->layer << " " << asm2->layerWeight << " " << Quote(asm2->maskBone) << "\n";
             if (asm2->additive || !asm2->maskBones.empty()) {
                 out << "  animsmlayerx " << (asm2->additive ? 1 : 0) << " " << asm2->maskBones.size();
@@ -1122,6 +1157,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             }
             if (!asm2->layerName.empty()) out << "  animsmlname " << Quote(asm2->layerName) << "\n";
         }
+        ++asmAt;
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
             out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
@@ -1325,7 +1361,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
-    if (auto* tr = go->GetComponent<Terrain>()) {
+    for (auto* tr : go->GetComponents<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a
             << " " << tr->heights.size();
@@ -1341,7 +1377,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << Quote(tr->normalMap) << " " << tr->normalStrength;
         out << "\n";
     }
-    if (auto* td = go->GetComponent<TerrainDigger>()) {
+    for (auto* td : go->GetComponents<TerrainDigger>()) {
         out << "  terraindigger " << (int)td->mode << " " << td->button
             << " " << (int)(unsigned char)td->key << " " << td->radius << " " << td->strength
             << " " << td->range << " " << td->relax
@@ -1350,7 +1386,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << td->brushColor.b << " " << td->brushColor.a
             << " " << td->raiseButton << "\n";
     }
-    if (auto* v = go->GetComponent<VoxelTerrain>()) {
+    for (auto* v : go->GetComponents<VoxelTerrain>()) {
         out << "  voxelterrain " << v->nx << " " << v->ny << " " << v->nz
             << " " << v->voxelSize << " " << v->iso << " " << (v->autoColor ? 1 : 0)
             << " " << v->snowLevel << " " << v->rockSlope
@@ -1362,7 +1398,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
     }
-    if (auto* vd = go->GetComponent<VoxelDigger>()) {
+    for (auto* vd : go->GetComponents<VoxelDigger>()) {
         out << "  voxeldigger " << (int)vd->mode << " " << vd->button
             << " " << (int)(unsigned char)vd->key << " " << vd->radius << " " << vd->strength
             << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
@@ -1370,7 +1406,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->brushColor.b << " " << vd->brushColor.a
             << " " << vd->addButton << "\n";
     }
-    if (auto* pm = go->GetComponent<PauseMenu>()) {
+    for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
             << " " << (pm->showResume ? 1 : 0) << " " << (pm->showQuit ? 1 : 0)
             << " " << pm->dimColor.r << " " << pm->dimColor.g << " " << pm->dimColor.b << " " << pm->dimColor.a
@@ -1378,7 +1414,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
     }
     // Saveable: flags, then the save id, prefab, and the property paths ("Light.intensity" ...).
-    if (auto* sv = go->GetComponent<Saveable>()) {
+    for (auto* sv : go->GetComponents<Saveable>()) {
         out << "  saveable " << (sv->dynamic ? 1 : 0) << " " << (sv->saveTransform ? 1 : 0)
             << " " << (sv->saveActive ? 1 : 0) << " " << (sv->saveComponents ? 1 : 0)
             << " " << (sv->saveVariables ? 1 : 0) << " " << (sv->saveSceneVariables ? 1 : 0)
@@ -1386,25 +1422,25 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const std::string& p : sv->properties) out << " " << Quote(p);
         out << "\n";
     }
-    if (auto* ss = go->GetComponent<SaveConfig>())
+    for (auto* ss : go->GetComponents<SaveConfig>())
         out << "  savesettings " << ss->autosaveInterval << " " << (ss->autosaveOnSceneStart ? 1 : 0)
             << " " << ss->autosaveSlots << "\n";
-    if (auto* as = go->GetComponent<AutoSave>())
+    for (auto* as : go->GetComponents<AutoSave>())
         out << "  autosave " << as->interval << " " << (as->saveOnStart ? 1 : 0)
             << " " << Quote(as->slot) << " " << Quote(as->label) << "\n";
-    if (auto* fl = go->GetComponent<Flashlight>()) {
+    for (auto* fl : go->GetComponents<Flashlight>()) {
         out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
             << " " << fl->range << " " << fl->angle << " " << fl->intensity
             << " " << fl->color.r << " " << fl->color.g << " " << fl->color.b << "\n";
     }
-    if (auto* fh = go->GetComponent<FirstPersonHand>()) {
+    for (auto* fh : go->GetComponents<FirstPersonHand>()) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
             << " " << (fh->showLeftArm ? 1 : 0)
             << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
             << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow
             << " " << (fh->showWhileRunning ? 1 : 0) << "\n";
     }
-    if (auto* hh = go->GetComponent<FirstPersonHands>()) {
+    for (auto* hh : go->GetComponents<FirstPersonHands>()) {
         auto side = [&](const FirstPersonHands::HandSide& s) {
             out << " " << (s.enabled ? 1 : 0)
                 << " " << s.position.x << " " << s.position.y << " " << s.position.z
@@ -1446,13 +1482,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
         out << "\n";
     }
-    if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
+    for (auto* ps : go->GetComponents<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
             << " " << ps->spawnPoint.x << " " << ps->spawnPoint.y << " " << ps->spawnPoint.z
             << " " << ps->spawnSpread << " " << (ps->spawnLocalPlayer ? 1 : 0)
             << " " << (int)(unsigned char)ps->glyph << "\n";
     }
-    if (auto* ns = go->GetComponent<NetworkSync>()) {
+    for (auto* ns : go->GetComponents<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
             << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId);
         if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
@@ -1460,14 +1496,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // netobject / nettransform / syncvar are their own records. An older engine
     // refuses a scene that contains them; scenes without these components are unchanged.
-    if (auto* no = go->GetComponent<NetworkObject>()) {
+    for (auto* no : go->GetComponents<NetworkObject>()) {
         out << "  netobject " << (int)no->authority << " " << (no->owned ? 1 : 0)
             << " " << Quote(no->netId) << "\n";
     }
-    if (go->GetComponent<NetworkTransform>()) out << "  nettransform\n";
+    for (NetworkTransform* dupKeep_ : go->GetComponents<NetworkTransform>()) { (void)dupKeep_; out << "  nettransform\n"; }
     for (auto* sv : go->GetComponents<SyncVar>())
         out << "  syncvar " << Quote(sv->name) << " " << Quote(sv->value) << "\n";
-    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+    for (auto* ac : go->GetComponents<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
         std::string allow;
         for (const auto& p : s.spawnAllowlist) { if (!allow.empty()) allow += ';'; allow += p; }
@@ -1499,7 +1535,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << " " << nv->cooldown << " " << nv->budget << " " << nv->refillPerSecond;
         out << "\n";
     }
-    if (auto* w = go->GetComponent<Water>()) {
+    for (auto* w : go->GetComponents<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
             << " " << w->waveLength << " " << w->waveSpeed
             << " " << w->color.r << " " << w->color.g << " " << w->color.b
@@ -1508,13 +1544,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << w->depth << " " << w->fluidDensity << " " << w->linearDrag
             << " " << Quote(w->texture) << "\n";
     }
-    if (auto* ws = go->GetComponent<WorldStreamer>()) {
+    for (auto* ws : go->GetComponents<WorldStreamer>()) {
         out << "  worldstreamer " << ws->cellSize << " " << ws->loadRadius
             << " " << ws->unloadRadius << " " << (ws->onlyOnCellChange ? 1 : 0)
             << " " << Quote(ws->folder) << " " << Quote(ws->prefix)
             << " " << Quote(ws->ext) << " " << Quote(ws->target) << "\n";
     }
-    if (auto* de = go->GetComponent<Destructible>()) {
+    for (auto* de : go->GetComponents<Destructible>()) {
         out << "  destructible " << Quote(de->blockTag) << " " << de->voxelSize
             << " " << de->fractureChunks << " " << de->debrisLifetime
             << " " << de->explosionForce << " " << de->upwardBias
@@ -1523,7 +1559,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << de->maxDebris << " " << de->breakButton
             << " " << de->breakRadius << " " << de->reach << "\n";
     }
-    if (auto* ch = go->GetComponent<Character>()) {
+    bool wroteCharacterMaterial = false;
+    for (auto* ch : go->GetComponents<Character>()) {
         out << "  character " << ch->ToText() << "\n";
         // Disabled = a custom model replaced the blocky body (AttachCharacterModel):
         // remember it so the default character stays hidden after a load.
@@ -1545,11 +1582,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
             // A rigged model keeps its material/texture — Character objects skip
             // the normal mesh/material records, so write one here (same format).
-            if (auto* mr = go->GetComponent<MeshRenderer>())
-                out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
-                    << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
-                    << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
-                    << mr->tiling.x << " " << mr->tiling.y << "\n";
+            if (!wroteCharacterMaterial)
+                if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                    wroteCharacterMaterial = true;
+                    out << "  material " << mr->emissive.r << " " << mr->emissive.g << " "
+                        << mr->emissive.b << " " << mr->specular << " " << mr->shininess << " "
+                        << (mr->unlit ? 1 : 0) << " " << Quote(mr->texture) << " "
+                        << mr->tiling.x << " " << mr->tiling.y << "\n";
+                }
         }
     }
     for (auto* li : go->GetComponents<Light>()) {   // every instance (a lamp with a point and a spot light)
@@ -1567,7 +1607,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << " " << li->flicker << " " << li->flickerSpeed << " " << (li->enabled ? 1 : 0);
         out << "\n";
     }
-    if (auto* rb = go->GetComponent<Rigidbody2D>()) {
+    for (auto* rb : go->GetComponents<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness
             << " " << rb->friction                                    // trailing (back-compatible)
@@ -1605,14 +1645,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const Vec2& p : pc->points) out << " " << p.x << " " << p.y;
         out << "\n";
     }
-    // Trigger tag / layer filter (one record for the object's 2D colliders, only
-    // when set, so older scenes and unfiltered triggers read exactly as before).
-    for (Collider2D* c : go->GetComponents<Collider2D>())
-        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
-            out << "  trigfilter2d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
-            break;
-        }
-    if (auto* rb = go->GetComponent<Rigidbody3D>()) {
+    // Trigger tag / layer filter. One record when every collider shares it (older scenes
+    // read that as applying to all). Differing filters are one indexed record each.
+    WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
+    for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
             << (rb->freezeX ? 1 : 0) << " " << (rb->freezeY ? 1 : 0) << " "
@@ -1641,7 +1677,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque   // hinge (trailing)
             << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
     }
-    if (auto* a = go->GetComponent<AimIK>()) {
+    for (auto* a : go->GetComponents<AimIK>()) {
         out << "  aimik " << Quote(a->boneName) << " " << Quote(a->targetName)
             << " " << a->aimAxis.x << " " << a->aimAxis.y << " " << a->aimAxis.z
             << " " << a->upAxis.x << " " << a->upAxis.y << " " << a->upAxis.z
@@ -1649,20 +1685,20 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << a->target.x << " " << a->target.y << " " << a->target.z
             << " " << a->smoothing << "\n";
     }
-    if (auto* t = go->GetComponent<IKTarget>()) {
+    for (auto* t : go->GetComponents<IKTarget>()) {
         out << "  iktarget " << t->limb << " " << Quote(t->characterName)
             << " " << t->weight << " " << t->blendTime << "\n";
     }
-    if (auto* ao = go->GetComponent<AimOffset>()) {
+    for (auto* ao : go->GetComponents<AimOffset>()) {
         out << "  aimoffset " << (ao->useCamera ? 1 : 0) << " " << Quote(ao->targetName)
             << " " << ao->weight << " " << ao->pitchClamp << " " << ao->yawClamp
             << " " << ao->spineWeight << " " << ao->chestWeight << " " << ao->armWeight
             << " " << ao->kick << " " << ao->recovery << "\n";
     }
-    if (auto* pc = go->GetComponent<PoseCapture>()) {
+    for (auto* pc : go->GetComponents<PoseCapture>()) {
         out << "  posecap " << Quote(pc->clipName) << " " << pc->recordSeconds << "\n";
     }
-    if (auto* l = go->GetComponent<LookAtIK>()) {
+    for (auto* l : go->GetComponents<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
             << " " << l->forwardAxis.x << " " << l->forwardAxis.y << " " << l->forwardAxis.z
             << " " << l->weight << " " << l->maxAngle
@@ -1681,7 +1717,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Written BEFORE footik on purpose: components load in record order, and
     // the retarget must pose the rig before FootIK plants the feet on it.
-    if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
+    for (auto* hr : go->GetComponents<HumanoidRetarget>()) {
         out << "  humretarget " << hr->weight;
         if (hr->leanScale != 1.0f) out << " lean " << hr->leanScale;
         // Bones picked by hand: "map <slot> <name>" pairs after the weight (older
@@ -1690,7 +1726,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             if (!hr->boneMap[b].empty()) out << " map " << b << " " << Quote(hr->boneMap[b]);
         out << "\n";
     }
-    if (auto* f = go->GetComponent<FootIK>()) {
+    for (auto* f : go->GetComponents<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
             << " " << Quote(f->rightHipName) << " " << Quote(f->rightKneeName) << " " << Quote(f->rightFootName)
             << " " << Quote(f->pelvisName)
@@ -1712,7 +1748,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         WriteLimitKv(k, "hl", f->hipLimit); WriteLimitKv(k, "kl", f->kneeLimit);
         out << "\n";
     }
-    if (auto* lb = go->GetComponent<LimbIK>()) {
+    for (auto* lb : go->GetComponents<LimbIK>()) {
         out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
             << " " << Quote(lb->targetName) << " " << Quote(lb->poleName)
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
@@ -1736,7 +1772,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (lb->stretch != 0.0f) out << " st=" << lb->stretch;
         out << "\n";
     }
-    if (auto* ci = go->GetComponent<ChainIK>()) {
+    for (auto* ci : go->GetComponents<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
             << " " << ci->solver << " " << (ci->orient ? 1 : 0)
             << " " << ci->target.x << " " << ci->target.y << " " << ci->target.z
@@ -1765,15 +1801,15 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     auto ikFade = [&](const char* kind, bool active, float fade) {
         out << "  ikx " << kind << " " << (active ? 1 : 0) << " " << fade;
     };
-    if (auto* a = go->GetComponent<AimIK>())    { ikFade("aim", a->ikActive, a->fadeTime); out << "\n"; }
-    if (auto* l = go->GetComponent<LookAtIK>()) { ikFade("look", l->ikActive, l->fadeTime); out << "\n"; }
-    if (auto* lb = go->GetComponent<LimbIK>())  { ikFade("limb", lb->ikActive, lb->fadeTime); out << "\n"; }
-    if (auto* ci = go->GetComponent<ChainIK>()) {
+    for (auto* a : go->GetComponents<AimIK>())    { ikFade("aim", a->ikActive, a->fadeTime); out << "\n"; }
+    for (auto* l : go->GetComponents<LookAtIK>()) { ikFade("look", l->ikActive, l->fadeTime); out << "\n"; }
+    for (auto* lb : go->GetComponents<LimbIK>())  { ikFade("limb", lb->ikActive, lb->fadeTime); out << "\n"; }
+    for (auto* ci : go->GetComponents<ChainIK>()) {
         ikFade("chain", ci->ikActive, ci->fadeTime);
         out << " " << Quote(ci->poleName) << " " << (ci->usePole ? 1 : 0) << " " << ci->pole.x << " " << ci->pole.y
             << " " << ci->pole.z << " " << ci->maxJointBend << " " << ci->tolerance << "\n";
     }
-    if (auto* fb = go->GetComponent<FullBodyIK>()) {
+    for (auto* fb : go->GetComponents<FullBodyIK>()) {
         out << "  fbik " << fb->weight << " " << (fb->ikActive ? 1 : 0) << " " << fb->fadeTime << " " << fb->softness
             << " " << fb->bodyPull << " " << fb->maxBodyOffset << " " << fb->spineReach << " " << fb->maxSpineAngle
             << " " << (fb->autoMap ? 1 : 0)
@@ -1801,7 +1837,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (fb->stretch != 0.0f) k("st", fb->stretch);
         out << "\n";
     }
-    if (auto* h = go->GetComponent<HoldableObject>()) {
+    for (auto* h : go->GetComponents<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
         k("style", (int)h->style).b("support", h->supportHand).b("two", h->twoHanded)("weight", h->weight).str("socket", h->socket)
@@ -1823,7 +1859,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
+    for (auto* ph : go->GetComponents<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
         k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
@@ -1832,13 +1868,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("charge", ph->throwChargeTime)("tmin", ph->throwMinSpeed)("tmax", ph->throwMaxSpeed)("reach", ph->pickupRange);
         out << "\n";
     }
-    if (auto* hp = go->GetComponent<HoldPrompt>()) {
+    for (auto* hp : go->GetComponents<HoldPrompt>()) {
         out << "  holdprompt";
         KvOut k{out};
         k.key("drop", hp->dropKey).key("alt", hp->altDropKey).str("prompt", hp->promptObject);
         out << "\n";
     }
-    if (auto* rm = go->GetComponent<RootMotion>()) {
+    for (auto* rm : go->GetComponents<RootMotion>()) {
         out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
             << " " << (rm->lockHeight ? 1 : 0) << " " << (rm->applyToRigidbody ? 1 : 0)
             << " " << rm->loopThreshold << "\n";
@@ -1904,12 +1940,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cap->offset.x << " " << (rs ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
-    // Trigger tag / layer filter for the object's 3D colliders (only when set).
-    for (Collider3D* c : go->GetComponents<Collider3D>())
-        if (!c->triggerTag.empty() || c->triggerLayers != 0xFFFFFFFFu) {
-            out << "  trigfilter3d " << Quote(c->triggerTag) << " " << c->triggerLayers << "\n";
-            break;
-        }
+    // See the 2D filter: one shared record, or one indexed record per collider when they differ.
+    WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -1926,12 +1958,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     for (auto* al : go->GetComponents<ActionList>()) {
         out << "  actions " << Quote(al->ToText()) << "\n";
     }
-    if (auto* mv = go->GetComponent<Mover>()) {
+    for (auto* mv : go->GetComponents<Mover>()) {
         out << "  mover " << mv->velocity.x << " " << mv->velocity.y << " " << mv->velocity.z;
         if (mv->space != Space::Local) out << " " << static_cast<int>(mv->space);   // optional trailing field
         out << "\n";
     }
-    if (auto* cc = go->GetComponent<CharacterController2D>()) {
+    for (auto* cc : go->GetComponents<CharacterController2D>()) {
         out << "  charctrl2d " << (int)cc->mode << " " << cc->speed << " " << cc->jumpForce
             // extended (optional, back-compatible trailing fields)
             << " " << cc->runSpeed << " " << KeyToken(cc->sprintKey)
@@ -1944,13 +1976,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (cc->wallJump ? 1 : 0) << " " << cc->wallSlideSpeed
             << " " << cc->wallJumpForce << " " << cc->wallJumpPush << "\n";
     }
-    if (auto* cc = go->GetComponent<CharacterController3D>()) {
+    for (auto* cc : go->GetComponents<CharacterController3D>()) {
         out << "  charctrl3d " << cc->speed << " " << cc->jumpForce << " " << (cc->canJump ? 1 : 0)
             << " " << cc->runSpeed << " " << (int)(unsigned char)cc->sprintKey         // trailing (back-compatible)
             << " " << cc->acceleration << " " << cc->deceleration << " " << cc->airControl
             << " " << (cc->driveAnimation ? 1 : 0) << " " << (cc->footIK ? 1 : 0) << "\n";
     }
-    if (auto* v = go->GetComponent<VehicleController>()) {
+    for (auto* v : go->GetComponents<VehicleController>()) {
         out << "  vehicle " << v->acceleration << " " << v->maxSpeed << " " << v->reverseSpeed
             << " " << v->brakeForce << " " << v->drag << " " << v->turnSpeed << " " << v->grip
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
@@ -1961,7 +1993,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
                 << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
     }
-    if (auto* bb = go->GetComponent<BlockBuilder>()) {
+    for (auto* bb : go->GetComponents<BlockBuilder>()) {
         out << "  blockbuilder " << bb->blockSize << " " << bb->reach << " "
             << bb->blockColor.r << " " << bb->blockColor.g << " " << bb->blockColor.b << " " << bb->blockColor.a
             << " " << bb->placeButton << " " << bb->removeButton
@@ -1969,7 +2001,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (bb->showPreview ? 1 : 0) << " " << (bb->showCrosshair ? 1 : 0)
             << " " << (bb->placeInAir ? 1 : 0) << "\n";
     }
-    if (auto* sb = go->GetComponent<StructureBuilder>()) {
+    for (auto* sb : go->GetComponents<StructureBuilder>()) {
         out << "  structurebuilder " << (int)sb->piece << " " << sb->cellSize << " " << sb->wallHeight
             << " " << sb->slabThickness << " " << sb->wallThickness << " " << sb->pillarThickness
             << " " << sb->reach << " " << sb->rotSteps << " " << sb->placeButton << " " << sb->removeButton
@@ -1979,7 +2011,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << Quote(sb->structureTag) << " " << Quote(sb->structureTexture)
             << " " << Quote(sb->woodItem) << " " << Quote(sb->stoneItem) << " " << Quote(sb->metalItem) << "\n";
     }
-    if (auto* bm = go->GetComponent<BuilderMode>()) {
+    for (auto* bm : go->GetComponents<BuilderMode>()) {
         out << "  buildermode " << (int)bm->brush << " " << bm->gridSize << " " << (bm->snapToGrid ? 1 : 0)
             << " " << bm->reach << " " << bm->rotateStepDeg << " " << bm->scaleStep
             << " " << bm->minScale << " " << bm->maxScale
@@ -1991,18 +2023,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << Quote(bm->prefabPath) << " " << Quote(bm->modelName)
             << " " << Quote(bm->mapPath) << "\n";
     }
-    if (auto* bp = go->GetComponent<BuildPiece>()) {
+    for (auto* bp : go->GetComponents<BuildPiece>()) {
         out << "  buildpiece " << bp->tier << " " << bp->health << " " << bp->maxHealth
             << " " << bp->cost << " " << Quote(bp->material) << "\n";
     }
     // In-game build mode + logic links (key=value records: fields can be added freely).
-    if (auto* b = go->GetComponent<Buildable>()) {
+    for (auto* b : go->GetComponents<Buildable>()) {
         out << "  buildable";
         KvOut k{out};
         k("id", b->buildId).b("edit", b->editable).b("placed", b->placed).str("prefab", b->prefab);
         out << "\n";
     }
-    if (auto* bm = go->GetComponent<BuildMode>()) {
+    for (auto* bm : go->GetComponents<BuildMode>()) {
         const BuildBindings& kb = bm->bindings;
         out << "  buildmode";
         KvOut k{out};
@@ -2025,7 +2057,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* ls = go->GetComponent<LogicSource>()) {
+    for (auto* ls : go->GetComponents<LogicSource>()) {
         std::string links;
         for (int id : ls->links) links += (links.empty() ? "" : ",") + std::to_string(id);
         out << "  logicsource";
@@ -2048,7 +2080,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* lt = go->GetComponent<LogicTarget>()) {
+    for (auto* lt : go->GetComponents<LogicTarget>()) {
         out << "  logictarget";
         KvOut k{out};
         k("kind", (int)lt->kind)("mode", (int)lt->mode).b("invert", lt->invert)
@@ -2058,7 +2090,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("sz", lt->spawnOffset.z)("alive", lt->maxAlive).str("event", lt->eventName);
         out << "\n";
     }
-    if (auto* ls = go->GetComponent<LoadingScreen>()) {
+    for (auto* ls : go->GetComponents<LoadingScreen>()) {
         auto& bg = ls->backgroundColor; auto& tc = ls->textColor;
         auto& bb = ls->barBackground; auto& bf = ls->barFill;
         out << "  loadingscreen " << bg.r << " " << bg.g << " " << bg.b << " " << bg.a
@@ -2087,7 +2119,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << (ls->asyncLoad ? 1 : 0) << " " << ls->objectsPerFrame;   // background loading (optional on read)
         out << "\n";
     }
-    if (auto* ui = go->GetComponent<InventoryUI>()) {
+    for (auto* ui : go->GetComponents<InventoryUI>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  inventoryui " << ui->hotbarSlots << " " << ui->backpackRows << " " << ui->selected
             << " " << (int)(unsigned char)ui->toggleKey << " " << (ui->selectHotkeys ? 1 : 0)
@@ -2127,7 +2159,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << (int)(unsigned char)ui->useKey << " " << (ui->clickToUse ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
-    if (auto* gi = go->GetComponent<GridInventory>()) {
+    for (auto* gi : go->GetComponents<GridInventory>()) {
         out << "  gridinventory " << gi->cols << " " << gi->rows
             << " " << (int)(unsigned char)gi->toggleKey << " " << Quote(gi->title) << " " << gi->items.size();
         for (const auto& it : gi->items)
@@ -2143,7 +2175,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << (gi->keepOnSceneLoad ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
-    if (auto* gu = go->GetComponent<GridInventoryUI>()) {
+    for (auto* gu : go->GetComponents<GridInventoryUI>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  gridinventoryui " << gu->cellSize << " " << gu->gap
             << " " << (gu->darkenWhenOpen ? 1 : 0) << " " << (gu->showWeight ? 1 : 0);
@@ -2169,7 +2201,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (gu->showItemNames ? 1 : 0) << " " << gu->backdropDim;
         out << "\n";
     }
-    if (auto* cs = go->GetComponent<CraftingStation>()) {
+    for (auto* cs : go->GetComponents<CraftingStation>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  craftingstation 0 " << (int)(unsigned char)cs->toggleKey   // 0: `open` is runtime state, not saved
             << " " << Quote(cs->title) << " " << (cs->closeWhenCrafted ? 1 : 0)
@@ -2188,7 +2220,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         WriteRecipeExtras(out, cs->recipes);
         out << "\n";
     }
-    if (auto* ch = go->GetComponent<ChestInventory>()) {
+    for (auto* ch : go->GetComponents<ChestInventory>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  chestinventory 0 " << (int)(unsigned char)ch->openKey   // 0: `open` is runtime state, not saved
             << " " << ch->range << " " << Quote(ch->title) << " " << ch->cols
@@ -2199,18 +2231,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << Quote(ch->playerName);   // appended (quote-peek guarded)
         out << "\n";
     }
-    if (auto* ni = go->GetComponent<NetInventory>()) {
+    for (auto* ni : go->GetComponents<NetInventory>()) {
         // New record. Old scenes have no line, so they still load.
         out << "  netinventory " << ni->range << " " << ni->maxPerSecond << " " << ni->cheatThreshold
             << " " << ni->maxRequestBytes << " " << (ni->hideUntilOpen ? 1 : 0) << " " << Quote(ni->saveDir) << "\n";
     }
-    if (auto* v2 = go->GetComponent<VehicleController2D>()) {
+    for (auto* v2 : go->GetComponents<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
             << " " << v2->brakeForce << " " << v2->drag << " " << v2->turnSpeed << " " << v2->grip
             << " " << v2->handbrakeGrip << " " << (v2->sideView ? 1 : 0)
             << " " << (int)(unsigned char)v2->handbrakeKey << "\n";
     }
-    if (auto* sv = go->GetComponent<SurvivalStats>()) {
+    for (auto* sv : go->GetComponents<SurvivalStats>()) {
         out << "  survival " << sv->maxHealth << " " << sv->armor << " " << sv->regenWhenFed
             << " " << sv->regenDelay << " " << sv->maxHunger << " " << sv->hungerDrain << " "
             << sv->starveDamage << " " << sv->maxThirst << " " << sv->thirstDrain << " "
@@ -2231,7 +2263,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         o << " " << (c->publishPrefs ? 1 : 0) << " " << (c->publishBar ? 1 : 0)
           << " " << (c->sendMessages ? 1 : 0);
     };
-    if (auto* c = go->GetComponent<HealthStat>()) {
+    for (auto* c : go->GetComponents<HealthStat>()) {
         out << "  stat_health " << c->maxHealth << " " << c->armor << " " << c->regenPerSecond
             << " " << c->regenDelay << " " << c->lowThreshold;
         statToggles(out, c);
@@ -2241,98 +2273,98 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << c->respawnDelay << " " << c->lives
             << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
     }
-    if (auto* c = go->GetComponent<Seat>()) {
+    for (auto* c : go->GetComponents<Seat>()) {
         out << "  seat " << c->seatHeight << " "
             << c->sitPoint.x << " " << c->sitPoint.y << " " << c->sitPoint.z << " "
             << c->facing << " " << c->type << " "
             << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
             << c->useRadius << " " << Quote(c->prompt) << "\n";
     }
-    if (auto* c = go->GetComponent<HungerStat>()) {
+    for (auto* c : go->GetComponents<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
             << c->sprintMultiplier << " " << c->lowThreshold;
         statToggles(out, c);
         out << " " << c->starveDamage << " " << c->overeatMax << " " << (c->slowWhenStarving ? 1 : 0)
             << " " << c->minSpeedFactor << "\n";
     }
-    if (auto* c = go->GetComponent<ThirstStat>()) {
+    for (auto* c : go->GetComponents<ThirstStat>()) {
         out << "  stat_thirst " << c->maxThirst << " " << c->drainPerSecond << " "
             << c->sprintMultiplier << " " << c->lowThreshold;
         statToggles(out, c);
         out << " " << c->dehydrateDamage << " " << c->overdrinkMax << " "
             << (c->slowWhenDehydrated ? 1 : 0) << " " << c->minSpeedFactor << "\n";
     }
-    if (auto* c = go->GetComponent<StaminaStat>()) {
+    for (auto* c : go->GetComponents<StaminaStat>()) {
         out << "  stat_stamina " << c->maxStamina << " " << c->regenPerSecond << " " << c->regenDelay
             << " " << c->sprintCost << " " << c->jumpCost << " " << c->exhaustedUntil;
         statToggles(out, c);
         out << " " << c->lowThreshold << " " << (c->slowWhenExhausted ? 1 : 0) << " "
             << c->minSpeedFactor << " " << c->regenScale << "\n";
     }
-    if (auto* c = go->GetComponent<OxygenStat>()) {
+    for (auto* c : go->GetComponents<OxygenStat>()) {
         out << "  stat_oxygen " << c->maxOxygen << " " << c->drainPerSecond << " "
             << c->refillPerSecond;
         statToggles(out, c);
         out << " " << c->lowThreshold << " " << c->drownDamage << "\n";
     }
-    if (auto* c = go->GetComponent<TemperatureStat>()) {
+    for (auto* c : go->GetComponents<TemperatureStat>()) {
         out << "  stat_temp " << c->maxWarmth << " " << c->coldDrain << " "
             << c->warmRegen;
         statToggles(out, c);
         out << " " << c->lowThreshold << " " << c->freezeDamage << "\n";
     }
-    if (auto* c = go->GetComponent<SleepStat>()) {
+    for (auto* c : go->GetComponents<SleepStat>()) {
         out << "  stat_sleep " << c->maxEnergy << " " << c->drainPerSecond << " "
             << c->restPerSecond << " " << c->tiredThreshold;
         statToggles(out, c);
         out << " " << c->exhaustDamage << " " << (c->slowWhenTired ? 1 : 0) << " "
             << c->minSpeedFactor << "\n";
     }
-    if (auto* c = go->GetComponent<SanityStat>()) {
+    for (auto* c : go->GetComponents<SanityStat>()) {
         out << "  stat_sanity " << c->maxSanity << " " << c->drainInDark << " "
             << c->regenInLight << " " << c->lowThreshold;
         statToggles(out, c);
         out << " " << c->insaneDamage << "\n";
     }
-    if (auto* c = go->GetComponent<RadiationStat>()) {
+    for (auto* c : go->GetComponents<RadiationStat>()) {
         out << "  stat_radiation " << c->maxRadiation << " " << c->gainPerSecond << " "
             << c->decayPerSecond << " " << c->sickThreshold << " " << c->damagePerSecond; statTail(out, c);
     }
-    if (auto* c = go->GetComponent<BleedingStat>()) {
+    for (auto* c : go->GetComponents<BleedingStat>()) {
         out << "  stat_bleed " << c->maxBleed << " " << c->damagePerSecond << " "
             << c->clotPerSecond; statTail(out, c);
     }
-    if (auto* c = go->GetComponent<PoisonStat>()) {
+    for (auto* c : go->GetComponents<PoisonStat>()) {
         out << "  stat_poison " << c->maxPoison << " " << c->damagePerSecond << " "
             << c->decayPerSecond; statTail(out, c);
     }
-    if (auto* c = go->GetComponent<WetnessStat>()) {
+    for (auto* c : go->GetComponents<WetnessStat>()) {
         out << "  stat_wet " << c->maxWetness << " " << c->soakPerSecond << " " << c->dryPerSecond
             << " " << c->chillPerSecond << " " << c->soakedThreshold; statTail(out, c);
     }
-    if (auto* c = go->GetComponent<CarryWeightStat>()) {
+    for (auto* c : go->GetComponents<CarryWeightStat>()) {
         out << "  stat_carry " << c->maxLoad << " " << c->overStaminaDrain << " "
             << c->minSpeedFactor; statTail(out, c);
     }
-    if (auto* c = go->GetComponent<StatusEffectStat>()) {
+    for (auto* c : go->GetComponents<StatusEffectStat>()) {
         out << "  statuseffect " << (c->sendMessages ? 1 : 0) << "\n";
     }
-    if (auto* c = go->GetComponent<SurvivalSave>()) {
+    for (auto* c : go->GetComponents<SurvivalSave>()) {
         out << "  survivalsave " << Quote(c->saveKey) << " " << (c->loadOnStart ? 1 : 0)
             << " " << (c->saveContinuously ? 1 : 0) << "\n";
     }
-    if (auto* c = go->GetComponent<SurvivalZone>()) {
+    for (auto* c : go->GetComponents<SurvivalZone>()) {
         out << "  survivalzone " << c->effect << " " << c->amount << " " << c->duration
             << " " << Quote(c->effectName) << "\n";
     }
-    if (auto* c = go->GetComponent<Consumables>()) {
+    for (auto* c : go->GetComponents<Consumables>()) {
         out << "  consumables " << (c->requireInventory ? 1 : 0) << " " << (c->consumeOnDrop ? 1 : 0)
             << " " << (c->destroyDroppedItem ? 1 : 0) << " " << c->recipes.size();
         for (const auto& r : c->recipes)
             out << " " << Quote(r.item) << " " << Quote(r.action) << " " << r.amount;
         out << "\n";
     }
-    if (auto* c = go->GetComponent<DayNightCycle>()) {
+    for (auto* c : go->GetComponents<DayNightCycle>()) {
         auto col = [&](const Color& k) { out << " " << k.r << " " << k.g << " " << k.b; };
         out << "  daynight " << c->dayLengthSeconds << " " << c->time << " " << (c->paused ? 1 : 0)
             << " " << (c->controlSun ? 1 : 0) << " " << (c->rotateSun ? 1 : 0) << " " << (c->controlSky ? 1 : 0)
@@ -2340,7 +2372,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
         out << "\n";
     }
-    if (auto* c = go->GetComponent<NPCController>()) {
+    for (auto* c : go->GetComponents<NPCController>()) {
         out << "  npc " << c->behavior << " " << c->moveSpeed << " " << c->sightRange << " "
             << c->wanderRadius << " " << c->attackRange << " " << c->attackDamage << " "
             << c->attackInterval << " " << (c->faceMovement ? 1 : 0) << " " << Quote(c->targetName)
@@ -2360,7 +2392,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const Vec3& w : c->waypoints)
             out << "  npcwp " << w.x << " " << w.y << " " << w.z << "\n";
     }
-    if (auto* c = go->GetComponent<MeleeAttacker>()) {
+    for (auto* c : go->GetComponents<MeleeAttacker>()) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
             << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0) << "\n";
     }
@@ -2374,12 +2406,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (c->usePool) out << " 1";   // optional: older builds read it as an unknown field and warn
         out << "\n";
     }
-    if (auto* c = go->GetComponent<CraftingMenu>()) {
+    for (auto* c : go->GetComponents<CraftingMenu>()) {
         out << "  craftmenu " << (int)(unsigned char)c->toggleKey << " " << (c->open ? 1 : 0)
             << " " << c->position.x << " " << c->position.y << " " << c->buttonSize.x << " "
             << c->buttonSize.y << " " << c->spacing << " " << (int)c->anchor << "\n";
     }
-    if (auto* c = go->GetComponent<Crafting>()) {
+    for (auto* c : go->GetComponents<Crafting>()) {
         out << "  crafting " << c->recipes.size();
         for (const auto& r : c->recipes) {
             out << " " << Quote(r.output) << " " << r.outputCount << " " << r.inputs.size();
@@ -2392,12 +2424,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // A Player Controller is one record plus a section per view it has. Bare
     // controllers (code that adds them by hand) keep their own records, which
     // load back into a Player Controller.
-    const auto* pcOwner = go->GetComponent<PlayerController>();
-    if (pcOwner) {
+    const auto playerControllers = go->GetComponents<PlayerController>();
+    const auto* pcOwner = playerControllers.empty() ? nullptr : playerControllers.front();
+    for (const PlayerController* pc : playerControllers) {
         out << "  playercontroller";
         KvOut k{out};
-        k("view", (int)pcOwner->viewMode());
-        if (auto* pv = pcOwner->toggle()) {
+        k("view", (int)pc->viewMode());
+        if (auto* pv = pc->toggle()) {
             k.b("allow", pv->allowToggle)("start", (int)pv->defaultView).key("key", pv->toggleKey)
              ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
              ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
@@ -2408,7 +2441,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     const char* fpName = pcOwner ? "pcfirst" : "fpctrl";
     const char* tpName = pcOwner ? "pcthird" : "tpctrl";
-    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+    for (auto* fp : go->GetComponents<FirstPersonController>()) {
         out << "  " << fpName << " " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
             << " " << (fp->invertY ? 1 : 0)
@@ -2428,7 +2461,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << fp->maxJumps
             << " " << (fp->footIK ? 1 : 0) << "\n";
     }
-    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+    for (auto* fp : go->GetComponents<FirstPersonController>()) {
         // Feel / slide / hooks (separate record: older builds skip it).
         out << "  " << (pcOwner ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
@@ -2452,7 +2485,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
-    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+    for (auto* tp : go->GetComponents<ThirdPersonController>()) {
         out << "  " << tpName << " " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
             << tp->mouseSensitivity << " " << tp->turnSpeed << " " << tp->distance << " "
             << tp->cameraHeight << " " << (tp->canJump ? 1 : 0) << " " << (tp->driveAnimation ? 1 : 0)
@@ -2492,7 +2525,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
-    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+    for (auto* tp : go->GetComponents<ThirdPersonController>()) {
         out << "  " << (pcOwner ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
             << " " << (tp->aimWithRightMouse ? 1 : 0) << " " << tp->aimDistance << " " << tp->aimShoulder
             << " " << tp->aimFov << " " << tp->aimSensitivity << " " << tp->aimLerp
@@ -2509,7 +2542,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
-    if (auto* pv = pcOwner ? nullptr : go->GetComponent<PlayerView>()) {
+    if (!pcOwner)
+    for (auto* pv : go->GetComponents<PlayerView>()) {
         out << "  playerview";
         KvOut k{out};
         k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
@@ -2520,7 +2554,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
-    if (auto* th = go->GetComponent<UITheme>()) {
+    for (auto* th : go->GetComponents<UITheme>()) {
         out << "  uitheme";
         KvOut k{out};
         k.str("name", th->themeName).b("apply", th->applyOnStart)("preset", th->preset)
@@ -2539,7 +2573,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (th->global) k.b("global", true);
         out << "\n";
     }
-    if (auto* td = go->GetComponent<TopDownController>()) {
+    for (auto* td : go->GetComponents<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
             << KeyToken(td->sprintKey) << " "
             << (td->driveAnimation ? 1 : 0) << " " << (td->rotateToFace ? 1 : 0) << " " << td->turnSpeed << " "
@@ -2548,7 +2582,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << td->lookHeight << " " << td->cameraDamping
             << " " << (td->footIK ? 1 : 0) << "\n";
     }
-    if (auto* ts = go->GetComponent<TopDownShooterController>()) {
+    for (auto* ts : go->GetComponents<TopDownShooterController>()) {
         out << "  tdsctrl";
         KvOut k{out};
         k("walk", ts->walkSpeed)("run", ts->runSpeed).key("sprint", ts->sprintKey)("accel", ts->acceleration)
@@ -2567,7 +2601,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
         out << "\n";
     }
-    if (auto* rd = go->GetComponent<Ragdoll>()) {
+    for (auto* rd : go->GetComponents<Ragdoll>()) {
         out << "  ragdoll";
         KvOut k{out};
         k("grav", rd->gravity)("damp", rd->damping)("fric", rd->friction)("radius", rd->radius)
@@ -2576,7 +2610,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("recover", rd->hitRecover);
         out << "\n";
     }
-    if (auto* pc = go->GetComponent<Platformer25DController>()) {
+    for (auto* pc : go->GetComponents<Platformer25DController>()) {
         out << "  p25ctrl";
         KvOut k{out};
         k("walk", pc->walkSpeed)("run", pc->runSpeed).key("sprint", pc->sprintKey)("accel", pc->acceleration)
@@ -2602,7 +2636,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (pc->stance() != Platformer25DController::Stance::Stand) k("stance", (int)pc->stance());   // saved crouched / prone
         out << "\n";
     }
-    if (auto* pj = go->GetComponent<Projectile3D>()) {
+    for (auto* pj : go->GetComponents<Projectile3D>()) {
         out << "  proj3d";
         KvOut k{out};
         k("vx", pj->velocity.x)("vy", pj->velocity.y)("vz", pj->velocity.z)("dmg", pj->damage)("life", pj->lifetime)
@@ -2610,7 +2644,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("bounces", pj->maxBounces);
         out << "\n";
     }
-    if (auto* t2 = go->GetComponent<TopDownController2D>()) {
+    for (auto* t2 : go->GetComponents<TopDownController2D>()) {
         out << "  tdctrl2d " << t2->speed << " " << t2->runSpeed << " " << KeyToken(t2->sprintKey)
             << " " << (t2->normalizeDiagonal ? 1 : 0) << " " << (t2->useGamepad ? 1 : 0)
             << " " << t2->acceleration << " " << t2->deceleration
@@ -2621,7 +2655,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << t2->knockbackTime << " " << KeyToken(t2->fireKey) << " " << t2->fireButton
             << " " << t2->projectileSpeed << " " << t2->fireRate << " " << Quote(t2->projectile) << "\n";
     }
-    if (auto* fr = go->GetComponent<FreeRoamController>()) {
+    for (auto* fr : go->GetComponents<FreeRoamController>()) {
         out << "  frctrl " << fr->moveSpeed << " " << fr->boostMultiplier << " "
             << (int)(unsigned char)fr->sprintKey << " " << (int)(unsigned char)fr->upKey << " "
             << (int)(unsigned char)fr->downKey << " " << fr->mouseSensitivity << " "
@@ -2629,7 +2663,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (fr->lookRequiresRightMouse ? 1 : 0) << " " << fr->minPitch << " " << fr->maxPitch << " "
             << fr->acceleration << " " << fr->yaw << " " << fr->pitch << "\n";
     }
-    if (auto* ts = go->GetComponent<ThirdPersonShooterController>()) {
+    for (auto* ts : go->GetComponents<ThirdPersonShooterController>()) {
         out << "  tpsctrl " << ts->walkSpeed << " " << ts->runSpeed << " " << ts->jumpForce << " "
             << KeyToken(ts->sprintKey) << " " << (ts->canJump ? 1 : 0) << " "
             << (ts->driveAnimation ? 1 : 0) << " " << ts->turnSpeed << " "
@@ -2653,7 +2687,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << ts->stepOffset
             << " " << ts->walkAcceleration << " " << ts->steerRate << "\n";
     }
-    if (auto* cm = go->GetComponent<ClickToMoveController>()) {
+    for (auto* cm : go->GetComponents<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
             << KeyToken(cm->runKey) << " " << cm->stopDistance << " " << cm->turnSpeed
             << " " << cm->mouseButton << " " << (cm->holdToMove ? 1 : 0) << " "
@@ -2671,39 +2705,39 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (cm->footIK ? 1 : 0) << " " << (cm->showCursor ? 1 : 0)
             << " " << (cm->usePathfinding ? 1 : 0) << " " << cm->repathInterval << "\n";
     }
-    if (auto* ft = go->GetComponent<FollowTarget2D>()) {
+    for (auto* ft : go->GetComponents<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
     }
     // The other movement controllers' crouch / prone (after their own records, so they exist on load).
-    if (auto* c = go->GetComponent<CharacterController3D>())        WriteStanceControl(out, "cc3dstance", c->stanceControl);
-    if (auto* c = go->GetComponent<ThirdPersonShooterController>()) WriteStanceControl(out, "tpsstance", c->stanceControl);
-    if (auto* c = go->GetComponent<TopDownController>())            WriteStanceControl(out, "tdstance", c->stanceControl);
-    if (auto* c = go->GetComponent<ClickToMoveController>())        WriteStanceControl(out, "ctmstance", c->stanceControl);
-    if (auto* c = go->GetComponent<NPCController>())                WriteStanceControl(out, "npcstance", c->stanceControl);
-    if (auto* sp = go->GetComponent<Spinner>()) {
+    for (auto* c : go->GetComponents<CharacterController3D>())        WriteStanceControl(out, "cc3dstance", c->stanceControl);
+    for (auto* c : go->GetComponents<ThirdPersonShooterController>()) WriteStanceControl(out, "tpsstance", c->stanceControl);
+    for (auto* c : go->GetComponents<TopDownController>())            WriteStanceControl(out, "tdstance", c->stanceControl);
+    for (auto* c : go->GetComponents<ClickToMoveController>())        WriteStanceControl(out, "ctmstance", c->stanceControl);
+    for (auto* c : go->GetComponents<NPCController>())                WriteStanceControl(out, "npcstance", c->stanceControl);
+    for (auto* sp : go->GetComponents<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
             << " " << sp->angularVelocity.z;
         if (sp->space != Space::Self) out << " " << static_cast<int>(sp->space);   // optional trailing field
         out << "\n";
     }
-    if (auto* lt = go->GetComponent<Lifetime>()) {
+    for (auto* lt : go->GetComponents<Lifetime>()) {
         out << "  lifetime " << lt->seconds;
         if (lt->Elapsed() > 0.0f) out << " " << lt->Elapsed();   // optional: a running timer is saved with the game
         out << "\n";
     }
-    if (auto* co = go->GetComponent<Collectible>()) {
+    for (auto* co : go->GetComponents<Collectible>()) {
         out << "  collectible " << Quote(co->scoreVar) << " " << co->points << " " << co->heal
             << " " << (co->respawn ? 1 : 0) << " " << co->respawnDelay << " " << Quote(co->collectorTag) << "\n";
     }
-    if (auto* dt = go->GetComponent<DamageOnTouch>()) {
+    for (auto* dt : go->GetComponents<DamageOnTouch>()) {
         out << "  damagetouch " << dt->damage << " " << dt->interval << " " << (dt->once ? 1 : 0)
             << " " << dt->knockback << " " << (dt->destroySelf ? 1 : 0) << " " << Quote(dt->targetTag) << "\n";
     }
-    if (auto* tp = go->GetComponent<Teleporter>()) {
+    for (auto* tp : go->GetComponents<Teleporter>()) {
         out << "  teleporter " << Quote(tp->targetName) << " " << tp->destination.x << " " << tp->destination.y
             << " " << tp->destination.z << " " << tp->cooldown << " " << Quote(tp->triggerTag) << "\n";
     }
-    if (auto* jp = go->GetComponent<JumpPad>()) {
+    for (auto* jp : go->GetComponents<JumpPad>()) {
         out << "  jumppad " << jp->force << " " << (jp->useObjectUp ? 1 : 0) << " "
             << jp->forwardBoost << " " << jp->cooldown << " " << Quote(jp->triggerTag) << "\n";
     }
@@ -2711,12 +2745,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  triggerzone " << tz->action << " " << Quote(tz->varName) << " " << tz->amount
             << " " << (tz->once ? 1 : 0) << " " << Quote(tz->targetName) << " " << Quote(tz->triggerTag) << "\n";
     }
-    if (auto* st = go->GetComponent<Stats>()) {
+    for (auto* st : go->GetComponents<Stats>()) {
         out << "  stats " << st->health << " " << st->maxHealth << " " << st->mana << " " << st->maxMana
             << " " << st->level << " " << st->xp << " " << st->xpToNext
             << " " << st->strength << " " << st->defense << " " << st->intelligence << " " << st->agility << "\n";
     }
-    if (auto* inv = go->GetComponent<Inventory>()) {
+    for (auto* inv : go->GetComponents<Inventory>()) {
         out << "  inventory " << inv->capacity << " " << inv->slots.size();
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
@@ -2725,7 +2759,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (inv->keepOnSceneLoad ? 1 : 0);
         out << "\n";
     }
-    if (auto* pk = go->GetComponent<ItemPickup>()) {
+    for (auto* pk : go->GetComponents<ItemPickup>()) {
         out << "  itempickup";
         KvOut k{out};
         k.str("item", pk->item)("count", pk->count).str("tag", pk->collectorTag).b("touch", pk->pickupOnTouch)
@@ -2740,7 +2774,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* eq = go->GetComponent<Equipment>()) {
+    for (auto* eq : go->GetComponents<Equipment>()) {
         // One line: the flags, then per slot sN* keys (name, accepted type, socket, item and
         // its instance data, a worn bag's contents included).
         out << "  equipment";
@@ -2760,23 +2794,23 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* ls = go->GetComponent<LootSource>()) {
+    for (auto* ls : go->GetComponents<LootSource>()) {
         out << "  lootsource";
         KvOut{out}.str("table", ls->table)("when", (int)ls->when)("refill", ls->refill)("seed", ls->seed);
         out << "\n";
     }
-    if (auto* tm = go->GetComponent<TurnManager>()) {
+    for (auto* tm : go->GetComponents<TurnManager>()) {
         out << "  turnmgr " << tm->current << " " << tm->round << " " << (tm->autoStart ? 1 : 0)
             << " " << tm->participants.size();
         for (const auto& p : tm->participants) out << " " << Quote(p);
         out << "\n";
     }
-    if (auto* cf = go->GetComponent<CameraFollow>()) {
+    for (auto* cf : go->GetComponents<CameraFollow>()) {
         out << "  camerafollow " << Quote(cf->targetName) << " "
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
     }
-    if (auto* vc = go->GetComponent<VirtualCamera>()) {
+    for (auto* vc : go->GetComponents<VirtualCamera>()) {
         out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
             << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
             << " " << vc->positionDamping << " " << vc->rotationDamping
@@ -2798,19 +2832,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
             << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
     }
-    if (auto* cb = go->GetComponent<CinemachineBrain>()) {
+    for (auto* cb : go->GetComponents<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
     }
-    if (auto* dp = go->GetComponent<DollyPath>()) {
+    for (auto* dp : go->GetComponents<DollyPath>()) {
         out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
         for (const auto& w : dp->waypoints) out << " " << w.x << " " << w.y << " " << w.z;
         out << "\n";
     }
-    if (auto* dc = go->GetComponent<DollyCart>()) {
+    for (auto* dc : go->GetComponents<DollyCart>()) {
         out << "  dollycart " << Quote(dc->path) << " " << dc->position << " "
             << dc->speed << " " << (dc->autoMove ? 1 : 0) << "\n";
     }
-    if (auto* tr = go->GetComponent<TextRenderer>()) {
+    for (auto* tr : go->GetComponents<TextRenderer>()) {
         out << "  text " << Quote(tr->text) << " "
             << tr->color.r << " " << tr->color.g << " " << tr->color.b << " " << tr->color.a << " "
             << tr->pixelSize << " " << (tr->screenSpace ? 1 : 0) << " "
@@ -2836,7 +2870,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (tr->autoSize ? 1 : 0) << " " << tr->autoSizeMin << " " << tr->autoSizeMax
             << "\n";   // best-fit auto-size (newest)
     }
-    if (auto* an = go->GetComponent<SpriteAnimator>()) {
+    for (auto* an : go->GetComponents<SpriteAnimator>()) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
             << (an->playing ? 1 : 0) << " " << an->frames.size();
         for (const auto& f : an->frames) out << " " << Quote(f);
@@ -2858,13 +2892,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
             << au->lowPass << " " << (au->stream ? 1 : 0) << "\n";
     }
-    if (auto* mp = go->GetComponent<MusicPlayer>()) {
+    for (auto* mp : go->GetComponents<MusicPlayer>()) {
         out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
             << (mp->loopPlaylist ? 1 : 0) << " " << mp->crossfade << " " << mp->volume << " " << mp->tracks.size();
         for (const auto& t : mp->tracks) out << " " << Quote(t);
         out << " " << (mp->stream ? 1 : 0) << "\n";
     }
-    if (auto* anim = go->GetComponent<Animator>()) {
+    for (auto* anim : go->GetComponents<Animator>()) {
         out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
             << (anim->clip.loop ? 1 : 0) << " " << Quote(anim->clip.name)
             << " " << anim->clip.Tracks().size();
@@ -2887,13 +2921,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
-    if (auto* tm = go->GetComponent<Tilemap>()) {
+    for (auto* tm : go->GetComponents<Tilemap>()) {
         out << "  tilemap " << tm->tileSize << " " << tm->Width() << " " << tm->Height();
         for (int t : tm->Tiles()) out << " " << t;
         out << "\n";
     }
-    if (go->GetComponent<TilemapCollider2D>()) out << "  tilemapcollider\n";
-    if (auto* btn = go->GetComponent<UIButton>()) {
+    for (TilemapCollider2D* dupKeep_ : go->GetComponents<TilemapCollider2D>()) { (void)dupKeep_; out << "  tilemapcollider\n"; }
+    for (auto* btn : go->GetComponents<UIButton>()) {
         out << "  uibutton " << Quote(btn->label) << " "
             << btn->position.x << " " << btn->position.y << " "
             << btn->size.x << " " << btn->size.y << " "
@@ -2929,7 +2963,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << btn->focusColor.r << " " << btn->focusColor.g << " "
             << btn->focusColor.b << " " << btn->focusColor.a << "\n";
     }
-    if (auto* pn = go->GetComponent<UIPanel>()) {
+    for (auto* pn : go->GetComponents<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
             << pn->size.x << " " << pn->size.y << " "
             << pn->color.r << " " << pn->color.g << " " << pn->color.b << " " << pn->color.a
@@ -2953,10 +2987,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << pn->cornerMask   // newest: per-corner rounding bitmask
             << "\n";
     }
-    if (auto* doc = go->GetComponent<UIDocument>()) {
+    for (auto* doc : go->GetComponents<UIDocument>()) {
         out << "  uidocument " << Quote(doc->markup) << "\n";
     }
-    if (auto* nm = go->GetComponent<NetworkManager>()) {
+    for (auto* nm : go->GetComponents<NetworkManager>()) {
         out << "  network " << (int)nm->autoStart << " " << nm->autoPort << " "
             << Quote(nm->autoHost) << " " << Quote(nm->startName) << " "
             << Quote(nm->startRoom) << " "
@@ -2969,7 +3003,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
         for (const auto& pf : nm->spawnablePrefabs) out << "  netprefab " << Quote(pf) << "\n";
     }
-    if (auto* wu = go->GetComponent<WorldUI>()) {
+    for (auto* wu : go->GetComponents<WorldUI>()) {
         out << "  worldui " << Quote(wu->text) << " "
             << wu->color.r << " " << wu->color.g << " " << wu->color.b << " " << wu->color.a << " "
             << wu->background.r << " " << wu->background.g << " " << wu->background.b << " " << wu->background.a << " "
@@ -2978,7 +3012,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << wu->maxDistance << " " << wu->bar << " "
             << wu->barColor.r << " " << wu->barColor.g << " " << wu->barColor.b << " " << wu->barColor.a << "\n";
     }
-    if (auto* in = go->GetComponent<UIInputField>()) {
+    for (auto* in : go->GetComponents<UIInputField>()) {
         out << "  uiinput " << in->position.x << " " << in->position.y << " "
             << in->size.x << " " << in->size.y << " " << (int)in->anchor << " "
             << in->maxLength << " " << Quote(in->text) << " " << Quote(in->placeholder) << " "
@@ -2989,7 +3023,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
             << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
     }
-    if (auto* tb = go->GetComponent<UITabs>()) {
+    for (auto* tb : go->GetComponents<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
             << tb->size.x << " " << tb->size.y << " " << (int)tb->anchor << " " << tb->value << " "
             << tb->background.r << " " << tb->background.g << " " << tb->background.b << " " << tb->background.a << " "
@@ -3020,7 +3054,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (bool d : tb->disabled) out << " " << (d ? 1 : 0);
         out << " " << (tb->closable ? 1 : 0) << "\n";   // grok/ui-controls
     }
-    if (auto* dd = go->GetComponent<UIDropdown>()) {
+    for (auto* dd : go->GetComponents<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
             << dd->size.x << " " << dd->size.y << " " << (int)dd->anchor << " "
             << dd->value << " "
@@ -3037,18 +3071,18 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const auto& ic : dd->optionIcons) out << " " << Quote(ic);   // grok/ui-controls
         out << "\n";
     }
-    if (auto* tb = go->GetComponent<UITextBind>()) {
+    for (auto* tb : go->GetComponents<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
     }
-    if (auto* bb = go->GetComponent<UIBarBind>()) {
+    for (auto* bb : go->GetComponents<UIBarBind>()) {
         out << "  uibarbind " << Quote(bb->var) << " " << bb->min << " " << bb->max << "\n";
     }
-    if (auto* dg = go->GetComponent<UIDraggable>()) {
+    for (auto* dg : go->GetComponents<UIDraggable>()) {
         out << "  uidraggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
             << " " << (dg->snapToSlot ? 1 : 0)
             << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0) << "\n";
     }
-    if (auto* dt = go->GetComponent<UIDropTarget>()) {
+    for (auto* dt : go->GetComponents<UIDropTarget>()) {
         out << "  uidroptarget " << Quote(dt->acceptTag)
             << " " << (dt->showHighlight ? 1 : 0)
             << " " << dt->highlight.r << " " << dt->highlight.g
@@ -3061,16 +3095,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << dt->rejectHighlight.r << " " << dt->rejectHighlight.g << " " << dt->rejectHighlight.b << " " << dt->rejectHighlight.a
             << " " << (dt->snapToCenter ? 1 : 0) << "\n";
     }
-    if (auto* dg = go->GetComponent<Draggable>()) {
+    for (auto* dg : go->GetComponents<Draggable>()) {
         out << "  draggable " << (dg->returnToStart ? 1 : 0) << " " << (dg->anyTarget ? 1 : 0)
             << " " << (dg->snapToZone ? 1 : 0)
             << " " << (int)dg->axis << " " << dg->dragThreshold << " " << (dg->bringToFront ? 1 : 0)
             << " " << dg->gridX << " " << dg->gridY << " " << dg->dragScale << "\n";
     }
-    if (auto* dz = go->GetComponent<DropZone>()) {
+    for (auto* dz : go->GetComponents<DropZone>()) {
         out << "  dropzone " << Quote(dz->acceptTag) << "\n";
     }
-    if (auto* tt = go->GetComponent<UITooltip>()) {
+    for (auto* tt : go->GetComponents<UITooltip>()) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
             << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
             << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
@@ -3100,19 +3134,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (newTail) out << " " << decay << " " << (ta->speedBased ? 1 : 0) << " " << Quote(ta->tag);
         out << "\n";
     }
-    if (auto* lg = go->GetComponent<UILayoutGroup>()) {
+    for (auto* lg : go->GetComponents<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
             << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
             << " " << lg->columns << " " << lg->spacingY
             << " " << lg->boxSize.x << " " << lg->boxSize.y << " " << (int)lg->justify << " " << (int)lg->align
             << " " << (lg->wrap ? 1 : 0) << "\n";   // flex fields (optional, newer)
     }
-    if (auto* fi = go->GetComponent<UIFlexItem>()) {
+    for (auto* fi : go->GetComponents<UIFlexItem>()) {
         out << "  uiflexitem " << fi->grow << " " << fi->shrink << " " << fi->baseSize.x << " " << fi->baseSize.y
             << " " << (int)fi->alignSelf << "\n";
     }
-    if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
-    if (auto* md = go->GetComponent<UIModal>()) {
+    for (auto* mk : go->GetComponents<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
+    for (auto* md : go->GetComponents<UIModal>()) {
         auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  uimodal " << (md->dimBackground ? 1 : 0) << " "
             << md->dimColor.r << " " << md->dimColor.g << " " << md->dimColor.b << " " << md->dimColor.a << " "
@@ -3123,13 +3157,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << Quote(md->titleText) << " " << Quote(md->bodyText)
             << " " << Quote(md->confirmText) << " " << Quote(md->cancelText) << "\n";
     }
-    if (auto* toast = go->GetComponent<UIToast>()) {
+    for (auto* toast : go->GetComponents<UIToast>()) {
         // grok/ui-toast. Live toast cards are ordinary children and are not listed here.
         out << "  uitoast " << toast->corner << " " << toast->duration << " " << toast->maxStack << " "
             << toast->margin << " " << toast->gap << " " << toast->width << " " << toast->height << " "
             << (toast->showIcon ? 1 : 0) << "\n";
     }
-    if (auto* cm = go->GetComponent<UIContextMenu>()) {
+    for (auto* cm : go->GetComponents<UIContextMenu>()) {
         auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  uicontext " << (cm->anywhere ? 1 : 0) << " " << cm->itemHeight << " " << cm->width << " " << cm->textSize;
         c4(cm->background); c4(cm->hoverColor); c4(cm->textColor); c4(cm->borderColor);
@@ -3137,7 +3171,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const std::string& it : cm->items) out << " " << Quote(it);
         out << "\n";
     }
-    if (auto* kb = go->GetComponent<UIKeybindField>()) {
+    for (auto* kb : go->GetComponents<UIKeybindField>()) {
         auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  uikeybind " << kb->position.x << " " << kb->position.y << " " << kb->size.x << " " << kb->size.y
             << " " << (int)kb->anchor << " " << Quote(kb->action) << " " << (int)(unsigned char)kb->key
@@ -3146,12 +3180,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << (kb->interactable ? 1 : 0) << " " << (kb->focusable ? 1 : 0)
             << " " << Quote(kb->inputAction) << " " << (kb->gamepad ? 1 : 0) << " " << kb->part << "\n";
     }
-    if (auto* fr = go->GetComponent<UIFrame>()) {
+    for (auto* fr : go->GetComponents<UIFrame>()) {
         out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
             << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
             << " " << fr->size.x << " " << fr->size.y << "\n";
     }
-    if (auto* sv = go->GetComponent<UIScrollView>()) {
+    for (auto* sv : go->GetComponents<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
@@ -3159,7 +3193,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0)
             << " " << sv->inertia << " " << (sv->elastic ? 1 : 0) << " " << sv->barStyle << "\n";   // grok/ui-controls
     }
-    if (auto* lv = go->GetComponent<UIListView>()) {
+    for (auto* lv : go->GetComponents<UIListView>()) {
         out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
             << " " << (int)lv->anchor << " "
             << lv->background.r << " " << lv->background.g << " " << lv->background.b << " " << lv->background.a << " "
@@ -3169,7 +3203,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const std::string& it : lv->items) out << " " << Quote(it);
         out << "\n";
     }
-    if (auto* cv = go->GetComponent<Canvas>()) {
+    for (auto* cv : go->GetComponents<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
             << cv->referenceResolution.x << " " << cv->referenceResolution.y << " "
             << cv->matchWidthOrHeight << " " << cv->scaleFactor << " " << cv->sortOrder
@@ -3179,14 +3213,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (cv->billboard ? 1 : 0)                                  // world-space canvas (optional)
             << " " << (int)cv->screenMatch << "\n";                             // newest: screen match mode
     }
-    if (go->GetComponent<EventSystem>()) {
+    for (EventSystem* dupKeep_ : go->GetComponents<EventSystem>()) { (void)dupKeep_;
         out << "  eventsystem\n";
     }
-    if (auto* w3 = go->GetComponent<WorldSpaceUI>()) {
+    for (auto* w3 : go->GetComponents<WorldSpaceUI>()) {
         out << "  worldui3d " << w3->pixelsPerUnit << " " << (w3->billboard ? 1 : 0)
             << " " << (w3->constantSize ? 1 : 0) << " " << w3->constantScale << "\n";
     }
-    if (auto* pb = go->GetComponent<UIProgressBar>()) {
+    for (auto* pb : go->GetComponents<UIProgressBar>()) {
         out << "  uiprogress " << pb->position.x << " " << pb->position.y << " "
             << pb->size.x << " " << pb->size.y << " " << pb->value << " "
             << pb->background.r << " " << pb->background.g << " " << pb->background.b << " " << pb->background.a << " "
@@ -3206,7 +3240,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << pb->highColor.r << " " << pb->highColor.g << " " << pb->highColor.b << " " << pb->highColor.a
             << " " << Quote(pb->textFormat) << "\n";
     }
-    if (auto* rp = go->GetComponent<UIRadialProgress>()) {
+    for (auto* rp : go->GetComponents<UIRadialProgress>()) {
         out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
             << rp->size.x << " " << rp->size.y << " " << rp->value << " "
             << rp->thickness << " " << rp->startAngle << " " << (rp->clockwise ? 1 : 0) << " "
@@ -3216,7 +3250,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << rp->textColor.r << " " << rp->textColor.g << " " << rp->textColor.b << " " << rp->textColor.a
             << " " << (rp->spin ? 1 : 0) << " " << rp->spinSpeed << "\n";   // extended (back-compatible)
     }
-    if (auto* mm = go->GetComponent<Minimap>()) {
+    for (auto* mm : go->GetComponents<Minimap>()) {
         out << "  minimap " << mm->position.x << " " << mm->position.y << " "
             << mm->size.x << " " << mm->size.y << " "
             << mm->background.r << " " << mm->background.g << " " << mm->background.b << " " << mm->background.a << " "
@@ -3277,7 +3311,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << mm->userWaypointColor.b << " " << mm->userWaypointColor.a;
         out << "\n";
     }
-    if (auto* bl = go->GetComponent<MinimapBlip>()) {
+    for (auto* bl : go->GetComponents<MinimapBlip>()) {
         out << "  minimapblip " << bl->color.r << " " << bl->color.g << " " << bl->color.b << " " << bl->color.a << " "
             << bl->size << " " << (bl->square ? 1 : 0) << " "
             // --- appended (v2): shape enum + heading rotation ---
@@ -3285,7 +3319,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             // --- appended (v3): icon texture, (v4): label ---
             << " " << Quote(bl->icon) << " " << Quote(bl->label) << "\n";
     }
-    if (auto* cr = go->GetComponent<Crosshair>()) {
+    for (auto* cr : go->GetComponents<Crosshair>()) {
         out << "  crosshair " << cr->position.x << " " << cr->position.y << " "
             << cr->size.x << " " << cr->size.y << " "
             << cr->color.r << " " << cr->color.g << " " << cr->color.b << " " << cr->color.a << " "
@@ -3303,7 +3337,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << cr->spreadRecover << " " << cr->spreadMax;   // grok/ui-hud
         out << "\n";
     }
-    if (auto* sg = go->GetComponent<UISlotGrid>()) {
+    for (auto* sg : go->GetComponents<UISlotGrid>()) {
         out << "  uislotgrid " << sg->position.x << " " << sg->position.y << " " << (int)sg->anchor << " "
             << sg->columns << " " << sg->rows << " " << sg->cell.x << " " << sg->cell.y << " " << sg->gap << " "
             << sg->value << " "
@@ -3314,24 +3348,24 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const auto& lb : sg->labels) out << " " << Quote(lb);
         out << "\n";
     }
-    if (auto* cp = go->GetComponent<UIColorPicker>()) { // grok/ui-color
+    for (auto* cp : go->GetComponents<UIColorPicker>()) { // grok/ui-color
         out << "  uicolorpicker " << cp->position.x << " " << cp->position.y << " " << (int)cp->anchor << " "
             << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
         for (const Color& c : cp->swatches)
             out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
         out << "\n";
     }
-    if (auto* sa = go->GetComponent<UISafeArea>())
+    for (auto* sa : go->GetComponents<UISafeArea>())
         out << "  uisafearea " << (sa->left ? 1 : 0) << " " << (sa->top ? 1 : 0) << " " << (sa->right ? 1 : 0)
             << " " << (sa->bottom ? 1 : 0) << " " << (sa->enabled ? 1 : 0) << "\n";
-    if (auto* ri = go->GetComponent<UIRawImage>()) {
+    for (auto* ri : go->GetComponents<UIRawImage>()) {
         out << "  uirawimage " << ri->position.x << " " << ri->position.y << " " << ri->size.x << " " << ri->size.y
             << " " << ri->color.r << " " << ri->color.g << " " << ri->color.b << " " << ri->color.a
             << " " << ri->uvX << " " << ri->uvY << " " << ri->uvW << " " << ri->uvH
             << " " << ri->scroll.x << " " << ri->scroll.y << " " << (ri->enabled ? 1 : 0)
             << " " << Quote(ri->texture) << " " << (int)ri->anchor << "\n";
     }
-    if (auto* im = go->GetComponent<UIImage>()) {
+    for (auto* im : go->GetComponents<UIImage>()) {
         out << "  uiimage " << im->position.x << " " << im->position.y << " "
             << im->size.x << " " << im->size.y << " "
             << im->color.r << " " << im->color.g << " " << im->color.b << " " << im->color.a << " "
@@ -3351,7 +3385,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << im->shadowOffset.x << " " << im->shadowOffset.y << " " << im->shadowSoftness
             << "\n";
     }
-    if (auto* sl = go->GetComponent<UISlider>()) {
+    for (auto* sl : go->GetComponents<UISlider>()) {
         out << "  uislider " << sl->position.x << " " << sl->position.y << " "
             << sl->size.x << " " << sl->size.y << " "
             << sl->value << " " << sl->minValue << " " << sl->maxValue << " "
@@ -3371,7 +3405,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << sl->fillEnd.r << " " << sl->fillEnd.g << " " << sl->fillEnd.b << " " << sl->fillEnd.a
             << " " << sl->knobShape << " " << Quote(sl->valueFormat) << "\n";
     }
-    if (auto* st = go->GetComponent<UIStepper>()) {
+    for (auto* st : go->GetComponents<UIStepper>()) {
         out << "  uistepper " << st->position.x << " " << st->position.y << " "
             << st->size.x << " " << st->size.y << " "
             << st->value << " " << st->minValue << " " << st->maxValue << " " << st->step << " "
@@ -3382,7 +3416,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (int)st->anchor << " " << (int)st->shape << " " << st->cornerRadius << " "
             << (st->interactable ? 1 : 0) << "\n";
     }
-    if (auto* rt = go->GetComponent<UIRating>()) {
+    for (auto* rt : go->GetComponents<UIRating>()) {
         out << "  uirating " << rt->position.x << " " << rt->position.y << " "
             << rt->size.x << " " << rt->size.y << " "
             << rt->count << " " << rt->value << " " << (rt->allowHalf ? 1 : 0) << " " << (rt->readOnly ? 1 : 0) << " "
@@ -3390,7 +3424,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << rt->off.r << " " << rt->off.g << " " << rt->off.b << " " << rt->off.a << " "
             << (int)rt->anchor << "\n";
     }
-    if (auto* tg = go->GetComponent<UIToggle>()) {
+    for (auto* tg : go->GetComponents<UIToggle>()) {
         out << "  uitoggle " << Quote(tg->label) << " "
             << tg->position.x << " " << tg->position.y << " "
             << tg->size.x << " " << tg->size.y << " " << (tg->on ? 1 : 0) << " "
@@ -3458,14 +3492,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     // The runtime UI components added with the twelve looks: one key=value record each (older builds skip them).
-    if (auto* sv = go->GetComponent<UIStyleVariant>()) {
+    for (auto* sv : go->GetComponents<UIStyleVariant>()) {
         out << "  uivariant";
         KvOut k{out};
         k("variant", sv->variant);
         if (!sv->themeName.empty()) k.str("vtheme", sv->themeName);
         out << "\n";
     }
-    if (auto* dn = go->GetComponent<UIDamageNumbers>()) {
+    for (auto* dn : go->GetComponents<UIDamageNumbers>()) {
         out << "  uidamage";
         KvOut k{out};
         k("dnLife", dn->lifetime)("dnRise", dn->riseSpeed)("dnGrav", dn->gravity)("dnSpread", dn->spread)
@@ -3475,13 +3509,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .col("dnMiss", dn->missColor).col("dnInfo", dn->infoColor);
         out << "\n";
     }
-    if (auto* db = go->GetComponent<UIDialogueBox>()) {
+    for (auto* db : go->GetComponents<UIDialogueBox>()) {
         out << "  uidialoguebox";
         KvOut k{out};
         k("dbCps", db->charsPerSecond).b("dbHide", db->hideWhenDone).b("dbClick", db->advanceOnClick).b("dbStartHidden", db->startHidden);
         out << "\n";
     }
-    if (auto* ib = go->GetComponent<UIInventoryBind>()) {
+    for (auto* ib : go->GetComponents<UIInventoryBind>()) {
         out << "  uiinvbind";
         KvOut k{out};
         k.str("inv", ib->inventoryName).b("fit", ib->fitRows)("fscale", ib->slotFontScale);
@@ -3491,39 +3525,65 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // numbers, dialogue boxes). One key=value record that is only written when something is non-default,
     // so older scenes are byte-for-byte the same and older builds skip it.
     {
-        std::ostringstream xs; UseRoundTripFloats(xs);
-        KvOut k{xs};
-        if (auto* pn = go->GetComponent<UIPanel>(); pn && pn->blocksPointer) k.b("pblock", true);
-        if (auto* rtx = go->GetComponent<TextRenderer>(); rtx && rtx->richText) k.b("rich", true);
-        if (auto* tg = go->GetComponent<UIToggle>(); tg && !tg->radioGroup.empty()) k.str("rgroup", tg->radioGroup);
-        if (auto* sg = go->GetComponent<UISlotGrid>(); sg && (sg->fontScale != 1.5f || !sg->numberEmptySlots || sg->textColor.r != 1.0f || sg->textColor.g != 1.0f || sg->textColor.b != 1.0f || sg->textColor.a != 1.0f))
-            k("sgFont", sg->fontScale).b("sgNum", sg->numberEmptySlots).col("sgText", sg->textColor);
-        if (auto* dg = go->GetComponent<UIDraggable>()) {
-            if (dg->dragParent) k.b("dragParent", true);
-            if (dg->keepOnScreen) k.b("keepOnScreen", true);
+        const auto panels = go->GetComponents<UIPanel>();
+        const auto richTexts = go->GetComponents<TextRenderer>();
+        const auto uixToggles = go->GetComponents<UIToggle>();
+        const auto grids = go->GetComponents<UISlotGrid>();
+        const auto drags = go->GetComponents<UIDraggable>();
+        const int n = std::max({(int)panels.size(), (int)richTexts.size(), (int)uixToggles.size(),
+                                (int)grids.size(), (int)drags.size()});
+        for (int i = 0; i < n; ++i) {
+            std::ostringstream xs; UseRoundTripFloats(xs);
+            KvOut k{xs};
+            if (auto* pn = AtComp(panels, i); pn && pn->blocksPointer) k.b("pblock", true);
+            if (auto* rtx = AtComp(richTexts, i); rtx && rtx->richText) k.b("rich", true);
+            if (auto* tg = AtComp(uixToggles, i); tg && !tg->radioGroup.empty()) k.str("rgroup", tg->radioGroup);
+            if (auto* sg = AtComp(grids, i); sg && (sg->fontScale != 1.5f || !sg->numberEmptySlots || sg->textColor.r != 1.0f || sg->textColor.g != 1.0f || sg->textColor.b != 1.0f || sg->textColor.a != 1.0f))
+                k("sgFont", sg->fontScale).b("sgNum", sg->numberEmptySlots).col("sgText", sg->textColor);
+            if (auto* dg = AtComp(drags, i)) {
+                if (dg->dragParent) k.b("dragParent", true);
+                if (dg->keepOnScreen) k.b("keepOnScreen", true);
+            }
+            if (xs.str().empty()) continue;
+            if (i > 0) k("i", i);
+            out << "  uix" << xs.str() << "\n";
         }
-        if (!xs.str().empty()) out << "  uix" << xs.str() << "\n";
     }
-    // Localization: the string-table keys of localized text and the Localized
-    // switches, after the components they belong to. Its own key=value record, so
-    // older scenes load unchanged; nothing is written for literal text.
+    // Localization keys, one record per instance. The first instance omits `i` (the line a
+    // single text field has always written). A later instance adds `i=<index>`.
     {
-        std::ostringstream ls; UseRoundTripFloats(ls);
-        KvOut k{ls};
-        if (auto* tr = go->GetComponent<TextRenderer>(); tr && !tr->loc.key.empty()) k.str("text", tr->loc.key);
-        if (auto* b = go->GetComponent<UIButton>(); b && !b->loc.key.empty()) k.str("button", b->loc.key);
-        if (auto* t = go->GetComponent<UIToggle>(); t && !t->loc.key.empty()) k.str("toggle", t->loc.key);
-        if (auto* tt = go->GetComponent<UITooltip>(); tt && !tt->loc.key.empty()) k.str("tooltip", tt->loc.key);
-        if (auto* w = go->GetComponent<WorldUI>(); w && !w->loc.key.empty()) k.str("world", w->loc.key);
-        if (auto* in = go->GetComponent<UIInputField>(); in && !in->loc.key.empty()) k.str("input", in->loc.key);
-        if (auto* hp = go->GetComponent<HoldPrompt>(); hp && hp->localized) k.b("hold", true);
-        if (auto* pm = go->GetComponent<PauseMenu>(); pm && pm->localized) k.b("pause", true);
-        if (auto* ls2 = go->GetComponent<LoadingScreen>(); ls2 && ls2->localized) k.b("loading", true);
-        if (!ls.str().empty()) out << "  loc" << ls.str() << "\n";
+        const auto texts = go->GetComponents<TextRenderer>();
+        const auto buttons = go->GetComponents<UIButton>();
+        const auto toggles = go->GetComponents<UIToggle>();
+        const auto tips = go->GetComponents<UITooltip>();
+        const auto worlds = go->GetComponents<WorldUI>();
+        const auto inputs = go->GetComponents<UIInputField>();
+        const auto holds = go->GetComponents<HoldPrompt>();
+        const auto pauses = go->GetComponents<PauseMenu>();
+        const auto loads = go->GetComponents<LoadingScreen>();
+        const int n = std::max({(int)texts.size(), (int)buttons.size(), (int)toggles.size(), (int)tips.size(),
+                                (int)worlds.size(), (int)inputs.size(), (int)holds.size(), (int)pauses.size(),
+                                (int)loads.size()});
+        for (int i = 0; i < n; ++i) {
+            std::ostringstream ls; UseRoundTripFloats(ls);
+            KvOut k{ls};
+            if (auto* tr = AtComp(texts, i); tr && !tr->loc.key.empty()) k.str("text", tr->loc.key);
+            if (auto* b = AtComp(buttons, i); b && !b->loc.key.empty()) k.str("button", b->loc.key);
+            if (auto* t = AtComp(toggles, i); t && !t->loc.key.empty()) k.str("toggle", t->loc.key);
+            if (auto* tt = AtComp(tips, i); tt && !tt->loc.key.empty()) k.str("tooltip", tt->loc.key);
+            if (auto* w = AtComp(worlds, i); w && !w->loc.key.empty()) k.str("world", w->loc.key);
+            if (auto* inf = AtComp(inputs, i); inf && !inf->loc.key.empty()) k.str("input", inf->loc.key);
+            if (auto* hp = AtComp(holds, i); hp && hp->localized) k.b("hold", true);
+            if (auto* pm = AtComp(pauses, i); pm && pm->localized) k.b("pause", true);
+            if (auto* lsc = AtComp(loads, i); lsc && lsc->localized) k.b("loading", true);
+            if (ls.str().empty()) continue;
+            if (i > 0) k("i", i);
+            out << "  loc" << ls.str() << "\n";
+        }
     }
     // Navigation: key=value records of their own, so older scenes load unchanged.
     // The baked mesh stays in the .okaynav file the surface points at.
-    if (auto* ns = go->GetComponent<NavMeshSurface>()) {
+    for (auto* ns : go->GetComponents<NavMeshSurface>()) {
         out << "  navsurface";
         KvOut k{out};
         k("radius", ns->settings.agentRadius)("height", ns->settings.agentHeight)("slope", ns->settings.maxSlope)
@@ -3538,7 +3598,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    if (auto* na = go->GetComponent<NavMeshAgent>()) {
+    for (auto* na : go->GetComponents<NavMeshAgent>()) {
         out << "  navagent";
         KvOut k{out};
         k("radius", na->radius)("height", na->height)("speed", na->speed)("accel", na->acceleration)
@@ -3548,13 +3608,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("mask", na->areaMask);
         out << "\n";
     }
-    if (auto* nm = go->GetComponent<NavMeshModifier>()) {
+    for (auto* nm : go->GetComponents<NavMeshModifier>()) {
         out << "  navmod";
         KvOut k{out};
         k("area", nm->area).b("kids", nm->applyToChildren);
         out << "\n";
     }
-    if (auto* nl = go->GetComponent<NavMeshLink>()) {
+    for (auto* nl : go->GetComponents<NavMeshLink>()) {
         out << "  navlink";
         KvOut k{out};
         k("type", (int)nl->type)("sx", nl->startPoint.x)("sy", nl->startPoint.y)("sz", nl->startPoint.z)
@@ -3562,7 +3622,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("cost", nl->cost)("area", nl->area)("speed", nl->speed)("arc", nl->arcHeight);
         out << "\n";
     }
-    if (auto* no = go->GetComponent<NavMeshObstacle>()) {
+    for (auto* no : go->GetComponents<NavMeshObstacle>()) {
         out << "  navobstacle";
         KvOut k{out};
         k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z)
@@ -3572,7 +3632,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // ---- Dialogue and quests: own key=value records, so older scenes skip nothing
     // they don't have and newer keys are ignored by older builds. ----
-    if (auto* st = go->GetComponent<StoryState>()) {
+    for (auto* st : go->GetComponents<StoryState>()) {
         out << "  storystate";
         KvOut k{out};
         k("n", (int)st->vars.size());
@@ -3587,7 +3647,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         for (const auto& f : st->flags) k.str(("f" + std::to_string(i++)).c_str(), f);
         out << "\n";
     }
-    if (auto* dr = go->GetComponent<DialogueRunner>()) {
+    for (auto* dr : go->GetComponents<DialogueRunner>()) {
         out << "  dialoguerunner";
         KvOut k{out};
         k.str("file", dr->graphFile)("mode", dr->startMode).key("key", dr->interactKey)("range", dr->interactRange)
@@ -3596,7 +3656,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("start", dr->startNode).str("player", dr->playerName);
         out << "\n";
     }
-    if (auto* ql = go->GetComponent<QuestLog>()) {
+    for (auto* ql : go->GetComponents<QuestLog>()) {
         out << "  questlog";
         KvOut k{out};
         k.str("file", ql->questFile).b("tracker", ql->showTracker).b("journal", ql->allowJournal).key("jkey", ql->journalKey)
@@ -3644,7 +3704,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // Behavior tree runner: a key=value record of its own, so older scenes load
     // unchanged. The tree itself stays in the .okaybt file it points at.
-    if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) {
+    for (auto* bt : go->GetComponents<BehaviorTreeRunner>()) {
         out << "  btrunner";
         KvOut k{out};
         k.str("tree", bt->treePath)("rate", bt->tickRate).b("auto", bt->runOnStart).b("debug", bt->debug)
@@ -3659,7 +3719,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Splines and what builds on them, lines and trails: key=value records of their
     // own (a spline's points one per line), so older scenes load unchanged. Generated
     // meshes and placed items are not saved: they are built again from these.
-    if (auto* sp = go->GetComponent<Spline>()) {
+    for (auto* sp : go->GetComponents<Spline>()) {
         out << "  spline";
         KvOut{out}("type", (int)sp->type).b("closed", sp->closed)("up", (int)sp->upMode)("res", sp->resolution);
         out << "\n";
@@ -3672,14 +3732,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << "\n";
         }
     }
-    if (auto* sf = go->GetComponent<SplineFollower>()) {
+    for (auto* sf : go->GetComponents<SplineFollower>()) {
         out << "  splinefollower";
         KvOut{out}.str("spline", sf->spline)("drive", (int)sf->drive)("wrap", (int)sf->wrap)("speed", sf->speed)
             ("dur", sf->duration)("start", sf->startAt).b("auto", sf->playOnStart).b("orient", sf->orient)
             ("offx", sf->offset.x)("offy", sf->offset.y)("offz", sf->offset.z);
         out << "\n";
     }
-    if (auto* sm = go->GetComponent<SplineMesh>()) {
+    for (auto* sm : go->GetComponents<SplineMesh>()) {
         out << "  splinemesh";
         KvOut{out}.str("spline", sm->spline)("mode", (int)sm->mode)("profile", (int)sm->profile)("width", sm->width)
             ("height", sm->height)("sides", sm->sides)
@@ -3689,7 +3749,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             ("msz", sm->meshScale.z).b("fit", sm->stretchToFit).b("collider", sm->generateCollider);
         out << "\n";
     }
-    if (auto* si = go->GetComponent<SplineInstancer>()) {
+    for (auto* si : go->GetComponents<SplineInstancer>()) {
         out << "  splineinstancer";
         KvOut{out}.str("spline", si->spline).str("tmpl", si->templateName).str("prefab", si->prefabPath)
             .str("mesh", si->meshName)("spacing", si->spacing)("start", si->startOffset)("side", si->sideOffset)
@@ -3698,7 +3758,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             ("ry", si->rotationOffset.y)("rz", si->rotationOffset.z)("max", si->maxCount);
         out << "\n";
     }
-    if (auto* lr = go->GetComponent<LineRenderer>()) {
+    for (auto* lr : go->GetComponents<LineRenderer>()) {
         out << "  linerenderer";
         KvOut k{out};
         k.str("pts", PointList(lr->positions))
@@ -4234,6 +4294,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             bool sawEnd = false;
             std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
             std::vector<std::string> compOrder;                  // `comporder`: type keys in the saved component order
+            int nFpFeel = 0, nTpFeel = 0, nFpStance = 0, nTpStance = 0;
+            int nCc3dSt = 0, nTpsSt = 0, nTdSt = 0, nCtmSt = 0, nNpcSt = 0;
+            int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
@@ -4366,7 +4429,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // overrides the placeholder geometry the preceding `mesh` line
                     // built from a (now-empty) name. Operate on the existing
                     // MeshRenderer (add one if somehow absent).
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int vcount = 0; in >> vcount;
                     if (!in || !countOk(vcount, 3)) return bad("meshgeo: bad vertex count");
@@ -4397,7 +4460,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // shape (its face colors come from the later meshcolors record,
                     // or from this regeneration if that record is absent).
                     int v = 0; in >> v;
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     mr->meshVariant = v;
                     if (v != 0 && Mesh::NameHasVariants(mr->mesh.name))
@@ -4405,7 +4468,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "meshuv") {
                     // Per-vertex UVs for meshgeo geometry (optional record that
                     // follows meshgeo, which cleared the uvs array).
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int uc = 0; in >> uc;
                     if (!in || !countOk(uc, 2)) return bad("meshuv: bad count");
@@ -4416,7 +4479,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "meshpoly") {
                     // Per-triangle polygon ids for meshgeo geometry (optional record).
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int pc = 0; in >> pc;
                     if (!in || !countOk(pc, 1)) return bad("meshpoly: bad count");
@@ -4425,7 +4488,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     for (int i = 0; i < pc && in; ++i) { int f = 0; in >> f; mr->mesh.polyFace.push_back(f); }
                 } else if (field == "meshseams") {
                     // UV seam edges of meshgeo geometry (optional record).
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int sc = 0; in >> sc;
                     mr->mesh.seams.clear();
@@ -4438,7 +4501,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Optional: restore smooth (1) or angle-based auto-smooth (2)
                     // shading on meshgeo geometry (the meshgeo reader cleared
                     // normals for flat shading).
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int s = 0; in >> s;
                     if (s == 2) { float a = 30.0f; in >> a; mr->mesh.ComputeAutoSmoothNormals(a); }
@@ -4446,7 +4509,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "meshcolors") {
                     // Per-face colors (vertex paint / baked lightmap). Follows the
                     // `mesh`/`meshgeo` geometry so the counts line up.
-                    auto* mr = go->GetComponent<MeshRenderer>();
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int cc = 0; in >> cc;
                     if (!in || !countOk(cc, 4)) return bad("meshcolors: bad count");
@@ -4459,8 +4522,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
                     // names + inverse-bind matrices. Joints are re-resolved by name at
                     // runtime (SkinnedMesh::Start); show the bind mesh now for the editor.
-                    auto* sm = go->GetComponent<SkinnedMesh>();
-                    if (!sm) sm = go->AddComponent<SkinnedMesh>();
+                    auto* sm = go->AddComponent<SkinnedMesh>();
                     Mesh bm;
                     // Every count is checked, and the result must be consistent:
                     // one weight set per vertex and triangles inside the vertex
@@ -4499,10 +4561,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (t < 0 || t >= (int)bm.vertices.size()) return bad("skinmesh: triangle index " + std::to_string(t) + " out of range");
                     sm->bind = bm;
                     sm->joints.clear();   // re-resolved from names in Start()
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) mr->mesh = bm;   // show bind pose until skinned
                 } else if (field == "blendshapes") {
-                    auto* bs = go->GetComponent<BlendShapes>();
-                    if (!bs) bs = go->AddComponent<BlendShapes>();
+                    auto* bs = go->AddComponent<BlendShapes>();
                     bs->shapes.clear(); bs->base = Mesh{};
                     long nshape = 0; in >> nshape;
                     for (long i = 0; i < nshape && in; ++i) {
@@ -4520,10 +4581,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     bs->Apply(true);
                 } else if (field == "skinx") {
                     int m = 0; in >> m;
-                    if (auto* sm = go->GetComponent<SkinnedMesh>()) sm->method = m;
+                    if (auto* sm = LastOf(go->GetComponents<SkinnedMesh>())) sm->method = m;
                 } else if (field == "modelanim") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
-                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    auto* ma = go->AddComponent<ModelAnimator>();
                     int autop = 1, lp = 1; long clipCount = 0;
                     in >> ma->active >> autop >> ma->speed >> lp >> clipCount;
                     if (!in || !countOk(clipCount, 2)) return bad("modelanim: bad clip count");
@@ -4554,7 +4614,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         ma->clips.push_back(std::move(clip));
                     }
                 } else if (field == "modelanimdrive") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int dm = 0; in >> dm >> ma->walkThreshold >> ma->runThreshold;
                     ma->driveByMovement = (dm != 0);
@@ -4566,14 +4626,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                       std::istringstream rs(rest); int ip;
                       if (rs >> ip) ma->inPlace = (ip != 0); }
                 } else if (field == "modelanimair") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     ma->jumpClip = ReadQuoted(in);
                     ma->fallClip = ReadQuoted(in);
                     ma->landClip = ReadQuoted(in);
                     in >> ma->airUpVel >> ma->airDownVel;
                 } else if (field == "modelanimstance") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     ma->crouchClip     = ReadQuoted(in);
                     ma->crouchWalkClip = ReadQuoted(in);
@@ -4581,23 +4641,23 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ma->crawlClip      = ReadQuoted(in);
                     ma->getUpClip      = ReadQuoted(in);
                 } else if (field == "modelanimdir") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     ma->strafeLeftClip  = ReadQuoted(in);
                     ma->strafeRightClip = ReadQuoted(in);
                     ma->walkBackClip    = ReadQuoted(in);
                     ma->runBackClip     = ReadQuoted(in);
                 } else if (field == "modelanimlegs") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int lf = 0; in >> lf;
                     ma->legsFollowTravel = (lf != 0);
                 } else if (field == "modelanimblend") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     in >> ma->blendTime;
                 } else if (field == "modelanimroot") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int rm = 0; in >> rm;
                     ma->rootMotion = (rm != 0);
@@ -4609,19 +4669,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                       if (rs >> rr) ma->rootMotionRotation = (rr != 0);
                       if (rs >> at) ma->rootMotionApplyTo = at; }
                 } else if (field == "modelanimsmooth") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int sm = 0; in >> sm;
                     ma->smoothLocomotion = (sm != 0);
                 } else if (field == "modelanimstride") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int sm = 1, bf = 1; in >> sm >> bf;
                     ma->strideMatch = (sm != 0);
                     ma->builtinFallback = (bf != 0);
                     in >> ma->walkClipSpeed >> ma->runClipSpeed >> ma->crouchWalkClipSpeed >> ma->crawlClipSpeed;
                 } else if (field == "modelanimcubic") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     long cnt = 0; in >> cnt;
                     if (!in || !countOk(cnt, 1)) return bad("modelanimcubic: bad clip count");
                     for (long k = 0; k < cnt && in; ++k) {
@@ -4630,7 +4690,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         for (auto& nc : ma->clips[ci].nodes) { nc.clip.smoothKeys = true; nc.clip.SetSmooth("", true); }
                     }
                 } else if (field == "modelanimevents") {
-                    auto* ma = go->GetComponent<ModelAnimator>();
+                    auto* ma = LastOf(go->GetComponents<ModelAnimator>());
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     long ci = -1, cnt = 0; in >> ci >> cnt;
                     for (long k = 0; k < cnt && in; ++k) {
@@ -4907,7 +4967,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (sm2 && i < (long)sm2->states.size()) { sm2->states[i].nx = x; sm2->states[i].ny = y; }
                     }
                 } else if (field == "material") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         Color e; float spec = 0, shin = 16; int unlit = 0;
                         in >> e.r >> e.g >> e.b >> spec >> shin >> unlit;
                         mr->emissive = e; mr->specular = spec; mr->shininess = shin;
@@ -4920,12 +4980,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             in >> mr->tiling.x >> mr->tiling.y;
                     }
                 } else if (field == "texopts") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int fl = 0; in >> fl >> mr->texOffset.x >> mr->texOffset.y;
                         mr->texFilter = (MeshRenderer::TexFilter)fl;
                     }
                 } else if (field == "normalmap") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->normalMap = ReadQuoted(in);
                         in >> std::ws;
@@ -4933,19 +4993,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (std::isdigit(p) || p == '-' || p == '.') in >> mr->normalStrength;
                     }
                 } else if (field == "reflect") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> mr->reflectivity;
                         in >> std::ws;                       // optional metalness
                         int p = in.peek();
                         if (std::isdigit(p) || p == '-' || p == '.') in >> mr->metallic;
                     }
                 } else if (field == "specmap") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->specularMap = ReadQuoted(in);
                     }
                 } else if (field == "aomap") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->aoMap = ReadQuoted(in);
                         in >> std::ws;
@@ -4953,17 +5013,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (std::isdigit(p) || p == '-' || p == '.') in >> mr->aoStrength;
                     }
                 } else if (field == "mrmap") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->metallicRoughnessMap = ReadQuoted(in);
                     }
                 } else if (field == "emissivemap") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> std::ws;
                         if (in.peek() == '"') mr->emissiveMap = ReadQuoted(in);
                     }
                 } else if (field == "shader") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int s = 0; in >> s >> mr->toonBands;
                         mr->shader = (MeshRenderer::Shader)s;
                         in >> std::ws;   // optional gradient colours (appended later)
@@ -4974,26 +5034,25 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                     }
                 } else if (field == "rim") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>())
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>()))
                         in >> mr->rimStrength >> mr->rimPower
                            >> mr->rimColor.r >> mr->rimColor.g >> mr->rimColor.b;
                 } else if (field == "outline") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> mr->outlineWidth >> mr->outlineColor.r >> mr->outlineColor.g >> mr->outlineColor.b;
                         mr->outline = true;
                     }
                 } else if (field == "uvanim") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
                         mr->triplanar = (tp != 0);
                     }
                 } else if (field == "modstack") {
-                    auto* mm = go->GetComponent<MeshModifiers>();
-                    if (!mm) mm = go->AddComponent<MeshModifiers>();
+                    auto* mm = go->AddComponent<MeshModifiers>();
                     KvIn k(in);
                     k.b("on", mm->enabled);
                 } else if (field == "mod") {
-                    auto* mm = go->GetComponent<MeshModifiers>();
+                    auto* mm = LastOf(go->GetComponents<MeshModifiers>());
                     if (!mm) mm = go->AddComponent<MeshModifiers>();
                     KvIn k(in);
                     MeshModifier m;
@@ -5011,12 +5070,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     mm->modifiers.push_back(m);
                 } else if (field == "meshenabled") {
                     int en = 1; in >> en;
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = (en != 0);
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) mr->enabled = (en != 0);
                 } else if (field == "meshshadows") {
                     int cs = 1, rs = 1; in >> cs >> rs;
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
                 } else if (field == "groundshadow") {
-                    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
                         mr->groundShadow = (gs != 0);
                     }
@@ -5061,11 +5120,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
-                    in >> std::ws; if (std::isdigit(in.peek())) in >> layers;
-                    if (field == "trigfilter2d")
-                        for (Collider2D* c : go->GetComponents<Collider2D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
-                    else
-                        for (Collider3D* c : go->GetComponents<Collider3D>()) { c->triggerTag = tag; c->triggerLayers = layers; }
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> layers;
+                    in >> std::ws;
+                    int index = -1;   // no index: the one record applies to every collider, as older files did
+                    if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    if (field == "trigfilter2d") {
+                        auto all = go->GetComponents<Collider2D>();
+                        if (index < 0) { for (Collider2D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
+                        else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
+                    } else {
+                        auto all = go->GetComponents<Collider3D>();
+                        if (index < 0) { for (Collider3D* c : all) { c->triggerTag = tag; c->triggerLayers = layers; } }
+                        else if (index < (int)all.size()) { all[(std::size_t)index]->triggerTag = tag; all[(std::size_t)index]->triggerLayers = layers; }
+                    }
                 } else if (field == "boxcollider2d") {
                     Vec2 sz, off; int trig = 0, layer = 0, af = 0;
                     in >> sz.x >> sz.y >> off.x >> off.y >> trig;
@@ -5293,7 +5360,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
                 } else if (field == "chainx2") {
                     // Newer ChainIK data: pole mode/direction + per-joint limits.
-                    if (auto* ci = go->GetComponent<ChainIK>()) {
+                    if (auto* ci = LastOf(go->GetComponents<ChainIK>())) {
                         long long nl = 0;
                         in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
                         if (!in || !countOk(nl, 7)) return bad("chainx2: bad limit count");
@@ -5374,7 +5441,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     KvIn k(in);
                     k.key("drop", hp->dropKey); k.key("alt", hp->altDropKey); k.str("prompt", hp->promptObject);
                 } else if (field == "fbikx") {
-                    if (auto* fb = go->GetComponent<FullBodyIK>()) {
+                    if (auto* fb = LastOf(go->GetComponents<FullBodyIK>())) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
                         KvIn k(in);
                         for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
@@ -5388,14 +5455,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;
-                    if (kind == "aim")  { if (auto* a = go->GetComponent<AimIK>())    { a->ikActive = act != 0; a->fadeTime = fade; } }
-                    else if (kind == "look") { if (auto* l = go->GetComponent<LookAtIK>()) { l->ikActive = act != 0; l->fadeTime = fade; } }
-                    else if (kind == "limb") { if (auto* lb = go->GetComponent<LimbIK>()) { lb->ikActive = act != 0; lb->fadeTime = fade; } }
+                    if (kind == "aim")  { if (auto* a = NthOf<AimIK>(go, nIkAim))    { a->ikActive = act != 0; a->fadeTime = fade; } }
+                    else if (kind == "look") { if (auto* l = NthOf<LookAtIK>(go, nIkLook)) { l->ikActive = act != 0; l->fadeTime = fade; } }
+                    else if (kind == "limb") { if (auto* lb = NthOf<LimbIK>(go, nIkLimb)) { lb->ikActive = act != 0; lb->fadeTime = fade; } }
                     else if (kind == "chain") {
                         std::string poleName = ReadQuoted(in);
                         int up = 0; Vec3 pl{0, 0, 1}; float mb = 0.0f, tol = 1e-3f;
                         in >> up >> pl.x >> pl.y >> pl.z >> mb >> tol;
-                        if (auto* ci = go->GetComponent<ChainIK>()) {
+                        if (auto* ci = NthOf<ChainIK>(go, nIkChain)) {
                             ci->ikActive = act != 0; ci->fadeTime = fade;
                             ci->poleName = poleName; ci->usePole = up != 0; ci->pole = pl;
                             ci->maxJointBend = mb; ci->tolerance = tol;
@@ -5468,10 +5535,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "scriptpath") {
                     std::string p = ReadQuoted(in);
-                    if (auto* sc = go->GetComponent<ScriptComponent>()) sc->SetPath(p);
+                    if (auto* sc = LastOf(go->GetComponents<ScriptComponent>())) sc->SetPath(p);
                 } else if (field == "scriptfields") {
                     int n = 0; in >> n;
-                    auto* sc = go->GetComponent<ScriptComponent>();
+                    auto* sc = LastOf(go->GetComponents<ScriptComponent>());
                     for (int i = 0; i < n && in; ++i) {
                         std::string k = ReadQuoted(in), v = ReadQuoted(in);
                         if (sc) sc->fields[k] = v;
@@ -5589,7 +5656,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
                 } else if (field == "vehiclesusp") {
-                    auto* v = go->GetComponent<VehicleController>();
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;
                     float rh, ss, sd, st, wb, tw, bl, mt, ts;
                     in >> rh >> ss >> sd >> st >> wb >> tw >> bl >> mt >> ts;
@@ -6192,7 +6259,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         c->repathInterval = g(25, c->repathInterval);
                     }
                 } else if (field == "npcwp") {
-                    if (auto* c = go->GetComponent<NPCController>()) {
+                    if (auto* c = LastOf(go->GetComponents<NPCController>())) {
                         Vec3 w; in >> w.x >> w.y >> w.z; c->waypoints.push_back(w);
                     }
                 } else if (field == "melee") {
@@ -6243,7 +6310,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws;   // optional recipe book + recipe extras
                     if (in.peek() == '"') { c->recipeBook = ReadQuoted(in); ReadRecipeExtras(in, c->recipes); }
                 } else if (field == "fpfeel" || field == "pcfirstfeel") {
-                    if (auto* fp = go->GetComponent<FirstPersonController>()) {
+                    if (auto* fp = NthOf<FirstPersonController>(go, nFpFeel)) {
                         int z = 1, sl = 1, sm = 1, ik = 1;
                         in >> fp->lookSmoothing >> fp->sprintFovBoost >> fp->fovLerp >> z >> fp->zoomFov >> fp->zoomSensitivity
                            >> fp->landDip >> sl >> fp->slideSpeed >> fp->slideTime >> fp->slideEyeHeight >> sm >> ik;
@@ -6271,7 +6338,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                     }
                 } else if (field == "tpfeel" || field == "pcthirdfeel") {
-                    if (auto* tp = go->GetComponent<ThirdPersonController>()) {
+                    if (auto* tp = NthOf<ThirdPersonController>(go, nTpFeel)) {
                         int a = 1, rc = 0, sl = 1, sm = 1, ik = 1;
                         in >> tp->lookSmoothing >> tp->sprintFovBoost >> tp->fovLerp >> a >> tp->aimDistance >> tp->aimShoulder
                            >> tp->aimFov >> tp->aimSensitivity >> tp->aimLerp >> rc >> tp->recenterDelay >> tp->recenterSpeed
@@ -6360,12 +6427,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.b("global", th->global);
                 } else if (field == "uix") {
                     // Runtime UI extras: only the keys present are applied, so scenes saved before them load as they were.
+                    // `i` (absent on the first, and on every older file) picks which instance.
                     KvIn k(in);
-                    if (auto* pn = go->GetComponent<UIPanel>()) k.b("pblock", pn->blocksPointer);
-                    if (auto* rtx = go->GetComponent<TextRenderer>()) k.b("rich", rtx->richText);
-                    if (auto* tg = go->GetComponent<UIToggle>()) k.str("rgroup", tg->radioGroup);
-                    if (auto* sg = go->GetComponent<UISlotGrid>()) { k.f("sgFont", sg->fontScale); k.b("sgNum", sg->numberEmptySlots); k.col("sgText", sg->textColor); }
-                    if (auto* dg = go->GetComponent<UIDraggable>()) { k.b("dragParent", dg->dragParent); k.b("keepOnScreen", dg->keepOnScreen); }
+                    int idx = 0; k.i("i", idx);
+                    if (auto* pn = AtComp(go->GetComponents<UIPanel>(), idx)) k.b("pblock", pn->blocksPointer);
+                    if (auto* rtx = AtComp(go->GetComponents<TextRenderer>(), idx)) k.b("rich", rtx->richText);
+                    if (auto* tg = AtComp(go->GetComponents<UIToggle>(), idx)) k.str("rgroup", tg->radioGroup);
+                    if (auto* sg = AtComp(go->GetComponents<UISlotGrid>(), idx)) { k.f("sgFont", sg->fontScale); k.b("sgNum", sg->numberEmptySlots); k.col("sgText", sg->textColor); }
+                    if (auto* dg = AtComp(go->GetComponents<UIDraggable>(), idx)) { k.b("dragParent", dg->dragParent); k.b("keepOnScreen", dg->keepOnScreen); }
                 } else if (field == "uivariant") {
                     auto* sv = go->AddComponent<UIStyleVariant>();
                     KvIn k(in);
@@ -6556,18 +6625,18 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
                         if (st == (int)S::Crouch || st == (int)S::Prone) c->RestoreStance(static_cast<S>(st));
                     };
-                    if (field == "fpstance" || field == "pcfirststance") load(go->GetComponent<FirstPersonController>());
-                    else                     load(go->GetComponent<ThirdPersonController>());
+                    if (field == "fpstance" || field == "pcfirststance") load(NthOf<FirstPersonController>(go, nFpStance));
+                    else                     load(NthOf<ThirdPersonController>(go, nTpStance));
                 } else if (field == "cc3dstance") {
-                    auto* c = go->GetComponent<CharacterController3D>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                    auto* c = NthOf<CharacterController3D>(go, nCc3dSt); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "tpsstance") {
-                    auto* c = go->GetComponent<ThirdPersonShooterController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                    auto* c = NthOf<ThirdPersonShooterController>(go, nTpsSt); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "tdstance") {
-                    auto* c = go->GetComponent<TopDownController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                    auto* c = NthOf<TopDownController>(go, nTdSt); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "ctmstance") {
-                    auto* c = go->GetComponent<ClickToMoveController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                    auto* c = NthOf<ClickToMoveController>(go, nCtmSt); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "npcstance") {
-                    auto* c = go->GetComponent<NPCController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                    auto* c = NthOf<NPCController>(go, nNpcSt); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "p25ctrl") {
                     auto* pc = go->AddComponent<Platformer25DController>();
                     KvIn k(in);
@@ -7005,7 +7074,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "animx") {
                     float span = -1.0f; int ne = 0, nl = 0;
                     in >> span >> ne;
-                    auto* anim = go->GetComponent<Animator>();
+                    auto* anim = LastOf(go->GetComponents<Animator>());
                     for (int e = 0; e < ne && in; ++e) {
                         float et = 0; in >> et; std::string en = ReadQuoted(in);
                         if (anim) anim->clip.AddEvent(et, en);
@@ -7318,7 +7387,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
                        >> hh->othersArmLift >> hh->othersArmForward;
                 } else if (field == "fphands2") {
-                    auto* hh = go->GetComponent<FirstPersonHands>();
+                    auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
                     if (!hh) hh = go->AddComponent<FirstPersonHands>();
                     auto extra = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
                         int on = 0;
@@ -7398,7 +7467,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "anticheatsafety") {   // follows the object's "anticheat" line
                     int enc = 0, toggle = 0;
                     in >> enc >> toggle;
-                    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>())) {
                         ac->settings.requireEncryption = enc != 0;
                         ac->allowRuntimeToggle = toggle != 0;
                     }
@@ -7409,7 +7478,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (std::isdigit(in.peek())) in >> needMove;
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '.') in >> rewindRtt;
-                    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>())) {
                         AntiCheatSettings& s = ac->settings;
                         auto ok = [](float v) { return std::isfinite(v) && v >= 0.0f; };
                         if (ok(o)) s.hitOriginTolerance = o;
@@ -7422,7 +7491,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);
-                    if (auto* ac = go->GetComponent<AntiCheatConfig>(); ac && !w.empty()) ac->settings.weapons.push_back(w);
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && !w.empty()) ac->settings.weapons.push_back(w);
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
                     nv->rpc = ReadQuoted(in);
@@ -7508,14 +7577,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // A custom model replaced the blocky body: keep the default
                     // Character (and the mesh Apply() just rebuilt) hidden.
                     int en = 1; in >> en;
-                    if (auto* ch = go->GetComponent<Character>()) ch->enabled = (en != 0);
-                    if (!en) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                    if (auto* ch = LastOf(go->GetComponents<Character>())) ch->enabled = (en != 0);
+                    if (!en) if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) mr->enabled = false;
                 } else if (field == "charext") {
                     // External-rig mode: the Character computes the pose for a
                     // HumanoidRetarget and renders nothing itself.
                     int ex = 0; in >> ex;
-                    if (auto* ch = go->GetComponent<Character>()) ch->driveExternal = (ex != 0);
-                    if (ex) if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = false;
+                    if (auto* ch = LastOf(go->GetComponents<Character>())) ch->driveExternal = (ex != 0);
+                    if (ex) if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) mr->enabled = false;
                 } else if (field == "humretarget") {
                     auto* hr = go->AddComponent<HumanoidRetarget>();
                     in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
@@ -7548,7 +7617,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     for (long long k = 0; k < nu && in; ++k) { Vec2 t; in >> t.x >> t.y; bm.uvs.push_back(t); }
                     for (int t : bm.triangles)
                         if (t < 0 || t >= (int)bm.vertices.size()) return bad("charbind: triangle index " + std::to_string(t) + " out of range");
-                    auto* ch = go->GetComponent<Character>();
+                    auto* ch = LastOf(go->GetComponents<Character>());
                     if (!ch) ch = go->AddComponent<Character>();
                     ch->BindCustomMesh(bm);
                     ch->Apply();
@@ -7585,7 +7654,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "netprefab") {   // one of the NetworkManager's spawnable prefabs
                     const std::string pf = ReadQuoted(in);
-                    if (auto* nm = go->GetComponent<NetworkManager>(); nm && !pf.empty()) nm->spawnablePrefabs.push_back(pf);
+                    if (auto* nm = LastOf(go->GetComponents<NetworkManager>()); nm && !pf.empty()) nm->spawnablePrefabs.push_back(pf);
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();
                     wu->text = ReadQuoted(in);
@@ -8401,16 +8470,18 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.b("lock", sp->lockPlayer);
                 } else if (field == "loc") {
                     // Localized text: string-table keys for the components read above.
+                    // `i` absent means the first instance (every file written before per-instance keys).
                     KvIn k(in);
-                    if (auto* tr = go->GetComponent<TextRenderer>()) k.str("text", tr->loc.key);
-                    if (auto* b = go->GetComponent<UIButton>()) k.str("button", b->loc.key);
-                    if (auto* t = go->GetComponent<UIToggle>()) k.str("toggle", t->loc.key);
-                    if (auto* tt = go->GetComponent<UITooltip>()) k.str("tooltip", tt->loc.key);
-                    if (auto* w = go->GetComponent<WorldUI>()) k.str("world", w->loc.key);
-                    if (auto* inf = go->GetComponent<UIInputField>()) k.str("input", inf->loc.key);
-                    if (auto* hp = go->GetComponent<HoldPrompt>()) k.b("hold", hp->localized);
-                    if (auto* pm = go->GetComponent<PauseMenu>()) k.b("pause", pm->localized);
-                    if (auto* lsc = go->GetComponent<LoadingScreen>()) k.b("loading", lsc->localized);
+                    int idx = 0; k.i("i", idx);
+                    if (auto* tr = AtComp(go->GetComponents<TextRenderer>(), idx)) k.str("text", tr->loc.key);
+                    if (auto* b = AtComp(go->GetComponents<UIButton>(), idx)) k.str("button", b->loc.key);
+                    if (auto* t = AtComp(go->GetComponents<UIToggle>(), idx)) k.str("toggle", t->loc.key);
+                    if (auto* tt = AtComp(go->GetComponents<UITooltip>(), idx)) k.str("tooltip", tt->loc.key);
+                    if (auto* w = AtComp(go->GetComponents<WorldUI>(), idx)) k.str("world", w->loc.key);
+                    if (auto* inf = AtComp(go->GetComponents<UIInputField>(), idx)) k.str("input", inf->loc.key);
+                    if (auto* hp = AtComp(go->GetComponents<HoldPrompt>(), idx)) k.b("hold", hp->localized);
+                    if (auto* pm = AtComp(go->GetComponents<PauseMenu>(), idx)) k.b("pause", pm->localized);
+                    if (auto* lsc = AtComp(go->GetComponents<LoadingScreen>(), idx)) k.b("loading", lsc->localized);
                 } else if (field == "navsurface") {
                     auto* ns = go->AddComponent<NavMeshSurface>();
                     KvIn k(in);
@@ -8508,7 +8579,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "questlogdef") {
                     // One inline quest of the Quest Log read just before it.
                     KvIn k(in);
-                    auto* ql = go->GetComponent<QuestLog>();
+                    auto* ql = LastOf(go->GetComponents<QuestLog>());
                     if (ql) {
                         QuestDef q;
                         std::string pre;
@@ -8558,8 +8629,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         if (!key.empty()) bt->overrides.emplace_back(key, val);
                     }
                 } else if (field == "spline") {
-                    auto* sp = go->GetComponent<Spline>();
-                    if (!sp) sp = go->AddComponent<Spline>();
+                    auto* sp = go->AddComponent<Spline>();
                     KvIn k(in);
                     int type = 0, up = 0;
                     k.i("type", type); k.i("up", up);
@@ -8567,7 +8637,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     sp->upMode = up == 1 ? Spline::UpMode::World : Spline::UpMode::Minimal;
                     k.b("closed", sp->closed); k.i("res", sp->resolution);
                 } else if (field == "splinept") {
-                    auto* sp = go->GetComponent<Spline>();
+                    auto* sp = LastOf(go->GetComponents<Spline>());
                     if (!sp) sp = go->AddComponent<Spline>();
                     KvIn k(in);
                     SplinePoint p;
@@ -8683,8 +8753,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
             }
             if (!compOrder.empty()) ApplyComponentOrder(*go, compOrder);   // after the flags: they were counted in the writer's order
-            // Single-instance components appear once per object: a second record of
-            // the same type loads (both exist) but is reported.
+            // Every saved type keeps every instance (AllowsMultiple). A type that opts
+            // out still loads both records and reports that a resave would keep only the first.
             {
                 std::unordered_map<std::string, int> counts;
                 for (const auto& c : go->Components()) {
@@ -9064,38 +9134,38 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         out.push_back(p);
     };
     for (const auto& go : scene.Objects()) {
-        if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
+        for (auto* sr : go->GetComponents<SpriteRenderer>()) add(sr->texture);
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
-        if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
-        if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); for (const auto& l : tr->layers) add(l.texture); }
+        for (auto* mp : go->GetComponents<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
+        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
+        for (auto* terrain : go->GetComponents<Terrain>())         { add(terrain->texture); add(terrain->normalMap); for (const auto& l : terrain->layers) add(l.texture); }
         for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
         for (auto* de : go->GetComponents<Decal>())         add(de->texture);
         for (auto* ps : go->GetComponents<ParticleSystem>()) add(ps->texture);
         for (auto* sw : go->GetComponents<Spawner>())       add(sw->prefabPath);   // the prefab a spawner makes ships with the scene
-        if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
-        if (auto* ri = go->GetComponent<UIRawImage>())      add(ri->texture);
-        if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
-        if (auto* an = go->GetComponent<SpriteAnimator>()) {
+        for (auto* im : go->GetComponents<UIImage>())         add(im->texture);
+        for (auto* ri : go->GetComponents<UIRawImage>())      add(ri->texture);
+        for (auto* button : go->GetComponents<UIButton>())        add(button->icon);
+        for (auto* an : go->GetComponents<SpriteAnimator>()) {
             for (const auto& f : an->frames) add(f);
             for (const auto& c : an->clips) for (const auto& f : c.frames) add(f);
         }
-        if (auto* bm = go->GetComponent<BuildMode>())
+        for (auto* bm : go->GetComponents<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         for (auto* sp : go->GetComponents<SequencePlayer>()) {
             add(sp->sequencePath);
             Sequence seq;   // the sounds its audio cues play ship with it
             if (Sequence::LoadFromFile(sp->ResolvedPath(), seq))
-                for (const auto& tr : seq.audio) for (const auto& c : tr.cues) add(c.file);
+                for (const auto& trk : seq.audio) for (const auto& c : trk.cues) add(c.file);
         }
-        if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
-        if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
-        if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
-        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
-        if (auto* sm = go->GetComponent<SplineMesh>()) { const std::string& m = sm->sourceMesh; if (m.find('.') != std::string::npos) add(m); }
-        if (auto* si = go->GetComponent<SplineInstancer>()) add(si->prefabPath);
-        if (auto* lr = go->GetComponent<LineRenderer>()) add(lr->texture);
-        if (auto* tr = go->GetComponent<TrailRenderer>()) add(tr->texture);
+        for (auto* lt : go->GetComponents<LogicTarget>()) add(lt->spawnPrefab);
+        for (auto* ls : go->GetComponents<LootSource>()) add(ls->table);
+        for (auto* ns : go->GetComponents<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
+        for (auto* runner : go->GetComponents<BehaviorTreeRunner>()) add(runner->treePath);   // the tree ships with the scene
+        for (auto* sm : go->GetComponents<SplineMesh>()) { const std::string& m = sm->sourceMesh; if (m.find('.') != std::string::npos) add(m); }
+        for (auto* si : go->GetComponents<SplineInstancer>()) add(si->prefabPath);
+        for (auto* lr : go->GetComponents<LineRenderer>()) add(lr->texture);
+        for (auto* trail : go->GetComponents<TrailRenderer>()) add(trail->texture);
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
@@ -9167,8 +9237,7 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {
-        auto* tr = go.GetComponent<TrailRenderer>();
-        if (!tr) return;
+        for (auto* tr : go.GetComponents<TrailRenderer>()) {
         out << "  trailrenderer";
         KvOut k{out};
         k("time", tr->time)("mindist", tr->minVertexDistance)("width", tr->width).col("c", tr->color)
@@ -9177,6 +9246,7 @@ void RegisterBuiltinComponentSerializers() {
         WriteCurveKv(k, "w", tr->widthCurve);
         WriteGradientKv(k, "g", tr->colorGradient);
         out << "\n";
+        }
     };
     trail.read = [](GameObject& go, std::istream& in) {
         auto* tr = go.AddComponent<TrailRenderer>();
@@ -9195,8 +9265,8 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry lod;
     lod.name = "lodgroup";
     lod.write = [](const GameObject& go, std::ostream& out) {
-        auto* lg = go.GetComponent<LODGroup>();
-        if (!lg || lg->levels.empty()) return;
+        for (auto* lg : go.GetComponents<LODGroup>()) {
+        if (!lg || lg->levels.empty()) continue;
         out << "  lodgroup";
         KvOut k{out};
         k.b("screen", lg->useScreenSize)("hyst", lg->hysteresis)("cullD", lg->cullDistance)
@@ -9210,10 +9280,10 @@ void RegisterBuiltinComponentSerializers() {
             k(("r" + std::to_string(i)).c_str(), L.ratio);
         }
         out << "\n";
+        }
     };
     lod.read = [](GameObject& go, std::istream& in) {
-        auto* lg = go.GetComponent<LODGroup>();
-        if (!lg) lg = go.AddComponent<LODGroup>();
+        auto* lg = go.AddComponent<LODGroup>();
         KvIn k(in);
         int n = 0, force = -1;
         k.b("screen", lg->useScreenSize); k.f("hyst", lg->hysteresis);
@@ -9228,8 +9298,11 @@ void RegisterBuiltinComponentSerializers() {
             k.f(("s" + std::to_string(i)).c_str(), lg->levels[(std::size_t)i].screenSize);
             k.f(("r" + std::to_string(i)).c_str(), lg->levels[(std::size_t)i].ratio);
         }
-        if (auto* mr = go.GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() && n > 1)
-            lg->RebuildFromRatios(mr->DisplayMesh());
+        // Only the first group rebuilds the shared mesh. A second group keeps its own
+        // ratios; rebuilding again would replace the mesh the first group just made.
+        if (lg == go.GetComponent<LODGroup>())
+            if (auto* mr = go.GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() && n > 1)
+                lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
 
@@ -9273,15 +9346,14 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";
     occ.write = [](const GameObject& go, std::ostream& out) {
-        auto* o = go.GetComponent<Occluder>();
-        if (!o) return;
+        for (auto* o : go.GetComponents<Occluder>()) {
         out << "  occluder";
         KvOut{out}.b("mesh", o->useMesh);
         out << "\n";
+        }
     };
     occ.read = [](GameObject& go, std::istream& in) {
-        auto* o = go.GetComponent<Occluder>();
-        if (!o) o = go.AddComponent<Occluder>();
+        auto* o = go.AddComponent<Occluder>();
         KvIn k(in);
         k.b("mesh", o->useMesh);
     };
@@ -9291,10 +9363,13 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry tl;
     tl.name = "terrainlayers";
     tl.write = [](const GameObject& go, std::ostream& out) {
-        auto* t = go.GetComponent<Terrain>();
-        if (!t || t->layers.empty()) return;
+        const auto terrains = go.GetComponents<Terrain>();
+        for (int which = 0; which < (int)terrains.size(); ++which) {
+        auto* t = terrains[(std::size_t)which];
+        if (!t || t->layers.empty()) continue;
         out << "  terrainlayers";
         KvOut k{out};
+        if (which > 0) k("i", which);   // the first terrain omits it: an older file has no index
         k("n", (int)t->layers.size())("res", t->splatResolution);
         for (std::size_t i = 0; i < t->layers.size(); ++i) {
             const std::string p = "l" + std::to_string(i);
@@ -9303,10 +9378,14 @@ void RegisterBuiltinComponentSerializers() {
         }
         k.str("w", t->EncodeSplat());
         out << "\n";
+        }
     };
     tl.read = [](GameObject& go, std::istream& in) {
         KvIn k(in);
-        auto* t = go.GetComponent<Terrain>();
+        int which = 0;
+        k.i("i", which);
+        const auto terrains = go.GetComponents<Terrain>();
+        auto* t = (which >= 0 && which < (int)terrains.size()) ? terrains[(std::size_t)which] : nullptr;
         if (!t) return;
         int n = 0;
         k.i("n", n); k.i("res", t->splatResolution);
@@ -9331,8 +9410,7 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry fol;
     fol.name = "foliage";
     fol.write = [](const GameObject& go, std::ostream& out) {
-        auto* f = go.GetComponent<Foliage>();
-        if (!f) return;
+        for (auto* f : go.GetComponents<Foliage>()) {
         out << "  foliage";
         KvOut k{out};
         k.str("mesh", f->mesh).str("path", f->meshPath).str("prefab", f->prefabPath).col("t", f->tint)("var", f->variants)
@@ -9348,6 +9426,7 @@ void RegisterBuiltinComponentSerializers() {
         }
         k.str("inst", s);
         out << "\n";
+        }
     };
     fol.read = [](GameObject& go, std::istream& in) {
         auto* f = go.AddComponent<Foliage>();
@@ -9380,13 +9459,13 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry cab;
     cab.name = "cable";
     cab.write = [](const GameObject& go, std::ostream& out) {
-        auto* c = go.GetComponent<Cable>();
-        if (!c) return;
+        for (auto* c : go.GetComponents<Cable>()) {
         out << "  cable";
         KvOut{out}.str("from", c->startObject).str("to", c->endObject)("sx", c->startOffset.x)("sy", c->startOffset.y)
             ("sz", c->startOffset.z)("ex", c->endOffset.x)("ey", c->endOffset.y)("ez", c->endOffset.z)("sag", c->sag)
             ("seg", c->segments)("w", c->width).col("c", c->color);
         out << "\n";
+        }
     };
     cab.read = [](GameObject& go, std::istream& in) {
         auto* c = go.AddComponent<Cable>();
@@ -9401,12 +9480,12 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Entry dec;
     dec.name = "decal";
     dec.write = [](const GameObject& go, std::ostream& out) {
-        auto* d = go.GetComponent<Decal>();
-        if (!d) return;
+        for (auto* d : go.GetComponents<Decal>()) {
         out << "  decal";
         KvOut{out}.str("tex", d->texture).col("t", d->tint)("x", d->size.x)("y", d->size.y)("z", d->size.z)
             ("angle", d->maxAngle)("lift", d->lift);
         out << "\n";
+        }
     };
     dec.read = [](GameObject& go, std::istream& in) {
         auto* d = go.AddComponent<Decal>();

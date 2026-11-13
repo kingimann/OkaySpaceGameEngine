@@ -844,6 +844,12 @@ add_executable(test_save_coverage test_save_coverage.cpp)
 target_link_libraries(test_save_coverage PRIVATE okay::engine)
 add_test(NAME save_coverage COMMAND test_save_coverage)
 
+# Two of every serializable component, plus prefab apply, undo deltas, diff/merge, copy and export.
+add_executable(test_duplicate_components test_duplicate_components.cpp)
+target_link_libraries(test_duplicate_components PRIVATE okay::engine)
+target_compile_definitions(test_duplicate_components PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME duplicate_components COMMAND test_duplicate_components)
+
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)

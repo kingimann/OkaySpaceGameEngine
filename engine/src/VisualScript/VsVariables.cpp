@@ -28,6 +28,11 @@ bool VsSameValue(const VsValue& a, const VsValue& b) {
         const Vec3 x = a.AsVec3(), y = b.AsVec3();
         return x.x == y.x && x.y == y.y && x.z == y.z;
     }
+    if (a.IsColor() || b.IsColor()) {
+        if (!a.IsColor() || !b.IsColor()) return false;
+        const VsColor x = a.AsColor(), y = b.AsColor();
+        return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a;
+    }
     if (a.IsBool() != b.IsBool()) return false;
     return a.IsBool() ? a.AsBool() == b.AsBool() : a.AsFloat() == b.AsFloat();
 }

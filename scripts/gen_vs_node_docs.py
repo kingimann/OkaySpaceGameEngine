@@ -131,7 +131,7 @@ def load_targets():
     b = text.find("};", a)
     return {t: int(n) for t, n in re.findall(r'\{"([^"]+)",\s*(\d+)\}', text[a:b])}
 
-TYPE_NAME = {"M": "Map", "N": "Number", "B": "Bool", "T": "Text", "V": "Vector3", "O": "Object", "L": "List", "A": "Any"}
+TYPE_NAME = {"M": "Map", "C": "Color", "N": "Number", "B": "Bool", "T": "Text", "V": "Vector3", "O": "Object", "L": "List", "A": "Any"}
 TYPE_DEFAULT = {
     "Number": "0", "Bool": "false", "Text": "empty text", "Vector3": "(0, 0, 0)",
     "Object": "no object", "Map": "an empty map", "List": "an empty list", "Any": "nothing", "Flow": "",

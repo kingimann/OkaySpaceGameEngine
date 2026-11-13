@@ -30,6 +30,7 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptTemplates.hpp"
 #include "VsCanvasTools.hpp"
+#include "VsVariablePanel.hpp"
 #include "VsPlayground.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptLevels.hpp"
@@ -753,8 +754,8 @@ inline const std::vector<VsDef>& Registry() {
         {"Break",           "Break",            CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         {"Continue",        "Continue",         CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         // Lists
-        {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 0, nullptr},
-        {"NewMap",          "New Map",          CAT_DATA,  false, {}, {}, {"Map"}, 0, nullptr},
+        {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 1, "item type (optional)"},
+        {"NewMap",          "New Map",          CAT_DATA,  false, {}, {}, {"Map"}, 1, "item type (optional)"},
         {"MapSet",          "Map Set",          CAT_DATA,  true, {""}, {"Map","Key","Value"}, {}, 0, nullptr},
         {"MapRemove",       "Map Remove",       CAT_DATA,  true, {""}, {"Map","Key"}, {}, 0, nullptr},
         {"MapGet",          "Map Get",          CAT_DATA,  false, {}, {"Map","Key"}, {"Value","Found"}, 0, nullptr},
@@ -766,6 +767,22 @@ inline const std::vector<VsDef>& Registry() {
         {"ListGet",         "List Get",         CAT_DATA,  false, {}, {"List","Index"}, {"Item"}, 0, nullptr},
         {"ListLength",      "List Length",      CAT_DATA,  false, {}, {"List"}, {"Count"}, 0, nullptr},
         {"ListContains",    "List Contains",    CAT_DATA,  false, {}, {"List","Item"}, {"Bool"}, 0, nullptr},
+        {"ListInsert",      "List Insert",      CAT_DATA,  true, {""}, {"List","Index","Item"}, {}, 0, nullptr},
+        {"ListSet",         "List Set",         CAT_DATA,  true, {""}, {"List","Index","Item"}, {}, 0, nullptr},
+        {"ListFind",        "List Find",        CAT_DATA,  false, {}, {"List","Item"}, {"Index","Found"}, 0, nullptr},
+        {"ListRemoveItem",  "List Remove Item", CAT_DATA,  true, {""}, {"List","Item"}, {"Removed"}, 0, nullptr},
+        {"ListSort",        "List Sort",        CAT_DATA,  true, {""}, {"List","Descending"}, {}, 0, nullptr},
+        {"ListReverse",     "List Reverse",     CAT_DATA,  true, {""}, {"List"}, {}, 0, nullptr},
+        {"ListClear",       "List Clear",       CAT_DATA,  true, {""}, {"List"}, {}, 0, nullptr},
+        {"ListCopy",        "List Copy",        CAT_DATA,  false, {}, {"List","Deep"}, {"Copy"}, 0, nullptr},
+        {"MapClear",        "Map Clear",        CAT_DATA,  true, {""}, {"Map"}, {}, 0, nullptr},
+        {"MapCount",        "Map Count",        CAT_DATA,  false, {}, {"Map"}, {"Count"}, 0, nullptr},
+        {"MapCopy",         "Map Copy",         CAT_DATA,  false, {}, {"Map","Deep"}, {"Copy"}, 0, nullptr},
+        {"StructNew",       "New Struct",       CAT_DATA,  false, {}, {}, {"Struct"}, 1, "struct name"},
+        {"StructGet",       "Get Field",        CAT_DATA,  false, {}, {"Struct"}, {"Value"}, 1, "field"},
+        {"StructSet",       "Set Field",        CAT_DATA,  true, {""}, {"Struct","Value"}, {}, 1, "field"},
+        {"MakeColor",       "Make Color",       CAT_DATA,  false, {}, {"R","G","B","A"}, {"Color"}, 0, nullptr},
+        {"SplitColor",      "Split Color",      CAT_DATA,  false, {}, {"Color"}, {"R","G","B","A"}, 0, nullptr},
         {"AllWithTag",      "All With Tag",     CAT_XFORM, false, {}, {}, {"Objects"}, 1, "tag"},
         // Scene variables (every graph in the scene) and global ones (kept across scene loads).
         {"GetSceneVar",     "Get Scene Var",    CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
@@ -963,12 +980,42 @@ struct VsEditGraph {
     std::vector<VsExecLink> execLinks;
     std::vector<VsDataLink> dataLinks;
     std::vector<VsComment> comments;
-    // `var name value` lines: starting values the Inspector edits. Kept across save.
-    struct Exposed { std::string name; std::string value; };
+    // Declared variables: `decl name Type scope literal` lines (typed) and old
+    // `var name value` lines (typed = false: object scope, type from the value).
+    // The defaults are what the Inspector edits. Kept across save.
+    struct Exposed {
+        std::string name;
+        std::string value;               // the default: a literal for typed rows, the old plain text otherwise
+        std::string type = "Number";     // Number, Bool, Text, Vector3, Color, Object, List, List<T>, Map, Map<T>, or a struct
+        std::string scope = "object";    // object (this graph's own), scene, global
+        bool typed = false;
+    };
     std::vector<Exposed> vars;
+    /// `struct Name field:Type=literal ...` lines: record types a variable can have.
+    struct StructFieldEd { std::string name, type = "Number", value; };
+    struct StructEd { std::string name; std::vector<StructFieldEd> fields; };
+    std::vector<StructEd> structs;
     int nextId = 1;
     std::string path;      // .okayvs file (empty = unsaved)
     bool dirty = false;
+private:
+    mutable std::string m_declKey, m_declError;
+    mutable std::vector<okay::vs::VarDecl> m_decls;
+    mutable std::vector<okay::vs::StructDef> m_structDefs;
+    void refreshDecls() const {
+        const std::string key = declText();
+        if (key == m_declKey && !key.empty()) return;
+        if (key.empty()) { m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_declError.clear(); return; }
+        m_declKey = key; m_decls.clear(); m_structDefs.clear(); m_declError.clear();
+        std::string err;
+        if (auto g = okay::vs::NodeGraph::Parse(key, &err)) { m_decls = g->Decls(); m_structDefs = g->Structs(); }
+        else {
+            m_declError = err;
+            // Struct names alone still let a type be picked while a default is wrong.
+            for (const auto& st : structs) m_structDefs.push_back({st.name, {}});
+        }
+    }
+public:
 
     VsEditNode* find(int id) { for (auto& n : nodes) if (n.id == id) return &n; return nullptr; }
     int add(const std::string& type, float x, float y) {
@@ -1037,10 +1084,134 @@ struct VsEditGraph {
         dataLinks.push_back({consumer, inPin, producer, outPin}); dirty = true;
     }
 
+    /// The struct and variable lines of the file (what a Parse of just the declarations needs).
+    std::string declText() const {
+        std::ostringstream o;
+        for (const auto& st : structs) {
+            o << "struct " << st.name;
+            for (const auto& f : st.fields) {
+                std::string tok = f.name + ":" + f.type;
+                if (!f.value.empty()) tok += "=" + f.value;
+                o << ' ' << okay::vs::QuoteIfNeeded(tok);
+            }
+            o << "\n";
+        }
+        for (const auto& v : vars) {
+            if (v.typed) {
+                o << "decl " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.type) << ' ' << v.scope;
+                if (!v.value.empty()) o << ' ' << okay::vs::QuoteText(v.value);   // blank = the type's default
+                o << "\n";
+            }
+            else o << "var " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.value) << "\n";
+        }
+        return o.str();
+    }
+    /// The declarations as the runtime reads them. Empty (with `declError()` saying why) when
+    /// the declaration lines don't load.
+    const std::vector<okay::vs::VarDecl>& typedDecls() const { refreshDecls(); return m_decls; }
+    const std::vector<okay::vs::StructDef>& structDefs() const { refreshDecls(); return m_structDefs; }
+    const std::string& declError() const { refreshDecls(); return m_declError; }
+    /// Add a typed variable at its type's default. False (with `err`) for a bad or repeated name or type.
+    bool declare(const std::string& name, const std::string& type, const std::string& scope, std::string* err = nullptr) {
+        auto bad = [&](const std::string& m) { if (err) *err = m; return false; };
+        if (!okay::vs::VsValidIdent(name)) return bad("'" + name + "' isn't a valid variable name (letters, digits and _, not starting with a digit)");
+        okay::vs::VarScope sc;
+        if (!okay::vs::VarScopeFromName(scope, sc)) return bad("the scope must be object, scene or global");
+        for (const auto& v : vars) if (v.name == name && v.scope == scope) return bad("there is already a " + scope + " variable named '" + name + "'");
+        std::string terr;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, &terr)) return bad(terr);
+        Exposed e; e.name = name; e.type = okay::vs::VarTypeText(vt); e.scope = okay::vs::VarScopeName(sc); e.typed = true;
+        e.value = okay::vs::VsToLiteral(okay::vs::VsDefaultFor(vt, structDefs()));
+        vars.push_back(e); dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Change a variable's type; the default is converted when it fits, else reset.
+    bool setVarType(std::size_t i, const std::string& type, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, err)) return false;
+        okay::vs::VsValue cur;
+        const bool had = okay::vs::VsParseTyped(vt, vars[i].value, structDefs(), cur);
+        vars[i].type = okay::vs::VarTypeText(vt); vars[i].typed = true;
+        vars[i].value = okay::vs::VsToLiteral(had ? cur : okay::vs::VsDefaultFor(vt, structDefs()));
+        dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Set a variable's default from literal text. False (with `err`) when it doesn't fit the type.
+    bool setVarDefault(std::size_t i, const std::string& literal, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(vars[i].type, structDefs(), vt, err)) return false;
+        okay::vs::VsValue v;
+        if (!okay::vs::VsParseTyped(vt, literal, structDefs(), v, err)) return false;
+        vars[i].value = okay::vs::VsToLiteral(v); vars[i].typed = true; dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool setVarScope(std::size_t i, const std::string& scope, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarScope sc;
+        if (!okay::vs::VarScopeFromName(scope, sc)) { if (err) *err = "the scope must be object, scene or global"; return false; }
+        const std::string name = okay::vs::VarScopeName(sc);
+        for (std::size_t k = 0; k < vars.size(); ++k)
+            if (k != i && vars[k].name == vars[i].name && vars[k].scope == name) { if (err) *err = "there is already a " + name + " variable named '" + vars[i].name + "'"; return false; }
+        vars[i].scope = name; vars[i].typed = true; dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool renameVar(std::size_t i, const std::string& name, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid variable name"; return false; }
+        for (std::size_t k = 0; k < vars.size(); ++k)
+            if (k != i && vars[k].name == name && vars[k].scope == vars[i].scope) { if (err) *err = "there is already a variable named '" + name + "'"; return false; }
+        const std::string old = vars[i].name;
+        vars[i].name = name; dirty = true; m_declKey.clear();
+        // Nodes naming the old variable follow the rename.
+        for (auto& n : nodes) {
+            if (n.arg != old) continue;
+            const std::string& t = n.type;
+            const bool obj = t == "GetVar" || t == "SetVar" || t == "AddVar" || t == "ToggleVar" || t == "HasVar" || t == "OnVarChanged";
+            const bool scn = t == "GetSceneVar" || t == "SetSceneVar" || t == "AddSceneVar" || t == "OnSceneVarChanged";
+            const bool glb = t == "GetGlobalVar" || t == "SetGlobalVar" || t == "AddGlobalVar" || t == "OnGlobalVarChanged";
+            if ((obj && vars[i].scope == "object") || (scn && vars[i].scope == "scene") || (glb && vars[i].scope == "global")) n.arg = name;
+        }
+        return true;
+    }
+    void removeVar(std::size_t i) { if (i < vars.size()) { vars.erase(vars.begin() + (long)i); dirty = true; m_declKey.clear(); } }
+    bool declareStruct(const std::string& name, std::string* err = nullptr) {
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid struct name"; return false; }
+        for (const auto& st : structs) if (st.name == name) { if (err) *err = "there is already a struct named '" + name + "'"; return false; }
+        structs.push_back({name, {}}); dirty = true; m_declKey.clear(); return true;
+    }
+    bool addStructField(std::size_t si, const std::string& name, const std::string& type, std::string* err = nullptr) {
+        if (si >= structs.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid field name"; return false; }
+        for (const auto& f : structs[si].fields) if (f.name == name) { if (err) *err = "the struct already has a field '" + name + "'"; return false; }
+        // A field may use only structs listed before this one (a struct can't hold itself).
+        std::vector<okay::vs::StructDef> before;
+        for (std::size_t k = 0; k < si; ++k) before.push_back({structs[k].name, {}});
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, before, vt, err)) return false;
+        structs[si].fields.push_back({name, okay::vs::VarTypeText(vt), ""}); dirty = true; m_declKey.clear();
+        return true;
+    }
+    void removeStructField(std::size_t si, std::size_t fi) {
+        if (si < structs.size() && fi < structs[si].fields.size()) { structs[si].fields.erase(structs[si].fields.begin() + (long)fi); dirty = true; m_declKey.clear(); }
+    }
+    /// Remove a struct; variables of that type go back to Any-typed maps.
+    void removeStruct(std::size_t si) {
+        if (si >= structs.size()) return;
+        const std::string n = structs[si].name;
+        structs.erase(structs.begin() + (long)si);
+        for (auto& v : vars) if (v.type == n) { v.type = "Map"; }
+        dirty = true; m_declKey.clear();
+    }
+    /// Call after editing `vars` / `structs` fields directly.
+    void declsChanged() { m_declKey.clear(); dirty = true; }
+
     std::string toText() const {
         std::ostringstream o;
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
-        for (const auto& v : vars) o << "var " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.value) << "\n";
+        o << declText();
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
             if (!n.arg.empty()) o << ' ' << (n.type == "Const" ? VsConstField(n.arg) : okay::vs::QuoteIfNeeded(n.arg));
@@ -1065,7 +1236,7 @@ struct VsEditGraph {
         f << toText();
         path = p; dirty = false; return true;
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); nextId = 1; path.clear(); dirty = false; }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
@@ -1119,7 +1290,34 @@ struct VsEditGraph {
                 std::string name;
                 ls >> name;
                 std::string v = restOf(ls);
-                if (!name.empty()) vars.push_back({name, v});
+                if (!name.empty()) {
+                    Exposed e; e.name = name; e.value = v;
+                    float probe = 0;
+                    e.type = (v == "true" || v == "false") ? "Bool" : okay::vs::VsParseFinite(v, probe) ? "Number" : "Text";
+                    vars.push_back(e);
+                }
+            } else if (kind == "decl" || kind == "struct") {
+                const std::vector<std::string> t = okay::vs::TokenizeLine(line);
+                auto unq = [](std::string x) { if (x.size() >= 2 && x.front() == '"' && x.back() == '"') x = x.substr(1, x.size() - 2); return x; };
+                if (kind == "decl" && t.size() >= 4) {
+                    Exposed e; e.name = unq(t[1]); e.type = unq(t[2]); e.scope = unq(t[3]); e.typed = true;
+                    e.value = t.size() > 4 ? unq(t[4]) : std::string();
+                    if (!e.name.empty()) vars.push_back(e);
+                } else if (kind == "struct" && t.size() >= 2) {
+                    StructEd st; st.name = unq(t[1]);
+                    for (std::size_t k = 2; k < t.size(); ++k) {
+                        const std::string f = unq(t[k]);
+                        const auto colon = f.find(':');
+                        if (colon == std::string::npos) continue;
+                        StructFieldEd sf; sf.name = f.substr(0, colon);
+                        std::string ty = f.substr(colon + 1);
+                        const auto eq = ty.find('=');
+                        if (eq != std::string::npos) { sf.value = ty.substr(eq + 1); ty = ty.substr(0, eq); }
+                        sf.type = ty;
+                        st.fields.push_back(sf);
+                    }
+                    if (!st.name.empty()) structs.push_back(st);
+                }
             } else if (kind == "comment") {
                 VsComment c;
                 if (!VsReadCoord(ls, c.x) || !VsReadCoord(ls, c.y) || !VsReadCoord(ls, c.w) || !VsReadCoord(ls, c.h)) continue;
@@ -1271,6 +1469,7 @@ inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin)
         const auto& pins = n->type == "FunctionStart" ? sig.params : sig.returns;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
     }
+    if (const auto dt = okay::vs::DeclOutType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::OutputType(n->type, pin, n->arg);
 }
 inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) {
@@ -1282,6 +1481,7 @@ inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) 
         const auto& pins = n->type == "Return" ? sig.returns : sig.params;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
     }
+    if (const auto dt = okay::vs::DeclInType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::InputType(n->type, pin);
 }
 inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
@@ -2237,6 +2437,7 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
         case PinType::Object: return IM_COL32(95, 165, 255, 255);
         case PinType::List:   return IM_COL32(90, 215, 220, 255);
         case PinType::Map:    return IM_COL32(180, 140, 230, 255);
+        case PinType::Color:  return IM_COL32(250, 150, 60, 255);
         default:              return IM_COL32(185, 185, 195, 255);
     }
 }
@@ -2353,10 +2554,9 @@ struct VsDebugView {
 };
 inline VsDebugView& DebugView() { static VsDebugView v; return v; }
 inline std::string VsDebugText(const okay::vs::VsValue& v) {
-    if (v.IsObject()) return v.AsObjectId() ? "'" + v.AsString() + "'" + (v.AsString().empty() ? " (destroyed)" : "") : "(no object)";
-    if (v.IsString()) return "\"" + v.AsString() + "\"";
-    if (v.IsArray()) { auto a = v.AsArray(); return "list (" + std::to_string(a ? a->size() : 0) + "): " + v.AsString(); }
-    return v.AsString();
+    // Every kind reads on one line: lists and maps show their size and first items, a colour its
+    // hex, a vector its three numbers.
+    return okay::vs::VsDescribe(v);
 }
 
 // Optional log sink (the host wires this to its console); no hard dependency on
@@ -3664,25 +3864,9 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
-            if (!g.vars.empty()) {
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Exposed values");
-                ImGui::Separator();
-                ImGui::TextWrapped("These are the numbers and text the Inspector shows. Change one, Save, then Play.");
-                for (std::size_t i = 0; i < g.vars.size(); ++i) {
-                    ImGui::PushID((int)i + 700000);
-                    ImGui::SetNextItemWidth(90);
-                    char buf[64];
-                    std::snprintf(buf, sizeof(buf), "%s", g.vars[i].value.c_str());
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted(g.vars[i].name.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::InputText("##exvar", buf, sizeof(buf))) { g.vars[i].value = buf; g.dirty = true; }
-                    ImGui::PopID();
-                }
-            }
+            VsDrawVariableDecls(g);
             ImGui::Spacing();
-            ImGui::TextUnformatted("Variables");
+            ImGui::TextUnformatted("Variables used");
             ImGui::Separator();
             if (vars.empty()) ImGui::TextWrapped("Names you type on Get Var, Set Var, scene and global variable nodes show up here.");
             VsVarScope last = VsVarScope::Object;
@@ -5000,6 +5184,11 @@ inline void Draw(EditorState& ed, bool* open) {
         auto row = [](const std::string& name, const okay::vs::VsValue& v) {
             ImGui::TextDisabled("%s", name.c_str());
             ImGui::SameLine(110.0f);
+            if (v.IsColor()) {   // a swatch beside the hex
+                const okay::vs::VsColor c = v.AsColor();
+                ImGui::ColorButton("##dbgcol", ImVec4(c.r, c.g, c.b, c.a), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+                ImGui::SameLine();
+            }
             ImGui::TextWrapped("%s", VsDebugText(v).c_str());
         };
         if (ImGui::CollapsingHeader("Call stack", ImGuiTreeNodeFlags_DefaultOpen)) {

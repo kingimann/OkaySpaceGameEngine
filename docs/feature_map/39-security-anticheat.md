@@ -5,7 +5,7 @@ paths or tampered files. It pulls together the anti-cheat in the network layer (
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
 safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
-hardening items are merged; nobody is touching it now.
+hardening items are merged. The opt-in detection engine (39.12) was added afterwards.
 
 ## 39. Security & anti-cheat
 
@@ -24,8 +24,8 @@ hardening items are merged; nobody is touching it now.
 - **Docs:** `docs/anticheat.md` (P1, Network hardening, Gameplay validation), `docs/launcher-multiplayer.md`
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
-- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off
-- **Related:** 16.6, 16.11, 39.2
+- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
+- **Related:** 16.6, 16.11, 39.2, 39.12
 - **Words:** anti-cheat, cheat, authority, allowlist, forged syncvar, hit claim, NetValidator, .okayac, violation, kick, speed hack, fire rate, ammo budget
 - **Seen as:** "forged syncvar", "rpc rejected", "hit rejected" in the log; players kicked for speed; clients can't spawn a prefab
 - **Ask me like:** "which messages does the anti-cheat refuse?", "allow clients to spawn only crates"
@@ -235,3 +235,26 @@ hardening items are merged; nobody is touching it now.
 - **Words:** RLS, row level security, service_role, password hash, PBKDF2, SHA-256, constant time, updater signing, SECURITY DEFINER, secrets, curl
 - **Seen as:** a token or key in a log; a download from a hostile server being trusted; weak local passwords
 - **Ask me like:** "list the weak spots in the account code", "sign the updater with the anti-cheat key"
+
+### 39.12 Detection engine: behavioural detectors, risk score, evidence export
+- **What:** An opt-in server-side layer that watches what clients claim over time (positions, aim, shots, counters, packets), keeps a decaying risk score per player and escalates through log, flag, rate-limit, shadow-restrict, kick and ban request. It uses only what the server saw and its own physics, so it cannot be patched out of a client; it cannot see anything the server never receives. Off unless `detect.enabled`.
+- **Parts:**
+  - 39.12.1 Movement detectors - `Net/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
+  - 39.12.2 Combat detectors - `Net/CheatDetect`, `Net/NetworkManager` - fire rate per weapon definition, accuracy and headshot ratio over a sliding window, aim snap then hit, shots through walls, damage above the weapon maximum, hits outside lag-compensated reach
+  - 39.12.3 Economy and state detectors - `Net/CheatDetect` - counters claimed above what server-known grants explain (client SyncVar writes of watched keys are checked automatically), duplicated unique items and acquisition bursts, ability use before its cooldown
+  - 39.12.4 Network detectors - `Net/CheatDetect`, `Net/NetworkManager` - message-rate bursts, replayed packets (the secure channel's window feeds it), malformed input, repeated corrections and a tick going backwards, a game clock off the server's
+  - 39.12.5 Suspicion model - `Net/CheatDetect` - evidence records (kind, value, threshold, tick, state snapshots), per-kind weights, decay by half-life, confirmations for soft detectors, a response ladder with release and latched kick / ban request, risk kept for 5 minutes across a rejoin
+  - 39.12.6 False-positive protection - `Net/CheatDetect` - grace after teleport, respawn, lag spike, host migration and join; ping-scaled tolerance; stale-input tolerance; `NoteSpeedBoost`, `NoteExternalForce`, `NoteFlightAllowed`
+  - 39.12.7 Evidence bundle - `Net/CheatDetect` - `EvidenceBundle` JSON (size capped, tokens redacted, no account or address unless opted in) and a parser for hostile input; `AntiCheatKick` carries `risk`, `banRequested` and `evidence`
+  - 39.12.8 Cheat simulation harness - `tests/test_anticheat_sim.cpp` - scripted cheating and honest players against the engine (seeded, fake time) and against a real server; prints detection and false-positive rates
+- **Code:** `Net/CheatDetect`, `Net/AntiCheat`, `Net/NetworkManager`, `Scene/SceneSerializer`
+- **API:** `DetectSettings`, `CheatDetector`, `AntiCheatSettings::detect`, `AntiCheat::detector`, `onDetectResponse`, `EvidenceBundle`, `BundleOptions`, `NetworkManager::AntiCheatKick`, `.okayac` keys `detect.*` (`detect.enabled`, `detect.maxSpeed`, `detect.weapon`, `detect.ability`, `detect.economy`, `detect.kickAt`, `detect.weight.<detector>` ...)
+- **Editor:** none yet - set the keys in a `.okayac` file or in code; the Anti-Cheat Config component keeps them in the saved scene
+- **Docs:** `docs/anticheat.md` (Detection engine)
+- **Tests:** `cheat_detect`, `anticheat_sim`
+- **Status:** Works - every detector has a unit test and a simulated cheat; in the harness all 880 cheating runs are flagged and none of 410 honest runs (high ping, loss, lag spikes, respawns, skilled shooters, traders) are; not run against real networks or a shipped game
+- **Open:** thresholds are tuned on a network model and loopback, not on real players (use observe mode first); the headshot flag, economy grants, item acquisition and cooldown uses must be reported by game code (`OnShot`, `OnGrant`, `OnItemAcquire`, `OnAbility`); no editor inspector for the keys; the report backend that would send a bundle is separate; a cheat that stays inside the tolerances, or only reads data (wall-hack, radar), is invisible
+- **Related:** 39.1, 39.5, 39.6, 16.6
+- **Words:** detection engine, risk score, evidence bundle, suspicion, behavioural anti-cheat, speed hack, fly hack, no-clip, aimbot, rapid fire, teleport hack, wall hack, duplication, false positive, shadow restrict, ban request, detect.enabled
+- **Seen as:** a player kicked with a risk score and evidence in the kick report; "speed window", "teleport", "through wall" evidence in the log; honest players with bad ping flagged when the thresholds are too tight
+- **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"

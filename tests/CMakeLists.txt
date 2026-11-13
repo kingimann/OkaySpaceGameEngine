@@ -2545,6 +2545,11 @@ target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
+# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
+target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
+add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
+
 # Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
 #   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
 add_executable(test_fbx_hostile test_fbx_hostile.cpp

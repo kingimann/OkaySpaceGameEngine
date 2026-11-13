@@ -2828,6 +2828,34 @@ add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
 target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
 add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
 
+# Our own 3DS and BVH readers (okay/Render/ModelData.hpp): fixtures from scripts/gen_3ds_fixtures.py and
+# scripts/gen_bvh_fixtures.py in tests/data/models, checked by hand-computed values and through the import seam.
+add_executable(test_3ds_reader test_3ds_reader.cpp)
+target_link_libraries(test_3ds_reader PRIVATE okay::engine)
+target_compile_definitions(test_3ds_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_reader COMMAND test_3ds_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_bvh_reader test_bvh_reader.cpp)
+target_link_libraries(test_bvh_reader PRIVATE okay::engine)
+target_compile_definitions(test_bvh_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME bvh_reader COMMAND test_bvh_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Hostile input + mutation fuzz for the 3DS and BVH readers. Standalone (no engine library, only the two reader files)
+# so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_3DS_FUZZ_ITERS raises the sweep.
+add_executable(test_3ds_bvh_hostile test_3ds_bvh_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Max3dsReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BvhReader.cpp)
+target_include_directories(test_3ds_bvh_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_3ds_bvh_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_bvh_hostile COMMAND test_3ds_bvh_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(3ds_bvh_hostile PROPERTIES TIMEOUT 300)
+
+# Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
+# real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
+add_executable(test_model_corpus test_model_corpus.cpp)
+target_link_libraries(test_model_corpus PRIVATE okay::engine)
+target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
+
 # Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
 add_executable(test_clipboard test_clipboard.cpp)
 target_link_libraries(test_clipboard PRIVATE okay::engine)

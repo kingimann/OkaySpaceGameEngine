@@ -182,13 +182,14 @@ static void TestDuplicateComponents() {
     auto* second = o->AddComponent<SpriteRenderer>(); second->glyph = 'B';
     CHECK(o->GetComponent<SpriteRenderer>() == first);
     CHECK(o->GetComponents<SpriteRenderer>().size() == 2);
-    // Saving writes the first one only.
+    // Saving writes both, in the order they were added.
     Scene b("b");
     Round(a, b);
-    CHECK(Find(b, "O")->GetComponents<SpriteRenderer>().size() == 1);
-    CHECK(Find(b, "O")->GetComponent<SpriteRenderer>()->glyph == 'A');
+    CHECK(Find(b, "O")->GetComponents<SpriteRenderer>().size() == 2);
+    CHECK(Find(b, "O")->GetComponents<SpriteRenderer>()[0]->glyph == 'A');
+    CHECK(Find(b, "O")->GetComponents<SpriteRenderer>()[1]->glyph == 'B');
 
-    // Two records of a single-instance type in the text: both load, with a warning.
+    // Two records in a file load as two components, with no "only the first is saved" warning.
     std::vector<std::string> warn;
     Scene c("c");
     const std::string two =
@@ -196,7 +197,7 @@ static void TestDuplicateComponents() {
         "  sprite 65 1 1 1 1 1 1\n  sprite 66 1 1 1 1 1 1\n  parent -1\nend\n";
     CHECK(SceneSerializer::Deserialize(c, two, nullptr, &warn));
     CHECK(Find(c, "O")->GetComponents<SpriteRenderer>().size() == 2);
-    CHECK(Has(warn, "two 'SpriteRenderer' components"));
+    CHECK(!Has(warn, "only the first is saved"));
 
     // Different types side by side are fine. Two colliders of one type are not: the
     // second is not saved and loading text that has both warns.

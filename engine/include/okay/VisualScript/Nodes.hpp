@@ -351,10 +351,18 @@ struct SetVarNode : VsNode {
     }
 };
 
+// Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
+// value of any type. Text only prints the text, Value only prints the value, both
+// print "text: value". A graph saved before pin 1 existed has nothing on it, so
+// it prints exactly what it did.
 struct PrintNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        Log::Info(In(0, g, ctx).AsString());   // exactly what was typed / wired in
+        const bool hasText = HasInput(0), hasValue = HasInput(1);
+        if (hasText && hasValue)
+            Log::Info(In(0, g, ctx).AsString() + ": " + In(1, g, ctx).AsString());
+        else if (hasValue) Log::Info(In(1, g, ctx).AsString());
+        else Log::Info(In(0, g, ctx).AsString());
         return 0;
     }
 };

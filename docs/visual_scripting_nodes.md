@@ -519,7 +519,7 @@ Turns this object by Deg degrees (2D).
 
 `Print`
 
-Writes Value to the Console. Great for checking what your script is doing.
+Writes a message to the Console. Type your own Text, wire in a Value (a key being held, a number, a position...) or both: with both it prints `Text: Value`.
 
 **Requires:** No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.
 
@@ -527,9 +527,10 @@ Writes Value to the Console. Great for checking what your script is doing.
 | --- | --- | --- | --- | --- |
 | flow | in | Flow | The flow arrives here. Print runs when a wire reaches this pin. | — |
 | flow | out | Flow | After Print finishes, the flow continues from here to the next step. | — |
-| Value | in | Text | The value being stored, sent or tested. It is a Text. Unwired, this is empty text. | empty text |
+| Text | in | Text | Your message. Type it into the box, or wire a text in. | empty text |
+| Value | in | Any | Optional. Anything: a Bool prints `true` or `false`, a number its digits, a position its x, y, z. With Text typed too, the line is `Text: Value`. | nothing |
 
-**Example:** Put Print after an event such as On Start or On Update, and wire a value into Value.
+**Example:** Put Print after an event such as On Update, type `Space held` into Text and wire Key Held into Value: the Console shows `Space held: true`.
 
 **Related:** Log Warning, Log Error, To Text
 

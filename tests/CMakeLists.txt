@@ -2588,3 +2588,7 @@ add_executable(test_net_rejoin test_net_rejoin.cpp)
 target_link_libraries(test_net_rejoin PRIVATE okay::engine)
 add_test(NAME net_rejoin COMMAND test_net_rejoin)
 
+
+add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
+target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
+add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)

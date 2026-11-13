@@ -53,7 +53,7 @@ const Row kRows[] = {
         {"Translate", true, "NNN", ""},
         {"SetPosition", true, "NNN", ""},
         {"Rotate", true, "N", ""},
-        {"Print", true, "T", ""},
+        {"Print", true, "TA", ""},
         {"PlaySound", true, "", ""},
         {"Spawn", true, "NNN", "O"},
         {"Destroy", true, "O", ""},

@@ -43,6 +43,13 @@ struct Sim {
     float wheel = 0;
     std::string text;
     bool edge[Key_COUNT] = {};
+    // IME: the preedit is a state (kept until EndCompose), a commit is one-shot
+    std::string composition, commitText;
+    bool composing = false;
+    int compCaret = -1;
+    void Compose(const std::string& s, int caret = -1) { composition = s; composing = true; compCaret = caret; }
+    void EndCompose() { composing = false; composition.clear(); compCaret = -1; }
+    void Commit(const std::string& s) { commitText = s; }
     bool named[OkayUI::KeyId_COUNT] = {};   // named keys held (see OkayUI::KeyId)
     void Hold(OkayUI::KeyId k, bool held) { named[k] = held; }
     Bitmap bmp;
@@ -57,10 +64,12 @@ struct Sim {
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
         in.selectAll = edge[Key_SelectAll]; in.up = edge[Key_Up]; in.down = edge[Key_Down]; in.copy = edge[Key_Copy]; in.cut = edge[Key_Cut]; in.paste = edge[Key_Paste]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
         for (int i = 0; i < OkayUI::KeyId_COUNT; ++i) in.keyDown[i] = named[i];
+        in.composition = composing ? composition.c_str() : nullptr; in.compositionCaret = compCaret;
+        in.commit = commitText.empty() ? nullptr : commitText.c_str();
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();
-        text.clear(); wheel = 0;
+        text.clear(); commitText.clear(); wheel = 0;
         for (bool& e : edge) e = false;
         ++frames;
     }

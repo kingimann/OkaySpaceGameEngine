@@ -313,6 +313,7 @@ TypedDrag g_tdd;
 float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
 MouseCursor g_cursor = MouseCursor_Arrow;
 IO g_io;                              // GetIO(): filled in BeginFrame
+ImeRect g_ime;                        // GetImeRect(): the focused text input's caret, set while the frame is built
 bool g_ptrOverWindow = false, g_ptrOverWindowPrev = false;   // the pointer was over a window's rectangle this / last frame (WantCaptureMouse)
 double g_clock = 0.0;                             // seconds: Input::time when the host gives it, else frames / 60
 double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
@@ -832,6 +833,7 @@ void BeginFrame(const Input& in) {
     ++g_frameCount;
     if (g_winBaseScale > 0.0f) { g_theme.textScale = g_winBaseScale; g_winBaseScale = 0.0f; }   // a window left open never keeps its font scale
     g_cursor = MouseCursor_Arrow;
+    g_ime = ImeRect();
     g_ptrOverWindowPrev = g_ptrOverWindow; g_ptrOverWindow = false;
     {
         const double prev = g_clock;
@@ -1211,6 +1213,33 @@ void eraseBytes(char* b, int& len, int from, int to) {
 }
 } // namespace
 
+Composition GetComposition() {
+    Composition c;
+    const char* src = g_in.composition;
+    if (!src || !*src) return c;
+    const int want = g_in.compositionCaret;
+    int srcCaret = -1;
+    int n = 0;
+    for (int i = 0; src[i] && n < 256;) {
+        const int k = printableUtf8Len(src + i);
+        if (srcCaret < 0 && want >= 0 && want < i + (k ? k : 1)) srcCaret = n;   // a caret inside a character goes to its start
+        if (!k) { ++i; continue; }
+        if (n + k > 256) break;
+        for (int j = 0; j < k; ++j) c.text[n + j] = src[i + j];
+        n += k; i += k;
+    }
+    c.text[n] = '\0';
+    c.length = n;
+    if (n == 0) return c;
+    c.active = true;
+    if (want < 0) srcCaret = n;
+    else if (srcCaret < 0) srcCaret = n;   // the caret was past the end (or after the last kept character)
+    c.caret = snapToChar(c.text, n, srcCaret);
+    return c;
+}
+ImeRect GetImeRect() { return g_ime; }
+void SetImeRect(const ImeRect& r) { g_ime = r; g_ime.valid = true; }
+
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags) {
     if (!buf || cap < 1) return false;
     if (buf[cap - 1] != '\0') {   // never trust the caller's buffer to be terminated
@@ -1246,6 +1275,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = g_focusSelectAll ? 0 : len; g_focusSelectAll = false; }
     if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
+    Composition comp = (focused && !(flags & InputText_ReadOnly)) ? GetComposition() : Composition();
+    const bool composing = comp.active;   // the input method owns Backspace, the arrows, Enter and Escape while it composes
 
     // Keystrokes, applied only while focused (the host forwards the ones it wants OkayUI to have).
     bool changed = false, enter = false;
@@ -1266,6 +1297,14 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             for (int i = 0; i < n; ++i) buf[ts->caret + i] = p[i];
             len += n; ts->caret += n; ts->anchor = ts->caret; changed = true;
         };
+        if (g_in.commit && g_in.commit[0] && !readOnly) {   // what the input method finished: typed text, replacing a selection
+            for (const char* p = g_in.commit; *p;) {
+                const int n = printableUtf8Len(p);
+                if (!n) { ++p; continue; }
+                insertOne(p, n);
+                p += n;
+            }
+        }
         if (g_in.text && g_in.text[0] && !readOnly) {
             for (const char* p = g_in.text; *p;) {
                 const int n = printableUtf8Len(p);
@@ -1275,7 +1314,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             }
         }
         // Clipboard: copy and cut take the selection, paste replaces it (new lines and tabs become spaces: it is a one-line field).
-        if ((g_in.copy || g_in.cut) && ts->caret != ts->anchor) {
+        if (!composing && (g_in.copy || g_in.cut) && ts->caret != ts->anchor) {
             const int lo = selLo(), hi = selHi();
             char tmp[kClipboardMax]; int n = hi - lo; if (n > kClipboardMax - 1) n = kClipboardMax - 1;
             for (int i = 0; i < n; ++i) tmp[i] = buf[lo + i];
@@ -1283,7 +1322,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             SetClipboardText(tmp);
             if (g_in.cut && !readOnly) deleteSelection();
         }
-        if (g_in.paste && !readOnly) {
+        if (g_in.paste && !readOnly && !composing) {
             const char* clip = GetClipboardText();
             for (const char* p = clip; p && *p;) {
                 const int n = printableUtf8Len(p);
@@ -1292,11 +1331,11 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
                 p += n;
             }
         }
-        if (g_in.backspace && !readOnly && !deleteSelection() && ts->caret > 0) {
+        if (g_in.backspace && !composing && !readOnly && !deleteSelection() && ts->caret > 0) {
             const int from = prevChar(buf, ts->caret);
             eraseBytes(buf, len, from, ts->caret); ts->caret = ts->anchor = from; changed = true;
         }
-        if (g_in.del && !readOnly && !deleteSelection() && ts->caret < len) {
+        if (g_in.del && !composing && !readOnly && !deleteSelection() && ts->caret < len) {
             eraseBytes(buf, len, ts->caret, nextChar(buf, len, ts->caret)); ts->anchor = ts->caret; changed = true;
         }
         // Caret movement: with shift the anchor stays and the selection grows; otherwise a
@@ -1305,13 +1344,13 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             if (g_in.shift) ts->caret = to;
             else { ts->caret = ts->anchor != ts->caret ? collapseTo : to; ts->anchor = ts->caret; }
         };
-        if (g_in.left)  move(prevChar(buf, ts->caret), selLo());
-        if (g_in.right) move(nextChar(buf, len, ts->caret), selHi());
-        if (g_in.home)  { ts->caret = 0;   if (!g_in.shift) ts->anchor = 0; }
-        if (g_in.end)   { ts->caret = len; if (!g_in.shift) ts->anchor = len; }
-        if (g_in.selectAll) { ts->anchor = 0; ts->caret = len; }
-        if (g_in.enter) enter = true;
-        if (g_in.escape) { g_focus = 0; focused = false; }
+        if (g_in.left && !composing)  move(prevChar(buf, ts->caret), selLo());
+        if (g_in.right && !composing) move(nextChar(buf, len, ts->caret), selHi());
+        if (g_in.home && !composing)  { ts->caret = 0;   if (!g_in.shift) ts->anchor = 0; }
+        if (g_in.end && !composing)   { ts->caret = len; if (!g_in.shift) ts->anchor = len; }
+        if (g_in.selectAll && !composing) { ts->anchor = 0; ts->caret = len; }
+        if (g_in.enter && !composing) enter = true;
+        if (g_in.escape && !composing) { g_focus = 0; focused = false; }
     }
 
     // Rounded box (focused gets an accent border hint).
@@ -1325,10 +1364,18 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     ts->caret = snapToChar(buf, len, ts->caret); ts->anchor = snapToChar(buf, len, ts->anchor);
     ts->first = snapToChar(buf, len, ts->first);   // an edit below `first` can leave it inside a new character
     if (ts->first > ts->caret) ts->first = ts->caret;
+    const int selLoD = ts->caret < ts->anchor ? ts->caret : ts->anchor, selHiD = ts->caret < ts->anchor ? ts->anchor : ts->caret;
+    const float preW = composing ? fMeasure(comp.text) * s : 0.0f;
+    float preCaretW = 0.0f;
+    if (composing) { const char sv = comp.text[comp.caret]; comp.text[comp.caret] = '\0'; preCaretW = fMeasure(comp.text) * s; comp.text[comp.caret] = sv; }
+    if (composing) {   // keep the preedit's caret visible; the text before it starts at `first`
+        if (ts->first > selLoD) ts->first = selLoD;
+        while (ts->first < selLoD && textWidth(buf, ts->first, selLoD) + preCaretW > innerW - 2.0f) ts->first = nextChar(buf, len, ts->first);
+    } else
     while (ts->first < ts->caret && textWidth(buf, ts->first, ts->caret) > innerW - 2.0f) ts->first = nextChar(buf, len, ts->first);
     const float ty = y + (h - th) * 0.5f;
     PushClipRect(x + b, y + b, w - 2.0f * b, h - 2.0f * b);
-    if (focused && ts->caret != ts->anchor) {   // selection highlight behind the text
+    if (focused && !composing && ts->caret != ts->anchor) {   // selection highlight behind the text
         const int lo = ts->caret < ts->anchor ? ts->caret : ts->anchor, hi = ts->caret < ts->anchor ? ts->anchor : ts->caret;
         const int a = lo < ts->first ? ts->first : lo;
         if (hi > a) {
@@ -1337,12 +1384,29 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             quad(x0, ty, x1 - x0, th, sel);
         }
     }
-    drawText(tx, ty, buf + ts->first, s, g_theme.text);
-    if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, g_theme.textDim);   // the placeholder, while the field is empty
+    float caretX = tx + textWidth(buf, ts->first, ts->caret);
+    if (composing) {   // text before the selection, the underlined preedit in place of the selection, then the text after it
+        const float px = tx + textWidth(buf, ts->first, selLoD);
+        { const char sv = buf[selLoD]; buf[selLoD] = '\0'; drawText(tx, ty, buf + ts->first, s, g_theme.text); buf[selLoD] = sv; }
+        unsigned char wash[4] = { g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 50 };
+        quad(px, ty, preW, th, wash);
+        drawText(px, ty, comp.text, s, g_theme.text);
+        quad(px, ty + th - 2.0f, preW, 2.0f, g_theme.text);   // the preedit underline
+        drawText(px + preW, ty, buf + selHiD, s, g_theme.text);
+        caretX = px + preCaretW;
+    } else {
+        drawText(tx, ty, buf + ts->first, s, g_theme.text);
+        if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, g_theme.textDim);   // the placeholder, while the field is empty
+    }
     // Blinking caret (steady when Theme::caretBlink is off, which tests use).
-    if (focused && (!g_theme.caretBlink || (g_frame / 30u) % 2u == 0u)) {
-        const float cx = tx + textWidth(buf, ts->first, ts->caret);
-        quad(cx, ty, 2.0f, th, g_theme.text);
+    if (focused && (!g_theme.caretBlink || (g_frame / 30u) % 2u == 0u)) quad(caretX, ty, 2.0f, th, g_theme.text);
+    if (focused) {   // where the host should put the candidate window: the caret, kept inside the box
+        ImeRect ir;
+        const float cxr = caretX < x + b ? x + b : (caretX > x + w - b - 2.0f ? x + w - b - 2.0f : caretX);
+        ir.caret = Rect{cxr, ty, 2.0f, th};
+        if (composing) { const float px = tx + textWidth(buf, ts->first, selLoD); ir.composition = Rect{px, ty, preW, th}; }
+        else ir.composition = Rect{cxr, ty, 0.0f, th};
+        SetImeRect(ir);
     }
     PopClipRect();
     return (flags & InputText_EnterReturnsTrue) ? (enter && focused) : changed;
@@ -4423,6 +4487,7 @@ void ResetState() {
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
     g_ovCurN = g_ovPrevN = 0;
+    g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }
 

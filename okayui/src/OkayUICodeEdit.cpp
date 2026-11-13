@@ -974,10 +974,20 @@ void CodeEdit::handleKeys(bool& changed) {
     const bool ctrl = io.keyCtrl, shift = io.keyShift;
     bool any = false;
     const unsigned v0 = version_;
+    if (in.commit && in.commit[0]) {   // what the input method finished: inserted like typed text, over the selection
+        std::string t = sanitize(in.commit);
+        t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
+        if (!t.empty()) { InsertText(t.c_str()); any = true; }
+    }
     if (in.text && in.text[0] && !ctrl) {
         std::string t = sanitize(in.text);
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
         if (!t.empty()) { InsertText(t.c_str()); any = true; }
+    }
+    if (comp_.active) {   // composing: the input method owns Backspace, the arrows, Enter and Escape
+        if (any) lastActivity_ = GetTime();
+        if (version_ != v0) changed = true;
+        return;
     }
     if (in.selectAll) { SelectAll(); any = true; }
     if (in.copy) { Copy(); any = true; }
@@ -1072,17 +1082,27 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     item_ = GetItemRect();
     const bool hovered = IsItemHovered();
     if (wantFocus_) { SetKeyboardFocusId(wid); wantFocus_ = false; }
+    comp_ = (Focused() && !readOnly_) ? GetComposition() : Composition();
+    compCells_ = compCaretCells_ = 0;
+    if (comp_.active) {
+        compCells_ = (int)std::ceil(CalcTextSize(comp_.text).x / charW_ - 0.001f);
+        const std::string pre(comp_.text, (size_t)comp_.caret);
+        compCaretCells_ = pre.empty() ? 0 : (int)std::ceil(CalcTextSize(pre.c_str()).x / charW_ - 0.001f);
+        if (compCells_ < 1) compCells_ = 1;
+    }
     layout(item_);
     handleMouse(item_, wid, hovered);
     bool changed = false;
     if (Focused() && handleKeys_) handleKeys(changed);
     layout(item_);
+    if (comp_.active) reveal_ = true;   // keep the preedit's caret in view while composing
     if (reveal_) {
         reveal_ = false;
-        const float top = (float)caret_.line * lineH_;
+        const CodePos rp = comp_.active ? SelectionStart() : caret_;
+        const float top = (float)rp.line * lineH_;
         if (top < scrollY_) scrollY_ = top;
         else if (top + lineH_ > scrollY_ + view_.h) scrollY_ = top + lineH_ - view_.h;
-        const float cx = (float)ByteToColumn(caret_.line, caret_.col) * charW_;
+        const float cx = (float)(ByteToColumn(rp.line, rp.col) + (comp_.active ? compCaretCells_ : 0)) * charW_;
         if (cx < scrollX_) scrollX_ = cx;
         else if (cx + charW_ + 8.0f > scrollX_ + view_.w) scrollX_ = cx + charW_ + 8.0f - view_.w;
         clampScroll();
@@ -1140,7 +1160,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         if (focused && !sel && l == caret_.line) dl.AddRectFilled(r0, r1, pal_.currentLine);
         bool hasMarker = false;
         for (const CodeMarker& m : markers_) if (m.line == l) { if (!hasMarker) dl.AddRectFilled(r0, r1, pal_.errorLine); hasMarker = true; }
-        if (sel && l >= sa.line && l <= sb.line) {
+        if (sel && !comp_.active && l >= sa.line && l <= sb.line) {
             const int from = l == sa.line ? ByteToColumn(l, sa.col) : 0;
             const int to = l == sb.line ? ByteToColumn(l, sb.col) : ByteToColumn(l, (int)s.size()) + 1;
             if (to > from) dl.AddRectFilled(Vec2{xOf(from), y}, Vec2{xOf(to), y + lineH_}, focused ? pal_.selection : pal_.selectionInactive);
@@ -1163,6 +1183,22 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         // the text, in runs of one colour
         LineTokens(l, toks);
         size_t ti = 0; int col = 0, runStart = 0, runCells = 0; Color32 runColor = 0; bool inRun = false;
+        // composing: the preedit goes where the selection starts, in place of the selected part of this line; the rest moves right
+        const bool compHere = comp_.active && focused && l == sa.line;
+        int insCol = 0, hideTo = 0, colShift = 0; bool insDone = false;
+        if (compHere) {
+            insCol = ByteToColumn(l, sa.col);
+            hideTo = insCol;
+            if (sel) hideTo = sb.line == l ? ByteToColumn(l, sb.col) : ByteToColumn(l, (int)s.size());
+        }
+        const int c0l = compHere ? std::max(0, c0 - compCells_) : c0;
+        auto drawPreedit = [&] {
+            const float px = xOf(insCol), pw = (float)compCells_ * charW_;
+            const Color32 wash = ColorMulAlpha(pal_.selection, 0.5f);
+            dl.AddRectFilled(Vec2{px, y}, Vec2{px + pw, y + lineH_}, wash);
+            dl.AddText(Vec2{px, y + dy}, pal_.text[CodeColor_Default], comp_.text);
+            dl.AddRectFilled(Vec2{px, y + lineH_ - 2.0f}, Vec2{px + pw, y + lineH_}, pal_.text[CodeColor_Default]);   // the preedit underline
+        };
         auto flush = [&] {
             if (inRun) {
                 while (!run.empty() && run.back() == ' ') run.pop_back();
@@ -1173,16 +1209,21 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         const int len = (int)s.size();
         for (int p = 0; p < len;) {
             const int q = nextIdx(s, p);
+            if (compHere && !insDone && col >= insCol) { flush(); drawPreedit(); insDone = true; colShift = compCells_ - (hideTo - insCol); }
+            if (compHere && col >= insCol && col < hideTo) {   // replaced by the preedit
+                col = s[(size_t)p] == '\t' ? nextTab(col, tabSize_) : col + 1; p = q;
+                continue;
+            }
             if (s[(size_t)p] == '\t') { flush(); col = nextTab(col, tabSize_); p = q; continue; }
             if (col >= c1) break;
-            if (col >= c0) {
+            if (col >= c0l) {
                 while (ti < toks.size() && toks[ti].end <= p) ++ti;
                 const unsigned char cid = (ti < toks.size() && toks[ti].start <= p) ? toks[ti].color : (unsigned char)CodeColor_Default;
                 const Color32 cc = colorFor(pal_, cid);
-                if (inRun && (cc != runColor || col != runStart + runCells)) flush();
+                if (inRun && (cc != runColor || col + colShift != runStart + runCells)) flush();
                 if (!inRun) {
                     if (s[(size_t)p] == ' ') { ++col; p = q; continue; }
-                    inRun = true; runStart = col; runCells = 0; runColor = cc;
+                    inRun = true; runStart = col + colShift; runCells = 0; runColor = cc;
                 }
                 run.append(s, (size_t)p, (size_t)(q - p)); ++runCells;
             } else {
@@ -1191,6 +1232,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             ++col; p = q;
         }
         flush();
+        if (compHere && !insDone) { drawPreedit(); insDone = true; }
         // error underlines
         for (const CodeMarker& m : markers_) {
             if (m.line != l) continue;
@@ -1213,14 +1255,24 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         if (hovered && !in.blocked && in.mouseY >= y && in.mouseY < y + lineH_ && in.mouseX >= item.x && in.mouseX < vend.x)
             for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) { SetTooltip("%s", m.message.c_str()); break; }
     }
-    // the caret
-    if (focused && caret_.line >= first && caret_.line <= last) {
-        const double t = GetTime() - lastActivity_;
-        const bool vis = !Style().caretBlink || t < 0.0 || std::fmod(t, 1.0) < 0.5;
-        if (vis) {
-            const float x = xOf(ByteToColumn(caret_.line, caret_.col)), y = rowY(caret_.line);
-            dl.AddRectFilled(Vec2{x, y + 1.0f}, Vec2{x + 2.0f, y + lineH_ - 1.0f}, pal_.caret);
+    // the caret (while composing: the caret inside the preedit) and where the host should put the candidate window
+    imeCaret_ = imeComp_ = Rect{};
+    if (focused) {
+        const CodePos cp = comp_.active ? SelectionStart() : caret_;
+        const int ccol = ByteToColumn(cp.line, cp.col) + (comp_.active ? compCaretCells_ : 0);
+        const float cxp = xOf(ccol), cyp = rowY(cp.line);
+        if (cp.line >= first && cp.line <= last) {
+            const double t = GetTime() - lastActivity_;
+            const bool vis = !Style().caretBlink || t < 0.0 || std::fmod(t, 1.0) < 0.5;
+            if (vis) dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + 2.0f, cyp + lineH_ - 1.0f}, pal_.caret);
         }
+        const float lx = std::min(std::max(cxp, view_.x), std::max(view_.x, vend.x - 2.0f));
+        const float ly = std::min(std::max(cyp, view_.y), std::max(view_.y, vend.y - lineH_));
+        imeCaret_ = Rect{lx, ly, 2.0f, lineH_};
+        if (comp_.active) imeComp_ = Rect{xOf(ByteToColumn(cp.line, cp.col)), ly, (float)compCells_ * charW_, lineH_};
+        else imeComp_ = Rect{lx, ly, 0.0f, lineH_};
+        ImeRect ir; ir.caret = imeCaret_; ir.composition = imeComp_;
+        SetImeRect(ir);
     }
     dl.PopClipRect();
 

@@ -33,6 +33,7 @@
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
+#include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
@@ -632,6 +633,25 @@ static int RunSelfTest() {
         GameObject* back = pm.scene().Find("BoxA");
         check(back && back->Guid() == guid && back->transform->Children().size() == 1, "prefab mode: the instance was rebuilt with the new child");
         fs::remove_all(dir, pec);
+    }
+
+    // The Lighting footer names one shared gap. These six switches are that gap
+    // (ignored on Direct3D 12 and the software renderer, drawn on the other two).
+    {
+        const char* shared = "not drawn on Direct3D 12 or the software renderer.";
+        const RenderFeature group[] = {
+            RenderFeature::FilmicLighting, RenderFeature::Exposure, RenderFeature::TonemapCurve,
+            RenderFeature::SceneBloom, RenderFeature::ColourGrading, RenderFeature::SceneFxaa};
+        for (RenderFeature f : group) {
+            const char* note = FeatureGapNote(f);
+            check(note && std::strstr(note, shared) != nullptr, "post switches share the Direct3D 12 / software gap");
+            check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
+        }
+        check(std::strstr(FeatureGapNote(RenderFeature::SpotPointShadows),
+                          "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer.") != nullptr,
+              "spot and point shadow note");
+        check(FeatureGapNote(RenderFeature::Fog)[0] == 0, "fog is drawn on every renderer");
+        check(FeatureGapNote(RenderFeature::VignetteAmount)[0] == 0, "vignette amount is drawn on every renderer");
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -11702,6 +11722,17 @@ static void ApplyLookPresetToScene(EditorState& ed, const std::string& name) {
 
 // The scene's look, saved with it: sky mode, fog, post-processing and weather.
 // Every edit previews live in the Scene and Game views.
+
+// Grey wrapped line under a switch that some renderers ignore. Quiet when every
+// renderer draws it. The words come from RendererFeatures.hpp.
+static void DrawRendererNote(okay::RenderFeature feature) {
+    const char* note = okay::FeatureGapNote(feature);
+    if (!note || !note[0]) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", note);
+    ImGui::PopTextWrapPos();
+}
+
 static void DrawLookSections(EditorState& ed) {
     auto& rs = ed.scene().renderSettings;
     auto& post = rs.post;
@@ -11753,21 +11784,28 @@ static void DrawLookSections(EditorState& ed) {
         }
         if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
-        if (rs.vignette > 0.0f)
+        if (rs.vignette > 0.0f) {
             if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
+            DrawRendererNote(okay::RenderFeature::VignetteSmoothness);
+        }
         if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
         if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
+        DrawRendererNote(okay::RenderFeature::SceneSsao);
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
+        DrawRendererNote(okay::RenderFeature::DepthOfField);
         if (post.dof) {
             if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
             if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
             tip("How far either side of the focus distance stays sharp.");
         }
-        ImGui::TextDisabled("Applied by the GPU renderers; the software renderer keeps its own output.");
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Linear lighting, exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12 or the software renderer. The vignette amount is drawn on every renderer. The software renderer has its own switches under Rendering below; those are separate from this section.");
+        ImGui::PopTextWrapPos();
     }
 
     if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -11790,7 +11828,7 @@ static void DrawLookSections(EditorState& ed) {
             if (ImGui::SliderFloat("Star Density##proc", &rs.skyStarDensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Star Brightness##proc", &rs.skyStarBright, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
             tip("Stars show once the sun has set.");
-            ImGui::TextDisabled("Drawn by the GPU renderers; the software renderer shows the sun's colours as a gradient.");
+            DrawRendererNote(okay::RenderFeature::ProceduralSkyDetail);
         }
     }
 
@@ -12013,6 +12051,7 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
         SectionHeader("Effects");
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
+        DrawRendererNote(okay::RenderFeature::PerPixelLighting);
 
         ImGui::Checkbox("Shadows", &ShadowsEnabled());
         if (ShadowsEnabled()) {
@@ -12025,6 +12064,7 @@ void DrawSceneSettings(EditorState& ed) {
                 ImGui::SliderInt("Shadow cascades", &ShadowCascades(), 1, ShadowMap::kMaxCascades);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("More cascades = sharper shadows across distance, at the cost of extra depth passes.");
+                DrawRendererNote(okay::RenderFeature::SunShadowCascades);
             }
             int res = ShadowMapResolution();
             const char* resLabels[] = {"512", "1024", "2048", "4096"};
@@ -12035,6 +12075,7 @@ void DrawSceneSettings(EditorState& ed) {
         }
 
         ImGui::Checkbox("Ambient occlusion (SSAO)", &SSAOEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildSsao);
         if (SSAOEnabled()) {
             ImGui::SliderFloat("AO radius", &SSAORadius(), 0.05f, 2.0f, "%.2f");
             ImGui::SliderFloat("AO strength", &SSAOStrength(), 0.0f, 2.0f, "%.2f");
@@ -12047,18 +12088,22 @@ void DrawSceneSettings(EditorState& ed) {
         }
 
         ImGui::Checkbox("Bloom", &BloomEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildBloom);
         if (BloomEnabled()) {
             ImGui::SliderFloat("Bloom threshold", &BloomThreshold(), 0.0f, 1.0f, "%.2f");
             ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
         }
 
         ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        DrawRendererNote(okay::RenderFeature::SoftwareToneMap);
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
         ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildFxaa);
 
         ImGui::Checkbox("Color grading", &ColorGradeEnabled());
+        DrawRendererNote(okay::RenderFeature::SoftwareColorGrade);
         if (ColorGradeEnabled()) {
             ImGui::SliderFloat("Brightness", &Brightness(), 0.2f, 2.0f, "%.2f");
             ImGui::SliderFloat("Contrast",   &Contrast(),   0.5f, 2.0f, "%.2f");
@@ -12120,6 +12165,9 @@ void DrawSceneSettings(EditorState& ed) {
         if (img.SavePNG(path)) ConsoleLog("Saved Scene view to " + path + " (raw engine pixels)", 0);
         else                   ConsoleLog("Failed to save scene_capture.png", 2);
     }
+    // OKAY_UI_LIGHTSCROLL=0.5: scroll the Lighting window (0 top .. 1 bottom) for a screenshot.
+    if (const char* sc = std::getenv("OKAY_UI_LIGHTSCROLL"))
+        ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)std::atof(sc));
     ImGui::End();
 }
 
@@ -17877,8 +17925,10 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::Indent();
                     ImGui::SliderFloat("Shadow distance##b", &g_build.shadowDistance, 0.0f, 400.0f, "%.0f m");
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cascaded shadow reach. 0 = legacy single map fit to the whole scene.");
-                    if (g_build.shadowDistance > 0.0f)
+                    if (g_build.shadowDistance > 0.0f) {
                         ImGui::SliderInt("Cascades##b", &g_build.shadowCascades, 1, 4);
+                        DrawRendererNote(okay::RenderFeature::SunShadowCascades);
+                    }
                     ImGui::SliderFloat("Softness##b", &g_build.shadowSoftness, 0.0f, 6.0f, "%.1f tx");
                     const char* resLabels[] = {"512", "1024", "2048", "4096"};
                     const int   resVals[]   = {512, 1024, 2048, 4096};
@@ -17886,15 +17936,21 @@ void DrawFileDialogs(EditorState& ed) {
                     if (ImGui::Combo("Resolution##b", &resIdx, resLabels, 4)) g_build.shadowResolution = resVals[resIdx];
                     ImGui::Unindent();
                 }
-                ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
-                ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
+                ImGui::Checkbox("Bloom", &g_build.bloom);
+                DrawRendererNote(okay::RenderFeature::BuildBloom);
+                ImGui::Checkbox("Ambient occlusion", &g_build.ssao);
+                DrawRendererNote(okay::RenderFeature::BuildSsao);
                 ImGui::Checkbox("FXAA", &g_build.fxaa);
+                DrawRendererNote(okay::RenderFeature::BuildFxaa);
+                DrawRendererNote(okay::RenderFeature::PerPixelLighting);
                 const char* aaOpts[] = {"Off", "2x", "4x"};
                 const int   aaVals[] = {1, 2, 4};
                 int aaSel = 0; for (int i = 0; i < 3; ++i) if (aaVals[i] == g_build.antialias) aaSel = i;
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::Combo("Supersampling (AA)", &aaSel, aaOpts, 3)) g_build.antialias = aaVals[aaSel];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render at a higher resolution then downscale for smoother edges.\n2x = 4x the pixels, 4x = 16x — sharper but heavier on the GPU.");
+                if (const char* sc = std::getenv("OKAY_UI_BUILDSCROLL"))
+                    ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)std::atof(sc));
             }
             if (s_buildSec == 4) {
                 ImGui::Spacing();
@@ -31454,11 +31510,16 @@ void DrawInspector(EditorState& ed) {
             }
 
             SectionHeader("Shadows");
+            if (std::getenv("OKAY_UI_SPOTLIGHT")) ImGui::SetScrollHereY(0.25f);
             if (ImGui::Checkbox("Cast Shadows##light", &li->castShadows)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(li->type == Light::Type::Directional
                     ? "Sun shadows (cascaded). One Directional light casts them — the first\nthat has Cast Shadows on. Others still light the scene.\nQuality changes the map size and distance (Low / Medium / High)."
                     : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+            if (li->type == Light::Type::Directional)
+                DrawRendererNote(okay::RenderFeature::SunShadowCascades);
+            else
+                DrawRendererNote(okay::RenderFeature::SpotPointShadows);
             if (li->type == Light::Type::Directional && !okay::DirectionalShadowWarning().empty())
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "%s", okay::DirectionalShadowWarning().c_str());
             if (li->castShadows) {
@@ -48730,6 +48791,16 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_LIGHTING")) {
                 g_showSceneSettings = true;
                 if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Lighting");
+            }
+            // OKAY_UI_BUILD=1 opens Build Settings (pair with OKAY_UI_BUILDSEC). OKAY_UI_SPOTLIGHT=1
+            // adds a spot light and selects it, so a screenshot can show the Cast Shadows note.
+            if (std::getenv("OKAY_UI_BUILD") && s_focusFrames == 40) g_showBuildGame = true;
+            if (std::getenv("OKAY_UI_SPOTLIGHT") && s_focusFrames == 36) {
+                GameObject* spot = ed.scene().CreateGameObject("Spot Light");
+                auto* li = spot->AddComponent<Light>();
+                li->type = Light::Type::Spot;
+                li->castShadows = true;
+                ed.Select(spot);
             }
             if (const char* lp = std::getenv("OKAY_UI_PRESET"); lp && s_focusFrames == 33) ApplyLookPresetToScene(ed, lp);
             // OKAY_UI_POST="bloom=1;exposure=1.2" (PostSet names), OKAY_UI_SKY=<cloud cover>

@@ -25,8 +25,8 @@ namespace dae {
 
 constexpr std::size_t kMaxFileBytes = 512u * 1024u * 1024u;
 constexpr std::size_t kMaxXmlNodes  = 4000000;
-constexpr int         kMaxXmlDepth  = 256;
-constexpr int         kMaxSceneDepth = 64;
+constexpr int         kMaxXmlDepth  = 512;
+constexpr int         kMaxSceneDepth = 256;   // real exporters nest bone / box chains 60+ deep
 constexpr std::size_t kMaxSceneNodes = 200000;
 constexpr std::size_t kMaxParts      = 100000;
 constexpr std::size_t kMaxOutVerts   = 40000000;
@@ -226,7 +226,10 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
 // Number lists
 // ---------------------------------------------------------------------------
 
-bool ParseFloats(const std::string& t, std::vector<float>& out) {
+// Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
+// unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
+// counts such tokens so the reader can say so.
+bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nullptr) {
     out.clear();
     out.reserve(t.size() / 4 + 1);
     const char* p = t.c_str();
@@ -234,13 +237,92 @@ bool ParseFloats(const std::string& t, std::vector<float>& out) {
     for (;;) {
         while (p < end && IsWs(*p)) ++p;
         if (p >= end) break;
+        const char* q = p;
+        bool comma = false, point = false;
+        while (q < end && !IsWs(*q)) { if (*q == ',') comma = true; else if (*q == '.') point = true; ++q; }
         char* e = nullptr;
-        float v = std::strtof(p, &e);
-        if (e == p || !std::isfinite(v)) return false;
+        float v;
+        if (comma && !point && q - p < 64) {
+            char buf[72];
+            for (const char* c = p; c < q; ++c) buf[c - p] = *c == ',' ? '.' : *c;
+            buf[q - p] = 0;
+            v = std::strtof(buf, &e);
+            if (e != buf + (q - p)) return false;
+            if (commas) ++*commas;
+        } else {
+            v = std::strtof(p, &e);
+            if (e != q) return false;   // not a whole token (or no number at all)
+        }
+        if (!std::isfinite(v)) return false;
         out.push_back(v);
-        p = e;
+        p = q;
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Polygon triangulation: convex polygons are fanned (the corner order the file gave); a concave one
+// is ear clipped on its dominant plane. Polygons over kMaxEarCorners corners are fanned either way.
+// ---------------------------------------------------------------------------
+constexpr std::size_t kMaxEarCorners = 256;
+
+// Triangles as indices into `p` (0 .. p.size()-1), winding kept as the polygon's own.
+void TriangulatePolygon(const std::vector<Vec3>& p, std::vector<std::array<int, 3>>& tris) {
+    const int n = (int)p.size();
+    tris.clear();
+    auto fan = [&]() { for (int i = 1; i + 1 < n; ++i) tris.push_back({0, i, i + 1}); };
+    if (n <= 3 || (std::size_t)n > kMaxEarCorners) { fan(); return; }
+    // Newell normal, dominant axis dropped
+    double nx = 0, ny = 0, nz = 0;
+    for (int i = 0; i < n; ++i) {
+        const Vec3& a = p[(std::size_t)i]; const Vec3& b = p[(std::size_t)((i + 1) % n)];
+        nx += ((double)a.y - b.y) * ((double)a.z + b.z);
+        ny += ((double)a.z - b.z) * ((double)a.x + b.x);
+        nz += ((double)a.x - b.x) * ((double)a.y + b.y);
+    }
+    const double ax = std::fabs(nx), ay = std::fabs(ny), az = std::fabs(nz);
+    if (!(ax + ay + az > 1e-30)) { fan(); return; }
+    std::vector<double> u((std::size_t)n), v((std::size_t)n);
+    for (int i = 0; i < n; ++i) {
+        const Vec3& a = p[(std::size_t)i];
+        if (az >= ax && az >= ay) { u[(std::size_t)i] = a.x; v[(std::size_t)i] = a.y; if (nz < 0) u[(std::size_t)i] = -u[(std::size_t)i]; }
+        else if (ax >= ay) { u[(std::size_t)i] = a.y; v[(std::size_t)i] = a.z; if (nx < 0) u[(std::size_t)i] = -u[(std::size_t)i]; }
+        else { u[(std::size_t)i] = a.z; v[(std::size_t)i] = a.x; if (ny < 0) u[(std::size_t)i] = -u[(std::size_t)i]; }
+    }
+    // now the polygon is counter-clockwise in (u, v)
+    auto cross = [&](int a, int b, int c) { return (u[(std::size_t)b] - u[(std::size_t)a]) * (v[(std::size_t)c] - v[(std::size_t)a]) - (v[(std::size_t)b] - v[(std::size_t)a]) * (u[(std::size_t)c] - u[(std::size_t)a]); };
+    bool convex = true;
+    for (int i = 0; i < n && convex; ++i) if (cross(i, (i + 1) % n, (i + 2) % n) < -1e-12) convex = false;
+    if (convex) { fan(); return; }
+    std::vector<int> idx((std::size_t)n);
+    for (int i = 0; i < n; ++i) idx[(std::size_t)i] = i;
+    int guard = 0;
+    while (idx.size() > 3 && guard++ < 4 * n) {
+        bool clipped = false;
+        const std::size_t m = idx.size();
+        for (std::size_t i = 0; i < m; ++i) {
+            const int a = idx[(i + m - 1) % m], b = idx[i], c = idx[(i + 1) % m];
+            if (cross(a, b, c) <= 1e-12) continue;   // reflex or flat corner: not an ear
+            bool inside = false;
+            for (std::size_t k = 0; k < m && !inside; ++k) {
+                const int q = idx[k];
+                if (q == a || q == b || q == c) continue;
+                auto same = [&](int o) { return std::fabs(u[(std::size_t)q] - u[(std::size_t)o]) < 1e-12 && std::fabs(v[(std::size_t)q] - v[(std::size_t)o]) < 1e-12; };
+                if (same(a) || same(b) || same(c)) continue;   // a bridge or duplicate corner at the same spot is not inside
+                if (cross(a, b, q) >= 0 && cross(b, c, q) >= 0 && cross(c, a, q) >= 0) inside = true;
+            }
+            if (inside) continue;
+            tris.push_back({a, b, c});
+            idx.erase(idx.begin() + (std::ptrdiff_t)i);
+            clipped = true;
+            break;
+        }
+        if (!clipped) break;
+    }
+    if (idx.size() == 3) tris.push_back({idx[0], idx[1], idx[2]});
+    else for (std::size_t i = 1; i + 1 < idx.size(); ++i) tris.push_back({idx[0], idx[i], idx[i + 1]});   // degenerate input: fan what is left
+    // zero-area slivers (the two coincident edges of a bridge into a hole) draw nothing
+    tris.erase(std::remove_if(tris.begin(), tris.end(), [&](const std::array<int, 3>& t) { return std::fabs(cross(t[0], t[1], t[2])) < 1e-12; }), tris.end());
 }
 
 bool ParseInts(const std::string& t, std::vector<int>& out) {
@@ -362,6 +444,7 @@ struct Reader {
     std::map<std::string, int> interpApprox;                         // non-LINEAR/STEP interpolation names, read as linear
     std::vector<PendingSkin> pending;
     std::size_t totalVerts = 0;
+    int decimalCommas = 0;
 
     // Things skipped, reported once each through ImportedModel::notes.
     std::map<std::string, int> skippedPrims;
@@ -382,7 +465,7 @@ struct Reader {
         const int sn = Lookup(id);
         if (sn < 0 || x.n[(std::size_t)sn].name != "source") return false;
         const int fa = x.First(sn, "float_array");
-        if (fa < 0 || !ParseFloats(x.Text(fa), s.f)) return false;
+        if (fa < 0 || !ParseFloats(x.Text(fa), s.f, &decimalCommas)) return false;
         const int acc = x.Find(sn, "accessor");
         s.stride = 1; s.offset = 0;
         if (acc >= 0) {
@@ -477,6 +560,21 @@ struct Reader {
                 polys.emplace_back(at, (std::size_t)c);
                 at += (std::size_t)c;
             }
+        } else if (kind == "tristrips" || kind == "trifans") {
+            // every <p> is one strip (or fan); each triangle becomes its own 3 corners
+            const bool strip = kind == "tristrips";
+            for (int pn : x.All(prim, "p")) {
+                std::vector<int> v;
+                if (!ParseInts(x.Text(pn), v)) return Fail("COLLADA: bad <p> index list");
+                const std::size_t n = v.size() / (std::size_t)stride;
+                auto push = [&](std::size_t k) { all.insert(all.end(), v.begin() + (std::ptrdiff_t)(k * (std::size_t)stride), v.begin() + (std::ptrdiff_t)((k + 1) * (std::size_t)stride)); };
+                for (std::size_t i = 0; i + 2 < n; ++i) {
+                    const std::size_t at = all.size() / (std::size_t)stride;
+                    if (strip) { if (i & 1) { push(i + 1); push(i); push(i + 2); } else { push(i); push(i + 1); push(i + 2); } }
+                    else { push(0); push(i + 1); push(i + 2); }
+                    polys.emplace_back(at, 3);
+                }
+            }
         } else {   // polygons
             for (int k : x.n[(std::size_t)prim].kids) {
                 int pn = -1;
@@ -515,17 +613,19 @@ struct Reader {
             if (uv.has) m.uvs.push_back(Vec2{uv.src.At(ti, 0), 1.0f - uv.src.At(ti, 1)});
             return true;
         };
+        std::vector<Vec3> ring;
+        std::vector<std::array<int, 3>> tri;
+        std::vector<int> cv;   // output vertex of each corner of the polygon
         for (const auto& pl : polys) {
             if (pl.second < 3) continue;
             if (pl.first + pl.second > all.size() / (std::size_t)stride) return Fail("COLLADA: polygon runs past <p>");
-            int a = 0, b = 0, c = 0;
-            if (!corner(pl.first, a)) return Fail("COLLADA: index out of range");
-            if (!corner(pl.first + 1, b)) return Fail("COLLADA: index out of range");
-            for (std::size_t i = 2; i < pl.second; ++i) {
-                if (!corner(pl.first + i, c)) return Fail("COLLADA: index out of range");
-                m.triangles.push_back(a); m.triangles.push_back(b); m.triangles.push_back(c);
-                b = c;
-            }
+            cv.assign(pl.second, 0);
+            for (std::size_t i = 0; i < pl.second; ++i) if (!corner(pl.first + i, cv[i])) return Fail("COLLADA: index out of range");
+            if (pl.second == 3) { m.triangles.push_back(cv[0]); m.triangles.push_back(cv[1]); m.triangles.push_back(cv[2]); continue; }
+            ring.resize(pl.second);
+            for (std::size_t i = 0; i < pl.second; ++i) ring[i] = m.vertices[(std::size_t)cv[i]];
+            TriangulatePolygon(ring, tri);
+            for (const auto& t : tri) { m.triangles.push_back(cv[(std::size_t)t[0]]); m.triangles.push_back(cv[(std::size_t)t[1]]); m.triangles.push_back(cv[(std::size_t)t[2]]); }
         }
         if (totalVerts + m.vertices.size() > kMaxOutVerts) return Fail("COLLADA: model too large");
         totalVerts += m.vertices.size();
@@ -561,12 +661,12 @@ struct Reader {
         std::vector<PrimSet> sets;
         for (int k : x.n[(std::size_t)mn].kids) {
             const std::string& nm = x.n[(std::size_t)k].name;
-            if (nm == "triangles" || nm == "polylist" || nm == "polygons") {
+            if (nm == "triangles" || nm == "polylist" || nm == "polygons" || nm == "tristrips" || nm == "trifans") {
                 PrimSet ps;
                 ps.mesh.name = x.Attr(gn, "name").empty() ? gid : x.Attr(gn, "name");
                 if (!BuildPrim(mn, k, ps)) { geoFailed[gid] = true; return nullptr; }
                 if (!ps.mesh.triangles.empty()) sets.push_back(std::move(ps));
-            } else if (nm == "lines" || nm == "linestrips" || nm == "tristrips" || nm == "trifans") {
+            } else if (nm == "lines" || nm == "linestrips") {
                 skippedPrims[nm]++;
             }
         }
@@ -1103,7 +1203,69 @@ struct Reader {
         }
     }
 
+    // Keys of `ch` inside [t0, t1], times shifted by -t0, with a key interpolated at each edge that has none.
+    static void TrimChannel(ImportedChannel& ch, float t0, float t1) {
+        auto trimV = [&](std::vector<ImportedKeyV3>& k) {
+            if (k.empty()) return;
+            auto at = [&](float t) {
+                if (t <= k.front().time) return k.front().value;
+                if (t >= k.back().time) return k.back().value;
+                for (std::size_t i = 1; i < k.size(); ++i) if (t <= k[i].time) {
+                    const float d = k[i].time - k[i - 1].time, a = d > 0 ? (t - k[i - 1].time) / d : 0.0f;
+                    return k[i - 1].value + (k[i].value - k[i - 1].value) * a;
+                }
+                return k.back().value;
+            };
+            std::vector<ImportedKeyV3> r;
+            r.push_back({0.0f, at(t0)});
+            for (const auto& e : k) if (e.time > t0 + 1e-6f && e.time < t1 - 1e-6f) r.push_back({e.time - t0, e.value});
+            if (t1 > t0 + 1e-6f) r.push_back({t1 - t0, at(t1)});
+            k = std::move(r);
+        };
+        trimV(ch.position); trimV(ch.scale);
+        auto& k = ch.rotation;
+        if (k.empty()) return;
+        auto at = [&](float t) {
+            if (t <= k.front().time) return k.front().value;
+            if (t >= k.back().time) return k.back().value;
+            for (std::size_t i = 1; i < k.size(); ++i) if (t <= k[i].time) {
+                const float d = k[i].time - k[i - 1].time, a = d > 0 ? (t - k[i - 1].time) / d : 0.0f;
+                Quat q0 = k[i - 1].value, q1 = k[i].value;
+                if (q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w < 0) q1 = Quat{-q1.x, -q1.y, -q1.z, -q1.w};
+                return Quat{q0.x + (q1.x - q0.x) * a, q0.y + (q1.y - q0.y) * a, q0.z + (q1.z - q0.z) * a, q0.w + (q1.w - q0.w) * a}.Normalized();
+            }
+            return k.back().value;
+        };
+        std::vector<ImportedKeyQ> r;
+        r.push_back({0.0f, at(t0)});
+        for (const auto& e : k) if (e.time > t0 + 1e-6f && e.time < t1 - 1e-6f) r.push_back({e.time - t0, e.value});
+        if (t1 > t0 + 1e-6f) r.push_back({t1 - t0, at(t1)});
+        k = std::move(r);
+    }
+
     void ReadAnimations(int lib) {
+        // <library_animation_clips>: named takes (start / end, the animations they play). When there
+        // are any, they are the clips: each one holds its animations' channels, cut to [start, end] and
+        // moved to start at 0.
+        if (const int lc = x.First(0, "library_animation_clips"); lc >= 0 && x.First(lc, "animation_clip") >= 0) {
+            int n = 0;
+            for (int ac : x.All(lc, "animation_clip")) {
+                std::vector<Track> tracks;
+                for (int ia : x.All(ac, "instance_animation")) {
+                    const int an = Lookup(UrlId(x.Attr(ia, "url")));
+                    if (an >= 0 && x.n[(std::size_t)an].name == "animation") CollectTracks(an, tracks);
+                }
+                ImportedClip clip;
+                clip.name = !x.Attr(ac, "name").empty() ? x.Attr(ac, "name") : !x.Attr(ac, "id").empty() ? x.Attr(ac, "id") : "clip" + std::to_string(n);
+                ++n;
+                BuildClip(tracks, clip);
+                std::vector<float> sv, ev;
+                if (x.HasAttr(ac, "start") && x.HasAttr(ac, "end") && ParseFloats(x.Attr(ac, "start"), sv) && ParseFloats(x.Attr(ac, "end"), ev) && sv.size() == 1 && ev.size() == 1 && ev[0] > sv[0])
+                    for (ImportedChannel& ch : clip.channels) TrimChannel(ch, sv[0], ev[0]);
+                if (!clip.channels.empty()) out->clips.push_back(std::move(clip)); else ++emptyClips;
+            }
+            if (!out->clips.empty() || emptyClips) return;
+        }
         // A top-level <animation> that holds other animations is a clip of its own. Plain
         // top-level animations (one channel group per bone or property) are merged into one clip.
         std::vector<Track> flat;
@@ -1126,8 +1288,30 @@ struct Reader {
     }
 
     // ---- driver -----------------------------------------------------------
-    bool Run(const std::string& text) {
+    bool Run(const std::string& raw) {
         out->backend = "own";
+        std::string conv;
+        if (const bool le = raw.size() >= 2 && (unsigned char)raw[0] == 0xFF && (unsigned char)raw[1] == 0xFE,
+                       be = raw.size() >= 2 && (unsigned char)raw[0] == 0xFE && (unsigned char)raw[1] == 0xFF,
+                       leNoBom = raw.size() >= 4 && raw[0] == '<' && raw[1] == 0 && raw[3] == 0,
+                       beNoBom = raw.size() >= 4 && raw[0] == 0 && raw[1] == '<' && raw[2] == 0;
+            le || be || leNoBom || beNoBom) {
+            // UTF-16: convert to UTF-8 first (the XML reader and every number in it are UTF-8 / ASCII)
+            const bool little = le || leNoBom;
+            std::size_t i = (le || be) ? 2 : 0;
+            conv.reserve(raw.size() / 2 + 8);
+            auto unit = [&](std::size_t at) { return little ? (unsigned)((unsigned char)raw[at] | ((unsigned char)raw[at + 1] << 8)) : (unsigned)(((unsigned char)raw[at] << 8) | (unsigned char)raw[at + 1]); };
+            for (; i + 1 < raw.size(); i += 2) {
+                unsigned c = unit(i);
+                if (c >= 0xD800 && c < 0xDC00 && i + 3 < raw.size() && unit(i + 2) >= 0xDC00 && unit(i + 2) < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (unit(i + 2) - 0xDC00); i += 2; }
+                else if (c >= 0xD800 && c < 0xE000) c = 0xFFFD;   // lone surrogate
+                if (c < 0x80) conv.push_back((char)c);
+                else if (c < 0x800) { conv.push_back((char)(0xC0 | (c >> 6))); conv.push_back((char)(0x80 | (c & 0x3F))); }
+                else if (c < 0x10000) { conv.push_back((char)(0xE0 | (c >> 12))); conv.push_back((char)(0x80 | ((c >> 6) & 0x3F))); conv.push_back((char)(0x80 | (c & 0x3F))); }
+                else { conv.push_back((char)(0xF0 | (c >> 18))); conv.push_back((char)(0x80 | ((c >> 12) & 0x3F))); conv.push_back((char)(0x80 | ((c >> 6) & 0x3F))); conv.push_back((char)(0x80 | (c & 0x3F))); }
+            }
+        }
+        const std::string& text = conv.empty() ? raw : conv;
         if (!ParseXml(text, x, err)) return false;
         if (x.n.empty() || x.n[0].name != "COLLADA") return Fail("not a COLLADA file (root element is not COLLADA)");
         for (std::size_t i = 0; i < x.n.size(); ++i) {
@@ -1138,8 +1322,8 @@ struct Reader {
         std::string up = "Y_UP";
         if (const int as = x.First(0, "asset"); as >= 0) {
             if (const int u = x.First(as, "unit"); u >= 0) {
-                const float v = (float)std::atof(x.Attr(u, "meter").c_str());
-                if (std::isfinite(v) && v > 0.0f) unit = v;
+                std::vector<float> uv;
+                if (ParseFloats(x.Attr(u, "meter"), uv, &decimalCommas) && uv.size() == 1 && std::isfinite(uv[0]) && uv[0] > 0.0f) unit = uv[0];
             }
             if (const int a = x.First(as, "up_axis"); a >= 0) {
                 std::string t; for (char c : x.Text(a)) if (!IsWs(c)) t += c;
@@ -1192,6 +1376,7 @@ struct Reader {
         if (skews) note(std::to_string(skews) + " <skew>/<lookat> transform(s) ignored");
         if (camLights) note(std::to_string(camLights) + " camera/light instance(s) not imported");
         if (skinsDropped) note(std::to_string(skinsDropped) + " skin controller(s) were malformed; the mesh is imported unskinned");
+        if (decimalCommas) note(std::to_string(decimalCommas) + " number(s) in the geometry were written with a decimal comma and were read as decimal points");
         if (weightsTrunc) note(std::to_string(weightsTrunc) + " vertices had more than 4 bone weights; the 4 strongest are kept");
         if (badDecompose) note(std::to_string(badDecompose) + " non-finite node transform(s) replaced by identity");
         if (animSkipped) note(std::to_string(animSkipped) + " animation channel(s) not read (target element not found, wrong value count, keys out of order or unreadable sampler; first: '" + animExample + "')");

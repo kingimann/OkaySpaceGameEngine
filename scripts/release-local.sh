@@ -94,6 +94,10 @@ for f in OkaySpace.exe Tools/OkayEngine.exe Tools/OkaySpacePlayer.exe; do
 done
 [ -f build-win-dist/CHANGELOG.txt ] || cp dist/CHANGELOG.txt build-win-dist/CHANGELOG.txt
 
+# Authenticode-sign our programs before they are zipped, installed or checksummed (skipped with a warning when
+# WINDOWS_SIGN_PFX_BASE64 is not set; see docs/packaging.md "Code signing").
+scripts/sign-windows.sh build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe
+
 OUT="$PWD/release-out"; rm -rf "$OUT"; mkdir -p "$OUT"
 NAME="OkaySpace-windows-v${VER}"
 rm -rf "$OUT/$NAME"; mkdir -p "$OUT/$NAME"; cp -r build-win-dist/* "$OUT/$NAME/"
@@ -105,6 +109,7 @@ ASSETS=("$OUT/$NAME.zip" build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayE
 if [ $HAVE_NSIS = 1 ]; then
   say "Building the installer"
   makensis -DVERSION="$VER" -DDISTDIR="$PWD/build-win-dist" -DOUTFILE="$OUT/OkaySpace-Setup.exe" scripts/okayspace-installer.nsi >/dev/null
+  scripts/sign-windows.sh "$OUT/OkaySpace-Setup.exe"
   ASSETS+=("$OUT/OkaySpace-Setup.exe")
 fi
 

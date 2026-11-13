@@ -20,7 +20,9 @@
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshModifier.hpp"
@@ -529,6 +531,7 @@ void RegisterTopDownShooterController() {
      .AddFloat("bulletSize", &TopDownShooterController::bulletSize).Range(0, kBig, 0.05).Tooltip("Size of a bullet")
      .AddColor("bulletColor", &TopDownShooterController::bulletColor).Range(0, 1, 0.01).Tooltip("Colour of a bullet")
      .AddString("projectile", &TopDownShooterController::projectile).Tooltip("Prefab for FireMode::Prefab")
+     .AddString("weapon", &TopDownShooterController::weapon).Tooltip("A gun from the weapon list. Empty keeps the numbers in this section")
      .AddFloat("muzzleHeight", &TopDownShooterController::muzzleHeight).Range(-kBig, kBig, 0.05).Tooltip("Bullets start this high above the player origin")
      .AddFloat("muzzleForward", &TopDownShooterController::muzzleForward).Range(-kBig, kBig, 0.05).Tooltip("... and this far in front")
      .Section("Ammo")
@@ -1096,6 +1099,56 @@ void RegisterNetworkTransform() {
 
 } // namespace
 
+void RegisterMeleeAttacker() {
+    PropertyBuilder<MeleeAttacker> b("MeleeAttacker", "melee", "Gameplay");
+    b.Section("Swing")
+     .AddFloat("damage", &MeleeAttacker::damage).Range(0, kBig, 0.1).Tooltip("How much health one hit removes")
+     .AddFloat("range", &MeleeAttacker::range).Range(0, 1000, 0.05).Tooltip("How far the swing reaches")
+     .AddFloat("arc", &MeleeAttacker::arc).Range(0, 360, 1).Tooltip("How wide the swing is, in degrees. 360 hits all around")
+     .AddFloat("cooldown", &MeleeAttacker::cooldown).Range(0, 60, 0.01).Tooltip("Seconds before another swing can start")
+     .AddKey("attackKey", &MeleeAttacker::attackKey).Tooltip("The key that starts a swing. 0 means no key")
+     .AddBool("useMouse", &MeleeAttacker::useMouse).Tooltip("Also swing with the left mouse button")
+     .AddFloat("swingTime", &MeleeAttacker::swingTime).Range(0, 30, 0.01).Tooltip("How long the swing lasts. 0 lands the hit at once")
+     .AddFloat("hitStart", &MeleeAttacker::hitStart).Range(0, 30, 0.01).Tooltip("Seconds into the swing when a hit can land")
+     .AddFloat("hitEnd", &MeleeAttacker::hitEnd).Range(0, 30, 0.01).Tooltip("Seconds into the swing when the hit closes")
+     .AddFloat("knockback", &MeleeAttacker::knockback).Range(0, kBig, 0.1).Tooltip("How hard a hit pushes a body away")
+     .AddInt("comboSteps", &MeleeAttacker::comboSteps).Range(1, 20, 1).Tooltip("Hits in one chain. 1 is a single swing")
+     .AddFloat("comboWindow", &MeleeAttacker::comboWindow).Range(0, 30, 0.01).Tooltip("Seconds after a swing to continue the chain")
+     .AddFloat("comboBonus", &MeleeAttacker::comboBonus).Range(0, 10, 0.01).Tooltip("Extra damage fraction for each hit after the first")
+     .AddBool("useHitbox", &MeleeAttacker::useHitbox).Tooltip("Use a box in front instead of the cone")
+     .AddFloat("hitboxWidth", &MeleeAttacker::hitboxWidth).Range(0, 100, 0.05).Tooltip("How wide the hit box is")
+     .AddFloat("hitboxHeight", &MeleeAttacker::hitboxHeight).Range(0, 100, 0.05).Tooltip("How tall the hit box is")
+     .AddFloat("hitboxDepth", &MeleeAttacker::hitboxDepth).Range(0, 100, 0.05).Tooltip("How far in front the hit box reaches")
+     .AddString("weapon", &MeleeAttacker::weapon).Tooltip("A weapon from the project list. Empty uses the numbers above, or the held item")
+     .AddString("weaponFile", &MeleeAttacker::weaponFile).Tooltip("An .okayweapon file of its own. Empty uses the project list");
+    b.Commit();
+}
+
+void RegisterRangedWeapon() {
+    PropertyBuilder<RangedWeapon> b("RangedWeapon", "gun", "Gameplay");
+    b.Section("Shot")
+     .AddFloat("damage", &RangedWeapon::damage).Range(0, kBig, 0.1).Tooltip("How much health one shot removes")
+     .AddFloat("fireRate", &RangedWeapon::fireRate).Range(0, 1000, 0.1).Tooltip("Shots per second")
+     .AddFloat("range", &RangedWeapon::range).Range(0, kBig, 0.1).Tooltip("How far an instant shot reaches")
+     .AddFloat("knockback", &RangedWeapon::knockback).Range(0, kBig, 0.1).Tooltip("How hard a shot pushes a body")
+     .AddFloat("spread", &RangedWeapon::spread).Range(0, 180, 0.1).Tooltip("Aim wobble, in degrees")
+     .AddBool("hitscan", &RangedWeapon::hitscan).Tooltip("On: the shot lands at once. Off: it spawns a projectile")
+     .AddString("projectile", &RangedWeapon::projectile).Tooltip("Prefab for a shot that is not instant")
+     .AddFloat("projectileSpeed", &RangedWeapon::projectileSpeed).Range(0, kBig, 0.1).Tooltip("How fast that projectile flies")
+     .AddFloat("muzzleHeight", &RangedWeapon::muzzleHeight).Range(-10, 10, 0.05).Tooltip("How high above the object the shot starts")
+     .Section("Rounds")
+     .AddInt("magazine", &RangedWeapon::magazine).Range(0, 100000, 1).Tooltip("Rounds the gun holds. 0 means it never reloads")
+     .AddInt("reserve", &RangedWeapon::reserve).Range(-1, 1000000, 1).Tooltip("Spare rounds. -1 means they never run out")
+     .AddFloat("reloadTime", &RangedWeapon::reloadTime).Range(0, 60, 0.01).Tooltip("Seconds to refill the gun")
+     .AddBool("autoReload", &RangedWeapon::autoReload).Tooltip("Start a reload when the gun is empty")
+     .AddKey("fireKey", &RangedWeapon::fireKey).Tooltip("The key that fires. 0 means no key")
+     .AddInt("fireButton", &RangedWeapon::fireButton).Range(-1, 4, 1).Tooltip("Mouse button that fires. -1 means none. 0 is the left button")
+     .AddKey("reloadKey", &RangedWeapon::reloadKey).Tooltip("The key that reloads")
+     .AddString("weapon", &RangedWeapon::weapon).Tooltip("A gun from the project list. Empty uses the numbers above, or the held item")
+     .AddString("weaponFile", &RangedWeapon::weaponFile).Tooltip("An .okayweapon file of its own. Empty uses the project list");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
     RegisterPlayerController();
     RegisterPlayerView();
@@ -1113,6 +1166,8 @@ void RegisterGameplayProperties() {
     RegisterVehicleController();
     RegisterVehicleController2D();
     RegisterProjectile3D();
+    RegisterMeleeAttacker();
+    RegisterRangedWeapon();
     RegisterSpawner();
     RegisterVolume();
     RegisterMusicPlayer();

@@ -28,9 +28,17 @@ them.
 ## Player attacks (Melee Attacker)
 
 *Add Component ▸ Gameplay ▸ Melee Attacker.* On attack input (`attackKey`, default F,
-and/or left mouse) it hits every NPC within `range` inside a `arc`-degree cone in
-front for `damage`, on a `cooldown`. Broadcasts `player_attack`. `Swing()` is exposed
-for custom inputs/scripts.
+and/or left mouse) it hits whatever is inside `range` and the `arc`-degree cone in
+front: a Health component, survival health, RPG stats, or an NPC. A weapon from
+**View > Editors & Tools > Weapons** replaces those numbers and gives the swing a hit
+window, a combo and knockback. See `docs/weapons.md`. Broadcasts `player_attack`.
+`Swing()` is exposed for custom inputs/scripts.
+
+## Guns (Ranged Weapon)
+
+*Add Component ▸ Gameplay ▸ Ranged Weapon (gun).* Fires on a rate, spends the rounds
+in the gun, and reloads from the spare rounds. The same weapon list supplies the
+numbers. An instant shot hurts the first health it reaches. See `docs/weapons.md`.
 
 ## Spawner (enemy waves / loot)
 

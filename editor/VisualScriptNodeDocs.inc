@@ -15697,6 +15697,89 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "SwingWeapon";
+        d.title = "Swing Weapon";
+        d.description = "Starts a swing on this object's Melee Attacker. A weapon with a hit window lands during the window, not on this node. Swung is true when that component is there.";
+        d.requirements = "Needs a Melee Attacker on this object. Runs in Play mode.";
+        d.component = "MeleeAttacker";
+        d.example = "Put Swing Weapon after On Key, and use the Swung output if you need to know the component was there.";
+        d.related = "FireWeapon";
+        d.keywords = "swing weapon melee";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Swing Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Swing Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Swung", "Bool", "True when this object has a Melee Attacker. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "FireWeapon";
+        d.title = "Fire Weapon";
+        d.description = "Fires this object's gun once, if the fire rate, the reload and the rounds allow it. Fired is true when a shot left the gun.";
+        d.requirements = "Needs a Ranged Weapon on this object. Runs in Play mode.";
+        d.component = "RangedWeapon";
+        d.example = "Put Fire Weapon after On Key. Wire Fired into a branch if you need to know the shot left the gun.";
+        d.related = "ReloadWeapon";
+        d.keywords = "fire weapon gun";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fire Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Fire Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Fired", "Bool", "True when a shot left the gun. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ReloadWeapon";
+        d.title = "Reload Weapon";
+        d.description = "Starts reloading this object's gun from its spare rounds. Started is true when the object has a gun.";
+        d.requirements = "Needs a Ranged Weapon on this object. Runs in Play mode.";
+        d.component = "RangedWeapon";
+        d.example = "Put Reload Weapon after On Key. Started tells you the object has a gun.";
+        d.related = "FireWeapon";
+        d.keywords = "reload weapon gun";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reload Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Reload Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Started", "Bool", "True when this object has a gun. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "WeaponAmmo";
+        d.title = "Get Ammo";
+        d.description = "How many rounds are left in this object's gun. Rounds is 0 when there is no gun.";
+        d.requirements = "Needs a Ranged Weapon on this object to read a real count. It runs in Play mode.";
+        d.component = "RangedWeapon";
+        d.example = "Wire Get Ammo's Rounds output into a comparison or a text field. It has no flow of its own.";
+        d.related = "FireWeapon";
+        d.keywords = "ammo rounds gun";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Rounds", "Number", "Rounds left in the gun. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "SetWeapon";
+        d.title = "Set Weapon";
+        d.description = "Points the Melee Attacker, the gun and the top-down shooter on this object at this weapon id. Set is true when this object exists.";
+        d.requirements = "Needs a Melee Attacker, a Ranged Weapon or a top-down shooter on this object for the id to be stored. It runs in Play mode.";
+        d.component = "MeleeAttacker|RangedWeapon";
+        d.example = "Put Set Weapon after On Start and type the weapon id into the node.";
+        d.related = "SwingWeapon";
+        d.keywords = "set weapon";
+        d.setting = "weapon. The value typed into the node.";
+        d.settingDefault = "sword";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Set", "Bool", "True when this object exists. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "SetObjectVar";
         d.title = "Set Object Var";
         d.description = "Stores Value in a variable on another object, named in Target.";

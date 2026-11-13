@@ -188,7 +188,7 @@ bool FilterMatches(Filter f, const std::string& e) {
         case Filter::Scenes: return e == ".okayscene";
         case Filter::Materials: return e == ".okaymat";
         case Filter::Prefabs: return e == ".okayprefab";
-        case Filter::Data: return e == ".okaydata" || e == ".okayitems" || e == ".okayloot" || e == ".okayrecipes" || e == ".json";
+        case Filter::Data: return e == ".okaydata" || e == ".okayitems" || e == ".okayloot" || e == ".okayrecipes" || e == ".okayweapon" || e == ".json";
         case Filter::Audio: return e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac";
         case Filter::Models: return okay::AssetTypeFromExtension(e) == okay::AssetType::Model;
         case Filter::All: case Filter::Folders: return true;

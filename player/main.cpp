@@ -1431,6 +1431,7 @@ int main(int argc, char** argv) {
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
+    WeaponBook::Get().Load(baseDir + "weapons.okayweapon"); // the project's weapons (shipped by Build Game)
     // The project's strings in every language (shipped by Build Game), and the
     // language to show: the one the player chose before, else the OS language
     // when the game has it, else the table's default.

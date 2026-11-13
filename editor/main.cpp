@@ -17,6 +17,7 @@
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
+#include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
 #include "okay/Core/BuildInfo.hpp"
@@ -5006,6 +5007,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
         {"Item Database", "Item Database",             &g_showItemDatabase,  "Editors & Tools", PI_Package},
+        {"Weapons",       "Weapons",                   &g_showWeapons,       "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
@@ -6549,6 +6551,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
             ImGui::MenuItem("Item Database", nullptr, &g_showItemDatabase);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define every item once (name, icon, stack size, weight, grid size, rarity, what using it does). Inventories, chests, recipes and builders all use these.");
+            ImGui::MenuItem("Weapons", nullptr, &g_showWeapons);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these.");
             ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
             ImGui::EndMenu();
@@ -10437,6 +10441,8 @@ void DrawProject(EditorState& ed) {
             RequestLoad(ed, full);
         } else if (ext == ".okayprefab") {
             OpenPrefabMode(ed, full);   // double-click: edit the prefab on its own (right-click > Place in Scene puts a copy in the scene)
+        } else if (ext == ".okayweapon") {
+            OpenWeaponFile(full);
         } else if (ext == ".okaydata") {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
@@ -17117,6 +17123,7 @@ void HandleShortcuts(EditorState& ed) {
         if (projectKeys && g_pb && g_pb->CanUndo()) {}   // the Project panel undoes its own file operation
         else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
+        else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -17124,6 +17131,7 @@ void HandleShortcuts(EditorState& ed) {
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
+        else if (WeaponEditorFocused() && WeaponEditorUndo(true)) ConsoleLog("Redo (weapons)");
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
@@ -35111,21 +35119,73 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* c = dynamic_cast<MeleeAttacker*>(curComp)) {
         if (CompHeader("Melee Attacker", c, &toRemove)) {
-            ImGui::TextDisabled("Hits NPCs in a cone in front on attack input.");
+            ImGui::TextDisabled("Swings on the attack key. A hit lands on health, survival health, stats or an NPC inside the arc, and only while the hit window is open.");
+            if (WeaponReferenceField("Weapon##melee", c->weapon, c->weaponFile, false)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A melee weapon from the list. Empty uses the numbers below, or the weapon tied to the held item.");
+            if (!c->weapon.empty() || !c->weaponFile.empty())
+                ImGui::TextDisabled("The weapon replaces these numbers while it is set.");
             if (ImGui::DragFloat("Damage##melee", &c->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
-            oked::FieldTip("Damage##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much health one hit removes.");
             if (ImGui::DragFloat("Range##melee", &c->range, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            oked::FieldTip("Range##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the swing reaches.");
             if (ImGui::DragFloat("Arc##melee", &c->arc, 1.0f, 1.0f, 360.0f, "%.0f deg")) ed.dirty = true;
-            oked::FieldTip("Arc##melee");
-            if (ImGui::DragFloat("Cooldown##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
-            oked::FieldTip("Cooldown##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How wide the swing is, in degrees. 360 hits all around.");
+            if (ImGui::DragFloat("Time between swings##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds before another swing can start.");
+            if (ImGui::DragFloat("Swing time##melee", &c->swingTime, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the swing lasts. 0 lands the hit at once.");
+            if (ImGui::DragFloat("Hit window opens##melee", &c->hitStart, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds into the swing when a hit can land.");
+            if (ImGui::DragFloat("Hit window closes##melee", &c->hitEnd, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds into the swing when the hit closes.");
+            if (ImGui::DragFloat("Knockback##melee", &c->knockback, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard a hit pushes a body away.");
+            if (ImGui::DragInt("Combo hits##melee", &c->comboSteps, 0.1f, 1, 20)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many hits belong to one chain. 1 is a single swing.");
+            if (ImGui::Checkbox("Use a hit box##melee", &c->useHitbox)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box in front of the fighter, instead of the cone.");
             char k[2] = { c->attackKey, 0 };
-            if (ImGui::InputText("Attack Key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
-            oked::FieldTip("Attack Key##melee");
-            if (ImGui::Checkbox("Left Mouse Too##melee", &c->useMouse)) ed.dirty = true;
-            oked::FieldTip("Left Mouse Too##melee");
+            if (ImGui::InputText("Attack key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that starts a swing.");
+            if (ImGui::Checkbox("Also use the left mouse button##melee", &c->useMouse)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##melee")) toRemove = c;
+        }
+    }
+    if (auto* gun = dynamic_cast<RangedWeapon*>(curComp)) {
+        if (CompHeader("Ranged Weapon", gun, &toRemove)) {
+            ImGui::TextDisabled("Fires on a rate, spends the rounds in the gun, and reloads from the spare rounds.");
+            if (WeaponReferenceField("Weapon##gun", gun->weapon, gun->weaponFile, true)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A gun from the list. Empty uses the numbers below, or the weapon tied to the held item.");
+            if (!gun->weapon.empty() || !gun->weaponFile.empty())
+                ImGui::TextDisabled("The weapon replaces these numbers while it is set.");
+            if (ImGui::DragFloat("Damage##gun", &gun->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much health one shot removes.");
+            if (ImGui::DragFloat("Shots per second##gun", &gun->fireRate, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the gun can fire.");
+            if (ImGui::DragFloat("Range##gun", &gun->range, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far an instant shot reaches.");
+            if (ImGui::DragInt("Rounds in the gun##gun", &gun->magazine, 0.2f, 0, 100000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many rounds the gun holds. 0 means it never reloads.");
+            if (ImGui::DragInt("Spare rounds##gun", &gun->reserve, 0.2f, -1, 1000000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rounds waiting for the next reload. -1 means they never run out.");
+            if (ImGui::DragFloat("Reload time##gun", &gun->reloadTime, 0.01f, 0.0f, 30.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to refill the gun.");
+            if (ImGui::DragFloat("Knockback##gun", &gun->knockback, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard a shot pushes a body.");
+            if (ImGui::Checkbox("Instant shot##gun", &gun->hitscan)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: the shot lands at once. Off: it spawns a projectile.");
+            if (ImGui::Checkbox("Reload when empty##gun", &gun->autoReload)) ed.dirty = true;
+            char fk[2] = { gun->fireKey, 0 };
+            if (ImGui::InputText("Fire key##gun", fk, sizeof(fk))) { gun->fireKey = fk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that fires. Leave it blank for no key.");
+            char rk[2] = { gun->reloadKey, 0 };
+            if (ImGui::InputText("Reload key##gun", rk, sizeof(rk))) { gun->reloadKey = rk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that reloads.");
+            if (ed.isPlaying())
+                ImGui::TextDisabled("%d rounds in the gun, %s spare%s", gun->Rounds(),
+                    gun->Spare() < 0 ? "unlimited" : std::to_string(gun->Spare()).c_str(),
+                    gun->IsReloading() ? ", reloading" : "");
+            if (ImGui::SmallButton("Remove##gun")) toRemove = gun;
         }
     }
     if (auto* c = dynamic_cast<Spawner*>(curComp)) {
@@ -39987,6 +40047,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Crafting>(), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
             if (item(!go->GetComponent<CraftingMenu>(), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeleeAttacker>(), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<RangedWeapon>(), "Ranged Weapon (gun)")) { go->AddComponent<RangedWeapon>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
@@ -48708,6 +48769,7 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
@@ -49234,6 +49296,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
         { OKAY_PROFILE("UI.ItemDatabase"); if (g_showItemDatabase) DrawItemDatabase(ed); }
+        { OKAY_PROFILE("UI.Weapons"); if (g_showWeapons) DrawWeaponEditor(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
         // Make Playable Character is queued from the Project panel, which draws
         // after the Inspector. A drop onto a player is queued from the Hierarchy,

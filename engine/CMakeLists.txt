@@ -100,6 +100,9 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Combat/WeaponBook.cpp
+    src/Components/MeleeAttacker.cpp
+    src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
     src/Inventory/InventoryPersistence.cpp

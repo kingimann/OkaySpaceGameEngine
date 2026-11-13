@@ -70,6 +70,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
     UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
+    WeaponEditor.cpp                                                   # the Weapons window (weapon definitions)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...

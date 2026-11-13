@@ -682,6 +682,11 @@ inline const std::vector<VsDef>& Registry() {
         {"CraftItem",       "Craft",            CAT_ACTION, true, {""}, {"Times"}, {"Crafted"}, 1, "recipe output item"},
         {"LootRoll",        "Loot Roll",        CAT_ACTION, true, {""}, {}, {"Rolled"}, 1, "loot table"},
         {"SpawnPickup",     "Spawn Pickup",     CAT_ACTION, true, {""}, {"Count", "X", "Y", "Z"}, {"Name"}, 1, "item"},
+        {"SwingWeapon",     "Swing Weapon",     CAT_ACTION, true, {""}, {}, {"Swung"}, 0, nullptr},
+        {"FireWeapon",      "Fire Weapon",      CAT_ACTION, true, {""}, {}, {"Fired"}, 0, nullptr},
+        {"ReloadWeapon",    "Reload Weapon",    CAT_ACTION, true, {""}, {}, {"Started"}, 0, nullptr},
+        {"WeaponAmmo",      "Get Ammo",         CAT_DATA, false, {}, {}, {"Rounds"}, 0, nullptr},
+        {"SetWeapon",       "Set Weapon",       CAT_ACTION, true, {""}, {}, {"Set"}, 1, "weapon"},
         // Other objects' variables, save / load.
         {"SetObjectVar",    "Set Object Var",   CAT_VAR, true, {""}, {"Target", "Value"}, {}, 1, "variable"},
         {"GetObjectVar",    "Get Object Var",   CAT_VAR, false, {}, {"Target"}, {"Value"}, 1, "variable"},
@@ -1038,7 +1043,7 @@ public:
             {"Condition", "always"}, {"Actions", "log Hello"},
             {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
-            {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}};
+            {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}, {"SetWeapon", "sword"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -2085,6 +2090,10 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="EquipItem")      out += ind + "equip(" + in(0, "\"\"") + ", " + q(arg("item")) + ")\n";
     else if (t=="CraftItem")      out += ind + "craft(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
     else if (t=="LootRoll")       out += ind + "loot_roll(" + q(arg("loot")) + ")\n";
+    else if (t=="SwingWeapon")    out += ind + "weapon_swing()\n";
+    else if (t=="FireWeapon")     out += ind + "weapon_fire()\n";
+    else if (t=="ReloadWeapon")   out += ind + "weapon_reload()\n";
+    else if (t=="SetWeapon")      out += ind + "weapon_set(" + q(arg("sword")) + ")\n";
     else if (t=="SpawnPickup")    out += ind + "spawn_pickup(" + q(arg("item")) + ", " + in(0, "1") + ", " + in(1, "0") + ", " + in(2, "0") + ", " + in(3, "0") + ")\n";
     else if (t=="SetBuildPalette") {   // "Name=prefab|icon, ..." -> one build_palette_add per item
         out += ind + "build_palette_clear()\n";

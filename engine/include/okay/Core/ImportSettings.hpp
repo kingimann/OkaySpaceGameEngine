@@ -26,7 +26,7 @@ enum class AssetType {
     VisualScript,   ///< okayvs
     Sequence,       ///< okayseq
     Script,         ///< cs lua
-    Data,           ///< okaydata okayitems okayloot okayrecipes okayloc okaynav json txt bin
+    Data,           ///< okaydata okayitems okayloot okayweapon okayrecipes okayloc okaynav json txt bin
     Font,           ///< ttf otf
     Other           ///< any extension not listed above
 };

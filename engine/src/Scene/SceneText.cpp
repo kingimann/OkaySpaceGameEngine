@@ -90,7 +90,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "destructible", "dialoguerunner", "dollycart", "dollypath", "draggable", "dropzone", "edgecollider2d",
     "equipment", "eventsystem", "fbik", "fbikx", "flashlight", "follow2d", "footik",
     "fpctrl", "fpfeel", "fphand", "fphands", "fphands2", "fpstance", "frctrl",
-    "gridinventory", "gridinventoryui", "groundshadow", "guid", "holdable", "holdprompt", "humretarget",
+    "gridinventory", "gridinventoryui", "groundshadow", "guid", "gun", "holdable", "holdprompt", "humretarget",
     "iktarget", "ikx", "inventory", "inventoryui", "itempickup", "joint2d", "joint3d",
     "jumppad", "layer", "lifetime", "light", "limbik", "linerenderer", "loadingscreen",
     "loc", "locked", "logicsource", "logictarget", "lookatik", "lootsource", "material",

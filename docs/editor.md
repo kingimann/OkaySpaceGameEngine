@@ -429,6 +429,7 @@ MyGame/
     build_profiles.cfg      the named build profiles
     scene_build.txt         Scenes In Build, in order (Scene Manager)
   items.okayitems           the Item Database          strings.okayloc   the string table (Localization window)
+  weapons.okayweapon        the weapon list             (View > Editors & Tools > Weapons)
 ```
 
 Each project has its own `project.okayproj` and its own build settings: opening another project loads that

@@ -98,6 +98,10 @@
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/Crafting.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
@@ -6415,6 +6419,40 @@ struct OkayScriptVM::Impl {
         b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);
             return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["weapon_swing"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* m = go ? go->GetComponent<MeleeAttacker>() : nullptr;
+            if (!m) return Value{0.0f};
+            m->Swing();
+            return Value{1.0f};
+        };
+        b["weapon_fire"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            return Value{g && g->Fire() ? 1.0f : 0.0f};
+        };
+        b["weapon_reload"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            if (!g) return Value{0.0f};
+            g->Reload();
+            return Value{1.0f};
+        };
+        b["weapon_ammo"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            return Value{(float)(g ? g->Rounds() : 0)};
+        };
+        b["weapon_set"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go || a.empty()) return Value{0.0f};
+            const std::string id = a[0].AsString();
+            bool any = false;
+            if (auto* m = go->GetComponent<MeleeAttacker>()) { m->weapon = id; any = true; }
+            if (auto* g = go->GetComponent<RangedWeapon>()) { g->weapon = id; any = true; }
+            if (auto* s = go->GetComponent<TopDownShooterController>()) { s->weapon = id; any = true; }
+            return Value{any ? 1.0f : 0.0f};
         };
         b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);

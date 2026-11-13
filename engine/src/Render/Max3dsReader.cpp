@@ -7,6 +7,7 @@
 // shininess, self illumination), the keyframe section (node hierarchy, pivots,
 // position / rotation / scale tracks) and the master scale. Everything it did not
 // read is listed in ImportedModel::notes. See docs/own_3ds_reader.md.
+#include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <array>
@@ -802,7 +803,7 @@ bool Read3dsBuffer(const std::string& bytes, const std::string& baseDir, Importe
 
 bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err, bool flatten) {
     out = ImportedModel{};
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
     char buf[65536];

@@ -3,6 +3,7 @@
 // polygons), materials and textures, the node hierarchy, skins and matrix animations.
 // Anything it does not read is listed in ImportedModel::notes. See
 // okay/Render/ModelData.hpp and docs/model_import.md.
+#include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "PolygonTriangulate.hpp"
@@ -1342,7 +1343,7 @@ bool ReadColladaBuffer(const std::string& text, const std::string& baseDir, Impo
 
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err, bool flatten) {
     out = ImportedModel{};
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
     char buf[65536];

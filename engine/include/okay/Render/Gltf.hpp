@@ -24,6 +24,7 @@
 #include "okay/Math/Vec2.hpp"
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -155,7 +156,7 @@ struct GltfDoc {
 
 inline GltfDoc LoadDoc(const std::string& path) {
     GltfDoc doc;
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) return doc;
     std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (bytes.size() < 4) return doc;
@@ -192,7 +193,7 @@ inline GltfDoc LoadDoc(const std::string& path) {
                 std::size_t bp = u.find(mark);
                 if (u.rfind("data:", 0) == 0 && bp != std::string::npos)
                     Base64Decode(u.substr(bp + mark.size()), data);
-                else { std::ifstream bf(doc.dir + u, std::ios::binary);
+                else { std::ifstream bf(std::filesystem::u8path(doc.dir + u), std::ios::binary);
                        if (bf) data.assign((std::istreambuf_iterator<char>(bf)), std::istreambuf_iterator<char>()); }
             } else data = glbBin;   // bufferless entry in a .glb -> the BIN chunk
             doc.buffers.push_back(std::move(data));
@@ -448,7 +449,7 @@ inline std::string WriteImageSidecar(const GltfDoc& doc, const std::string& mode
     if (std::size_t sl = stem.find_last_of("/\\"); sl != std::string::npos) stem = stem.substr(sl + 1);
     if (std::size_t dot = stem.find_last_of('.'); dot != std::string::npos) stem = stem.substr(0, dot);
     std::string out = doc.dir + stem + "_tex" + std::to_string(imageIdx) + ext;
-    std::ofstream of(out, std::ios::binary);
+    std::ofstream of(std::filesystem::u8path(out), std::ios::binary);
     if (!of) return {};
     of.write((const char*)data.data(), (std::streamsize)data.size());
     return of ? out : std::string{};

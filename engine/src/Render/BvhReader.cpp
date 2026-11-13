@@ -2,6 +2,7 @@
 // nodes and the motion as one animation clip. Written from the public description of
 // the text format. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp
 // and docs/own_bvh_reader.md.
+#include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -331,7 +332,7 @@ bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err
 
 bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
     char buf[65536];

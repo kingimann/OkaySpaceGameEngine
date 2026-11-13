@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_map>
@@ -1070,7 +1071,7 @@ bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::str
 }
 
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "cannot open " + path; return false; }
     std::vector<std::uint8_t> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return LoadMemory(buf.data(), buf.size(), out, err, opt);

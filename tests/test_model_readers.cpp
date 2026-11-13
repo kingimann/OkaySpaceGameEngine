@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <clocale>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -454,6 +455,37 @@ int main() {
             int tris = -1; const bool ok = gltfTris(mode, ix, useIdx || ix.empty() ? useIdx : false, nPos, &tris);
             CHECK(!ok || (tris >= 0 && tris <= std::max(nPos, nIdx)));
         }
+    }
+
+    // ---------------- Non-ASCII directory and file names (paths are UTF-8 strings) ----------------
+    {
+        // On Windows a narrow fopen() / ifstream path goes through the ANSI code page, so a folder such as "Müller" or a
+        // Japanese file name failed to open. Copy the fixtures under such names and read each format by path.
+        namespace fsx = std::filesystem;
+        const std::string uni = "okay_m\xC3\xBCller_\xE6\x97\xA5\xE6\x9C\xAC";   // "okay_müller_日本"
+        std::error_code ec;
+        const fsx::path dir = fsx::temp_directory_path(ec) / fsx::u8path(uni);
+        fsx::remove_all(dir, ec); fsx::create_directories(dir, ec);
+        const std::string d8 = dir.u8string() + "/";
+        struct F { const char* src; const char* dst; };
+        const F files[] = {{"cube.obj", "w\xC3\xBCrfel.obj"}, {"cube.mtl", "cube.mtl"}, {"cube_ascii.stl", "\xE7\xAB\x8B\xE6\x96\xB9.stl"}, {"cube_ascii.ply", "cube.ply"}, {"cube_le.ply", "cube_le.ply"},
+                           {"walk.bvh", "walk.bvh"}, {"zup_cm.dae", "z\xC3\xBCp.dae"}, {"cube.3ds", "cube.3ds"}};
+        for (const F& f : files) { std::ofstream o(fsx::u8path(d8 + f.dst), std::ios::binary); const std::string b = Slurp(kDir + f.src); o.write(b.data(), (std::streamsize)b.size()); }
+        { std::ofstream o(fsx::u8path(d8 + "rig.fbx"), std::ios::binary); const std::string b = Slurp(std::string(OKAY_SOURCE_DIR) + "/tests/assets/fbx/cube_zup_cm_bin.fbx"); o.write(b.data(), (std::streamsize)b.size()); }
+        SetImportBackend(".dae", ImportBackend::Own); SetImportBackend(".bvh", ImportBackend::Own); SetImportBackend(".3ds", ImportBackend::Own);
+        for (const F& f : files) {
+            const std::string name = f.dst;
+            if (name.size() < 4 || name.substr(name.size() - 4) == ".mtl") continue;
+            ImportedModel m; std::string e;
+            const bool ok = ImportModelData(d8 + name, m, ImportBackend::Own, false, &e);
+            if (!ok) std::printf("  %s: %s\n", name.c_str(), e.c_str());
+            CHECK(ok);
+        }
+        if (fsx::exists(fsx::u8path(d8 + "cube.mtl"), ec)) { ImportedModel m; std::string e; CHECK(ReadObjFile(d8 + "w\xC3\xBCrfel.obj", m, &e) && !m.materials.empty()); }   // the .mtl beside it is found too
+        fbx::Scene fs_; std::string fe;
+        CHECK(fbx::LoadFile(d8 + "rig.fbx", fs_, &fe));
+        { bool ok = false; Mesh mm = ImportModel(d8 + "rig.fbx", &ok); CHECK(ok && !mm.vertices.empty()); }
+        fsx::remove_all(dir, ec);
     }
 
     // ---------------- Locale: a decimal comma must not change what a file reads as ----------------

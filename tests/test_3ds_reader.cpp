@@ -17,6 +17,22 @@
 
 using namespace okay;
 
+// setenv / unsetenv exist on POSIX only; the Windows C runtime has _putenv_s (an empty value removes the variable).
+static void TestSetEnv(const char* n, const char* v) {
+#ifdef _WIN32
+    _putenv_s(n, v);
+#else
+    setenv(n, v, 1);
+#endif
+}
+static void TestUnsetEnv(const char* n) {
+#ifdef _WIN32
+    _putenv_s(n, "");
+#else
+    unsetenv(n);
+#endif
+}
+
 static const std::string kDir = std::string(OKAY_SOURCE_DIR) + "/tests/data/models/";
 
 static std::string Slurp(const std::string& p) {
@@ -203,7 +219,7 @@ int main() {
     // ---------------- the seam ----------------
     {
         CHECK(HasOwnReader(".3ds") && HasOwnReader(".3DS"));
-        unsetenv("OKAY_OWN_3DS");
+        TestUnsetEnv("OKAY_OWN_3DS");
         SetImportBackend(".3ds", ImportBackend::Default);
         ImportedModel m;
         if (!AssimpAvailable()) {
@@ -214,11 +230,11 @@ int main() {
                 bool ok = true; ImportModel(kDir + "cube.3ds", &ok); CHECK(!ok);
             }
         }
-        setenv("OKAY_OWN_3DS", "1", 1);
+        TestSetEnv("OKAY_OWN_3DS", "1");
         CHECK(EffectiveImportBackend(".3ds") == ImportBackend::Own);
         CHECK(ImportableExtensions().find(".3ds") != std::string::npos);
         CHECK(ImportModelData(kDir + "cube.3ds", m, ImportBackend::Default, false, &err) && m.backend == "own" && m.parts.size() == 1);
-        setenv("OKAY_OWN_3DS", "0", 1);
+        TestSetEnv("OKAY_OWN_3DS", "0");
         CHECK(EffectiveImportBackend(".3ds") != ImportBackend::Own);
         CHECK(SetImportBackend(".3ds", ImportBackend::Own));   // run-time beats the environment
         CHECK(EffectiveImportBackend(".3ds") == ImportBackend::Own);
@@ -240,7 +256,7 @@ int main() {
         }
         CHECK(!ImportModelData(kDir + "does_not_exist.3ds", m, ImportBackend::Own, false, &err) && !err.empty());
         SetImportBackend(".3ds", ImportBackend::Default);
-        unsetenv("OKAY_OWN_3DS");
+        TestUnsetEnv("OKAY_OWN_3DS");
     }
 
     TEST_MAIN_RESULT();

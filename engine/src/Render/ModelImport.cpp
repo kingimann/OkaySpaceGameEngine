@@ -782,14 +782,14 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
         if (!s->length) continue;
-        fs::path p(UfbxStr(*s));
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
-        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
-        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).string();
+        const fs::path p = fs::u8path(UfbxStr(*s));
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).u8string();
+        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).u8string();
     }
     if (tex->content.size > 0 && tex->content.data) {
         std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
@@ -797,13 +797,13 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
             const unsigned char* d = (const unsigned char*)tex->content.data;
             ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
         }
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -1153,7 +1153,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
             std::string cn = UfbxStr(st->name);
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();   // Mixamo: the file name says what it is
+                cn = std::filesystem::u8path(path).stem().u8string();   // Mixamo: the file name says what it is
                 if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;
@@ -1228,29 +1228,29 @@ std::string OwnTexturePath(const fbx::Texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const std::string* s : {&tex->fileName, &tex->relativeFileName}) {
         if (s->empty()) continue;
-        fs::path p(*s);
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        const fs::path p = fs::u8path(*s);
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
         // Windows paths in the file ("C:\art\x.png") on a POSIX host: use the part after the last separator.
         std::string base = *s; const std::size_t sl = base.find_last_of("/\\"); if (sl != std::string::npos) base = base.substr(sl + 1);
         if (!base.empty()) {
-            if (fs::exists(dir / base, ec)) return (dir / base).string();
-            if (fs::exists(dir / "textures" / base, ec)) return (dir / "textures" / base).string();
+            if (fs::exists(dir / fs::u8path(base), ec)) return (dir / fs::u8path(base)).u8string();
+            if (fs::exists(dir / "textures" / fs::u8path(base), ec)) return (dir / "textures" / fs::u8path(base)).u8string();
         }
     }
     if (!tex->content.empty()) {
         std::string ext = fs::path(tex->fileName).extension().string();
         if (ext.empty()) ext = (tex->content.size() > 2 && tex->content[0] == 0xFF && tex->content[1] == 0xD8) ? ".jpg" : ".png";
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data(), (std::streamsize)tex->content.size());
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -1487,7 +1487,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
             std::string cn = fc.name;
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();
+                cn = std::filesystem::u8path(path).stem().u8string();
                 if (sc.clips.size() > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;

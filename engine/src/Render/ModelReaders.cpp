@@ -1,6 +1,7 @@
 // Our own model readers: OBJ (+MTL), STL (ascii + binary), PLY (ascii + binary).
 // Every reader works on an in-memory buffer, bounds-checks every read, and fails
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
+#include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "PolygonTriangulate.hpp"
@@ -24,7 +25,7 @@ constexpr std::size_t kMaxMtlBytes  = 16u * 1024u * 1024u;
 bool Fail(std::string* err, const char* msg) { if (err) *err = msg; return false; }
 
 bool ReadAllBytes(const std::string& path, std::size_t cap, std::string& out, std::string* err) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) return Fail(err, "cannot open file");
     out.clear();
     char buf[65536];
@@ -708,7 +709,7 @@ bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err) 
 }
 
 bool PlyFileDeclaresDuplicateVertex(const std::string& path) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) return false;
     std::string pending;
     pending.reserve(8192);

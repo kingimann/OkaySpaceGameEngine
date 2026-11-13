@@ -1829,6 +1829,13 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+# The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
+if(SDL2_FOUND)
+    add_executable(test_voice_races test_voice_races.cpp)
+    target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME voice_races COMMAND test_voice_races)
+endif()
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)

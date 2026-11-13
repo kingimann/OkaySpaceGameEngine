@@ -41,7 +41,8 @@ public:
     /// Only list servers for this game ("" = every game). The player sets it to
     /// the game's title.
     void SetGame(const std::string& title);
-    const std::string& Game() const;
+    /// A copy (the net worker reads it too, so no reference is handed out).
+    std::string Game() const;
 
     /// Start a refresh in the background (ignored while one is running).
     void Refresh(int sources = kAll);

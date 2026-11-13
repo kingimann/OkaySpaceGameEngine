@@ -1,5 +1,37 @@
 OkaySpace Game Engine — Changelog
 
+v2.864.0
+  Editor and visual scripting
+  - Visual scripts can declare typed variables (numbers, text, colours, lists,
+    maps and structs) with scopes. The editor has panels for variables and
+    structs, the Inspector edits them live, and the debugger can watch them.
+    Note: Add Var on a Vector3 now adds component by component.
+  - Pins show a tooltip saying what can connect, and nodes show what they do,
+    need and give.
+  - New navigation obstacles can carve holes in the navigation mesh; the editor
+    previews them.
+  - The Build window follows a <Name>_Data folder layout, strips unused assets,
+    supports StreamingAssets and writes a build report (with a dry run). The
+    player has --build-info.
+
+  Multiplayer
+  - A client now notices when the host has gone away or refuses the join,
+    instead of waiting forever.
+  - The relay only accepts a repeated hello with a valid cookie, limits how
+    fast one address can send them, and will not downgrade the protocol
+    version. Session codes no longer appear in logs, the relay checks its port
+    range, and the per-address session count follows a host that moves.
+  - Position updates at the edge of the number range no longer overflow.
+
+  Engine
+  - Hostile or damaged model files (FBX, GLB, PLY) no longer crash or hang:
+    depth, node and animation limits are enforced and out-of-range numbers are
+    clamped. Skinned meshes with bad joint indices are repaired.
+  - Physics sweeps with NaN or huge distances, huge navigation grids and path
+    searches, and array functions that changed the list while walking it no
+    longer hang or overflow.
+  - Fixed data races in the server browser and voice chat.
+
 v2.863.0
   Launcher and updates
   - Updates are checked before they are used. The Versions page no longer has

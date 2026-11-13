@@ -290,4 +290,17 @@ std::string GameObject::Path() const {
     return out;
 }
 
+void GameObject::StripToTransform() {
+    for (std::size_t i = m_components.size(); i-- > 0;)
+        if (Component* c = m_components[i].get(); c != static_cast<Component*>(transform)) {
+            // The scene records the freed address in its removal watches before the
+            // free, so a StartComponent watching while an OnDestroy destroyed the
+            // whole object skips the freed component instead of touching it (#735).
+            if (m_scene) m_scene->NotifyComponentRemoved(c);
+            m_components.erase(m_components.begin() + (long)i);
+        }
+    active = false;
+    m_destroyed = true;
+}
+
 } // namespace okay

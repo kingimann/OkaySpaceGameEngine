@@ -9,9 +9,6 @@
 
 namespace OkayUI {
 
-/// Four floats, 0..1 (ImVec4 for colours).
-struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
-
 /// The area OkayUI draws into: position (0, 0) and the display size the host gave BeginFrame (Input::displayW/H; zeros when the host
 /// gave none). OkayUI has one viewport, so there is no per-window or multi-monitor variant.
 struct Viewport {
@@ -19,18 +16,6 @@ struct Viewport {
     Vec2 GetCenter() const { return Vec2{ pos.x + size.x * 0.5f, pos.y + size.y * 0.5f }; }
 };
 Viewport GetMainViewport();
-
-/// Colour conversion between a packed 0xAABBGGRR value (Color32) and four floats 0..1. Out-of-range or non-finite floats are
-/// clamped (NaN becomes 0), so a bad colour cannot produce a bad byte.
-Vec4 ColorConvertU32ToFloat4(Color32 c);
-Color32 ColorConvertFloat4ToU32(Vec4 v);
-/// RGB <-> HSV, all 0..1 (hue 0..1 around the wheel). Non-finite input gives 0.
-void ColorConvertRGBtoHSV(float r, float g, float b, float& h, float& s, float& v);
-void ColorConvertHSVtoRGB(float h, float s, float v, float& r, float& g, float& b);
-
-/// The active theme's colour for `which` as floats 0..1 (the colour PushStyleColor would replace). Includes any PushStyleColor in force
-/// only as far as Style() does: it reads the theme itself, not the override stack.
-Vec4 GetStyleColorVec4(Col which);
 
 /// The far corner of the current window's content region, relative to the window (cursor position plus the space still available).
 /// Dear ImGui's GetContentRegionMax is the window's full content size; here it is the remaining extent from the cursor, which is
@@ -51,13 +36,9 @@ void SetScrollX(float x);
 /// The next window gets a resize grip with `minSize` as its smallest size (ResizableNextWindow). `maxSize` is not enforced.
 void SetNextWindowSizeConstraints(Vec2 minSize, Vec2 maxSize);
 
-/// A stable id for a string: a 32-bit FNV-1a hash (never 0). Unlike Dear ImGui's it does not look at the ID stack.
-unsigned GetID(const char* str);
-
-/// Accepted and ignored, so ported code compiles: OkayUI has no keyboard-default-focus item, no overlap rule between items, and no
-/// frozen table rows or columns.
+/// Accepted and ignored, so ported code compiles: OkayUI has no keyboard-default-focus item and no overlap rule between items.
+/// (Colour conversion, GetStyleColorVec4, GetID and TableSetupScrollFreeze, which this header used to define, are real OkayUI calls now: OkayUI.hpp.)
 void SetItemDefaultFocus();
 void SetNextItemAllowOverlap();
-void TableSetupScrollFreeze(int cols, int rows);
 
 } // namespace OkayUI

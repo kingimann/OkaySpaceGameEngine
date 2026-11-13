@@ -234,6 +234,13 @@ struct TableState {
     float rowTop = 0, rowBottom = 0, rowStart = 0;
     float* w[16] = {nullptr};   // persisted per-column widths (pixels)
     float headerBottom = 0;     // y below the header row (for the resize handles)
+    float topY = 0;             // y of the table's top edge (borders and resize handles start here)
+    // The flag-style API (BeginTable(id, n, flags) + TableSetupColumn): columns are described after Begin and sized on first use.
+    int   flags = 0, rowIndex = -1, nSetup = 0;
+    bool  setupDone = true;
+    const char* sLabel[16] = {nullptr};
+    int   sFlags[16] = {0};
+    float sVal[16] = {0};
 };
 TableState g_tbl;
 
@@ -3149,6 +3156,45 @@ void tblEnterCell() {
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
 }
+
+// Size the columns of a flag-style table from its TableSetupColumn calls: fixed columns take their pixel width, the rest share what is left by weight.
+void tblFinishSetup() {
+    if (g_tbl.setupDone) return;
+    g_tbl.setupDone = true;
+    float fixed = 0.0f, wsum = 0.0f; int nstretch = 0;
+    for (int i = 0; i < g_tbl.count; ++i) {
+        if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) fixed += g_tbl.sVal[i];
+        else { wsum += (i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f; ++nstretch; }
+    }
+    const float rest = std::max(g_tbl.fullW - fixed, 24.0f * (float)nstretch);
+    float sum = 0.0f;
+    for (int i = 0; i < g_tbl.count; ++i) {
+        float seed;
+        if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) seed = g_tbl.sVal[i];
+        else seed = rest * ((i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f) / (wsum > 0.0f ? wsum : 1.0f);
+        g_tbl.w[i] = floatState(g_tbl.id ^ (0x7100 + i), seed);
+        if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
+        sum += *g_tbl.w[i];
+    }
+    if (sum > 0.0f) { const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) *g_tbl.w[i] *= f; }
+}
+// The header bar with bold column labels; moves the row cursor below it.
+void tblDrawHeader(const char* const* labels) {
+    const float hh = rowH();
+    if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, g_theme.border);   // hairline under dim headers
+    else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+    const Font* prevF = g_font; g_font = &kFontBold;
+    for (int i = 0; i < g_tbl.count; ++i) {
+        const float cx = tblColX(i);
+        if (labels[i] && labels[i][0])
+            drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? g_theme.textDim : g_theme.text);
+    }
+    g_font = prevF;
+    g_tbl.rowTop += hh;
+    g_tbl.rowBottom = g_tbl.rowTop;
+    g_tbl.rowStart = g_tbl.rowTop;
+    g_tbl.headerBottom = g_tbl.rowTop;
+}
 } // namespace
 
 bool BeginTable(const char* id, int columns, const char* const* headers) {
@@ -3164,6 +3210,7 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     g_tbl.active = true; g_tbl.id = tid; g_tbl.count = columns; g_tbl.index = -1;
     g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
     g_tbl.rowTop = g_lay.cy; g_tbl.rowBottom = g_lay.cy; g_tbl.rowStart = g_lay.cy;
+    g_tbl.topY = g_lay.cy; g_tbl.flags = 0; g_tbl.rowIndex = -1; g_tbl.setupDone = true; g_tbl.nSetup = 0;
 
     // Fetch/seed persisted column widths, then rescale so they exactly fill fullW
     // (keeps the table snug when the window is resized).
@@ -3197,15 +3244,57 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     return true;
 }
 
+bool BeginTable(const char* id, int columns, TableFlags flags) {
+    if (!g_lay.active || columns < 1) return false;
+    if (columns > 16) columns = 16;
+    g_tbl.active = true; g_tbl.id = hashLabel(id); g_tbl.count = columns; g_tbl.index = -1;
+    g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
+    g_tbl.rowTop = g_tbl.rowBottom = g_tbl.rowStart = g_tbl.headerBottom = g_tbl.topY = g_lay.cy;
+    g_tbl.flags = (int)flags; g_tbl.rowIndex = -1; g_tbl.nSetup = 0; g_tbl.setupDone = false;
+    return true;
+}
+
+void TableSetupColumn(const char* label, int columnFlags, float widthOrWeight) {
+    if (!g_tbl.active || g_tbl.setupDone || g_tbl.nSetup >= g_tbl.count) return;
+    g_tbl.sLabel[g_tbl.nSetup] = label; g_tbl.sFlags[g_tbl.nSetup] = columnFlags; g_tbl.sVal[g_tbl.nSetup] = widthOrWeight;
+    ++g_tbl.nSetup;
+}
+
+void TableHeadersRow() {
+    if (!g_lay.active || !g_tbl.active) return;
+    tblFinishSetup();
+    if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
+    g_tbl.rowTop = g_tbl.rowBottom;
+    const char* none[16] = {nullptr};
+    for (int i = 0; i < g_tbl.count && i < g_tbl.nSetup; ++i) none[i] = g_tbl.sLabel[i];
+    tblDrawHeader(none);
+}
+
+bool TableSetColumnIndex(int column) {
+    if (!g_lay.active || !g_tbl.active || column < 0 || column >= g_tbl.count) return false;
+    g_tbl.index = column - 1;
+    return TableNextColumn();
+}
+int TableGetColumnIndex() { return g_tbl.active ? g_tbl.index : -1; }
+int TableGetRowIndex() { return g_tbl.active ? g_tbl.rowIndex : -1; }
+
 void TableNextRow() {
     if (!g_lay.active || !g_tbl.active) return;
+    tblFinishSetup();
     if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
     g_tbl.rowTop = g_tbl.rowBottom;   // next row starts below the tallest cell so far
     g_tbl.index = -1;
+    ++g_tbl.rowIndex;
+    if ((g_tbl.flags & Table_RowBg) && (g_tbl.rowIndex & 1)) {   // banded rows: drawn first so the cells go on top (one text row tall)
+        unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
+        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, rowH(), withAlpha(white, 0.045f, tmp));
+    }
+    if ((g_tbl.flags & Table_BordersInnerH) && g_tbl.rowTop > g_tbl.rowStart + 0.5f) quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, 1.0f, g_theme.border);
 }
 
 bool TableNextColumn() {
     if (!g_lay.active || !g_tbl.active) return false;
+    tblFinishSetup();
     if (g_tbl.index >= 0) {           // remember how tall the cell we're leaving got
         if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
     }
@@ -3217,16 +3306,17 @@ bool TableNextColumn() {
 
 void EndTable() {
     if (!g_lay.active || !g_tbl.active) return;
+    tblFinishSetup();
     if (g_lay.cy > g_tbl.rowBottom) g_tbl.rowBottom = g_lay.cy;
-    const float top = g_tbl.rowStart, bottom = g_tbl.rowBottom;
+    const float top = g_tbl.topY, bottom = g_tbl.rowBottom;
 
     // Column borders + draggable resize handles (applied next frame).
     for (int i = 1; i < g_tbl.count; ++i) {
         float bx = tblColX(i);
-        quad(bx - 0.5f, g_tbl.headerBottom - rowH(), 1.0f, bottom - (g_tbl.headerBottom - rowH()), g_theme.border);
+        quad(bx - 0.5f, top, 1.0f, bottom - top, g_theme.border);
         const int hid = g_tbl.id ^ (0x7b00 + i);
         const float grab = 4.0f;
-        const bool over = hit(bx - grab, top - rowH(), grab * 2.0f, bottom - top + rowH());
+        const bool over = !(g_tbl.flags & Table_NoResize) && hit(bx - grab, top, grab * 2.0f, bottom - top);
         if (over) g_hot = hid;
         if (g_active == hid) {
             if (!g_in.mouseDown) g_active = 0;

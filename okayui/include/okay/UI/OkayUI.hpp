@@ -486,6 +486,34 @@ bool BeginTable(const char* id, int columns, const char* const* headers = nullpt
 /// Same, with starting column widths in proportion to `weights` (e.g. {3, 1, 1}
 /// makes the first column three times as wide). Users can still drag them.
 bool BeginTable(const char* id, int columns, const char* const* headers, const float* weights);
+/// The flag-style table, for tables whose columns are described one by one (the usual way to build a table):
+///     if (BeginTable("stats", 3, Table_RowBg | Table_BordersInnerH)) {
+///         TableSetupColumn("Name", Col_WidthFixed, 120); TableSetupColumn("Value"); TableSetupColumn("Note", 0, 2);
+///         TableHeadersRow();
+///         TableNextRow(); TableSetColumnIndex(0); Text("HP"); TableSetColumnIndex(1); Text("100");
+///         EndTable();
+///     }
+/// Set the columns up right after BeginTable (up to 16). A Col_WidthFixed column keeps `widthOrWeight` pixels at first; the others
+/// share the rest by weight (0 = weight 1). Users can still drag the borders unless Table_NoResize is set.
+enum TableFlags : int {
+    Table_None         = 0,
+    Table_RowBg        = 1,   // every second row gets a faint band (drawn one text row tall)
+    Table_BordersInnerH = 2,  // a hairline between rows
+    Table_NoResize     = 4,   // the column borders cannot be dragged
+};
+enum TableColumnFlags : int {
+    Col_None       = 0,
+    Col_WidthFixed = 1,       // `widthOrWeight` is pixels
+};
+inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
+bool BeginTable(const char* id, int columns, TableFlags flags);
+void TableSetupColumn(const char* label, int columnFlags = 0, float widthOrWeight = 0.0f);
+/// The header bar with the labels given to TableSetupColumn.
+void TableHeadersRow();
+/// Jump to column `column` of the current row (false when it does not exist); like TableNextColumn but not in order.
+bool TableSetColumnIndex(int column);
+int  TableGetColumnIndex();   // -1 before the first cell of a row
+int  TableGetRowIndex();      // -1 before the first row
 /// Width in pixels of `text` in the current UI font (for fitting/truncating).
 float CalcTextWidth(const char* text);
 /// Start a new row (call before the row's TableNextColumn cells).

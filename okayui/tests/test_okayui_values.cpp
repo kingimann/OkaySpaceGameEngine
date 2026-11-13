@@ -507,6 +507,51 @@ void SubMenuTests() {
     r.Frames(2);
 }
 
+void TableTests() {
+    Rig r; UI::Rect c0, c1, c2, c1b, hdrProbe; int rowSeen = -9, colSeen = -9; bool bad = false; bool noResize = false;
+    r.body = [&] {
+        const UI::TableFlags fl = noResize ? (UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_NoResize) : (UI::Table_RowBg | UI::Table_BordersInnerH);
+        if (UI::BeginTable("t", 3, fl)) {
+            UI::TableSetupColumn("Name", UI::Col_WidthFixed, 100.0f);
+            UI::TableSetupColumn("Value", 0, 1.0f);
+            UI::TableSetupColumn("Note", 0, 3.0f);
+            UI::TableSetupColumn("ignored: more than the columns");
+            UI::TableHeadersRow();
+            UI::TableNextRow();
+            UI::TableSetColumnIndex(2); UI::Text("n"); c2 = UI::GetItemRect();      // out of order: the last column first
+            UI::TableSetColumnIndex(0); UI::Text("a"); c0 = UI::GetItemRect();
+            colSeen = UI::TableGetColumnIndex(); rowSeen = UI::TableGetRowIndex();
+            UI::TableSetColumnIndex(1); UI::Text("b"); c1 = UI::GetItemRect();
+            if (UI::TableSetColumnIndex(3) || UI::TableSetColumnIndex(-1)) bad = true;   // no such column
+            UI::TableNextRow(); UI::TableNextColumn(); UI::Text("second"); UI::TableNextColumn(); UI::Text("b2"); c1b = UI::GetItemRect();
+            UI::EndTable();
+        }
+        if (UI::TableGetRowIndex() != -1 || UI::TableGetColumnIndex() != -1) bad = true;   // outside a table
+        UI::TableSetupColumn("x"); UI::TableHeadersRow(); UI::TableNextRow(); UI::EndTable();   // calls outside a table are harmless
+    };
+    r.Frames(3);
+    CHECK(!bad && colSeen == 0 && rowSeen == 0);
+    CHECK(c0.x < c1.x && c1.x < c2.x);                                       // cells land in their own columns, even set out of order
+    CHECK(c1.x - c0.x > 95.0f && c1.x - c0.x < 105.0f);                      // the fixed column keeps about 100 px
+    const float w1 = c2.x - c1.x;                                           // "Value" has weight 1 and "Note" weight 3: Note is about three times as wide
+    CHECK(std::fabs(w1 - 95.0f) < 2.0f);                                     // (480 - 100) shared 1:3 gives 95 px for Value (and 285 for Note)
+    CHECK(c1b.y > c1.y);                                                     // the second row is below the first
+    // the border between Value and Note can be dragged unless Table_NoResize
+    const float borderX = c2.x - 4.0f, my = c1.y + 2.0f;
+    r.sim.Move(borderX, my); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(borderX + 30.0f, my); r.Frame(); r.Frame(); r.sim.Up(); r.Frame(); r.Frames(2);
+    CHECK(c2.x > c1.x + w1 + 10.0f);                                         // Value grew
+    // NoResize: the same drag changes nothing
+    noResize = true; r.Frames(2);
+    const float before = c2.x;
+    r.sim.Move(c2.x - 4.0f, my); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(c2.x + 26.0f, my); r.Frame(); r.Frame(); r.sim.Up(); r.Frame(); r.Frames(2);
+    CHECK(std::fabs(c2.x - before) < 0.5f);
+    // a banded row draws a faint band: a pixel in the second row's empty right side differs from one in the first row
+    r.Frames(2);
+    const auto& bmp = r.sim.Draw();
+    const int px = (int)(c2.x + 150), y0 = (int)(c1.y + 3.0f), y1 = (int)(c1b.y + 3.0f);
+    if (px < (int)bmp.w) CHECK(PixelAt(bmp, px, y0) != PixelAt(bmp, px, y1));
+}
+
 void ModalTests() {
     Rig r; int behind = 0; bool ok = false, shown = false, flag = true; UI::Rect rOpen, rBehind, rOk;
     r.body = [&] {
@@ -574,6 +619,7 @@ int main() {
     TypedSingleTests();
     MenuTests();
     SubMenuTests();
+    TableTests();
     ModalTests();
     TEST_MAIN_RESULT();
 }

@@ -146,7 +146,22 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 23: UI::ProgressBar(r.Nasty(), r.Chance(50) ? lbl.c_str() : nullptr); break;
             case 24: { int t = r.Int(4); UI::TabBar(hdr, r.Int(5) - 1, &t); break; }
             case 25: UI::Tooltip(lbl.c_str()); break;
-            case 26: if (UI::BeginTable(lbl.c_str(), r.Int(20) - 2, r.Chance(50) ? hdr : nullptr)) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("c"); UI::TableNextColumn(); UI::Text("d"); UI::EndTable(); } break;
+            case 26: if (r.Chance(50)) {   // the flag-style table: random flags, columns (including too many and too few), setup calls, jumps
+                const int cols = r.Int(20) - 2;
+                if (UI::BeginTable(lbl.c_str(), cols, (UI::TableFlags)r.Int(8))) {
+                    const int nsetup = r.Int(20);
+                    for (int s = 0; s < nsetup; ++s) UI::TableSetupColumn(r.Chance(10) ? nullptr : "col", r.Int(2), r.Chance(20) ? r.Nasty() : (float)r.Int(200));
+                    if (r.Chance(70)) UI::TableHeadersRow();
+                    for (int row = 0; row < 3; ++row) {
+                        UI::TableNextRow();
+                        for (int c = 0; c < 4; ++c) { if (UI::TableSetColumnIndex(r.Int(20) - 2)) UI::Text("c"); }
+                        UI::TableGetColumnIndex(); UI::TableGetRowIndex();
+                    }
+                    UI::EndTable();
+                }
+                break;
+            }
+            if (UI::BeginTable(lbl.c_str(), r.Int(20) - 2, r.Chance(50) ? hdr : nullptr)) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("c"); UI::TableNextColumn(); UI::Text("d"); UI::EndTable(); } break;
             case 27: UI::OpenPopup(lbl.c_str()); break;
             case 28: if (UI::BeginPopup(lbl.c_str())) { UI::Selectable("in popup", false); if (r.Chance(30)) UI::CloseCurrentPopup(); UI::EndPopup(); } break;
             case 29: if (UI::BeginPopupContextItem(lbl.c_str())) { UI::Text("ctx"); UI::EndPopup(); } break;

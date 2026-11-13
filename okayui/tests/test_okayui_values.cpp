@@ -673,6 +673,63 @@ void WindowApiTests() {
     UI::SetNextWindowPos(UI::Vec2{1, 1}); sim.Frame([&] { CHECK(!UI::Begin(nullptr)); UI::End(); });
 }
 
+void IoCursorFontTests() {
+    Sim sim(640, 480);
+    float h1 = 0, h2 = 0, hAfter = 0, w1 = 0, w2 = 0; UI::Rect rBig, rNorm; bool cap = false, capKb = false, wantText = false; UI::Vec2 mp{}, ds{}; float dt = 0;
+    bool ctrl = false, shiftK = false, altK = false; UI::MouseCursor cur0 = UI::MouseCursor_Hand, curSet = UI::MouseCursor_Arrow; int scaleMode = 0;
+    char text[64] = "x";
+    auto frame = [&](std::function<void()> extra = nullptr) {
+        sim.Frame([&] {
+            UI::Begin("Win", 20, 20, 300, 240);
+            h1 = UI::GetFrameHeight();
+            if (scaleMode == 1) UI::SetWindowFontScale(2.0f);
+            if (scaleMode == 2) UI::SetWindowFontScale(std::nanf(""));
+            if (scaleMode == 3) UI::SetWindowFontScale(1000.0f);
+            h2 = UI::GetFrameHeight();
+            UI::Button("big"); rBig = UI::GetItemRect();
+            if (extra) extra();
+            UI::End();
+            hAfter = UI::GetFrameHeight();                                 // after End the scale is gone
+            UI::Begin("Win2", 340, 20, 200, 100); w2 = UI::GetFrameHeight(); UI::Button("norm"); rNorm = UI::GetItemRect(); UI::End();
+            const UI::IO& io = UI::GetIO(); cap = io.wantCaptureMouse; capKb = io.wantCaptureKeyboard; wantText = io.wantTextInput;
+            mp = io.mousePos; ds = io.displaySize; dt = io.deltaTime; ctrl = io.keyCtrl; shiftK = io.keyShift; altK = io.keyAlt;
+            curSet = UI::GetMouseCursor();
+        });
+    };
+    // font scale: 2x makes the rows taller inside the window only, and it ends with the window
+    scaleMode = 0; frame(); frame();
+    const float base = h2; CHECK(base > 8.0f && std::fabs(h1 - h2) < 0.01f);
+    scaleMode = 1; frame(); CHECK(h2 > base + 12.0f && std::fabs(hAfter - base) < 0.01f && rBig.h > base + 12.0f);   // the text doubles (16 -> 32 px), the row padding does not
+    CHECK(std::fabs(w2 - base) < 0.01f);                                   // the next window is unaffected
+    scaleMode = 2; frame(); CHECK(std::fabs(h2 - base) < 0.01f);           // NaN is ignored
+    scaleMode = 3; frame(); CHECK(h2 < base * 9.0f && h2 > base + 12.0f);                       // clamped to 8x
+    scaleMode = 0; frame(); CHECK(std::fabs(h2 - base) < 0.01f);           // and the next frame starts clean
+    UI::SetWindowFontScale(3.0f);                                          // outside a window: harmless
+    // mouse cursor: starts as the arrow every frame, the last SetMouseCursor wins, junk is the arrow
+    frame([&] { cur0 = UI::GetMouseCursor(); UI::SetMouseCursor(UI::MouseCursor_ResizeEW); });
+    CHECK(cur0 == UI::MouseCursor_Arrow && curSet == UI::MouseCursor_ResizeEW);
+    frame(); CHECK(curSet == UI::MouseCursor_Arrow);
+    frame([&] { UI::SetMouseCursor((UI::MouseCursor)77); }); CHECK(curSet == UI::MouseCursor_Arrow);
+    // IO: pointer, display size, frame time, modifiers
+    sim.Move(100, 100); sim.ctrl = true; sim.shift = true; sim.Hold(UI::KeyId_Alt, true); frame();
+    CHECK(mp.x == 100 && mp.y == 100 && ds.x == 640 && ds.y == 480 && dt > 0.0f && ctrl && shiftK && altK);
+    sim.ctrl = sim.shift = false; sim.Hold(UI::KeyId_Alt, false); frame(); CHECK(!ctrl && !shiftK && !altK);
+    // wants the mouse over a window or while pressing a widget, not over empty space
+    sim.Move(600, 450); frame(); frame(); CHECK(!cap);
+    sim.Move(100, 100); frame(); CHECK(cap);
+    sim.Move(450, 60); frame(); CHECK(cap);                                // over the second window
+    sim.Move(600, 450); frame(); frame(); CHECK(!cap);
+    // keyboard: wanted only while a text field has focus
+    UI::Rect fld;
+    auto withField = [&] { UI::SetNextItemWidth(200); UI::InputText("##t", text, sizeof text); fld = UI::GetItemRect(); };
+    frame(withField); frame(withField);
+    CHECK(!capKb && !wantText);
+    sim.Move(CenterX(fld), CenterY(fld)); frame(withField); sim.Down(); frame(withField); sim.Up(); frame(withField); frame(withField);
+    CHECK(capKb && wantText);                                              // the field has focus now
+    sim.Press(Key_Escape); frame(withField); frame(withField);
+    CHECK(!capKb && !wantText);                                            // Escape gave it up
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -930,6 +987,7 @@ int main() {
     KeyStateTests();
     StyleVarTests();
     WindowApiTests();
+    IoCursorFontTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

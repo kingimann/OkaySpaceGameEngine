@@ -301,6 +301,10 @@ float* floatState(int id, float dflt) {
 }
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 unsigned long long g_frameCount = 0;              // frames begun so far
+float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
+MouseCursor g_cursor = MouseCursor_Arrow;
+IO g_io;                              // GetIO(): filled in BeginFrame
+bool g_ptrOverWindow = false, g_ptrOverWindowPrev = false;   // the pointer was over a window's rectangle this / last frame (WantCaptureMouse)
 double g_clock = 0.0;                             // seconds: Input::time when the host gives it, else frames / 60
 double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
 bool   g_dblClick = false;                        // this frame's press was the second of a double click
@@ -809,7 +813,19 @@ void BeginFrame(const Input& in) {
     g_popupTop = 0;
     PopStyleVar(32);                                // an unbalanced PushStyleVar never leaks into the next frame
     ++g_frameCount;
-    g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
+    if (g_winBaseScale > 0.0f) { g_theme.textScale = g_winBaseScale; g_winBaseScale = 0.0f; }   // a window left open never keeps its font scale
+    g_cursor = MouseCursor_Arrow;
+    g_ptrOverWindowPrev = g_ptrOverWindow; g_ptrOverWindow = false;
+    {
+        const double prev = g_clock;
+        g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
+        g_io.deltaTime = (g_frameCount > 1 && g_clock > prev) ? (float)(g_clock - prev) : 1.0f / 60.0f;
+    }
+    g_io.mousePos = Vec2{in.mouseX, in.mouseY}; g_io.mouseDelta = Vec2{0, 0}; g_io.mouseWheel = in.wheel;
+    g_io.displaySize = Vec2{in.displayW, in.displayH};
+    g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
+    g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown;
+    g_io.wantCaptureKeyboard = g_focus != 0; g_io.wantTextInput = g_focus != 0;
     for (int k = 0; k < KeyId_COUNT; ++k) {   // named keys: keep last frame's state, take this frame's
         g_keyPrev[k] = g_keyNow[k];
         g_keyNow[k] = in.keyDown[k] || (k == KeyId_Ctrl && in.ctrl) || (k == KeyId_Shift && in.shift);
@@ -1551,6 +1567,7 @@ static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it 
 // The window being built (for GetWindowPos / IsWindowHovered ...) and the one that was clicked last (IsWindowFocused).
 struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; };
 static CurWin g_curWin;
+
 static int g_focusWin = 0;
 // SetNextWindowPos / SetNextWindowSize, consumed by the next Begin(title, p_open, flags).
 struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; };
@@ -1634,6 +1651,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
+    g_winBaseScale = g_theme.textScale;
+    if (!g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
     if (slot) slot->lastFrame = g_frameCount;
     if (g_pressed && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_focusWin = id;   // the last window drawn under the pointer is on top
@@ -1699,10 +1718,24 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 }
 
 void End() {
+    if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
     g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
     g_lay.active = false;
+}
+
+void SetWindowFontScale(float scale) {
+    if (!g_curWin.valid || g_winBaseScale <= 0.0f || !std::isfinite(scale)) return;
+    g_theme.textScale = g_winBaseScale * (scale < 0.25f ? 0.25f : (scale > 8.0f ? 8.0f : scale));
+}
+void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
+MouseCursor GetMouseCursor() { return g_cursor; }
+const IO& GetIO() {
+    // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
+    g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
+    g_io.wantCaptureMouse = !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev || g_active != 0);
+    return g_io;
 }
 
 void SetNextWindowPos(Vec2 pos, Cond cond) { g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond}; }

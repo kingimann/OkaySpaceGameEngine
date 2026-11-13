@@ -156,6 +156,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
                 if (r.Chance(10)) UI::SetWindowFocus("fz win");
                 break;
             }
+            if (r.Chance(8)) { UI::SetWindowFontScale(r.Nasty()); UI::SetMouseCursor((UI::MouseCursor)r.Int(14)); const UI::IO& io = UI::GetIO(); (void)io; UI::GetMouseCursor(); break; }
             if (r.Chance(15)) { UI::PushStyleVar((UI::StyleVar)r.Int(UI::StyleVar_COUNT + 3), UI::Vec2{r.Nasty(), r.Nasty()}); if (r.Chance(60)) UI::PopStyleVar(r.Int(4)); break; }
             if (r.Chance(25)) {   // tab bars: random items, close boxes, trailing buttons, nested bars, calls out of order
                 if (UI::BeginTabBar(r.Chance(10) ? nullptr : "tb")) {

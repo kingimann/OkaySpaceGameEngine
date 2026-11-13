@@ -805,6 +805,24 @@ bool IsWindowHovered();
 bool IsWindowFocused();
 bool IsWindowAppearing();
 void SetWindowFocus(const char* title);
+/// Scale the text (and with it every row height) of the current window until its End; 1 = unchanged, kept between 0.25 and 8.
+void SetWindowFontScale(float scale);
+/// The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
+/// cursor. It starts each frame as the arrow.
+enum MouseCursor : int { MouseCursor_Arrow = 0, MouseCursor_TextInput, MouseCursor_ResizeAll, MouseCursor_ResizeNS, MouseCursor_ResizeEW,
+                         MouseCursor_ResizeNESW, MouseCursor_ResizeNWSE, MouseCursor_Hand, MouseCursor_NotAllowed, MouseCursor_COUNT };
+void SetMouseCursor(MouseCursor cursor);
+MouseCursor GetMouseCursor();
+/// Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
+/// the UI wants the mouse (pointer over a window or a widget is active) or the keyboard (a text field has focus), so the host knows
+/// not to also give them to the game.
+struct IO {
+    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[2] = {false, false};
+    bool keyCtrl = false, keyShift = false, keyAlt = false;
+    bool wantCaptureMouse = false, wantCaptureKeyboard = false, wantTextInput = false;
+    float deltaTime = 1.0f / 60.0f;
+};
+const IO& GetIO();
 /// Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
 void SetNextWindowPos(Vec2 pos, Cond cond = Cond_Always);
 void SetNextWindowSize(Vec2 size, Cond cond = Cond_Always);

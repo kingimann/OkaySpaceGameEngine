@@ -145,6 +145,30 @@ int main() {
         for (const Vec3& n : tet.parts[0].mesh.normals) CHECK_NEAR(n.Magnitude(), 1.0, 1e-4);
     }
 
+    // A PLY that declares the vertex element twice (the second block with normals) used to
+    // come out with hasN set and fewer normals than vertices; it is rejected now.
+    {
+        const std::string twice =
+            "ply\nformat ascii 1.0\n"
+            "element vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "element vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0\n1 0 0\n0 1 0\n0 0 1 0 0 1\n1 0 1 0 0 1\n0 1 1 0 0 1\n3 0 1 2\n";
+        ImportedModel m; std::string e;
+        CHECK(!ReadPlyBuffer(twice, m, &e));
+        CHECK(e.find("more than one vertex element") != std::string::npos);
+        // The same data with one vertex element is fine, and normals match vertices.
+        const std::string once =
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 0 1\n1 0 0 0 0 1\n0 1 0 0 0 1\n3 0 1 2\n";
+        ImportedModel ok;
+        CHECK(ReadPlyBuffer(once, ok, &e));
+        CHECK(ok.parts[0].mesh.normals.size() == ok.parts[0].mesh.vertices.size());
+    }
+
     // ---------------- OBJ + MTL ----------------
     ImportedModel obj;
     {

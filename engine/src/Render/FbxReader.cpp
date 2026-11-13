@@ -2,6 +2,7 @@
 // Written from the public description of the format; no third-party code.
 #include "okay/Render/FbxReader.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -419,8 +420,15 @@ bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::
     Text t{(const char*)data, size, 0, &lim, &out, {}, 0};
     // "; FBX 7.3.0 project file" in the first comment line gives the version.
     if (size > 6 && std::memcmp(data, "; FBX ", 6) == 0) {
+        // The buffer is not NUL-terminated: scan a bounded, terminated copy of the
+        // first line's start, never the caller's bytes.
+        char hdr[33];
+        const std::size_t n = std::min<std::size_t>(size - 6, sizeof(hdr) - 1);
+        std::memcpy(hdr, data + 6, n); hdr[n] = '\0';
         int a = 0, b = 0;
-        if (std::sscanf((const char*)data + 6, "%d.%d", &a, &b) == 2) out.version = (std::uint32_t)(a * 1000 + b * 100);
+        // Range-check before the arithmetic: a long digit run would overflow it.
+        if (std::sscanf(hdr, "%d.%d", &a, &b) == 2 && a >= 0 && a <= 99999 && b >= 0 && b <= 9999)
+            out.version = (std::uint32_t)(a * 1000 + b * 100);
     }
     for (;;) {
         t.SkipSpace(true);

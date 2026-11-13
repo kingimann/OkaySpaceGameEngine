@@ -58,6 +58,16 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh` h
 
 `model_readers` (`tests/test_model_readers.cpp`, fixtures in `tests/data/models/`): every format and encoding, ascii equals binary, MTL fields, malformed input, a deterministic fuzz sweep (every truncation of every fixture plus mutations; run it under `-DOKAY_SANITIZE=address,undefined`), the backend switch, scene import of a two-material OBJ. In a build with Assimp it also reads the same files through both backends and compares part, vertex and triangle counts, the triangles themselves (positions, normals, UVs), the OBJ materials, and, for the glTF rig fixtures in `tests/assets/rigs`, Assimp's bone, skinned-mesh and clip counts against the glTF reader's.
 
+## FBX limits (hostile files)
+
+An FBX file is untrusted input, so both FBX paths (ufbx, the default, and our own `okay::fbx` reader) refuse a file that goes past the numbers in `okay::fbx::Limits` (table in `docs/own_fbx_reader.md`). The refusal is a clean failure: `ok = false`, an error string in the log, no partial scene, and no other reader is tried on the same file.
+
+- **Node hierarchy.** At most 2048 levels deep and 1 Mi nodes. A flat file can declare an arbitrarily deep Model chain through its connections, so the ufbx path sets ufbx's `node_depth_limit` and builds the engine hierarchy with an explicit stack, not recursion.
+- **Animation counts.** At most 128 stacks (takes), 1024 layers, 128 Ki curves and curve nodes, and 4 Mi keys over all curves, checked right after the file is read.
+- **Bake budget.** Stacks can share curves, so a small file can ask for many full clips. Baking is charged against one whole-file budget of 4 Mi baked keys/evaluations (a few hundred MB at most). On the ufbx path every bake is also given an allocation limit equal to what is left of that budget; our reader additionally caps each clip at 20000 samples.
+
+Cubic FBX keys store two slopes: the key's own outgoing (right) slope and the incoming (next-left) slope that the following key arrives with. Both paths interpolate between key k and k+1 with the Hermite spline using the outgoing slope of k and the incoming slope stored on k (test `fbx_reader`, "cubic Hermite"). glTF `CUBICSPLINE` is baked with the same basis, using the out-tangent of k and the in-tangent of k+1.
+
 ## Not covered yet (still Assimp-only)
 
 Blender (`.blend`), DirectX `.x`, MD2/MD3/MD5/MDL, SMD, MS3D, LWO, DXF, OFF, AC3D, B3D, 3MF, AMF, ASE, X3D and the rest of the Assimp list. FBX stays on ufbx unless `OKAY_OWN_FBX` is switched on. PLY triangle strips, PLY/STL vertex colours, STL colour attributes, and OBJ free-form curves and surfaces are not read.

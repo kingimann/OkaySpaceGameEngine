@@ -5,9 +5,11 @@
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <unordered_map>
 #include <filesystem>
 #include <fstream>
@@ -311,6 +313,85 @@ static ImportStats Collect(Scene& s, GameObject* root) {
 
 }
 
+
+// ---- cubic Hermite tangents -------------------------------------------------------------------
+// A cubic key carries two slopes (value per second): the right (outgoing) slope of the key itself and
+// the "next left" (incoming) slope that the FOLLOWING key arrives with. Between key k and key k+1 the
+// curve is the Hermite spline  h00 v0 + h10 dt m0 + h01 v1 + h11 dt m1  with m0 = right slope of key k and
+// m1 = next-left slope stored on key k (= incoming slope of key k+1).
+static double HermiteRef(double v0, double v1, double m0, double m1, double dt, double u) {
+    const double u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * v0 + (u3 - 2 * u2 + u) * dt * m0 + (-2 * u3 + 3 * u2) * v1 + (u3 - u2) * dt * m1;
+}
+// Two keys, 0 -> 10 cm over 1 s, user tangents: right slope `a`, next-left slope `b`.
+static long long FloatBits(float f) { std::uint32_t u; std::memcpy(&u, &f, 4); return (long long)u; }
+// (An ASCII 7.x file prints KeyAttrDataFloat as the integer bit patterns of its floats.)
+static std::string HermiteFbx(double a, double b) {
+    char buf[2400];
+    std::snprintf(buf, sizeof buf,
+        "; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n\tFBXHeaderVersion: 1003\n\tFBXVersion: 7400\n}\n"
+        "GlobalSettings:  {\n\tVersion: 1000\n\tProperties70:  {\n\t\tP: \"UpAxis\", \"int\", \"Integer\", \"\", 1\n\t\tP: \"UpAxisSign\", \"int\", \"Integer\", \"\", 1\n"
+        "\t\tP: \"FrontAxis\", \"int\", \"Integer\", \"\", 2\n\t\tP: \"FrontAxisSign\", \"int\", \"Integer\", \"\", 1\n"
+        "\t\tP: \"CoordAxis\", \"int\", \"Integer\", \"\", 0\n\t\tP: \"CoordAxisSign\", \"int\", \"Integer\", \"\", 1\n"
+        "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\", 1.0\n\t}\n}\n"
+        "Objects:  {\n"
+        "\tModel: 2001, \"Model::M\", \"Null\" {\n\t\tProperties70:  {\n\t\t\tP: \"Lcl Translation\", \"Lcl Translation\", \"\", \"A\", 0.0, 0.0, 0.0\n\t\t}\n\t}\n"
+        "\tAnimationStack: 2002, \"AnimStack::Take 001\", \"\" {\n\t}\n"
+        "\tAnimationLayer: 2003, \"AnimLayer::BaseLayer\", \"\"\n"
+        "\tAnimationCurveNode: 2004, \"AnimCurveNode::T\", \"\" {\n\t\tProperties70:  {\n\t\t\tP: \"d|X\", \"Number\", \"\", \"A\", 0.0\n\t\t\tP: \"d|Y\", \"Number\", \"\", \"A\", 0.0\n\t\t\tP: \"d|Z\", \"Number\", \"\", \"A\", 0.0\n\t\t}\n\t}\n"
+        "\tAnimationCurve: 2005, \"AnimCurve::x\", \"\" {\n\t\tDefault: 0.0\n\t\tKeyVer: 4008\n"
+        "\t\tKeyTime: *2 {\n\t\t\ta: 0,46186158000\n\t\t}\n\t\tKeyValueFloat: *2 {\n\t\t\ta: 0.0,10.0\n\t\t}\n"
+        "\t\tKeyAttrFlags: *1 {\n\t\t\ta: 1032\n\t\t}\n\t\tKeyAttrDataFloat: *4 {\n\t\t\ta: %lld,%lld,0,0\n\t\t}\n"
+        "\t\tKeyAttrRefCount: *1 {\n\t\t\ta: 2\n\t\t}\n\t}\n}\n"
+        "Connections:  {\n\tC: \"OO\", 2001, 0\n\tC: \"OO\", 2003, 2002\n\tC: \"OP\", 2004, 2001, \"Lcl Translation\"\n"
+        "\tC: \"OP\", 2005, 2004, \"d|X\"\n\tC: \"OO\", 2004, 2003\n}\n", FloatBits((float)a), FloatBits((float)b));
+    return buf;
+}
+
+static void HermiteTests() {
+    RUN_SUITE("fbx animation: cubic Hermite uses the right key's outgoing and the next key's incoming slope");
+    const fs::path file = fs::temp_directory_path() / ("okay_fbx_hermite_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()) + ".fbx");
+    // (right slope, next-left slope) in cm/s. 0 -> 10 cm in 1 s:
+    //   (0, 20): 10u^2         (flat start, steep arrival)    u = .3 .5 .7 .9  ->  0.9 2.5 4.9 8.1 cm
+    //   (20, 0): 20u - 10u^2   (steep start, flat arrival)                     ->  5.1 7.5 9.1 9.9 cm
+    //   (0, 0):  10(3u^2-2u^3) (ease in/out)
+    const struct { double a, b; } cases[] = {{0, 20}, {20, 0}, {0, 0}};
+    const double us[] = {0.3, 0.5, 0.7, 0.9};
+    const double hand[2][4] = {{0.9, 2.5, 4.9, 8.1}, {5.1, 7.5, 9.1, 9.9}};
+    for (int ci = 0; ci < 3; ++ci) {
+        { std::ofstream f(file, std::ios::binary); const std::string t = HermiteFbx(cases[ci].a, cases[ci].b); f.write(t.data(), (std::streamsize)t.size()); }
+        fbx::Scene r; std::string err;
+        CHECK(fbx::LoadFile(file.string(), r, &err));
+        CHECK(r.clips.size() == 1 && r.clips[0].nodes.size() == 1);
+        for (int mode = 0; mode < 2; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer
+            std::vector<double> got;
+            if (mode == 0) {
+                if (r.clips.size() != 1 || r.clips[0].nodes.size() != 1) continue;
+                const auto& tr = r.clips[0].nodes[0].translation;
+                CHECK(tr.size() == 31);
+                for (double u : us) got.push_back(tr[(std::size_t)std::lround(u * 30)].v[0] * 100.0);
+            } else {
+                fbx::SetOwnReaderEnabled(false);
+                Scene sc("hermite"); bool ok = false;
+                GameObject* root = ImportModelScene(sc, file.string(), &ok);
+                CHECK(ok && root);
+                auto* ma = root ? root->GetComponent<ModelAnimator>() : nullptr;
+                CHECK(ma && ma->clips.size() == 1 && ma->clips[0].nodes.size() == 1);
+                if (!ma || ma->clips.size() != 1 || ma->clips[0].nodes.size() != 1) continue;
+                for (double u : us) { bool f = false; got.push_back((double)ma->clips[0].nodes[0].clip.Evaluate("position.x", (float)u, f) * 100.0); CHECK(f); }
+            }
+            for (std::size_t i = 0; i < 4; ++i) {
+                const double ref = HermiteRef(0, 10, cases[ci].a, cases[ci].b, 1.0, us[i]);
+                const double tol = mode ? 0.05 : 2e-4;   // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve
+                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode ? "ufbx" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
+                CHECK(Near(got[i], ref, tol));
+                if (ci < 2) CHECK(Near(ref, hand[ci][i], 1e-9));   // the reference itself against the hand-computed values
+            }
+        }
+    }
+    std::error_code ec; fs::remove(file, ec);
+}
+
 static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, const std::string& what, double tol = 2e-3) {
     auto* mu = ru->GetComponent<ModelAnimator>();
     auto* mo = ro->GetComponent<ModelAnimator>();
@@ -470,6 +551,7 @@ static void CompareWithUfbx() {
 int main() {
     InflateTests();
     DirectTests();
+    HermiteTests();
     CompareWithUfbx();
     TEST_MAIN_RESULT();
 }

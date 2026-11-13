@@ -55,8 +55,27 @@ NavMeshSurface* Navigation::Surface(Scene& scene) {
 }
 
 const NavMesh* Navigation::Mesh(Scene& scene) {
+    SceneCache& c = CacheFor(scene);
+    NavMeshSurface* s = c.surface;
+    if (!s) return nullptr;
+    // Obstacles that are carving right now cut their solid out of the baked mesh; every query below
+    // (paths, raycasts, random points) then goes around them. Rebuilt only when the set changed.
+    static thread_local std::vector<NavCarveVolume> volumes;
+    volumes.clear();
+    for (const NavMeshObstacle* o : c.obstacles)
+        if (o && o->enabled && o->gameObject && o->gameObject->active && o->Carving()) volumes.push_back(o->CarvedVolume());
+    return s->ApplyCarving(volumes);
+}
+
+const NavMesh* Navigation::BakedMesh(Scene& scene) {
     NavMeshSurface* s = CacheFor(scene).surface;
     return s ? s->Mesh() : nullptr;
+}
+
+std::uint32_t Navigation::CarveGeneration(Scene& scene) {
+    if (!Mesh(scene)) return 0;
+    NavMeshSurface* s = CacheFor(scene).surface;
+    return s ? s->CarveGeneration() : 0;
 }
 
 bool Navigation::FindPath(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,

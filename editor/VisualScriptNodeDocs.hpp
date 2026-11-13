@@ -60,6 +60,8 @@ inline std::string VsPinTypeLabel(okay::vs::PinType t) {
         case PinType::Vec3:   return "Vector3";
         case PinType::Object: return "Object";
         case PinType::List:   return "List";
+        case PinType::Map:    return "Map";
+        case PinType::Color:  return "Color";
         default:              return "Any";
     }
 }

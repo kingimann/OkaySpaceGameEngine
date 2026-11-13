@@ -43,3 +43,12 @@ __pycache__/
 
 # fixtures are checked in
 !tests/data/models/*.obj
+
+# Files the engine writes into the folder it runs from (prefs, save slots, creations): a stray run from the
+# repository root must not be committed. Tests use tests/test_sandbox.hpp so they never write here.
+/game.okayprefs
+/game.okayprefs.bak
+/save.okaysave
+/save.okaysave.bak
+/saves/
+/creations/

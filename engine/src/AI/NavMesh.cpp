@@ -1,4 +1,5 @@
 #include "okay/AI/NavMesh.hpp"
+#include "okay/Core/SafeCast.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -106,17 +107,23 @@ void NavMesh::BuildGrid() {
     m_gridW = m_gridH = 0;
     if (polys.empty()) return;
     const float ex = boundsMax.x - boundsMin.x, ez = boundsMax.z - boundsMin.z;
+    // No usable bounds (a vertex was NaN or infinite, or the extent overflowed a float): no grid,
+    // so every query finds nothing rather than sizing an allocation from a garbage number.
+    if (!std::isfinite(ex) || !std::isfinite(ez) || ex < 0.0f || ez < 0.0f) return;
     m_gridCell = std::max(ex, ez) / 64.0f;
     if (m_gridCell < 1.0f) m_gridCell = 1.0f;
     if (m_gridCell > 8.0f) m_gridCell = 8.0f;
-    m_gridW = (int)(ex / m_gridCell) + 1;
-    m_gridH = (int)(ez / m_gridCell) + 1;
+    // A very large mesh gets bigger cells instead of a huge grid: at most kMaxGridSide per side.
+    constexpr float kMaxGridSide = 2048.0f;
+    m_gridCell = std::max(m_gridCell, std::max(ex, ez) / kMaxGridSide);
+    m_gridW = SafeInt(ex / m_gridCell) + 1;
+    m_gridH = SafeInt(ez / m_gridCell) + 1;
     std::vector<int> count((std::size_t)m_gridW * m_gridH + 1, 0);
     auto range = [&](const Poly& p, int& x0, int& z0, int& x1, int& z1) {
-        x0 = std::clamp((int)((p.minX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
-        x1 = std::clamp((int)((p.maxX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
-        z0 = std::clamp((int)((p.minZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
-        z1 = std::clamp((int)((p.maxZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
+        x0 = std::clamp(SafeInt((p.minX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
+        x1 = std::clamp(SafeInt((p.maxX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
+        z0 = std::clamp(SafeInt((p.minZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
+        z1 = std::clamp(SafeInt((p.maxZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
     };
     for (const Poly& p : polys) {
         int x0, z0, x1, z1; range(p, x0, z0, x1, z1);
@@ -136,10 +143,10 @@ void NavMesh::PolysNear(float minX, float minZ, float maxX, float maxZ, std::vec
     out.clear();
     if (m_gridW <= 0 || m_gridH <= 0) return;
     if (maxX < boundsMin.x || minX > boundsMax.x || maxZ < boundsMin.z || minZ > boundsMax.z) return;
-    int x0 = std::clamp((int)((minX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
-    int x1 = std::clamp((int)((maxX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
-    int z0 = std::clamp((int)((minZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
-    int z1 = std::clamp((int)((maxZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
+    int x0 = std::clamp(SafeInt((minX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
+    int x1 = std::clamp(SafeInt((maxX - boundsMin.x) / m_gridCell), 0, m_gridW - 1);
+    int z0 = std::clamp(SafeInt((minZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
+    int z1 = std::clamp(SafeInt((maxZ - boundsMin.z) / m_gridCell), 0, m_gridH - 1);
     if (++m_s.markStamp == 0) { std::fill(m_s.mark.begin(), m_s.mark.end(), 0u); m_s.markStamp = 1; }
     if (m_s.mark.size() != polys.size()) m_s.mark.assign(polys.size(), 0);
     for (int z = z0; z <= z1; ++z)
@@ -503,7 +510,12 @@ bool NavMesh::Deserialize(const std::string& text, std::string* error) {
             in >> nv; if (nv > 50000000u) { if (error) *error = "too many vertices"; return false; }
             vertices.reserve(nv);
         } else if (tag == "v") {
-            Vec3 v; in >> v.x >> v.y >> v.z; vertices.push_back(v);
+            Vec3 v; in >> v.x >> v.y >> v.z;
+            if (in && !(std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z))) {
+                if (error) *error = "non-finite vertex";   // would make the cell grid's size garbage
+                Clear(); return false;
+            }
+            vertices.push_back(v);
         } else if (tag == "polys") {
             in >> np; if (np > 50000000u) { if (error) *error = "too many polygons"; return false; }
             polys.reserve(np);

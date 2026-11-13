@@ -5961,9 +5961,11 @@ Skips the rest of this run of a loop's Body; the loop goes on to the next item.
 
 `NewList`
 
-A new, empty list. Keep it in a variable, then List Add to it.
+A new, empty list. Keep it in a variable, then List Add to it. The text field can name the item type (Number, Vector3...) so the checker catches wrong items.
 
 **Requires:** No component is required. It only computes a value from its inputs.
+
+**Setting:** item type (optional). The value typed into the node.
 
 | Pin | Direction | Type | Meaning | Default |
 | --- | --- | --- | --- | --- |
@@ -6051,6 +6053,277 @@ True when the list has this item.
 | Bool | out | Bool | True or false. It is a Bool. Wire it into an input that expects a Bool. | — |
 
 **Example:** Wire List Contains's Bool output into another node's input. It has no flow of its own.
+
+### List Insert
+
+`ListInsert`
+
+Puts an item into a list at an index (0 = the front); the items after it move up. An index past the end is reported and nothing changes.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Insert runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Insert finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Index | in | Number | Which entry. The first is 0. It is a Number. Unwired, this is 0. | 0 |
+| Item | in | Any | One entry of the list. It is an Any. Unwired, this is nothing. | nothing |
+
+**Example:** Put List Insert after an event such as On Start or On Update, and wire a value into List.
+
+### List Set
+
+`ListSet`
+
+Replaces the item at an index. An index outside the list is reported and nothing changes.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Set runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Set finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Index | in | Number | Which entry. The first is 0. It is a Number. Unwired, this is 0. | 0 |
+| Item | in | Any | One entry of the list. It is an Any. Unwired, this is nothing. | nothing |
+
+**Example:** Put List Set after an event such as On Start or On Update, and wire a value into List.
+
+### List Find
+
+`ListFind`
+
+The index of the first item equal to Item (-1 and Found = false when it isn't there).
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Item | in | Any | One entry of the list. It is an Any. Unwired, this is nothing. | nothing |
+| Index | out | Number | The current number, starting at 0. It is a Number. Wire it into an input that expects a Number. | — |
+| Found | out | Bool | What List Find produces on Found. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Wire List Find's Index output into another node's input. It has no flow of its own.
+
+### List Remove Item
+
+`ListRemoveItem`
+
+Removes the first item equal to Item. Removed says whether there was one.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Remove Item runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Remove Item finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Item | in | Any | One entry of the list. It is an Any. Unwired, this is nothing. | nothing |
+| Removed | out | Bool | True when the items were taken out. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Put List Remove Item after an event such as On Start or On Update, and wire a value into List.
+
+### List Sort
+
+`ListSort`
+
+Sorts the list in place, smallest first (Descending = largest first). Numbers sort as numbers, text alphabetically, mixed lists by kind.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Sort runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Sort finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Descending | in | Bool | The Descending input of List Sort. It is a Bool. Unwired, this is false. | false |
+
+**Example:** Put List Sort after an event such as On Start or On Update, and wire a value into List.
+
+### List Reverse
+
+`ListReverse`
+
+Reverses the list in place.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Reverse runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Reverse finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+
+**Example:** Put List Reverse after an event such as On Start or On Update, and wire a value into List.
+
+### List Clear
+
+`ListClear`
+
+Removes every item from the list.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Clear runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Clear finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+
+**Example:** Put List Clear after an event such as On Start or On Update, and wire a value into List.
+
+### List Copy
+
+`ListCopy`
+
+A new list with the same items. Deep also copies lists and maps inside it; without it they stay shared.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Deep | in | Bool | The Deep input of List Copy. It is a Bool. Unwired, this is false. | false |
+| Copy | out | List | What List Copy produces on Copy. It is a List. Wire it into an input that expects a List. | — |
+
+**Example:** Wire List Copy's Copy output into another node's input. It has no flow of its own.
+
+### Map Clear
+
+`MapClear`
+
+Removes every entry from the map.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Map Clear runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Map Clear finishes, the flow continues from here to the next step. | — |
+| Map | in | Map | The Map input of Map Clear. It is a Map. Unwired, this is an empty map. | an empty map |
+
+**Example:** Put Map Clear after an event such as On Start or On Update, and wire a value into Map.
+
+### Map Count
+
+`MapCount`
+
+How many entries a map has.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Map | in | Map | The Map input of Map Count. It is a Map. Unwired, this is an empty map. | an empty map |
+| Count | out | Number | How many. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Wire Map Count's Count output into another node's input. It has no flow of its own.
+
+### Map Copy
+
+`MapCopy`
+
+A new map with the same entries. Deep also copies lists and maps inside it; without it they stay shared.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Map | in | Map | The Map input of Map Copy. It is a Map. Unwired, this is an empty map. | an empty map |
+| Deep | in | Bool | The Deep input of Map Copy. It is a Bool. Unwired, this is false. | false |
+| Copy | out | Map | What Map Copy produces on Copy. It is a Map. Wire it into an input that expects a Map. | — |
+
+**Example:** Wire Map Copy's Copy output into another node's input. It has no flow of its own.
+
+### New Struct
+
+`StructNew`
+
+A new struct of the type named in the text field, every field at its default. Declare structs in the Variables panel.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+**Setting:** struct name. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Struct | out | Map | What New Struct produces on Struct. It is a Map. Wire it into an input that expects a Map. | — |
+
+**Example:** Wire New Struct's Struct output into another node's input. It has no flow of its own.
+
+### Get Field
+
+`StructGet`
+
+Reads one field of a struct. A field the struct doesn't have is reported.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+**Setting:** field. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Struct | in | Map | The Struct input of Get Field. It is a Map. Unwired, this is an empty map. | an empty map |
+| Value | out | Any | The value that was read. It is an Any. Wire it into an input that expects an Any. | — |
+
+**Example:** Wire Get Field's Value output into another node's input. It has no flow of its own.
+
+### Set Field
+
+`StructSet`
+
+Sets one field of a struct. The value must fit the field's type, or it is reported and nothing changes.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+**Setting:** field. The value typed into the node.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Set Field runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Set Field finishes, the flow continues from here to the next step. | — |
+| Struct | in | Map | The Struct input of Set Field. It is a Map. Unwired, this is an empty map. | an empty map |
+| Value | in | Any | The value being stored, sent or tested. It is an Any. Unwired, this is nothing. | nothing |
+
+**Example:** Put Set Field after an event such as On Start or On Update, and wire a value into Struct.
+
+### Make Color
+
+`MakeColor`
+
+A colour from red, green, blue and alpha, each 0 to 1 (alpha defaults to 1).
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| R | in | Number | Red, from 0 to 1. It is a Number. Unwired, this is 0. | 0 |
+| G | in | Number | Green, from 0 to 1. It is a Number. Unwired, this is 0. | 0 |
+| B | in | Number | Blue, from 0 to 1. It is a Number. Unwired, this is 0. | 0 |
+| A | in | Number | Opacity, from 0 (invisible) to 1 (solid). It is a Number. Unwired, this is 0. | 0 |
+| Color | out | Color | What Make Color produces on Color. It is a Color. Wire it into an input that expects a Color. | — |
+
+**Example:** Wire Make Color's Color output into another node's input. It has no flow of its own.
+
+### Split Color
+
+`SplitColor`
+
+The red, green, blue and alpha of a colour, each 0 to 1.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Color | in | Color | The Color input of Split Color. It is a Color. | — |
+| R | out | Number | What Split Color produces on R. It is a Number. Wire it into an input that expects a Number. | — |
+| G | out | Number | What Split Color produces on G. It is a Number. Wire it into an input that expects a Number. | — |
+| B | out | Number | What Split Color produces on B. It is a Number. Wire it into an input that expects a Number. | — |
+| A | out | Number | What Split Color produces on A. It is a Number. Wire it into an input that expects a Number. | — |
+
+**Example:** Wire Split Color's R output into another node's input. It has no flow of its own.
 
 ### All With Tag
 

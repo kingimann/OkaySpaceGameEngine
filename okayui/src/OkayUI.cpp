@@ -145,8 +145,11 @@ struct CurMenu {
     float x = 0, w = 0;                          // dropdown left + width
     float bx = 0, by = 0, bw = 0, bh = 0;        // the menu's button on the bar
     float itemStartY = 0, itemY = 0;             // dropdown item cursor
+    float subX = 0, subY = 0, subW = 0, subH = 0;   // the open sub-menu's list this frame (a press inside it is not "outside")
 };
 CurMenu g_curMenu;
+CurMenu g_menuStack[4];                          // the menus a nested BeginMenu came from (outermost first)
+int g_menuDepth = 0;
 Theme g_theme;
 
 // Scoped color-override stack: each entry remembers a theme color slot and its prior
@@ -785,7 +788,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; g_curMenu.active = false;
+    g_inMenuBar = false; g_curMenu.active = false; g_menuDepth = 0;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -2748,6 +2751,29 @@ void BeginMenuBar() {
 void EndMenuBar() { g_inMenuBar = false; }
 
 bool BeginMenu(const char* label) {
+    if (g_lay.active && g_curMenu.active && label) {   // a sub-menu: a row of the open menu that opens a list to its right
+        if (g_menuDepth >= 4) return false;
+        const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
+        bool* open = openState(id, false);
+        const float h = rowH(), s = g_theme.textScale;
+        const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
+        g_curMenu.itemY += h;
+        const bool ih = hitOverlay(x, y, w, h);
+        if (ih) { g_hot = id; *open = true; }            // hovering the row opens it
+        g_toOverlay = true;
+        quad(x, y, w, h, (ih || *open) ? g_theme.bgHover : g_theme.panel);
+        drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, g_theme.textDim);
+        g_toOverlay = false;
+        if (!*open) return false;
+        g_menuStack[g_menuDepth++] = g_curMenu;
+        g_curMenu.menuId = id;
+        g_curMenu.x = x + w; g_curMenu.w = 180.0f;
+        g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = w; g_curMenu.bh = h;
+        g_curMenu.itemStartY = y; g_curMenu.itemY = y;
+        g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
+        return true;
+    }
     if (!g_lay.active || !g_inMenuBar) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
@@ -2768,6 +2794,7 @@ bool BeginMenu(const char* label) {
         g_curMenu.x = x; g_curMenu.w = 180.0f;
         g_curMenu.bx = x; g_curMenu.by = y; g_curMenu.bw = bw; g_curMenu.bh = h;
         g_curMenu.itemStartY = y + h; g_curMenu.itemY = y + h;
+        g_curMenu.subX = g_curMenu.subY = g_curMenu.subW = g_curMenu.subH = 0.0f;
     }
     return *open;
 }
@@ -2783,7 +2810,7 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     if (ih) g_hot = iid;
     bool clicked = false;
     if (g_active == iid) {
-        if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; } g_active = 0; }
+        if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
     const unsigned char* col = enabled ? g_theme.text : g_theme.textDim;
     g_toOverlay = true;
@@ -2814,13 +2841,28 @@ void MenuSeparator() {
 
 void EndMenu() {
     if (!g_curMenu.active) return;
-    // A press outside both the menu button and its item list closes the menu.
+    const bool nested = g_menuDepth > 0;
+    // A press outside both the menu button (or the sub-menu's row) and its item list closes the menu.
     const bool inBtn  = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.bx, g_curMenu.by, g_curMenu.bw, g_curMenu.bh);
     const bool inList = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.x, g_curMenu.itemStartY,
                                g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY);
-    if (g_pressed && !inBtn && !inList) *openState(g_curMenu.menuId, false) = false;
-    if (g_curMenu.itemY > g_curMenu.itemStartY)
+    const bool inSub  = g_curMenu.subW > 0.0f && pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.subX, g_curMenu.subY, g_curMenu.subW, g_curMenu.subH);
+    if (g_pressed && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
+    // A sub-menu also closes when the pointer leaves its row, its list and any list opened from it.
+    if (nested && !inBtn && !inList && !inSub) *openState(g_curMenu.menuId, false) = false;
+    const bool hasItems = g_curMenu.itemY > g_curMenu.itemStartY;
+    if (hasItems)
         registerOverlay(g_curMenu.x, g_curMenu.itemStartY, g_curMenu.w, g_curMenu.itemY - g_curMenu.itemStartY, false);
+    if (nested) {   // back to the menu this one was opened from; it needs to know where this list is
+        const CurMenu child = g_curMenu;
+        g_curMenu = g_menuStack[--g_menuDepth];
+        if (hasItems) {   // the bounding box of its list and of any list opened from it (a press in either is "inside" for the outer menus)
+            float x0 = child.x, y0 = child.itemStartY, x1 = child.x + child.w, y1 = child.itemY;
+            if (child.subW > 0.0f) { x0 = std::min(x0, child.subX); y0 = std::min(y0, child.subY); x1 = std::max(x1, child.subX + child.subW); y1 = std::max(y1, child.subY + child.subH); }
+            g_curMenu.subX = x0; g_curMenu.subY = y0; g_curMenu.subW = x1 - x0; g_curMenu.subH = y1 - y0;
+        }
+        return;
+    }
     g_curMenu.active = false;
 }
 

@@ -455,6 +455,58 @@ void MenuTests() {
     CHECK(true);
 }
 
+void SubMenuTests() {
+    Rig r; UI::Rect bar; bool fileOpen = false, subOpen = false, subSubOpen = false, a = false, b = false, deep = false;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        fileOpen = UI::BeginMenu("File");
+        if (fileOpen) {
+            if (UI::MenuItem("New")) a = true;
+            subOpen = UI::BeginMenu("Recent");
+            if (subOpen) {
+                if (UI::MenuItem("One")) b = true;
+                subSubOpen = UI::BeginMenu("More");
+                if (subSubOpen) { if (UI::MenuItem("Deep")) deep = true; UI::EndMenu(); }
+                UI::EndMenu();
+            } else subSubOpen = false;
+            UI::MenuItem("Quit");
+            UI::EndMenu();
+        } else subOpen = subSubOpen = false;
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    const float h = bar.h, listX = bar.x, listW = 180.0f, rowY0 = bar.y + h;
+    auto rowMid = [&](int row) { return rowY0 + (float)row * h + h * 0.5f; };
+    r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    CHECK(fileOpen && !subOpen);                                         // the sub-menu is closed until the row is pointed at
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame();
+    CHECK(fileOpen && subOpen);                                          // hovering the "Recent" row opens it
+    r.MoveTo(listX + listW + 30, rowMid(1)); r.Frame();
+    CHECK(subOpen && !subSubOpen);                                       // moving into its list keeps it open
+    r.MoveTo(listX + listW + 30, rowMid(2)); r.Frame();                  // onto the "More" row (second row of the sub-list, starts at the Recent row)
+    CHECK(subOpen && subSubOpen);                                        // a second level opens
+    r.MoveTo(listX + 2 * listW + 30, rowMid(2)); r.Frame();
+    CHECK(subSubOpen);
+    r.Click(listX + 2 * listW + 30, rowMid(2)); r.Frame(); r.Frame();
+    CHECK(deep && !fileOpen && !subOpen && !subSubOpen);                 // picking a deep item runs it and closes every level
+    // leaving the sub-menu closes just it
+    deep = false; r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame(); CHECK(subOpen);
+    r.MoveTo(listX + 30, rowMid(0)); r.Frame(); r.Frame();               // back onto "New"
+    CHECK(fileOpen && !subOpen);
+    // a press elsewhere closes everything
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame();
+    r.Click(400, 300); r.Frame();
+    CHECK(!fileOpen && !subOpen);
+    // a plain item next to the sub-menu still works, and the sub-menu row itself does not click through
+    r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    r.Click(listX + 30, rowMid(0)); r.Frame(); r.Frame();
+    CHECK(a && !fileOpen);
+    // BeginMenu outside any menu or bar, with a null label, is harmless
+    r.body = [&] { CHECK(!UI::BeginMenu(nullptr)); };
+    r.Frames(2);
+}
+
 void ModalTests() {
     Rig r; int behind = 0; bool ok = false, shown = false, flag = true; UI::Rect rOpen, rBehind, rOk;
     r.body = [&] {
@@ -521,6 +573,7 @@ int main() {
     TypedNumberTests();
     TypedSingleTests();
     MenuTests();
+    SubMenuTests();
     ModalTests();
     TEST_MAIN_RESULT();
 }

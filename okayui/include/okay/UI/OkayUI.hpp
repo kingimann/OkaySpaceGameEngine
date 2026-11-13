@@ -421,6 +421,8 @@ void EndMenuBar();
 /// A menu on the bar; returns true while its dropdown is open (then add MenuItems).
 bool BeginMenu(const char* label);
 /// Close a BeginMenu() block (handles click-outside dismissal).
+/// BeginMenu inside a BeginMenu block is a sub-menu: a row with an arrow that opens its list to the right while the pointer is
+/// on the row or the list (up to four levels); picking any item closes the whole chain. Call EndMenu() for it as well.
 void EndMenu();
 /// An item in the currently-open menu; returns true the frame it is clicked.
 bool MenuItem(const char* label);

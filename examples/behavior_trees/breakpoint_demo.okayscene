@@ -1,0 +1,25 @@
+okayscene 3
+name "Behavior tree breakpoint"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 6 -10 0 0 0 1 1 1 1
+  camera 1 5 52 0.12 0.14 0.18 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 16 1 16
+  mesh "Cube" 0.2 0.22 0.26 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 2 "Marker"
+  active 1
+  parent -1
+  transform 0 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.95 0.55 0.15 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+  btrunner tree="mark.okaybt" rate=0 auto=1 debug=0 homeset=0 hx=0 hy=0 hz=0 n=0
+end

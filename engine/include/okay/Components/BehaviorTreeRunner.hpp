@@ -4,6 +4,7 @@
 #include "okay/Scene/Component.hpp"
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,6 +26,16 @@ class Character;
 /// hear Send Event tasks as on_bt_event(name).
 class BehaviorTreeRunner : public Behaviour {
 public:
+    /// Play stays paused for this reason while a node breakpoint is holding it.
+    /// The editor's pause button clears it when Play resumes.
+    static constexpr const char* kBreakPause = "bt";
+    /// Called when a breakpoint pauses Play (the editor turns on its pause button).
+    using PauseHook = void (*)(BehaviorTreeRunner& runner, int nodeId);
+    static void SetPauseHook(PauseHook hook);
+
+    BehaviorTreeRunner();
+    ~BehaviorTreeRunner() override;
+
     /// Before the NPC Controller and the Nav Mesh Agent (-10), so an order given
     /// this tick moves the body this frame.
     int ExecutionOrder() const override { return -20; }
@@ -77,8 +88,41 @@ public:
         float started = 0.0f;                  ///< Clock() when it last started running
     };
     const NodeState* State(int nodeId) const;
-    /// The running nodes, root first.
+    /// The running nodes of the root tree, root first.
     std::vector<int> ActivePath() const;
+    /// Live state of a node in the root tree or in a sub-tree that is running.
+    /// `treePath` is the file (resolved the same way as a runner's tree). Empty
+    /// or the root file reads the root tree.
+    const NodeState* StateFor(const std::string& treePath, int nodeId) const;
+    /// The running nodes of that tree, root first. Empty when that tree is not the
+    /// one running right now (the root, or a sub-tree a Run Sub-Tree node is in).
+    std::vector<int> ActivePathFor(const std::string& treePath) const;
+    /// The blackboard of the root tree, or of a running sub-tree. Null when
+    /// `treePath` is a sub-tree that is not running.
+    Blackboard* BoardFor(const std::string& treePath);
+    const Blackboard* BoardFor(const std::string& treePath) const;
+    /// The blackboard a task or script sees: the sub-tree's while one is ticking,
+    /// otherwise this runner's own.
+    Blackboard& ActiveBoard();
+    const Blackboard& ActiveBoard() const;
+    /// Resolved path of the tree this runner started (empty when it was built in code).
+    const std::string& RootTreePath() const { return m_activePath; }
+
+    /// Set while a breakpoint is holding Play. The node is on the active path.
+    bool IsBreakPaused() const;
+    int BreakNode() const { return m_breakNode; }
+    const std::string& BreakTreePath() const { return m_breakPath; }
+    /// Drop the breakpoint pause (Stop, and the editor's resume, call this).
+    void ReleaseBreak();
+
+    struct TraceStep {
+        std::string path;      ///< resolved tree file (empty for a tree built in code)
+        std::string treeName;
+        int nodeId = -1;
+        std::string title;
+    };
+    /// Running nodes from the root down through any sub-tree that is running.
+    std::vector<TraceStep> ActiveTrace() const;
 
     /// Tell this object's scripts (on_bt_event) and visual scripts (On Custom Event)
     /// about `name`; `to` sends it to another object, `broadcast` to every object
@@ -107,6 +151,16 @@ private:
         bool  hasGoal = false;
         float stamp = -1.0f;               // service: last run; play animation: the time limit
         bool  entered = false;             // custom: "enter" was sent
+        bool  bpSeen = false;              // this activation already paused on its breakpoint
+    };
+    /// A Run Sub-Tree node's own tree, blackboard and node state. Not swapped onto
+    /// the runner until that node ticks, so the parent tree's state stays put.
+    struct SubFrame {
+        std::shared_ptr<const BehaviorTree> tree;
+        std::vector<Rt> rt;
+        Blackboard board;
+        std::map<int, std::unique_ptr<SubFrame>> children;
+        std::string path;
     };
     enum class Move { Moving, Arrived, Blocked };
 
@@ -116,6 +170,14 @@ private:
     BtStatus TickComposite(int idx, float dt);
     BtStatus TickDecorator(int idx, float dt);
     BtStatus TickTask(int idx, float dt, bool first);
+    BtStatus TickSubtree(int nodeIndex, float dt, bool first);
+    void WithFrame(SubFrame& frame, const std::function<void()>& fn);
+    void ApplyKeyMap(const std::string& mapText, Blackboard& parent, Blackboard& child, bool intoChild);
+    bool PathOnStack(const std::string& path) const;
+    void NoteBreak(int nodeId);
+    std::string TreeIdentity() const;
+    const SubFrame* FindFrame(const std::map<int, std::unique_ptr<SubFrame>>& kids, const std::string& path) const;
+    SubFrame* FindFrame(std::map<int, std::unique_ptr<SubFrame>>& kids, const std::string& path);
     void RunServices(int idx, float dt);
     void RunService(int idx, float elapsed);
     void Enter(int idx);
@@ -141,6 +203,12 @@ private:
 
     std::shared_ptr<const BehaviorTree> m_tree;
     std::vector<Rt> m_rt;
+    std::map<int, std::unique_ptr<SubFrame>> m_children;
+    std::string m_activePath;                 ///< resolved path of the tree currently ticking
+    std::vector<std::string> m_runStack;      ///< trees already on this tick (recursion guard)
+    int m_breakNode = -1;
+    std::string m_breakPath;
+    bool m_breakLatched = false;
     std::string m_error;
     bool  m_running = false;
     float m_time = 0.0f, m_acc = 0.0f;

@@ -248,9 +248,21 @@ system fallback fonts (`SystemFallbackFonts()`), the same chain
 false` leaves the installed fonts out, which gives the same answer on every machine
 (useful in tests and CI: installed fonts differ).
 
-## Not in this change
+## In the Localization window
 
-The editor's Localization window still draws the grid itself; wiring it to
-`LocTable` (cell states, the diff before an import, the checker's report, the scan
-for unused keys) is the next step. Right-to-left text is still drawn left to right,
-unshaped; the mirrored preview only shows how a layout would behave.
+**View > Editors & Tools > Localization** calls these tools (see
+[localization.md](localization.md)):
+
+* the grid is a `LocTable` grid: search, cell states and the state filters,
+* the line under the filter is `LocCheck` plus `LocMissingReport`; **Show report**
+  lists missing translations and placeholder mismatches, and a click selects the key,
+* **Scan project** is `LocScanProject` (plus the open scene) for unused and undefined keys,
+* the selected key's preview line is `LocPreview`: pseudo-localization, and mirrored
+  text for a right-to-left language,
+* CSV import still uses the string table's importer (so a column headed `FR` fills
+  `fr`) and then `LocDiffTables`, and the status line says what changed.
+
+Right-to-left text is still drawn left to right in the Scene view, unshaped; the
+mirrored preview only shows how a layout would behave. JSON import and export, a
+confirm step before applying a CSV, and the font coverage report are not in the
+window yet.

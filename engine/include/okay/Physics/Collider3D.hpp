@@ -163,13 +163,14 @@ public:
 /// ResolveSphere and Rigidbody3D contact all work against arbitrary (concave, hollow,
 /// holed) geometry.
 ///
-/// STATIC ONLY: it is world geometry. Dynamic Rigidbody3D bodies (spheres, capsules,
-/// boxes) collide with it, but a mesh collider cannot itself be a dynamic body: the
-/// solver has no concave-vs-concave contact and no convex-hull shape. A mesh collider
-/// on the same object as a non-kinematic Rigidbody3D is ignored by physics contact (a
-/// warning is logged and the Inspector says so); use a Box / Sphere / Capsule collider
-/// on moving things. Kinematic bodies may carry one (a moving platform). Queries
-/// (raycast, overlap, casts) work either way.
+/// Static and kinematic meshes collide as the exact triangles. A dynamic Rigidbody3D
+/// on the same object cannot use a concave triangle soup (no concave-vs-concave
+/// contact), so it collides as the convex hull of the mesh instead: the body can
+/// fall, stack and bounce, and concave gaps are filled in. Rays, overlaps and casts
+/// follow the same choice (exact triangles, or the hull while the body is dynamic).
+/// A mesh with no volume that cannot be made into a hull is still refused, with a
+/// warning and an Inspector message. Kinematic bodies keep the exact triangles
+/// (a moving platform).
 ///
 /// With no MeshRenderer, or a mesh with no usable triangles, it falls back to the
 /// `size` / `offset` bounding box exactly as before.
@@ -194,7 +195,20 @@ public:
     /// Why the collider is not (fully) doing what its name says; empty when it is.
     /// Shown in the Inspector.
     std::string StatusMessage() const;
-    /// True when a non-kinematic Rigidbody3D shares the object (unsupported, see above).
+    /// True when a non-kinematic Rigidbody3D shares the object.
+    bool IsDynamicBody() const;
+    /// True when that dynamic body collides as the convex hull (the hull was built).
+    bool UsesConvexHull() const;
+    /// The convex hull in the mesh's local space. Empty when !UsesConvexHull().
+    const Mesh& Hull() const;
+    int HullVertexCount() const { return (int)Hull().vertices.size(); }
+    int HullTriangleCount() const { return (int)Hull().triangles.size() / 3; }
+    /// The hull as a triangle mesh, for queries while the body is dynamic.
+    const TriMesh& HullTris() const;
+    /// World-space point of the hull furthest along `dir`.
+    Vec3 SupportWorld(const Vec3& dir) const;
+    /// True when a dynamic body shares the object and no convex hull could be built,
+    /// so contact is refused (see StatusMessage).
     bool IsDynamicConflict() const;
     /// Triangle world AABB, or the `size` box without triangles.
     void WorldAABB(Vec3& mn, Vec3& mx) const override;
@@ -206,7 +220,12 @@ public:
     bool m_warnedDynamic = false;   // runtime: the dynamic-body warning was logged
 private:
     void Refresh() const;
+    void EnsureHull() const;
     mutable TriMesh m_tris;
+    mutable Mesh m_hull;
+    mutable TriMesh m_hullTris;
+    mutable bool m_hullReady = false;
+    mutable std::uint64_t m_hullHash = 0;
     mutable bool m_valid = false;
     mutable std::uint64_t m_hash = 0, m_checkedEpoch = ~0ull;
     mutable const void *m_vp = nullptr, *m_ip = nullptr;

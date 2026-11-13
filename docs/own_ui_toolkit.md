@@ -314,7 +314,7 @@ All of it is in `okayui/include/okay/UI/OkayUI.hpp` and `okayui/src/OkayUI.cpp`,
 
 - **Nothing in the editor or launcher uses any of this.** The editor's custom drawing (about 2,500 call sites) still calls `ImDrawList`. A port needs a small adapter (a `Vec2` and colour conversion), which was not written because it would be unused code until the first panel is ported.
 - **The lab page is only reachable headlessly** (`okayui_headless_demo`). The editor's "Test UI" and the player overlay were not extended: they are big files that could not be built and run in this step, and an untested edit to them would break the rule that new controls are observed.
-- **The Direct3D 11 backend ignores clip spans**, so a clipped draw list is not clipped there. The Windows path is also untested here. The SDL_Renderer path honours clipping by construction but was not run on a display in this step.
+- **The Direct3D 11 backend ignores clip spans** (the old `OkayUI::D3D11Backend`; the new one in section 7 draws a scissor rectangle per span), so a clipped draw list is not clipped there. The Windows path is also untested here. The SDL_Renderer path honours clipping by construction but was not run on a display in this step.
 - **The software backend cannot show `AddImage`** (no textures), and has no anti-aliasing: diagonal lines and circle edges are hard-edged, unlike the GPU path with linear filtering. Pixel tests assert shapes and counts with tolerances, not a match with any GPU output.
 - **Concave polygons** are drawn as a fan and so wrong; there is no ear clipping. `AddConcavePolyFilled` (5 call sites) and `AddImageRounded` (17) are not provided. Rounded rectangles round all four corners or none.
 - **Text in the draw list is one line**, with no newline handling, and no per-call font.
@@ -605,3 +605,91 @@ Tested: `test_okayui_tables.cpp` (19,427 checks): unsorted start, ascending, des
 Row clipper (a later change to step 31): a table row wholly outside what can be seen still lays out (its cells are entered, so row heights, column widths, ids and the scroll limits stay exact) but emits no geometry: no quads, glyphs, textured quads or triangles while `g_cullRow` is set, which `TableNextRow` sets from the row's screen top and its remembered height. The band tested is the scrolling box's body below the frozen rows, else the enclosing clip rectangle, else the display; below the band is certain, above it allows four row heights of slack for a row taller than its remembered height. Frozen rows, the header, overlay content (popups, tooltips) and every row of a table with no clip and no display size are never culled. `TableRowIsVisible()` tells a caller its row was skipped, so expensive cell content can be skipped too (the cell still has to be entered); `SetTableRowClipping(false)` turns it off for comparison. Before this a 5,000-row three-text-column ScrollY table filled the 262,144-vertex batch and silently lost shapes (1,081,824 in the test table with row bands and borders); now it emits about as many vertices as the rows on screen, `DrawData::dropped` is 0 at the top, in the middle and at the end, and the picture is pixel-identical to the unclipped one (compared at three scroll positions in both looks, plus the two existing table goldens unchanged). Tested in `TestRowClipper` in `okayui/tests/test_okayui_tables.cpp`. Not done: a plain `ListClipper` for content that is not a table (a long list of `Selectable`s still emits every item), culling by column, and a row taller than four times its remembered height above the box on its first frame.
 
 Not done: column reordering, hiding and the header context menu, auto-fit by double click on a border, `TableSetColumnEnabled`, `TableGetHoveredColumn`, outer and inner vertical borders as flags, sizing policies beyond fixed and weighted, nested tables, row selection helpers, keyboard navigation, a horizontal bar for a ScrollY-only table; a frozen-column set wider than 90% of the box is dropped; the row-height memory holds the first 256 rows (later rows get a one-row band); `Selectable_SpanAllColumns` in a scrolling table is limited by the cell's clip; not run in a real window or on Windows.
+
+## 7. The render interface: OkayUI on screen without a Dear ImGui backend
+
+Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)
+
+### 7.1 What exists
+
+| Piece | File | What it is |
+|---|---|---|
+| Contract, validator, front end | `okayui/include/okay/UI/OkayUIRender.hpp`, `okayui/render/OkayUIRender.cpp` | `render::Backend` (what a backend implements), `render::Validate` (checks a frame), `render::Renderer` (the one front end every host calls) |
+| Software backend (the reference) | `okayui/render/OkayUIRender_Soft.cpp` | CPU, into an RGBA bitmap, using the same pixel routines as `OkayUI::soft::Render` and the software painter |
+| Painter backend | `okayui/render/OkayUIRender_Painter.cpp` | through `okay::platform::Painter`: the sdl2 painter or the own software painter |
+| OpenGL backend | `okayui/render/OkayUIRender_GL.cpp` | OpenGL 3.3 core or OpenGL ES 3.0; entry points through a get-proc function like `okay::GLRenderer::LoadGL`, no link-time GL |
+| Direct3D 11 backend | `okayui/render/OkayUIRender_D3D11.cpp` | one scissor rectangle per span; Windows only (compiles to a stub elsewhere) |
+| Factories | `okayui/include/okay/UI/OkayUIRenderBackends.hpp` | `CreateSoftBackend`, `CreatePainterBackend`, `CreateGLBackend`, `CreateD3D11Backend` |
+
+Library `okay_ui_render` (CMake, `okayui/CMakeLists.txt`); only its tests and two tools link it.
+
+Use, per frame: `OkayUI::BeginFrame(input); ...widgets...; OkayUI::EndFrameData(w, h);` then `renderer.Render(OkayUI::GetDrawData(), {fbWidth, fbHeight, dpi})`. The host clears the target before and presents after. Host images are registered once with `renderer.SetImage(key, w, h, rgba)` under the pointer it gives to `OkayUI::Image` / `DrawTexture` / `DrawList::AddImage`.
+
+### 7.2 The contract (full text in the header)
+
+- **Data.** OkayUI's `DrawData` as it is: 20-byte vertices (float position, RGBA8 straight alpha, float uv), 32-bit indices, and spans in draw order (clip rectangle or none, texture key or none). Window stacking has already reordered the index buffer (`reorderWindows`) before `GetDrawData`, so spans are ascending and adjacent; a backend must not depend on that and the validator only reports when it is not so.
+- **Coordinates and DPI.** Logical pixels, top-left origin; the framebuffer is `dpi` times larger. The renderer converts each clip to framebuffer pixels (floor of the low edge, ceil of the high edge, clamped to the target) and drops spans that end up empty, so a backend always receives a non-empty in-range scissor. OkayUI itself knows nothing of DPI: text is baked at fixed sizes and is magnified, not re-rasterised, at `dpi` above 1.
+- **Colour.** Vertex colour times texel, then source-over with straight alpha (`rgb = src * a + dst * (1 - a)`, `alpha = a + dst.a * (1 - a)`). No premultiplication, no sRGB conversion (the GL backend switches `FRAMEBUFFER_SRGB` off while it draws and puts it back).
+- **Textures.** RGBA8, top row first. Key = `DrawData::atlasTexture` (launcher-look glyph atlas, linear), `FallbackFontOf(key)` (a fallback font's atlas, re-uploaded when `TtfFont::Generation()` changes), or a host image. An unknown key skips that span and is counted (`Stats::unresolvedSpans`). The main glyph atlas is baked once; `Renderer::InvalidateAtlas()` is the hook if that ever changes.
+- **Frame.** `BeginFrame` / `Draw` / `EndFrame` once per OkayUI frame. The GL and Direct3D 11 backends save and restore the state they change (viewport, scissor, blend, program, bound texture and buffers, depth, cull, stencil, input assembler and shader state).
+
+### 7.3 The validator
+
+`render::Validate(DrawData, fbW, fbH, dpi)` never reads past what the counts describe and never trusts a value. Fatal (the frame is refused, nothing drawn): bad target size or DPI (outside 1..16384 pixels, 0.25..16), negative or oversize counts, a null pointer with a count, a vertex stride other than 20, a nonsensical atlas size. Repairable (the renderer drops just the bad parts, `Stats::repaired`): an index count not a multiple of 3, indices out of range, NaN / infinite / above 1e6 vertex positions (the triangle is dropped; a NaN uv is zeroed), spans outside the index buffer (offset or count negative or overflowing, clamped in 64-bit maths), spans not a multiple of 3, clip rectangles with a negative size or overflowing. Warnings (legal, OkayUI never does them): spans not ascending, indices no span draws, an unresolvable texture key, `DrawData::dropped` above zero. `Options::strict` turns every problem into a refusal.
+
+### 7.4 What was tested, and where
+
+Everything here ran in this repository's sandbox; there is no GPU and no Windows machine in it.
+
+| Backend | Ran on | How |
+|---|---|---|
+| Software | the CPU | `test_okayui_render` (8,566 checks): byte-identical to `OkayUI::soft::Render` on all 20 scenes that old rasteriser can draw; golden images (the committed `primitives`, `demo_window`, `demo_window_launcher`, `drawlist_lab*` with nearest atlas sampling, plus six new `render_*.png` with linear sampling); exact clip rectangles, DPI 1.5 and 2 (flat areas of the 2x picture equal the 1x picture, 0 mismatches over 785,000 pixels), alpha, host images, repair of damaged frames, 4,000 randomly damaged frames |
+| Painter, own software painter | the CPU | same test: **byte-identical** to the reference on all 23 scenes (max difference 0) |
+| Painter, sdl2 painter | SDL's software renderer on a surface, `SDL_VIDEODRIVER=dummy` | same test: **not identical**. Mean channel difference 0.4 to 3.1, largest single-channel differences 180 to 255 on a few thousand edge pixels (text and thin lines: SDL rasterises geometry its own way, flat areas are within 1 level because SDL truncates where the others round). Asserted: mean under 4. No GPU `SDL_Renderer` was run |
+| OpenGL 3.3 core | Mesa llvmpipe 25.2 (CPU) through EGL, surfaceless / pbuffer, FBO read-back | `test_okayui_render_gl` (272 checks), see 7.5 |
+| OpenGL ES 3.0 | Mesa llvmpipe (ES 3.2 context) through EGL | the same test; same numbers |
+| Direct3D 11 | `x86_64-w64-mingw32-g++`: compiled clean (`-Wall -Wextra`), linked against `d3d11` and `d3dcompiler_47`. **Run under Wine 9.0 (wine64) on Xvfb** with wined3d translating to OpenGL on llvmpipe: device created, HLSL compiled by Wine's `d3dcompiler_47`, all 23 scenes drawn and read back | `okayui_render_dump` writes the scenes and the reference, `okayui_render_d3d11_check` draws them (7.5). Also the HLSL text compiled to SPIR-V with `glslangValidator -D` for both entry points, and the four GLSL shaders validated with `glslangValidator` |
+
+Not a real D3D11 driver: Wine's D3D11 is a translation on top of OpenGL, so it shows that the backend's calls, shaders, states and read-back work, not how a Windows GPU driver rasterises.
+
+To repeat the Wine run: build `okayui_render_dump` on Linux, run it on an empty directory, build `okayui_render_d3d11_check` for Windows (CMake with MinGW; or by hand with `OkayUIRender.cpp`, `OkayUIRender_D3D11.cpp` and a stub `OkayUI::FallbackFontOf` returning null), then `WINEPREFIX=... xvfb-run wine64 okayui_render_d3d11_check.exe Z:/dir hardware`.
+
+### 7.5 Image differences against the software reference
+
+Per-channel differences over the whole frame, 23 scenes (`okayui/tests/RenderScenes.hpp`): explicit-coordinate widgets, the scripted demo window, the draw-list lab, the colour picker, a scrolling table with frozen headers, plots, three stacked windows with translucent shapes on top (the reordered draw list), nested clipped children, host images with tint and alpha, rounded rectangles and gradients, a code editor view, each in the classic and the launcher look, plus launcher-look text in scripts the launcher font lacks (a fallback-font atlas).
+
+| Backend | Largest difference | Worst mean | Pixels more than 8 apart | Notes |
+|---|---|---|---|---|
+| Own software painter | 0 | 0 | 0 | same rasteriser |
+| OpenGL 3.3 core, llvmpipe | 237 | 0.180 | 6 in the worst scene (0.002 percent) | classic-look scenes are one level off on about a third of their pixels (blend rounding, 1 of 255); the few large differences are single pixels on exactly tied triangle edges |
+| OpenGL ES 3.0, llvmpipe | 237 | 0.180 | 6 | identical to core |
+| OpenGL, DPI 1.5 and 2 | 0 | 0 | 0 | on the hand-made clip/alpha frame; demo window at DPI 2: max 222, mean 0.011, 8 pixels |
+| Direct3D 11 under Wine (the check tool returns failure for a mean above 0.5: `lab` 0.52 and `code_view` 2.85 do) | 255 | 2.85 (code view, classic look) | up to 15,191 (lab) and 4,902 (code view) | the large counts are single-pixel flips of 1x1 and 2x2 quads whose vertices are at y = n + 0.5, so pixel centres sit exactly on an edge (checked for one such pixel: the quad's top edge). The software and OpenGL runs resolve those ties one way, Wine's D3D-to-GL translation the other. Whether a real Windows driver (D3D11 requires the top-left rule) agrees with the reference there is not known |
+| sdl2 painter | 255 | 3.09 | 13 to 23,517 | see the table in 7.4 |
+
+Scenes with launcher-look text through the atlas agree to mean 0.01 (GL) because the atlas is sampled linearly in both; with `Options::atlasLinear = false` the software backend draws what `OkayUI::soft::Render` and the old goldens drew.
+
+### 7.6 Performance
+
+`test_okayui_render_bench`, release `-O1`, 1280 x 800, the median of several frames, on a shared 4-core machine that other jobs were using (load average about 6), so read these as orders of magnitude. CPU milliseconds. "Build" is OkayUI building the frame; "valid" is `Validate` (indices and vertices scanned); upload is vertex plus index data. GL is Mesa llvmpipe: "submit" is `Renderer::Render` returning (CPU side, includes the buffer upload), "+ finish" adds `glFinish`, which waits for llvmpipe's CPU rasteriser; there is no GPU time to report. The Direct3D 11 backend was not timed (Wine's translation says nothing about Windows).
+
+| Scene | Vertices / indices / spans | Build | Valid | Software | Painter (soft) | Painter (sdl2 soft) | GL core submit (+ finish) |
+|---|---|---|---|---|---|---|---|
+| Code editor, 100,000-line file | 8,480 / 12,480 / 5 | 0.1 | 0.03 | 420-660 | 420-470 | 50-60 | 0.7 (55-80) |
+| Table, 5000 rows x 1 | 106,164 / 159,006 / 4 | 1.6 | 0.6 | 560 | 410 | 48 | 2.5 (54) |
+| Table, 5000 rows x 3 | 262,144 / 393,006 / 3, **10,520 shapes dropped** | 5.8 | 2-8 | 390-510 | 400-580 | 50 | 6-14 (62-83) |
+| Plot, 20,000 points | 20,600 / 30,690 / 2 | 0.2 | 0.08 | 450-480 | 430-450 | 60-73 | 1.7 (73) |
+
+What this says: the interface itself is cheap (validating 400,000 indices costs under 8 ms, usually 0.1 to 2; submitting a 6.6 MB frame to GL costs 6 to 14 ms of CPU, mostly the buffer copy). The CPU rasterisers are slow because each of these frames is a full-window translucent panel: that is the reference, not a backend to ship. The code editor draws only the lines in view, so 100,000 lines cost the same as 200. **OkayUI tables now cull rows outside the clip** (4.35, row clipper): a 5000-row table with three text columns used to overflow OkayUI's own batch (262,144 vertices) and lose the bottom rows from the picture; it now emits only the rows in view and `DrawData::dropped` stays 0. Content that is not a table (a long list of `Selectable`s) still has no culling.
+
+### 7.7 Known differences and gaps, said bluntly
+
+- **No real GPU was used.** OpenGL ran on llvmpipe only; nothing ran on a hardware driver (no hardware driver of any vendor). Direct3D 11 ran only under Wine on top of llvmpipe; it has never run on Windows.
+- **Tie breaking on exact pixel-centre edges is not the same everywhere** (7.5). OkayUI's classic look puts small quads at half-pixel coordinates; a backend may draw or skip the pixel on the edge.
+- **Direct3D 11 HLSL** was compiled by Wine's `d3dcompiler_47` and parsed by glslang, not by the Windows shader compiler.
+- **The old `OkayUI::D3D11Backend`** (`okayui/src/OkayUI_D3D11.cpp`) is unchanged and still ignores clip spans and textures (the gap in 4.4); the new backend does not. Nothing switches over: no host uses either.
+- **DPI above 1 magnifies text**, it does not re-rasterise it; the DPI-aware font path is not built.
+- **Target formats.** The GL backend draws into whatever framebuffer is bound, assuming a linear RGBA8-like target; a multisampled or sRGB target was not tested (sRGB write conversion is switched off). Direct3D 11 read-back understands RGBA8 and BGRA8 targets without multisampling only.
+- **Texture size.** The front end refuses above 16384; the OpenGL backend does not query `GL_MAX_TEXTURE_SIZE` (a larger texture than the driver takes is a GL error and a blank texture), Direct3D 11 refuses above 8192. There is no packer for host images (one texture each).
+- **Missing:** Metal, Vulkan, WebGL / OpenGL ES 2, Direct3D 12 backends; a window or swap chain (the host owns those: this is where `okay::platform` and the editor and launcher port come in); multi-viewport rendering; premultiplied-alpha targets; a GPU timer.
+- **Not wired anywhere.** No editor, launcher or player code calls any of this, and Dear ImGui is not removed. What remains for dropping it: an own platform backend for input and windows (the SDL2 row of the roadmap), porting editor and launcher panels to OkayUI, then deleting the `okay_imgui` library.

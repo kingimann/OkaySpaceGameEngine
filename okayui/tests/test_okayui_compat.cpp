@@ -27,18 +27,18 @@ int main() {
         CHECK_NEAR(v.x, 10 / 255.0f, 1e-6); CHECK_NEAR(v.y, 128 / 255.0f, 1e-6); CHECK_NEAR(v.z, 1.0f, 1e-6); CHECK_NEAR(v.w, 64 / 255.0f, 1e-6);
         CHECK(UI::ColorConvertFloat4ToU32(v) == c);
         const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
-        CHECK(UI::ColorConvertFloat4ToU32(UI::Vec4{-1.0f, 2.0f, nan, inf}) == UI::RGBA(0, 255, 0, 0));   // clamped, NaN and infinity are 0
+        CHECK(UI::ColorConvertFloat4ToU32(UI::Vec4{-1.0f, 2.0f, nan, inf}) == UI::RGBA(0, 255, 0, 255));   // clamped; NaN is 0 and +infinity clamps to 1 (OkayUI.hpp's own conversion)
         for (unsigned r = 0; r < 256; r += 51) for (unsigned g = 0; g < 256; g += 51) for (unsigned b = 0; b < 256; b += 51) {
             float h, s, val, rr, gg, bb;
-            UI::ColorConvertRGBtoHSV(r / 255.0f, g / 255.0f, b / 255.0f, h, s, val);
-            UI::ColorConvertHSVtoRGB(h, s, val, rr, gg, bb);
+            UI::ColorConvertRGBtoHSV(r / 255.0f, g / 255.0f, b / 255.0f, &h, &s, &val);
+            UI::ColorConvertHSVtoRGB(h, s, val, &rr, &gg, &bb);
             CHECK_NEAR(rr, r / 255.0f, 1e-4); CHECK_NEAR(gg, g / 255.0f, 1e-4); CHECK_NEAR(bb, b / 255.0f, 1e-4);
         }
         float r, g, b;
-        UI::ColorConvertHSVtoRGB(1.25f, 1.0f, 1.0f, r, g, b);          // a hue past 1 wraps: 0.25 is yellow-green
-        float r2, g2, b2; UI::ColorConvertHSVtoRGB(0.25f, 1.0f, 1.0f, r2, g2, b2);
+        UI::ColorConvertHSVtoRGB(1.25f, 1.0f, 1.0f, &r, &g, &b);          // a hue past 1 wraps: 0.25 is yellow-green
+        float r2, g2, b2; UI::ColorConvertHSVtoRGB(0.25f, 1.0f, 1.0f, &r2, &g2, &b2);
         CHECK(r == r2 && g == g2 && b == b2);
-        UI::ColorConvertHSVtoRGB(nan, nan, nan, r, g, b);
+        UI::ColorConvertHSVtoRGB(nan, nan, nan, &r, &g, &b);
         CHECK(r == 0 && g == 0 && b == 0);
     }
     {   // theme colours as floats
@@ -47,7 +47,7 @@ int main() {
         const UI::Vec4 a = UI::GetStyleColorVec4(UI::Col_Accent), tx = UI::GetStyleColorVec4(UI::Col_Text);
         CHECK_NEAR(a.x, t.accent[0] / 255.0f, 1e-6); CHECK_NEAR(a.z, t.accent[2] / 255.0f, 1e-6);
         CHECK_NEAR(tx.y, t.text[1] / 255.0f, 1e-6);
-        CHECK(UI::GetStyleColorVec4((UI::Col)99).w > 0.0f);   // an unknown id answers with the text colour, never garbage
+        { const UI::Vec4 u = UI::GetStyleColorVec4((UI::Col)9999); CHECK(u.x == 0 && u.y == 0 && u.z == 0 && u.w == 0); }   // an unknown id answers (0, 0, 0, 0)
     }
     {   // ids
         CHECK(UI::GetID("a") != UI::GetID("b") && UI::GetID("a") == UI::GetID("a"));

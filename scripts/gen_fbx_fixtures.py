@@ -31,6 +31,7 @@ def AD(v): return P('d', list(v))
 def AI(v): return P('i', list(v))
 def AL(v): return P('l', list(v))
 def AF(v): return P('f', list(v))
+def AC(v): return P('c', list(v))   # byte array ('c', written by newer SDKs for thumbnails)
 
 
 class N:
@@ -51,7 +52,7 @@ def bin_prop(p, compress):
         b = v.encode('latin-1')
         return b'S' + struct.pack('<I', len(b)) + b
     if k == 'R': return b'R' + struct.pack('<I', len(v)) + v
-    fmt = {'d': 'd', 'f': 'f', 'l': 'q', 'i': 'i', 'b': 'B'}[k]
+    fmt = {'d': 'd', 'f': 'f', 'l': 'q', 'i': 'i', 'b': 'B', 'c': 'B'}[k]
     raw = struct.pack('<%d%s' % (len(v), fmt), *v)
     if compress and len(raw) >= 64:
         z = zlib.compress(raw, 9)
@@ -419,6 +420,41 @@ def rig_scene(ascii_names):
     return sc.top(up=1, unit=1.0)
 
 
+def takes_scene():
+    """Three takes that share one timeline (found in a real exporter file): each has its own layer, curve node and
+    copy of the curves, and a time span (LocalStart / LocalStop) saying which part of them it plays.
+    The header carries a byte-array ('c') thumbnail, which newer SDKs write."""
+    sc = Scene(False)
+    g = sc.geometry('Geo', geo_children(CUBE_V, quad_polys(CUBE_Q), [n for n in CUBE_N for _ in range(4)]))
+    m = sc.model('Mover', 0)
+    sc.connect(g, m)
+    for name, span in (('first', (0.0, 1.0)), ('second', (1.0, 2.0)), ('whole', None)):
+        stack = sc.nid()
+        pl = [prop70('LocalStart', 'KTime', 'Time', '', span[0] * KTIME), prop70('LocalStop', 'KTime', 'Time', '', span[1] * KTIME)] if span else []
+        sc.objects.append(N('AnimationStack', [L(stack), sc.nm('AnimStack', name), S('')], [props70(*pl)]))
+        layer = sc.nid()
+        sc.objects.append(N('AnimationLayer', [L(layer), sc.nm('AnimLayer', 'BaseLayer'), S('')], []))
+        sc.connect(layer, stack)
+        cx = curve(sc, 'x', [(0.0, 0.0), (1.0, 10.0), (2.0, 0.0)], 0x4)   # linear: up to 10 at t=1, back to 0 at t=2
+        cn = curve_node(sc, 'T', m, 'Lcl Translation', (0, 0, 0), [cx, None, None])
+        sc.connect(cn, layer)
+    top = sc.top()
+    top[0].children.append(N('Thumbnail', [], [N('Version', [I(100)]), N('Format', [I(0)]), N('ImageData', [AC([1, 2, 3, 4, 250, 251, 252, 253] * 20)])]))
+    return top
+
+
+def bridge_scene():
+    """A square with a square hole cut into it, written as ONE polygon with a bridge: the outer ring, back to its
+    start, the inner ring (opposite direction), back to its start. Corners repeat; area 16 - 4 = 12."""
+    sc = Scene(False)
+    verts = [(0, 0, 0), (4, 0, 0), (4, 4, 0), (0, 4, 0), (1, 1, 0), (1, 3, 0), (3, 3, 0), (3, 1, 0)]
+    polys = [0, 1, 2, 3, 0, 4, 5, 6, 7, ~4]   # inner ring ends on its first corner, then the polygon closes back to corner 0
+    g = sc.geometry('Annulus', geo_children(verts, polys, [(0, 0, 1)] * len(verts), 'ByVertice'))
+    m = sc.model('Annulus', 0)
+    sc.connect(g, m)
+    return sc.top()
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -436,6 +472,8 @@ def main():
     write_binary(os.path.join(out, 'pivot_bin.fbx'), pivot_scene(), 7400)
     write_binary(os.path.join(out, 'rig_bin75.fbx'), rig_scene(False), 7500)
     write_ascii(os.path.join(out, 'rig_ascii.fbx'), rig_scene(True), 7400)
+    write_binary(os.path.join(out, 'takes_bin.fbx'), takes_scene(), 7400)
+    write_binary(os.path.join(out, 'bridge_bin.fbx'), bridge_scene(), 7400, compress=False)
     for f in sorted(os.listdir(out)):
         print(f, os.path.getsize(os.path.join(out, f)))
 

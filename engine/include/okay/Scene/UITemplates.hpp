@@ -431,6 +431,10 @@ inline GameObject* AddSettings(Scene& scene) {
     toggleAt("HighContrast", "High contrast", 500, 196, false);
     toggleAt("ReduceMotion", "Reduce motion", 500, 236, false);
     toggleAt("ReduceFlashing", "Reduce flashing", 500, 276, false);
+    toggleAt("Subtitles", "Subtitles", 500, 316, true);
+    toggleAt("SoundCaptions", "Sound captions", 500, 356, false);
+    toggleAt("HoldToggle", "Hold to toggle", 500, 396, false);
+    dropdownAt("AimAssist", "Aim assist", 500, 436, 160, {"Off", "Low", "Medium", "High"}, 2);
     Button(scene, root, "BackButton", "Done", UIAnchor::TopLeft, {500, 520}, {420, 44}, ButtonKind::Secondary);
     root->AddComponent<SettingsScreen>();
     return root;

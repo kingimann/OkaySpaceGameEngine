@@ -22,10 +22,14 @@ namespace okay {
 
 /// Binds the prebuilt Settings screen (Music / Effects, Monitor, Display mode,
 /// Resolution, Refresh rate, VSync, Quality, the Accessibility rows, Apply and Done)
-/// to the audio mixer, the window and the render quality preset and to Accessibility.
+/// to the audio mixer, the window and the render quality preset and to Accessibility
+/// (text size, colour filter, high contrast, reduced motion and flashing, subtitles,
+/// sound captions, hold-to-toggle and aim assist).
 /// Monitor, display mode, resolution and refresh wait for Apply, then ask
 /// "Keep these settings?" for 10 seconds and revert on their own if nobody keeps them.
-/// VSync, quality, volume and the accessibility rows apply as they change.
+/// VSync, quality, volume and the accessibility rows apply as they change (saved to
+/// Prefs when Done is pressed). A scene saved before a row existed simply has no control
+/// for it, and that row is skipped, so an older Settings object still loads.
 /// Done hides the screen (and keeps a pending display change) and, when a Pause Menu
 /// is in the scene, shows that again. While the screen is active the cursor is free
 /// and GameInputBlocked reports a modal.
@@ -62,6 +66,16 @@ public:
     static int ColorFilterIndex(ColorblindMode m) {
         for (int i = 0; i < kColorFilters; ++i) if (ColorFilterMode(i) == m) return i;
         return 0;   // Achromatopsia has no correction to apply: shown as Off
+    }
+    /// Aim assist dropdown: Off, Low, Medium, High. Medium is the saved default.
+    static constexpr int kAimLevels = 4;
+    static AimAssist AimLevel(int i) {
+        static const AimAssist v[kAimLevels] = {AimAssist::Off, AimAssist::Low, AimAssist::Medium, AimAssist::High};
+        return v[i < 0 ? 0 : i >= kAimLevels ? kAimLevels - 1 : i];
+    }
+    static int AimIndex(AimAssist level) {
+        for (int i = 0; i < kAimLevels; ++i) if (AimLevel(i) == level) return i;
+        return 2;
     }
 
     static void Ensure(Scene& scene) {
@@ -133,6 +147,10 @@ private:
     UIToggle*   m_contrast = nullptr;
     UIToggle*   m_motion = nullptr;
     UIToggle*   m_flashing = nullptr;
+    UIToggle*   m_subtitles = nullptr;
+    UIToggle*   m_soundCaptions = nullptr;
+    UIToggle*   m_holdToggle = nullptr;
+    UIDropdown* m_aim = nullptr;
     UIButton*   m_done = nullptr;
     GameObject* m_returnTo = nullptr;
     bool        m_open = false;
@@ -173,10 +191,15 @@ private:
         m_contrast = toggle("HighContrastToggle");
         m_motion = toggle("ReduceMotionToggle");
         m_flashing = toggle("ReduceFlashingToggle");
+        m_subtitles = toggle("SubtitlesToggle");
+        m_soundCaptions = toggle("SoundCaptionsToggle");
+        m_holdToggle = toggle("HoldToggleToggle");
+        if (GameObject* g = Child("AimAssistDropdown")) m_aim = g->GetComponent<UIDropdown>();
         if (GameObject* g = Child("BackButton")) m_done = g->GetComponent<UIButton>();
         m_bound = m_music || m_effects || m_full || m_vsync || m_quality || m_done || m_monitor || m_mode ||
                   m_resolution || m_refresh || m_apply ||
-                  m_textSize || m_colorFilter || m_contrast || m_motion || m_flashing;
+                  m_textSize || m_colorFilter || m_contrast || m_motion || m_flashing ||
+                  m_subtitles || m_soundCaptions || m_holdToggle || m_aim;
     }
 
     void FillDisplayChoices() {
@@ -307,6 +330,10 @@ private:
         if (m_contrast) m_contrast->on = a.highContrast;
         if (m_motion) m_motion->on = a.reduceMotion;
         if (m_flashing) m_flashing->on = a.reduceFlashing;
+        if (m_subtitles) m_subtitles->on = a.subtitles.enabled;
+        if (m_soundCaptions) m_soundCaptions->on = a.subtitles.soundCaptions;
+        if (m_holdToggle) m_holdToggle->on = a.toggleAllHolds;
+        if (m_aim) m_aim->value = AimIndex(a.aimAssist);
     }
 
     void Push() {
@@ -332,6 +359,18 @@ private:
         if (m_contrast && m_contrast->on != a.highContrast) Accessibility::SetHighContrast(m_contrast->on);
         if (m_motion && m_motion->on != a.reduceMotion) Accessibility::SetReduceMotion(m_motion->on);
         if (m_flashing && m_flashing->on != a.reduceFlashing) Accessibility::SetReduceFlashing(m_flashing->on);
+        if (m_subtitles && m_subtitles->on != a.subtitles.enabled) {
+            SubtitleSettings sub = a.subtitles;
+            sub.enabled = m_subtitles->on;
+            Accessibility::SetSubtitles(sub);
+        }
+        if (m_soundCaptions && m_soundCaptions->on != a.subtitles.soundCaptions) {
+            SubtitleSettings sub = Accessibility::Get().subtitles;
+            sub.soundCaptions = m_soundCaptions->on;
+            Accessibility::SetSubtitles(sub);
+        }
+        if (m_holdToggle && m_holdToggle->on != a.toggleAllHolds) Accessibility::SetToggleAllHolds(m_holdToggle->on);
+        if (m_aim && m_aim->value != AimIndex(a.aimAssist)) Accessibility::SetAimAssist(AimLevel(m_aim->value));
     }
 
     void Close() {

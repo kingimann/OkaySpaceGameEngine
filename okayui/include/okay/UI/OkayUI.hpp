@@ -101,6 +101,10 @@ struct Theme {
     float windowPadding  = 10.0f;  // inside a window, around its content
     bool  windowShadow   = false;  // soft drop shadow under windows
     bool  caretBlink     = true;   // text caret blinks (off: always visible, for tests and screenshots)
+    // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
+    // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
+    unsigned char      colors[64][4] = {};
+    unsigned long long colorSet = 0;
 };
 
 /// The OkaySpace launcher's look for game UI: its font (Roboto, smooth TrueType
@@ -451,20 +455,41 @@ bool SliderFloat4(const char* label, float v[4], float minV, float maxV);
 bool InputFloat(const char* label, float* value, float step = 0.1f);
 /// A square button with an arrow: dir 0 left, 1 right, 2 up, 3 down (anything else is left). `id` names it.
 bool ArrowButton(const char* id, int dir);
-/// A square swatch showing rgba[0..3] (each 0..1) that can be clicked; `size` <= 0 uses the row height.
+/// Colour widgets (new files: okayui/src/OkayUIColor.cpp for the picker; the swatch and the row editors are in OkayUI.cpp).
+/// Flags for ColorEdit3/4, ColorPicker3/4 and ColorButton (OkayUI's own values).
+///  NoAlpha: three channels only; the alpha of a 4-float array is left alone and drawn as 1.
+///  NoPicker: ColorEdit: clicking the swatch does not open the picker.   NoInputs: ColorEdit: the swatch only; picker: no hex field or cells.
+///  NoLabel: do not draw the label.   NoSidePreview: picker: no current / original preview strip.   NoAlphaBar: picker: no alpha bar.
+///  Hex: ColorEdit: one hex text field (#RRGGBB or #RRGGBBAA) in place of the channel sliders.
+///  AlphaPreviewHalf: a swatch shows the colour with its alpha (over a checkerboard) on the left half and opaque on the right half; without
+///  the flag the whole swatch shows the alpha over the checkerboard.
+enum ColorEditFlags : int {
+    ColorEdit_None = 0, ColorEdit_NoAlpha = 1, ColorEdit_NoPicker = 2, ColorEdit_NoInputs = 4, ColorEdit_NoLabel = 8,
+    ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
+};
+/// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
-/// An RGBA color editor: a swatch (left half with the alpha, right half opaque) plus four 0..1 sliders.
-bool ColorEdit4(const char* label, float rgba[4]);
+bool ColorButton(const char* id, const float rgba[4], int flags, float size);
+/// An RGBA color editor: a swatch plus four 0..1 sliders (see ColorEditFlags); clicking the swatch opens a ColorPicker4 popup.
+/// Returns true on any frame a channel changed.
+bool ColorEdit4(const char* label, float rgba[4], int flags = 0);
 /// Ends the current line: the next widget starts on a new row even right after SameLine().
 void NewLine();
 
-/// An RGB color editor: a swatch plus three 0..1 channel sliders on one row.
+/// An RGB color editor: a swatch plus three 0..1 channel sliders on one row (ColorEdit4 with ColorEdit_NoAlpha).
 /// Edits rgb[0..2] in place; returns true on any frame a channel changed.
-bool ColorEdit3(const char* label, float rgb[3]);
+bool ColorEdit3(const char* label, float rgb[3], int flags = 0);
 
-/// A full HSV color picker: a saturation/value square plus a hue bar. Drag either to
-/// edit rgb[0..2] (each 0..1) in place. Returns true on any frame a channel changed.
-bool ColorPicker3(const char* label, float rgb[3]);
+/// A full color picker: a saturation/value square, a hue bar, an alpha bar (ColorPicker4), a current / original preview, a hex field
+/// (#RRGGBB or #RRGGBBAA, typed text applies once it is a whole colour) and R G B A cells (0..255). Drag the square or the bars,
+/// click the original swatch to go back. The hue is kept while the colour is grey. Edits the floats in place (each 0..1); true on any change.
+bool ColorPicker4(const char* label, float rgba[4], int flags = 0);
+bool ColorPicker3(const char* label, float rgb[3], int flags = 0);
+/// "#RRGGBB" (or "#RRGGBBAA" with `alpha`) from floats 0..1, written into `out` (cap >= 10 bytes), and back. ColorFromHex accepts an
+/// optional '#', then exactly 6 or 8 hex digits in either case; it changes `rgba` only when the whole text is a colour (6 digits leave
+/// rgba[3] alone) and returns whether it did.
+void ColorToHex(const float rgba[4], bool alpha, char* out, int cap);
+bool ColorFromHex(const char* text, float rgba[4]);
 
 /// A collapsing tree node. Returns true while expanded; when it does, the widgets
 /// that follow are INDENTED until you call TreePop(). Nestable. State kept per label.
@@ -908,15 +933,50 @@ bool IsDisabled();
 Theme& Style();
 
 // ---- Scoped style overrides (ImGui-style) --------------------------------------
-// Which theme color a PushStyleColor call overrides.
+// The theme colours a PushStyleColor / SetStyleColor / GetStyleColorVec4 call names. The first eight are the original theme
+// fields; the rest are the full Dear ImGui colour set. A colour that was never set follows the base theme (Style().bg, ...);
+// a set one overrides it. Which widget draws with which colour is listed in docs/own_ui_toolkit.md section 4.33; a few
+// (the navigation highlights, BorderShadow, DragDropTarget, the unfocused tab colours, the hovered / active separator)
+// are accepted and stored but nothing draws with them yet.
 enum Col : int {
     Col_Bg, Col_BgHover, Col_BgDown, Col_Border,
     Col_Text, Col_Panel, Col_Track, Col_Accent,
-    Col_COUNT
+    Col_TextDisabled, Col_WindowBg, Col_ChildBg, Col_PopupBg, Col_BorderShadow,
+    Col_FrameBg, Col_FrameBgHovered, Col_FrameBgActive,
+    Col_TitleBg, Col_TitleBgActive, Col_TitleBgCollapsed, Col_MenuBarBg,
+    Col_ScrollbarBg, Col_ScrollbarGrab, Col_ScrollbarGrabHovered, Col_ScrollbarGrabActive,
+    Col_CheckMark, Col_SliderGrab, Col_SliderGrabActive,
+    Col_Header, Col_HeaderHovered, Col_HeaderActive,
+    Col_Separator, Col_SeparatorHovered, Col_SeparatorActive,
+    Col_ResizeGrip, Col_ResizeGripHovered, Col_ResizeGripActive,
+    Col_Tab, Col_TabHovered, Col_TabActive, Col_TabUnfocused, Col_TabUnfocusedActive,
+    Col_DockingPreview, Col_DockingEmptyBg,
+    Col_PlotLines, Col_PlotLinesHovered, Col_PlotHistogram, Col_PlotHistogramHovered,
+    Col_TableHeaderBg, Col_TableBorderStrong, Col_TableBorderLight, Col_TableRowBg, Col_TableRowBgAlt,
+    Col_TextSelectedBg, Col_DragDropTarget, Col_NavHighlight, Col_NavWindowingHighlight, Col_NavWindowingDimBg, Col_ModalWindowDimBg,
+    Col_COUNT,
+    // the button colours are the original three fields under their Dear ImGui names
+    Col_Button = Col_Bg, Col_ButtonHovered = Col_BgHover, Col_ButtonActive = Col_BgDown,
 };
 /// Temporarily override a theme color (RGBA 0..255). Every PushStyleColor must be
 /// matched by a PopStyleColor. Nestable — great for coloring one widget or section.
 void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255);
+/// The same with a packed colour (see RGBA) or four floats 0..1 (non-finite values count as 0; out of range ones are clamped).
+void PushStyleColor(Col which, Color32 color);
+struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
+void PushStyleColor(Col which, Vec4 rgba);
 void PopStyleColor(int count = 1);
+/// Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
+void SetStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255);
+void ResetStyleColor(Col which);
+/// What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
+/// An id outside the enum answers (0, 0, 0, 0). GetStyleColorName gives "Col_Text" for Col_Text (or "" outside the enum).
+Vec4 GetStyleColorVec4(Col which);
+const char* GetStyleColorName(Col which);
+/// Dear ImGui style colour conversions (all components 0..1; hue wraps).
+Vec4 ColorConvertU32ToFloat4(Color32 c);
+Color32 ColorConvertFloat4ToU32(Vec4 c);
+void ColorConvertRGBtoHSV(float r, float g, float b, float* h, float* s, float* v);
+void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b);
 
 } // namespace OkayUI

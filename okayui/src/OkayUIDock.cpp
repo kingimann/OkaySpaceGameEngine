@@ -117,7 +117,7 @@ DockDropInfo EvalDrop(Ctx& c, Vec2 m) {
 
 void DrawGuides(Ctx& c, const DockDropInfo& d) {
     const DrawList& fg = GetForegroundDrawList();
-    const Color32 acc = GetColorU32(Col_Accent), accSoft = ColorMulAlpha(acc, 0.30f), border = GetColorU32(Col_Border), panel = GetColorU32(Col_Panel);
+    const Color32 acc = GetColorU32(Col_Accent), accSoft = GetColorU32(Col_DockingPreview), border = GetColorU32(Col_Border), panel = GetColorU32(Col_Panel);
     fg.AddRectFilled(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), accSoft);
     fg.AddRect(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), acc, 0.0f, 2.0f);
     // the five guide boxes over the leaf under the pointer
@@ -263,12 +263,12 @@ void DockSpace(Rect area) {
 
     // ---- draw ----
     const DrawList& dl = GetWindowDrawList();
-    const Color32 panel = GetColorU32(Col_Panel), track = GetColorU32(Col_Track), border = GetColorU32(Col_Border), acc = GetColorU32(Col_Accent);
+    const Color32 panel = GetColorU32(Col_Panel), track = GetColorU32(Col_Track), emptyBg = GetColorU32(Col_DockingEmptyBg), border = GetColorU32(Col_Border), acc = GetColorU32(Col_Accent);
     const Color32 dim = GetColorU32(Col_Text, 0.55f), txt = GetColorU32(Col_Text);
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit()) continue;
         const Rect& r = n.rect;
-        dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), panel);
+        dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), n.tabs.empty() ? emptyBg : panel);
         dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + std::min(c.tabH, r.h)), track);
         dl.AddRect(V(r.x, r.y), V(r.x + r.w, r.y + r.h), border);
         if (n.tabs.empty()) {

@@ -5,11 +5,11 @@ distribution) and no default has been changed. The roadmap (`docs/own_code_roadm
 requires this announcement to be published **one release before** Assimp is removed. The owner decides the release
 numbers and the date; the text between the lines below is the announcement, with the two release numbers left to fill in.
 
-Open decision for the owner before publishing: **3DS and BVH have no reader of our own yet.** The roadmap's supported
-set after removal lists 3DS (and BVH animation "later"), but neither is written. Either the 3DS reader passes its
-criteria before Assimp is removed (then delete the 3DS line from the dropped list below), or `.3ds` is announced as
-dropped too. The text below announces `.3ds` and `.bvh` as dropped, which is the safe reading of today's code; change it
-only when a reader exists and has passed the criteria.
+Decision made (owner delegated it): **`.3ds` and `.bvh` are covered, not dropped.** Our own 3DS reader and BVH reader exist
+(PR #795, `docs/own_3ds_reader.md`, `docs/own_bvh_reader.md`) and were checked on real files (15 of 16 and 3 of 3). Both
+are off by default until the release that makes our readers the default; the sequence is: this announcement in the next
+release, our readers as default in the release after, Assimp and ufbx deleted the release after that. The flip is
+conditional on `docs/model_corpus.md` ("flip readiness") saying the criteria are met.
 
 ---
 
@@ -28,10 +28,11 @@ OkaySpace is replacing the third-party model importer (Assimp) with import code 
 - PLY (`.ply`)
 - COLLADA (`.dae`)
 - FBX (`.fbx`)
+- 3D Studio (`.3ds`)
+- BVH motion capture (`.bvh`, animation only)
 
 **These formats will stop importing** when Assimp is removed: `.blend`, `.x`, MD2/MD3/MD5/MDL, SMD, MS3D, LWO, DXF, OFF,
-AC, B3D, 3MF, AMF, ASE, X3D and the rest of Assimp's list. Also `.3ds` and `.bvh`, which do not have a reader of our own
-yet.
+AC, B3D, 3MF, AMF, ASE, X3D and the rest of Assimp's list.
 
 **What to do:** open the file in your modelling tool and export it as glTF 2.0 (`.glb`) or FBX, then import that file.
 Models that are already in a project keep working only if they were imported before; re-importing the original file in a
@@ -44,7 +45,7 @@ Until `<REMOVAL RELEASE>`, nothing changes: every format above still imports in 
 ## Which of our own readers cover each format
 
 "Own reader" means code in this repository (`engine/src/Render/ModelReaders.cpp`, `ColladaReader.cpp`, `FbxReader.cpp`,
-`FbxScene.cpp`, and the glTF loader in `ModelImport.cpp`). State is from the code today, taken from
+`FbxScene.cpp`, `Max3dsReader.cpp`, `BvhReader.cpp`, and the glTF loader in `ModelImport.cpp`). State is from the code today, taken from
 `docs/own_code_roadmap.md`.
 
 | Format | Covered by an own reader? | State today |
@@ -53,10 +54,10 @@ Until `<REMOVAL RELEASE>`, nothing changes: every format above still imports in 
 | OBJ + MTL | Yes | Ours, always built. |
 | STL | Yes | Ours, always built. |
 | PLY | Yes | Ours, always built. |
-| COLLADA (`.dae`) | Yes, **off by default** (`OKAY_OWN_COLLADA`) | Tested on fixtures our own scripts wrote; no real-exporter corpus yet. Without Assimp this reader is the only way `.dae` loads, so it must be on by default before Assimp goes. |
-| FBX | Yes, **off by default** (`OKAY_OWN_FBX`); ufbx is the default reader | Tested on fixtures only; no real exported file has been read by it. Stays on ufbx until its own criteria hold. |
-| 3DS | **No** | Reader not written (Assimp is the only importer today). |
-| BVH | **No** | Animation reader not written (Assimp is the only importer today). |
+| COLLADA (`.dae`) | Yes, **off by default** (`OKAY_OWN_COLLADA`) | Checked on 26 real exporter files (24 read; the other two hold only cameras or lights) and on our own fixtures. Without Assimp this reader is the only way `.dae` loads. |
+| FBX | Yes, **off by default** (`OKAY_OWN_FBX`); ufbx is the default reader | Checked on 43 real exported files (42 agree with ufbx; the 43rd is damaged and every reader rejects it). Stays on ufbx until the flip release. |
+| 3DS | Yes, **off by default** (`OKAY_OWN_3DS`) | Checked on 16 real files (15 read; the 16th is empty); meshes, triangles, bounding boxes and area match Assimp. |
+| BVH | Yes, **off by default** (`OKAY_OWN_BVH`) | Checked on 3 real files; animation only (skeleton and one clip, no mesh). |
 | `.blend`, `.x`, MD2, MD3, MD5, MDL, SMD, MS3D, LWO, DXF, OFF, AC, B3D, 3MF, AMF, ASE, X3D and the rest of Assimp's list | **No, by decision** | Dropped, not replaced. |
 
 Not part of the announcement, but a precondition (see `docs/third_party_removal_checklist.md`): the COLLADA and FBX

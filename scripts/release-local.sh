@@ -132,7 +132,9 @@ fi
 
 # ---- GitHub release ----------------------------------------------------------
 TAG="v$VER"
-LATEST=--latest; [ $CHANNEL = lts ] && LATEST=--latest=false
+# Created as NOT latest: launchers read releases/latest, and refuse a version whose checksums (Supabase versions.json)
+# are not published yet ("no checksum" error). It is promoted below, after the checksums are in.
+LATEST=--latest=false
 if gh release view "$TAG" >/dev/null 2>&1; then
   [ $FORCE = 1 ] || die "release $TAG already exists (use --force to replace its files)"
   say "Updating release $TAG"
@@ -146,8 +148,13 @@ fi
 if [ -n "${SUPABASE_SERVICE_KEY:-}${SUPABASE_ACCESS_TOKEN:-}" ]; then
   say "Publishing to Supabase ($CHANNEL)"
   CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" scripts/publish-supabase.sh
+  if [ $CHANNEL != lts ]; then
+    say "Checksums are published: marking $TAG as the latest release"
+    gh release edit "$TAG" --latest
+  fi
 else
-  echo "note: no SUPABASE_SERVICE_KEY / SUPABASE_ACCESS_TOKEN set: Supabase step skipped, so in-app updates will not see v$VER yet"
+  echo "warning: no SUPABASE_SERVICE_KEY / SUPABASE_ACCESS_TOKEN set: the checksums were NOT published, so launchers would refuse v$VER."
+  echo "         $TAG was left as NOT latest. Publish the checksums (scripts/publish-supabase.sh), then: gh release edit $TAG --latest"
 fi
 
 # ---- verify what users will download matches what we built --------------------

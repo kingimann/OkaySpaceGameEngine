@@ -9091,7 +9091,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
         if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
-        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
+        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) {
+            add(bt->treePath);   // the tree ships with the scene, and so does every tree it runs
+            std::vector<std::string> nested;
+            BehaviorTree::CollectReferencedFiles(bt->treePath, nested);
+            for (const std::string& p : nested) add(p);
+        }
         if (auto* sm = go->GetComponent<SplineMesh>()) { const std::string& m = sm->sourceMesh; if (m.find('.') != std::string::npos) add(m); }
         if (auto* si = go->GetComponent<SplineInstancer>()) add(si->prefabPath);
         if (auto* lr = go->GetComponent<LineRenderer>()) add(lr->texture);

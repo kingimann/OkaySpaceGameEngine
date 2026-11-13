@@ -16,6 +16,8 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Core/Game.hpp"
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
@@ -48444,6 +48446,7 @@ int main(int argc, char** argv) {
                 if (ed.isPlaying()) {
                     if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
                     if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
+                    if (!g_paused) okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause);   // resume also lets a node breakpoint go
                     ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
                     // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
                     // scene by the scaled delta: 0 while the game or the editor is paused, as before.

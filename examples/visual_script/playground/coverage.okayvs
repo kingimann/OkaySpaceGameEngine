@@ -1383,3 +1383,13 @@ node 1457 Fn.wrap
 node 1458 Fn.wrap_in_box
 node 1459 Fn.write_save
 node 1460 Fn.zoom_camera
+node 1461 Fn.box_cast
+node 1462 Fn.capsule_cast
+node 1463 Fn.overlap_box
+node 1464 Fn.overlap_capsule
+node 1465 Fn.add_explosion_force
+node 1466 Fn.Physics2D.BoxCast
+node 1467 Fn.Physics2D.CapsuleCast
+node 1468 Fn.Physics2D.OverlapBox
+node 1469 Fn.Physics2D.OverlapCapsule
+node 1470 Fn.Rigidbody2D.AddExplosionForce

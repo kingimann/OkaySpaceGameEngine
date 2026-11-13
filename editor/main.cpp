@@ -12891,6 +12891,10 @@ void DrawScriptDocs() {
         fapi("raycast_all3(o.., d..) / raycast_all(ox,oy,dx,dy)", "names of EVERYTHING hit, nearest first (+ ray_all_*)");
         fapi("sphere_cast3(o.., d.., r) / box_cast3(c.., half.., d..)", "thick casts (won't slip through gaps)");
         fapi("capsule_cast3(a.., b.., r, d..)", "would a capsule fit along this path?");
+        fapi("box_cast(cx, cy, hx, hy, dx, dy)", "sweep a flat box; name of the first thing hit (ray_* details)");
+        fapi("capsule_cast(ax, ay, bx, by, r, dx, dy)", "sweep a flat capsule along a direction");
+        fapi("overlap_box(cx, cy, hx, hy) / overlap_capsule(ax, ay, bx, by, r)", "names inside a flat box or capsule");
+        fapi("add_explosion_force(cx, cy, force, radius [, up])", "shove this 2D body; fades to nothing at radius");
         fapi("overlap_sphere3 / overlap_box3 / overlap_capsule3", "names of the objects inside a shape");
         fapi("layer_mask(\"Default\", \"Enemy\")", "a layers number for the queries above");
         fapi("overlap(x, y)", "a 2D collider contains this point?");
@@ -13147,6 +13151,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"overlap_circle","overlap_circle(x, y, r)"},
         {"raycast_all3","raycast_all3(x, y, z, dx, dy, dz, dist)"}, {"sphere_cast3","sphere_cast3(x, y, z, dx, dy, dz, r, dist)"},
         {"box_cast3","box_cast3(x, y, z, hx, hy, hz, dx, dy, dz, dist)"}, {"overlap_box3","overlap_box3(x, y, z, hx, hy, hz)"},
+        {"box_cast","box_cast(x, y, hx, hy, dx, dy, dist)"}, {"capsule_cast","capsule_cast(ax, ay, bx, by, r, dx, dy, dist)"},
+        {"overlap_box","overlap_box(x, y, hx, hy)"}, {"overlap_capsule","overlap_capsule(ax, ay, bx, by, r)"},
+        {"add_explosion_force","add_explosion_force(x, y, force, radius, up)"},
         {"overlap_sphere3","overlap_sphere3(x, y, z, r)"},
         // timers
         {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
@@ -13804,6 +13811,16 @@ static const ScriptHelp* ScriptHelpFor(const std::string& key) {
             "string hit = sphere_cast3(x, y, z, 0, 0, 1, 0.5, 10);\nif (hit != \"\") print(\"blocked by \" + hit);"}},
         {"box_cast3", {"Sweep a box (centre, half size) along a direction; the first thing it touches.",
             "string hit = box_cast3(x, y, z, 0.5, 1, 0.5, 0, 0, 1, 5);"}},
+        {"box_cast", {"Sweep a flat box and return the name of the first thing it touches. Details are ray_hit, ray_dist, ray_x, ray_y, ray_nx, ray_ny.",
+            "string hit = box_cast(0, 0, 0.5, 0.5, 1, 0, 10);\nif (hit != \"\") print(hit + \" at \" + ray_dist());"}},
+        {"capsule_cast", {"Sweep a flat capsule (a line with round ends) and return the first thing it touches.",
+            "string hit = capsule_cast(0, -0.5, 0, 0.5, 0.3, 1, 0, 10);"}},
+        {"overlap_box", {"Names of the objects inside a flat box. The last number is a turn in degrees.",
+            "var near = overlap_box(x, y, 1, 0.5, \"\", false, 30);"}},
+        {"overlap_capsule", {"Names of the objects inside a flat capsule.",
+            "var near = overlap_capsule(x, y - 1, x, y + 1, 0.4);"}},
+        {"add_explosion_force", {"Shove this 2D body away from a point. The push fades to nothing at the radius. The last number pops it upward.",
+            "add_explosion_force(0, 0, 20, 8, 0.4);"}},
         {"overlap_box3", {"Names of the objects inside a box (centre, half size). Optional layers / ignore triggers.",
             "var inside = overlap_box3(x, y, z, 2, 2, 2);\nprint(count(inside) + \" things nearby\");"}},
         {"overlap_sphere3", {"Names of the objects inside a ball. Great for explosions.",

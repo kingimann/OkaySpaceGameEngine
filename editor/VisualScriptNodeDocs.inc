@@ -16389,6 +16389,112 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "BoxCast2D";
+        d.title = "Box Cast";
+        d.description = "Sweeps a flat box through the side view and reports the first thing it touches, where, and how far. Z is ignored. Angle is degrees. The layer list is a dropdown; blank means every layer.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Box Cast's Hit output into another node's input. It has no flow of its own.";
+        d.related = "Capsule Cast, Overlap Rectangle";
+        d.keywords = "box cast, sweep, boxcast, 2d, physics";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Center", "Vector3", "The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is this object's position.", "this object's position"});
+        d.pins.push_back({true, false, "Flat Half", "Vector3", "Half the flat box's width and height. Z is ignored. It is a Vector3. Unwired, this is (0.5, 0.5, 0).", "(0.5, 0.5, 0)"});
+        d.pins.push_back({true, false, "Heading", "Vector3", "Which way the cast points. Unwired, it points along this object's right. It is a Vector3. Unwired, this is this object's right.", "this object's right"});
+        d.pins.push_back({true, false, "Box Angle", "Number", "How far the flat box is turned, in degrees. 0 lines it up with the axes. It is a Number. Unwired, this is 0 degrees.", "0 degrees"});
+        d.pins.push_back({true, false, "Reach", "Number", "How far the shape may travel. 0 means no practical limit. It is a Number. Unwired, this is 100.", "100"});
+        d.pins.push_back({false, false, "Hit", "Bool", "True when something was hit. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Point", "Vector3", "Where the hit happened. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Normal", "Vector3", "The direction the surface faces at the hit. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Distance", "Number", "How far away the hit is. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Object", "Object", "The object that was found, or nothing. It is an Object. Wire it into an input that expects an Object.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CapsuleCast2D";
+        d.title = "Capsule Cast";
+        d.description = "Sweeps a capsule (a line with round ends) through the side view. Unwired, it stands on this object and points to the right. Skips triggers.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Capsule Cast's Hit output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "capsule cast, sweep, capsule, 2d, physics";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Segment Start", "Vector3", "One end of the capsule's inner line. Unwired, it is half a unit below this object. It is a Vector3. Unwired, this is half a unit below this object.", "half a unit below this object"});
+        d.pins.push_back({true, false, "Segment End", "Vector3", "The other end of the capsule's inner line. Unwired, it is half a unit above this object. It is a Vector3. Unwired, this is half a unit above this object.", "half a unit above this object"});
+        d.pins.push_back({true, false, "Capsule Radius", "Number", "The round ends of the capsule, in world units. It is a Number. Unwired, this is 0.5.", "0.5"});
+        d.pins.push_back({true, false, "Heading", "Vector3", "Which way the cast points. Unwired, it points along this object's right. It is a Vector3. Unwired, this is this object's right.", "this object's right"});
+        d.pins.push_back({true, false, "Reach", "Number", "How far the shape may travel. 0 means no practical limit. It is a Number. Unwired, this is 100.", "100"});
+        d.pins.push_back({false, false, "Hit", "Bool", "True when something was hit. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Point", "Vector3", "Where the hit happened. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Normal", "Vector3", "The direction the surface faces at the hit. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Distance", "Number", "How far away the hit is. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Object", "Object", "The object that was found, or nothing. It is an Object. Wire it into an input that expects an Object.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OverlapBox2D";
+        d.title = "Overlap Rectangle";
+        d.description = "The objects inside a flat rectangle. Angle turns it, in degrees. 0 lines the box up with the axes. This object is left out.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Overlap Rectangle's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "overlap rectangle, rectangle, overlap, 2d";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Center", "Vector3", "The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Flat Half", "Vector3", "Half the flat box's width and height. Z is ignored. It is a Vector3. Unwired, this is (0.5, 0.5, 0).", "(0.5, 0.5, 0)"});
+        d.pins.push_back({true, false, "Box Angle", "Number", "How far the flat box is turned, in degrees. 0 lines it up with the axes. It is a Number. Unwired, this is 0 degrees.", "0 degrees"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Objects", "List", "The objects that were found, as a list. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OverlapCapsule2D";
+        d.title = "Overlap Capsule";
+        d.description = "The objects inside a flat capsule. Segment Start and Segment End are the inner line; Radius is the round ends.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Overlap Capsule's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "overlap capsule, capsule, overlap, 2d";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Segment Start", "Vector3", "One end of the capsule's inner line. Unwired, it is half a unit below this object. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Segment End", "Vector3", "The other end of the capsule's inner line. Unwired, it is half a unit above this object. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Capsule Radius", "Number", "The round ends of the capsule, in world units. It is a Number. Unwired, this is 0.5.", "0.5"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Objects", "List", "The objects that were found, as a list. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "AddExplosionForce";
+        d.title = "Add Explosion Force";
+        d.description = "Shoves this object's 2D body away from Blast Point. The push fades to nothing at Blast Radius. Upward Bias pops it up as well as out.";
+        d.requirements = "Needs a Rigidbody2D on this object. Kinematic and static bodies are not shoved. Runs in Play mode.";
+        d.component = "Rigidbody2D";
+        d.example = "Put Add Explosion Force after an event such as On Start or On Update, and wire a value into Blast Point.";
+        d.related = "Add Force, Add Impulse";
+        d.keywords = "add explosion force, blast, explosion, knockback, 2d";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Add Explosion Force runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Add Explosion Force finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Blast Point", "Vector3", "Where the blast starts. Unwired, that is the world origin. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Blast Force", "Number", "How hard the blast pushes. It fades to nothing at the edge of the blast radius. It is a Number. Unwired, this is 10.", "10"});
+        d.pins.push_back({true, false, "Blast Radius", "Number", "How far the shove reaches. A body past this distance does not move. It is a Number. Unwired, this is 5.", "5"});
+        d.pins.push_back({true, false, "Upward Bias", "Number", "Extra upward push, so debris pops up. 0 pushes only outward. It is a Number. Unwired, this is 0.", "0"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "ContactPoint";
         d.title = "Contact Point";
         d.description = "Where the collision or trigger touch happened, as a point in the world.";

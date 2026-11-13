@@ -20,7 +20,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** -
 - **Tests:** `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics2D::Step and Rigidbody2D read; covered by the tests above (friction, spin, tilemap strips, NaN and freed-pointer safety)
-- **Open:** no dedicated physics doc; no AddExplosionForce on Rigidbody2D (3D only); 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
+- **Open:** no dedicated physics doc; 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
 - **Related:** 6.3, 6.4, 6.5, 6.7, 2.6, 4.3
 - **Words:** physics, gravity, 2D physics, Rigidbody2D, BoxCollider2D, CircleCollider2D, CapsuleCollider2D, PolygonCollider2D, EdgeCollider2D, one-way platform, trigger, TilemapCollider2D, sleeping, friction, bounce, restitution, Box2D-style
 - **Seen as:** a sprite falls through the floor; a box jitters or never comes to rest; a ball does not bounce; a platform cannot be jumped up through; tilemap tiles do not block the player; a body spins when it should stay upright
@@ -86,15 +86,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Parts:**
   - 6.5.1 3D rays and casts - `Physics/Physics3D` - Raycast, RaycastAll, Linecast, SphereCast, BoxCast, CapsuleCast; layer mask, trigger switch, ignore object, `IgnoreHierarchy`
   - 6.5.2 3D overlaps - `Physics/Physics3D` - OverlapSphere, OverlapBox, OverlapCapsule
-  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, CircleCast
+  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, OverlapCapsule, CircleCast, BoxCast, CapsuleCast
   - 6.5.4 Debug view - `Physics/PhysicsDebug` - per-frame record of contacts and query rays, off by default; editor menu View > Scene Overlays > Physics Debug
 - **Code:** `Physics/PhysicsDebug`, `Physics/Physics2D`, `Physics/Physics3D`, `editor/main.cpp` (Physics Debug menu and overlay)
-- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit` and `overlap` (registered in area 13)
+- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `Physics2D::BoxCast`, `Physics2D::CapsuleCast`, `Physics2D::OverlapCapsule`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit`, `box_cast`, `capsule_cast` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
-- **Docs:** -
-- **Tests:** `queries`, `physics_queries_ext`, `script_physics`, `phys_math`, `physics_nan`
-- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
-- **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header); no 2D box or capsule casts
+- **Docs:** `docs/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
+- **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`
+- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; 2D box and capsule casts, overlaps and their script and visual-script nodes covered by `physics2d_casts`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
+- **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header)
 - **Related:** 6.7, 13.6, 14.4, 9.5
 - **Words:** raycast, linecast, spherecast, boxcast, capsulecast, overlap, RaycastHit, hit.point, hit.normal, ignore, layerMask, queryTriggers, physics debug, contact points
 - **Seen as:** a ray hits the shooter's own body; a camera ray passes through a wall; a trigger blocks a ray; contact points and rays are hard to see while debugging
@@ -140,15 +140,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **What:** The four force modes, explosion shoves, and a lightweight push-out that keeps a transform-moved player (no Rigidbody) from clipping into walls and floors.
 - **Parts:**
   - 6.8.1 Force modes - `Physics/ForceMode` - Force, Acceleration, Impulse, VelocityChange used by `AddForce(force, mode)` on both bodies
-  - 6.8.2 Explosion force - `Physics/Rigidbody3D` - `AddExplosionForce` with linear falloff and an upward bias
+  - 6.8.2 Explosion force - `Physics/Rigidbody3D`, `Physics/Rigidbody2D` - `AddExplosionForce` with linear falloff and an upward bias, in 3D and in the flat plane
   - 6.8.3 Sphere push-out - `Physics/PlayerCollision` - `ResolvePlayerBody` calls `Physics3D::ResolveSphere` after the Transform moved
 - **Code:** `Physics/ForceMode`, `Physics/PlayerCollision`
 - **API:** `ForceMode`, `AddForce`, `AddImpulse`, `AddTorque`, `AddForceAtPosition`, `AddExplosionForce`, `ResolvePlayerBody`, `Physics3D::ResolveSphere`
 - **Editor:** none
 - **Docs:** -
-- **Tests:** `physics_explode`, `phys_math`
-- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above
-- **Open:** AddExplosionForce exists on Rigidbody3D only (no 2D explosion); ResolvePlayerBody approximates the body as one sphere
+- **Tests:** `physics_explode`, `physics2d_casts`, `phys_math`
+- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above, including the flat-plane blast
+- **Open:** ResolvePlayerBody approximates the body as one sphere
 - **Related:** 6.2, 4.1, 4.2, 6.6
 - **Words:** AddForce, AddImpulse, ForceMode, VelocityChange, explosion, blast, knockback, AddExplosionForce, push out, depenetration, ResolvePlayerBody
 - **Seen as:** a grenade does not push crates; knockback is too weak or too strong; the player clips into a wall corner

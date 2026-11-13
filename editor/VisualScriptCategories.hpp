@@ -121,8 +121,8 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
         return VsAt("UI");
     if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input"))
         return VsAt("Input");
-    if (has("raycast") || has("overlap") || has("rigid") || has("force") || has("impulse") ||
-        has("velocity") || has("physics") || has("gravity"))
+    if (has("raycast") || has("overlap") || has("cast") || has("explosion") || has("rigid") ||
+        has("force") || has("impulse") || has("velocity") || has("physics") || has("gravity"))
         return VsAt("Physics");
     if (has("net") || has("steam") || has("rpc") || has("lobby")) return VsAt("Online");
     if (has("wait") || has("delay") || has("timescale") || has("pause") || has("timer") || has("cooldown"))
@@ -320,8 +320,12 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsPre(type, "Axis")) return VsAt("Input", "Axes");
     // Physics
     if (VsIs(type, "ContactPoint") || VsIs(type, "ContactNormal") || VsIs(type, "ImpactSpeed")) return VsAt("Physics", "Collisions");
-    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D")) return VsAt("Physics", "Queries");
-    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity")) return VsAt("Physics");
+    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D") ||
+        VsIs(type, "BoxCast2D") || VsIs(type, "CapsuleCast2D"))
+        return VsAt("Physics", "Queries");
+    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity") ||
+        VsIs(type, "AddExplosionForce"))
+        return VsAt("Physics");
     // Animation
     if (VsPre(type, "Ik")) return VsAt("Animation", "IK");
     if (VsIs(type, "Die") || VsIs(type, "Revive") || VsIs(type, "Dive") || VsIs(type, "Sit") || VsIs(type, "StandUp") ||

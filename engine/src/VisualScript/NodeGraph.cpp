@@ -648,6 +648,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Audio / physics / tween.
     if (type == "PlaySound")   return std::make_unique<PlaySoundNode>();
     if (type == "AddForce")    return std::make_unique<AddForceNode>();
+    if (type == "AddExplosionForce") return std::make_unique<AddExplosionForceNode>();
     if (type == "AddImpulse")  return std::make_unique<AddImpulseNode>();
     if (type == "SetVelocity") return std::make_unique<SetVelocityNode>();
     if (type == "VelX")        return std::make_unique<VelAxisNode>(0);
@@ -662,6 +663,10 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "RaycastAll3D")    return std::make_unique<RaycastAll3DNode>(layers);
         if (type == "OverlapSphere3D") return std::make_unique<Overlap3DNode>(false, layers);
         if (type == "OverlapBox3D")    return std::make_unique<Overlap3DNode>(true, layers);
+        if (type == "BoxCast2D")       return std::make_unique<BoxCast2DNode>(layers);
+        if (type == "CapsuleCast2D")   return std::make_unique<CapsuleCast2DNode>(layers);
+        if (type == "OverlapBox2D")    return std::make_unique<OverlapBox2DNode>(layers);
+        if (type == "OverlapCapsule2D") return std::make_unique<OverlapCapsule2DNode>(layers);
         if (type == "ContactPoint")    return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Point);
         if (type == "ContactNormal")   return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Normal);
         if (type == "ImpactSpeed")     return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Speed);

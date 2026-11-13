@@ -998,6 +998,11 @@ add_executable(test_physics_explode test_physics_explode.cpp)
 target_link_libraries(test_physics_explode PRIVATE okay::engine)
 add_test(NAME physics_explode COMMAND test_physics_explode)
 
+add_executable(test_physics2d_casts test_physics2d_casts.cpp)
+target_link_libraries(test_physics2d_casts PRIVATE okay::engine)
+target_compile_definitions(test_physics2d_casts PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME physics2d_casts COMMAND test_physics2d_casts)
+
 add_executable(test_subtree test_subtree.cpp)
 target_link_libraries(test_subtree PRIVATE okay::engine)
 add_test(NAME subtree COMMAND test_subtree)

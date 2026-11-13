@@ -27517,7 +27517,7 @@ void DrawModeling(EditorState& ed) {
                 go->AddComponent<MeshCollider3D>();   // collides against the live triangles
                 ed.dirty = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision (BVH) — use this for floors, walls, ramps, bowls and rooms you model or extrude.\nStatic only: bodies collide with it, it cannot be a dynamic body (use Box for moving things).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision (BVH) for floors, walls, ramps, bowls and rooms.\nA dynamic Rigidbody on this object collides as the convex hull of the mesh instead, so the body can move. Concave gaps are filled in.");
             ImGui::SameLine();
             if (AccentToggleButton("None##colmode", hasNone)) {
                 for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
@@ -32712,15 +32712,19 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mcol = dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Mesh Collider 3D", mcol, &toRemove)) {
-            // Exact per-triangle collision against the MeshRenderer's mesh (BVH). Static only.
+            // Exact triangles while static or kinematic. A dynamic body uses the convex hull.
             const std::string status = mcol->StatusMessage();
-            if (mcol->HasTriangles()) {
+            if (mcol->UsesConvexHull()) {
+                ImGui::TextDisabled("Dynamic body: convex hull, %d vertices / %d triangles. Concave gaps are filled in.",
+                                    mcol->HullVertexCount(), mcol->HullTriangleCount());
+            } else if (mcol->HasTriangles()) {
                 const TriMesh& tm = mcol->Tris();
                 ImGui::TextDisabled("Exact triangles: %d (BVH %d nodes%s)", tm.TriangleCount(), tm.NodeCount(),
                                     tm.DroppedTriangles() > 0 ? (", " + std::to_string(tm.DroppedTriangles()) + " degenerate skipped").c_str() : "");
             }
             if (!status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", status.c_str());
-            ImGui::TextDisabled("Static geometry: bodies collide with it; it cannot be a dynamic body.");
+            if (!mcol->UsesConvexHull())
+                ImGui::TextDisabled("Static or kinematic: exact triangles. A dynamic Rigidbody uses the convex hull.");
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
@@ -43209,8 +43213,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
                          : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
                 if (auto* mcol = dynamic_cast<MeshCollider3D*>(col); mcol && mcol->HasTriangles()) {
-                    // The real collision geometry: triangle edges (sampled for big meshes) in world space.
-                    const TriMesh& tm = mcol->Tris();
+                    // The real collision geometry: exact triangles, or the convex hull on a dynamic body.
+                    const TriMesh& tm = mcol->UsesConvexHull() ? mcol->HullTris() : mcol->Tris();
                     Mat4 w = mcol->WorldMatrix();
                     int nt = tm.TriangleCount();
                     int stride = std::max(1, nt / 1500);

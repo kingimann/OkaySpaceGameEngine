@@ -812,6 +812,8 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - conversation (10.2)
 - convert graph to script (14.8)
 - Converting between graphs and scripts (14.8)
+- convex hull (6.2)
+- ConvexContact (6.2)
 - cookie (16.14, 39.8)
 - Cooldown (1.1, 1.2, 11.7, 12.2, 16.6)
 - copy (37.2)

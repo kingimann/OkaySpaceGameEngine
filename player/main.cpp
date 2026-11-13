@@ -2774,7 +2774,8 @@ int main(int argc, char** argv) {
             ui2d::SetUIDefaultFont(nullptr);
             break;
         }
-        // Cutscene overlay (the fade to black and the subtitle) of a playing sequence.
+        // Cutscene overlay (letterbox bars, coloured fade, fade to black, subtitle).
+        // Drawn here, after whichever renderer produced the frame, so it matches everywhere.
         if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
             int W = 0, H = 0; renderer->OutputSize(&W, &H);
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));

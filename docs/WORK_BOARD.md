@@ -113,6 +113,7 @@ Nothing user-visible, nothing default.
 | Engine | Accessibility settings, save games without code | #657 #664 |
 | Engine | Subtitles and sound captions, hold-to-toggle, aim assist | #767 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
+| Cutscenes | Letterbox bars, camera shake, coloured screen fade, nested sequences | #776 |
 
 ## Claimed (in progress)
 

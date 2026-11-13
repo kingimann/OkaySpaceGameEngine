@@ -12,6 +12,7 @@
 // and Square take inputs up to about 2^20 in magnitude and return limbs that are
 // 16 bits to within a small excess; Freeze gives the canonical form.
 #include <cstdint>
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto::fe16 {
 
@@ -80,7 +81,7 @@ inline void ToBytes(std::uint8_t out[32], const Fe& a) {
         borrow = (d >> 63) & 1;
         u[i] = d + borrow * 65536;
     }
-    const std::int64_t keepT = -borrow;               // all ones when the subtraction borrowed (t < p)
+    const std::int64_t keepT = ct::Barrier(-borrow);  // all ones when the subtraction borrowed (t < p)
     for (int i = 0; i < 16; ++i) t.v[i] = (t.v[i] & keepT) | (u[i] & ~keepT);
     for (int i = 0; i < 16; ++i) {
         out[2 * i] = static_cast<std::uint8_t>(t.v[i] & 0xff);
@@ -96,7 +97,7 @@ inline void FromBytes(Fe& r, const std::uint8_t in[32]) {
 
 // bit must be 0 or 1: swaps a and b when it is 1, in constant time.
 inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
-    const std::int64_t mask = -bit;
+    const std::int64_t mask = ct::Barrier(-bit);
     for (int i = 0; i < 16; ++i) {
         const std::int64_t t = mask & (a.v[i] ^ b.v[i]);
         a.v[i] ^= t; b.v[i] ^= t;
@@ -104,7 +105,7 @@ inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
 }
 // r = bit ? b : a
 inline void Select(Fe& r, const Fe& a, const Fe& b, std::int64_t bit) {
-    const std::int64_t mask = -bit;
+    const std::int64_t mask = ct::Barrier(-bit);
     for (int i = 0; i < 16; ++i) r.v[i] = a.v[i] ^ (mask & (a.v[i] ^ b.v[i]));
 }
 

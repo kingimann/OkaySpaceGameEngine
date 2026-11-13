@@ -14,6 +14,7 @@
 //   second operand of Sub must be a Mul/Square/Sub output or a sum of at most two of them.
 // Everything is fixed-length arithmetic and masks: no branch or table index depends on a value.
 #include <cstdint>
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto::fe64 {
 
@@ -140,7 +141,7 @@ inline void FromBytes(Fe& r, const std::uint8_t in[32]) {
 
 // bit must be 0 or 1: swaps a and b when it is 1, in constant time.
 inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
-    const U64 mask = 0 - static_cast<U64>(bit);
+    const U64 mask = ct::Barrier(0 - static_cast<U64>(bit));
     for (int i = 0; i < 5; ++i) {
         const U64 t = mask & (a.v[i] ^ b.v[i]);
         a.v[i] ^= t; b.v[i] ^= t;
@@ -148,7 +149,7 @@ inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
 }
 // r = bit ? b : a
 inline void Select(Fe& r, const Fe& a, const Fe& b, std::int64_t bit) {
-    const U64 mask = 0 - static_cast<U64>(bit);
+    const U64 mask = ct::Barrier(0 - static_cast<U64>(bit));
     for (int i = 0; i < 5; ++i) r.v[i] = a.v[i] ^ (mask & (a.v[i] ^ b.v[i]));
 }
 

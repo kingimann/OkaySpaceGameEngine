@@ -2467,6 +2467,25 @@ if(WIN32)
 endif()
 add_test(NAME crypto_fe16 COMMAND test_crypto_fe16)
 
+# Constant-time audit 1 of 2: valgrind marks every secret undefined and reports any branch or address that
+# depends on one (docs/crypto_review_package.md section 4). Built only when the valgrind headers exist; the
+# ctest runs it under valgrind and is skipped when valgrind itself is missing.
+find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
+find_program(OKAY_VALGRIND valgrind)
+if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
+    set(_okay_ct_srcs "")
+    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519)
+        list(APPEND _okay_ct_srcs ${CMAKE_SOURCE_DIR}/engine/src/Crypto/${_f}.cpp)
+    endforeach()
+    add_executable(crypto_ct_valgrind crypto_ct_valgrind.cpp ${_okay_ct_srcs})
+    target_include_directories(crypto_ct_valgrind PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VALGRIND_INCLUDE})
+    target_compile_definitions(crypto_ct_valgrind PRIVATE OKAY_CRYPTO_CTGRIND)
+    target_compile_options(crypto_ct_valgrind PRIVATE -g)
+    if(OKAY_VALGRIND)
+        add_test(NAME crypto_ct_valgrind COMMAND ${OKAY_VALGRIND} -q $<TARGET_FILE:crypto_ct_valgrind>)
+    endif()
+endif()
+
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
 # smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
 # -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binary `fuzz_crypto` instead.

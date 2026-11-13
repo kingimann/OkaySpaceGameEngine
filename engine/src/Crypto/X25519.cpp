@@ -3,6 +3,7 @@
 // scalar only ever drives masked conditional swaps.
 #include <okay/Crypto/Crypto.hpp>
 #include "Fe25519.hpp"
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto {
 
@@ -52,7 +53,9 @@ bool X25519(std::uint8_t out[32], const std::uint8_t scalar[32], const std::uint
     MemZero(&x3, sizeof x3); MemZero(&z3, sizeof z3);
     std::uint32_t acc = 0;
     for (int i = 0; i < 32; ++i) acc |= out[i];
-    return acc != 0;
+    const bool nonZero = acc != 0;
+    OKAY_CT_PUBLIC(nonZero);   // by design: an all-zero result (small-order peer point) is reported, as libsodium does
+    return nonZero;
 }
 
 void X25519Base(std::uint8_t out[32], const std::uint8_t scalar[32]) {

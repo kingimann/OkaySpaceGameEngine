@@ -10,6 +10,7 @@
 // tests/test_crypto_field.cpp checks it against a bit-by-bit reference, at the edges and on random input.
 #include <cstddef>
 #include <cstdint>
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto::sc {
 
@@ -41,7 +42,7 @@ inline void CondSubL(std::uint32_t r[9]) {
         d[i] = static_cast<std::uint32_t>(t);
         borrow = (t >> 32) & 1;
     }
-    const std::uint32_t keepR = 0u - static_cast<std::uint32_t>(borrow);   // all ones when r < L
+    const std::uint32_t keepR = ct::Barrier(0u - static_cast<std::uint32_t>(borrow));   // all ones when r < L
     for (int i = 0; i < 9; ++i) r[i] = (r[i] & keepR) | (d[i] & ~keepR);
 }
 

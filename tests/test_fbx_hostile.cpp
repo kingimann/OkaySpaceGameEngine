@@ -9,6 +9,10 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 // Hostile-input tests for okay::fbx. Pure standard C++ (links no engine code), so CI can also build
 // it with -fsanitize=address,undefined and run the bigger mutation fuzz:
@@ -285,12 +289,48 @@ static void Fuzz() {
     CHECK(bad > 0 && ok > 0);   // the mutations bite, and some still load
 }
 
+// The ASCII header's "; FBX 7.3" version is read from the caller's bytes, which are not
+// NUL-terminated. Put the buffer flush against an inaccessible page: any read past its
+// last byte faults (plain ASan misses it, libc's scanf is uninstrumented). Heap
+// buffers sized exactly cover the ASan side of the same check.
+static void HeaderEndsAtBuffer() {
+    RUN_SUITE("ascii header at buffer end");
+    const std::string cases[] = {"; FBX 7.3", "; FBX 7.", "; FBX 7", "; FBX ",
+                                 "; FBX 7." + std::string(40, '3'), "; FBX " + std::string(60, '9')};
+    for (const std::string& c : cases) {
+        auto* heap = new std::uint8_t[c.size()];   // exactly sized, no terminator
+        std::memcpy(heap, c.data(), c.size());
+        fbx::Document d;
+        std::string err;
+        (void)fbx::Parse(heap, c.size(), d, &err, fbx::Limits());
+        if (c == "; FBX 7.3") CHECK(d.version == 7300);
+        delete[] heap;
+    }
+#if defined(__linux__)
+    const long pg = sysconf(_SC_PAGESIZE);
+    void* base = mmap(nullptr, (std::size_t)pg * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(base != MAP_FAILED);
+    if (base == MAP_FAILED) return;
+    CHECK(mprotect((char*)base + pg, (std::size_t)pg, PROT_NONE) == 0);
+    for (const std::string& c : cases) {
+        std::uint8_t* at = (std::uint8_t*)base + pg - c.size();   // last byte is the last byte of the page
+        std::memcpy(at, c.data(), c.size());
+        fbx::Document d;
+        std::string err;
+        (void)fbx::Parse(at, c.size(), d, &err, fbx::Limits());
+        if (c == "; FBX 7.3") CHECK(d.version == 7300);
+    }
+    munmap(base, (std::size_t)pg * 2);
+#endif
+}
+
 int main() {
     Truncation();
     CraftedBinary();
     Bombs();
     CraftedAscii();
     Hierarchies();
+    HeaderEndsAtBuffer();
     Fuzz();
     TEST_MAIN_RESULT();
 }

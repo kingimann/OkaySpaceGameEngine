@@ -52,6 +52,14 @@
 #include "ModelImportInternal.hpp"
 
 namespace okay {
+// Validate a freshly built skin's joint indices against its joint list (the one
+// place every importer funnels through) and say so when the file had bad ones.
+static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
+    const int bad = sm.SanitizeJoints(sm.joints.size());
+    if (bad > 0)
+        Log::Warning("model import '", path, "': ", bad, " joint index(es) outside the ", sm.joints.size(),
+                     "-joint list were dropped (weight zeroed)");
+}
 
 static std::string Lower(std::string s);
 
@@ -628,6 +636,7 @@ GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const 
             sm->jointNames.push_back(b.name);
             sm->inverseBind.push_back(b.inverseBind);
         }
+        ValidateSkinJoints(*sm, path);
     }
 
     // Animations -> a ModelAnimator clip library on the root (same as the glTF path).
@@ -1025,6 +1034,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
                 // which may sit under a child object) into bone space.
                 sm->inverseBind.push_back(UfbxToMat4(cl->geometry_to_bone));
             }
+            ValidateSkinJoints(*sm, path);
             if (g != host) {   // the part's object is a child of the mesh node: same space
                 g->transform->localPosition = Vec3{0, 0, 0};
             }
@@ -1368,6 +1378,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 sm->jointNames.push_back(bg ? bg->name : std::string());
                 sm->inverseBind.push_back(OwnToMat4(cl.geometryToBone));
             }
+            ValidateSkinJoints(*sm, path);
             if (g != host) g->transform->localPosition = Vec3{0, 0, 0};
             AddOwnBlendShapes(mesh, vi, g, nullptr);
         }
@@ -1649,6 +1660,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             auto* sm = host->AddComponent<SkinnedMesh>();
             sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
             sm->joints = jointTs; sm->jointNames = jointNs; sm->inverseBind = invBind;
+            ValidateSkinJoints(*sm, path);
             AddGltfMorphTargets(doc, meshIdx, pi, host);
         }
     }

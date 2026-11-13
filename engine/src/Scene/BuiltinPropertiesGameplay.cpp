@@ -1007,8 +1007,15 @@ void RegisterNavMeshLink() {
 // NavMeshObstacle
 void RegisterNavMeshObstacle() {
     PropertyBuilder<NavMeshObstacle> b("NavMeshObstacle", "navobstacle", "Navigation");
-    b.AddVec3("size", &NavMeshObstacle::size).Range(-kBig, kBig, 0.1).Tooltip("The box, in local units (scaled by the Transform)")
-     .AddVec3("center", &NavMeshObstacle::center).Range(-kBig, kBig, 0.1).Tooltip("Offset from the Transform, in local units");
+    b.AddEnum("shape", &NavMeshObstacle::shape, {"Box", "Capsule"}).Tooltip("The solid agents go around: a box, or an upright capsule")
+     .AddVec3("size", &NavMeshObstacle::size).Range(-kBig, kBig, 0.1).Tooltip("Box: the box, in local units (scaled by the Transform)")
+     .AddVec3("center", &NavMeshObstacle::center).Range(-kBig, kBig, 0.1).Tooltip("Offset from the Transform, in local units")
+     .AddFloat("capsuleRadius", &NavMeshObstacle::capsuleRadius).Range(0, kBig, 0.05).Tooltip("Capsule: radius, in local units (scaled by the Transform's X and Z)")
+     .AddFloat("capsuleHeight", &NavMeshObstacle::capsuleHeight).Range(0, kBig, 0.1).Tooltip("Capsule: total height including both caps, in local units (scaled by the Transform's Y)")
+     .AddBool("carve", &NavMeshObstacle::carve).Tooltip("Cut a hole in the navigation mesh so the path search goes around it (agents otherwise only dodge it locally)")
+     .AddBool("carveOnlyWhenStationary", &NavMeshObstacle::carveOnlyWhenStationary).Tooltip("Carve only once it has stopped moving; a moving obstacle is only dodged locally")
+     .AddFloat("timeToStationary", &NavMeshObstacle::timeToStationary).Range(0, 60, 0.1).Tooltip("Seconds without moving before it counts as stationary and carves")
+     .AddFloat("moveThreshold", &NavMeshObstacle::moveThreshold).Range(0, kBig, 0.05).Tooltip("Not stationary-only: carve again after it has moved this far");
     b.Commit();
 }
 

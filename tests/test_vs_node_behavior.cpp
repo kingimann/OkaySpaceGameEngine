@@ -2,6 +2,7 @@
 // The gate at the bottom fails if a node is registered there and this file
 // never called Cover() for it.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include <Okay.hpp>
 #include "okay/Animation/AnimationClip.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -90,6 +91,7 @@ static void Clip(GameObject* go, const char* name, float seconds) {
 
 int main() {
     RUN_SUITE("vs_node_behavior");
+    okaytest::Sandbox sandbox("vs_node_behavior", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     vs::SetRuntimeErrorHook(&OnErr);
     Time::SetTimeScale(1.0f);
     Keys({});
@@ -1030,5 +1032,6 @@ int main() {
     vs::SetRuntimeErrorHook(nullptr);
     Time::SetTimeScale(1);
     Keys({});
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

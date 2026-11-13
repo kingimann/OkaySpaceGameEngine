@@ -2,6 +2,7 @@
 // back in the editor and in the runtime unchanged, quotes, '#' and all; paste
 // never invents wires; and layout coordinates / ids can't hit undefined casts.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
 #include <Okay.hpp>
 #include <climits>
@@ -21,6 +22,7 @@ VsValueStr RunVar(const std::string& text, const char* var, std::string* err = n
 
 int main() {
     RUN_SUITE("vs_editor_model");
+    okaytest::Sandbox sandbox("vs_editor_model", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
@@ -460,6 +462,7 @@ int main() {
     }
 
     Log::sink = sink;
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }
 

@@ -163,6 +163,7 @@ add_library(okay_engine
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
+    src/AI/NavMeshCarve.cpp
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp

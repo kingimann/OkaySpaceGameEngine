@@ -1844,6 +1844,67 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
             }
         }
     }
+        else if (_it.kind == K_TouchStick) {   // virtual joystick
+        auto* js = up->GetComponent<VirtualJoystick>();
+        if (!js || !up->active || UIHidden(up.get()) || !js->Shows()) continue;
+        float op = _slot.opacity * ((js->tracking || !js->fadeWhenIdle) ? 1.0f : 0.45f);
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        if (js->floating && js->tracking) o = js->floatCenter - js->size * 0.5f;
+        enterScroll(up.get(), o);
+        const int cx = (int)(o.x + js->size.x * 0.5f), cy = (int)(o.y + js->size.y * 0.5f);
+        int rad = (int)(std::min(js->size.x, js->size.y) * 0.5f); if (rad < 4) rad = 4;
+        auto bytes = [op](const Color& c) {
+            return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255),
+                        (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * op)};
+        };
+        MMFillCircle(p, cx, cy, rad, bytes(js->baseColor));
+        int kr = (int)(rad * js->knobScale); if (kr < 6) kr = 6;
+        MMFillCircle(p, cx + (int)js->knob.x, cy + (int)js->knob.y, kr, bytes(js->knobColor));
+        MMDrawRing(p, cx, cy, rad - 1, 2, bytes(js->knobColor));
+    }
+        else if (_it.kind == K_TouchPad) {   // directional pad
+        auto* dp = up->GetComponent<TouchDPad>();
+        if (!dp || !up->active || UIHidden(up.get()) || !dp->Shows()) continue;
+        float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        Rect box{(int)o.x, (int)o.y, (int)dp->size.x, (int)dp->size.y};
+        FillUIShape(p, box, UIShape::Rounded, 18.0f, dp->color, dp->color, false, false, op);
+        const int arm = std::max(8, (int)(std::min(dp->size.x, dp->size.y) * 0.28f));
+        const int cx = (int)(o.x + dp->size.x * 0.5f), cy = (int)(o.y + dp->size.y * 0.5f);
+        auto armRect = [&](int dir) {
+            // 0 up, 1 down, 2 left, 3 right
+            if (dir == 0) return Rect{cx - arm / 2, (int)o.y + 6, arm, (int)(dp->size.y * 0.5f) - arm / 2};
+            if (dir == 1) return Rect{cx - arm / 2, cy, arm, (int)(dp->size.y * 0.5f) - 6};
+            if (dir == 2) return Rect{(int)o.x + 6, cy - arm / 2, (int)(dp->size.x * 0.5f) - arm / 2, arm};
+            return Rect{cx, cy - arm / 2, (int)(dp->size.x * 0.5f) - 6, arm};
+        };
+        const bool on[4] = {dp->value.y > 0.5f, dp->value.y < -0.5f, dp->value.x < -0.5f, dp->value.x > 0.5f};
+        for (int dir = 0; dir < 4; ++dir) {
+            const Color& c = on[dir] ? dp->pressedColor : dp->color;
+            Color brighter{std::min(1.0f, c.r + 0.25f), std::min(1.0f, c.g + 0.25f), std::min(1.0f, c.b + 0.25f), c.a};
+            FillUIShape(p, armRect(dir), UIShape::Rounded, 8.0f, on[dir] ? dp->pressedColor : brighter,
+                        on[dir] ? dp->pressedColor : brighter, false, false, op);
+        }
+    }
+        else if (_it.kind == K_TouchButton) {   // touch action button
+        auto* tb = up->GetComponent<TouchButton>();
+        if (!tb || !up->active || UIHidden(up.get()) || !tb->Shows()) continue;
+        float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        const Color& fill = tb->pressed ? tb->pressedColor : tb->color;
+        Rect box{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
+        FillUIShape(p, box, UIShape::Circle, 0.0f, fill, fill, false, false, op);
+        if (!tb->label.empty()) {
+            const float px = 2.0f;
+            const float tw = UITextW(tb->label, px);
+            RGBA tc{(std::uint8_t)(tb->textColor.r * 255), (std::uint8_t)(tb->textColor.g * 255),
+                    (std::uint8_t)(tb->textColor.b * 255), (std::uint8_t)(tb->textColor.a * 255 * op)};
+            DrawUIText(p, tb->label, o.x + (tb->size.x - tw) * 0.5f,
+                       o.y + (tb->size.y - 8.0f * px) * 0.5f, px, tc);
+        }
+    }
         else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
         if (!UIShowsFocusRing(up.get())) continue;
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped

@@ -74,7 +74,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker, virtual joystick or D-pad; double-click, long-press and swipe gestures are not in the UI components
+- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker. Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`)
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -194,7 +194,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Phones and tablets), `docs/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
-- **Open:** no on-screen controls (virtual joystick, D-pad, touch buttons) found; no test for `UITouchScroll` by name
+- **Open:** `UITouchScroll` still has no test by name. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/input.md`)
 - **Related:** 12.1, 8.4, 18.2
 - **Words:** mobile, phone, tablet, safe area, notch, portrait, landscape, touch, emulator, device frame, resolution
 - **Seen as:** UI is tiny or cropped on a phone; buttons sit under the notch; finger scrolling does not work; the device preview shows the wrong insets
@@ -259,7 +259,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** -
 - **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`
 - **Status:** Works - navigation, touch and focus rules are implemented and tested; a focus graph with tab order, links and traps (`UI/FocusGraph`, `BuildFocusGraph` in `UINavigation.hpp`) merged in #574 but `NavigateUI` does not use it
-- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
+- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); remapping all UI actions and screen-reader hints belong to area 32. Touch gestures (tap, double tap, long press, swipe, pinch, rotate) are in `docs/input.md`. A mouse double-click is still not its own UI event.
 - **Related:** 8.3, 8.4, 32.1, 12.4
 - **Words:** event system, hover, pressed, selected, gamepad navigation, focus, D-pad, keyboard menu navigation, touch, tap, pointer over UI, input capture, UICaptured
 - **Seen as:** gamepad cannot move through a menu; focus ring stays on a hidden widget; clicks on the HUD also fire in the world; the camera keeps turning while a menu is open; the wrong widget gets the click

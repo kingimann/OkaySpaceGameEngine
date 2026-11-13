@@ -7,6 +7,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -881,6 +882,22 @@ EngineApi Build() {
             }, "Add a direction action, e.g. (\"Steer\", \"keys:i,k,j,l\", \"stick:right\")."));
         in.staticProps.push_back(ro("gamepadConnected", tBool,
             [](const Value&, CallContext&) { return Value{Input::GamepadConnected()}; }, "True while a controller is plugged in."));
+        in.staticMethods.push_back(method("Gesture", {tString}, {"name"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                return Value{Gestures::Happened(S(a[0]))};
+            }, "True on the frame a touch gesture happens. name is \"tap\", \"double tap\", \"long press\", \"swipe\", \"swipe up\", \"swipe down\", \"swipe left\", \"swipe right\", \"pinch\" or \"rotate\"."));
+        in.staticProps.push_back(ro("swipeDirection", tString,
+            [](const Value&, CallContext&) { return Value{Gestures::SwipeDirection()}; },
+            "\"up\", \"down\", \"left\" or \"right\" when a swipe happened this frame, otherwise empty."));
+        in.staticProps.push_back(ro("pinchScale", tFloat,
+            [](const Value&, CallContext&) { return Value{Gestures::PinchScale()}; },
+            "How far apart two fingers are compared with where the pinch began. 1 means unchanged. Greater than 1 means they moved apart."));
+        in.staticProps.push_back(ro("twistDegrees", tFloat,
+            [](const Value&, CallContext&) { return Value{Gestures::TwistDegrees()}; },
+            "How far two fingers have twisted, in degrees. Positive is counter-clockwise."));
+        in.staticProps.push_back(ro("touchScreen", tBool,
+            [](const Value&, CallContext&) { return Value{Input::TouchScreen()}; },
+            "True once a touch screen has been used or reported."));
         api.types.push_back(std::move(in));
     }
     // ---- Time ----

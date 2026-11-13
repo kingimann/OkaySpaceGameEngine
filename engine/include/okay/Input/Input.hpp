@@ -235,7 +235,12 @@ public:
     static bool TouchDragging();
     static constexpr float kTouchDragPixels = 10.0f;
     /// Report a finger event: `state` 0 = down, 1 = moved, 2 = up.
+    /// A finger marks this machine as a touch screen (see TouchScreen).
     static void FeedTouch(long long id, int state, const Vec2& position);
+    /// True once a touch screen has been reported (SDL_GetNumTouchDevices, or any
+    /// finger). On-screen controls with "only on touch devices" wait for this.
+    static bool TouchScreen();
+    static void SetTouchScreen(bool present);
 
     // ---- UI capture (modal panels: inventories, menus) ----
     /// True while a modal UI (an open inventory, a menu) owns the pointer — player
@@ -298,6 +303,7 @@ private:
     static float       s_mouseWheel;
     static std::vector<Touch> s_touches;
     static bool        s_uiCaptured;
+    static bool        s_touchScreen;
 };
 
 } // namespace okay

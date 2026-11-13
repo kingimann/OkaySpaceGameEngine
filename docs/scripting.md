@@ -223,7 +223,8 @@ What's supported:
 - **`Vector3.Angle(a, b)`** (`vec_angle`) — angle in degrees between two vectors;
   `Vector2.Lerp` / `Vector3.LerpUnclamped` map onto `vec_lerp`; and
   `Input.GetButton/GetButtonDown/GetButtonUp` are accepted (same as the key
-  checks).
+  checks). Touch gestures are `gesture("tap")`, `gesture("swipe up")`,
+  `pinch_scale()`, `twist_degrees()` and `is_touch_screen()` (see `docs/input.md`).
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).

@@ -2036,7 +2036,22 @@ int main(int argc, char** argv) {
         if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
         if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
-        InputActions::Tick();   // after every device is fed: Jump, Move, Fire... for this frame
+        // On-screen controls and gestures read the SDL finger events already fed above
+        // (desktop and the web build). This stays on the SDL player path: it does not
+        // switch on the own platform backend.
+        {
+            int ow = 0, oh = 0;
+            renderer->OutputSize(&ow, &oh);
+            if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
+            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            TouchControls::Sample(scene);
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
+#else
+            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
+#endif
+        }
+        InputActions::Tick();   // after every device is fed, including the on-screen controls
 
         // The Settings screen asked for a window or quality change.
         {

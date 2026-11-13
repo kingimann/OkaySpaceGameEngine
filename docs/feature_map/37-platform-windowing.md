@@ -97,7 +97,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** -
 - **Status:** Partial - web build script and the `__EMSCRIPTEN__` main loop exist (read); Android and iOS are instructions only; the WebGL CI job is covered in area 18.3
-- **Open:** Android and iOS projects are not in the repo; web has no networking; `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself although the player already feeds touches
+- **Open:** Android and iOS projects are not in the repo; web has no networking. The player feeds SDL finger events on desktop and web, and gestures and on-screen controls are described in `docs/input.md`
 - **Related:** 18.2, 18.3, 8.4, 12.9
 - **Words:** WebGL, Emscripten, WebAssembly, wasm, browser build, Android, iOS, mobile build, APK, SDL2 port, touch, build-web.sh
 - **Seen as:** the web build shows a blank page or freezes the tab; multiplayer does not connect in the browser; touch controls do not work on a phone; the mobile build has no project to open

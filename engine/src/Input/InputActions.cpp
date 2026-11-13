@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <unordered_map>
 
 namespace okay {
 
@@ -52,6 +53,12 @@ Vec2 ClampLength(Vec2 v) {
 std::vector<InputActions::Action>& Actions() {
     static std::vector<InputActions::Action> a;
     return a;
+}
+
+struct Contribution { float value = 0.0f; Vec2 vector; };
+std::unordered_map<std::string, Contribution>& Contributions() {
+    static std::unordered_map<std::string, Contribution> c;
+    return c;
 }
 
 void DefineDefaults() {
@@ -350,7 +357,40 @@ void InputActions::Tick() {
     if (!blocked)
         for (Action& a : Actions())
             if (IsBase(a.context)) sample(a, claimed);
+
+    // On-screen controls, added after the devices so a key and a virtual stick
+    // share one action. A menu that blocks the base context does not also get them.
+    for (Action& a : Actions()) {
+        auto it = Contributions().find(Lower(a.name));
+        if (it == Contributions().end()) continue;
+        if (IsBase(a.context)) { if (blocked) continue; }
+        else if (!ContextActive(a.context)) continue;
+        const Contribution& c = it->second;
+        if (a.direction) {
+            a.vector = ClampLength(a.vector + c.vector);
+            a.value = std::sqrt(a.vector.x * a.vector.x + a.vector.y * a.vector.y);
+        } else {
+            float extra = c.value;
+            const float len = std::sqrt(c.vector.x * c.vector.x + c.vector.y * c.vector.y);
+            if (len > extra) extra = len > 1.0f ? 1.0f : len;
+            if (extra > a.value) a.value = extra;
+        }
+    }
+    Contributions().clear();
 }
+
+void InputActions::Contribute(const std::string& action, float value) {
+    if (action.empty()) return;
+    Contribution& c = Contributions()[Lower(action)];
+    if (value > c.value) c.value = value;
+}
+void InputActions::ContributeVector(const std::string& action, const Vec2& vector) {
+    if (action.empty()) return;
+    Contribution& c = Contributions()[Lower(action)];
+    c.vector.x += vector.x;
+    c.vector.y += vector.y;
+}
+void InputActions::ClearContributions() { Contributions().clear(); }
 
 void InputActions::DefineIn(const std::string& context, const std::string& name,
                             const std::vector<std::string>& bindings, bool direction) {

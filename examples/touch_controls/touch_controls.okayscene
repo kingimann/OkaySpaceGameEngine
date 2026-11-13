@@ -1,0 +1,52 @@
+okayscene 1
+name "Touch controls"
+gravity 0 -9.8
+gravity3 0 -9.8 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 8 -14 0 0 0 1 1 1 1
+    camera 1 5 52 0.07 0.08 0.12 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.2 0 0 0 0 1 16 0.3 16
+    mesh "Cube" 0.16 0.18 0.22 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 2 "Marker"
+  active 1
+  parent -1
+  transform 0 0.6 0 0 0 0 1 0.8 0.8 0.8
+    mesh "Cube" 0.35 0.62 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    script "okayscript" "function update(dt) { walk(action_x(\"move\"), action_y(\"move\"), 4); }"
+end
+gameobject 3 "Readout"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "Touch the controls. A tap, swipe, pinch or twist is named here." 1 1 1 1 2 1 24 28
+    script "okayscript" "function update(dt) { if (gesture(\"tap\")) set_text(\"Tap\"); if (gesture(\"double tap\")) set_text(\"Double tap\"); if (gesture(\"long press\")) set_text(\"Long press\"); if (gesture(\"swipe\")) set_text(swipe_direction()); if (gesture(\"pinch\")) set_text(\"Pinch\"); if (gesture(\"rotate\")) set_text(\"Rotate\"); }"
+    visualscript ""
+    visualscriptpath "touch_controls.okayvs"
+end
+gameobject 4 "Stick"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    virtualjoystick x=48 y=-48 w=170 h=170 anchor=6 action="Move" floating=0 dead=0.15 touchOnly=0 fade=0 knob=0.42 baseR=0.08 baseG=0.09 baseB=0.14 baseA=0.7 capR=0.26 capG=0.59 capB=0.98 capA=0.9
+end
+gameobject 5 "Pad"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    touchdpad x=240 y=-48 w=150 h=150 anchor=6 action="Move" dead=0.28 diag=1 touchOnly=0 cR=0.08 cG=0.09 cB=0.14 cA=0.7 pR=0.26 pG=0.59 pB=0.98 pA=0.9
+end
+gameobject 6 "Jump"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    touchbutton x=-48 y=-48 w=130 h=130 anchor=8 action="Jump" label="Jump" touchOnly=0 cR=0.26 cG=0.59 cB=0.98 cA=0.85 pR=0.16 pG=0.43 pB=0.82 pA=0.95 tR=1 tG=1 tB=1 tA=1
+end

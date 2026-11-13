@@ -426,6 +426,15 @@ inline const std::vector<VsDef>& Registry() {
         {"OnAction", "On Action Pressed", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
         {"OnActionUp", "On Action Released", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
         {"OnActionHeld", "On Action Held", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnTap", "On Tap", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDoubleTap", "On Double Tap", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnLongPress", "On Long Press", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnSwipe", "On Swipe", CAT_EVENT, false, {""}, {}, {}, 1, "up, down, left, right, or blank for any"},
+        {"OnPinch", "On Pinch", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnRotate", "On Two Finger Rotate", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"GestureSwipeDirection", "Get Swipe Direction", CAT_INPUT, false, {}, {}, {"Direction"}, 0, nullptr},
+        {"GesturePinchScale", "Get Pinch Scale", CAT_INPUT, false, {}, {}, {"Scale"}, 0, nullptr},
+        {"GestureTwist", "Get Twist Angle", CAT_INPUT, false, {}, {}, {"Degrees"}, 0, nullptr},
         {"GetMoveAxis", "Get Move Axis", CAT_INPUT, false, {}, {}, {"Move"}, 0, nullptr},
         {"RandomPick", "Random Pick", CAT_MATH, false, {}, {"List"}, {"Item"}, 0, nullptr},
         {"RandomPoint", "Random Point In Area", CAT_MATH, false, {}, {"Center","Size"}, {"Point"}, 0, nullptr},
@@ -966,6 +975,9 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
     if (type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag")
         return type + ":" + tok(arg, "Player");
+    if (type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnPinch" || type == "OnRotate")
+        return type;
+    if (type == "OnSwipe") return arg.empty() ? std::string("OnSwipe") : "OnSwipe:" + tok(arg, "");
     if (type == "OnAction") return "OnAction:" + tok(arg, "interact");
     if (type == "OnActionUp") return "OnActionUp:" + tok(arg, "interact");
     if (type == "OnActionHeld") return "OnActionHeld:" + tok(arg, "interact");

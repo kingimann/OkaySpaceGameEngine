@@ -10,6 +10,7 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -3835,6 +3836,16 @@ struct OkayScriptVM::Impl {
         b["action_value"] = [actName](std::vector<Value>& a) { return Value{InputActions::Value(actName(a))}; };
         b["action_x"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).x}; };
         b["action_y"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).y}; };
+        // Touch gestures. gesture("tap"), gesture("double tap"), gesture("long press"),
+        // gesture("swipe"), gesture("swipe up"|"down"|"left"|"right"), gesture("pinch"),
+        // gesture("rotate"). True on the frame it happens.
+        b["gesture"] = [](std::vector<Value>& a) {
+            return Value{Gestures::Happened(a.empty() ? std::string() : a[0].AsString())};
+        };
+        b["swipe_direction"] = [](std::vector<Value>&) { return Value{Gestures::SwipeDirection()}; };
+        b["pinch_scale"] = [](std::vector<Value>&) { return Value{Gestures::PinchScale()}; };
+        b["twist_degrees"] = [](std::vector<Value>&) { return Value{Gestures::TwistDegrees()}; };
+        b["is_touch_screen"] = [](std::vector<Value>&) { return Value{Input::TouchScreen()}; };
         b["rumble"] = [](std::vector<Value>& a) {
             Input::Rumble(a.size() > 0 ? a[0].AsFloat() : 0.5f, a.size() > 1 ? a[1].AsFloat() : 0.5f, a.size() > 2 ? a[2].AsFloat() : 0.2f);
             return Value{};

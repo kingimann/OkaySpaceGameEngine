@@ -26,6 +26,7 @@ std::string Input::s_typedText;
 float Input::s_mouseWheel = 0.0f;
 std::vector<Input::Touch> Input::s_touches;
 bool Input::s_uiCaptured = false;
+bool Input::s_touchScreen = false;
 
 #if defined(__unix__) || defined(__APPLE__)
 namespace {
@@ -262,6 +263,7 @@ bool Input::TouchDragging() {
 }
 
 void Input::FeedTouch(long long id, int state, const Vec2& position) {
+    s_touchScreen = true;
     Touch* t = nullptr;
     for (auto& e : s_touches) if (e.id == id) t = &e;
     if (state == 0) {
@@ -278,6 +280,9 @@ void Input::FeedTouch(long long id, int state, const Vec2& position) {
 
 float Input::MouseWheel() { return s_mouseWheel; }
 void Input::FeedMouseWheel(float delta) { s_mouseWheel += delta; }
+
+bool Input::TouchScreen() { return s_touchScreen; }
+void Input::SetTouchScreen(bool present) { s_touchScreen = present; }
 
 bool Input::UICaptured() { return s_uiCaptured; }
 void Input::SetUICaptured(bool captured) { s_uiCaptured = captured; }

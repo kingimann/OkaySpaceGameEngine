@@ -6071,6 +6071,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     }
     if (ImGui::BeginMenu("Controls")) {
         if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+        if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
+        if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
+        if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
         if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
         if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
         if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
@@ -20149,6 +20152,9 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Raw Image"))    mkUI("RawImage", [](GameObject* g){ g->AddComponent<UIRawImage>(); });
             if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
             if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Virtual Joystick")) mkUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
+            if (ImGui::MenuItem("D-Pad"))        mkUI("D-Pad", [](GameObject* g){ g->AddComponent<TouchDPad>(); });
+            if (ImGui::MenuItem("Touch Button")) mkUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
             if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
             if (ImGui::MenuItem("Stepper"))      mkUI("Stepper", [](GameObject* g){ g->AddComponent<UIStepper>(); });
             if (ImGui::MenuItem("Rating"))       mkUI("Rating",  [](GameObject* g){ g->AddComponent<UIRating>(); });
@@ -40071,6 +40077,9 @@ void DrawInspector(EditorState& ed) {
             // grok/ui-theme
             if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VirtualJoystick>(), "Virtual Joystick")) { go->AddComponent<VirtualJoystick>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TouchDPad>(), "D-Pad")) { go->AddComponent<TouchDPad>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TouchButton>(), "Touch Button")) { go->AddComponent<TouchButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
@@ -48316,6 +48325,17 @@ int main(int argc, char** argv) {
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
             g_playPointerGrabbed = capture;
+            // The same touch controls the built player samples, from the SDL finger
+            // events already fed above. The own platform backend stays off.
+            if (g_playCanvasSize.x > 1.0f && g_playCanvasSize.y > 1.0f)
+                UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
+            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            TouchControls::Sample(ed.scene());
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
+#else
+            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
+#endif
             InputActions::Tick();
         } else if (ed.isPlaying()) {
             // Playing, but a text field has the keyboard. Do not feed the game,
@@ -48327,6 +48347,8 @@ int main(int argc, char** argv) {
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
+            Gestures::Reset();
+            TouchControls::ReleaseAll(ed.scene());
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.

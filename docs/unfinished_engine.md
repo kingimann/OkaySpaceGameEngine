@@ -55,7 +55,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | Editor Play mode does not feed function keys, Alt, Tab or left/right modifiers | `editor/main.cpp:47007-47027` builds keys by hand; the built game calls `okay::AppendSdlExtendedKeys(ks, down)` at `player/main.cpp:1890` | A game that binds F-keys, Alt or Tab works when built and silently fails in the editor Play button | High | Small |
 | Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedPad(g_pad.get(), down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
-| No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers | no matches for joystick, gesture or swipe in `engine/include/okay/Components` or `UI/` | Mobile and web-touch games must build their own controls | Medium | Medium |
+| ~~No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers~~ Resolved: a virtual joystick (fixed or floating), a D-pad and a touch button drive the action map, and a recogniser reports tap, double tap, long press, swipe, pinch and two-finger rotate. See `docs/input.md`. | `Input/GestureRecognizer`, `Components/TouchControls` | Done | Medium | Medium |
 | Input contexts (`PushContext`) have no consumer | no reference from `engine/include/okay/Components`, editor or player | The feature exists but a pause menu does not use it; `Input::SetUICaptured` is the real path | Low | Small |
 | `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` (the platform controller mapping is tested in `platform`, not this feed) | Controller mapping regressions go unseen | Low | Small |
 
@@ -125,7 +125,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Android and iOS export only produce assets plus a README | `editor/main.cpp` Build code; tooltip says "Export an Android Studio project" (feature map 18.2) | Misleading label; there is no mobile project in the repo | Medium | Large |
-| Web and mobile have no touch gestures beyond mouse emulation | feature map 18.2 / 37.x | See section 5 | Medium | Medium |
+| ~~Web and mobile have no touch gestures beyond mouse emulation~~ Resolved: the player feeds SDL finger events on desktop and web, and the gestures in section 5 are available there. Mobile export is still assets plus a README (the row above this one). | `player/main.cpp` finger events, `docs/input.md` | Done for gestures. The export row stays open | Medium | Medium |
 | No multi-monitor or resolution list; no shared window layer | feature map 37.1; each host repeats SDL setup | Fullscreen picks the default monitor; no resolution menu in the shipped Settings screen | Medium | Medium |
 | No clipboard API for games or scripts | no `clipboard` in `engine/include`, `engine/src`, `player` (only a comment in `SceneSerializer.hpp:123`) | Cannot paste into in-game text fields | Medium | Small |
 | No file dialog for scripts or the player | each editor window calls tinyfd directly (feature map 37.3) | Games cannot ask for a file | Low | Small |

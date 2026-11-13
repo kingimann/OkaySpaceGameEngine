@@ -404,6 +404,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
+            base == "OnSwipe" ||
             base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
@@ -419,6 +420,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (auto cov = MakeCoverageNode(type, args)) return cov;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
+        type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnSwipe" ||
+        type == "OnPinch" || type == "OnRotate" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
         type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
@@ -575,6 +578,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();
+    if (type == "GestureSwipeDirection") return std::make_unique<GestureSwipeDirectionNode>();
+    if (type == "GesturePinchScale") return std::make_unique<GesturePinchScaleNode>();
+    if (type == "GestureTwist") return std::make_unique<GestureTwistNode>();
     // Transform getters.
     if (type == "GetPosition") return std::make_unique<GetPositionNode>();
     if (type == "GetX") return std::make_unique<GetAxisNode>(0);

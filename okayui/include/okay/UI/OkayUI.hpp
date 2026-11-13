@@ -47,6 +47,8 @@ struct Input {
     bool        selectAll = false;     // the select-all shortcut (Ctrl+A)
     bool        shift     = false;     // shift held
     bool        ctrl      = false;     // Ctrl held (Ctrl+click on a drag or slider box types a number into it)
+    float       displayW  = 0.0f;      // size of the area OkayUI draws into (BeginPopupModal centres in it); 0 = unknown
+    float       displayH  = 0.0f;
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().
@@ -441,6 +443,13 @@ void OpenPopup(const char* id);
 bool BeginPopupContextItem(const char* id);
 /// Returns true while the named popup (opened via OpenPopup) is showing.
 bool BeginPopup(const char* id);
+/// A modal dialog: while the popup named `name` is open (OpenPopup(name) first) the area behind it is dimmed and
+/// inert, it is centred in Input::displayW x displayH (or stays where it opened when those are 0), it has a title
+/// line, and a click outside does NOT close it. Escape closes it; with `open` given it also has a close button and
+/// *open is cleared when it closes. Fill it with widgets and a button that calls CloseCurrentPopup(), then EndPopup().
+bool BeginPopupModal(const char* name, bool* open = nullptr);
+/// True while the named popup (or modal) is open.
+bool IsPopupOpen(const char* name);
 /// Close the popup body opened by the matching Begin*Popup. Pair each with End only
 /// when Begin returned true.
 void EndPopup();

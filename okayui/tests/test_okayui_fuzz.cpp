@@ -119,7 +119,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(68)) {
+        switch (r.Int(70)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -188,6 +188,8 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 65: UI::SetNextItemOpen(r.Chance(50)); break;
             case 66: if (depth < 3 && UI::BeginCombo(lbl.c_str(), r.Chance(20) ? nullptr : "preview")) { RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); UI::EndCombo(); } break;
             case 67: UI::BeginMenuBar(); if (UI::BeginMenu(lbl.c_str())) { UI::MenuItem(lbl.c_str(), r.Chance(30) ? nullptr : "Ctrl+X", r.Chance(50), r.Chance(50)); UI::MenuSeparator(); UI::EndMenu(); } UI::EndMenuBar(); break;
+            case 68: if (r.Chance(30)) UI::OpenPopup("m"); if (UI::BeginPopupModal("m", r.Chance(50) ? &bools[0] : nullptr)) { UI::Text("modal"); UI::EndPopup(); } UI::IsPopupOpen("m"); break;
+            case 69: UI::OpenPopup(lbl.c_str()); break;
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }

@@ -411,3 +411,11 @@ Built: `MenuItem(label, shortcut, selected, enabled)` (right-aligned dim shortcu
 Tested (109 checks in `test_okayui_values.cpp`): a normal item with a shortcut clicks and closes the menu, a disabled item does nothing, a checked item still clicks, the item below a separator, the shortcut pixels are drawn, null labels and calls outside a menu are harmless. Fuzz draws random items, shortcuts, states and separators; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
 
 Not done: nested sub-menus, acting on the shortcut keys (the text is for display), keyboard navigation of menus.
+
+### 4.16 Gap-closing step 12: modal popups (family 9)
+
+Built: `BeginPopupModal(name, bool* open)` / `IsPopupOpen(name)` plus `Input::displayW/H`. The dialog is centred in the display, the area behind is dimmed and inert, a click outside does not close it, Escape closes it, and an optional close button clears `*open`.
+
+Tested (121 checks in `test_okayui_values.cpp`): opens and reports open, centred position, background pixel darker on every colour channel, outside click ignored, widgets behind inert, Escape and the close button close it, null names harmless. Fuzz and the other suites unchanged.
+
+Not done: the host must set `Input::displayW/H` and `ctrl` (shared/OkayUIHost.hpp), a sizing option, keyboard navigation inside the dialog.

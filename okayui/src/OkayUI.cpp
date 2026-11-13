@@ -112,7 +112,7 @@ bool  g_rPressed  = false;       // right button went down this frame
 
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; };   // w <= 0: the default width
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; };   // w <= 0: the default width; modal: a click outside does not close it
 PopupSlot g_popups[8];
 PopupSlot* popupSlot(int id, bool create) {
     for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
@@ -125,6 +125,7 @@ int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = non
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
 int   g_nextOpen = -1;             // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
+float g_dispW = 0.0f, g_dispH = 0.0f;   // Input::displayW / displayH of this frame
 float g_wrapPos = -1.0f;            // PushTextWrapPos: < 0 = off, 0 = wrap at the right edge, > 0 = wrap at that width
 const char* g_hintText = nullptr;   // placeholder for the next text field (InputTextWithHint)
 bool  g_focusNextField = false;
@@ -775,6 +776,7 @@ void BeginFrame(const Input& in) {
     g_prevMouseY = in.mouseY;
     g_hot = 0;
     g_wrapPos = -1.0f; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
+    g_dispW = in.displayW > 0.0f ? in.displayW : 0.0f; g_dispH = in.displayH > 0.0f ? in.displayH : 0.0f;
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
@@ -2848,7 +2850,7 @@ bool Selectable(const char* label, bool selected) {
 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; g_openPopupThisFrame = p->id; }
 }
 
 void CloseCurrentPopup() {
@@ -2889,7 +2891,7 @@ void EndPopup() {
     g_toOverlay = false;
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
-    if (p && p->open && g_pressed && g_openPopupThisFrame != c.id) {
+    if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
         const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 12.0f);
         if (!inside) p->open = false;
     }
@@ -2897,6 +2899,48 @@ void EndPopup() {
 }
 
 bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
+
+bool IsPopupOpen(const char* name) {
+    if (!name) return false;
+    const PopupSlot* p = popupSlot(hashLabel(name), false);
+    return p && p->open;
+}
+
+bool BeginPopupModal(const char* name, bool* open) {
+    if (!g_lay.active || !name) return false;
+    const int id = hashLabel(name);
+    PopupSlot* p = popupSlot(id, false);
+    if (!p || !p->open) { if (open) *open = false; return false; }
+    p->modal = true;
+    if (p->w <= 0.0f) p->w = 320.0f;
+    if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
+    const float pad = 6.0f;
+    float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
+    const float titleH = rowH() + 4.0f;
+    if (g_dispW > 0.0f && g_dispH > 0.0f) {   // centre it, using last frame's measured height
+        p->x = (g_dispW - p->w) * 0.5f;
+        p->y = (g_dispH - (*hSlot + pad * 2.0f)) * 0.5f;
+        if (p->y < 0.0f) p->y = 0.0f;
+    }
+    // Dim and block everything behind it.
+    if (g_dispW > 0.0f && g_dispH > 0.0f) {
+        registerOverlay(0.0f, 0.0f, g_dispW, g_dispH, true);
+        g_toOverlay = true;
+        const unsigned char dim[4] = {0, 0, 0, 140};
+        quad(0.0f, 0.0f, g_dispW, g_dispH, dim);
+        g_toOverlay = false;
+    }
+    if (!beginPopupBody(id)) return false;
+    (void)titleH;
+    Text(name);
+    if (open) {   // a close button at the top-right of the title line
+        const float bx = p->x + p->w - pad - rowH(), by = p->y + pad;
+        if (Button(id ^ 0x58, bx, by, rowH(), rowH(), "x")) { p->open = false; *open = false; }
+    }
+    Separator();
+    return true;
+}
+
 
 namespace { int g_comboCloseId = 0; }   // a press on an open combo's box: the release closes it instead of reopening it
 

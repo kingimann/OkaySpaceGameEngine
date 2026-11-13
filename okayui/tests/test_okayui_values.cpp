@@ -455,6 +455,52 @@ void MenuTests() {
     CHECK(true);
 }
 
+void ModalTests() {
+    Rig r; int behind = 0; bool ok = false, shown = false, flag = true; UI::Rect rOpen, rBehind, rOk;
+    r.body = [&] {
+        if (UI::Button("open")) UI::OpenPopup("dlg"); rOpen = UI::GetItemRect();
+        if (UI::Button("behind")) ++behind; rBehind = UI::GetItemRect();
+        shown = UI::BeginPopupModal("dlg", &flag);
+        if (shown) {
+            UI::Text("are you sure?");
+            if (UI::Button("OK")) { ok = true; UI::CloseCurrentPopup(); }
+            rOk = UI::GetItemRect();
+            UI::EndPopup();
+        }
+    };
+    r.Frames(2);
+    CHECK(!shown && !UI::IsPopupOpen("dlg"));
+    r.Frame(); const unsigned plain = PixelAt(r.sim.Draw(), 15, 400);   // a window pixel away from the dialog, before it opens
+    r.Click(CenterX(rOpen), CenterY(rOpen)); r.Frames(3);
+    CHECK(shown && UI::IsPopupOpen("dlg"));
+    {   // the area behind is dimmed: every colour channel of that pixel got darker
+        const unsigned dimmed = PixelAt(r.sim.Draw(), 15, 400);
+        CHECK(dimmed != plain);
+        CHECK(((dimmed >> 24) & 255) < ((plain >> 24) & 255) && ((dimmed >> 16) & 255) < ((plain >> 16) & 255) && ((dimmed >> 8) & 255) < ((plain >> 8) & 255));
+    }
+    // centred in the 640x480 display
+    CHECK(rOk.x > 640 * 0.5f - 200 && rOk.x < 640 * 0.5f + 200 && rOk.y > 100 && rOk.y < 380);
+    // widgets behind are inert while it is open
+    r.Click(CenterX(rBehind), CenterY(rBehind)); r.Frames(2);
+    CHECK(behind == 0 && shown);
+    // a click outside the dialog does not close it
+    r.Click(600, 440); r.Frames(2);
+    CHECK(shown);
+    // OK runs, closes it, and the widgets behind work again
+    r.Click(CenterX(rOk), CenterY(rOk)); r.Frames(3);
+    CHECK(ok && !shown && !UI::IsPopupOpen("dlg"));
+    r.Click(CenterX(rBehind), CenterY(rBehind)); r.Frames(2);
+    CHECK(behind == 1);
+    // Escape closes it too
+    r.Click(CenterX(rOpen), CenterY(rOpen)); r.Frames(3); CHECK(shown);
+    r.Tap(Key_Escape); r.Frames(2);
+    CHECK(!shown && !flag);
+    // a null name is refused
+    r.body = [&] { if (UI::BeginPopupModal(nullptr)) UI::EndPopup(); UI::IsPopupOpen(nullptr); };
+    r.Frames(2);
+    CHECK(true);
+}
+
 }  // namespace
 
 int main() {
@@ -475,5 +521,6 @@ int main() {
     TypedNumberTests();
     TypedSingleTests();
     MenuTests();
+    ModalTests();
     TEST_MAIN_RESULT();
 }

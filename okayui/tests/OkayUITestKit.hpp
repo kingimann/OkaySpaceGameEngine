@@ -53,7 +53,7 @@ struct Sim {
         in.wheel = wheel; in.text = text.empty() ? nullptr : text.c_str();
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
-        in.selectAll = edge[Key_SelectAll]; in.shift = shift; in.ctrl = ctrl;
+        in.selectAll = edge[Key_SelectAll]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();

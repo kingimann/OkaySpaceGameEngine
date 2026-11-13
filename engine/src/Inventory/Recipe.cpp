@@ -97,6 +97,13 @@ std::string RecipeBook::Serialize() const {
     return o.str();
 }
 
+bool RecipeBook::Save(const std::string& path) const {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f << Serialize();
+    return (bool)f;
+}
+
 bool RecipeBook::Load(const std::string& path, std::string* err) {
     std::ifstream f(path, std::ios::binary);
     if (!f && !DataAsset::BaseDir().empty()) f.open(DataAsset::BaseDir() + path, std::ios::binary);
@@ -105,13 +112,59 @@ bool RecipeBook::Load(const std::string& path, std::string* err) {
     return LoadText(ss.str(), err);
 }
 
-const RecipeBook& RecipeBook::Cached(const std::string& path) {
+namespace {
+std::map<std::string, RecipeBook>& BookCache() {
     static std::map<std::string, RecipeBook> cache;
+    return cache;
+}
+}
+
+const RecipeBook& RecipeBook::Cached(const std::string& path) {
+    auto& cache = BookCache();
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;
     RecipeBook& b = cache[path];
     b.Load(path);
     return b;
+}
+
+void RecipeBook::Forget(const std::string& path) { BookCache().erase(path); }
+
+std::vector<std::string> RecipeBook::Issues(const ItemDatabase& items) const {
+    std::vector<std::string> out;
+    if (recipes.empty())
+        out.push_back("This recipe book has no recipes.");
+    std::map<std::string, int> made;
+    for (int i = 0; i < (int)recipes.size(); ++i) {
+        const Recipe& r = recipes[i];
+        const std::string who = r.output.empty()
+            ? "Recipe " + std::to_string(i + 1)
+            : "Recipe " + std::to_string(i + 1) + " (\"" + r.output + "\")";
+        if (r.output.empty())
+            out.push_back(who + " has no output item.");
+        else if (!items.IsDefined(r.output))
+            out.push_back(who + " makes an item that isn't in the Item Database.");
+        if (r.inputs.empty())
+            out.push_back(who + " has no ingredients, so it cannot be crafted.");
+        for (const auto& in : r.inputs) {
+            if (in.item.empty() || !items.IsDefined(in.item))
+                out.push_back(who + " needs \"" + (in.item.empty() ? std::string("(nothing)") : in.item) + "\", which isn't in the Item Database.");
+        }
+        for (const auto& b : r.byproducts) {
+            if (b.item.empty() || !items.IsDefined(b.item))
+                out.push_back(who + " also gives \"" + (b.item.empty() ? std::string("(nothing)") : b.item) + "\", which isn't in the Item Database.");
+        }
+        if (r.craftTime < 0.0f)
+            out.push_back(who + " has a negative crafting time. It is treated as instant.");
+        if (!r.output.empty() && r.outputCount < 1)
+            out.push_back(who + " makes fewer than 1. It is treated as 1.");
+        if (!r.output.empty()) ++made[r.output];
+    }
+    for (const auto& kv : made) {
+        if (kv.second > 1)
+            out.push_back(std::to_string(kv.second) + " recipes make \"" + kv.first + "\". All of them show up in the crafting menu.");
+    }
+    return out;
 }
 
 // ---- CraftQueue ----

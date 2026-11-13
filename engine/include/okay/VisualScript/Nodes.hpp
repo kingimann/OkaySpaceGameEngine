@@ -16,6 +16,7 @@
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Gestures.hpp"
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -322,6 +323,15 @@ struct MouseXNode : VsNode {
 };
 struct MouseYNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return Input::MousePosition().y; }
+};
+struct GestureSwipeDirectionNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue(Gestures::SwipeDirection()); }
+};
+struct GesturePinchScaleNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return Gestures::PinchScale(); }
+};
+struct GestureTwistNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return Gestures::TwistDegrees(); }
 };
 
 // Transform getters (read this object's local position).

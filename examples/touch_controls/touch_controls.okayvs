@@ -1,0 +1,49 @@
+# On-screen controls drive Move and Jump. These nodes hear the gestures.
+node 1 OnTap
+pos 1 40 40
+entry OnTap 1
+node 2 SetVar sawTap
+pos 2 300 40
+default 2 0 1
+exec 1 0 2
+node 3 OnDoubleTap
+pos 3 40 180
+entry OnDoubleTap 3
+node 4 SetVar sawDouble
+pos 4 300 180
+default 4 0 1
+exec 3 0 4
+node 5 OnLongPress
+pos 5 40 320
+entry OnLongPress 5
+node 6 SetVar sawHold
+pos 6 300 320
+default 6 0 1
+exec 5 0 6
+node 7 OnSwipe
+pos 7 40 460
+entry OnSwipe 7
+node 8 SetVar sawSwipe
+pos 8 300 460
+default 8 0 1
+exec 7 0 8
+node 9 GestureSwipeDirection
+pos 9 560 460
+node 10 OnPinch
+pos 10 40 600
+entry OnPinch 10
+node 11 SetVar sawPinch
+pos 11 300 600
+default 11 0 1
+exec 10 0 11
+node 12 GesturePinchScale
+pos 12 560 600
+node 13 OnRotate
+pos 13 40 740
+entry OnRotate 13
+node 14 SetVar sawTwist
+pos 14 300 740
+default 14 0 1
+exec 13 0 14
+node 15 GestureTwist
+pos 15 560 740

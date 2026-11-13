@@ -1,10 +1,15 @@
 # Cutscenes: sequences and the Timeline window
 
 A **sequence** is a timeline of tracks that drives a cutscene without scripting:
-camera shots, object moves, animation and audio cues, events and subtitles. It is
+camera shots, object moves, animation and audio cues, events and subtitles,
+letterbox bars, camera shake, a coloured screen fade, and nested sequences. It is
 saved as a `.okayseq` text file in the project's `Assets` folder, authored in the
 **Timeline** window (View → Editors & Tools → Timeline), and played in a scene by
 a **Sequence Player** component. Scripts can start one with `play_sequence("Intro")`.
+
+`examples/cutscene` is a working one: open `intro.okayscene` and press Play. Bars
+ease in, the screen fades up from a dark blue, the hero walks, the camera bumps
+as `glance.okayseq` swings the door, then the picture fades out. Escape skips it.
 
 ## The Sequence Player component
 
@@ -79,13 +84,43 @@ The built-in actions on an event track:
 The fade and the subtitle are a function of the playhead time, so they scrub in
 the editor and need no state in a build.
 
+**Letterbox bars.** One track for the picture. Each key is how tall the top bar
+and the bottom bar are, as a fraction of the screen (0 none, about 0.12 a film
+frame, never more than 0.45). The curve on a key is how the bars grow or shrink
+toward the next key. The bar colour is one colour for the whole track (black,
+unless you change it). The bars are drawn on top of the frame, after whichever
+renderer drew the scene, so they show in the editor, in a built game, and on
+every renderer.
+
+**Camera shake.** Keys of strength (0 still, 1 the camera's full shake distance
+and angle) and of shakes per second (18 when that channel has no keys). The same
+time always shakes the same way, so scrubbing matches playback. The shake is
+applied in the camera's view, not by moving the camera object, so a controller
+is not fighting it and every renderer sees it. **Reduce motion** in the
+accessibility settings makes the strength 0 for the whole track.
+
+**Screen fade.** Keys of a colour and an opacity, with a curve between them.
+This is the whole-screen wash (a dark blue opening, a red hit, a fade to any
+colour). It is separate from an event's Fade to black / Fade from black, and it
+is drawn the same way as the letterbox bars, so it does not depend on the renderer.
+
+**Nested sequence.** A cue names another `.okayseq` file and a time. From that
+moment the other sequence plays: its camera, object moves, bars, shake, fade,
+sounds, animation and events, for as long as it lasts. **Start this far in**
+skips the opening of the child. A sequence that plays itself is skipped, with a
+warning, so a cycle cannot hang the game. The child is found next to the parent
+file, or under the project folder.
+
 ## The Timeline window
 
 - **New / Open / Save** `.okayseq` files; the Project panel opens one on
   double-click. Saving reloads any Sequence Player in the scene that uses the file.
-- **+ Add Track**: Camera, Transform, Animation, Audio, Events or Subtitles. A
-  track's object is picked in the inspector on the right (the selected scene
-  object is the default).
+- **+ Add Track**: Camera, Transform, Animation, Audio, Events, Subtitles,
+  Letterbox bars, Camera shake, Screen fade, or Nested sequence. A track's
+  object is picked in the inspector on the right (the selected scene object is
+  the default). The picture tracks explain themselves in plain language: bar
+  height as a percent of the screen, shake strength, colour and opacity, and
+  the file the nested sequence plays.
 - The ruler: click or drag to **scrub**, wheel to zoom, middle-drag to pan.
   **Snap** rounds times to frames at the chosen fps. With **Loop** on, drag the
   blue markers for the loop range.
@@ -161,6 +196,19 @@ events "Main"
   timescale 5 0.5
   wait 6
   end 8
+letterbox
+  color 0 0 0 1
+  bar 0 0 linear                 # time, fraction of the screen height, curve
+  bar 1 0.12 sineinout
+shake
+  strength 0 0 linear            # 0 still .. 1 the camera's full shake
+  strength 1 0.8 sineinout
+  frequency 0 14 linear          # shakes per second
+fade
+  rgba 0 0.02 0.03 0.06 1 sineinout    # time, red green blue, opacity, curve
+  rgba 1 0.02 0.03 0.06 0 sineinout
+nest "The door opens"
+  play 2 "glance.okayseq" 0      # time, file, seconds skipped into the child
 ```
 
 Names are quoted (`\"` and `\\` inside), `#` starts a comment, easing words are

@@ -42,7 +42,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** none as ctest; the `web-build` CI job (18.3.5)
 - **Status:** Partial - web builds and is checked in CI; Android and iOS are instructions only (the export writes `assets/` and a README, not a Gradle project)
-- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); no touch or gesture feed beyond mouse emulation; the web build excludes the relay and OkayUI's Direct3D backend
+- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build excludes the relay and OkayUI's Direct3D backend. Touch gestures and on-screen controls are fed from SDL finger events on desktop and web (`docs/input.md`)
 - **Related:** 18.3, 15.7, 42.6
 - **Words:** web, WebGL, WASM, WebAssembly, Emscripten, emsdk, Android, iOS, mobile, APK, touch, okay-player.html
 - **Seen as:** the web page is blank or the game doesn't load from a file:// URL; Android export gives no APK; a feature missing on the web build (networking relay, encryption)

@@ -64,9 +64,11 @@ not saved with the scene.
   Scale**. Clouds are lit by the sun and drift with the scene's wind.
 
 Reflective materials and the *Sky colors* ambient mode take the procedural
-sky's colours too. The software renderer shows the sun's colours as a plain
-gradient (no disc, stars or clouds). In the Scene view the *Debug View → Sky
-gradient* toggle hides the procedural sky as well.
+sky's colours too. OpenGL and Direct3D 11 draw the sun disc, halo, clouds and
+stars. Direct3D 12 and the software renderer show the sun's colours as a plain
+gradient (no disc, stars or clouds). The Lighting window says so under Sky
+Mode. In the Scene view the *Debug View → Sky gradient* toggle hides the
+procedural sky as well.
 
 ## Fog
 

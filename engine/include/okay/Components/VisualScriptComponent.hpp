@@ -194,6 +194,7 @@ private:
     std::vector<TimerEntry> m_timerEntries;
     struct ActionEntry { std::string entry; std::string action; int edge; };   // 0 pressed, 1 released, 2 held
     std::vector<ActionEntry> m_actionEntries;
+    std::vector<std::string> m_gestureEntries;   // OnTap, OnSwipe:up, ...
     float m_lastHealth = -1.0f;
     bool  m_sawHealth = false;
     bool  m_deathFired = false;

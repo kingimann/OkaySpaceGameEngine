@@ -8,22 +8,23 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 ## 10. Story & cinematics
 
 ### 10.1 Cutscene sequences and Sequence Player
-- **What:** A `.okayseq` timeline of tracks (camera shots, object transforms, animation and audio cues, events, fades and subtitles) played by a Sequence Player component, authored in the Timeline window with live preview in the Scene and Game views.
+- **What:** A `.okayseq` timeline of tracks (camera shots, object transforms, animation and audio cues, events, fades and subtitles, letterbox bars, camera shake, a coloured screen fade, nested sequences) played by a Sequence Player component, authored in the Timeline window with live preview in the Scene and Game views.
 - **Parts:**
   - 10.1.1 Sequence data and file - `Components/Sequence` - tracks, keys, shots, cues and events; evaluators `CameraAt`, `ChannelAt`, `OverlayAt`; text save and load
   - 10.1.2 Sequence Player - `Components/SequencePlayer` - Play, Pause, Resume, Stop, Skip, Seek; play on start, loop, time scale, skip key, lock player; restores the main camera when done
   - 10.1.3 Camera, transform, animation and audio tracks - `Components/Sequence`, `Components/SequencePlayer` - shots that cut or blend between camera objects or inline poses; eased keys; Character, model and Animator cues; one-shot audio through an Audio Source
   - 10.1.4 Event track actions - `Components/Sequence` - named events to scripts, set active, teleport, fade to and from black, subtitle, time scale, wait for input, end
   - 10.1.5 Timeline window - `editor/TimelineWindow.*` - tracks, ruler with scrub and snap, key editing, Record and Key, Shot from Scene view, preview outside Play, Play in Game, own undo
+  - 10.1.6 Letterbox, shake, screen fade and nested sequences - `Components/Sequence`, `Components/SequencePlayer` - keyed bar height, keyed shake (off when reduce motion is on), keyed colour and opacity, and a cue that plays another `.okayseq`; bars and the colour fade are overlay rectangles, so every renderer draws them
 - **Code:** `Components/Sequence`, `Components/SequencePlayer`, `editor/TimelineWindow.*`
 - **API:** `Sequence`, `SequencePlayer`, `SeqShot`, `SeqKey`, `SeqEvent`, `SeqOverlay`, script `play_sequence`, `stop_sequence`, `sequence_playing`, `sequence_time`, `on_sequence_event`, `on_sequence_started`, `on_sequence_finished`, visual-script On Sequence Event
 - **Editor:** View > Editors & Tools > Timeline; Add Component > Gameplay > Sequence Player (cutscene); double-click a `.okayseq` in the Project panel
 - **Docs:** `docs/cutscenes.md`
 - **Tests:** `sequence`
-- **Status:** Works - Sequence.hpp, SequencePlayer.hpp, the Timeline window header and the function layout of Sequence.cpp and SequencePlayer.cpp read; shots, keys, events, fades and skip behaviour covered by the 433-line `sequence` test
-- **Open:** per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); per docs the only tracks are camera, transform, animation, audio and events (no letterbox, shake or nested-sequence track); subtitles are drawn by the sequence itself, not by the caption manager that #574 added (`Core/Subtitles`)
+- **Status:** Works - shots, keys, events, fades, letterbox bars, camera shake, coloured screen fade and nested sequences. The `sequence` test asserts each new track's effect in a scene. `examples/cutscene` is a cutscene you can play.
+- **Open:** per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); subtitles are drawn by the sequence itself, not by the caption manager that #574 added (`Core/Subtitles`)
 - **Related:** 4.8, 7.3, 5.1, 10.4, 32.2, 8.5
-- **Words:** cutscene, sequence, timeline, Sequence Player, .okayseq, cinematic, camera shot, track, keyframe, fade to black, subtitle, intro, skip cutscene, Timeline window
+- **Words:** cutscene, sequence, timeline, Sequence Player, .okayseq, cinematic, camera shot, track, keyframe, fade to black, subtitle, intro, skip cutscene, Timeline window, letterbox, camera shake, screen fade, nested sequence
 - **Seen as:** the camera does not return after a cutscene; the player can still walk during it; the cutscene plays twice or from the middle after loading; an object stays where the cutscene left it; a subtitle never appears; skip does not fire the last events
 - **Ask me like:** "make an intro cutscene with two camera shots and a fade"; "let the player skip the cutscene with Escape"
 

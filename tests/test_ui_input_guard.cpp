@@ -174,11 +174,25 @@ int main() {
         screen->Update(0.016f);
         CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::SFX], 0.4f, 0.001f);
         CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::UI], 0.4f, 0.001f);
-        auto* full = s.Find("FullscreenToggle") ? s.Find("FullscreenToggle")->GetComponent<UIToggle>() : nullptr;
-        CHECK(full != nullptr);
-        if (full) full->on = true;
+        auto* mode = s.Find("DisplayModeDropdown") ? s.Find("DisplayModeDropdown")->GetComponent<UIDropdown>() : nullptr;
+        CHECK(mode != nullptr);
+        if (mode) mode->value = 1;                 // Borderless
         screen->Update(0.016f);
-        CHECK(DisplaySettings::Fullscreen());
+        GameObject* applyGo = s.Find("ApplyButton");
+        auto* apply = applyGo ? applyGo->GetComponent<UIButton>() : nullptr;
+        CHECK(apply != nullptr);
+        if (apply) {
+            Vec2 o, sz;
+            CHECK(GetUIScreenRect(applyGo, 1280, 720, o, sz));
+            Vec2 c{o.x + sz.x * 0.5f, o.y + sz.y * 0.5f};
+            Input::FeedMouse(c, 0);
+            Input::FeedMouse(c, 1u);
+            apply->Update(0.016f);
+            screen->LateUpdate(0.016f);
+            Input::FeedMouse({0, 0}, 0);
+        }
+        CHECK(DisplaySettings::Fullscreen() && DisplaySettings::Mode() == WindowMode::Borderless);
+        CHECK(DisplaySettings::TrialActive());
         auto* vs = s.Find("VsyncToggle") ? s.Find("VsyncToggle")->GetComponent<UIToggle>() : nullptr;
         if (vs) vs->on = false;
         screen->Update(0.016f);
@@ -205,6 +219,7 @@ int main() {
         CHECK(settings->active == false);
         CHECK(pause->active);                      // back to the pause menu
         CHECK(!SettingsScreen::AnyOpen(&s));
+        CHECK(!DisplaySettings::TrialActive());    // Done keeps the display change
         UIWorld().rectOf = nullptr;
         DisplaySettings::SetFullscreen(false);
         DisplaySettings::SetVSync(true);

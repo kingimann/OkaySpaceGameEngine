@@ -112,7 +112,7 @@ Nothing user-visible, nothing default.
 | Editor | Add Node menu: built once (2.861.1), then only visible rows drawn and results cached (2.861.2) | #740 #746 |
 | Engine | Accessibility settings, save games without code | #657 #664 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
-| Cutscenes | Letterbox bars, camera shake, coloured screen fade, nested sequences | `john/sequence-tracks` |
+| Cutscenes | Letterbox bars, camera shake, coloured screen fade, nested sequences | #776 |
 
 ## Claimed (in progress)
 

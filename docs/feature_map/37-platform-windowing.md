@@ -3,7 +3,7 @@
 How the engine meets the operating system. `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
 clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The window, DPI, focus, file dialog
 and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2) plus `Core/DisplaySettings`,
-`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI, clipboard or thread API exists. 37.9 maps the
+`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
 online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ## 37. Platform & windowing
@@ -30,22 +30,22 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "make the game window resizable with a minimum size"; "add a fullscreen toggle on F11 to my build"
 
 ### 37.2 Focus, cursor and clipboard
-- **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard, which the engine does not wrap.
+- **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard games and scripts use to copy and paste text.
 - **Parts:**
   - 37.2.1 Focus handling - `player/main.cpp` - `runInBackground`, `muteOnFocusLoss` (sets `AudioMixer::focusMuted`), focus loss releases a locked cursor until the next click
   - 37.2.2 Cursor lock and visibility - `Input/Cursor` - gameplay sets the wish, the player applies it with SDL relative mouse mode (see 8.4)
   - 37.2.3 Text input - `player/main.cpp`, `Input/Input` - `SDL_StartTextInput` and `Input::FeedText` carry real typed characters (see 8.1)
-  - 37.2.4 Clipboard - `editor/ConsolePanel.*`, `editor/LocalizationWindow.*`, `launcher/main.cpp` - only Dear ImGui's `SetClipboardText` copy buttons in the tools; the node editors keep an internal text clipboard, not the OS one
-- **Code:** `player/main.cpp`, `Input/Cursor`, `editor/ConsolePanel.*`, `editor/LocalizationWindow.*`
-- **API:** `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
-- **Editor:** Build Settings; Console panel Copy buttons
-- **Docs:** `docs/audio.md` (mute when unfocused), `docs/input.md`
-- **Tests:** -
-- **Status:** Basic - focus and cursor code read in player/main.cpp; the clipboard is only reachable through the editor's ImGui widgets (no engine API found by search)
-- **Open:** no engine or script clipboard API (copy and paste in game text fields is not available; searched `engine/include` for clipboard and found only a comment in `SceneSerializer`); node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
+  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install an SDL clipboard (SDL directly, not `okay::platform`); tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
+- **Code:** `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
+- **API:** `GetClipboardText`, `SetClipboardText`, `get_clipboard_text`, `set_clipboard_text`, `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
+- **Editor:** Build Settings; Play mode uses the same clipboard as a built game; Console panel Copy buttons
+- **Docs:** `docs/game_ui.md` (text fields), `docs/scripting_reference.md`, `docs/audio.md` (mute when unfocused), `docs/input.md`
+- **Tests:** `tests/test_clipboard.cpp` (sanitize, field copy/cut/paste, script and visual-script functions)
+- **Status:** Works - a focused game text field and scripts can copy and paste text; the player and editor Play mode use SDL; tests never write the operating-system clipboard
+- **Open:** the input field has no caret selection, so there is no select-all shortcut; node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
 - **Related:** 7.4, 8.1, 8.4, 12.3
 - **Words:** clipboard, copy, paste, Ctrl+V, focus, alt-tab, background, run in background, mute when unfocused, IME, text input, cursor release, SetClipboardText
-- **Seen as:** cannot paste into a game text field; the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
+- **Seen as:** the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
 - **Ask me like:** "let players paste into the chat box"; "pause the game when the window loses focus"
 
 ### 37.3 File dialogs

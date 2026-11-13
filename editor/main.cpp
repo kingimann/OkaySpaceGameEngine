@@ -63,6 +63,7 @@
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
+#include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
 
 #include <numeric>
 #include <algorithm>
@@ -12562,6 +12563,7 @@ void DrawScriptDocs() {
 
     if (sec("UI — drive scene widgets by name")) {
         fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
+        fapi("get_clipboard_text() / set_clipboard_text(\"s\")", "read or set the text a player can copy and paste");
         fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
         fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
         fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
@@ -48189,6 +48191,18 @@ int main(int argc, char** argv) {
             ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed,
             gameClicked, playStarted);
         g_gameCursorReleased = pointer.released;
+        // Play reads and writes the operating-system clipboard. Stopping Play puts
+        // the memory clipboard back, so a headless self-test never calls SDL for it.
+        {
+            static okay::SdlClipboard s_playClipboard;
+            static bool s_playClipboardOn = false;
+            if (ed.isPlaying()) {
+                if (!s_playClipboardOn) { okay::InstallGameClipboard(&s_playClipboard); s_playClipboardOn = true; }
+            } else if (s_playClipboardOn) {
+                okay::InstallGameClipboard(nullptr);
+                s_playClipboardOn = false;
+            }
+        }
         if (ed.isPlaying() && pointer.feedGame) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -48199,6 +48213,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
             if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
             if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
+            if (ks[SDL_SCANCODE_LGUI]   || ks[SDL_SCANCODE_RGUI])   down.push_back(Input::KeyCmd);   // Command, for copy / paste
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
             if (pointer.feedEscapeToGame) down.push_back((char)27);

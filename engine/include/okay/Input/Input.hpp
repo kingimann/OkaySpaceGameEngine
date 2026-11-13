@@ -19,6 +19,9 @@ public:
     // with letters, digits or space.
     static constexpr char KeyShift = 16;
     static constexpr char KeyCtrl  = 17;
+    /// Command on macOS, the Windows / Super key elsewhere. Either side. Text
+    /// fields treat it like Ctrl for copy, cut and paste.
+    static constexpr char KeyCmd   = static_cast<char>(153);
     // Arrow keys, distinct from WASD. AxisWASD counts either. The player and
     // the editor feed both, so a script that asks for "up" or for W agrees.
     static constexpr char KeyUp    = 1;
@@ -65,7 +68,7 @@ public:
     }
     /// True for a key name KeyFromName understands exactly: one character, or one
     /// of space / up / down / left / right / enter / return / escape / esc /
-    /// backspace / tab / shift / ctrl / control / alt / f1..f12 / insert / delete /
+    /// backspace / tab / shift / ctrl / control / cmd / command / alt / f1..f12 / insert / delete /
     /// home / end / pageup / pagedown / lshift / rshift / lctrl / rctrl / lalt /
     /// ralt (any case). Any other name would silently become its first letter.
     static bool IsKnownKeyName(const std::string& s) { return s.size() == 1 || FindKeyName(s) != nullptr; }
@@ -278,6 +281,7 @@ private:
             {"enter", '\r'}, {"return", '\r'}, {"escape", static_cast<char>(27)}, {"esc", static_cast<char>(27)},
             {"backspace", static_cast<char>(8)}, {"tab", '\t'},
             {"shift", KeyShift}, {"ctrl", KeyCtrl}, {"control", KeyCtrl}, {"alt", KeyAlt},
+            {"cmd", KeyCmd}, {"command", KeyCmd}, {"meta", KeyCmd}, {"gui", KeyCmd},
             {"f1", KeyF(1)}, {"f2", KeyF(2)}, {"f3", KeyF(3)}, {"f4", KeyF(4)}, {"f5", KeyF(5)}, {"f6", KeyF(6)},
             {"f7", KeyF(7)}, {"f8", KeyF(8)}, {"f9", KeyF(9)}, {"f10", KeyF(10)}, {"f11", KeyF(11)}, {"f12", KeyF(12)},
             {"insert", KeyInsert}, {"ins", KeyInsert}, {"delete", KeyDelete}, {"del", KeyDelete},

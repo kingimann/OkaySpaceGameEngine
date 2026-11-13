@@ -497,6 +497,7 @@ Intuitive names for common builtins so code reads naturally:
 | Function | Description |
 |---|---|
 | `after(seconds, "fn")` | Call `fn` once after a delay |
+| `actions_load("text")` | Add an Actions list from its saved text and run it on this object. An exported Actions component is this call; every step in the text runs as it does on the component |
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
 | `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |

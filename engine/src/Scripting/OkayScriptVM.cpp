@@ -9138,7 +9138,20 @@ struct OkayScriptVM::Impl {
             ActionList runner;
             runner.gameObject = me; runner.transform = me->transform;
             runner.instructions = ActionList::DecodeItems(a[0].AsString());
-            if (runner.BeginRun()) runner.Update(0.0f);
+            if (runner.BeginRun()) runner.Update(rt.host ? rt.host->deltaTime : 0.0f);
+            return Value{};
+        };
+        // actions_load(text): the Actions export. Adds the list described by `text`
+        // (ActionList::ToText) to this object. The scene starts it and ticks it, so
+        // every step, wait, branch, and trigger behaves as it does on an Actions component.
+        b["actions_load"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{};
+            const std::string text = a[0].AsString();
+            for (ActionList* have : me->GetComponents<ActionList>())
+                if (have->ToText() == text) return Value{};
+            ActionList* al = me->AddComponent<ActionList>();
+            al->FromText(text);
             return Value{};
         };
         b["check_action"] = [this](std::vector<Value>& a) {

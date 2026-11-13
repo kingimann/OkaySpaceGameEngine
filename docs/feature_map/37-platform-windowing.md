@@ -9,23 +9,24 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 ## 37. Platform & windowing
 
 ### 37.1 Window, fullscreen and display settings
-- **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, toggles fullscreen with Alt+Enter or F11, and applies the Settings screen's fullscreen, vsync and quality choices.
+- **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, and applies the Settings screen's monitor, display mode, resolution, refresh rate, vsync and quality. A shared SDL helper lists monitors and modes for the player and the editor.
 - **Parts:**
   - 37.1.1 Window creation - `player/main.cpp` - flags, centered position, minimum size, window icon PNG, hidden-then-reveal to avoid a black flash, optional boot splash
   - 37.1.2 High DPI - `player/main.cpp`, `editor/main.cpp` - `SDL_HINT_WINDOWS_DPI_AWARENESS` per-monitor, `SDL_WINDOW_ALLOW_HIGHDPI`; the editor scales its Game view by `DisplayFramebufferScale`
-  - 37.1.3 Fullscreen, vsync and quality settings - `Core/DisplaySettings` - Prefs-backed `Fullscreen`, `VSync`, `Quality`; hosts re-apply when `Generation()` moves; the player also toggles on Alt+Enter and F11 when Build Settings allows
+  - 37.1.3 Fullscreen, vsync and quality settings - `Core/DisplaySettings` - Prefs-backed window mode, resolution, refresh, monitor, `VSync`, `Quality`; hosts re-apply when `Generation()` moves; the player also toggles on Alt+Enter and F11 when Build Settings allows
   - 37.1.4 Build Settings window options - `editor/main.cpp` - run in background, mute when unfocused, fullscreen toggle, start maximized, minimum size, company and save-to-user-folder, read by the player from its config
   - 37.1.5 Console host loop - `Core/Application` - the terminal game loop (`Application::Run`) with console renderer, frame pacing and quit-on-Q; used by tests and headless demos
   - 37.1.6 GPU preference - `player/main.cpp` - on Windows exports NVIDIA Optimus and AMD flags so hybrid laptops use the discrete GPU
-- **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/Application`
-- **API:** `DisplaySettings::SetFullscreen`, `DisplaySettings::SetVSync`, `DisplaySettings::SetQuality`, `DisplaySettings::Generation`, `Application::Config`, Build Settings window options
-- **Editor:** Build Settings (window and presentation options); Settings Screen component drives the same values in game
-- **Docs:** `docs/packaging.md`, `docs/web_mobile.md`
-- **Tests:** -
-- **Status:** Works for the player window (player/main.cpp window, DPI and fullscreen code read); the editor and launcher windows are separate SDL setups. No tests cover window code (it needs a display)
-- **Open:** no engine-level window abstraction: each host program repeats its own SDL setup; no multi-monitor selection and no resolution list (the Settings screen has Music, Effects, Fullscreen, VSync, Quality and Done per its header); no Linux or macOS DPI hint (the hint is Windows only); `DisplaySettings` is documented only in code comments
+  - 37.1.7 Monitors, modes and the confirm clock - `Core/DisplayModes`, `shared/SdlDisplays.cpp` - list, filter and fall back; Apply then "Keep these settings?" for 10 seconds, restored on the next launch if the question was never answered
+- **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/DisplayModes`, `shared/SdlDisplays.hpp`, `shared/SdlDisplays.cpp`, `Core/Application`
+- **API:** `DisplaySettings::SetMode`, `SetMonitorName`, `SetResolution`, `SetRefreshHz`, `BeginTrial`, `ResolveSaved`, `sdldisplay::ListMonitors`, `sdldisplay::Apply`, script `set_display_mode`, `set_monitor`, `begin_display_confirm`
+- **Editor:** Build Settings (window and presentation options); the Settings screen in play uses the same SDL helper on the editor window
+- **Docs:** `docs/display_settings.md`, `docs/packaging.md`, `docs/web_mobile.md`
+- **Tests:** `display_settings`, `display_screen`
+- **Status:** Works for the choice itself (filtering, fallback, the 10-second revert, the Settings screen and the script nodes are tested). The player and the editor apply it through SDL. Each host still creates its own window. The own-code platform backend is not used.
+- **Open:** no single window class shared by the player, editor and launcher (each still creates its SDL window); no Linux or macOS DPI hint (the hint is Windows only)
 - **Related:** 7.4, 8.4, 12.8, 12.9, 15.7, 18.1, 2.1
-- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, Application
+- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, refresh rate, monitor, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, SdlDisplays, keep these settings, Application
 - **Seen as:** the game looks blurry on a scaled display; the window flashes black at start; fullscreen does not toggle; the game window has the wrong icon or title; the Settings screen quality button changes nothing; the window cannot be resized
 - **Ask me like:** "make the game window resizable with a minimum size"; "add a fullscreen toggle on F11 to my build"
 

@@ -322,17 +322,18 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Store enemy stats in a data asset"; "Pack the scene so players can't edit it"
 
 ### 1.15 Display settings
-- **What:** Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives.
+- **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
-  - 1.15.1 Settings values - `Core/DisplaySettings` - Fullscreen, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
+  - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
   - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips shadows, per-pixel lighting, bloom, SSAO and FXAA, and sets shadow resolution, cascade count and shadow distance
-- **Code:** `Core/DisplaySettings`
-- **API:** `DisplaySettings::SetQuality`, `DisplaySettings::SetFullscreen`, `DisplaySettings::Generation`, `DisplaySettings::ApplyQuality`
+  - 1.15.3 Mode list and fallback - `Core/DisplayModes` - filter and sort modes, pick a connected monitor and a listed size and rate when the saved one is gone, the 10-second confirm clock, and the saved text
+- **Code:** `Core/DisplaySettings`, `Core/DisplayModes`
+- **API:** `DisplaySettings::SetMode`, `SetResolution`, `SetRefreshHz`, `SetMonitorName`, `ResolveSaved`, `BeginTrial`, `FilterDisplayModes`, `ResolveDisplay`
 - **Editor:** none (the player reads it; Settings screen component, 12.8)
-- **Docs:** -
-- **Tests:** `visibility_lod`
-- **Status:** Basic - Low/Medium/High now also set shadow map size, cascade count and distance (High matches the old 2048 / 80 m / 3 defaults); `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
-- **Open:** resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
+- **Docs:** `docs/display_settings.md`
+- **Tests:** `display_settings`, `visibility_lod`
+- **Status:** Works - the choice, the fallback and the confirm clock are plain data with tests; a host applies them when Generation() moves. `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
+- **Open:** the editor calls `ApplyQuality()` when the generation moves (editor/main.cpp)
 - **Related:** 12.8, 38.1, 2.3, 2.5
 - **Words:** DisplaySettings, fullscreen, vsync, quality, graphics settings, Low Medium High, video settings
 - **Seen as:** the quality setting changes nothing on a GPU machine; fullscreen is not remembered

@@ -235,6 +235,11 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `game_save(slot [, label])` / `game_load(slot)` / `game_continue()` | Save slots for objects marked with a Saveable component (see docs/save_framework.md, "Saving without code"). `game_load` and `game_continue` take effect at the start of the next frame and reload the saved level. Return 1 when accepted, 0 (with a `[save]` Console error) when the slot is missing, damaged or from a newer version |
 | `game_delete_slot(slot)` / `game_slot_exists(slot)` / `game_can_continue()` / `game_autosave()` | Delete a slot, ask whether it exists, ask whether any valid save exists, save into the autosave ring |
+| `get_monitor()` / `get_monitors()` / `set_monitor(name or index)` | The monitor in use, every connected monitor's name, and choosing one |
+| `get_display_mode()` / `set_display_mode("windowed" \| "borderless" \| "fullscreen")` | How the window is shown |
+| `get_display_width()` / `get_display_height()` / `set_display_resolution(width, height)` | The size in pixels |
+| `get_refresh_rate()` / `set_refresh_rate(hertz)` / `get_display_resolutions()` / `get_refresh_rates(width, height)` | The rate, the sizes on offer, and the rates for a size |
+| `begin_display_confirm()` / `keep_display_settings()` / `revert_display_settings()` / `get_display_confirm_seconds()` | Start the 10-second "keep these settings?" question, answer it, or read the seconds left |
 | `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |

@@ -52,6 +52,7 @@
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
+#include "SdlDisplays.hpp"             // monitor list and display modes, shared with the player (SDL, not the platform seam)
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -20841,6 +20842,16 @@ static const ActionOpInfo kInstrOps[] = {
     {"game_can_continue","Can Continue",  "intoVar",              "Sets a variable to 1 if there is a save to continue, else 0.", "Save"},
     {"game_slot_age","Slot Saved Ago",    "slot  intoVar",        "Sets a variable to the seconds since the slot was saved (-1 if empty).", "Save"},
     {"game_slot_text","Slot Saved Time",  "slot  intoTextVar",    "Sets a text variable to when the slot was saved, e.g. 2026-11-08 14:03 (UTC); empty if none.", "Save"},
+    {"set_display_mode","Set Display Mode","windowed|borderless|fullscreen","Windowed, a borderless full screen, or exclusive full screen.", "Scene"},
+    {"set_display_resolution","Set Display Resolution","width height","Set the window size, in pixels. Full screen snaps to a listed mode.", "Scene"},
+    {"set_refresh_rate","Set Refresh Rate","hertz","Set the refresh rate. 0 lets the monitor choose.", "Scene"},
+    {"set_monitor","Set Monitor","name or index","Use a connected monitor by its name, or by its number starting at 0.", "Scene"},
+    {"begin_display_confirm","Ask to Keep Display","", "Remember the current display and start the 10-second keep-or-revert clock.", "Scene"},
+    {"keep_display_settings","Keep Display Settings","", "Accept the display change and stop the countdown.", "Scene"},
+    {"revert_display_settings","Revert Display Settings","", "Put the previous display back.", "Scene"},
+    {"get_display_mode","Get Display Mode","intoTextVar","Store windowed, borderless or fullscreen in a text variable.", "Scene"},
+    {"get_monitor","Get Monitor","intoTextVar","Store the current monitor's name in a text variable.", "Scene"},
+    {"get_refresh_rate","Get Refresh Rate","intoVar","Store the refresh rate in hertz (0 when none was chosen).", "Scene"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
@@ -48370,11 +48381,17 @@ int main(int argc, char** argv) {
             const bool gameModal = invModal || (ed.isPlaying() && (okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&ed.scene())));
             okay::Input::SetUICaptured(gameModal || (ed.isPlaying() && okay::GameInputBlocked(&ed.scene(), (unsigned)okay::GameInputMask::World)));
             {
+                static bool s_monitors = false;
+                if (!s_monitors && window) {
+                    s_monitors = true;
+                    okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+                }
+                okay::DisplaySettings::TickTrial(dt);
                 static int s_dispGen = 0;
                 const int gen = okay::DisplaySettings::Generation();
                 if (gen != s_dispGen) {
                     s_dispGen = gen;
-                    if (window) SDL_SetWindowFullscreen(window, okay::DisplaySettings::Fullscreen() ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
                     if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
                     okay::DisplaySettings::ApplyQuality();

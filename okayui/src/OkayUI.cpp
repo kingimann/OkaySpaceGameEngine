@@ -3927,7 +3927,8 @@ bool BeginDragDropTarget() {
     if (!g_lay.active || !g_tdd.active || !g_tdd.hasPayload) return false;
     const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
     if (!hit(px, py, pw, ph)) return false;
-    quad(px, py, pw, 2.0f, g_theme.accent); quad(px, py + ph - 2.0f, pw, 2.0f, g_theme.accent);   // an accent outline marks the drop spot
+    const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
+    quad(px, py, pw, 2.0f, dc); quad(px, py + ph - 2.0f, pw, 2.0f, dc);   // an accent outline marks the drop spot
     g_tddOver = true;
     return true;
 }

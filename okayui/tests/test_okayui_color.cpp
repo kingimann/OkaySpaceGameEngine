@@ -324,6 +324,24 @@ void TestWidgetsUseColours() {
         CHECK(CountEq(b, Rgba(14, 207, 208)) > 100);
         CHECK(CountEq(b, Rgba(209, 14, 210)) > 5);
     }
+    {   // the drop target outline while a typed drag is over an item
+        Rig r; UI::Rect rt, rs;
+        auto ui = [&] {
+            if (UI::Begin("W", 10, 10, 380, 200)) {
+                UI::Button("source"); rs = UI::GetItemRect();
+                if (UI::BeginDragDropSource()) { UI::SetDragDropPayload("T", "x", 1); UI::EndDragDropSource(); }
+                UI::Button("target"); rt = UI::GetItemRect();
+                if (UI::BeginDragDropTarget()) UI::EndDragDropTarget();
+            }
+            UI::End();
+        };
+        UI::SetStyleColor(UI::Col_DragDropTarget, 201, 11, 12);
+        r.sim.Frames(2, ui);
+        r.sim.Move(CenterX(rs), CenterY(rs)); r.sim.Frame(ui); r.sim.Down(); r.sim.Frame(ui);
+        r.sim.Move(CenterX(rs) + 20, CenterY(rs) + 10); r.sim.Frame(ui); r.sim.Move(CenterX(rt), CenterY(rt)); r.sim.Frames(2, ui);
+        CHECK(CountEq(r.sim.Draw(12, 14, 20), Rgba(201, 11, 12)) > 100);
+        r.sim.Up(); r.sim.Frames(2, ui);
+    }
     {   // docking: the preview of a drop and the empty dock
         Rig r(640, 480); UI::Vec2 wp{0, 0};
         auto ui = [&] {

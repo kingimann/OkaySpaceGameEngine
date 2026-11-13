@@ -1016,7 +1016,7 @@ Theme& Style();
 // The theme colours a PushStyleColor / SetStyleColor / GetStyleColorVec4 call names. The first eight are the original theme
 // fields; the rest are the full Dear ImGui colour set. A colour that was never set follows the base theme (Style().bg, ...);
 // a set one overrides it. Which widget draws with which colour is listed in docs/own_ui_toolkit.md section 4.33; a few
-// (the navigation highlights, BorderShadow, DragDropTarget, the unfocused tab colours, the hovered / active separator)
+// (the navigation highlights, BorderShadow, the unfocused tab colours, the hovered / active separator)
 // are accepted and stored but nothing draws with them yet.
 enum Col : int {
     Col_Bg, Col_BgHover, Col_BgDown, Col_Border,

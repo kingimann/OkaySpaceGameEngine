@@ -100,9 +100,10 @@ void HostileTests() {
     r.body = [&] { UI::DragFloat3("x", none); UI::DragInt2("y", noneI); UI::DragFloatRange2("z", a, a); };
     r.Frames(3);                                                    // null pointers are refused, not dereferenced
     CHECK(true);
-    r.body = [&] { UI::DragFloat4("a long label that does not fit in the window at all", v); };
+    float v4[4] = {0, 0, 0, 0};                                     // DragFloat4 reads four floats: v has only three
+    r.body = [&] { UI::DragFloat4("a long label that does not fit in the window at all", v4); };
     r.Frames(3);
-    CHECK(v[0] == 0);
+    CHECK(v4[0] == 0);
 }
 
 void SliderAndInputTests() {

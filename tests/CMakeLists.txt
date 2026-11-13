@@ -2447,6 +2447,9 @@ add_test(NAME file_dialog COMMAND test_file_dialog)
 add_executable(test_accessibility_wired test_accessibility_wired.cpp)
 target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
 add_test(NAME accessibility_wired COMMAND test_accessibility_wired)
+add_executable(test_accessibility_remaining test_accessibility_remaining.cpp)
+target_link_libraries(test_accessibility_remaining PRIVATE okay::engine)
+add_test(NAME accessibility_remaining COMMAND test_accessibility_remaining)
 # okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
 # platform: registry, timers, audio devices, controllers on each compiled-in backend (no
 # display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.

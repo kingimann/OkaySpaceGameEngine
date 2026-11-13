@@ -2843,7 +2843,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
             << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
-            << au->lowPass << " " << (au->stream ? 1 : 0) << "\n";
+            << au->lowPass << " " << (au->stream ? 1 : 0);
+        if (!au->caption.empty()) out << " " << Quote(au->caption);
+        out << "\n";
     }
     if (auto* mp = go->GetComponent<MusicPlayer>()) {
         out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
@@ -6963,6 +6965,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                 in >> au->lowPass;
                                 in >> std::ws;   // optional stream flag
                                 if (std::isdigit(in.peek())) { int stv = 0; in >> stv; au->stream = stv != 0; }
+                                while (in && (in.peek() == ' ' || in.peek() == '\t')) in.get();
+                                if (in.peek() == '"') au->caption = ReadQuoted(in);
                             }
                         }
                     }

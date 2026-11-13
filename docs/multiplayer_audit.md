@@ -67,7 +67,7 @@ Ranked by player-visible impact. Each has a regression test in
    a dropped client's state for `resumeGraceSeconds` under a secret token its Welcome
    gave it, and a rejoin with that token gets the same peer id, score, ready flag and last
    position back; a connection the host has not yet noticed is dead is replaced, even on a
-   full host. Objects the player made with `SpawnOwned` are announced again. Tests:
+   full host; a resent Welcome (the first was lost) still says the state was resumed. Objects the player made with `SpawnOwned` are announced again. Tests:
    `tests/test_net_reconnect.cpp` (direct, relay, encrypted, parked, no-grace, bounded tries,
    hard refusal, cancel) and `tests/test_net_rejoin.cpp` (single-use, account-bound, not after
    a kick, bounded parked states).
@@ -144,10 +144,14 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
   macro names and adds no `<mutex>` / `<thread>` to public headers.
 - The launcher (server browser, matchmaking, party and invite flows, voice) was read,
   not run: the launcher target needs SDL2 windowing and live services (Supabase
-  tables under `docs/sql`) that are not available here. No bug was fixed there beyond
-  what PR #700 already covers.
-- Behaviour on a real lossy WAN: the timeouts are tested over loopback with a mute or
-  stalled peer, and the ordered backlog with a simulated lossless link, not with
-  `NetSim` at high loss.
-- Sanitizer runs: the delta overflow is shown by a wrong result before the fix, not by
-  an UBSan report.
+  tables under `docs/sql`) that are not available here. The voice-clip fix (#718) compiles
+  (the launcher's `main.cpp` builds) but playing a voice message was not run; no other bug
+  was fixed there beyond what PR #700 already covers.
+- Behaviour on a real WAN: loss, delay, reordering and duplication were simulated on loopback
+  with `NetSim` (20% loss, 15% duplication, 30 ms +/- 25 ms), not measured on a real link.
+  The reconnect delays are tested with a hung host (the client's clock advanced faster than
+  the wall clock), not with a real network outage or a changing NAT address.
+- Reconnect over a relay was tested against the in-process relay only; a real relay that
+  changes a client's slot between sessions was not seen.
+- Animation replication was checked by the state the proxy's animator reaches, not by looking
+  at the pose on screen.

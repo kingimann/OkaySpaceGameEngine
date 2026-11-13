@@ -2931,6 +2931,7 @@ void NetworkManager::ServerTick(float dt) {
                     c.stateAge = resumed.age;   // the move check allows for the time away
                     c.score = resumed.score;
                     c.ready = resumed.ready;
+                    c.resumed = true;
                 }
                 if (resumeGraceSeconds > 0.0f) {
                     std::random_device rdt;
@@ -2985,7 +2986,7 @@ void NetworkManager::ServerTick(float dt) {
             if (authoritativeMovement) welcomeFlags |= 4 | 8;   // bit 2: send inputs, not positions; bit 3: PawnAcks (predict)
             if (c.cookie) welcomeFlags |= 16;                    // bit 4: a session cookie (u64) follows
             if (c.resumeToken) welcomeFlags |= 32;               // bit 5: a resume token (u64) follows
-            if (haveResumed) welcomeFlags |= 64;                 // bit 6: your old state was restored
+            if (c.resumed) welcomeFlags |= 64;                   // bit 6: your old state was restored (also on a resent Welcome)
             if (welcomeFlags) w.Write(welcomeFlags);
             if (welcomeFlags & 2) w.Write(HostTickRate());
             if (welcomeFlags & 16) WriteU64(w, c.cookie);

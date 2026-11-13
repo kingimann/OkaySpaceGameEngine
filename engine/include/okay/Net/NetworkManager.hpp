@@ -791,6 +791,7 @@ private:
         std::uint64_t cookie = 0;
         bool cookieSeen = false;
         std::uint64_t resumeToken = 0;   // secret that lets this client take its state back after a drop
+        bool resumed = false;            // it took its old state back (every Welcome it gets says so, retries included)
         float teleportUntil = -1.0f;     // server time until which its positions skip the move check (a respawn)
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.

@@ -52,10 +52,11 @@ struct Guest {
 void Pump(Host& h, int n) { for (int i = 0; i < n; ++i) { h.ss.Update(0.02f); Nap(); } }
 
 // What a raw peer needs from a Welcome.
-struct Welcomed { bool ok = false; std::uint32_t id = 0; std::uint64_t cookie = 0, token = 0; };
-Welcomed RawJoin(Host& h, UdpSocket& sock, const std::string& name) {
+struct Welcomed { bool ok = false; std::uint32_t id = 0; std::uint64_t cookie = 0, token = 0; std::uint8_t flags = 0; };
+Welcomed RawJoin(Host& h, UdpSocket& sock, const std::string& name, std::uint64_t resume = 0) {
     Packet j(std::uint8_t(1));
     j.Write(name); j.Write(std::string()); j.Write(std::string()); j.Write(std::string()); j.Write(std::string());
+    if (resume) { j.Write(static_cast<std::uint32_t>(resume)); j.Write(static_cast<std::uint32_t>(resume >> 32)); }
     const Endpoint to{0x7F000001u, h.srv->ServerPort()};
     sock.SendTo(to, j.Data(), j.Size());
     Welcomed w;
@@ -67,6 +68,7 @@ Welcomed RawJoin(Host& h, UdpSocket& sock, const std::string& name) {
             if (p.ReadU8() != 2) continue;
             w.id = p.ReadU32(); p.ReadString(); p.ReadString(); p.ReadString();
             const std::uint8_t flags = p.ReadU8();
+            w.flags = flags;
             if (flags & 2) p.ReadF32();
             auto u64 = [&] { const std::uint64_t lo = p.ReadU32(); return lo | ((std::uint64_t)p.ReadU32() << 32); };
             if (flags & 16) w.cookie = u64();
@@ -209,6 +211,24 @@ int main() {
             Pump(h, 3);
         }
         CHECK(h.srv->ParkedCount() == NetworkManager::kMaxParked);
+    }
+
+    // ---- A Welcome lost on the wire: the resent one still says the state was resumed ----
+    {
+        Host h;
+        Guest a("A");
+        CHECK(a.Join(h));
+        const std::uint32_t id = a.cli->LocalId();
+        const std::uint64_t token = a.cli->ResumeToken();
+        h.srv->SetPeerScore(id, 12);
+        a.cli->Stop();
+        Pump(h, 10);
+        UdpSocket sock; sock.Open(); sock.Bind(0);
+        Welcomed first = RawJoin(h, sock, "A", token);       // (pretend this Welcome never arrived)
+        CHECK(first.ok && first.id == id && (first.flags & 64));
+        Welcomed again = RawJoin(h, sock, "A", token);       // the client's retry: the token is already spent
+        CHECK(again.ok && again.id == id && (again.flags & 64));
+        CHECK(h.srv->PeerScore(id) == 12 && h.srv->Peers().size() == 1);
     }
 
     // ---- Replayed and duplicated datagrams ----

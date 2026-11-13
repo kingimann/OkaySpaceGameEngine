@@ -855,6 +855,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
+#include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
@@ -2024,6 +2025,44 @@ void Relaunch(const std::string& path) {
     (void)rc;
 }
 
+// Download one published file (`asset`: "OkayEngine.exe" or "OkaySpacePlayer.exe") of `version` to `dest`.new and check it against the
+// release server's checksum list (versions.json). Without that list, an entry for the version, or a SHA-256 for the file nothing is
+// downloaded or installed: the reason comes back in `reason`. `dest` itself is never touched here.
+bool FetchVerified(const std::string& version, const std::string& asset, const fs::path& dest, std::string& reason) {
+    okayversions::Sources src;
+    src.bucketBase = SupabaseReleasesBase();
+    src.archiveTemplate = "https://github.com/kingimann/OkaySpaceGameEngine/releases/download/v{version}/{file}";
+    std::error_code ec;
+    static unsigned n = 0;
+    const okayversions::Index index = okayversions::LoadIndex(src, [&](const std::string& url, std::string& out) {
+        const fs::path tmp = fs::temp_directory_path(ec) / ("okayspace_idx_" + std::to_string(okay::restart::CurrentPid()) + "_" + std::to_string(n++) + ".txt");
+        const bool got = Download(url, tmp);
+        if (got) { std::ifstream f(tmp, std::ios::binary); std::stringstream ss; ss << f.rdbuf(); out = ss.str(); }
+        fs::remove(tmp, ec);
+        return got;
+    });
+    std::string v = okayver::NormalizeVersion(version);
+    if (v.empty() || !index.Find(v)) v = index.ok ? index.latest : std::string();
+    const okayversions::Entry* entry = index.ok && !v.empty() ? index.Find(v) : nullptr;
+    if (const std::string why = okayupdater::IndexProblem(index, entry, v.empty() ? version : v); !why.empty()) { reason = why; return false; }
+    const okayversions::InstallPlan plan = okayversions::PlanInstall(index, v, src.bucketBase, {}, false);
+    if (!plan.ok) { reason = plan.error; return false; }
+    for (const okayversions::PlanFile& pf : plan.files) {
+        if (pf.indexName != asset) continue;
+        okayversions::FileInfo check; check.size = pf.size; check.sha256 = pf.sha256;
+        const okayupdater::Outcome o = okayupdater::StageFromUrls(asset, pf.urls, dest, &check,
+            [&](const std::string& u, const fs::path& to, std::string& err) {
+                const bool got = Download(u, to);
+                if (!got) err = "the server could not be reached or the file was not found";
+                return got;
+            });
+        if (!o.ok) reason = o.reason;
+        return o.ok;
+    }
+    reason = asset + " is not in the version list for v" + v + ", so it can't be checked and was not downloaded.";
+    return false;
+}
+
 // Download the published editor and swap it in for the running .exe, then
 // relaunch. Returns a human-readable status. Only call when an update is known
 // to be available (so this never loops on an already-current build).
@@ -2036,10 +2075,15 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
     }
     if (self.empty()) return "Couldn't locate the running executable.";
     fs::path newFile = self; newFile += ".new";
-    // Download the new build from the commit-pinned URL so the CDN can never hand
-    // back the old binary (the cause of "it updated but stayed the same version").
-    if (!Download(RawUrl(ref, "OkayEngine.exe"), newFile))
-        return "Download of v" + latest + " failed.";
+    // Only a file whose size and SHA-256 are in the release server's checksum list is installed. No list, no entry, no checksum, a failed
+    // download or a mismatch all stop here with the reason, and the running program is untouched.
+    {
+        std::string reason;
+        if (!FetchVerified(latest, "OkayEngine.exe", self, reason)) {
+            okay::restart::AppendLog(self.parent_path() / "okay_update.log", "editor update refused: " + reason);
+            return "Update to v" + latest + " was not installed. " + reason;
+        }
+    }
     const auto downloadedBytes = fs::file_size(newFile, ec);
     if (ec || downloadedBytes < 100000) {
         fs::remove(newFile, ec);
@@ -2071,6 +2115,8 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
     req.replaceBackup += ".old";
     req.minBytes = 100000;
     req.keepBackup = true;
+    req.expectVersion = latest;          // the helper asks the new file for its version before starting it; a bad one is rolled back
+    req.rollbackTarget = self;
     std::string err;
     if (!okay::restart::StartHelper(req, err))
         return "Couldn't start the updater (" + err + "). This version is unchanged. See okay_update.log next to the app.";
@@ -3793,13 +3839,21 @@ std::string EnsurePlayer(std::string* note) {
     fs::path self = updater::SelfPath();
     if (self.empty()) return {};
     fs::path dest = self.parent_path() / kPlayerExe;
-    if (note) *note = "Fetching the player runtime from GitHub...";
-    if (!updater::Download(updater::RawUrl("latest", "OkaySpacePlayer.exe"),
-                           dest.string()))
+    if (note) *note = "Fetching the player runtime (checked against the published checksum)...";
+    std::string reason;
+    if (!updater::FetchVerified(OKAY_ENGINE_VERSION, "OkaySpacePlayer.exe", dest, reason)) {
+        if (note) *note = "Couldn't get the player runtime: " + reason;
         return {};
+    }
     std::error_code ec;
-    if (!fs::exists(dest, ec) || fs::file_size(dest, ec) < 100000) {
+    {   // FetchVerified staged and checked <dest>.new; only now does it become the player
+        fs::path staged = dest; staged += ".new";
         fs::remove(dest, ec);
+        fs::rename(staged, dest, ec);
+    }
+    if (ec || !fs::exists(dest, ec) || fs::file_size(dest, ec) < 100000) {
+        fs::remove(dest, ec);
+        if (note) *note = "Couldn't install the player runtime next to the editor.";
         return {};
     }
 #if !defined(_WIN32)
@@ -47007,6 +47061,7 @@ int RunVsGraphShot(int argc, char** argv);
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)

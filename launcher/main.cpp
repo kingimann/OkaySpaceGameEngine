@@ -154,6 +154,7 @@ SDL_mutex* g_upMutex = nullptr;
 std::string g_upMessage = "Checking for updates...";
 std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
+bool g_upVerdictShown = false;    // the start-up verdict of the last launcher update is on screen: the launch check leaves it alone
 SDL_Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
@@ -746,6 +747,47 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
     if (!o.ok) UpFail(o.reason);
     return o.ok;
 }
+// The launcher's own file as it was when this process started. CurrentExecutable() is wrong after the swap on Linux
+// (/proc/self/exe follows the renamed file to "<name>.old"), so the path captured at start is the one to swap and to restart.
+static fs::path SelfProgramPath() {
+    if (!g_selfPath.empty()) return fs::path(g_selfPath);
+    return okay::restart::CurrentExecutable();
+}
+static fs::path SelfUpdateStateFile() { return okay::selfupdate::StatePath(fs::path(g_exeDir)); }
+// Remember how the last self-update went (see shared/SelfUpdate.hpp); a failure to write it is logged, never silent.
+static void RecordSelfUpdate(const std::string& from, const std::string& to, bool swapped, const std::string& reason) {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State next = okay::selfupdate::AfterAttempt(okay::selfupdate::Read(file), from, to, swapped, reason);
+    std::string err;
+    if (!okay::selfupdate::Write(file, next, err)) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "could not record the update state: " + err);
+}
+// Runs once at start (main thread, before the first frame): decides from the state file whether the last launcher update was confirmed,
+// did not apply, or failed, and puts the answer where the person sees it (the update dialog and the sidebar note) and in okay_update.log.
+static void ApplyStartupUpdateVerdict() {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State st = okay::selfupdate::Read(file);
+    const okay::selfupdate::Startup v = okay::selfupdate::EvaluateStartup(st, OKAY_ENGINE_VERSION);
+    if (v.kind == okay::selfupdate::StartupKind::Nothing) return;
+    const fs::path log = fs::path(g_exeDir) / "okay_update.log";
+    okay::restart::AppendLog(log, v.logLine);
+    std::error_code ec;
+    if (v.removeBackup && !g_selfPath.empty()) fs::remove(okay::selfupdate::BackupPath(fs::path(g_selfPath)), ec);
+    if (v.resetVersionFile) {   // VERSION.txt must not claim a version that is not installed (it would hide the update from the next check)
+        std::ofstream(fs::path(g_exeDir) / "VERSION.txt") << OKAY_ENGINE_VERSION << "\n";
+    }
+    if (v.clearState) okay::selfupdate::Clear(file);
+    else {
+        std::string err;
+        if (!okay::selfupdate::Write(file, v.next, err)) okay::restart::AppendLog(log, "could not record the update state: " + err);
+    }
+    if (v.message.empty()) return;
+    SetUpMsg(v.message);
+    SetUpStep("Update failed: your current version is unchanged", 0, 3);
+    SetUpVers(OKAY_ENGINE_VERSION, v.next.to);
+    SetState(Up_Failed);
+    g_upModalOpen = v.showDialog;
+    g_upVerdictShown = v.showDialog;   // the dialog is the person's first sight of it: the launch check stays out of its way once; later starts may retry (AutoRetryAllowed stops it after 2)
+}
 bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
     const okayupdater::Outcome o = okayupdater::Commit(name, dest, 100000, /*keepBackup=*/inUse);
     if (!o.ok) UpFail(o.reason);
@@ -916,6 +958,7 @@ static void FetchSupabaseNews(const std::string& ver) {
 }
 
 okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
+bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
@@ -974,6 +1017,16 @@ int RunUpdateCheck(void*) {
         return 0;
     }
 
+    if (newer && g_upAutomatic) {   // the check at launch must not retry a release that already failed twice (a click on Retry always may)
+        std::string why;
+        if (!okay::selfupdate::AutoRetryAllowed(okay::selfupdate::Read(SelfUpdateStateFile()), latest, why)) {
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "automatic update skipped: " + why);
+            SetUpMsg(why);
+            SetUpStep("Update paused after repeated failures", 0, 3);
+            SetState(Up_Failed);
+            return 0;
+        }
+    }
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -990,7 +1043,8 @@ int RunUpdateCheck(void*) {
     };
     if (const std::string why = okayupdater::IndexProblem(vindex, ventry, latest); !why.empty()) {
         UpFail(why);
-        SetUpMsg(why);
+        if (newer) RecordSelfUpdate(local, latest, false, why);
+        SetUpMsg("Update refused. " + why);
         SetUpStep("Update refused: no checksums", 0, kSteps);
         SetState(Up_Failed);
         return 0;
@@ -1036,8 +1090,7 @@ int RunUpdateCheck(void*) {
     if (ok && newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
-        fs::path selfExe = okay::restart::CurrentExecutable();
-        if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
+        const fs::path selfExe = SelfProgramPath();
         if (selfExe.empty()) {
             UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
             ok = false;
@@ -1049,19 +1102,24 @@ int RunUpdateCheck(void*) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
         SetUpMsg("Installing...");
-        for (const Item& it : items) {
-            if (!CommitFile(it.name, it.dest, it.inUse)) {
-                ok = false;
-                for (const Item& rest : items) okayupdater::Discard(rest.dest);   // (a failed swap already put its old file back)
-                break;
-            }
-            if (it.name == "OkaySpace.exe") launcherOk = true;
+        // The launcher goes first (the swap most likely to be refused: a security scanner holding the file) and the others only if it worked;
+        // if any swap fails everything already swapped is put back, so the install stays whole (okayupdater::CommitAll).
+        std::vector<okayupdater::CommitItem> order;
+        for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
+        for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
+        const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
+        if (!co.ok) {
+            UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
+            ok = false;
+        } else {
+            for (const Item& it : items) if (it.name == "OkaySpace.exe") launcherOk = true;
         }
     }
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
         g_upRelaunchNeeded = launcherOk;
+        if (launcherOk) RecordSelfUpdate(local, latest, true, "");
         // The kept copies beyond "Keep previous versions: N" go (never the LTS line's newest installed patch, never the default editor).
         if (newer) {
             okayversions::RemoveGuards guards;
@@ -1080,6 +1138,7 @@ int RunUpdateCheck(void*) {
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
         const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
+        if (newer) RecordSelfUpdate(local, latest, false, why);
         SetUpMsg("Update failed. " + why);
         SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
@@ -1093,6 +1152,7 @@ void StartUpdateCheck(bool showDialog = true) {
     if (s == Up_Checking || s == Up_Downloading) return;
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
+    g_upAutomatic = !showDialog;
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
@@ -1372,17 +1432,29 @@ static bool BeginUpdatedRestart() {
     static bool started = false;
     if (started) return true;
     okay::restart::Request req;
-    req.executable = okay::restart::CurrentExecutable();
-    if (req.executable.empty() && !g_selfPath.empty()) req.executable = fs::path(g_selfPath);
+    req.executable = SelfProgramPath();
     req.arguments = okay::restart::CurrentArguments();
     std::error_code ec;
     req.workingDirectory = fs::current_path(ec);
     req.waitForPid = CurrentPid();
     req.keepBackup = true;
     if (!req.executable.empty()) req.logFile = req.executable.parent_path() / "okay_update.log";
+    {   // the helper checks the new file is the published version before starting it, and puts the previous launcher back if it is not
+        std::string fromV, toV; GetUpVers(fromV, toV);
+        const okay::selfupdate::State pending = okay::selfupdate::Read(req.stateFile.empty() ? SelfUpdateStateFile() : req.stateFile);
+        req.expectVersion = pending.phase == okay::selfupdate::Phase::Swapped ? pending.to : toV;   // (the state file survives a later update check that cleared `toV`)
+        if (req.expectVersion.empty())
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart without a start-up check: the version that was installed is not known");
+        req.rollbackTarget = req.executable;
+        req.replaceBackup = okay::selfupdate::BackupPath(req.executable);
+        req.stateFile = SelfUpdateStateFile();
+    }
     std::string err;
     if (!okay::restart::StartHelper(req, err)) {
-        Toast(err.empty() ? "Couldn't restart after the update. See okay_update.log next to the app." : err, 2);
+        const std::string msg = (err.empty() ? std::string("Couldn't restart the launcher.") : "Couldn't restart the launcher (" + err + ").") +
+            " The update is installed: close OkaySpace and open it again to finish. Details: okay_update.log next to the app.";
+        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart after the update failed: " + msg);
+        Toast(msg, 2);
         return false;
     }
     started = true;
@@ -17413,7 +17485,6 @@ static const okayversionsui::Host& VersionsHost() {
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
         h.fetchText = [](const std::string& url, std::string& out) { return FetchTextFile(url, out); };
-        h.headSize = [](const std::string& url) { return (std::uint64_t)std::max<long long>(0, RemoteSize(url)); };
     }
     if (builtAt == 0 || now - builtAt > 1000) {
         builtAt = now;
@@ -17432,6 +17503,7 @@ static const okayversionsui::Host& VersionsHost() {
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     SDL_SetMainReady();
     {
@@ -17478,6 +17550,7 @@ int main(int argc, char** argv) {
     g_dlMutex = SDL_CreateMutex();
     g_gitMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
+    ApplyStartupUpdateVerdict();   // was the last launcher update confirmed, not applied, or rolled back? Say so before anything else.
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
     LoadNotifs();                // the notifications feed + what was read / cleared
@@ -17696,7 +17769,7 @@ int main(int argc, char** argv) {
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    if (g_updateOnLaunch && !g_upVerdictShown) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
@@ -18118,6 +18191,16 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
                 }
                 ImGui::TextUnformatted(GetUpStep().c_str());
+                if (us == Up_Failed) {   // the reason and what to do, in full (the sidebar note only has room for the start of it)
+                    const std::string why = GetUpMsg();
+                    if (!why.empty()) {
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1.0f), "%s", why.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::Dummy(ImVec2(0, 2));
+                    }
+                }
 
                 // Overall step progress (engine / player / launcher).
                 int si = SDL_AtomicGet(&g_upStepIdx), stt = SDL_AtomicGet(&g_upStepTotal);
@@ -18155,7 +18238,7 @@ int main(int argc, char** argv) {
 
                 // Changelog / what's-new.
                 std::string cl = GetUpChangelog();
-                if (!cl.empty()) {
+                if (!cl.empty() && us != Up_Failed) {   // (a failure needs the room for its reason and the Retry button)
                     ImGui::Dummy(ImVec2(0, 4));
                     ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
                                         toV.empty() ? "" : toV.c_str());

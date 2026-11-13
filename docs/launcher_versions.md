@@ -43,7 +43,8 @@ once or not at all. Leftover scratch folders from a crash are deleted when the l
    be exactly `1`; an entry it cannot use is skipped; sizes must be whole numbers under 4 GiB; checksums are 64 hex digits; the `archive`
    and `bucketPath` templates cannot leave their place; garbage, a newer schema or a 404 page is "no index".
 2. The index can lag (it is written after the files, and a failure there only warns), so the heads are checked against
-   `<bucket>/VERSION.txt` and `LTS.txt`: a newer head there is added, without checksums.
+   `<bucket>/VERSION.txt` and `LTS.txt`: a newer head there is listed, but **it cannot be installed** until `versions.json` carries its
+   checksums (the row says "no checksum: can't be installed here" and the install says why).
 3. **Download address**: `<bucket>/<bucketPath>` when the version is `inBucket`, then (and when it is not) the `archive` GitHub address
    with the same file names. If the bucket copy fails or does not match its checksum, the GitHub copy is tried.
 4. **Every file's size and SHA-256 must match the index before it is moved into place.** Nothing that failed is ever kept or run.
@@ -51,9 +52,11 @@ once or not at all. Leftover scratch folders from a crash are deleted when the l
    [release_channels.md](release_channels.md) asking the release tooling to publish it.
 
 **No index at all** (offline bucket, old server): the heads of `VERSION.txt` (bucket and GitHub, the newest wins) and `LTS.txt` give a short
-list without checksums, and the page says so. Such an install is refused unless the server's reported size is known, the downloaded
-size matches it exactly, **and you confirm** ("Install without a checksum?"). With nothing reachable the page says "Couldn't reach the
-version list" with **Try again**, and every other part of the launcher behaves as it always did.
+list without checksums, and the page says so. **Nothing in that list can be installed**: there is no "install anyway" (the old "Install
+without a checksum?" question is gone). The row says "no checksum: can't be installed here", and trying it explains that versions.json
+could not be read from the release server and what to do. With nothing reachable the page says "Couldn't reach the version list" with
+**Try again**, and every other part of the launcher behaves as it always did. How the updater itself treats a missing or damaged index
+is in [updater.md](updater.md).
 
 The downloads only ever go under `<launcher dir>/Versions`. The launcher never writes into a project folder.
 
@@ -121,7 +124,7 @@ Latest, Keep previous versions to 1 and the default editor to "this version" (in
 | The disk fills mid-download, or any step fails | the scratch folder is removed; no version folder; other versions untouched |
 | Cancel | the curl child is stopped, the partial file removed, "Nothing was installed" |
 | A file does not match its checksum / size | not kept; the other source is tried; then "did not match its checksum, so it was not installed" |
-| No checksum known | refused unless the size is known and matches and you confirmed |
+| No checksum known | refused before anything is downloaded ("no checksum in the version list"; there is no install-anyway) |
 | Remove the running version, the launcher's version, the default editor, a version an open editor uses | refused with the reason |
 | A remove cannot delete everything after renaming | the version is gone from the list; the scratch folder is deleted at the next start |
 | The Versions folder cannot be made (a file is in the way, read-only) | a plain failure message |

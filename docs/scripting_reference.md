@@ -169,6 +169,8 @@ function update(dt) {
 | `ui_set_tab_badge("n", i, count)` | Badge a tab: 0 = none, -1 = a dot, N = a number |
 | `ui_set_tab_enabled("n", i, on)` | Enable / disable (dim) a tab |
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
+| `ui_get_rotation("n")` / `ui_set_rotation("n", degrees)` | Read or turn a UI frame, in degrees clockwise around its pivot. Children turn with it |
+| `ui_get_scale("n")` / `ui_set_scale("n", x, y)` | Read or set a UI frame's width and height scale. One number sets both. 1, 1 is unchanged. Children scale with it |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
 ### OkayUI (build a HUD from script — no Canvas objects)

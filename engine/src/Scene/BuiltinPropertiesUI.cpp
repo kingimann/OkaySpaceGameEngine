@@ -428,7 +428,9 @@ void RegisterUIFrame() {
      .AddVec2("anchorMax", &UIFrame::anchorMax).Range(-10, 10, 0.01)
      .AddVec2("pivot", &UIFrame::pivot).Range(-10, 10, 0.01)
      .AddVec2("position", &UIFrame::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor (margins for a stretch anchor)")
-     .AddVec2("size", &UIFrame::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels");
+     .AddVec2("size", &UIFrame::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddFloat("rotation", &UIFrame::rotation).Range(-3600, 3600, 1).Tooltip("Degrees clockwise around the pivot. Children turn with the frame")
+     .AddVec2("scale", &UIFrame::scale).Range(-100, 100, 0.01).Tooltip("Width and height multipliers around the pivot. 1, 1 is unchanged. Children scale with the frame");
     b.Commit();
 }
 

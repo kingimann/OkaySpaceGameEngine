@@ -1341,6 +1341,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_dropdown_value` | `Fn.ui_dropdown_value` |
 | `ui_end` | `Fn.ui_end` |
 | `ui_get_text` | `Fn.ui_get_text` |
+| `ui_get_rotation` | `Fn.ui_get_rotation` |
+| `ui_get_scale` | `Fn.ui_get_scale` |
 | `ui_heading` | `Fn.ui_heading` |
 | `ui_hide` | `Fn.ui_hide` |
 | `ui_hovered` | `Fn.ui_hovered` |
@@ -1366,6 +1368,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_set_progress` | `Fn.ui_set_progress` |
 | `ui_set_radio` | `Fn.ui_set_radio` |
 | `ui_set_rich` | `Fn.ui_set_rich` |
+| `ui_set_rotation` | `Fn.ui_set_rotation` |
+| `ui_set_scale` | `Fn.ui_set_scale` |
 | `ui_set_slider` | `Fn.ui_set_slider` |
 | `ui_set_slider_format` | `Fn.ui_set_slider_format` |
 | `ui_set_slider_step` | `Fn.ui_set_slider_step` |

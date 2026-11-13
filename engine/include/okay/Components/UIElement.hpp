@@ -874,6 +874,12 @@ inline Vec2 UITextDrawOrigin(GameObject* go, const TextRenderer* tr, float scree
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;
     if (!GetUIScreenRect(go, screenW, screenH, o, sz)) return false;
+    if (UIFrameTransformed(go)) {
+        Vec2 local;
+        if (!UIFramePointToLocal(go, p, screenW, screenH, local)) return false;
+        const float e = 0.05f;   // a click on the rotated edge still counts
+        return local.x >= -e && local.y >= -e && local.x <= sz.x + e && local.y <= sz.y + e;
+    }
     return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
 }
 

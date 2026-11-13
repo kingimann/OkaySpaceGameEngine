@@ -21,6 +21,10 @@ namespace okay {
 /// tests, the editor). Its own position / size / anchor fields stay in step as a
 /// mirror: a script or tool that writes them moves the frame (GetUIRect picks the
 /// change up), and the frame's values are written back for code that reads them.
+///
+/// `rotation` (degrees, clockwise on screen) and `scale` (width, then height)
+/// turn and resize the resolved rect around `pivot`. Children laid out inside
+/// the frame inherit both. Zero and (1, 1) leave an old frame exactly where it was.
 class UIFrame final : public Behaviour {
 public:
     Vec2 anchorMin{0.0f, 0.0f};
@@ -28,6 +32,10 @@ public:
     Vec2 pivot{0.0f, 0.0f};
     Vec2 position{0.0f, 0.0f};
     Vec2 size{100.0f, 100.0f};
+    /// Degrees clockwise on screen, around `pivot`. 0 is upright.
+    float rotation = 0.0f;
+    /// Width and height multipliers around `pivot`. (1, 1) keeps the resolved size.
+    Vec2 scale{1.0f, 1.0f};
 
     /// The anchors and pivot of a legacy preset.
     static void PresetValues(UIAnchor a, Vec2& amin, Vec2& amax, Vec2& pv) {

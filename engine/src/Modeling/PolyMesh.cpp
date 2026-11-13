@@ -477,8 +477,12 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
             header = true;
             continue;
         }
-        if (tag == "verts") { ls >> wantVerts; pm.verts.reserve(wantVerts); }
-        else if (tag == "faces") { ls >> wantFaces; pm.faces.reserve(wantFaces); }
+        // The declared counts come from the file, so only a bounded amount is reserved
+        // (reserve() of an absurd count throws length_error / bad_alloc). The real count
+        // is still checked against what was actually read, below.
+        constexpr std::size_t kMaxReserve = 1u << 20;
+        if (tag == "verts") { ls >> wantVerts; pm.verts.reserve(std::min(wantVerts, kMaxReserve)); }
+        else if (tag == "faces") { ls >> wantFaces; pm.faces.reserve(std::min(wantFaces, kMaxReserve)); }
         else if (tag == "v") {
             Vec3 v;
             if (!(ls >> v.x >> v.y >> v.z)) return fail(lineNo, "a vertex needs x y z");

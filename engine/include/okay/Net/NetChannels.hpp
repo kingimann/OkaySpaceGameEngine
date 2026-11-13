@@ -10,6 +10,7 @@
 // Movement, hit claims and the anti-cheat heartbeat stay on their own message
 // types. Nothing here changes those.
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -27,6 +28,7 @@ inline constexpr std::size_t kChannelNameMax = 64;
 inline constexpr std::size_t kChannelPayloadMax = 48u * 1024u;
 inline constexpr std::uint32_t kOrderedWindow = 32;   // in-flight and reorder depth
 inline constexpr std::size_t kMaxChannels = 64;
+inline constexpr std::size_t kOrderedBacklogMax = 4096;   // messages queued per channel behind a full window
 inline constexpr std::size_t kMaxSeqKeys = 256;       // sender/channel pairs remembered
 inline constexpr float kChannelResend = 0.25f;
 
@@ -41,7 +43,9 @@ struct ChanMsg {
 // One peer's reliable-ordered streams, both directions.
 class OrderedEnd {
 public:
-    // Packet to send now, or empty if the channel, size or window refuses it.
+    // Packet to send now, or empty if the channel or size refuses it. When the in-flight
+    // window is full the message is queued (up to kOrderedBacklogMax per channel) and goes
+    // out from CollectResend as acks free the window; empty is returned for that case too.
     // `cookie` (client sessions) is appended so the server can match it; 0 omits it.
     std::vector<std::uint8_t> Push(const std::string& channel, const std::string& data,
                                    std::uint64_t cookie);
@@ -58,7 +62,8 @@ public:
 
 private:
     struct Slot { std::vector<std::uint8_t> bytes; float age = 0.0f; };
-    struct OutStream { std::uint32_t next = 1; std::map<std::uint32_t, Slot> pending; };
+    struct Queued { std::string data; std::uint64_t cookie = 0; };
+    struct OutStream { std::uint32_t next = 1; std::map<std::uint32_t, Slot> pending; std::deque<Queued> backlog; };
     struct Held { std::string data; bool deliver = false; };
     struct InStream { std::uint32_t next = 1; std::map<std::uint32_t, Held> ahead; };
     std::unordered_map<std::string, OutStream> m_out;

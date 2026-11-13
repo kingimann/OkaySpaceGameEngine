@@ -1699,6 +1699,17 @@ add_executable(test_anticheat_integrity test_anticheat_integrity.cpp)
 target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
 target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
+# The same test compiled two more ways WITHOUT the engine, so shared/AntiCheatCrypto.hpp is proven to work where the
+# engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone (Ed25519 and SHA-512 from our own library,
+# the port only as the reference the test compares with), (b) with neither libsodium nor okay::crypto (the portable port).
+add_executable(test_anticheat_integrity_ownlib test_anticheat_integrity.cpp)
+target_link_libraries(test_anticheat_integrity_ownlib PRIVATE okay::crypto)
+target_include_directories(test_anticheat_integrity_ownlib PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_compile_definitions(test_anticheat_integrity_ownlib PRIVATE OKAY_OWN_CRYPTO)
+add_test(NAME anticheat_integrity_ownlib COMMAND test_anticheat_integrity_ownlib)
+add_executable(test_anticheat_integrity_portable test_anticheat_integrity.cpp)
+target_include_directories(test_anticheat_integrity_portable PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME anticheat_integrity_portable COMMAND test_anticheat_integrity_portable)
 add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
@@ -2556,23 +2567,89 @@ add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)
-target_link_libraries(test_crypto PRIVATE okay::engine)
+target_link_libraries(test_crypto PRIVATE okay::crypto)
 add_test(NAME crypto COMMAND test_crypto)
 
+# The embedded fonts in our own OKF1 container (shared/OkfDecode.hpp): decoded bytes must equal the original TrueType files
+# (pinned by size and SHA-256 in assets/fonts/embedded_fonts.sha256), the decoder's every token form and damaged input.
+# EmbeddedFont.cpp is compiled in directly, so this needs only okay::crypto (for SHA-256), not the engine.
+add_executable(test_embedded_font test_embedded_font.cpp ${CMAKE_SOURCE_DIR}/engine/src/Graphics/EmbeddedFont.cpp)
+target_link_libraries(test_embedded_font PRIVATE okay::crypto)
+target_include_directories(test_embedded_font PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_embedded_font PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME embedded_font COMMAND test_embedded_font)
+add_test(NAME embedded_font_generator COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen_embedded_fonts.py --check)
+
+# The internal arithmetic: the 51-bit and the portable 16-bit field against each other, the Barrett scalar
+# reduction against a bit-by-bit reference (includes engine/src/Crypto headers; needs __int128).
+add_executable(test_crypto_field test_crypto_field.cpp)
+target_include_directories(test_crypto_field PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME crypto_field COMMAND test_crypto_field)
+# The whole primitive test again with the portable 16-bit field forced on (what MSVC and WebAssembly use),
+# so the fallback cannot rot: the same sources compiled with OKAY_CRYPTO_FE16.
+add_executable(test_crypto_fe16 test_crypto.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Util.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Random.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/ChaCha20.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Poly1305.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Aead.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Blake2b.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha256.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/X25519.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Ed25519.cpp)
+target_include_directories(test_crypto_fe16 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_crypto_fe16 PRIVATE OKAY_CRYPTO_FE16)
+if(WIN32)
+    target_link_libraries(test_crypto_fe16 PRIVATE bcrypt)
+endif()
+add_test(NAME crypto_fe16 COMMAND test_crypto_fe16)
+
+# Constant-time audit 1 of 2: valgrind marks every secret undefined and reports any branch or address that
+# depends on one (docs/crypto_review_package.md section 4). Built only when the valgrind headers exist; the
+# ctest runs it under valgrind and is skipped when valgrind itself is missing.
+find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
+find_program(OKAY_VALGRIND valgrind)
+if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
+    set(_okay_ct_srcs "")
+    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519)
+        list(APPEND _okay_ct_srcs ${CMAKE_SOURCE_DIR}/engine/src/Crypto/${_f}.cpp)
+    endforeach()
+    add_executable(crypto_ct_valgrind crypto_ct_valgrind.cpp ${_okay_ct_srcs})
+    target_include_directories(crypto_ct_valgrind PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VALGRIND_INCLUDE})
+    target_compile_definitions(crypto_ct_valgrind PRIVATE OKAY_CRYPTO_CTGRIND)
+    target_compile_options(crypto_ct_valgrind PRIVATE -g)
+    if(OKAY_VALGRIND)
+        add_test(NAME crypto_ct_valgrind COMMAND ${OKAY_VALGRIND} -q $<TARGET_FILE:crypto_ct_valgrind>)
+    endif()
+endif()
+
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
-# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
-# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binary `fuzz_crypto` instead.
+# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more, or
+# scripts/crypto_fuzz_sanitized.sh).
+# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binaries `fuzz_crypto` and `fuzz_net_crypto` instead.
 option(OKAY_CRYPTO_LIBFUZZER "Build the okay::crypto libFuzzer target (clang -fsanitize=fuzzer)" OFF)
 if(OKAY_CRYPTO_LIBFUZZER)
     add_executable(fuzz_crypto fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto PRIVATE okay::crypto)
     target_compile_definitions(fuzz_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER)
     target_compile_options(fuzz_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
     target_link_options(fuzz_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
 else()
     add_executable(fuzz_crypto_smoke fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::crypto)
     add_test(NAME crypto_fuzz_smoke COMMAND fuzz_crypto_smoke 300)
+endif()
+# Fuzz target for what parses attacker bytes around the primitives: key exchange, sealed-message open and the replay
+# window, session tickets, mutated valid signatures and AEAD messages (fuzz_net_crypto.cpp). Compiled against okay::crypto
+# alone (SessionTicket.cpp and the header-only SecureChannel are built in), so it needs neither libsodium nor the engine.
+set(_okay_fuzznet_defs OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+if(OKAY_CRYPTO_LIBFUZZER)
+    add_executable(fuzz_net_crypto fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER ${_okay_fuzznet_defs})
+    target_compile_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+    target_link_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
+else()
+    add_executable(fuzz_net_crypto_smoke fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto_smoke PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto_smoke PRIVATE ${_okay_fuzznet_defs})
+    add_test(NAME crypto_fuzz_net_smoke COMMAND fuzz_net_crypto_smoke 300)
 endif()
 
 # Cross-checks against other implementations (both directions, thousands of random cases).
@@ -2587,13 +2664,13 @@ if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find t
 endif()
 if(_okay_xc_sodium)
     add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
-    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
 add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)
-target_link_libraries(crypto_xcheck_tool PRIVATE okay::engine)
+target_link_libraries(crypto_xcheck_tool PRIVATE okay::crypto)
 set(_okay_xc_python "")
 foreach(_py IN ITEMS python3 /usr/bin/python3 python)
     if(NOT _okay_xc_python)
@@ -2611,15 +2688,36 @@ else()
     message(STATUS "OkaySpace tests: python 'cryptography' not found; crypto_python_xcheck skipped")
 endif()
 
+# Benchmark (not a test): microseconds per operation, next to libsodium when it is installed.
+add_executable(bench_crypto bench_crypto.cpp)
+target_link_libraries(bench_crypto PRIVATE okay::crypto)
+if(_okay_xc_sodium)
+    target_link_libraries(bench_crypto PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(bench_crypto SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(bench_crypto PRIVATE OKAY_BENCH_SODIUM)
+endif()
+
+# Constant-time audit 2 of 2: a fixed-versus-random statistical timing test. NOT run by ctest at full length (it needs
+# a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
+# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
+add_executable(crypto_timing crypto_timing.cpp)
+target_link_libraries(crypto_timing PRIVATE okay::crypto)
+add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
+if(_okay_xc_sodium)   # reference rows: libsodium under the same harness, to tell CPU/measurement effects from ours
+    target_link_libraries(crypto_timing PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_timing SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(crypto_timing PRIVATE OKAY_TIMING_SODIUM)
+endif()
+
 # The existing SecureChannel test, compiled once per backend IN THE SAME BUILD (tests/test_net_crypto_*.cpp
 # rename the class so the two copies never meet at link time). With -DOKAY_OWN_CRYPTO=ON the engine's
 # own net code (net_*, net_auth, dedicated_server, ...) runs on okay::crypto as well.
 add_executable(test_net_crypto_own test_net_crypto_own.cpp)
-target_link_libraries(test_net_crypto_own PRIVATE okay::engine)
+target_link_libraries(test_net_crypto_own PRIVATE okay::crypto)
 add_test(NAME net_crypto_own COMMAND test_net_crypto_own)
 if(_okay_xc_sodium)
     add_executable(test_net_crypto_sodium test_net_crypto_sodium.cpp)
-    target_link_libraries(test_net_crypto_sodium PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_net_crypto_sodium PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_net_crypto_sodium SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME net_crypto_sodium COMMAND test_net_crypto_sodium)
 endif()

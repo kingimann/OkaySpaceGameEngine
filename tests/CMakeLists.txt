@@ -2848,6 +2848,22 @@ target_compile_definitions(test_3ds_bvh_hostile PRIVATE OKAY_SOURCE_DIR="${PROJE
 add_test(NAME 3ds_bvh_hostile COMMAND test_3ds_bvh_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(3ds_bvh_hostile PROPERTIES TIMEOUT 300)
 
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
+# hand-computed values and through the import seam; the hostile test is standalone (reader + the in-tree inflate) so it can also be
+# built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_BLEND_FUZZ_ITERS raises the sweep.
+add_executable(test_blend_reader test_blend_reader.cpp)
+target_link_libraries(test_blend_reader PRIVATE okay::engine)
+target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_blend_hostile test_blend_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

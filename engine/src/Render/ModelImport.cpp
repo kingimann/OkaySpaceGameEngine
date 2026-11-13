@@ -89,7 +89,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".blend"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -400,8 +400,13 @@ constexpr bool kOwnBvhDefault = true;
 #else
 constexpr bool kOwnBvhDefault = false;
 #endif
+#ifdef OKAY_OWN_BLEND_DEFAULT
+constexpr bool kOwnBlendDefault = true;
+#else
+constexpr bool kOwnBlendDefault = false;
+#endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .blend; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
@@ -410,15 +415,16 @@ int OwnSlot(const std::string& ext) {
     if (e == ".dae") return 3;
     if (e == ".3ds") return 4;
     if (e == ".bvh") return 5;
+    if (e == ".blend") return 6;
     return -1;
 }
-std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[7] = {{0}, {0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
 
 // Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
 // variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
 bool OwnOptedIn(int slot) {
-    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
-    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : slot == 5 ? kOwnBvhDefault : kOwnBlendDefault;
+    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : slot == 5 ? "OKAY_OWN_BVH" : "OKAY_OWN_BLEND";
     if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
@@ -457,7 +463,7 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+    if (s >= 3) {   // Collada, 3DS, BVH, Blend: off by default; Assimp reads them when the build has it
         if (OwnOptedIn(s)) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
@@ -492,7 +498,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
-                  : ReadBvhFile(path, out, &e1);
+                  : s == 5 ? ReadBvhFile(path, out, &e1) : ReadBlendFile(path, out, &e1, flatten);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -509,8 +515,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     }
     if (err) {
         const std::string x = ExtensionOf(path);
-        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
-        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : x == ".blend" ? "Blender" : nullptr;
+        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : x == ".bvh" ? "OKAY_OWN_BVH" : "OKAY_OWN_BLEND";
         if (nm)
             *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
                    "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";

@@ -232,6 +232,7 @@ add_library(okay_engine
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp
     src/Render/BvhReader.cpp
+    src/Render/BlendReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -513,6 +514,11 @@ endif()
 if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
+endif()
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+if(OKAY_OWN_BLEND)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

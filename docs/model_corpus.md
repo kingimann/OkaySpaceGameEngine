@@ -18,6 +18,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | COLLADA | 26 | 25 in `Collada/` and one in `invalid/`; geometry, skins, animation, instancing, cameras and lights only, three encodings |
 | 3DS | 16 | static and keyframed, camera animation, textured, one empty file |
 | BVH | 3 | motion capture, 2,752 to 4,511 frames |
+| Blender | 28 | `models/BLEND` (26) and `models-nonbsd/BLEND` (2): Blender 2.41 to 2.93, 32 and 64 bit, little and big endian, plain and gzip |
 
 ## Running it
 
@@ -72,6 +73,10 @@ See `docs/own_3ds_reader.md`: 15 of 16 read (the 16th is empty). Mesh count, tri
 ### BVH (own reader vs Assimp)
 
 See `docs/own_bvh_reader.md`: 3 of 3 read; first and last position and rotation keys equal to four decimals.
+
+### Blender (own reader vs Assimp)
+
+See `docs/own_blend_reader.md`: 28 of 28 read (Assimp reads 27; it fails `BlenderDefault_262.blend`).
 
 ## What this does not show
 

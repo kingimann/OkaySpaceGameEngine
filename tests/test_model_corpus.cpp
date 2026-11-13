@@ -1,4 +1,4 @@
-// Real-file validation of our own FBX, COLLADA, 3DS and BVH readers.
+// Real-file validation of our own FBX, COLLADA, 3DS, BVH and Blender readers.
 //
 // The files are NOT in this repository: they come from a directory named by the environment variable
 // OKAY_MODEL_CORPUS (for example the test/models tree of an Assimp source checkout; see docs/model_corpus.md).
@@ -9,7 +9,7 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh
+// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, blend
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -45,12 +45,12 @@ struct CorpusStats {
 };
 
 static const char* ExtOf(const std::string& reader) {
-    return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : ".fbx";
+    return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "blend" ? ".blend" : ".fbx";
 }
 
 static CorpusStats MeasureFile(const std::string& reader, const std::string& path) {
     CorpusStats s;
-    std::shared_ptr<ImportedModel> rawModel;   // dae / 3ds / bvh: the reader's own result, before the importer rescales it
+    std::shared_ptr<ImportedModel> rawModel;   // dae / 3ds / bvh / blend: the reader's own result, before the importer rescales it
     const auto t0 = std::chrono::steady_clock::now();
     if (reader == "fbx-own") {
         fbx::Scene fs_; std::string e;

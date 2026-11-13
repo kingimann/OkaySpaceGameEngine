@@ -77,6 +77,12 @@ get there changes.
 - If the relay doesn't answer within `NetworkManager::relayTimeoutSeconds` (15 by
   default, 0 waits forever) the attempt ends and `RelayError()` says so. A client
   whose code has no host yet hears nothing either, so it times out the same way.
+- A hello from an address that is already registered is not proof of life by
+  itself: it is rate-limited like any other, must carry the address's cookie (the
+  relay answers one without it with a fresh cookie, which a real peer picks up and
+  repeats), and a peer that proved its address can't be re-helloed at an older
+  version. Spoofed hellos can't keep dead peers in the table. A bad port argument
+  (`okayspace-relay 70000`, `abc`) is an error, not a wrapped number.
 - A refusal is reported as what it is: a code taken, a protocol version the relay
   doesn't speak, or "refused for an unknown reason (code N)".
 - All multi-byte numbers on the wire, in the relay frames and in the game's own

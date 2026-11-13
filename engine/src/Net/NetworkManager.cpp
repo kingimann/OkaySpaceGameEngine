@@ -257,6 +257,8 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_mode = Mode::Client;
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
+    m_connectionLost = false; m_connectionLostReason.clear();
+    m_serverSilence = 0.0f; m_joinWait = 0.0f;
     m_localUserId.clear();
     UseNextSessionKeys();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
@@ -296,6 +298,8 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     } else {
         m_mode = Mode::Client;
         m_joined = false;
+        m_connectionLost = false; m_connectionLostReason.clear();
+        m_serverSilence = 0.0f; m_joinWait = 0.0f;
         m_localUserId.clear();
         UseNextSessionKeys();
         OKAY_INFO("net: joining session '", code, "' via relay ", m_relayEp.ToString());
@@ -3288,8 +3292,10 @@ void NetworkManager::ClientTick(float dt) {
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
+    bool heard = false;   // any datagram from our server this tick
     while ((n = ReceiveFrom(buf.data(), buf.size(), from)) > 0) {
         if (!(from == m_serverEp)) continue;   // only our server talks to us
+        heard = true;
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;
@@ -3514,6 +3520,31 @@ void NetworkManager::ClientTick(float dt) {
         }
     }
     if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
+
+    // A server that stops answering ends the session instead of leaving a
+    // frozen world; the join gives up the same way. A hitch on this machine
+    // doesn't count: datagrams queued meanwhile are read above first.
+    if (heard) {
+        m_serverSilence = 0.0f;
+        m_joinWait = 0.0f;
+    } else if (m_joined) {
+        m_serverSilence += dt;
+        if (serverTimeoutSeconds > 0.0f && m_serverSilence >= serverTimeoutSeconds) {
+            m_connectionLost = true;
+            m_connectionLostReason = "the host stopped responding";
+            OKAY_WARN("net: no word from ", m_serverEp.ToString(), " for ", serverTimeoutSeconds, " s; leaving the session");
+            Stop();
+            return;
+        }
+    } else if (!awaitingRelay && !m_joinRejected) {
+        m_joinWait += dt;
+        if (joinTimeoutSeconds > 0.0f && m_joinWait >= joinTimeoutSeconds) {
+            m_joinRejected = true;
+            m_joinRejectReason = "the host did not answer";
+            m_joinTimer = 1e9f;   // stop retrying
+            OKAY_WARN("net: no answer from ", m_serverEp.ToString(), " after ", joinTimeoutSeconds, " s");
+        }
+    }
 
     // Authoritative movement: sample this frame's input for the next tick's
     // command (a press between ticks still counts).

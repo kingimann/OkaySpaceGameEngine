@@ -44,6 +44,10 @@ namespace okay::net {
 ///    and lock everyone else out. Drive
 /// it by calling Poll() in a loop (the standalone `okayspace-relay` binary does
 /// exactly that); tests pump it in-process alongside the peers.
+/// A peer-chosen string made safe to log: anything but printable ASCII (and
+/// the backslash) becomes \xNN, so it can't forge log lines.
+std::string RelayLogSafe(const std::string& s);
+
 class RelayServer {
 public:
     static constexpr std::size_t kMaxPeers = 4096;          ///< peers across all sessions

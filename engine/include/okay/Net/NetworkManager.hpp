@@ -258,6 +258,14 @@ public:
     /// Relay sessions: seconds to wait for the relay's welcome before giving up
     /// with RelayError() set ("the relay never answered"). 0 waits forever.
     float relayTimeoutSeconds = 15.0f;
+    /// Client: a joined session ends (Stop(), ConnectionLost() set) when the host
+    /// sends nothing for this many seconds. The client pings once a second and
+    /// the host answers, so a live host is never this quiet. 0 never gives up.
+    float serverTimeoutSeconds = 10.0f;
+    /// Client: seconds to wait for the host to accept the join before giving up
+    /// (JoinRejected() with the reason "the host did not answer"). A relay
+    /// session counts from when the relay pairs it. 0 waits forever.
+    float joinTimeoutSeconds = 15.0f;
     /// Relay sessions: a welcome must echo the nonce this peer sent, so one forged
     /// by someone who can't see our traffic is ignored. Relays older than protocol
     /// version 4 can't echo it; set this on the peer that has to use one anyway, accepting
@@ -614,6 +622,10 @@ public:
     /// Client: true if the server kicked this peer, plus the reason it gave.
     bool WasKicked() const { return m_kicked; }
     const std::string& KickReason() const { return m_kickReason; }
+    /// Client: true if the session ended because the host went silent
+    /// (serverTimeoutSeconds). Stays readable after the disconnect.
+    bool ConnectionLost() const { return m_connectionLost; }
+    const std::string& ConnectionLostReason() const { return m_connectionLostReason; }
 
     /// A connected peer in the session roster.
     struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
@@ -874,6 +886,10 @@ private:
     std::string m_joinRejectReason;
     bool m_kicked = false;       // client: kicked by the server
     std::string m_kickReason;
+    bool m_connectionLost = false;   // client: the host went silent
+    std::string m_connectionLostReason;
+    float m_serverSilence = 0.0f;    // client: seconds since the host last sent anything
+    float m_joinWait = 0.0f;         // client: seconds spent waiting for the join to be accepted
     // Client-side reliable channel (to the server).
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;

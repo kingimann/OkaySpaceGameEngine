@@ -1826,6 +1826,9 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
+target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
+add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)

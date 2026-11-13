@@ -50,7 +50,20 @@ RelayServer::Peer* RelayServer::FindBySlot(std::uint32_t slot) {
     return p != m_peers.end() ? &p->second : nullptr;
 }
 
+// A peer chooses its session code, so before it reaches a log line anything
+// that isn't printable ASCII is escaped (a code can't forge log lines).
+std::string RelayLogSafe(const std::string& s) {
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (unsigned char ch : s) {
+        if (ch >= 0x20 && ch < 0x7F && ch != '\\') out.push_back(static_cast<char>(ch));
+        else { out += "\\x"; out.push_back(hex[ch >> 4]); out.push_back(hex[ch & 15]); }
+    }
+    return out;
+}
+
 namespace {
+
 void WriteKey(Packet& p, std::uint64_t key) {
     p.Write(static_cast<std::uint32_t>(key));
     p.Write(static_cast<std::uint32_t>(key >> 32));
@@ -250,6 +263,20 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     // started with, so a NAT-keepalive hello is idempotent.
     if (auto existing = m_peers.find(from); existing != m_peers.end()) {
         Peer& peer = existing->second;
+        // A hello is not proof of anything until it carries this address's
+        // cookie: without that, a spoofed datagram could keep a dead peer
+        // alive, flip its version, take a vacant host slot or make the relay
+        // answer a victim. So re-hellos are rate-limited like new ones, a
+        // cookie-proven peer can't be re-helloed at an older version, and a
+        // version-3+ hello must carry a valid cookie (else it is sent one).
+        if (!HelloAllowed(from.address)) return;
+        if (version >= 3) {
+            if (!CookieValid(from, cookie)) { SendCookie(from); return; }
+        } else {
+            if (peer.version >= 3) return;   // downgrade of a proven peer
+            ++m_legacyHellos;
+            if (!m_legacyHello) return;
+        }
         peer.idle = 0.0f;
         peer.version = version;
         auto sit = m_sessions.find(peer.code);
@@ -305,6 +332,14 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             if (opa != m_perAddress.end() && --opa->second == 0) m_perAddress.erase(opa);
             m_peers.erase(old);
             m_perAddress[from.address]++;
+            if (s.opener == slotEp->second.address && from.address != s.opener) {
+                // The session's cap charge follows its host to the new address,
+                // so teardown later credits the address that was charged.
+                auto so = m_sessionsPerAddress.find(s.opener);
+                if (so != m_sessionsPerAddress.end() && --so->second == 0) m_sessionsPerAddress.erase(so);
+                m_sessionsPerAddress[from.address]++;
+                s.opener = from.address;
+            }
             slotEp->second = from;
             m_peers.emplace(from, moved);
             SendWelcome(from, moved.slot, s.hostSlot, s.hostKey);
@@ -353,7 +388,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     if (m_logBudget >= 1.0f) {
         m_logBudget -= 1.0f;
         OKAY_INFO("relay: peer slot ", peer.slot, peer.host ? " (host)" : " (client)",
-                  " joined session '", code, "'",
+                  " joined session '", RelayLogSafe(code), "'",
                   m_quietJoins ? " (+" + std::to_string(m_quietJoins) + " more not logged)" : std::string());
         m_quietJoins = 0;
     } else {

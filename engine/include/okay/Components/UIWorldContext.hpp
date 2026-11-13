@@ -2,6 +2,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Components/UIAnchor.hpp"
+#include "okay/UI/UIFrameTransform.hpp"
 #include <functional>
 
 namespace okay {
@@ -46,9 +47,19 @@ inline Vec2 UIToLocal(GameObject* go, const Vec2& designOrigin, const Vec2& size
     Vec2 o, sz;
     if (!UIWorld().rectOf(go, o, sz)) return Vec2{-1.0e9f, -1.0e9f};   // behind the camera
     if (UIWorld().clipContains && !UIWorld().clipContains(go, p)) return Vec2{-1.0e9f, -1.0e9f};   // clipped away
+    float dx = p.x - o.x, dy = p.y - o.y;
+    // A turned or scaled frame: undo that transform so the widget's own hit
+    // test (a rectangle, a rounded button) still runs in its layout rect.
+    if (UIFrameTransformed(go)) {
+        Vec2 local;
+        if (!UIFramePointToLocal(go, p, UICanvas::Width(), UICanvas::Height(), local))
+            return Vec2{-1.0e9f, -1.0e9f};
+        dx = local.x;
+        dy = local.y;
+    }
     const float kx = sz.x > 1e-4f ? size.x / sz.x : 1.0f;
     const float ky = sz.y > 1e-4f ? size.y / sz.y : 1.0f;
-    return Vec2{designOrigin.x + (p.x - o.x) * kx, designOrigin.y + (p.y - o.y) * ky};
+    return Vec2{designOrigin.x + dx * kx, designOrigin.y + dy * ky};
 }
 
 /// The widget's real rectangle. Stretch anchors store margins in `position` /

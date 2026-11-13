@@ -1,4 +1,5 @@
 #include "okay/Core/DisplaySettings.hpp"
+#include "okay/Core/DisplayModes.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include <algorithm>
@@ -16,6 +17,14 @@ bool g_qualityChosen = false;
 DisplayResolution g_resolution;       // 0 x 0 = none chosen
 DisplayResolution g_desktop;          // 0 x 0 = unknown
 std::vector<DisplayResolution> g_custom;   // the host's mode list (empty = use the standard one)
+std::vector<DisplayMonitor> g_monitors;
+int  g_monitorIndex = -1;
+std::string g_monitorName;
+int  g_refresh = 0;
+bool g_pending = false;                   // a confirm was saved and not finished
+DisplaySaved g_prev;                      // the choice to restore (its main fields)
+DisplayTrial g_trial;
+const std::vector<DisplayMode> kNoModes;
 int  g_generation = 0;
 
 // The standard list a settings screen offers when the host gives none (4:3, 16:10, 16:9 and ultrawide).
@@ -77,6 +86,77 @@ bool ReadInt(const char* key, int& out) {
     if (!Prefs::Has(key)) return false;
     out = Prefs::GetInt(key, out);
     return true;
+}
+
+void PublishMonitorResolutions() {
+    if (g_monitors.empty()) return;
+    int idx = g_monitorIndex;
+    if (idx < 0 || idx >= (int)g_monitors.size()) idx = 0;
+    const DisplayMonitor& mon = g_monitors[(std::size_t)idx];
+    g_custom = ResolutionsFromModes(mon.modes);
+    g_desktop = mon.Valid() ? DisplaySettings::ClampResolution(mon.width, mon.height) : DisplayResolution{};
+    g_listDirty = true;
+}
+
+const std::vector<DisplayMode>& ModesFor(int index) {
+    if (index < 0) index = 0;
+    if (index < 0 || index >= (int)g_monitors.size()) return kNoModes;
+    return g_monitors[(std::size_t)index].modes;
+}
+
+DisplaySaved Capture() {
+    DisplaySaved s;
+    s.mode = DisplaySettings::ModeName(g_mode);
+    s.width = g_resolution.width;
+    s.height = g_resolution.height;
+    s.refreshHz = g_refresh;
+    s.monitorName = g_monitorName;
+    s.monitorIndex = g_monitorIndex;
+    s.pending = g_pending || g_trial.active;
+    if (s.pending) {
+        s.hasPrevious = true;
+        s.prevMode = g_prev.mode;
+        s.prevWidth = g_prev.width;
+        s.prevHeight = g_prev.height;
+        s.prevRefresh = g_prev.refreshHz;
+        s.prevMonitorName = g_prev.monitorName;
+        s.prevMonitorIndex = g_prev.monitorIndex;
+    }
+    return s;
+}
+
+void RememberCurrentAsPrevious() {
+    g_prev.mode = DisplaySettings::ModeName(g_mode);
+    g_prev.width = g_resolution.width;
+    g_prev.height = g_resolution.height;
+    g_prev.refreshHz = g_refresh;
+    g_prev.monitorName = g_monitorName;
+    g_prev.monitorIndex = g_monitorIndex;
+    g_prev.hasPrevious = true;
+}
+
+void ApplyPick(const DisplayPick& pick) {
+    g_mode = pick.mode;
+    g_resolution = (pick.width > 0 && pick.height > 0) ? DisplayResolution{pick.width, pick.height} : DisplayResolution{};
+    g_refresh = pick.refreshHz < 0 ? 0 : pick.refreshHz;
+    g_monitorIndex = pick.monitorIndex;
+    g_monitorName = pick.monitorName;
+    PublishMonitorResolutions();
+}
+
+bool SamePick(const DisplayPick& pick) {
+    return g_mode == pick.mode && g_resolution.width == pick.width && g_resolution.height == pick.height &&
+           g_refresh == pick.refreshHz && g_monitorIndex == pick.monitorIndex && g_monitorName == pick.monitorName;
+}
+
+void ClearPendingKeys() {
+    Prefs::Delete("video.pending");
+    Prefs::Delete("video.prev.windowmode");
+    Prefs::Delete("video.prev.width");
+    Prefs::Delete("video.prev.height");
+    Prefs::Delete("video.prev.refresh");
+    Prefs::Delete("video.prev.monitor");
+    Prefs::Delete("video.prev.monitorindex");
 }
 } // namespace
 
@@ -191,6 +271,157 @@ DisplayResolution DisplaySettings::EffectiveResolution() {
     return g_resolution;
 }
 
+// ---- Monitors, refresh, confirm ---------------------------------------------------------
+const std::vector<DisplayMonitor>& DisplaySettings::Monitors() { return g_monitors; }
+
+void DisplaySettings::SetMonitors(const std::vector<DisplayMonitor>& monitors) {
+    g_monitors = monitors;
+    for (DisplayMonitor& m : g_monitors) m.modes = FilterDisplayModes(std::move(m.modes));
+    if (!g_monitorName.empty()) {
+        bool replaced = false;
+        const int idx = ChooseMonitorIndex(g_monitors, g_monitorName, -1, replaced);
+        if (!replaced && idx >= 0) g_monitorIndex = idx;
+    }
+    PublishMonitorResolutions();
+}
+
+int DisplaySettings::MonitorIndex() { return g_monitorIndex; }
+const std::string& DisplaySettings::MonitorName() { return g_monitorName; }
+
+void DisplaySettings::SetMonitorIndex(int index) {
+    if (g_monitors.empty()) {
+        if (g_monitorIndex < 0 && g_monitorName.empty()) return;
+        g_monitorIndex = -1;
+        g_monitorName.clear();
+        ++g_generation;
+        Save();
+        return;
+    }
+    if (index < 0) index = 0;
+    if (index >= (int)g_monitors.size()) index = (int)g_monitors.size() - 1;
+    const std::string& name = g_monitors[(std::size_t)index].name;
+    if (g_monitorIndex == index && g_monitorName == name) return;
+    g_monitorIndex = index;
+    g_monitorName = name;
+    PublishMonitorResolutions();
+    ++g_generation;
+    Save();
+}
+
+bool DisplaySettings::SetMonitorName(const std::string& name) {
+    bool replaced = false;
+    const int idx = ChooseMonitorIndex(g_monitors, name, -1, replaced);
+    if (replaced || idx < 0) return false;
+    SetMonitorIndex(idx);
+    return true;
+}
+
+const std::vector<DisplayMode>& DisplaySettings::MonitorModes(int index) { return ModesFor(index); }
+
+int DisplaySettings::RefreshHz() { return g_refresh; }
+void DisplaySettings::SetRefreshHz(int hz) {
+    if (hz < 0) hz = 0;
+    if (hz > 1000) hz = 1000;
+    if (g_refresh == hz) return;
+    g_refresh = hz;
+    ++g_generation;
+    Save();
+}
+
+std::vector<int> DisplaySettings::RefreshRatesForResolution(int width, int height) {
+    const int idx = g_monitorIndex >= 0 ? g_monitorIndex : 0;
+    return okay::RefreshRatesFor(ModesFor(idx), width, height);
+}
+std::vector<int> DisplaySettings::RefreshRates() {
+    return RefreshRatesForResolution(g_resolution.width, g_resolution.height);
+}
+
+void DisplaySettings::ResolveSaved() {
+    DisplaySaved saved = Capture();
+    if (g_pending) {
+        saved.pending = true;
+        saved.hasPrevious = g_prev.hasPrevious || !g_prev.mode.empty() || g_prev.width > 0 || !g_prev.monitorName.empty();
+        saved.prevMode = g_prev.mode;
+        saved.prevWidth = g_prev.width;
+        saved.prevHeight = g_prev.height;
+        saved.prevRefresh = g_prev.refreshHz;
+        saved.prevMonitorName = g_prev.monitorName;
+        saved.prevMonitorIndex = g_prev.monitorIndex;
+    }
+    const bool pending = saved.pending && saved.hasPrevious;
+    const DisplayPick pick = ResolveDisplay(saved, g_monitors);
+    const bool changed = !SamePick(pick);
+    if (!changed && !pending) {
+        PublishMonitorResolutions();
+        return;
+    }
+    ApplyPick(pick);
+    g_pending = false;
+    g_trial.Clear();
+    ++g_generation;
+    Save();
+}
+
+DisplayApply DisplaySettings::CurrentApply() {
+    DisplayApply a;
+    a.mode = g_mode;
+    int idx = g_monitorIndex;
+    if (idx >= 0 && idx < (int)g_monitors.size()) {
+        const DisplayMonitor& m = g_monitors[(std::size_t)idx];
+        a.hasMonitor = true;
+        a.monitorIndex = m.index;
+        a.originX = m.x;
+        a.originY = m.y;
+        a.desktopWidth = m.width;
+        a.desktopHeight = m.height;
+    }
+    const DisplayResolution r = EffectiveResolution();
+    a.hasSize = r.Valid();
+    a.width = r.width;
+    a.height = r.height;
+    a.refreshHz = g_refresh;
+    if (a.mode == WindowMode::Fullscreen && a.hasSize && a.refreshHz > 0) {
+        const std::vector<int> rates = okay::RefreshRatesFor(ModesFor(idx), r.width, r.height);
+        if (!rates.empty()) a.refreshHz = NearestRefresh(rates, a.refreshHz);
+    }
+    return a;
+}
+
+bool DisplaySettings::TrialActive() { return g_trial.active; }
+float DisplaySettings::TrialSecondsLeft() { return g_trial.active ? g_trial.secondsLeft : 0.f; }
+
+void DisplaySettings::BeginTrial(float seconds) {
+    if (g_trial.active) return;
+    RememberCurrentAsPrevious();
+    g_pending = true;
+    g_trial.Start(seconds);
+    Save();
+}
+
+void DisplaySettings::KeepTrial() {
+    if (!g_trial.active && !g_pending) return;
+    g_trial.Clear();
+    g_pending = false;
+    Save();
+}
+
+void DisplaySettings::RevertTrial() {
+    if (!g_trial.active && !g_pending) return;
+    DisplaySaved saved = Capture();
+    saved.pending = true;
+    saved.hasPrevious = true;
+    const DisplayPick pick = ResolveDisplay(saved, g_monitors);
+    ApplyPick(pick);
+    g_trial.Clear();
+    g_pending = false;
+    ++g_generation;
+    Save();
+}
+
+void DisplaySettings::TickTrial(float dt) {
+    if (g_trial.Tick(dt)) RevertTrial();
+}
+
 // ---- VSync and quality ------------------------------------------------------------------
 bool DisplaySettings::VSync() { return g_vsync; }
 void DisplaySettings::SetVSync(bool on) {
@@ -253,6 +484,22 @@ void DisplaySettings::Load() {
     }
     int w = 0, h = 0;
     if (ReadInt("video.width", w) && ReadInt("video.height", h) && w > 0 && h > 0) g_resolution = ClampResolution(w, h);
+    g_refresh = 0;
+    if (Prefs::Has("video.refresh")) g_refresh = std::clamp(Prefs::GetInt("video.refresh", 0), 0, 1000);
+    g_monitorName = Prefs::GetString("video.monitor");
+    g_monitorIndex = Prefs::Has("video.monitorindex") ? Prefs::GetInt("video.monitorindex", -1) : -1;
+    g_pending = Prefs::GetInt("video.pending", 0) != 0;
+    g_prev = DisplaySaved{};
+    g_trial.Clear();
+    if (g_pending) {
+        g_prev.mode = Prefs::GetString("video.prev.windowmode");
+        g_prev.width = Prefs::GetInt("video.prev.width", 0);
+        g_prev.height = Prefs::GetInt("video.prev.height", 0);
+        g_prev.refreshHz = Prefs::GetInt("video.prev.refresh", 0);
+        g_prev.monitorName = Prefs::GetString("video.prev.monitor");
+        g_prev.monitorIndex = Prefs::Has("video.prev.monitorindex") ? Prefs::GetInt("video.prev.monitorindex", -1) : -1;
+        g_prev.hasPrevious = Prefs::Has("video.prev.windowmode") || Prefs::Has("video.prev.width") || Prefs::Has("video.prev.monitor");
+    }
 }
 
 void DisplaySettings::Save() {
@@ -267,12 +514,40 @@ void DisplaySettings::Save() {
         Prefs::Delete("video.width");
         Prefs::Delete("video.height");
     }
+    if (g_refresh > 0) Prefs::SetInt("video.refresh", g_refresh);
+    else Prefs::Delete("video.refresh");
+    if (!g_monitorName.empty()) Prefs::SetString("video.monitor", g_monitorName);
+    else Prefs::Delete("video.monitor");
+    if (g_monitorIndex >= 0) Prefs::SetInt("video.monitorindex", g_monitorIndex);
+    else Prefs::Delete("video.monitorindex");
+    if (g_pending || g_trial.active) {
+        Prefs::SetInt("video.pending", 1);
+        Prefs::SetString("video.prev.windowmode", g_prev.mode);
+        if (g_prev.width > 0) Prefs::SetInt("video.prev.width", g_prev.width); else Prefs::Delete("video.prev.width");
+        if (g_prev.height > 0) Prefs::SetInt("video.prev.height", g_prev.height); else Prefs::Delete("video.prev.height");
+        if (g_prev.refreshHz > 0) Prefs::SetInt("video.prev.refresh", g_prev.refreshHz); else Prefs::Delete("video.prev.refresh");
+        if (!g_prev.monitorName.empty()) Prefs::SetString("video.prev.monitor", g_prev.monitorName); else Prefs::Delete("video.prev.monitor");
+        if (g_prev.monitorIndex >= 0) Prefs::SetInt("video.prev.monitorindex", g_prev.monitorIndex); else Prefs::Delete("video.prev.monitorindex");
+    } else {
+        ClearPendingKeys();
+    }
 }
 
 void DisplaySettings::Restore() {
     const bool any = Prefs::Has("video.windowmode") || Prefs::Has("video.fullscreen") || Prefs::Has("video.vsync") ||
-                     Prefs::Has("video.quality") || Prefs::Has("video.width");
+                     Prefs::Has("video.quality") || Prefs::Has("video.width") || Prefs::Has("video.refresh") ||
+                     Prefs::Has("video.monitor") || Prefs::Has("video.pending");
     Load();
+    if (g_pending && g_prev.hasPrevious) {
+        DisplaySaved saved = Capture();
+        const DisplayPick pick = ResolveDisplay(saved, g_monitors);
+        ApplyPick(pick);
+        g_pending = false;
+        g_trial.Clear();
+        Save();
+        ++g_generation;
+        return;
+    }
     if (any) ++g_generation;
 }
 
@@ -283,6 +558,8 @@ std::string DisplaySettings::Summary() {
     s += g_vsync ? ", vsync on" : ", vsync off";
     s += ", quality ";
     s += QualityName(g_quality);
+    if (g_refresh > 0) { s += ", "; s += std::to_string(g_refresh); s += " Hz"; }
+    if (!g_monitorName.empty()) { s += ", "; s += g_monitorName; }
     return s;
 }
 
@@ -294,6 +571,13 @@ void DisplaySettings::ResetToDefaults() {
     g_resolution = DisplayResolution{};
     g_desktop = DisplayResolution{};
     g_custom.clear();
+    g_monitors.clear();
+    g_monitorIndex = -1;
+    g_monitorName.clear();
+    g_refresh = 0;
+    g_pending = false;
+    g_prev = DisplaySaved{};
+    g_trial.Clear();
     g_listDirty = true;
     ++g_generation;
 }

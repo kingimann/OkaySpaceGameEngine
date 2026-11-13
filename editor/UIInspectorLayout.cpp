@@ -105,6 +105,14 @@ void DrawUILayoutComponentInspector(Component* comp, EditorState& ed, Component*
             if (ImGui::DragFloat2(sx || sy ? "Size / End Margin##ufr" : "Size##ufr", sz, 1.0f)) { fr->size = {sz[0], sz[1]}; ed.dirty = true; }
             if ((sx || sy) && ImGui::IsItemHovered())
                 ImGui::SetTooltip("On a stretched axis these are the margins from the two anchors.");
+            if (ImGui::DragFloat("Rotation##ufr", &fr->rotation, 1.0f, -3600.0f, 3600.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How far this frame is turned, in degrees, around its pivot. Positive turns it clockwise on screen. Everything inside turns with it.");
+            float scv[2] = {fr->scale.x, fr->scale.y};
+            if (ImGui::DragFloat2("Scale##ufr", scv, 0.01f, -100.0f, 100.0f)) { fr->scale = {scv[0], scv[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How much wider and taller this frame is than its size. 1 and 1 leaves it unchanged. Two different numbers stretch it. Everything inside scales with it.");
+            ImGui::TextDisabled("Children turn and scale with this frame.");
         }
         return;
     }

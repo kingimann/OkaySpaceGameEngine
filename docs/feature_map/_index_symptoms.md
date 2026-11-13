@@ -281,7 +281,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
 | a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
-| a TODO comment appears in generated code | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
@@ -1191,6 +1190,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
+| View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |

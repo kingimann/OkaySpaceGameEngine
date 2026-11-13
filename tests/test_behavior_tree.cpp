@@ -7,6 +7,7 @@
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <cmath>
 #include <cstdlib>
@@ -820,6 +821,189 @@ int main() {
         CHECK(bt && bt->type == BtNodeType::StartDialogue && bt->Str("graph") == "Assets/smith.okaydialog" && bt->Flag("wait"));
         CHECK(BtDefOf(BtNodeType::StartDialogue).type == BtNodeType::StartDialogue);
         CHECK(BtDefOf(BtNodeType::Custom).type == BtNodeType::Custom);
+        CHECK(BtDefOf(BtNodeType::RunSubtree).type == BtNodeType::RunSubtree);
+        CHECK(std::string(BtDefOf(BtNodeType::RunSubtree).title) == "Run Sub-Tree");
+    }
+
+    // A file under the repo, whether the test was started from the repo, the
+    // build directory, or the test directory. Reads only: nothing is written there.
+    auto repoFile = [](const std::string& rel) {
+        namespace fs = std::filesystem;
+        fs::path p = fs::current_path();
+        for (int i = 0; i < 8; ++i) {
+            if (fs::exists(p / rel)) return (p / rel).string();
+            if (!p.has_parent_path() || p.parent_path() == p) break;
+            p = p.parent_path();
+        }
+        return rel;
+    };
+
+    // ---- Run Sub-Tree: success, failure and running, in one saved scene -----------
+    {
+        const std::string scenePath = repoFile("examples/behavior_trees/subtree_demo.okayscene");
+        const std::string dir = std::filesystem::path(scenePath).parent_path().string();
+        BehaviorTree::SetAssetBaseDir(dir);
+        Scene scene;
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(scene, scenePath, &err));
+        if (!err.empty()) std::printf("  subtree scene: %s\n", err.c_str());
+        scene.physicsEnabled = false;
+        auto runner = [&](const char* name) {
+            GameObject* go = scene.Find(name);
+            CHECK(go != nullptr);
+            return go ? go->GetComponent<BehaviorTreeRunner>() : nullptr;
+        };
+        scene.Start();
+        BehaviorTreeRunner* succeed = runner("Succeed");
+        BehaviorTreeRunner* recover = runner("Recover");
+        BehaviorTreeRunner* hold = runner("Hold");
+        BehaviorTreeRunner* loop = runner("Loop");
+        BehaviorTreeRunner* guard = runner("Guard");
+        CHECK(succeed && recover && hold && loop && guard);
+        if (succeed && recover && hold && loop && guard) {
+            scene.Update(0.1f);
+            CHECK(succeed->blackboard.GetBool("done"));
+            CHECK(succeed->blackboard.GetString("heard") == "hi");
+            CHECK(succeed->LastResult() == BtStatus::Success);
+            CHECK(succeed->Completions() >= 1);
+            CHECK(recover->blackboard.GetBool("tookSecond"));
+            CHECK(recover->LastResult() == BtStatus::Success);
+            CHECK(hold->IsRunning());
+            CHECK(hold->Completions() == 0);
+            CHECK(hold->State(0) && hold->State(0)->running);
+            CHECK(loop->LastResult() == BtStatus::Failure);
+            CHECK(loop->LastError().find("already running") != std::string::npos);
+            CHECK(guard->Tree() && guard->Tree()->nodes.size() >= 1);
+            bool greeted = false;
+            for (int i = 0; i < 8 && !greeted; ++i) {
+                scene.Update(0.2f);
+                greeted = guard->blackboard.GetString("greeted") == "yes";
+            }
+            CHECK(greeted);
+            CHECK(hold->IsRunning());
+            CHECK(hold->Completions() == 0);
+        }
+        // The scene's trees, including the ones a Run Sub-Tree names, are the files a build ships.
+        const std::vector<std::string> shipped = SceneSerializer::CollectAssetPaths(scene);
+        auto has = [&](const std::string& name) {
+            for (const std::string& p : shipped) if (p.find(name) != std::string::npos) return true;
+            return false;
+        };
+        CHECK(has("GuardBrain.okaybt"));
+        CHECK(has("greet.okaybt"));
+        CHECK(has("quick.okaybt"));
+        CHECK(has("long.okaybt"));
+    }
+
+    // ---- Two trees that run each other are refused. The node and its breakpoint save. ----
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_bt_subtree";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir);
+        BehaviorTree::SetAssetBaseDir(dir.string());
+        const std::string aPath = (dir / "a.okaybt").string();
+        const std::string bPath = (dir / "b.okaybt").string();
+        BehaviorTree a;
+        a.name = "A";
+        a.DeclareKey("n", BtValue::Number(1));
+        const int run = a.AddNode(BtNodeType::RunSubtree);
+        a.Find(run)->Set("tree", "b.okaybt");
+        a.Find(run)->Set("map", "n>n");
+        a.Find(run)->breakpoint = true;
+        BehaviorTree b;
+        b.name = "B";
+        b.DeclareKey("n", BtValue::Number(0));
+        const int back = b.AddNode(BtNodeType::RunSubtree);
+        b.Find(back)->Set("tree", "a.okaybt");
+        CHECK(a.SaveToFile(aPath));
+        CHECK(b.SaveToFile(bPath));
+        BehaviorTree::Forget(aPath);
+        BehaviorTree::Forget(bPath);
+        BehaviorTree loaded;
+        CHECK(loaded.LoadFromFile(aPath));
+        const BtNode* node = loaded.Find(run);
+        CHECK(node && node->type == BtNodeType::RunSubtree);
+        CHECK(node->breakpoint);
+        CHECK(node->Str("tree") == "b.okaybt");
+        CHECK(node->Str("map") == "n>n");
+        const std::vector<BtKeyLink> links = BtParseKeyMap(node->Str("map"));
+        CHECK(links.size() == 1 && links[0].parent == "n" && links[0].child == "n" && links[0].way == '>');
+        const std::vector<BehaviorTree::Issue> issues = loaded.Validate(nullptr, aPath);
+        bool cycle = false;
+        for (const auto& is : issues) if (is.text.find("again") != std::string::npos) cycle = true;
+        CHECK(cycle);
+
+        Scene scene;
+        scene.physicsEnabled = false;
+        GameObject* go = scene.CreateGameObject("A");
+        auto* r = go->AddComponent<BehaviorTreeRunner>();
+        r->treePath = "a.okaybt";
+        r->runOnStart = true;
+        scene.Start();
+        scene.Update(0.1f);
+        // The breakpoint pauses before the sub-tree body, so the cycle is not entered yet.
+        CHECK(r->IsBreakPaused());
+        CHECK(r->BreakNode() == run);
+        CHECK(r->State(run) && r->State(run)->running);
+        scene.Update(0.1f);
+        CHECK(r->IsBreakPaused());
+        CHECK(r->State(run) && r->State(run)->running);
+        Game::ClearPause(BehaviorTreeRunner::kBreakPause);
+        scene.Update(0.1f);
+        CHECK(!r->IsBreakPaused());
+        CHECK(r->LastResult() == BtStatus::Failure);
+        CHECK(r->LastError().find("already running") != std::string::npos);
+
+        // The same refusal, and the propagation cases, survive a scene save in a temp file.
+        const std::string scenePath = (dir / "cases.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(scene, scenePath));
+        Scene again;
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(again, scenePath, &err));
+        GameObject* go2 = again.Find("A");
+        auto* r2 = go2 ? go2->GetComponent<BehaviorTreeRunner>() : nullptr;
+        CHECK(r2 && r2->treePath == "a.okaybt");
+        fs::remove_all(dir, ec);
+        BehaviorTree::Forget(aPath);
+        BehaviorTree::Forget(bPath);
+        Game::ClearPause(BehaviorTreeRunner::kBreakPause);
+    }
+
+    // ---- Breakpoint in the shipped scene pauses Play and leaves the node lit -------
+    {
+        const std::string scenePath = repoFile("examples/behavior_trees/breakpoint_demo.okayscene");
+        BehaviorTree::SetAssetBaseDir(std::filesystem::path(scenePath).parent_path().string());
+        Scene scene;
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(scene, scenePath, &err));
+        scene.physicsEnabled = false;
+        scene.Start();
+        GameObject* go = scene.Find("Marker");
+        auto* r = go ? go->GetComponent<BehaviorTreeRunner>() : nullptr;
+        CHECK(r != nullptr);
+        if (r) {
+            scene.Update(0.1f);
+            CHECK(r->IsBreakPaused());
+            CHECK(Game::IsPausedBy(BehaviorTreeRunner::kBreakPause));
+            CHECK(!r->blackboard.GetBool("hit"));
+            CHECK(!r->blackboard.GetBool("after"));
+            const BehaviorTreeRunner::NodeState* st = r->State(r->BreakNode());
+            CHECK(st && st->running);
+            CHECK(r->BreakNode() >= 0);
+            const BtNode* n = r->Tree() ? r->Tree()->Find(r->BreakNode()) : nullptr;
+            CHECK(n && n->breakpoint);
+            scene.Update(0.1f);
+            CHECK(!r->blackboard.GetBool("hit"));
+            CHECK(r->IsBreakPaused());
+            Game::ClearPause(BehaviorTreeRunner::kBreakPause);
+            scene.Update(0.1f);
+            CHECK(r->blackboard.GetBool("hit"));
+            CHECK(r->blackboard.GetBool("after"));
+            CHECK(!r->IsBreakPaused());
+        }
+        Game::ClearPause(BehaviorTreeRunner::kBreakPause);
     }
 
     TEST_MAIN_RESULT();

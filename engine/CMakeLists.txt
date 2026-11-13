@@ -59,7 +59,11 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
+    src/Input/GestureRecognizer.cpp
+    src/Input/Gestures.cpp
+    src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
+    src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
@@ -174,6 +178,7 @@ add_library(okay_engine
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/SpatialFx.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/Audio/AudioStream.cpp
@@ -209,6 +214,7 @@ add_library(okay_engine
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    src/UI/UIFrameTransform.cpp
     # Localization tools (docs/localization_tools.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
@@ -219,6 +225,7 @@ add_library(okay_engine
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
     src/UI/FocusGraph.cpp
+    src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp

@@ -1,11 +1,13 @@
 // The Localization window: the project's string table (<project>/strings.okayloc)
 // as keys x languages. Cells edit in place (the scene's localized text follows as
 // you type), a row per key with its note for translators, a bar per language
-// with how much of it is translated, search and filters (missing in a language,
-// keys nothing uses), CSV import / export for translators, a pseudo-localized
-// preview to spot truncation, and Find in Scene for the selected key. Also the
-// toolbar's preview-language menu and the Inspector's Localized options.
+// with how much of it is translated, search and filters, CSV import / export for
+// translators, a pseudo-localized preview to spot truncation, and Find in Scene
+// for the selected key. The grid, the check, the project scan and the preview
+// line come from LocalizationTools (LocTable, LocCheck, LocScan, LocPreview).
+// Also the toolbar's preview-language menu and the Inspector's Localized options.
 #include "LocalizationWindow.hpp"
+#include "LocalizationTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol, SearchField
 #include "okay/Components/DialogueRunner.hpp"
@@ -19,6 +21,7 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Graphics/TtfFont.hpp"
@@ -34,7 +37,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -185,73 +187,20 @@ int AddMissing(const EditorState& ed, const std::vector<std::pair<std::string, s
     return added;
 }
 
-// ---- What uses a key -----------------------------------------------------------------
-// Keys the project's files mention: scripts, visual scripts, scenes and prefabs (a
-// key is a run of letters, digits, '.', '_' and '-'), dialogue graphs and quest files.
-std::set<std::string> s_fileKeys;
-
 std::string GraphName(const DialogueGraph& g, const std::string& file) {
     return !g.name.empty() ? g.name : fs::u8path(file).stem().u8string();
 }
 
-void ScanProjectKeys(const EditorState& ed) {
-    s_fileKeys.clear();
-    const StringTable& t = Localization::Table();
-    if (ed.projectDir().empty()) return;
-    std::error_code ec;
-    for (auto it = fs::recursive_directory_iterator(fs::u8path(ed.projectDir()), fs::directory_options::skip_permission_denied, ec);
-         it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        if (!it->is_regular_file(ec)) continue;
-        const std::string ext = Lower(it->path().extension().u8string());
-        const std::string path = it->path().u8string();
-        if (ext == ".okaydialog") {
-            DialogueGraph g;
-            if (g.Load(path)) for (const auto& kv : DialogueStrings(g, GraphName(g, path))) s_fileKeys.insert(kv.first);
-            for (const auto& kv : DialogueRunner::LocKeys()) s_fileKeys.insert(kv.first);
-            continue;
-        }
-        if (ext == ".okayquest") {
-            std::vector<QuestDef> qs;
-            if (QuestFile::Load(path, qs)) for (const QuestDef& q : qs) for (const auto& kv : QuestStrings(q)) s_fileKeys.insert(kv.first);
-            for (const auto& kv : QuestLog::LocKeys()) s_fileKeys.insert(kv.first);
-            continue;
-        }
-        if (ext != ".okay" && ext != ".cs" && ext != ".lua" && ext != ".okayvs" && ext != ".okayscene" && ext != ".okayprefab") continue;
-        std::ifstream f(it->path(), std::ios::binary);
-        std::stringstream ss;
-        ss << f.rdbuf();
-        const std::string text = ss.str();
-        std::string tok;
-        for (std::size_t i = 0; i <= text.size(); ++i) {
-            const char c = i < text.size() ? text[i] : ' ';
-            if (std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == '-') { tok += c; continue; }
-            if (!tok.empty() && t.Has(tok)) s_fileKeys.insert(tok);
-            tok.clear();
-        }
-    }
-}
-
-// Every key in use: the open scene's components and inline scripts, plus the project's files.
-std::set<std::string> UsedKeys(const EditorState& ed) {
-    std::set<std::string> used = s_fileKeys;
-    for (const LocKeyUse& u : CollectLocKeys(ed.scene())) used.insert(u.key);
-    const StringTable& t = Localization::Table();
-    for (const auto& up : ed.scene().Objects())
-        for (auto* sc : up->GetComponents<ScriptComponent>()) {
-            const std::string& src = sc->Source();
-            for (const auto& kv : t.Entries())
-                if (src.find(kv.first) != std::string::npos) used.insert(kv.first);
-        }
-    return used;
-}
-
 // ---- Window state ------------------------------------------------------------------------
 char s_search[128] = "";
-int s_filter = 0;              // 0 every key, 1 missing in s_filterLang, 2 unused
+LocWindowFilter s_filter = LocWindowFilter::All;
 std::string s_filterLang;
+bool s_showReport = false;
+bool s_rescan = false;
+bool s_haveScan = false;
+std::string s_scanDir;
+LocScanResult s_scan;          // the last LocScanProject, including the open scene
 std::string s_selected;
-std::set<std::string> s_used;  // for the Unused filter, as of the last scan
 std::vector<LocKeyUse> s_uses; // the selected key's uses in the scene
 std::string s_usesKey;
 std::uint64_t s_usesStamp = 0;
@@ -361,8 +310,32 @@ void PreviewCombo(const char* id, float width) {
     }
 }
 
+// The open scene and its unsaved scripts, for LocScan. Saved files are LocScanProject's job.
+void FillScanQuery(const EditorState& ed, LocWindowQuery& query) {
+    query.scan = true;
+    query.projectDir = ed.projectDir();
+    for (const LocKeyUse& use : CollectLocKeys(ed.scene())) query.sceneKeys.push_back(use.key);
+    int n = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up) continue;
+        for (auto* sc : up->GetComponents<ScriptComponent>())
+            query.extraFiles.emplace_back("scene-script-" + std::to_string(n++) + ".okay", sc->Source());
+        for (auto* vc : up->GetComponents<VisualScriptComponent>())
+            query.extraFiles.emplace_back("scene-graph-" + std::to_string(n++) + ".okayvs", vc->Source());
+    }
+}
+
+void RunScan(const EditorState& ed) {
+    LocWindowQuery query;
+    FillScanQuery(ed, query);
+    s_scan = ScanLocWindow(Localization::Table(), query);
+    s_haveScan = true;
+    s_scanDir = ed.projectDir();
+}
+
 void DrawLanguages() {
     StringTable& t = Localization::Table();
+    const std::vector<LocStats> stats = LocTable(t).AllStats();
     const std::string def = t.DefaultLanguage();
     const float barW = 170.0f;
     const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
@@ -370,7 +343,8 @@ void DrawLanguages() {
         const LocLanguage& l = t.languages[i];
         if (i > 0 && ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + barW <= right) ImGui::SameLine();
         ImGui::PushID((int)i);
-        const float done = t.Completion(l.code);
+        const LocStats* st = (i < stats.size() && stats[i].language == l.code) ? &stats[i] : nullptr;
+        const float done = st ? st->Completion() : t.Completion(l.code);
         char overlay[96];
         std::snprintf(overlay, sizeof(overlay), "%s%s  %d%%", l.code.c_str(), l.code == def ? " *" : "", (int)(done * 100.0f + 0.5f));
         const ImVec4 fill = done >= 0.999f ? ImVec4(0.30f, 0.66f, 0.40f, 1.0f) : done >= 0.5f ? AccentCol(0.9f) : ImVec4(0.75f, 0.45f, 0.25f, 1.0f);
@@ -378,11 +352,14 @@ void DrawLanguages() {
         ImGui::ProgressBar(done, ImVec2(barW, 0), overlay);
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) {
-            std::size_t have = 0;
-            for (const auto& kv : t.Entries()) if (t.Text(kv.first, l.code)) ++have;
-            ImGui::SetTooltip("%s (%s): %d of %d keys translated%s\n%s\nClick for its name, font and default; double-click to preview it.",
-                              l.name.c_str(), l.code.c_str(), (int)have, (int)t.Size(), l.code == def ? " (the default language)" : "",
-                              l.font.empty() ? "Font: the one each text uses" : ("Font: " + l.font).c_str());
+            const int have = st ? st->total - st->missing : (int)(t.Completion(l.code) * (float)t.Size() + 0.5f);
+            const int total = st ? st->total : (int)t.Size();
+            std::string counts = st ? std::to_string(st->missing) + " missing, " + std::to_string(st->placeholderMismatch) +
+                                          " placeholder mismatches, " + std::to_string(st->sameAsSource) + " same as the source\n"
+                                    : std::string();
+            ImGui::SetTooltip("%s (%s): %d of %d keys have text%s\n%s%s\nClick for its name, font and default; double-click to preview it.",
+                              l.name.c_str(), l.code.c_str(), have, total, l.code == def ? " (the default language)" : "",
+                              counts.c_str(), l.font.empty() ? "Font: the one each text uses" : ("Font: " + l.font).c_str());
         }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) Localization::SetLanguage(l.code);
@@ -395,27 +372,19 @@ void DrawLanguages() {
     Tip("Add a language (a code like fr, de, ja, pt-BR, and the name players see).");
 }
 
-// The rows to show: search and filter.
-std::vector<std::string> VisibleKeys() {
-    const StringTable& t = Localization::Table();
-    const std::string needle = Lower(s_search);
-    std::vector<std::string> rows;
-    for (const auto& kv : t.Entries()) {
-        if (s_filter == 1 && t.Text(kv.first, s_filterLang)) continue;
-        if (s_filter == 2 && s_used.count(kv.first)) continue;
-        if (!needle.empty()) {
-            bool hit = Lower(kv.first).find(needle) != std::string::npos || Lower(kv.second.note).find(needle) != std::string::npos;
-            for (const auto& tx : kv.second.text) if (!hit && Lower(tx.second).find(needle) != std::string::npos) hit = true;
-            if (!hit) continue;
-        }
-        rows.push_back(kv.first);
+ImU32 CellTint(LocCellState state) {
+    switch (state) {
+        case LocCellState::Missing: return IM_COL32(130, 52, 40, 90);
+        case LocCellState::PlaceholderMismatch: return IM_COL32(176, 120, 32, 120);
+        case LocCellState::SameAsSource: return IM_COL32(64, 96, 140, 80);
+        case LocCellState::Extra: return IM_COL32(120, 72, 140, 80);
+        case LocCellState::Translated: break;
     }
-    return rows;
+    return 0;
 }
 
-void DrawTable(EditorState& ed, float height) {
+void DrawTable(EditorState& ed, float height, const LocGrid& grid) {
     StringTable& t = Localization::Table();
-    const std::vector<std::string> rows = VisibleKeys();
     const int nLang = (int)t.languages.size();
     const ImGuiTableFlags flags = ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter |
@@ -430,11 +399,12 @@ void DrawTable(EditorState& ed, float height) {
     }
     ImGui::TableHeadersRow();
     ImGuiListClipper clip;
-    clip.Begin((int)rows.size());
+    clip.Begin(grid.RowCount());
     std::string renameKey, deleteKey;
     while (clip.Step()) {
         for (int r = clip.DisplayStart; r < clip.DisplayEnd; ++r) {
-            const std::string& key = rows[(std::size_t)r];
+            const LocGridRow& grow = grid.rows[(std::size_t)r];
+            const std::string& key = grow.key;
             LocEntry* e = t.Find(key);
             if (!e) continue;
             ImGui::TableNextRow();
@@ -458,8 +428,14 @@ void DrawTable(EditorState& ed, float height) {
             for (int li = 0; li < nLang; ++li) {
                 const std::string code = t.languages[(std::size_t)li].code;
                 ImGui::TableSetColumnIndex(2 + li);
+                LocCellState state = LocCellState::Translated;
+                if ((std::size_t)li < grid.languages.size() && grid.languages[(std::size_t)li] == code &&
+                    (std::size_t)li < grow.cells.size())
+                    state = grow.cells[(std::size_t)li].state;
+                else if (const int column = grid.ColumnOf(code); column >= 0 && column < (int)grow.cells.size())
+                    state = grow.cells[(std::size_t)column].state;
                 const std::string* cur = t.Text(key, code);
-                if (!cur) ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, IM_COL32(130, 52, 40, 90));
+                if (const ImU32 tint = CellTint(state)) ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, tint);
                 std::string cell = cur ? ToCell(*cur) : std::string();
                 ImGui::PushID(li);
                 ImGui::SetNextItemWidth(-FLT_MIN);
@@ -471,10 +447,19 @@ void DrawTable(EditorState& ed, float height) {
                 if (ImGui::IsItemActivated()) SelectKey(key);
                 if (ImGui::IsItemDeactivatedAfterEdit()) EndEdit(ed);
                 cur = t.Text(key, code);   // (an edit may have changed or cleared it)
-                if (cur && ImGui::IsItemHovered() && !ImGui::IsItemActive() &&   // the whole text when the cell cuts it
-                    (cur->find('\n') != std::string::npos ||
-                     ImGui::CalcTextSize(cell.c_str()).x > ImGui::GetItemRectSize().x - ImGui::GetStyle().FramePadding.x * 2.0f))
-                    ImGui::SetTooltip("%s", cur->c_str());
+                const bool cut = cur && (cur->find('\n') != std::string::npos ||
+                    ImGui::CalcTextSize(cell.c_str()).x > ImGui::GetItemRectSize().x - ImGui::GetStyle().FramePadding.x * 2.0f);
+                if (ImGui::IsItemHovered() && !ImGui::IsItemActive() && (cut || state != LocCellState::Translated)) {
+                    std::string tip = state == LocCellState::Translated ? std::string() : LocCellStateName(state);
+                    if (cur && cut) {
+                        if (!tip.empty()) tip += "\n";
+                        tip += *cur;
+                    } else if (state == LocCellState::Missing) {
+                        if (!tip.empty()) tip += "\n";
+                        tip += "No text in this language.";
+                    }
+                    if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
+                }
                 ImGui::PopID();
             }
             ImGui::PopID();
@@ -492,8 +477,12 @@ void DrawTable(EditorState& ed, float height) {
 }
 
 void DrawSelected(EditorState& ed) {
-    if (s_selected.empty() || !Localization::Table().Has(s_selected)) {
+    if (s_selected.empty()) {
         ImGui::TextDisabled("Select a key to see where the scene uses it.");
+        return;
+    }
+    if (!Localization::Table().Has(s_selected)) {
+        ImGui::TextDisabled("\"%s\" is used, but it is not in the table. Add it with + Key.", s_selected.c_str());
         return;
     }
     ImGui::AlignTextToFramePadding();
@@ -504,17 +493,40 @@ void DrawSelected(EditorState& ed) {
     if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(s_selected.c_str());
     const auto& uses = SelectedUses(ed);
     ImGui::SameLine();
-    if (uses.empty()) { ImGui::TextDisabled("Find in Scene: nothing in this scene uses it."); return; }
-    ImGui::TextDisabled("Find in Scene:");
-    for (std::size_t i = 0; i < uses.size(); ++i) {
-        const LocKeyUse& u = uses[i];
-        if (!u.object) continue;
-        ImGui::SameLine();
-        ImGui::PushID((int)i);
-        const std::string label = u.object->name + " (" + u.where + ")";
-        if (ImGui::SmallButton(label.c_str())) ed.Select(u.object);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select %s", u.object->name.c_str());
-        ImGui::PopID();
+    if (uses.empty()) ImGui::TextDisabled("Find in Scene: nothing in this scene uses it.");
+    else {
+        ImGui::TextDisabled("Find in Scene:");
+        for (std::size_t i = 0; i < uses.size(); ++i) {
+            const LocKeyUse& u = uses[i];
+            if (!u.object) continue;
+            ImGui::SameLine();
+            ImGui::PushID((int)i);
+            const std::string label = u.object->name + " (" + u.where + ")";
+            if (ImGui::SmallButton(label.c_str())) ed.Select(u.object);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select %s", u.object->name.c_str());
+            ImGui::PopID();
+        }
+    }
+    const std::string shown = Localization::Language();
+    if (!LocWindowShowsPreview(shown)) return;
+    const bool pseudo = shown == Localization::kPseudo;
+    const LocWindowPreview preview = PreviewLocKey(Localization::Table(), s_selected, pseudo ? std::string() : shown, pseudo);
+    const char* previewLabel = preview.mirrored && !preview.pseudo ? "Mirrored preview" : "Pseudo preview";
+    ImGui::TextDisabled("%s", previewLabel);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    std::string shownText = preview.text;
+    InputString("##locpreviewline", shownText, nullptr, ImGuiInputTextFlags_ReadOnly);
+    if (ImGui::IsItemHovered()) {
+        const char* tip = preview.pseudo && preview.mirrored
+            ? "Pseudo-localized and mirrored for a right-to-left language. Placeholders stay whole.\n"
+              "This line does not change the table. The Scene view follows the Pseudo language."
+            : preview.pseudo
+            ? "Pseudo-localized: accented letters and about a third more length, in markers.\n"
+              "A placeholder such as {0} stays put. This line does not change the table."
+            : "Mirrored so a right-to-left language can be read here. The stored text is unchanged;\n"
+              "the Scene view still draws left to right.";
+        ImGui::SetTooltip("%s", tip);
     }
 }
 
@@ -647,15 +659,33 @@ void ImportCsv(const EditorState& ed) {
 
 void ImportCsvFrom(const EditorState& ed, const std::string& p) {
     std::ifstream f(fs::u8path(p), std::ios::binary);
+    if (!f) { ConsoleLog("Localization: couldn't read " + p, 2); return; }
     std::stringstream ss;
     ss << f.rdbuf();
-    StringTable& t = Localization::Table();
-    const std::string before = t.Write();
+    StringTable& live = Localization::Table();
+    StringTable after = live;
     std::string err;
     int rows = 0;
-    if (!t.ImportCsv(ss.str(), &err, &rows)) { ConsoleLog("Localization: couldn't import " + p + ": " + err, 2); return; }
+    if (!after.ImportCsv(ss.str(), &err, &rows)) { ConsoleLog("Localization: couldn't import " + p + ": " + err, 2); return; }
+    const std::string before = live.Write();
+    if (after.Write() == before) {
+        s_status = "Import changed nothing";
+        ConsoleLog("Localization: " + p + " changed nothing");
+        return;
+    }
+    const LocDiff diff = LocDiffTables(live, after);
+    live = std::move(after);
     Commit(ed, before);
-    ConsoleLog("Localization: imported " + std::to_string(rows) + " rows from " + p);
+    std::string note = "Imported " + std::to_string(rows) + " rows";
+    auto add = [&](int n, const char* what) { if (n > 0) note += ", " + std::to_string(n) + " " + what; };
+    add((int)diff.filled.size(), "filled");
+    add((int)diff.changed.size(), "changed");
+    add((int)diff.addedKeys.size(), "new keys");
+    add((int)diff.addedLanguages.size(), "new languages");
+    add((int)diff.cleared.size(), "cleared");
+    if (diff.notesChanged) add(diff.notesChanged, "notes");
+    if (s_status.rfind("Saved ", 0) == 0 || s_status.rfind("No project", 0) == 0) s_status = note;
+    ConsoleLog("Localization: " + note + " from " + p);
 }
 
 void ExportCsv(const EditorState& ed) {
@@ -670,6 +700,66 @@ void ExportCsvTo(const std::string& p) {
     f << Localization::Table().ExportCsv();
     if (f) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
     else ConsoleLog("Localization: couldn't write " + p, 2);
+}
+
+std::string FilterLabel() {
+    switch (s_filter) {
+        case LocWindowFilter::All: return "Every key";
+        case LocWindowFilter::MissingIn: return "Missing in " + s_filterLang;
+        case LocWindowFilter::PlaceholderMismatch: return "Placeholder mismatches";
+        case LocWindowFilter::SameAsSource: return "Same as source";
+        case LocWindowFilter::Unused: return "Unused";
+        case LocWindowFilter::Issues: return "Reported issues";
+    }
+    return "Every key";
+}
+
+void JumpToKey(const LocWindowModel& model, const std::string& key) {
+    SelectKey(key);
+    for (const LocGridRow& row : model.grid.rows)
+        if (row.key == key) return;
+    s_filter = LocWindowFilter::All;
+    const std::string needle = Lower(s_search);
+    if (!needle.empty() && Lower(key).find(needle) == std::string::npos) s_search[0] = 0;
+}
+
+void DrawCheck(const LocWindowModel& model) {
+    const std::string summary = LocWindowIssueSummary(model);
+    const std::vector<LocWindowIssue> issues = LocWindowIssues(model);
+    if (issues.empty()) ImGui::TextDisabled("%s", summary.c_str());
+    else ImGui::TextUnformatted(summary.c_str());
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Missing translations and placeholder mismatches, from the table check.\n"
+                          "Coloured cells match it: red is missing, amber is a placeholder mismatch,\n"
+                          "blue is the same as the source, purple is extra text.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton(s_haveScan ? "Rescan" : "Scan project")) s_rescan = true;
+    Tip("Read scripts, scenes, prefabs, dialogue and quests. Unused keys can be filtered,\n"
+        "and keys the project uses that the table lacks are added to this report.");
+    if (issues.empty()) s_showReport = false;
+    else {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(s_showReport ? "Hide report" : "Show report")) s_showReport = !s_showReport;
+    }
+    if (!s_showReport) return;
+    ImGui::BeginChild("##locreport", ImVec2(0, 120.0f), true);
+    for (const LocMissing& missing : model.missing) {
+        if (missing.keys.empty()) continue;
+        ImGui::TextDisabled("%s: %d of %d keys missing (%.0f%% done)", missing.language.c_str(),
+                            (int)missing.keys.size(), missing.total, (double)missing.completion * 100.0);
+    }
+    const int shown = std::min(300, (int)issues.size());
+    for (int i = 0; i < shown; ++i) {
+        const LocWindowIssue& issue = issues[(std::size_t)i];
+        ImGui::PushID(i);
+        const std::string where = issue.language.empty() ? std::string("project") : issue.language;
+        const std::string label = std::string(LocSeverityName(issue.severity)) + "   " + where + "   " + issue.key + "   " + issue.message;
+        if (ImGui::Selectable(label.c_str(), s_selected == issue.key)) JumpToKey(model, issue.key);
+        ImGui::PopID();
+    }
+    if ((int)issues.size() > shown)
+        ImGui::TextDisabled("And %d more. Use the filter to narrow the grid.", (int)issues.size() - shown);
+    ImGui::EndChild();
 }
 
 } // namespace
@@ -712,53 +802,81 @@ void DrawLocalizationWindow(EditorState& ed) {
         else { s_prevLanguage = Localization::Language(); Localization::SetLanguage(Localization::kPseudo); }
     }
     Tip("Preview every localized text accented and about a third longer, in [brackets]:\n"
-        "text that gets cut off, and text that never went through the table, stand out.");
+        "text that gets cut off, and text that never went through the table, stand out.\n"
+        "The selected key also shows a marked pseudo-locale preview under the grid.");
     ImGui::SameLine();
     ImGui::TextUnformatted("Preview");
     ImGui::SameLine();
     PreviewCombo("##locpreview", 170.0f);
 
-    // Languages and their completion.
+    if (s_scanDir != ed.projectDir()) {
+        s_haveScan = false;
+        s_scan = {};
+        s_scanDir = ed.projectDir();
+    }
+
+    // Languages and their completion (LocTable stats).
     DrawLanguages();
 
     // Search and filter.
     SearchField("##locsearch", s_search, sizeof(s_search), "Search keys and text", 260.0f);
     ImGui::SameLine();
-    std::string filterLabel = s_filter == 0 ? std::string("Every key")
-                            : s_filter == 1 ? "Missing in " + s_filterLang : std::string("Unused");
-    ImGui::SetNextItemWidth(170.0f);
-    if (ImGui::BeginCombo("##locfilter", filterLabel.c_str())) {
-        if (ImGui::Selectable("Every key", s_filter == 0)) s_filter = 0;
+    ImGui::SetNextItemWidth(210.0f);
+    if (ImGui::BeginCombo("##locfilter", FilterLabel().c_str())) {
+        if (ImGui::Selectable("Every key", s_filter == LocWindowFilter::All)) s_filter = LocWindowFilter::All;
         for (const LocLanguage& l : t.languages) {
             const std::string item = "Missing in " + l.code;
-            if (ImGui::Selectable(item.c_str(), s_filter == 1 && s_filterLang == l.code)) { s_filter = 1; s_filterLang = l.code; }
+            if (ImGui::Selectable(item.c_str(), s_filter == LocWindowFilter::MissingIn && s_filterLang == l.code)) {
+                s_filter = LocWindowFilter::MissingIn;
+                s_filterLang = l.code;
+            }
         }
-        if (ImGui::Selectable("Unused", s_filter == 2)) {
-            s_filter = 2;
-            ScanProjectKeys(ed);
-            s_used = UsedKeys(ed);
-        }
+        if (ImGui::Selectable("Placeholder mismatches", s_filter == LocWindowFilter::PlaceholderMismatch))
+            s_filter = LocWindowFilter::PlaceholderMismatch;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Keys that no text in this scene, no script, visual script, scene, dialogue graph or quest file names.");
+            ImGui::SetTooltip("Translations whose {0} or {name} placeholders differ from the source text.");
+        if (ImGui::Selectable("Same as source", s_filter == LocWindowFilter::SameAsSource))
+            s_filter = LocWindowFilter::SameAsSource;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Text copied from the source language. It may still need a translation.");
+        if (ImGui::Selectable("Unused", s_filter == LocWindowFilter::Unused)) s_filter = LocWindowFilter::Unused;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Keys nothing in this scene, and nothing the last scan found, mentions.\n"
+                              "Scan project reads scripts, scenes, dialogue and quests.");
+        if (ImGui::Selectable("Reported issues", s_filter == LocWindowFilter::Issues))
+            s_filter = LocWindowFilter::Issues;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Keys with a missing translation, a placeholder mismatch, or another check warning.");
         ImGui::EndCombo();
     }
-    if (s_filter == 1 && !t.FindLanguage(s_filterLang)) s_filter = 0;
-    if (s_filter == 2) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Rescan")) { ScanProjectKeys(ed); s_used = UsedKeys(ed); }
+    if (s_filter == LocWindowFilter::MissingIn && !t.FindLanguage(s_filterLang)) s_filter = LocWindowFilter::All;
+    if (s_rescan || (s_filter == LocWindowFilter::Unused && !s_haveScan)) {
+        RunScan(ed);
+        s_rescan = false;
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%d keys, %d languages", (int)t.Size(), (int)t.languages.size());
 
-    // The table, then the selected key's uses.
-    const float detailsH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    // After the search box and the filter, so this frame's text is the one the grid uses.
+    // A scan reads the project once; later frames only compare that result with the table.
+    LocWindowQuery query;
+    query.search = s_search;
+    query.filter = s_filter;
+    query.filterLanguage = s_filterLang;
+    const LocWindowModel model = BuildLocWindowModel(t, query, s_haveScan ? &s_scan : nullptr);
+
+    if (t.Size() > 0) DrawCheck(model);
+
+    // The table, then the selected key's uses and preview.
+    const bool previewLine = LocWindowShowsPreview(Localization::Language()) && !s_selected.empty() && t.Has(s_selected);
+    const float detailsH = ImGui::GetFrameHeightWithSpacing() * (previewLine ? 2.0f : 1.0f) + ImGui::GetStyle().ItemSpacing.y;
     if (t.languages.empty() && t.Size() == 0) {
         ImGui::Spacing();
         ImGui::TextWrapped("No strings yet. Add a language (+ Language), then keys (+ Key); or tick Localized on a "
                            "Text, Button or Toggle in the Inspector to make a key from its text. Scripts read keys with "
                            "loc(\"key\") or Localization.Get(\"key\").");
     } else {
-        DrawTable(ed, std::max(80.0f, ImGui::GetContentRegionAvail().y - detailsH));
+        DrawTable(ed, std::max(80.0f, ImGui::GetContentRegionAvail().y - detailsH), model.grid);
         DrawSelected(ed);
     }
     DrawPopups(ed);

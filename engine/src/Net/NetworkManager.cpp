@@ -279,7 +279,23 @@ void NetworkManager::UseNextSessionKeys() {
     m_nextSecure = net::SecureChannel{};                   // used once: the next session makes new ones
 }
 
+namespace {
+    NetworkManager::JoinGate g_joinGate;
+    std::string g_joinRefusal;
+}
+void NetworkManager::SetJoinGate(JoinGate gate) { g_joinGate = std::move(gate); g_joinRefusal.clear(); }
+std::string NetworkManager::LastJoinRefusal() { return g_joinRefusal; }
+
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
+    g_joinRefusal.clear();
+    if (g_joinGate) {
+        std::string why;
+        if (!g_joinGate(*this, host, port, false, std::string(), why)) {
+            g_joinRefusal = why.empty() ? std::string("join refused") : why;
+            OKAY_WARN("net: not joining ", host, ":", port, ": ", g_joinRefusal);
+            return false;
+        }
+    }
     Stop();
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
@@ -307,6 +323,17 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
 
 bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t relayPort,
                                 const std::string& code, bool asHost) {
+    if (!asHost) {
+        g_joinRefusal.clear();
+        if (g_joinGate) {
+            std::string why;
+            if (!g_joinGate(*this, relayHost, relayPort, true, code, why)) {
+                g_joinRefusal = why.empty() ? std::string("join refused") : why;
+                OKAY_WARN("net: not joining through the relay: ", g_joinRefusal);
+                return false;
+            }
+        }
+    }
     Stop();
     if (asHost && !EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }

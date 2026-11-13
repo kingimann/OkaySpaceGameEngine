@@ -33,11 +33,58 @@
 -- a machine stays (user_id becomes null): a cheater can't clear a machine ban
 -- by deleting the account and signing up again.
 --
+-- Abuse limits (all enforced here, in the database, so no client can skip them):
+--   reports  20 an hour and 60 a day per player; the same player can't be
+--            reported again within 10 minutes, nor more than 3 times a day, by
+--            the same reporter; a reporter whose last 10 reports in 30 days were
+--            all dismissed (none actioned) is paused until that clears.
+--   appeals  one every hour and 5 a day per player, 3 per ban, one open per ban
+--   lookups  ac_my_bans: 120 an hour per player
+-- Ban evasion: ac_devices records which machine hashes an account used (written
+-- by the ticket service through ac_note_device, readable by admins only);
+-- ac_linked_accounts shows other accounts on the same machines;
+-- ac_ban_with_devices bans an account and every machine it used in one step.
+-- A ban that names a machine blocks a new account made on it (ac_is_banned), and
+-- using a banned machine from another account is written to the audit log.
+-- Shared machines exist (a household, a cafe): linking is a lead for an admin
+-- to look at, never an automatic ban.
+-- Audit: public.ac_audit is an append-only record of EVERY change to bans,
+-- appeals, report reviews and the server-account list, including changes made
+-- from the SQL editor or with the service key (admin_log only sees signed-in
+-- admins). Nobody can edit or delete its rows through the API; only
+-- ac_purge_audit() (admins / the SQL editor) removes entries older than a year.
+--
 -- Retention: public.ac_purge_old() deletes reports and decided appeals older
--- than 90 days, and bans that ended (lifted or expired) more than 90 days ago.
+-- than 90 days, bans that ended (lifted or expired) more than 90 days ago, and
+-- machine links not seen for 90 days.
 -- With the pg_cron extension enabled, it runs every night (job "okay-ac-retention");
 -- without it, run `select public.ac_purge_old();` yourself (or from a scheduled
 -- Edge Function).
+
+-- ---------------------------------------------------------------------------
+-- Rate limiting (used by the functions below; nobody calls it directly)
+-- ---------------------------------------------------------------------------
+create table if not exists public.ac_rate_events (
+  key text not null,
+  at  timestamptz not null default now()
+);
+create index if not exists ac_rate_events_key on public.ac_rate_events (key, at desc);
+alter table public.ac_rate_events enable row level security;   -- no policy: only the definer functions below touch it
+revoke all on public.ac_rate_events from public, anon, authenticated;
+
+-- Count one use of `p_key`; refuse when it was already used `p_limit` times in the last `p_window`
+-- (at most a day is remembered). The advisory lock makes two simultaneous calls count one after the other.
+create or replace function public.ac_rate_hit(p_key text, p_limit int, p_window interval) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('ac_rate:' || p_key));
+  delete from public.ac_rate_events where key = p_key and at < now() - interval '1 day';
+  if (select count(*) from public.ac_rate_events where key = p_key and at > now() - p_window) >= p_limit then
+    raise exception 'Too many requests; try again later' using errcode = 'check_violation';
+  end if;
+  insert into public.ac_rate_events (key) values (p_key);
+end $$;
+revoke execute on function public.ac_rate_hit(text, int, interval) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Reports
@@ -107,6 +154,24 @@ begin
       if (new.kind = 'server_kick' or ltrim(new.reason) ilike '[server check]%')
          and not exists (select 1 from public.ac_report_servers s where s.user_id = auth.uid()) then
         raise exception 'Only a game server''s account files server reports' using errcode = 'insufficient_privilege';
+      end if;
+      perform public.ac_rate_hit('report-day:' || auth.uid(), 60, interval '1 day');
+      -- Player reports: no repeats, and no reporting for a while when nearly all of them were thrown out.
+      if new.kind = 'player' and new.reported is not null then
+        if exists (select 1 from public.ac_reports r where r.reporter = auth.uid() and r.reported = new.reported
+                   and r.created_at > now() - interval '10 minutes') then
+          raise exception 'You just reported this player; an admin will look at it' using errcode = 'check_violation';
+        end if;
+        if (select count(*) from public.ac_reports r where r.reporter = auth.uid() and r.reported = new.reported
+            and r.created_at > now() - interval '1 day') >= 3 then
+          raise exception 'You have already reported this player today' using errcode = 'check_violation';
+        end if;
+        if (select count(*) from public.ac_reports r where r.reporter = auth.uid() and r.kind = 'player'
+            and r.status = 'dismissed' and r.created_at > now() - interval '30 days') >= 10
+           and not exists (select 1 from public.ac_reports r where r.reporter = auth.uid()
+                           and r.status = 'actioned' and r.created_at > now() - interval '30 days') then
+          raise exception 'Your recent reports were all dismissed, so reporting is paused for now' using errcode = 'check_violation';
+        end if;
       end if;
     end if;
     return new;
@@ -353,9 +418,10 @@ drop function if exists public.ac_my_bans(text);
 create or replace function public.ac_my_bans(p_hw_hash text default null)
 returns table (id bigint, reason text, until timestamptz, created_at timestamptz, active boolean,
                appeal_status text, appeal_note text, appeals_left int)
-language plpgsql stable security definer set search_path = public as $$
+language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then return; end if;
+  perform public.ac_rate_hit('mybans:' || auth.uid(), 120, interval '1 hour');
   return query
     select b.id, b.reason, b.until, b.created_at,
            (not b.lifted and (b.until is null or b.until > now())),
@@ -384,6 +450,10 @@ begin
   if p_message is null or char_length(btrim(p_message)) = 0 or char_length(p_message) > 2000 then
     raise exception 'Write why the ban should be lifted (up to 2000 characters)' using errcode = 'invalid_parameter_value';
   end if;
+  perform public.ac_rate_hit('appeal-day:' || auth.uid(), 5, interval '1 day');   -- also stops probing ban ids
+  if exists (select 1 from public.ac_appeals a where a.user_id = auth.uid() and a.created_at > now() - interval '1 hour') then
+    raise exception 'Wait an hour between appeals' using errcode = 'check_violation';
+  end if;
   if not exists (select 1 from public.ac_bans b
                  where b.id = p_ban and not b.lifted and (b.until is null or b.until > now())
                    and (b.user_id = auth.uid()
@@ -402,6 +472,202 @@ begin
 end $$;
 revoke execute on function public.ac_file_appeal(bigint, text, text) from public, anon;
 grant execute on function public.ac_file_appeal(bigint, text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Ban evasion: which machines an account used
+-- ---------------------------------------------------------------------------
+create table if not exists public.ac_devices (
+  user_id    uuid not null references auth.users on delete cascade,
+  hw_hash    text not null check (hw_hash ~ '^[0-9a-f]{64}$'),
+  first_seen timestamptz not null default now(),
+  last_seen  timestamptz not null default now(),
+  primary key (user_id, hw_hash)
+);
+create index if not exists ac_devices_hw on public.ac_devices (hw_hash);
+alter table public.ac_devices enable row level security;
+drop policy if exists "admins read devices" on public.ac_devices;
+create policy "admins read devices" on public.ac_devices for select using (public.is_admin(auth.uid()));
+revoke insert, update, delete, truncate on public.ac_devices from public, anon, authenticated;   -- written only by ac_note_device
+
+-- The ticket service (service key) or an admin: this account just used this machine. Keeps the 20 newest machines per account.
+-- True when the machine has an active ban that belongs to another account (or to no account): that is written to the audit log.
+create or replace function public.ac_note_device(p_user uuid, p_hw_hash text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare evasion boolean;
+begin
+  if auth.uid() is not null and not public.is_admin(auth.uid()) then
+    raise exception 'Only the ticket service and admins record devices' using errcode = 'insufficient_privilege';
+  end if;
+  if p_user is null or p_hw_hash is null or p_hw_hash !~ '^[0-9a-f]{64}$' then return false; end if;
+  insert into public.ac_devices (user_id, hw_hash) values (p_user, p_hw_hash)
+  on conflict (user_id, hw_hash) do update set last_seen = now();
+  delete from public.ac_devices d where d.user_id = p_user and d.hw_hash in (
+    select x.hw_hash from public.ac_devices x where x.user_id = p_user order by x.last_seen desc offset 20);
+  select exists (select 1 from public.ac_bans b
+                 where not b.lifted and (b.until is null or b.until > now()) and b.hw_hash = p_hw_hash
+                   and b.user_id is distinct from p_user) into evasion;
+  if evasion then
+    insert into public.ac_audit (actor, actor_role, action, table_name, target, detail)
+    values (auth.uid(), 'ticket-service', 'evasion_signal', 'ac_devices', p_user,
+            jsonb_build_object('hw_hash_prefix', left(p_hw_hash, 12)));
+  end if;
+  return evasion;
+end $$;
+revoke execute on function public.ac_note_device(uuid, text) from public, anon, authenticated;
+grant execute on function public.ac_note_device(uuid, text) to authenticated, service_role;
+
+-- Admins: other accounts that used any machine this account used (a lead, not proof: machines can be shared).
+create or replace function public.ac_linked_accounts(p_user uuid)
+returns table (other_user uuid, shared_machines int, last_seen timestamptz, other_banned boolean)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_admin(auth.uid()) then
+    raise exception 'Only admins can look up linked accounts' using errcode = 'insufficient_privilege';
+  end if;
+  return query
+    select o.user_id, count(*)::int, max(o.last_seen),
+           exists (select 1 from public.ac_bans b where b.user_id = o.user_id and not b.lifted and (b.until is null or b.until > now()))
+      from public.ac_devices m
+      join public.ac_devices o on o.hw_hash = m.hw_hash and o.user_id <> m.user_id
+     where m.user_id = p_user
+     group by o.user_id
+     order by max(o.last_seen) desc
+     limit 50;
+end $$;
+revoke execute on function public.ac_linked_accounts(uuid) from public, anon;
+grant execute on function public.ac_linked_accounts(uuid) to authenticated;
+
+-- Admins: ban an account and every machine it used, in one step (runs with the caller's rights, so
+-- the "admins ban" policy and the ban guard apply to every row). Returns how many ban rows were made.
+create or replace function public.ac_ban_with_devices(p_user uuid, p_reason text, p_until timestamptz default null, p_report bigint default null)
+returns int language plpgsql set search_path = public as $$
+declare n int := 0; h record;
+begin
+  insert into public.ac_bans (user_id, reason, until, report_id) values (p_user, p_reason, p_until, p_report);
+  n := 1;
+  for h in select d.hw_hash from public.ac_devices d where d.user_id = p_user loop
+    if not exists (select 1 from public.ac_bans b where b.hw_hash = h.hw_hash and not b.lifted and (b.until is null or b.until > now())) then
+      insert into public.ac_bans (user_id, hw_hash, reason, until, report_id)
+      values (p_user, h.hw_hash, left(p_reason || ' (machine of this account)', 300), p_until, p_report);
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+revoke execute on function public.ac_ban_with_devices(uuid, text, timestamptz, bigint) from public, anon;
+grant execute on function public.ac_ban_with_devices(uuid, text, timestamptz, bigint) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Audit: an append-only record of every change to bans, appeals, report reviews and the server accounts
+-- ---------------------------------------------------------------------------
+create table if not exists public.ac_audit (
+  id         bigint generated always as identity primary key,
+  at         timestamptz not null default now(),
+  actor      uuid,            -- auth.uid(); null = the SQL editor, the service key, pg_cron or a cascade
+  actor_role text,            -- the JWT role or database role that made the change
+  action     text not null,   -- ban_insert, ban_update, ban_delete, appeal_decision, appeal_delete, report_review, report_delete, ...
+  table_name text not null,
+  row_id     bigint,
+  target     uuid,            -- the account it is about, when there is one
+  detail     jsonb not null default '{}'::jsonb
+);
+create index if not exists ac_audit_at on public.ac_audit (at desc);
+create index if not exists ac_audit_target on public.ac_audit (target, at desc);
+alter table public.ac_audit enable row level security;
+drop policy if exists "admins read audit" on public.ac_audit;
+create policy "admins read audit" on public.ac_audit for select using (public.is_admin(auth.uid()));
+revoke insert, update, delete, truncate on public.ac_audit from public, anon, authenticated;
+
+create or replace function public.ac_audit_immutable() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if coalesce(current_setting('okay.ac_audit_purge', true), '') = 'on' then
+    if tg_op = 'DELETE' then return old; end if;
+    return null;
+  end if;
+  raise exception 'The anti-cheat audit log is append-only' using errcode = 'insufficient_privilege';
+end $$;
+drop trigger if exists ac_audit_immutable on public.ac_audit;
+create trigger ac_audit_immutable before update or delete on public.ac_audit
+  for each row execute function public.ac_audit_immutable();
+drop trigger if exists ac_audit_no_truncate on public.ac_audit;
+create trigger ac_audit_no_truncate before truncate on public.ac_audit
+  for each statement execute function public.ac_audit_immutable();
+
+create or replace function public.ac_audit_role() returns text
+language plpgsql stable as $$
+declare r text;
+begin
+  begin r := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
+  exception when others then r := null; end;
+  return coalesce(r, current_user::text);
+end $$;
+
+create or replace function public.ac_audit_row() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare act text; rid bigint; tgt uuid; snap jsonb;
+begin
+  if coalesce(current_setting('okay.ac_purge', true), '') = 'on' then return coalesce(new, old); end if;   -- the retention job writes one summary
+  if tg_table_name = 'ac_bans' then
+    act := 'ban_' || lower(tg_op);
+    if tg_op = 'UPDATE' and to_jsonb(new) = to_jsonb(old) then return new; end if;
+    rid := coalesce(new.id, old.id); tgt := coalesce(new.user_id, old.user_id);
+  elsif tg_table_name = 'ac_appeals' then
+    if tg_op = 'INSERT' then act := 'appeal_insert';
+    elsif tg_op = 'UPDATE' then
+      if new.status is not distinct from old.status and new.decision_note is not distinct from old.decision_note then return new; end if;
+      act := 'appeal_decision';
+    else act := 'appeal_delete'; end if;
+    rid := coalesce(new.id, old.id); tgt := coalesce(new.user_id, old.user_id);
+  elsif tg_table_name = 'ac_reports' then
+    if tg_op = 'UPDATE' then
+      if new.status is not distinct from old.status and new.review_note is not distinct from old.review_note then return new; end if;
+      act := 'report_review';
+    elsif tg_op = 'DELETE' then act := 'report_delete';
+    else return new; end if;                       -- filing a report is not an admin action
+    rid := coalesce(new.id, old.id); tgt := coalesce(new.reported, old.reported, new.reporter, old.reporter);
+  else                                              -- ac_report_servers
+    act := 'server_account_' || lower(tg_op);
+    tgt := coalesce(new.user_id, old.user_id);
+  end if;
+  snap := case tg_op when 'INSERT' then jsonb_build_object('new', to_jsonb(new))
+                     when 'DELETE' then jsonb_build_object('old', to_jsonb(old))
+                     else jsonb_build_object('old', to_jsonb(old), 'new', to_jsonb(new)) end;
+  insert into public.ac_audit (actor, actor_role, action, table_name, row_id, target, detail)
+  values (auth.uid(), public.ac_audit_role(), act, tg_table_name::text, rid, tgt, snap);
+  return coalesce(new, old);
+end $$;
+drop trigger if exists ac_bans_audit on public.ac_bans;
+create trigger ac_bans_audit after insert or update or delete on public.ac_bans
+  for each row execute function public.ac_audit_row();
+drop trigger if exists ac_appeals_audit on public.ac_appeals;
+create trigger ac_appeals_audit after insert or update or delete on public.ac_appeals
+  for each row execute function public.ac_audit_row();
+drop trigger if exists ac_reports_audit on public.ac_reports;
+create trigger ac_reports_audit after update or delete on public.ac_reports
+  for each row execute function public.ac_audit_row();
+drop trigger if exists ac_report_servers_audit on public.ac_report_servers;
+create trigger ac_report_servers_audit after insert or update or delete on public.ac_report_servers
+  for each row execute function public.ac_audit_row();
+
+-- Audit entries older than a year (the SQL editor, pg_cron or an admin). Leaves one line saying so.
+create or replace function public.ac_purge_audit() returns bigint
+language plpgsql security definer set search_path = public as $$
+declare n bigint;
+begin
+  if auth.uid() is not null and not public.is_admin(auth.uid()) then
+    raise exception 'Only admins purge the audit log' using errcode = 'insufficient_privilege';
+  end if;
+  perform set_config('okay.ac_audit_purge', 'on', true);
+  delete from public.ac_audit where at < now() - interval '365 days';
+  get diagnostics n = row_count;
+  perform set_config('okay.ac_audit_purge', 'off', true);
+  insert into public.ac_audit (actor, actor_role, action, table_name, detail)
+  values (auth.uid(), public.ac_audit_role(), 'audit_purge', 'ac_audit', jsonb_build_object('removed', n));
+  return n;
+end $$;
+revoke execute on function public.ac_purge_audit() from public, anon;
+grant execute on function public.ac_purge_audit() to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Retention: 90 days
@@ -423,7 +689,11 @@ begin
   get diagnostics b = row_count;
   delete from public.ac_reports where created_at < now() - interval '90 days';
   get diagnostics r = row_count;
+  delete from public.ac_devices where last_seen < now() - interval '90 days';
+  delete from public.ac_rate_events where at < now() - interval '1 day';
   perform set_config('okay.ac_purge', 'off', true);
+  insert into public.ac_audit (actor, actor_role, action, table_name, detail)
+  values (auth.uid(), public.ac_audit_role(), 'purge', 'ac_*', jsonb_build_object('reports', r, 'appeals', a, 'bans', b));
   if auth.uid() is not null then
     perform public.admin_log_write('ac_purge', null, r || ' reports, ' || a || ' appeals, ' || b || ' bans older than 90 days');
   end if;
@@ -439,5 +709,9 @@ begin
       perform cron.unschedule('okay-ac-retention');
     end if;
     perform cron.schedule('okay-ac-retention', '17 3 * * *', 'select public.ac_purge_old()');
+    if exists (select 1 from cron.job where jobname = 'okay-ac-audit-retention') then
+      perform cron.unschedule('okay-ac-audit-retention');
+    end if;
+    perform cron.schedule('okay-ac-audit-retention', '41 3 1 * *', 'select public.ac_purge_audit()');
   end if;
 end $$;

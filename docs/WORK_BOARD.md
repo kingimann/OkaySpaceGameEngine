@@ -124,7 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
-| 2D box and capsule casts, and 2D explosion force | John | `john/physics2d-casts-explosion` |
+| 2D box and capsule casts, and 2D explosion force | John | `john/physics2d-casts-explosion` (#771, draft) |
 
 ## Free (unclaimed, safe small tasks)
 

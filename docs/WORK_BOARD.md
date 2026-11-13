@@ -124,6 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
+| In-game UI widgets: search bar, date and time picker, sandboxed file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | John | `john/ui-widgets-more` |
 
 ## Free (unclaimed, safe small tasks)
 

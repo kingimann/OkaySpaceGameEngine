@@ -1,5 +1,6 @@
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -4821,6 +4822,109 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
+        };
+        // App widgets. A missing object is a no-op so a graph can call them safely.
+        b["ui_search_query"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) return Value{w->query};
+            return Value{std::string{}};
+        };
+        b["ui_set_search"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) w->SetQuery(a[1].AsString());
+            return Value{};
+        };
+        b["ui_search_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) return Value{(float)w->MatchCount()};
+            return Value{0.0f};
+        };
+        b["ui_set_date"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 4) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>())
+                    w->SetDate(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), SafeInt(a[3].AsFloat()));
+            return Value{};
+        };
+        b["ui_set_time"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>())
+                    w->SetTime(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
+            return Value{};
+        };
+        b["ui_date_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>()) return Value{w->Text()};
+            return Value{std::string{}};
+        };
+        b["ui_file_set_root"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) w->SetRoot(a[1].AsString());
+            return Value{};
+        };
+        b["ui_file_open"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) w->Open(a[1].AsString());
+            return Value{};
+        };
+        b["ui_file_selected"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) return Value{w->selected};
+            return Value{std::string{}};
+        };
+        b["ui_accordion_toggle"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIAccordion>()) w->Toggle(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_accordion_open"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIAccordion>()) return Value{w->IsExpanded(SafeInt(a[1].AsFloat()))};
+            return Value{false};
+        };
+        b["ui_breadcrumb_select"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBreadcrumbs>()) w->Select(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_breadcrumb_path"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBreadcrumbs>()) return Value{w->Path()};
+            return Value{std::string{}};
+        };
+        b["ui_page"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->Page()};
+            return Value{0.0f};
+        };
+        b["ui_page_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->PageCount()};
+            return Value{0.0f};
+        };
+        b["ui_set_page"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) w->SetPage(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_set_loading"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISkeleton>()) w->SetLoading(a[1].AsBool());
+            return Value{};
+        };
+        b["ui_sheet_open"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) w->Open();
+            return Value{};
+        };
+        b["ui_sheet_close"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) w->Close();
+            return Value{};
+        };
+        b["ui_sheet_open_state"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) return Value{w->IsOpen()};
+            return Value{false};
         };
         // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
         // ui_set_variant("Quit", "danger"): give a widget a role (primary, secondary, danger, ghost,

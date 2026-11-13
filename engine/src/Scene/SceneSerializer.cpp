@@ -195,6 +195,7 @@
 #include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UIRating.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -3382,6 +3383,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (int)st->anchor << " " << (int)st->shape << " " << st->cornerRadius << " "
             << (st->interactable ? 1 : 0) << "\n";
     }
+    WriteMoreUI(out, go);
     if (auto* rt = go->GetComponent<UIRating>()) {
         out << "  uirating " << rt->position.x << " " << rt->position.y << " "
             << rt->size.x << " " << rt->size.y << " "
@@ -8253,6 +8255,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ReadAnchor(in, st->anchor);
                     in >> sh >> st->cornerRadius >> it;
                     st->shape = (UIShape)sh; st->interactable = (it != 0);
+                } else if (TryReadMoreUI(field, in, go)) {
                 } else if (field == "uirating") {
                     auto* rt = go->AddComponent<UIRating>();
                     Color on, off; int ah = 0, ro = 0;

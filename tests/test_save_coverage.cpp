@@ -55,10 +55,10 @@ using namespace okay;
     X(TemperatureStat) X(Terrain) X(TerrainDigger) X(TextRenderer) X(ThirdPersonController) \
     X(ThirdPersonShooterController) X(ThirstStat) X(Tilemap) X(TilemapCollider2D) X(TimedDestroy) \
     X(TopDownController) X(TopDownController2D) X(TopDownShooterController) X(TrailRenderer) X(TriggerZone) \
-    X(TurnManager) X(TweenAnimation) X(UIAnimation) X(UIBarBind) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
-    X(UIDamageNumbers) X(UIInventoryBind) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFlexItem) X(UIFrame) X(UIImage) \
+    X(TurnManager) X(TweenAnimation) X(UIAccordion) X(UIAnimation) X(UIBarBind) X(UIBottomSheet) X(UIBreadcrumbs) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
+    X(UIDamageNumbers) X(UIDateTimePicker) X(UIInventoryBind) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFilePicker) X(UIFlexItem) X(UIFrame) X(UIImage) \
     X(UIInputField) X(UIKeybindField) X(UILayoutGroup) X(UIListView) X(UIMask) X(UIModal) X(UIPanel) \
-    X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISlider) \
+    X(UIPagination) X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISearchBar) X(UISkeleton) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VirtualCamera) X(VisualScriptComponent) \
     X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \

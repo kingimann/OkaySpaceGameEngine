@@ -74,7 +74,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker, virtual joystick or D-pad; double-click, long-press and swipe gestures are not in the UI components
+- **Open:** from the component-library request, none found as components: radio group, virtual joystick or D-pad; double-click, long-press and swipe gestures are not in the UI components. Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -99,7 +99,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Tabs section), `docs/engine_api.md`
 - **Tests:** `ui_tabs`, `ui_overlays`, `ui_layout_containers`, `ui_extra`, `ui_nav_touch`, `ui_input_guard`, `item_dragdrop` (world drag and drop)
 - **Status:** Works - modals, context menu, keybind, virtual list, horizontal scroll and the new tabs came with the UI plan P1 PRs (ROADMAP: #381, #386, #391); toast and slot grid have no tests of their own
-- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); missing from the library request: accordion, breadcrumbs, pagination, skeleton loader, bottom sheet/drawer, data table, tree view, carousel, radial menu, kill feed
+- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); accordion, breadcrumbs, pagination, skeleton and bottom sheet are `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UISkeleton` and `UIBottomSheet`. Still missing from the library request: data table, tree view, carousel, radial menu, kill feed
 - **Related:** 12.12, 12.5, 11.1, 12.7
 - **Words:** list view, scroll view, scroll, tabs, tab bar, modal, dialog, popup, context menu, right-click menu, tooltip, toast, notification, slot grid, drag and drop, drop target
 - **Seen as:** a long list is slow or drops rows; tabs do not switch pages or overflow; a dialog lets clicks through to widgets behind it; Escape does not close a modal; a tooltip runs off the screen or never shows; scrolling with a finger does not work

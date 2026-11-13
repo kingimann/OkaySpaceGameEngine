@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIWidgetsMoreDraw.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
@@ -2001,6 +2002,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
                 i = j;
             }
         }
+        }
+        else if (DrawMoreUIWidget(_it.kind, up.get(), p, (float)w, (float)h, _slot.opacity)) {
         }
     }   // end single UI draw pass
     uiUseScale(1.0f);

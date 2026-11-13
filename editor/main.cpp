@@ -60,6 +60,7 @@
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
+#include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -6102,6 +6103,17 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
         if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
         if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("App")) {
+        if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
+        if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
+        if (ImGui::MenuItem("File Picker"))        addUI("File Picker", oked::BuildUIFilePicker);
+        if (ImGui::MenuItem("Accordion"))          addUI("Accordion",   oked::BuildUIAccordion);
+        if (ImGui::MenuItem("Breadcrumbs"))        addUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
+        if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
+        if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
+        if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -12571,6 +12583,14 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("ui_set_search(\"n\", text) / ui_search_query(\"n\") / ui_search_count(\"n\")", "filter a search bar; read the text; how many rows match (on_change, on_submit)");
+        fapi("ui_set_date(\"n\", y, m, d) / ui_set_time(\"n\", h, min) / ui_date_text(\"n\")", "set a date (invalid days are pulled back) or a time; read it");
+        fapi("ui_file_set_root(\"n\", folder) / ui_file_open(\"n\", name) / ui_file_selected(\"n\")", "sandboxed file picker: the only folder, open a row, the chosen file");
+        fapi("ui_accordion_toggle(\"n\", i) / ui_accordion_open(\"n\", i)", "open or close a section; is it open");
+        fapi("ui_breadcrumb_select(\"n\", i) / ui_breadcrumb_path(\"n\")", "keep that crumb and drop the ones after it; read the path");
+        fapi("ui_set_page(\"n\", page) / ui_page(\"n\") / ui_page_count(\"n\")", "show a page (pulled back into range); read the page and the page count");
+        fapi("ui_set_loading(\"n\", on)", "show or hide a skeleton placeholder");
+        fapi("ui_sheet_open(\"n\") / ui_sheet_close(\"n\") / ui_sheet_open_state(\"n\")", "open or close a bottom sheet; is it open");
         fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
         fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
         fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
@@ -20162,6 +20182,15 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
             if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            ImGui::Separator();
+            if (ImGui::MenuItem("Search Bar"))    mkUI("Search Bar", oked::BuildUISearchBar);
+            if (ImGui::MenuItem("Date and Time")) mkUI("Date and Time", oked::BuildUIDateTimePicker);
+            if (ImGui::MenuItem("File Picker"))   mkUI("File Picker", oked::BuildUIFilePicker);
+            if (ImGui::MenuItem("Accordion"))     mkUI("Accordion", oked::BuildUIAccordion);
+            if (ImGui::MenuItem("Breadcrumbs"))   mkUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
+            if (ImGui::MenuItem("Pagination"))    mkUI("Pagination", oked::BuildUIPagination);
+            if (ImGui::MenuItem("Skeleton"))      mkUI("Skeleton", oked::BuildUISkeleton);
+            if (ImGui::MenuItem("Bottom Sheet"))  mkUI("Bottom Sheet", oked::BuildUIBottomSheet);
             ImGui::Separator();
             // 3D UI: standalone in-world objects (WorldSpaceUI), separate from 2D UI.
             if (ImGui::BeginMenu("3D UI (in-world)")) {
@@ -38302,6 +38331,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawMoreUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawRuntimeUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
@@ -40103,6 +40133,14 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIToast>(), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
             if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISearchBar>(), "UI Search Bar")) { go->AddComponent<UISearchBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDateTimePicker>(), "UI Date and Time")) { go->AddComponent<UIDateTimePicker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFilePicker>(), "UI File Picker")) { go->AddComponent<UIFilePicker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAccordion>(), "UI Accordion")) { go->AddComponent<UIAccordion>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBreadcrumbs>(), "UI Breadcrumbs")) { go->AddComponent<UIBreadcrumbs>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }

@@ -281,6 +281,88 @@ A clickable button. The object needs a UI Button. on_click fires when it is pres
 | `GetComponent<UIButton>().SetInteractable(on)` | `UIButton.SetInteractable/1` | step | on (Bool), Target (Object) | - | False greys the button out and ignores clicks. |
 | `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
 
+## UISearchBar
+
+A search field over a list. on_change fires when the text or the chosen row changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISearchBar>().SetQuery(text)` | `UISearchBar.SetQuery/1` | step | text (Text), Target (Object) | - | Show only the items that contain this text. Fires OnValueChanged when it changes. |
+| `GetComponent<UISearchBar>().Clear()` | `UISearchBar.Clear/0` | step | Target (Object) | - | Empty the search and clear the chosen row. |
+| `GetComponent<UISearchBar>().MatchCount()` | `UISearchBar.MatchCount/0` | value | Target (Object) | Result (Number) | How many items match the search. |
+
+## UIDateTimePicker
+
+A date and time. Invalid days are pulled back to a real calendar day. on_change fires when it changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDateTimePicker>().SetDate(year, month, day)` | `UIDateTimePicker.SetDate/3` | step | year (Number), month (Number), day (Number), Target (Object) | - | Set the date. 31 February becomes the last day of February. |
+| `GetComponent<UIDateTimePicker>().SetTime(hour, minute)` | `UIDateTimePicker.SetTime/2` | step | hour (Number), minute (Number), Target (Object) | - | Set the clock. Hours stay in 0 to 23 and minutes in 0 to 59. |
+| `GetComponent<UIDateTimePicker>().Text()` | `UIDateTimePicker.Text/0` | value | Target (Object) | Result (Text) | The date and time as text, such as 2026-02-28 14:05. |
+
+## UIFilePicker
+
+A file list that can only open inside one folder. on_submit fires when a file is chosen.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIFilePicker>().SetRoot(folder)` | `UIFilePicker.SetRoot/1` | step | folder (Text), Target (Object) | - | The only folder this picker may open. |
+| `GetComponent<UIFilePicker>().Open(name)` | `UIFilePicker.Open/1` | step | name (Text), Target (Object) | - | Enter a folder or choose a file in the folder on screen. Paths that leave the folder do nothing. |
+| `GetComponent<UIFilePicker>().Selected()` | `UIFilePicker.Selected/0` | value | Target (Object) | Result (Text) | The chosen file, relative to the folder. Empty when none is chosen. |
+
+## UIAccordion
+
+Stacked headings that open and close. on_change fires when one opens or closes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAccordion>().Toggle(index)` | `UIAccordion.Toggle/1` | step | index (Number), Target (Object) | - | Open or close one section. The first section is 0. |
+| `GetComponent<UIAccordion>().SetExpanded(index, open)` | `UIAccordion.SetExpanded/2` | step | index (Number), open (Bool), Target (Object) | - | Open or close one section. |
+| `GetComponent<UIAccordion>().IsExpanded(index)` | `UIAccordion.IsExpanded/1` | value | index (Number), Target (Object) | Result (Bool) | True when that section is open. |
+
+## UIBreadcrumbs
+
+A path such as Home / Library / Books. Choosing a crumb drops the ones after it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIBreadcrumbs>().SetPath(path)` | `UIBreadcrumbs.SetPath/1` | step | path (Text), Target (Object) | - | Replace the path. Folders are separated by /. |
+| `GetComponent<UIBreadcrumbs>().Select(index)` | `UIBreadcrumbs.Select/1` | step | index (Number), Target (Object) | - | Keep this crumb and drop the ones after it. The first crumb is 0. |
+| `GetComponent<UIBreadcrumbs>().Path()` | `UIBreadcrumbs.Path/0` | value | Target (Object) | Result (Text) | The path, folders separated by /. |
+
+## UIPagination
+
+Page buttons. The page stays inside 1 to the page count. on_change fires when the page changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIPagination>().SetPage(page)` | `UIPagination.SetPage/1` | step | page (Number), Target (Object) | - | Show this page. Numbers outside 1 to the page count are pulled back in. |
+| `GetComponent<UIPagination>().Next()` | `UIPagination.Next/0` | step | Target (Object) | - | Go to the next page. The last page stays put. |
+| `GetComponent<UIPagination>().Previous()` | `UIPagination.Previous/0` | step | Target (Object) | - | Go to the previous page. The first page stays put. |
+| `GetComponent<UIPagination>().SetTotal(items, perPage)` | `UIPagination.SetTotal/2` | step | items (Number), perPage (Number), Target (Object) | - | Set how many items there are and how many fit on a page, then fix the page count. |
+| `GetComponent<UIPagination>().Page()` | `UIPagination.Page/0` | value | Target (Object) | Result (Number) | The page on screen, starting at 1. |
+
+## UISkeleton
+
+Grey bars shown while something is still loading.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISkeleton>().SetLoading(on)` | `UISkeleton.SetLoading/1` | step | on (Bool), Target (Object) | - | True shows the loading bars. False clears them. |
+| `GetComponent<UISkeleton>().IsLoading()` | `UISkeleton.IsLoading/0` | value | Target (Object) | Result (Bool) | True while the loading bars are showing. |
+
+## UIBottomSheet
+
+A panel that slides up from the bottom. on_change fires when it opens or closes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIBottomSheet>().Open()` | `UIBottomSheet.Open/0` | step | Target (Object) | - | Slide the sheet open. |
+| `GetComponent<UIBottomSheet>().Close()` | `UIBottomSheet.Close/0` | step | Target (Object) | - | Slide the sheet closed. |
+| `GetComponent<UIBottomSheet>().Toggle()` | `UIBottomSheet.Toggle/0` | step | Target (Object) | - | Open it if it is closed, or close it if it is open. |
+| `GetComponent<UIBottomSheet>().IsOpen()` | `UIBottomSheet.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the sheet is open. |
+
 ## Input
 
 Keyboard, mouse and gamepad.

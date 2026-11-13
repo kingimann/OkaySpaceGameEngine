@@ -92,7 +92,6 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | UI frames have no rotation or scale | `Components/UIFrame.hpp` (only anchors, pivot, size) | Cannot spin or zoom a widget (spinning icons, pop-in) except through UIAnimation tricks | Medium | Medium |
-| Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these | App-style UI must be assembled by hand | Medium | Large |
 | UI controller focus visuals not wired to accessibility | `UI/FocusGraph` is used by `UINavigation.hpp`; high contrast changes UI text only (see section 14) | Gamepad users get no consistent focus ring | Medium | Medium |
 | UI scripting needs the OkayUI bridge; without it `ui_*` calls draw nothing | `Scripting/ScriptUI` has only the OkayUI implementation in `shared/` (feature map 13.x) | A build without OkayUI silently ignores UI script calls | Low | Medium |
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
@@ -158,7 +157,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 7. Medium: 58. Low: 29. Total rows: 94.
+High: 7. Medium: 57. Low: 29. Total rows: 93.
 
 ## Top 15 to tackle first
 

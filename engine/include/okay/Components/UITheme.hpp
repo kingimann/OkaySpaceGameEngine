@@ -33,6 +33,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/UI/UIShape.hpp"
@@ -581,6 +582,7 @@ private:
             ch->dotColor = buttonText;
             ch->circleColor = accent;
         }
+        StyleMoreWidgets(go, panel, text, muted, accent, border);
         StyleText(go);
         if (auto* sv = go->GetComponent<UIStyleVariant>())
             if (sv->variant > 0 && sv->variant < kVariantCount) ApplyVariant(go, (Variant)sv->variant);

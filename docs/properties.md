@@ -304,6 +304,7 @@ has `enabled`.
 | LoadingScreen | 46 | look (layout, bar and spinner styles, colours), title and tips line, bar, spinner, and `asyncLoad` / `objectsPerFrame` for a background load; the `tips` list is not a property |
 | Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
 | UITheme, UIStyleVariant, UIDamageNumbers, UIDialogueBox | 37, 3, 15, 5 | the UI looks (12 built in), a widget's role in the theme, floating combat text and the dialogue box. See [ui_runtime.md](ui_runtime.md). `UIPanel.blocksPointer`, `UIToggle.radioGroup` and `UIDraggable.dragParent` / `keepOnScreen` were added with them |
+| UISearchBar, UIDateTimePicker, UIFilePicker, UIAccordion, UIBreadcrumbs, UIPagination, UISkeleton, UIBottomSheet | | search text and list, date and time, the sandboxed folder, accordion sections, the breadcrumb path, the page, the loading placeholder, and whether the bottom sheet is open. See [ui_runtime.md](ui_runtime.md) |
 | Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
 | Joint2D, Joint3D | 16, 14 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way |

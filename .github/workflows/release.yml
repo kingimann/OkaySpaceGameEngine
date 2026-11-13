@@ -82,7 +82,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache; then
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -148,6 +148,17 @@ jobs:
           scripts/build-windows-dist.sh
           ccache -s || true
 
+      # Sign our own programs (not the third-party SDL2.dll) BEFORE anything records their checksum: the zip, the installer,
+      # the GitHub assets and versions.json must all carry the same signed bytes. Without the two secrets this is skipped
+      # with a warning (the release stays unsigned, as before); with them, any failure fails the release instead of
+      # shipping unsigned. See docs/packaging.md "Code signing".
+      - name: Sign the Windows programs
+        env:
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          scripts/sign-windows.sh build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe
+
       - name: Package zip
         id: pkg
         run: |
@@ -171,6 +182,12 @@ jobs:
                    -DOUTFILE="$PWD/OkaySpace-Setup.exe" \
                    scripts/okayspace-installer.nsi
           ls -la OkaySpace-Setup.exe
+
+      - name: Sign the Windows installer
+        env:
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: scripts/sign-windows.sh OkaySpace-Setup.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v6
@@ -209,7 +226,11 @@ jobs:
           generate_release_notes: true
           # An LTS patch must not become GitHub's "latest" release: the in-app
           # updater downloads releases/latest/download/<name> on the latest channel.
-          make_latest: ${{ inputs.channel != 'lts' }}
+          # Never "latest" here. A launcher that reads releases/latest sees the version the moment it is "latest", and
+          # refuses it when the checksum list (versions.json on Supabase) does not have it yet ("no checksum" error,
+          # 2.866.0). The release is promoted to latest by the "Make the release visible" job below, only after the
+          # checksums are published.
+          make_latest: false
 
       # Also publish to the Supabase "releases" bucket (launchers check it first),
       # when the repo has a SUPABASE_SERVICE_KEY secret. Without it this is skipped.
@@ -262,4 +283,50 @@ jobs:
           files: okay-server-linux-x64
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.windows-exe.outputs.ver) }}
           target_commitish: ${{ github.sha }}
-          make_latest: ${{ inputs.channel != 'lts' }}
+          make_latest: false
+
+  # Make the release visible to launchers ("latest") only once its checksums are published. The in-app updater refuses
+  # any file that has no SHA-256 in versions.json, so announcing a version first just shows users an error. Without the
+  # SUPABASE_SERVICE_KEY secret nothing publishes the checksums, so this job fails loudly instead of letting the release
+  # slip out unchecked: run scripts/publish-supabase.sh (or scripts/release-local.sh), then
+  # `gh release edit v<version> --latest`.
+  finalize:
+    name: Make the release visible (latest)
+    needs: [windows-exe, linux-server]
+    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VER: ${{ needs.windows-exe.outputs.ver }}
+      HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      CHANNEL: ${{ inputs.channel || 'latest' }}
+    steps:
+      - name: Check the checksums are published, then mark the release latest
+        run: |
+          if [ "$HAVE_KEY" != "true" ]; then
+            msg="v$VER was built and attached to its GitHub release, but its checksums were NOT published (no SUPABASE_SERVICE_KEY secret), so launchers would refuse it. It is not marked latest. Run scripts/publish-supabase.sh with a key (or scripts/release-local.sh), then: gh release edit v$VER --latest"
+            echo "::error title=Release not visible to launchers::$msg"
+            echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          B=https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
+          # The checksum list must really contain this version with a checksum for each program, not just exist.
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$B/versions.json" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          v = [x for x in d.get('versions', []) if x.get('version') == '$VER']
+          ok = bool(v) and all((v[0].get('files', {}).get(n) or {}).get('sha256') for n in ('OkaySpace.exe', 'OkayEngine.exe', 'OkaySpacePlayer.exe'))
+          sys.exit(0 if ok else 1)"; then ok=1; break; fi
+            echo "versions.json has no checksums for v$VER yet (attempt $i)"; sleep 10
+          done
+          if [ "${ok:-0}" != "1" ]; then
+            echo "::error title=Checksums missing::versions.json on the release server has no checksums for v$VER, so the release stays hidden. Run scripts/publish-supabase.sh, then: gh release edit v$VER --latest"
+            exit 1
+          fi
+          if [ "$CHANNEL" = "lts" ]; then echo "LTS patch: left as a normal release (never latest)"; exit 0; fi
+          gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --latest
+          echo "v$VER is now the latest release, with checksums published." >> "$GITHUB_STEP_SUMMARY"

@@ -29,6 +29,8 @@ constexpr int kMaxVerts = 262144;   // per batch (main and overlay): about 5 MB 
 constexpr int kMaxIdx   = 393216;
 // Geometry that did not fit is counted, not hidden: DrawData::dropped, DroppedGeometry() and a message on stderr.
 int g_dropped = 0;
+bool g_rowClipper = true;   // the table row clipper (SetTableRowClipping)
+bool g_cullRow = false;   // a table row wholly outside the clip: its geometry is skipped, not emitted (see TableNextRow)
 inline void noteDrop() { ++g_dropped; }
 SDL_Vertex g_verts[kMaxVerts];
 int        g_nv = 0;
@@ -354,6 +356,7 @@ struct TableState {
     float shiftY = 0;                     // added to the logical row top to get the screen y (minus the scroll, for body rows)
     bool  clipOn = false; float clipR[4] = {0, 0, 0, 0};   // the clip rectangle in force (nothing changes when the next one is the same)
     float rowBgH = 0;                     // height of the band the current row's background got
+    bool  rowCulled = false;              // the current row is wholly outside the visible clip: its geometry is skipped (the row clipper)
     LayoutState saved;                    // the parent layout, restored by EndTable of a scrolling box
 };
 TableState g_tbl;
@@ -555,6 +558,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }   // batch full: counted and reported
     const SDL_Color sc = toColor(c);
     const int base = nv;
@@ -574,6 +578,7 @@ void quad(float x, float y, float w, float h, const unsigned char c[4]) {
 // next flat quad starts a new span. Textured geometry always goes to the main batch.
 void texQuad(float x, float y, float w, float h, SDL_Texture* tex,
              float u0, float v0, float u1, float v1, const unsigned char tint[4]) {
+    if (g_cullRow) return;
     setTexture(tex);
     if (g_nv + 4 > kMaxVerts || g_ni + 6 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
     const SDL_Color sc = toColor(tint);
@@ -595,6 +600,7 @@ void quadPts(float ax, float ay, float bx, float by, float cx, float cy,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
@@ -617,6 +623,7 @@ void gradQuad(float x, float y, float w, float h,
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
     if (nv + 4 > kMaxVerts || ni + 6 > kMaxIdx) { noteDrop(); return; }
     const int base = nv;
     SDL_FPoint uv; uv.x = g_whiteU; uv.y = g_whiteV;
@@ -646,6 +653,7 @@ void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsig
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
     if (nv + 3 > kMaxVerts || ni + 3 > kMaxIdx) { noteDrop(); return; }
     const SDL_Color sc = toColor(c);
     const int base = nv;
@@ -708,6 +716,7 @@ void bindTexture(SDL_Texture* t) {
     else if (g_novSpans < 32) g_ovSpans[g_novSpans++] = OverlaySpan{g_oni, t};
 }
 void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4]) {
+    if (g_cullRow && !g_toOverlay) return;
     SDL_Texture* tex = fallbackTex(f);
     if (!tex) return;
     f->Prepare(str);   // bake its new characters before reading the atlas size
@@ -745,7 +754,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
 
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
-    if (!str) return;
+    if (!str || (g_cullRow && !g_toOverlay)) return;
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
         if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
@@ -4054,6 +4063,23 @@ void tblCellClip(int col) {
     const bool culled = !g_tbl.rowFrozen && (rowRealTop + rowH() * 4.0f < g_tbl.frozenBottom || rowRealTop > g_tbl.oy + g_tbl.oh);
     tblSetClip(g_tbl.rowFrozen, culled ? 2 : (tblColFrozen(col) ? 0 : 1));
 }
+// The row clipper. Is the row whose top is at screen y `top` (and about `h` tall) wholly outside what can be seen? Then its cells still
+// lay out (so the row heights, widths and ids stay exact) but nothing is emitted for them: no quads, no glyphs, so a table of thousands
+// of rows neither fills the vertex batch nor costs time. Below the visible band is certain (rows only grow downward); above it allows
+// four row heights of slack for a row taller than its remembered height. Frozen rows and overlay content are never culled.
+bool tblRowOutside(float top, float h) {
+    if (g_toOverlay || !g_rowClipper) return false;
+    float clipTop, clipBot;
+    if (tblScrolls()) {
+        if (g_tbl.rowFrozen) return false;
+        clipTop = g_tbl.frozenBottom; clipBot = g_tbl.oy + g_tbl.oh;
+    } else if (g_clipTop > 0) {
+        const SDL_Rect& c = g_clipStack[g_clipTop - 1]; clipTop = (float)c.y; clipBot = (float)(c.y + c.h);
+    } else if (g_dispH > 0.0f) {
+        clipTop = 0.0f; clipBot = g_dispH;
+    } else return false;
+    return top > clipBot + 1.0f || top + 4.0f * h < clipTop;
+}
 // Point the layout at the current cell (column g_tbl.index at row g_tbl.rowTop).
 void tblEnterCell() {
     const float pad = 4.0f;
@@ -4292,6 +4318,7 @@ void TableSetupScrollFreeze(int cols, int rows) {
 }
 
 void TableHeadersRow() {
+    g_tbl.rowCulled = false; g_cullRow = false;
     if (!g_lay.active || !g_tbl.active) return;
     tblFinishSetup();
     tblFinishRow();
@@ -4322,6 +4349,8 @@ void TableSetScroll(float x, float y) {
     if (g_tbl.scrollY && std::isfinite(y)) g_tbl.sy = std::max(0.0f, std::min(y, *g_tbl.pMaxY));
 }
 
+void SetTableRowClipping(bool on) { g_rowClipper = on; }
+bool TableRowIsVisible() { return !(g_tbl.active && g_tbl.rowCulled); }
 bool TableSetColumnIndex(int column) {
     if (!g_lay.active || !g_tbl.active || column < 0 || column >= g_tbl.count) return false;
     g_tbl.index = column - 1;
@@ -4346,6 +4375,7 @@ void TableNextRow() {
     const float bandH = (g_tbl.store && g_tbl.rowIndex < kTblRows && g_tbl.store->rowH[g_tbl.rowIndex] > 0.0f) ? g_tbl.store->rowH[g_tbl.rowIndex] : rowH();
     g_tbl.rowBgH = bandH;
     const float by = g_tbl.rowTop + g_tbl.shiftY;
+    g_tbl.rowCulled = tblRowOutside(by, bandH); g_cullRow = g_tbl.rowCulled;
     const float bx = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, bw = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
     if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, 2);
     if ((g_tbl.flags & Table_RowBg) && (g_tbl.rowIndex & 1)) {   // banded rows: drawn first so the cells go on top
@@ -4386,6 +4416,7 @@ void TableSetBgColor(TableBgTarget target, Color32 color, int column) {
 
 void EndTable() {
     if (!g_lay.active || !g_tbl.active) return;
+    g_tbl.rowCulled = false; g_cullRow = false;
     tblFinishSetup();
     tblFinishRow();
     tblRememberRow();
@@ -5118,7 +5149,7 @@ void ResetState() {
     for (FloatSlot& f : g_floats) f = FloatSlot();
     for (TextSlot& t : g_texts) t = TextSlot();
     g_dd = DragDrop(); g_curMenu = CurMenu(); g_inMenuBar = false;
-    g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState();
+    g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState(); g_cullRow = false;
     for (TblStore& t : g_tstore) t = TblStore();
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
     g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = 0;

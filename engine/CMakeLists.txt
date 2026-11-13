@@ -59,7 +59,11 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
+    src/Input/GestureRecognizer.cpp
+    src/Input/Gestures.cpp
+    src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
+    src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
@@ -174,6 +178,7 @@ add_library(okay_engine
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/SpatialFx.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/Audio/AudioStream.cpp
@@ -209,6 +214,7 @@ add_library(okay_engine
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    src/UI/UIFrameTransform.cpp
     # Localization tools (docs/localization_tools.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
@@ -219,10 +225,13 @@ add_library(okay_engine
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
     src/UI/FocusGraph.cpp
+    src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp
+    src/Render/Max3dsReader.cpp
+    src/Render/BvhReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -494,6 +503,16 @@ endif()
 if(OKAY_OWN_COLLADA)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
+endif()
+# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
+# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_3DS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
+endif()
+if(OKAY_OWN_BVH)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

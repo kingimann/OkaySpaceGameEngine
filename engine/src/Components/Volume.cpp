@@ -87,6 +87,7 @@ const char* Volume::KindName(Kind k) {
         case Kind::Force: return "Force";
         case Kind::Atmosphere: return "Atmosphere";
         case Kind::Ambience: return "Ambience";
+        case Kind::Reverb: return "Reverb";
     }
     return "Checkpoint";
 }
@@ -98,6 +99,7 @@ const char* Volume::KindHint(Kind k) {
         case Kind::Force: return "Pushes the bodies inside every physics step: a wind, a draught, an updraft, a current.";
         case Kind::Atmosphere: return "While the camera is inside, the scene's fog and vignette fade to this volume's.";
         case Kind::Ambience: return "Plays the Audio Source on this object while the camera is inside, fading in and out.";
+        case Kind::Reverb: return "Adds a room, hall, cave or outdoor echo to 3D sounds while the listener is inside, blending at the edges.";
     }
     return "";
 }
@@ -109,6 +111,7 @@ Color Volume::KindColor(Kind k) {
         case Kind::Force: return Color::FromBytes(90, 160, 255);
         case Kind::Atmosphere: return Color::FromBytes(190, 120, 240);
         case Kind::Ambience: return Color::FromBytes(250, 200, 70);
+        case Kind::Reverb: return Color::FromBytes(70, 200, 210);
     }
     return Color::FromBytes(200, 200, 200);
 }
@@ -279,6 +282,15 @@ float EdgeWeight(const VolumeGeometry& g, const Transform& t, const Vec3& p, flo
     return Smooth(d / blend);
 }
 
+} // namespace
+
+float Volume::WeightAt(const Vec3& world) const {
+    if (!transform || !Geometry().Valid()) return 0.0f;
+    return EdgeWeight(Geometry(), *transform, world, blend);
+}
+
+namespace {
+
 Color LerpColor(const Color& a, const Color& b, float t) {
     return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
 }
@@ -380,6 +392,11 @@ void Volume::Update(float) {
         case Kind::Kill: UpdateBodies(); break;
         case Kind::Atmosphere: UpdateAtmosphere(); break;
         case Kind::Ambience: UpdateAmbience(); break;
+        case Kind::Reverb: {
+            Vec3 eye;
+            m_weight = (ViewerPosition(eye) && transform) ? WeightAt(eye) : 0.0f;
+            break;
+        }
         case Kind::Force: break;   // FixedUpdate
     }
 }

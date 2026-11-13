@@ -10,7 +10,7 @@
 # scripts/build-web.sh (or emcmake cmake ...). Assets are preloaded at build
 # time; drop a game.okayscene next to this CMakeLists or pass --preload-file.
 if(EMSCRIPTEN)
-    add_executable(okay-player main.cpp)
+    add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
     target_link_libraries(okay-player PRIVATE okay::engine)
     target_include_directories(okay-player PRIVATE ${CMAKE_SOURCE_DIR}/shared)
     target_compile_options(okay-player PRIVATE "-sUSE_SDL=2")
@@ -39,7 +39,7 @@ else()
 endif()
 # Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
 
-add_executable(okay-player main.cpp)
+add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
 okay_win_version(okay-player "OkaySpace Player" "OkaySpacePlayer.exe")
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/shared)

@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+namespace okay { class ItemDatabase; }
+
 namespace okay {
 
 /// A loot table (`.okayloot`): each roll picks one entry by weight, which then drops
@@ -18,15 +20,32 @@ struct LootTable {
     std::vector<Entry> entries;
     int rollsMin = 1, rollsMax = 1;
 
+    /// One entry's share of a single pick. `weightShare` is its weight over the
+    /// weights that are above zero; `dropShare` is that times its chance.
+    struct Share {
+        std::string item;
+        int index = 0;
+        float weightShare = 0.0f;
+        float dropShare = 0.0f;
+    };
+
     bool LoadText(const std::string& text, std::string* err = nullptr);
     std::string Serialize() const;
+    /// Write Serialize() to `path`.
+    bool Save(const std::string& path) const;
     /// Load from a file (relative paths also tried against DataAsset's base dir).
     bool Load(const std::string& path, std::string* err = nullptr);
     /// Loaded once per path and reused.
     static const LootTable& Cached(const std::string& path);
+    /// Drop a cached table so the next Cached() reads the file again.
+    static void Forget(const std::string& path);
 
     /// Roll the table: what drops (same item summed).
     std::vector<Inventory::Stack> Roll(Random& rng) const;
+    /// Each entry's share of one pick (empty weights count as no share).
+    std::vector<Share> Shares() const;
+    /// Plain-English problems, including items that are not a defined item.
+    std::vector<std::string> Issues(const ItemDatabase& items) const;
 };
 
 } // namespace okay

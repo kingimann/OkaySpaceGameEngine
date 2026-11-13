@@ -1,0 +1,19 @@
+HIERARCHY
+ROOT A
+{
+  OFFSET 0 0 0
+  CHANNELS 3 Xposition Yposition Zposition
+  End Site
+  {
+    OFFSET 0 1 0
+  }
+}
+ROOT B {
+  OFFSET 5 0 0
+  CHANNELS 3 Zrotation Xrotation Yrotation
+}
+MOTION
+Frames: 2
+Frame Time: 0.1
+0 0 0 0 0 0
+1 2 3 0 0 45

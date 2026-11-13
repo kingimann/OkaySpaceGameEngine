@@ -46,6 +46,9 @@
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/GestureRecognizer.hpp"
+#include "okay/Input/Gestures.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -313,6 +316,7 @@
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Audio/SpatialFx.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Audio/AudioByteSource.hpp"

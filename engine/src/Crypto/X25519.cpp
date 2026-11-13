@@ -15,10 +15,9 @@ bool X25519(std::uint8_t out[32], const std::uint8_t scalar[32], const std::uint
     std::uint8_t up[32];
     for (int i = 0; i < 32; ++i) up[i] = point[i];
     up[31] &= 127;                                    // decodeUCoordinate: mask the top bit
-    Fe x1, x2, z2, x3, z3, a24;
+    Fe x1, x2, z2, x3, z3;
     FromBytes(x1, up);
     One(x2); Zero(z2); Copy(x3, x1); One(z3);
-    Zero(a24); a24.v[0] = 121665 & 0xffff; a24.v[1] = 121665 >> 16;   // (A - 2) / 4
 
     std::int64_t swap = 0;
     for (int t = 254; t >= 0; --t) {
@@ -39,7 +38,7 @@ bool X25519(std::uint8_t out[32], const std::uint8_t scalar[32], const std::uint
         Add(T, DA, CB);  Square(x3, T);
         Sub(T, DA, CB);  Square(T, T);  Mul(z3, x1, T);
         Mul(x2, AA, BB);
-        Mul(T, a24, E);  Add(T, AA, T);  Mul(z2, E, T);
+        MulSmall(T, E, 121665);  Add(T, AA, T);  Mul(z2, E, T);
     }
     CSwap(x2, x3, swap);
     CSwap(z2, z3, swap);

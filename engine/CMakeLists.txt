@@ -1,3 +1,30 @@
+# ---- okay::crypto as its own static library --------------------------
+# Our own crypto primitives (docs/crypto.md). A separate target so that code which must not
+# link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
+# the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
+# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/crypto.md.
+add_library(okay_crypto STATIC
+    src/Crypto/Util.cpp
+    src/Crypto/Random.cpp
+    src/Crypto/ChaCha20.cpp
+    src/Crypto/Poly1305.cpp
+    src/Crypto/Aead.cpp
+    src/Crypto/Blake2b.cpp
+    src/Crypto/Sha256.cpp
+    src/Crypto/Sha512.cpp
+    src/Crypto/X25519.cpp
+    src/Crypto/Ed25519.cpp
+)
+target_include_directories(okay_crypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_crypto PUBLIC cxx_std_17)
+if(WIN32)
+    target_link_libraries(okay_crypto PUBLIC bcrypt)   # BCryptGenRandom
+endif()
+if(OKAY_OWN_CRYPTO)
+    target_compile_definitions(okay_crypto PUBLIC OKAY_OWN_CRYPTO)
+endif()
+add_library(okay::crypto ALIAS okay_crypto)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -51,16 +78,6 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
     src/Net/SessionTicket.cpp
-    src/Crypto/Util.cpp
-    src/Crypto/Random.cpp
-    src/Crypto/ChaCha20.cpp
-    src/Crypto/Poly1305.cpp
-    src/Crypto/Aead.cpp
-    src/Crypto/Blake2b.cpp
-    src/Crypto/Sha256.cpp
-    src/Crypto/Sha512.cpp
-    src/Crypto/X25519.cpp
-    src/Crypto/Ed25519.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
@@ -331,9 +348,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
-if(WIN32)
-    target_link_libraries(okay_engine PUBLIC bcrypt)   # BCryptGenRandom
-endif()
+target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 if(OKAY_OWN_CRYPTO)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
     message(STATUS "OkaySpace: packet encryption ENABLED (OUR OWN crypto, unreviewed; OKAY_OWN_CRYPTO=ON)")

@@ -1,14 +1,21 @@
 // Ed25519 (RFC 8032 section 5.1), pure, detached signatures. UNREVIEWED (see Crypto.hpp).
 //
-// Curve arithmetic is on the twisted Edwards curve -x^2 + y^2 = 1 + d x^2 y^2 in
-// extended coordinates (X:Y:Z:T), with the unified addition formula that is
-// complete for this curve (so doubling is just adding a point to itself and no
-// input is special). Scalar multiplication is a fixed 256-step double-and-add in
-// which the scalar bit only drives a masked select, so signing (secret scalars)
-// runs the same operations whatever the key. Verification works on public data.
+// Curve arithmetic is on the twisted Edwards curve -x^2 + y^2 = 1 + d x^2 y^2 in extended
+// coordinates (X:Y:Z:T). The addition formula is the unified one that is complete for this curve,
+// so no input is special; doubling has its own cheaper formula.
+//
+// Secret scalars (signing, public key from a seed) only ever go through BaseMult: the scalar is
+// recoded into 64 signed 4-bit digits and, for each digit, ALL eight entries of that window's
+// precomputed table are read and combined with masks (a constant-time lookup), so neither the
+// memory addresses nor the operations depend on the scalar. The table holds j * 16^(2i) * B
+// (j = 1..8, i = 0..31) in affine "cached" form; it is derived from the curve constants on first
+// use (thread-safe function-local static), nothing is pasted in.
+// Verification works on public data only (signature, message, public key), so it may use the
+// variable-time windowed ScalarMultPublic.
 // d, sqrt(-1) and the base point are derived from their definitions on first use.
 #include <okay/Crypto/Crypto.hpp>
 #include "Fe25519.hpp"
+#include "Scalar25519.hpp"
 
 namespace okay::crypto {
 namespace {
@@ -16,27 +23,30 @@ namespace {
 using fe::Fe;
 
 struct Point { Fe X, Y, Z, T; };
+// A point with Z = 1 in the form the mixed addition wants: y + x, y - x, 2 d x y.
+struct Cached { Fe yplusx, yminusx, t2d; };
 
 struct Consts {
     Fe d, d2;
     Point base;
+    Cached table[32][8];                              // table[i][j] = (j + 1) * 16^(2 i) * B
 };
 
 void SetIdentity(Point& p) { fe::Zero(p.X); fe::One(p.Y); fe::One(p.Z); fe::Zero(p.T); }
 
 // Decode per RFC 8032 section 5.1.3. Does NOT insist on a canonical y (callers do);
-// fails when there is no x, or x is 0 with the sign bit set.
-bool Decode(Point& p, const Consts& k, const std::uint8_t in[32]) {
+// fails when there is no x, or x is 0 with the sign bit set. Public data only.
+bool Decode(Point& p, const Fe& d, const std::uint8_t in[32]) {
     using namespace fe;
     std::uint8_t yb[32];
     for (int i = 0; i < 32; ++i) yb[i] = in[i];
     const int sign = yb[31] >> 7;
     yb[31] &= 127;
-    Fe y, one, u, v, v3, v7, x, t, chk;
+    Fe y, one, u, v, v3, v7, x, t, chk, negU;
     FromBytes(y, yb);
     One(one);
     Square(u, y);                    // y^2
-    Mul(v, k.d, u);
+    Mul(v, d, u);
     Add(v, v, one);                  // d y^2 + 1
     Sub(u, u, one);                  // y^2 - 1
     Square(v3, v); Mul(v3, v3, v);   // v^3
@@ -46,7 +56,7 @@ bool Decode(Point& p, const Consts& k, const std::uint8_t in[32]) {
     Mul(t, t, v3);
     Mul(x, t, u);                    // candidate x = u v^3 (u v^7)^((p-5)/8)
     Square(chk, x); Mul(chk, chk, v);   // v x^2
-    Fe negU; Zero(negU); Sub(negU, negU, u);
+    Neg(negU, u);
     if (Equal(chk, u)) {
         // x is right
     } else if (Equal(chk, negU)) {
@@ -55,7 +65,7 @@ bool Decode(Point& p, const Consts& k, const std::uint8_t in[32]) {
         return false;
     }
     if (IsZero(x) && sign) return false;
-    if (IsNegative(x) != sign) { Fe z; Zero(z); Sub(x, z, x); }
+    if (IsNegative(x) != sign) Neg(x, x);
     Copy(p.X, x); Copy(p.Y, y); One(p.Z); Mul(p.T, x, y);
     return true;
 }
@@ -71,117 +81,144 @@ void Encode(std::uint8_t out[32], const Point& p) {
 }
 
 // Unified addition (add-2008-hwcd-3 with a = -1).
-void PointAdd(Point& r, const Point& p, const Point& q, const Consts& k) {
+void PointAdd(Point& r, const Point& p, const Point& q, const Fe& d2) {
     using namespace fe;
     Fe a, b, c, d, e, f, g, h, t1, t2;
     Sub(t1, p.Y, p.X); Sub(t2, q.Y, q.X); Mul(a, t1, t2);
     Add(t1, p.Y, p.X); Add(t2, q.Y, q.X); Mul(b, t1, t2);
-    Mul(c, p.T, q.T); Mul(c, c, k.d2);
+    Mul(c, p.T, q.T); Mul(c, c, d2);
     Mul(d, p.Z, q.Z); Add(d, d, d);
     Sub(e, b, a); Sub(f, d, c); Add(g, d, c); Add(h, b, a);
     Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
 }
 
-void SelectPoint(Point& r, const Point& a, const Point& b, std::int64_t bit) {
-    fe::Select(r.X, a.X, b.X, bit); fe::Select(r.Y, a.Y, b.Y, bit);
-    fe::Select(r.Z, a.Z, b.Z, bit); fe::Select(r.T, a.T, b.T, bit);
+// Doubling (dbl-2008-hwcd with a = -1): 4 multiplications and 4 squarings.
+void PointDouble(Point& r, const Point& p) {
+    using namespace fe;
+    Fe a, b, c, e, f, g, h, t;
+    Square(a, p.X); Square(b, p.Y); Square(c, p.Z); Add(c, c, c);
+    Add(t, p.X, p.Y); Square(t, t);
+    Sub(e, t, a); Sub(e, e, b);                       // E = (X+Y)^2 - A - B
+    Sub(g, b, a);                                     // G = D + B with D = -A
+    Sub(f, g, c);                                     // F = G - C
+    Add(t, a, b); Neg(h, t);                          // H = D - B = -(A + B)
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
 }
 
-// r = scalar * p, scalar = 32 little-endian bytes, all 256 bits processed.
-void ScalarMult(Point& r, const Point& p, const std::uint8_t scalar[32], const Consts& k) {
-    Point acc, dbl, sum;
+// r = p + q with q in cached affine form (7 multiplications).
+void AddCached(Point& r, const Point& p, const Cached& q) {
+    using namespace fe;
+    Fe a, b, c, d, e, f, g, h, t;
+    Sub(t, p.Y, p.X); Mul(a, t, q.yminusx);
+    Add(t, p.Y, p.X); Mul(b, t, q.yplusx);
+    Mul(c, p.T, q.t2d);
+    Add(d, p.Z, p.Z);
+    Sub(e, b, a); Sub(f, d, c); Add(g, d, c); Add(h, b, a);
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+void ToCached(Cached& c, const Point& p, const Fe& d2) {
+    using namespace fe;
+    Fe zi, x, y, xy;
+    Invert(zi, p.Z);
+    Mul(x, p.X, zi); Mul(y, p.Y, zi);
+    Add(c.yplusx, y, x);
+    Sub(c.yminusx, y, x);
+    Mul(xy, x, y); Mul(c.t2d, xy, d2);
+}
+
+// ---- constant-time fixed-base multiplication ----------------------------------------------
+void CMoveCached(Cached& r, const Cached& a, std::int64_t bit) {   // r = bit ? a : r
+    fe::Select(r.yplusx, r.yplusx, a.yplusx, bit);
+    fe::Select(r.yminusx, r.yminusx, a.yminusx, bit);
+    fe::Select(r.t2d, r.t2d, a.t2d, bit);
+}
+
+// t = digit * 16^(2 pos) * B for a digit in -8..8, reading all eight table entries whatever the digit.
+void SelectBase(Cached& t, const Consts& k, int pos, std::int32_t digit) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(digit) >> 31;              // 1 when negative
+    const std::int32_t negMask = -static_cast<std::int32_t>(sign);
+    const std::uint32_t babs = static_cast<std::uint32_t>((digit ^ negMask) - negMask);
+    fe::One(t.yplusx); fe::One(t.yminusx); fe::Zero(t.t2d);   // digit 0: the identity
+    for (int j = 0; j < 8; ++j) {
+        const std::uint32_t x = babs ^ static_cast<std::uint32_t>(j + 1);
+        const std::int64_t eq = static_cast<std::int64_t>((x - 1u) >> 31);   // 1 when babs == j + 1, else 0
+        CMoveCached(t, k.table[pos][j], eq);
+    }
+    Cached n;                                          // the negative: swap y+x and y-x, negate 2dxy
+    fe::Copy(n.yplusx, t.yminusx); fe::Copy(n.yminusx, t.yplusx); fe::Neg(n.t2d, t.t2d);
+    CMoveCached(t, n, static_cast<std::int64_t>(sign));
+    MemZero(&n, sizeof n);
+}
+
+// r = a * B for a 32-byte little-endian scalar a < 2^255 (clamped scalars and reduced scalars both are).
+void BaseMult(Point& r, const std::uint8_t a[32], const Consts& k) {
+    std::int32_t e[64];
+    for (int i = 0; i < 32; ++i) { e[2 * i] = a[i] & 15; e[2 * i + 1] = (a[i] >> 4) & 15; }
+    std::int32_t carry = 0;                            // digits 0..15 -> -8..8 with a carry upwards
+    for (int i = 0; i < 63; ++i) {
+        e[i] += carry;
+        carry = (e[i] + 8) >> 4;
+        e[i] -= carry * 16;
+    }
+    e[63] += carry;                                    // a < 2^255, so e[63] <= 8
+    Point h;
+    Cached t;
+    SetIdentity(h);
+    for (int i = 1; i < 64; i += 2) { SelectBase(t, k, i / 2, e[i]); AddCached(h, h, t); }
+    for (int i = 0; i < 4; ++i) PointDouble(h, h);     // times 16
+    for (int i = 0; i < 64; i += 2) { SelectBase(t, k, i / 2, e[i]); AddCached(h, h, t); }
+    r = h;
+    MemZero(e, sizeof e); MemZero(&h, sizeof h); MemZero(&t, sizeof t);
+}
+
+// r = s * p by 4-bit windows. NOT constant time (branches on the scalar): verification only,
+// where the scalar and the point are public.
+void ScalarMultPublic(Point& r, const Point& p, const std::uint8_t s[32], const Consts& k) {
+    Point tab[16];
+    SetIdentity(tab[0]);
+    tab[1] = p;
+    for (int i = 2; i < 16; ++i) PointAdd(tab[i], tab[i - 1], p, k.d2);
+    Point acc;
     SetIdentity(acc);
-    for (int bit = 255; bit >= 0; --bit) {
-        PointAdd(dbl, acc, acc, k);
-        PointAdd(sum, dbl, p, k);
-        SelectPoint(acc, dbl, sum, (scalar[bit >> 3] >> (bit & 7)) & 1);
+    for (int i = 63; i >= 0; --i) {
+        for (int j = 0; j < 4; ++j) PointDouble(acc, acc);
+        const int nib = (s[i >> 1] >> ((i & 1) * 4)) & 15;
+        if (nib) PointAdd(acc, acc, tab[nib], k.d2);
     }
     r = acc;
-    MemZero(&acc, sizeof acc); MemZero(&dbl, sizeof dbl); MemZero(&sum, sizeof sum);
+}
+
+Consts MakeConsts() {
+    using namespace fe;
+    Consts c;
+    Fe n, den, inv;
+    SetSmall(n, 121665);
+    SetSmall(den, 121666);
+    Invert(inv, den);
+    Mul(c.d, n, inv);
+    Neg(c.d, c.d);                                    // d = -121665/121666
+    fe::Add(c.d2, c.d, c.d);
+    // Base point: y = 4/5, x even (RFC 8032 encodes it as 0x58 then 0x66 x31).
+    std::uint8_t enc[32];
+    for (int i = 0; i < 32; ++i) enc[i] = 0x66;
+    enc[0] = 0x58;
+    Decode(c.base, c.d, enc);
+    Point bi = c.base;                                // 16^(2 i) * B
+    for (int i = 0; i < 32; ++i) {
+        Point acc = bi;
+        for (int j = 0; j < 8; ++j) {
+            ToCached(c.table[i][j], acc, c.d2);
+            PointAdd(acc, acc, bi, c.d2);
+        }
+        for (int j = 0; j < 8; ++j) PointDouble(bi, bi);   // * 256
+    }
+    return c;
 }
 
 const Consts& GetConsts() {
-    static const Consts k = [] {
-        using namespace fe;
-        Consts c;
-        Fe n, den, inv, zero;
-        Zero(zero);
-        Zero(n); n.v[0] = 121665 & 0xffff; n.v[1] = 121665 >> 16;
-        Zero(den); den.v[0] = 121666 & 0xffff; den.v[1] = 121666 >> 16;
-        Invert(inv, den);
-        Mul(c.d, n, inv);
-        Sub(c.d, zero, c.d);                          // d = -121665/121666
-        fe::Add(c.d2, c.d, c.d);
-        // Base point: y = 4/5, x even (RFC 8032 encodes it as 0x58 then 0x66 x31).
-        std::uint8_t enc[32];
-        for (int i = 0; i < 32; ++i) enc[i] = 0x66;
-        enc[0] = 0x58;
-        Point b;
-        Decode(b, c, enc);
-        c.base = b;
-        return c;
-    }();
+    static const Consts k = MakeConsts();
     return k;
-}
-
-// ---- scalars modulo the group order L = 2^252 + 27742317777372353535851937790883648493 ----
-const std::uint8_t kL[32] = {
-    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10};
-
-// r - L when r >= L, else r. Constant time (borrow chain and a mask).
-void CondSubL(std::uint8_t r[32]) {
-    std::uint8_t u[32];
-    std::uint32_t borrow = 0;
-    for (int i = 0; i < 32; ++i) {
-        const std::uint32_t d = static_cast<std::uint32_t>(r[i]) - kL[i] - borrow;
-        u[i] = static_cast<std::uint8_t>(d);
-        borrow = (d >> 31) & 1;
-    }
-    const std::uint8_t keepR = static_cast<std::uint8_t>(0u - borrow);   // 0xff when r < L
-    for (int i = 0; i < 32; ++i) r[i] = static_cast<std::uint8_t>((r[i] & keepR) | (u[i] & ~keepR));
-}
-
-// out = (little-endian integer of n bytes) mod L, by doubling-and-adding bit by bit.
-void ReduceL(std::uint8_t out[32], const std::uint8_t* in, std::size_t n) {
-    std::uint8_t r[32] = {0};
-    for (std::size_t bit = n * 8; bit-- > 0;) {
-        std::uint32_t carry = (in[bit >> 3] >> (bit & 7)) & 1;
-        for (int i = 0; i < 32; ++i) {                // r = 2r + bit (r < L so this stays < 2L < 2^254)
-            const std::uint32_t v = (static_cast<std::uint32_t>(r[i]) << 1) | carry;
-            r[i] = static_cast<std::uint8_t>(v);
-            carry = v >> 8;
-        }
-        CondSubL(r);
-    }
-    for (int i = 0; i < 32; ++i) out[i] = r[i];
-    MemZero(r, sizeof r);
-}
-
-// out = (r + a * b) mod L, with r, a, b 32-byte little-endian integers.
-void MulAddL(std::uint8_t out[32], const std::uint8_t r[32], const std::uint8_t a[32], const std::uint8_t b[32]) {
-    std::uint32_t acc[64] = {0};
-    for (int i = 0; i < 32; ++i)
-        for (int j = 0; j < 32; ++j) acc[i + j] += static_cast<std::uint32_t>(a[i]) * b[j];
-    for (int i = 0; i < 32; ++i) acc[i] += r[i];
-    std::uint8_t wide[64];
-    std::uint32_t carry = 0;
-    for (int i = 0; i < 64; ++i) {
-        const std::uint32_t v = acc[i] + carry;
-        wide[i] = static_cast<std::uint8_t>(v);
-        carry = v >> 8;
-    }
-    ReduceL(out, wide, 64);
-    MemZero(acc, sizeof acc); MemZero(wide, sizeof wide);
-}
-
-bool ScalarIsCanonical(const std::uint8_t s[32]) {   // public data: s < L
-    std::uint32_t borrow = 0;
-    for (int i = 0; i < 32; ++i) {
-        const std::uint32_t d = static_cast<std::uint32_t>(s[i]) - kL[i] - borrow;
-        borrow = (d >> 31) & 1;
-    }
-    return borrow == 1;
 }
 
 bool YIsCanonical(const std::uint8_t enc[32]) {      // public data: y < p, ignoring the sign bit
@@ -193,8 +230,8 @@ bool YIsCanonical(const std::uint8_t enc[32]) {      // public data: y < p, igno
 // A point of order 1, 2, 4 or 8 (including the identity): 8P is the identity.
 bool HasSmallOrder(const Consts& k, const std::uint8_t enc[32]) {
     Point p;
-    if (!Decode(p, k, enc)) return false;            // not a point at all: refused elsewhere
-    for (int i = 0; i < 3; ++i) PointAdd(p, p, p, k);
+    if (!Decode(p, k.d, enc)) return false;          // not a point at all: refused elsewhere
+    for (int i = 0; i < 3; ++i) PointDouble(p, p);
     return fe::IsZero(p.X) && fe::Equal(p.Y, p.Z);
 }
 
@@ -208,7 +245,7 @@ void Ed25519PublicFromSeed(std::uint8_t pk[32], const std::uint8_t seed[32]) {
     Sha512Hash(h, seed, 32);
     Clamp(h);
     Point A;
-    ScalarMult(A, k.base, h, k);
+    BaseMult(A, h, k);
     Encode(pk, A);
     MemZero(h, sizeof h); MemZero(&A, sizeof A);
 }
@@ -233,7 +270,7 @@ void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, con
     Clamp(h);                                         // h[0..32] = secret scalar a, h[32..64] = prefix
     {
         Point A;
-        ScalarMult(A, k.base, h, k);
+        BaseMult(A, h, k);
         Encode(pk, A);
         MemZero(&A, sizeof A);
     }
@@ -243,46 +280,43 @@ void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, con
         s.Update(h + 32, 32);
         if (n) s.Update(m, n);
         s.Final(digest);
-        ReduceL(r, digest, 64);
+        sc::Reduce64(r, digest);
     }
     Point R;
-    ScalarMult(R, k.base, r, k);
+    BaseMult(R, r, k);
     Encode(sig, R);
     {
         Sha512 s;
         s.Update(sig, 32); s.Update(pk, 32);
         if (n) s.Update(m, n);
         s.Final(digest);
-        ReduceL(kk, digest, 64);
+        sc::Reduce64(kk, digest);
     }
-    MulAddL(sig + 32, r, kk, h);                      // S = r + k a (mod L)
+    sc::MulAdd(sig + 32, kk, h, r);                   // S = k a + r (mod L)
     MemZero(h, sizeof h); MemZero(digest, sizeof digest); MemZero(r, sizeof r); MemZero(&R, sizeof R);
 }
 
 bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]) {
     const Consts& k = GetConsts();
-    if (!ScalarIsCanonical(sig + 32)) return false;
+    if (!sc::IsCanonical(sig + 32)) return false;
     if (HasSmallOrder(k, sig)) return false;
     if (!YIsCanonical(pk) || HasSmallOrder(k, pk)) return false;
     Point A;
-    if (!Decode(A, k, pk)) return false;
+    if (!Decode(A, k.d, pk)) return false;
     // -A
-    {
-        Fe z; fe::Zero(z);
-        fe::Sub(A.X, z, A.X); fe::Sub(A.T, z, A.T);
-    }
+    fe::Neg(A.X, A.X); fe::Neg(A.T, A.T);
     std::uint8_t digest[64], h[32];
     {
         Sha512 s;
         s.Update(sig, 32); s.Update(pk, 32);
         if (n) s.Update(m, n);
         s.Final(digest);
-        ReduceL(h, digest, 64);
+        sc::Reduce64(h, digest);
     }
     Point sB, hA, sum;
-    ScalarMult(sB, k.base, sig + 32, k);
-    ScalarMult(hA, A, h, k);
-    PointAdd(sum, sB, hA, k);
+    BaseMult(sB, sig + 32, k);                        // (public scalar through the constant-time path: fine)
+    ScalarMultPublic(hA, A, h, k);
+    PointAdd(sum, sB, hA, k.d2);
     std::uint8_t enc[32];
     Encode(enc, sum);
     return ConstantTimeEqual(enc, sig, 32);

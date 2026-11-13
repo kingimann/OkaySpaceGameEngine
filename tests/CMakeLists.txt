@@ -2444,8 +2444,28 @@ add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)
-target_link_libraries(test_crypto PRIVATE okay::engine)
+target_link_libraries(test_crypto PRIVATE okay::crypto)
 add_test(NAME crypto COMMAND test_crypto)
+
+# The internal arithmetic: the 51-bit and the portable 16-bit field against each other, the Barrett scalar
+# reduction against a bit-by-bit reference (includes engine/src/Crypto headers; needs __int128).
+add_executable(test_crypto_field test_crypto_field.cpp)
+target_include_directories(test_crypto_field PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME crypto_field COMMAND test_crypto_field)
+# The whole primitive test again with the portable 16-bit field forced on (what MSVC and WebAssembly use),
+# so the fallback cannot rot: the same sources compiled with OKAY_CRYPTO_FE16.
+add_executable(test_crypto_fe16 test_crypto.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Util.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Random.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/ChaCha20.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Poly1305.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Aead.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Blake2b.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha256.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/X25519.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Ed25519.cpp)
+target_include_directories(test_crypto_fe16 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_crypto_fe16 PRIVATE OKAY_CRYPTO_FE16)
+if(WIN32)
+    target_link_libraries(test_crypto_fe16 PRIVATE bcrypt)
+endif()
+add_test(NAME crypto_fe16 COMMAND test_crypto_fe16)
 
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
 # smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
@@ -2453,13 +2473,13 @@ add_test(NAME crypto COMMAND test_crypto)
 option(OKAY_CRYPTO_LIBFUZZER "Build the okay::crypto libFuzzer target (clang -fsanitize=fuzzer)" OFF)
 if(OKAY_CRYPTO_LIBFUZZER)
     add_executable(fuzz_crypto fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto PRIVATE okay::crypto)
     target_compile_definitions(fuzz_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER)
     target_compile_options(fuzz_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
     target_link_options(fuzz_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
 else()
     add_executable(fuzz_crypto_smoke fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::crypto)
     add_test(NAME crypto_fuzz_smoke COMMAND fuzz_crypto_smoke 300)
 endif()
 
@@ -2475,13 +2495,13 @@ if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find t
 endif()
 if(_okay_xc_sodium)
     add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
-    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
 add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)
-target_link_libraries(crypto_xcheck_tool PRIVATE okay::engine)
+target_link_libraries(crypto_xcheck_tool PRIVATE okay::crypto)
 set(_okay_xc_python "")
 foreach(_py IN ITEMS python3 /usr/bin/python3 python)
     if(NOT _okay_xc_python)
@@ -2497,6 +2517,15 @@ if(_okay_xc_python)
              COMMAND ${_okay_xc_python} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/crypto_xcheck.py $<TARGET_FILE:crypto_xcheck_tool> 1500)
 else()
     message(STATUS "OkaySpace tests: python 'cryptography' not found; crypto_python_xcheck skipped")
+endif()
+
+# Benchmark (not a test): microseconds per operation, next to libsodium when it is installed.
+add_executable(bench_crypto bench_crypto.cpp)
+target_link_libraries(bench_crypto PRIVATE okay::crypto)
+if(_okay_xc_sodium)
+    target_link_libraries(bench_crypto PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(bench_crypto SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(bench_crypto PRIVATE OKAY_BENCH_SODIUM)
 endif()
 
 # The existing SecureChannel test, compiled once per backend IN THE SAME BUILD (tests/test_net_crypto_*.cpp

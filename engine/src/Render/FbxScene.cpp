@@ -136,6 +136,11 @@ struct Conv {
 // ---------------------------------------------------------------------------
 typedef std::int64_t Id;
 
+// Numbers from a file are doubles: converting one that is out of range (or NaN) to an integer is undefined,
+// so every such conversion goes through these.
+inline int SafeInt(double v) { return !(v == v) ? 0 : v < -1e9 ? -1000000000 : v > 1e9 ? 1000000000 : (int)v; }
+inline Id ToId(double v) { return !(v == v) ? 0 : v < -9e18 ? -9000000000000000000LL : v > 9e18 ? 9000000000000000000LL : (Id)v; }
+
 struct Props {
     std::unordered_map<std::string, std::vector<double>> num;
     std::unordered_map<std::string, std::string> str;
@@ -286,6 +291,8 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
             for (int j = 0; j < m && !inside; ++j) {
                 const int p = idx[(std::size_t)j];
                 if (p == a || p == b || p == c) continue;
+                auto same = [&](int o) { return std::fabs(X(p) - X(o)) < 1e-12 && std::fabs(Y(p) - Y(o)) < 1e-12; };
+                if (same(a) || same(b) || same(c)) continue;   // a bridge into a hole repeats corners at the same spot: not inside
                 if (cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0) inside = true;
             }
             if (!inside) ear = i;
@@ -309,6 +316,7 @@ struct Curve {
     std::vector<double> t, v;           // seconds, value
     std::vector<int> flags;             // per key
     std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file
+    bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
     double Eval(double time) const {
         const std::size_t n = t.size();
@@ -325,7 +333,7 @@ struct Curve {
         if (f & 0x4) return v[lo] + (v[hi] - v[lo]) * u;              // linear
         // cubic Hermite from the key tangents
         double m0 = sr[lo], m1 = sl[lo];
-        if (f & 0x300) {                                              // auto / TCB: derive from the neighbours
+        if ((f & 0x300) && !hasSlopes) {                              // auto / TCB without stored slopes: derive from the neighbours
             m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, flags[hi]);
         }
         const double u2 = u * u, u3 = u2 * u;
@@ -369,7 +377,7 @@ struct Builder {
         for (const Elem& e : o->children) {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;
-            const Id id = (Id)e.props[0].Num();
+            const Id id = ToId(e.props[0].Num());
             if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s, e.name);
             if (e.props.size() > 2 && e.props[2].type == 'S') ob.sub = e.props[2].s;
             LoadProps(e, ob.props);
@@ -382,7 +390,7 @@ struct Builder {
         if (c) for (const Elem& e : c->children) {
             if (e.name != "C" || e.props.size() < 3 || e.props[0].type != 'S') continue;
             if (!e.props[1].IsNumber() || !e.props[2].IsNumber()) continue;
-            Conn cn; cn.child = (Id)e.props[1].Num(); cn.parent = (Id)e.props[2].Num();
+            Conn cn; cn.child = ToId(e.props[1].Num()); cn.parent = ToId(e.props[2].Num());
             cn.propLink = e.props[0].s == "OP";
             if (e.props.size() > 3 && e.props[3].type == 'S') cn.prop = e.props[3].s;
             conns.push_back(std::move(cn));
@@ -395,9 +403,9 @@ struct Builder {
     void Settings() {
         Props gp;
         if (const Elem* g = doc.root.Find("GlobalSettings")) LoadProps(*g, gp);
-        sc.settings.upAxis = (int)gp.Get("UpAxis", 1);       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.frontAxis = (int)gp.Get("FrontAxis", 2); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.coordAxis = (int)gp.Get("CoordAxis", 0); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.upAxis = SafeInt(gp.Get("UpAxis", 1));       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.frontAxis = SafeInt(gp.Get("FrontAxis", 2)); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.coordAxis = SafeInt(gp.Get("CoordAxis", 0)); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.unitScaleFactor = gp.Get("UnitScaleFactor", 1.0);
         if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = cr->props[0].s;
         if (!opt.convertToYUpMeters) { sc.settings.appliedScale = 1.0; return; }
@@ -420,7 +428,7 @@ struct Builder {
             Texture t; t.name = o.name;
             if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = f->props[0].s;
             if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = f->props[0].s;
-            const Id id = (Id)o.e->props[0].Num();
+            const Id id = ToId(o.e->props[0].Num());
             auto pit = parentsOf.find(id);   // Video -> Texture
             for (const Conn* c : childrenOf[id]) {   // children of the texture: Video
                 const Obj* v = Get(c->child);
@@ -453,7 +461,7 @@ struct Builder {
                 const double sh = std::max(0.0, p.Get(sn, 0.0));
                 m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, 1.0 - std::sqrt(sh) * 0.1));
             }
-            const Id id = (Id)o.e->props[0].Num();
+            const Id id = ToId(o.e->props[0].Num());
             for (const Conn* c : childrenOf[id]) {   // textures plugged into this material
                 const Obj* t = Get(c->child);
                 if (!t || t->cls != "Texture" || !c->propLink) continue;
@@ -491,7 +499,7 @@ struct Builder {
         // parent of each model (first Model parent wins; id 0 = scene root)
         std::unordered_map<Id, Id> parentOf;
         for (std::size_t mi : models) {
-            const Id id = (Id)objs[mi].e->props[0].Num();
+            const Id id = ToId(objs[mi].e->props[0].Num());
             Id par = 0;
             auto it = parentsOf.find(id);
             if (it != parentsOf.end()) for (const Conn* c : it->second) {
@@ -505,7 +513,7 @@ struct Builder {
         // children in file order; roots first, then anything caught in a parent cycle
         std::unordered_map<Id, std::vector<Id>> kids;
         std::vector<Id> rootIds, order;
-        for (std::size_t mi : models) { const Id id = (Id)objs[mi].e->props[0].Num(); if (parentOf[id] == 0) rootIds.push_back(id); else kids[parentOf[id]].push_back(id); }
+        for (std::size_t mi : models) { const Id id = ToId(objs[mi].e->props[0].Num()); if (parentOf[id] == 0) rootIds.push_back(id); else kids[parentOf[id]].push_back(id); }
         std::unordered_map<Id, int> depth; std::unordered_set<Id> seen;
         auto walk = [&](Id start) -> bool {
             std::vector<Id> stack{start}; depth[start] = 1;
@@ -521,7 +529,7 @@ struct Builder {
         };
         for (Id r : rootIds) if (!walk(r)) return Fail("node hierarchy too deep");
         for (std::size_t mi : models) {   // cycle members: promote to roots
-            const Id id = (Id)objs[mi].e->props[0].Num();
+            const Id id = ToId(objs[mi].e->props[0].Num());
             if (!seen.count(id)) { parentOf[id] = 0; rootIds.push_back(id); if (!walk(id)) return Fail("node hierarchy too deep"); }
         }
         // `order` is depth-first pre-order per root already, but a promoted cycle root may have been walked
@@ -544,7 +552,7 @@ struct Builder {
             p.Vec3("RotationOffset", x.roff, 0); p.Vec3("RotationPivot", x.rp, 0);
             p.Vec3("ScalingOffset", x.soff, 0); p.Vec3("ScalingPivot", x.sp, 0);
             p.Vec3("GeometricTranslation", x.gt, 0); p.Vec3("GeometricRotation", x.gr, 0); p.Vec3("GeometricScaling", x.gs, 1);
-            x.order = (int)p.Get("RotationOrder", 0);
+            x.order = SafeInt(p.Get("RotationOrder", 0));
         }
         // a first pass for world matrices happens in Finish()
         return true;
@@ -656,7 +664,7 @@ struct Builder {
         }
 
         // skin + blend shapes
-        const Id gid = (Id)g.props[0].Num();
+        const Id gid = ToId(g.props[0].Num());
         bool haveSkin = false;
         for (const Conn* c : childrenOf[gid]) {
             const Obj* d = Get(c->child);
@@ -667,11 +675,11 @@ struct Builder {
                 const Mat g2n = Mul(Translate(xp[modelNode].gt[0], xp[modelNode].gt[1], xp[modelNode].gt[2]),
                                     Mul(Euler(xp[modelNode].gr, 0), ScaleM(xp[modelNode].gs[0], xp[modelNode].gs[1], xp[modelNode].gs[2])));
                 std::uint32_t ci = 0;
-                for (const Conn* cc : childrenOf[(Id)d->e->props[0].Num()]) {
+                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
                     const Obj* cl = Get(cc->child);
                     if (!cl || cl->cls != "Deformer" || cl->sub != "Cluster" || cc->propLink) continue;
                     Cluster cluster;
-                    for (const Conn* bc : childrenOf[(Id)cl->e->props[0].Num()]) {
+                    for (const Conn* bc : childrenOf[ToId(cl->e->props[0].Num())]) {
                         auto nm = nodeOfModel.find(bc->child);
                         if (nm != nodeOfModel.end() && !bc->propLink) { cluster.boneNode = nm->second; break; }
                     }
@@ -692,12 +700,12 @@ struct Builder {
                 for (auto& w : m.skinWeights) std::stable_sort(w.begin(), w.end(), [](const Influence& a, const Influence& b) { return a.weight > b.weight; });
                 if (m.clusters.empty()) m.skinWeights.clear();
             } else if (d->sub == "BlendShape") {
-                for (const Conn* cc : childrenOf[(Id)d->e->props[0].Num()]) {
+                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
                     const Obj* ch = Get(cc->child);
                     if (!ch || ch->cls != "Deformer" || ch->sub != "BlendShapeChannel" || cc->propLink) continue;
                     BlendChannel bc; bc.name = ch->name; bc.weight = ch->props.Get("DeformPercent", 0.0) * 0.01;
                     const Obj* shape = nullptr;
-                    for (const Conn* sc2 : childrenOf[(Id)ch->e->props[0].Num()]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
+                    for (const Conn* sc2 : childrenOf[ToId(ch->e->props[0].Num())]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
                     if (shape) {
                         const std::vector<double>* ix = ArrayOf(*shape->e, "Indexes");
                         const std::vector<double>* dv = ArrayOf(*shape->e, "Vertices");
@@ -715,7 +723,7 @@ struct Builder {
                             }
                         }
                     }
-                    chanOfObj[(Id)ch->e->props[0].Num()] = {(int)sc.meshes.size(), (int)m.channels.size()};
+                    chanOfObj[ToId(ch->e->props[0].Num())] = {(int)sc.meshes.size(), (int)m.channels.size()};
                     m.channels.push_back(std::move(bc));
                 }
             }
@@ -734,7 +742,7 @@ struct Builder {
                 if (o && o->cls == "Geometry" && o->sub == "Mesh") { geo = o; break; }
             }
             if (!geo) continue;
-            const Id gid = (Id)geo->e->props[0].Num();
+            const Id gid = ToId(geo->e->props[0].Num());
             auto it = meshOfGeom.find(gid);
             if (it != meshOfGeom.end()) { sc.nodes[ni].mesh = it->second; continue; }
             Mesh m;
@@ -773,13 +781,13 @@ struct Builder {
                 prev = t;
                 c.t.push_back(t); c.v.push_back((*kv)[i]);
                 int flags = 0x8;
-                if (fl && !fl->empty()) flags = (int)(*fl)[std::min(seg[i], fl->size() - 1)];
+                if (fl && !fl->empty()) flags = SafeInt((*fl)[std::min(seg[i], fl->size() - 1)]);
                 c.flags.push_back(flags);
                 double r = 0, l = 0;
-                if (da && (seg[i] * 4 + 1) < da->size()) { r = (*da)[seg[i] * 4]; l = (*da)[seg[i] * 4 + 1]; }
+                if (da && (seg[i] * 4 + 1) < da->size()) { r = (*da)[seg[i] * 4]; l = (*da)[seg[i] * 4 + 1]; c.hasSlopes = true; }
                 c.sr.push_back(r); c.sl.push_back(l);
             }
-            curveOf[(Id)o.e->props[0].Num()] = (int)curveStore.size();
+            curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
             curveStore.push_back(std::move(c));
         }
         // curve nodes
@@ -787,7 +795,7 @@ struct Builder {
         for (const Obj& o : objs) {
             if (o.cls != "AnimationCurveNode") continue;
             CurveNode cn;
-            const Id id = (Id)o.e->props[0].Num();
+            const Id id = ToId(o.e->props[0].Num());
             o.props.Vec3("d|X", cn.def, 0);
             if (o.props.Has("d|DeformPercent")) cn.def[0] = o.props.Get("d|DeformPercent", 0);
             for (const Conn* c : childrenOf[id]) {   // curves feeding it
@@ -810,12 +818,12 @@ struct Builder {
         // stacks -> layers -> curve nodes
         for (const Obj& st : objs) {
             if (st.cls != "AnimationStack") continue;
-            const Id sid = (Id)st.e->props[0].Num();
+            const Id sid = ToId(st.e->props[0].Num());
             std::vector<Layr> layers;
             for (const Conn* c : childrenOf[sid]) {
                 const Obj* l = Get(c->child);
                 if (!l || l->cls != "AnimationLayer" || c->propLink) continue;
-                Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = (int)l->props.Get("BlendMode", 0.0);
+                Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
                 layers.push_back(ly);
             }
             struct NodeCN { int layer; int which; const CurveNode* cn; };      // which: 0 T, 1 R, 2 S
@@ -838,6 +846,12 @@ struct Builder {
                 }
             if (perNode.empty() && blendCns.empty()) continue;
             if (t1 < t0) continue;
+            // A take has its own time span (LocalStart / LocalStop): several takes can share one timeline
+            // and their curves, so the span, not the keys, says which part of the curves a take plays.
+            if (st.props.Has("LocalStop")) {
+                const double a = st.props.Get("LocalStart", 0.0) / kKTimePerSec, b = st.props.Get("LocalStop", 0.0) / kKTimePerSec;
+                if (std::isfinite(a) && std::isfinite(b) && b > a) { t0 = a; t1 = b; }
+            }
             Clip clip; clip.name = st.name;
             const double dur = t1 - t0;
             std::size_t samples = (std::size_t)std::max(1.0, std::ceil(dur * opt.bakeRate));

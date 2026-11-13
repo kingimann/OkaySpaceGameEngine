@@ -243,6 +243,38 @@ static void DirectTests() {
         // file is cm: meters = cm * 0.01
         CHECK(Near(ox, p[0] * 0.01, 1e-9) && Near(oy, p[1] * 0.01, 1e-9) && Near(oz, p[2] * 0.01, 1e-9));
     } else CHECK(false);
+
+    // Found with real files. A bridge polygon (a square with a hole written as one polygon, corners repeated):
+    // ear clipping must not give up on the coincident corners; the area is 16 - 4.
+    RUN_SUITE("fbx scene: bridge polygon, takes with their own time span, byte-array property");
+    {
+        fbx::Scene br;
+        CHECK(fbx::LoadFile(Fx("bridge_bin.fbx"), br, &err));
+        if (!br.meshes.empty()) CHECK(Near(MeshArea(br.meshes[0]), 12.0 * 0.0001, 1e-9));   // centimetres to metres: x 0.01 on both axes
+    }
+    {
+        // three takes over one set of curves (x: 0 at t=0, 10 at t=1, 0 at t=2): "first" plays [0, 1],
+        // "second" [1, 2], "whole" has no span of its own. The header holds a 'c' (byte array) thumbnail.
+        fbx::Scene tk;
+        CHECK(fbx::LoadFile(Fx("takes_bin.fbx"), tk, &err));
+        CHECK(tk.clips.size() == 3);
+        if (tk.clips.size() == 3) {
+            const double want[3] = {1.0, 1.0, 2.0};
+            for (int c = 0; c < 3; ++c) {
+                CHECK(Near(tk.clips[(std::size_t)c].duration, want[c], 1e-9));
+                CHECK(tk.clips[(std::size_t)c].nodes.size() == 1);
+                if (tk.clips[(std::size_t)c].nodes.size() != 1) continue;
+                const auto& keys = tk.clips[(std::size_t)c].nodes[0].translation;
+                CHECK(!keys.empty() && Near(keys.front().time, 0.0));
+                CHECK(Near(keys.back().time, want[c], 1e-6));
+                // x translation in metres: 10 cm at the peak; sample at the middle of each clip
+                auto at = [&](double t) { double best = 1e9, v = 0; for (const auto& k : keys) if (std::fabs(k.time - t) < best) { best = std::fabs(k.time - t); v = k.v[0]; } return v; };
+                if (c == 0) { CHECK(Near(at(0.0), 0.0, 1e-9)); CHECK(Near(at(1.0), 0.10, 1e-9)); }       // rises 0 -> 10 cm
+                if (c == 1) { CHECK(Near(at(0.0), 0.10, 1e-9)); CHECK(Near(at(1.0), 0.0, 1e-9)); }       // starts at the peak, falls back
+                if (c == 2) { CHECK(Near(at(1.0), 0.10, 1e-9)); CHECK(Near(at(2.0), 0.0, 1e-9)); }
+            }
+        }
+    }
 }
 
 // ---- ufbx vs ours -----------------------------------------------------------------------
@@ -276,9 +308,10 @@ static ImportStats Collect(Scene& s, GameObject* root) {
         if (auto* ma = g->GetComponent<ModelAnimator>()) { st.clips += (int)ma->clips.size(); for (auto& c : ma->clips) st.tracks += (int)c.nodes.size(); }
     }
     return st;
+
 }
 
-static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, const std::string& what) {
+static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, const std::string& what, double tol = 2e-3) {
     auto* mu = ru->GetComponent<ModelAnimator>();
     auto* mo = ro->GetComponent<ModelAnimator>();
     if (!mu || !mo) { CHECK((mu == nullptr) == (mo == nullptr)); return; }
@@ -293,6 +326,9 @@ static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, c
             for (auto& x : co.nodes) if (x.node == nu.node) no = &x;
             if (!no) { std::cerr << "  (" << what << ") ufbx clip has a track for " << nu.node << " that ours lacks\n"; CHECK(false); continue; }
             for (float t : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.9f}) {
+                // ufbx's bake keeps the keys after the end of a take's time span; ours cuts the clip at the span
+                float ownLen = 0; for (auto& x : co.nodes) ownLen = std::max(ownLen, x.clip.Length());
+                if (t > ownLen + 1e-4f) continue;
                 for (const char* tr : {"position.x", "position.y", "position.z", "scale.x", "scale.y", "scale.z", "weights.0"}) {
                     bool f1 = false, f2 = false;
                     const float a = nu.clip.Evaluate(tr, t, f1), b = no->clip.Evaluate(tr, t, f2);
@@ -306,8 +342,8 @@ static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, c
                 if (q1 && q2) { worst = std::max(worst, 1.0 - std::fabs((double)ux * ox + (double)uy * oy + (double)uz * oz + (double)uw * ow)); ++compared; }
             }
         }
-        if (worst > 2e-3) std::cerr << "  (" << what << ") clip " << cu.name << " worst difference " << worst << "\n";
-        CHECK(worst < 2e-3);
+        if (worst > tol) std::cerr << "  (" << what << ") clip " << cu.name << " worst difference " << worst << "\n";
+        CHECK(worst < tol);
         CHECK(compared > 0);
     }
 }
@@ -318,9 +354,27 @@ static void CompareWithUfbx() {
     std::vector<std::string> paths;
     for (auto& e : fs::directory_iterator(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx")) if (e.path().extension() == ".fbx") paths.push_back(e.path().string());
     std::sort(paths.begin(), paths.end());
-    for (const std::string& path : paths) {
+    // Real exporter files, when OKAY_MODEL_CORPUS names a directory of them (docs/model_corpus.md): the same checks.
+    // transparentTest.fbx is a damaged file (NUL bytes replaced by spaces); neither reader can open it.
+    std::vector<std::string> real;
+    if (const char* root = std::getenv("OKAY_MODEL_CORPUS"); root && *root) {
+        for (auto& e : fs::recursive_directory_iterator(root)) {
+            std::string x = e.path().extension().string();
+            for (char& c : x) c = (char)std::tolower((unsigned char)c);
+            if (e.is_regular_file() && x == ".fbx" && e.path().filename() != "transparentTest.fbx") real.push_back(e.path().string());
+        }
+        std::sort(real.begin(), real.end());
+        std::cout << "  " << real.size() << " real FBX files from OKAY_MODEL_CORPUS\n";
+    }
+    const std::size_t fixtureCount = paths.size();
+    paths.insert(paths.end(), real.begin(), real.end());
+    for (std::size_t pi = 0; pi < paths.size(); ++pi) {
+        const std::string& path = paths[pi];
+        const bool isReal = pi >= fixtureCount;
         ++files;
         const std::string what = fs::path(path).filename().string();
+        // ufbx keeps a clip for a take whose curves animate only custom properties (a constant pose); ours drops it
+        const bool clipsMayDiffer = what == "box_orphant_embedded_texture.fbx" || what == "box_embedded_texture_fragmented.fbx";
         fbx::Scene direct; std::string err;
         const bool ownLoads = fbx::LoadFile(path, direct, &err);
         if (!ownLoads) std::cerr << "  (" << what << ") own reader: " << err << "\n";
@@ -344,16 +398,16 @@ static void CompareWithUfbx() {
         same("meshes", a.meshes, b.meshes, 0);
         same("skinned meshes", a.skinned, b.skinned, 0);
         same("joints", a.joints, b.joints, 0);
-        same("vertices", a.verts, b.verts, 0);
+        // ufbx keeps a few more duplicate vertices than we weld on real files
+        same("vertices", a.verts, b.verts, isReal ? 0.005 * a.verts : 0);
         same("triangles", a.tris, b.tris, 0);
         same("blend shape hosts", a.blend, b.blend, 0);
-        same("clips", a.clips, b.clips, 0);
-        same("clip node tracks", a.tracks, b.tracks, 0);
+        if (!clipsMayDiffer) { same("clips", a.clips, b.clips, 0); same("clip node tracks", a.tracks, b.tracks, 0); }
         for (int k = 0; k < 3; ++k) { same("bbox lo", a.lo[k], b.lo[k], 1e-4 * (1 + std::fabs(a.lo[k]))); same("bbox hi", a.hi[k], b.hi[k], 1e-4 * (1 + std::fabs(a.hi[k]))); }
-        same("surface area", a.area, b.area, 1e-4 * (1 + a.area));
+        same("surface area", a.area, b.area, (isReal ? 2e-3 : 1e-4) * (1 + a.area));   // real files: quads split along the other diagonal differ slightly
         auto na = a.names, nb = b.names; std::sort(na.begin(), na.end()); std::sort(nb.begin(), nb.end());
         CHECK(na == nb);
-        CompareClips(su, ru, so, ro, what);
+        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/own_fbx_reader.md)
 
         // skinned vertex data: weights and inverse binds
         for (const auto& up : su.Objects()) {
@@ -368,13 +422,13 @@ static void CompareWithUfbx() {
             CHECK(sa->inverseBind.size() == sb->inverseBind.size());
             for (std::size_t i = 0; i < std::min(sa->inverseBind.size(), sb->inverseBind.size()); ++i)
                 for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) CHECK_NEAR(sa->inverseBind[i].at(c, r), sb->inverseBind[i].at(c, r), 1e-4);
-            CHECK(sa->bind.vertices.size() == sb->bind.vertices.size());
-            if (sa->bind.vertices.size() == sb->bind.vertices.size() && sa->bind.uvs.size() == sa->bind.vertices.size() && sb->bind.uvs.size() == sb->bind.vertices.size()) {
+            if (!isReal) CHECK(sa->bind.vertices.size() == sb->bind.vertices.size());
+            if ((isReal || sa->bind.vertices.size() == sb->bind.vertices.size()) && sa->bind.uvs.size() == sa->bind.vertices.size() && sb->bind.uvs.size() == sb->bind.vertices.size()) {
                 // Vertex order may differ (each side dedupes in its own order): match vertices by
                 // position + normal + uv, then compare their influences as joint -> weight maps.
-                auto key = [](const Mesh& m, std::size_t i) {
+                auto key = [isReal](const Mesh& m, std::size_t i) {
                     char buf[160];
-                    std::snprintf(buf, sizeof(buf), "%.5f,%.5f,%.5f|%.4f,%.4f,%.4f|%.4f,%.4f", m.vertices[i].x, m.vertices[i].y, m.vertices[i].z,
+                    std::snprintf(buf, sizeof(buf), isReal ? "%.3f,%.3f,%.3f|%.2f,%.2f,%.2f|%.3f,%.3f" : "%.5f,%.5f,%.5f|%.4f,%.4f,%.4f|%.4f,%.4f", m.vertices[i].x, m.vertices[i].y, m.vertices[i].z,
                                   m.normals.size() > i ? m.normals[i].x : 0.f, m.normals.size() > i ? m.normals[i].y : 0.f, m.normals.size() > i ? m.normals[i].z : 0.f, m.uvs[i].x, m.uvs[i].y);
                     return std::string(buf);
                 };
@@ -405,8 +459,10 @@ static void CompareWithUfbx() {
         fbx::SetOwnReaderEnabled(true);  Mesh mb = ImportModel(path, &m2, &t2);
         fbx::SetOwnReaderEnabled(false);
         CHECK(m1 && m2);
-        CHECK(ma.vertices.size() == mb.vertices.size() && ma.triangles.size() == mb.triangles.size());
-        CHECK(ma.normals.size() == mb.normals.size() && ma.uvs.size() == mb.uvs.size());
+        if (isReal) CHECK(std::fabs((double)ma.vertices.size() - (double)mb.vertices.size()) <= 0.005 * (double)ma.vertices.size() && ma.triangles.size() == mb.triangles.size());
+        else CHECK(ma.vertices.size() == mb.vertices.size() && ma.triangles.size() == mb.triangles.size());
+        CHECK(ma.normals.size() == ma.vertices.size() ? mb.normals.size() == mb.vertices.size() : mb.normals.empty());
+        CHECK(ma.uvs.size() == ma.vertices.size() ? mb.uvs.size() == mb.vertices.size() : mb.uvs.empty());
     }
     CHECK(files >= 6);
 }

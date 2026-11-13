@@ -80,9 +80,11 @@ std::string ImportableExtensions() {
 #endif
         return out;
     }();
-    if ((" " + list + " ").find(" .dae ") == std::string::npos && EffectiveImportBackend(".dae") == ImportBackend::Own)
-        return list + " .dae";
-    return list;
+    std::string res = list;
+    for (const char* opt : {".dae", ".3ds", ".bvh"})
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    return res;
 }
 
 static std::string Lower(std::string s) {
@@ -380,22 +382,36 @@ constexpr bool kOwnColladaDefault = true;
 #else
 constexpr bool kOwnColladaDefault = false;
 #endif
+#ifdef OKAY_OWN_3DS_DEFAULT
+constexpr bool kOwn3dsDefault = true;
+#else
+constexpr bool kOwn3dsDefault = false;
+#endif
+#ifdef OKAY_OWN_BVH_DEFAULT
+constexpr bool kOwnBvhDefault = true;
+#else
+constexpr bool kOwnBvhDefault = false;
+#endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae; -1 = no own reader.
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
     if (e == ".dae") return 3;
+    if (e == ".3ds") return 4;
+    if (e == ".bvh") return 5;
     return -1;
 }
-std::atomic<int> g_backendChoice[4] = {{0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
 
-// Our Collada reader is opt-in: run-time SetImportBackend, else OKAY_OWN_COLLADA=0/1, else the CMake option.
-bool OwnColladaOptedIn() {
-    bool v = kOwnColladaDefault;
-    if (const char* e = std::getenv("OKAY_OWN_COLLADA")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
+// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+bool OwnOptedIn(int slot) {
+    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
+    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+    if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
 
@@ -433,8 +449,8 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s == 3) {   // Collada: off by default; Assimp reads it when the build has it
-        if (OwnColladaOptedIn()) return ImportBackend::Own;
+    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+        if (OwnOptedIn(s)) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
     if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
@@ -459,7 +475,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
-                                                                                                         : ReadColladaFile(path, out, &e1, flatten);
+                  : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
+                  : ReadBvhFile(path, out, &e1);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -474,9 +491,15 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (err) *err = e1;
         return false;
     }
-    if (err) *err = ExtensionOf(path) == ".dae"
-        ? "no Collada reader enabled: our own reader is off by default (set OKAY_OWN_COLLADA=1, build with -DOKAY_OWN_COLLADA=ON, or call SetImportBackend(\".dae\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON"
-        : "no reader for this format in this build";
+    if (err) {
+        const std::string x = ExtensionOf(path);
+        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
+        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        if (nm)
+            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+        else *err = "no reader for this format in this build";
+    }
     return false;
 }
 
@@ -531,7 +554,8 @@ void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
 } // namespace
 
 GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
-    if (model.parts.empty()) return nullptr;
+    // A skeleton-only model (BVH motion capture) has nodes and clips but no mesh.
+    if (model.parts.empty() && (model.nodes.empty() || model.clips.empty())) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
 
     if (model.nodes.empty()) {

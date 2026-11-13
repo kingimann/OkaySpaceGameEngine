@@ -202,6 +202,8 @@ add_library(okay_engine
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp
+    src/Render/Max3dsReader.cpp
+    src/Render/BvhReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -475,6 +477,16 @@ endif()
 if(OKAY_OWN_COLLADA)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
+endif()
+# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
+# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_3DS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
+endif()
+if(OKAY_OWN_BVH)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

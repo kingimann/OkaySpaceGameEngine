@@ -207,7 +207,7 @@ int main() {
         std::vector<std::string> seeds;
         for (const char* f : {"cube.obj", "cube.mtl", "plain.obj", "cube_ascii.stl", "cube_binary.stl", "two_solids.stl",
                               "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply",
-                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae"})
+                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae", "strips_concave.dae"})
             seeds.push_back(Slurp(kDir + f));
         int ran = 0, accepted = 0;
         for (const std::string& s : seeds) {

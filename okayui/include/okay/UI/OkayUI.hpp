@@ -72,6 +72,13 @@ struct Input {
     float       displayH  = 0.0f;
     bool        keyDown[KeyId_COUNT] = {};   // which named keys are held this frame (see KeyId); Ctrl/Shift also follow `ctrl` / `shift`
     double      time      = 0.0;       // seconds since start (for double clicks and GetTime); 0 = derive from the frame count at 60 fps
+    // Input method (IME) composition. While the user is composing, the host passes the current preedit text EVERY frame (it is a state,
+    // not an edge): the focused text field or CodeEdit shows it underlined at the caret and the keys (Backspace, arrows, Enter,
+    // Escape, ...) are left to the input method. Passing null or "" ends the composition; with nothing else that cancels it (the text
+    // is untouched). The finished text arrives once, in `commit`, and is inserted like typed text (replacing a selection).
+    const char* composition      = nullptr;   // preedit, UTF-8: control characters and invalid bytes are dropped, 256 bytes at most
+    int         compositionCaret = -1;        // byte offset of the caret inside `composition` (-1 or past the end: at its end)
+    const char* commit           = nullptr;   // text the input method committed this frame
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().
@@ -245,7 +252,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open =
 /// `cond` says when the call takes effect: always (and then the window cannot be dragged / resized), only the first time the
 /// window is ever seen, or each time it appears again after not being drawn for a frame.
 enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Appearing = 8 };
-enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2 };   // the only two flags OkayUI honours
+enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4 };   // the only flags OkayUI honours (no title bar: no collapse, close button or drag handle either; docked windows use it)
 
 void End();
 /// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
@@ -874,6 +881,17 @@ struct IO {
     float deltaTime = 1.0f / 60.0f;
 };
 const IO& GetIO();
+
+// ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
+/// This frame's preedit after cleaning (printable valid UTF-8 only, at most 256 bytes, caret moved onto a character boundary).
+struct Composition { char text[260] = {0}; int length = 0; int caret = 0; bool active = false; };
+Composition GetComposition();
+/// Where the focused text input's caret is on screen (pixels), and the span of the preedit (zero width when not composing). A host puts
+/// the system candidate window under `caret` (or `composition`). Valid for the frame just built, until the next BeginFrame; `valid` is
+/// false when no text input has the keyboard. Text fields and CodeEdit fill it; a custom text widget can with SetImeRect.
+struct ImeRect { bool valid = false; Rect caret, composition; };
+ImeRect GetImeRect();
+void SetImeRect(const ImeRect& r);
 /// Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
 void SetNextWindowPos(Vec2 pos, Cond cond = Cond_Always);
 void SetNextWindowSize(Vec2 size, Cond cond = Cond_Always);

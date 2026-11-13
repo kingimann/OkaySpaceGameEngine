@@ -110,7 +110,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 ## NOT DONE
 
-- **IME** (composition text, candidate window): none. Typed text arrives as finished characters only.
+- **IME** (composition text, candidate window): the widget shows the preedit, takes the commit and reports the caret rectangle (`docs/own_ui_toolkit.md` section 4.31); no host sends the events yet, so in a real window typed text still arrives as finished characters only.
 - **Ligatures**, **bidirectional text**, **wide-character cell widths**, **combining-mark clusters**.
 - **Multiple cursors** and **column (block) selection**.
 - **Code folding.**

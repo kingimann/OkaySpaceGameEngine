@@ -14,6 +14,15 @@ v2.864.0
     supports StreamingAssets and writes a build report (with a dry run). The
     player has --build-info.
 
+  Multiplayer
+  - Clients that stop hearing from the server time out cleanly instead of
+    hanging, and reliable ordered messages that arrive late are queued and
+    delivered in order.
+  - The relay limits how fast one address can re-send its hello, so a flood
+    from one address cannot starve other players. Network position deltas at
+    the edge of the number range no longer overflow.
+  - Respawn animations replay correctly for remote players.
+
   Engine
   - Hostile or damaged model files (FBX, GLB, PLY) no longer crash or hang:
     depth, node and animation limits are enforced and out-of-range numbers are

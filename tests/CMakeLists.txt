@@ -2554,3 +2554,7 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
+target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
+add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)

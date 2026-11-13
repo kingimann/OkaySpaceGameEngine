@@ -35,7 +35,6 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 ## Builtin parity
 
 Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1378 builtins are nodes.
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1363 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |

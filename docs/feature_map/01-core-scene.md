@@ -345,15 +345,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.16.2 CSV and build copy - `editor/LocalizationWindow.*` - Import/Export CSV for translators; Build Game copies the table and the fonts the languages name
   - 1.16.3 Preview language - `editor/LocalizationWindow.*` - toolbar language menu and pseudo-localize switch; the scene follows in Scene and Game views
   - 1.16.4 Inspector helpers - `editor/LocalizationWindow.*` - `LocalizedTextField`, `LocKeyInput`, `LocalizedSwitch` for Pause Menu, Hold Prompt and Loading Screen
-  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; not wired to the window (31.1, 31.3)
+  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `editor/LocalizationTools` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; the Localization window calls them (31.1, 31.3)
   - 1.16.6 Captions and accessibility settings - `Core/Subtitles`, `Core/AccessibilitySettings` - (#574) caption queue and settings; see 32.2 and 32.3
 - **Code:** `editor/LocalizationWindow.*`, `Scene/SceneLocalization`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `Core/Subtitles`, `Core/AccessibilitySettings`
 - **API:** `DrawLocalizationWindow`, `LocalizedTextField`, `LocKeyInput`, `CollectLocKeys`
 - **Editor:** View > Editors & Tools > Localization; toolbar language menu next to Build
 - **Docs:** `docs/localization.md`, `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_tools`
-- **Status:** Partial - the window, CSV and pseudo-localization exist (per docs/localization.md; read the header); the grid model, checker, scanner and previews are on main (#574) as engine code but `docs/localization_tools.md` says the window is not wired to them yet
-- **Open:** wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3), accessibility text scaling (area 32); tests for the window itself
+- **Tests:** `localization`, `loc_tools`, `loc_window`
+- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text). JSON in the window, a confirm step before CSV import, and the font coverage report are still out.
+- **Open:** JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
 - **Related:** 1.8, 31, 32, 15.6
 - **Words:** Localization window, translation table, CSV import, pseudo-localize, language preview, Find in Scene, missing key, translators, LocTable, LocCheck, LocScan, LocPreview, placeholder check, caption manager
 - **Seen as:** a translated text is cut off; unused keys pile up; a language shows empty cells

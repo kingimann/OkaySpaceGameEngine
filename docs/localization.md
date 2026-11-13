@@ -102,25 +102,43 @@ key, a column for its note and one per language.
 - Click a cell and type; the scene's texts follow as you type. Leaving the cell
   saves the table and makes one undo step: Ctrl+Z and Ctrl+Y undo and redo table
   edits while the window has focus. A line break shows as `\n` in a cell.
-- Cells a language has no text for are tinted. The bars above the grid show how
-  much of each language is translated; hover one for the count, click it for the
-  language's name, font and default, double-click it to preview it.
+- The bars above the grid show how much of each language is translated; hover
+  one for the count (including missing texts and placeholder mismatches), click
+  it for the language's name, font and default, double-click it to preview it.
 - **+ Key** adds a key with its text in the default language. Double-click a key
   (or right-click it) to rename it; texts in the scene that use the key follow
   the rename. Right-click > Delete removes it.
 - **+ Language** adds a language by its code (`fr`, `de`, `ja`, `pt-BR`) and name.
 - The search box matches keys, notes and texts. The filter shows every key, the
-  keys **missing in** one language, or the **unused** keys: keys that no text in
-  the open scene, no script or visual script, scene, prefab, dialogue graph or
-  quest file mentions (**Rescan** after editing scripts).
+  keys **missing in** one language, **placeholder mismatches** (`{0}` / `{name}`
+  different from the source text), text that is **same as source**, **unused**
+  keys, or **reported issues**.
+- Cells are coloured: red is missing, amber is a placeholder mismatch, blue is
+  the same as the source, purple is extra text. Hover a coloured cell for the
+  reason.
+- Under the filter, a line reports missing translations and placeholder
+  mismatches (and any other check warning: plurals, braces, length, whitespace).
+  **Show report** lists them, with one line per language that still has gaps;
+  click a row to select that key. **Scan project** (and **Rescan**) reads
+  scripts, scenes, prefabs, dialogue and quests, plus the open scene. After a
+  scan, **Unused** hides keys something mentions, and the report adds keys the
+  project uses that the table does not have. Built-in keys (`pause.`, `dlg.`,
+  `quest.` and the rest) are not called unused.
 - Select a key to see **Find in Scene**: a button per object that uses it, which
-  selects the object.
+  selects the object. When **Pseudo-localize** is on, or the preview language is
+  written right to left, the same row shows that key's preview: accented and
+  longer, in `[!!! ... !!!]` markers, and mirrored for Arabic, Hebrew, Persian
+  and Urdu. The preview does not change the table. The Scene view still follows
+  the toolbar language (its pseudo form uses plain brackets) and still draws
+  right-to-left text left to right.
 - **Add Dialogue & Quest Text** adds a key for every dialogue line, choice and
   speaker and every quest title, description and objective in the project, with
   the text typed in the graph or quest (see [Dialogue and quests](#dialogue-and-quests)).
-- **Pseudo-localize** previews every localized text accented and about 30%
-  longer, in brackets: `[Šţåŕţ~~]`. Text that gets cut off, and text that never
-  went through the table (it stays plain), stand out.
+- **Pseudo-localize** previews every localized text in the Scene view, accented
+  and about 30% longer, in brackets: `[Šţåŕţ~~]`. Text that gets cut off, and
+  text that never went through the table (it stays plain), stand out. The
+  selected key's own line is the marked form from the preview tool
+  (`[!!! Šţåŕţ~~ !!!]`), placeholders included.
 
 The toolbar's language menu (beside **Build**) switches the preview language of
 the Scene and Game views, and of Play.
@@ -133,7 +151,8 @@ spreadsheet programs keep accents. **Import CSV...** reads one back: the header
 row names the columns (`key`, `note` and language codes, in any order),
 separated by commas, semicolons or tabs. Fields with separators, quotes or line
 breaks are quoted, with `""` for a quote. Importing adds new keys and languages
-and replaces the texts it has; an empty cell keeps the text the table has. A column
+and replaces the texts it has; an empty cell keeps the text the table has. The
+status line says what the import did (filled, changed, new keys). A column
 headed `FR` or `pt_br` fills the table's `fr` or `pt-BR` instead of adding a second
 language, and the spreadsheet's "Unicode text" (UTF-16, tab separated) imports too.
 

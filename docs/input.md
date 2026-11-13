@@ -131,6 +131,12 @@ above it left. An action whose context is not pushed reads 0. Swallowing happens
 per input, so a UI that binds W takes W from Move but leaves A S D. A press that
 a context takes over from a held key ends the old action (`Up` fires).
 
+The pause menu is one consumer. While it is open it pushes a context named
+`Pause` in Block mode, so Jump, Move and the other gameplay actions do not fire.
+It pops that context when it closes, including when something else unpauses the
+game. Raw keys are unchanged, so Escape still toggles the menu.
+`Input::SetUICaptured` is set at the same time for code that reads the capture flag.
+
 Raw `Input.GetKey` is **not** affected, because scripts that read raw keys do not
 go through actions. Use `InputActions::KeyConsumed(key)` /
 `PadButtonConsumed(button, player)` to honour the stack from raw code, or read the

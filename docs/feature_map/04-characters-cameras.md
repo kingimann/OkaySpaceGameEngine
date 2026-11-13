@@ -19,7 +19,7 @@ Open pull request #554 (Grok's sessions, in flight) touches the controller panel
 - **API:** `PlayerController`, `PlayerView`, `FirstPersonController`, `ThirdPersonController`, `MoveSpeedScale`; scripts `set_view(0|1)`, `get_view()`, `SetViewMode(0|1|2)`; Add Component > Gameplay > Player Controller
 - **Editor:** Player Controller panel in the Inspector (View selector, Both section, movement, jump, sprint, crouch, prone, lean, slide, dodge, vault, foot IK, eye, orbit, Set Character Model...)
 - **Docs:** `docs/making_a_game.md` (The Player Controller, Controller movement extras)
-- **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`
+- **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`, `death_lock`
 - **Status:** Works - player_controller, view_upgrade and player tests cover the View modes, toggle and old-scene loading; I read PlayerController and PlayerView headers, not the full controllers
 - **Open:** in flight in #554 (Grok): controller panel gets an animation setup status; head and walk jitter are stated there as not fixed; a scene saved with the Player Controller records cannot be opened by a build from before that change (per docs)
 - **Related:** 4.2, 4.6, 4.7, 5.1, 5.6, 5.9, 16.8

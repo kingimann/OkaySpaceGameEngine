@@ -60,7 +60,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
 - **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
-- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`
+- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
 - **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3

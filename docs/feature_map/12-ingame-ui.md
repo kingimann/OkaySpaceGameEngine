@@ -173,7 +173,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
 - **Docs:** `docs/game_ui.md` (Loading screens)
-- **Tests:** `loading_screen`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
+- **Tests:** `loading_screen`, `loading_screen_layout`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
 - **Status:** Works - implemented and tested (headless loading logic, pause freeze and quit flag, pause card at three aspects)
 - **Open:** no known gaps; save-slot UI components (area 35) are not here
 - **Related:** 12.7, 7.4, 1.8, 35
@@ -194,7 +194,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Phones and tablets), `docs/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
-- **Open:** no on-screen controls (virtual joystick, D-pad, touch buttons) found; no test for `UITouchScroll` by name
+- **Open:** no on-screen controls (virtual joystick, D-pad, touch buttons) found; `UITouchScroll` itself is covered by `ui_touch_scroll`
 - **Related:** 12.1, 8.4, 18.2
 - **Words:** mobile, phone, tablet, safe area, notch, portrait, landscape, touch, emulator, device frame, resolution
 - **Seen as:** UI is tiny or cropped on a phone; buttons sit under the notch; finger scrolling does not work; the device preview shows the wrong insets

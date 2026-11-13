@@ -56,8 +56,8 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Editor Play mode does not feed function keys, Alt, Tab or left/right modifiers | `editor/main.cpp:47007-47027` builds keys by hand; the built game calls `okay::AppendSdlExtendedKeys(ks, down)` at `player/main.cpp:1890` | A game that binds F-keys, Alt or Tab works when built and silently fails in the editor Play button | High | Small |
 | Editor Play feeds one controller only | `editor/main.cpp:47025` (`FeedPad(g_pad.get(), down)`), player uses `pads.Feed` for all pads (`player/main.cpp:1891`) | Co-op controller games cannot be tested in the editor | Medium | Small |
 | No on-screen virtual stick, D-pad, or touch buttons; no pinch, swipe, long-press recognisers | no matches for joystick, gesture or swipe in `engine/include/okay/Components` or `UI/` | Mobile and web-touch games must build their own controls | Medium | Medium |
-| Input contexts (`PushContext`) have no consumer | no reference from `engine/include/okay/Components`, editor or player | The feature exists but a pause menu does not use it; `Input::SetUICaptured` is the real path | Low | Small |
-| `PlatformGamepad` has no test | no test names `FeedPad` or `PadSet` (the platform controller mapping is tested in `platform`, not this feed) | Controller mapping regressions go unseen | Low | Small |
+| ~~Input contexts (`PushContext`) have no consumer~~ Resolved: the pause menu pushes a context named Pause in Block mode while it is open and pops it on resume, including when something else unpauses the game. Gameplay actions stop. Escape still toggles because raw keys are unchanged. `Input::SetUICaptured` is still set as well. | `Components/PauseMenu.hpp` | Done. Other menus (bag, chest, dialogue) still use only `SetUICaptured`. | Low | Small |
+| ~~`PlatformGamepad` has no test~~ Resolved: `platform_gamepad` calls `FeedPad` and feeds a `PadSet` of fake controllers (stand-in keys, a second player, unplug, a full set). | `Input/PlatformGamepad.hpp` | The editor Play view still feeds one pad (open PR #699). This change does not touch that feed. | Low | Small |
 
 ## 6. AI and navigation
 
@@ -152,8 +152,8 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Localization tools (`LocTable`, `LocCheck`, `LocPreview`, `LocScan`) not reachable from the editor | zero references in `editor/` or `player/` | Missing-key reports, placeholder mismatches and pseudo-locale preview cannot be used by a normal user (this sharpens 1.16 and 31.1 with the exact consumer count) | Medium | Medium |
 | Duplicate components of one type save only the first (except a few listed types) | `SceneSerializer.cpp` (feature map 1.7) | Two colliders or two lights on one object lose one on save | Medium | Medium |
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
-| Lightmap baking has no test | `Render/Lightmap.hpp` (`BakeFaceLighting`); no test names it; editor calls it | Bake regressions invisible | Low | Small |
-| Other code with no test naming it | `UITouchScroll`, `ItemPresentation` (`DescribeItem`, `InventoryKeyWarning`), `LoadingScreenLayout`, `DeathLock` | Small features without any safety net | Low | Small |
+| ~~Lightmap baking has no test~~ Resolved: `lightmap` bakes face colours for a sun, point, spot and area light, a shadow ray, ambient occlusion and the mesh transform. | `Render/Lightmap.hpp` | Bake regressions are now visible. The bake is still per-face colours, not a UV lightmap texture. | Low | Small |
+| ~~Other code with no test naming it~~ Resolved: `ui_touch_scroll`, `item_presentation` (`DescribeItem`, `InventoryKeyWarning`), `loading_screen_layout`, `death_lock`. | those headers | A living body with a Health component no longer freezes because the animator still says `dead`. Health owns that flag when it is present. | Low | Small |
 | Anti-cheat Windows probes vs Linux: stubbed clock probe | `shared/AntiCheatChecks.hpp:337` (`#else`) | Behaviour differs by OS | Low | Small |
 
 ## Counts

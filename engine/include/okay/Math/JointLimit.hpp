@@ -131,4 +131,43 @@ inline Quat ApplyLimit(const Quat& localRot, const IKJointFrame& frame, const IK
     return Finite(out) ? out : frame.restLocal;
 }
 
+/// Signed angle, in degrees, of `localRot` relative to `restLocal` about a world
+/// axis (the shortest arc, about ±180). This is the spin a revolute joint
+/// measures: the same twist extraction an IK hinge uses (`TwistAbout`).
+inline float HingeAngleDegrees(const Quat& localRot, const Quat& restLocal, const Vec3& worldAxis) {
+    if (!Finite(localRot) || !Finite(restLocal)) return 0.0f;
+    const Vec3 axisW = SafeNormalize(worldAxis, Vec3::Up);
+    Quat delta = (restLocal.Inverse() * localRot).Normalized();
+    if (!Finite(delta)) return 0.0f;
+    if (delta.w < 0.0f) delta = {-delta.x, -delta.y, -delta.z, -delta.w};
+    const Vec3 axisL = SafeNormalize(restLocal.Inverse() * axisW, Vec3::Up);
+    float degrees = 0.0f;
+    TwistAbout(delta, axisL, degrees);
+    return std::isfinite(degrees) ? degrees : 0.0f;
+}
+
+/// `localRot` kept inside a revolute range [minDeg, maxDeg] about `worldAxis`,
+/// measured from `restLocal`. Uses `IKJointLimit::Hinge` and `ApplyLimit`, so a
+/// physics door and an IK elbow share one clamp. A rotation already inside the
+/// range is returned unchanged.
+inline Quat ClampHingeRotation(const Quat& localRot, const Quat& restLocal, const Vec3& worldAxis,
+                               float minDeg, float maxDeg) {
+    const float rel = HingeAngleDegrees(localRot, restLocal, worldAxis);
+    if (rel >= minDeg && rel <= maxDeg) return localRot;
+    IKJointLimit lim = IKJointLimit::Hinge(minDeg, maxDeg, 0.0f);
+    lim.autoAxes = false;
+    const Vec3 axisW = SafeNormalize(worldAxis, Vec3::Up);
+    const Vec3 axisL = SafeNormalize(restLocal.Inverse() * axisW, Vec3::Right);
+    lim.hingeAxis = axisL;
+    Vec3 side = Vec3::Cross(axisL, Vec3{0, 1, 0});
+    if (side.SqrMagnitude() < 1e-8f) side = Vec3::Cross(axisL, Vec3{1, 0, 0});
+    lim.twistAxis = SafeNormalize(side, Vec3::Up);
+    IKJointFrame frame;
+    frame.restLocal = restLocal;
+    frame.hingeAxis = axisL;
+    frame.twistAxis = lim.twistAxis;
+    frame.hasHinge = true;
+    return ApplyLimit(localRot, frame, lim, false);
+}
+
 } // namespace okay

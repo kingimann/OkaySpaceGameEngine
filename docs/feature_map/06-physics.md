@@ -50,15 +50,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld and hinge, with optional breaking.
 - **Parts:**
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
-  - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D` - pins a point and lets the body spin; motor in both, angle limits in 2D only
+  - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
-- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
-- **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`
-- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin)"; inspectors for all four modes
+- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
+- **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
+- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
 - **Docs:** -
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
-- **Open:** possible doc drift: both headers still say "no angular/hinge yet" and the Add Component rows say "(distance/spring/pin)" although a Hinge mode exists; Joint3D hinge has no angle limits (Joint2D has); joints connect by body name, not by object reference
+- **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
 - **Words:** joint, hinge, spring, rope, rod, pin, weld, fixed joint, revolute, motor, connectedBody, breakForce, ragdoll joint
 - **Seen as:** a rope or pendulum stretches or explodes; a door does not swing about its hinge; a spring never settles; a joint snaps unexpectedly

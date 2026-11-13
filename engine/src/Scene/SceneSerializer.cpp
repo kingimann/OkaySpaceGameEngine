@@ -1617,7 +1617,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << j->spring << " " << j->damper
             << " " << (j->breakable ? 1 : 0) << " " << j->breakForce
             << " " << j->axis.x << " " << j->axis.y << " " << j->axis.z     // hinge (trailing)
-            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque << "\n";
+            << " " << (j->useMotor ? 1 : 0) << " " << j->motorSpeed << " " << j->maxMotorTorque
+            << " " << (j->useLimits ? 1 : 0) << " " << j->minAngle << " " << j->maxAngle << "\n";
     }
     for (auto* j : go->GetComponents<Joint2D>()) {   // every instance: a chain link holds two joints
         out << "  joint2d " << j->mode << " " << Quote(j->connectedBody)
@@ -5120,6 +5121,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int um = 0;
                         in >> j->axis.x >> j->axis.y >> j->axis.z >> um >> j->motorSpeed >> j->maxMotorTorque;
                         j->useMotor = (um != 0);
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek()))) {   // angle limits (trailing)
+                            int ul = 0;
+                            in >> ul >> j->minAngle >> j->maxAngle;
+                            j->useLimits = (ul != 0);
+                        }
                     }
                 } else if (field == "joint2d") {
                     auto* j = go->AddComponent<Joint2D>();

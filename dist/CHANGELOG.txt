@@ -1,5 +1,50 @@
 OkaySpace Game Engine — Changelog
 
+v2.863.0
+  Launcher and updates
+  - Updates are checked before they are used. The Versions page no longer has
+    an "Install anyway" button: a file without a published checksum is refused.
+    The editor's own update and the player download use the same checks.
+  - An update swaps the launcher, editor and player together or not at all. If
+    the swap fails nothing is left half replaced.
+  - After an update restarts the launcher, the new program is asked to confirm
+    its version before it is started for real. A file that cannot start, or
+    reports the wrong version, is rolled back: the previous launcher is put
+    back and started, and the bad file is kept next to it for inspection.
+  - If an update fails, the update window says why and what to do. At most two
+    automatic attempts are made for the same version; the Retry button always
+    works.
+  - On Linux the restart now starts the new file instead of the renamed old one.
+
+  Engine
+  - Reliable ordered messages are no longer silently dropped when more than 32
+    are waiting for acknowledgement; they are queued and sent in order.
+  - Hostile or damaged data no longer crashes or hangs: network position
+    updates at the edge of the number range, subtitle timestamps that are far
+    too large, localization files with unusual whitespace, model files that
+    declare absurd sizes, and a console view with a NaN background.
+
+  Editor
+  - The editor no longer re-checks the whole scene for unsaved changes on every
+    frame while you play, which saves time on every frame.
+
+  Project
+  - The project license is now a proprietary license: games made with the
+    engine can be sold without royalty. See LICENSE.
+
+v2.862.0
+  Editor
+  - Visual script: right-click a node and choose Connect to... to see what can
+    plug into it. Every pin of the node has its own list of nodes that fit that
+    pin (easiest and exact-type matches first). Pick one and it is added already
+    wired, or choose "Search all" to open the full list for that pin.
+  - Visual script: the Print node now has a Text input and an optional Value
+    input, so it can print your own text, a value, or both ("Text: Value").
+  - Visual script: the Add Node menu opens faster the first time (the list is
+    built about three times quicker).
+  - Visual script: one flow output can now be wired to several nodes. They run
+    in the order they were connected. Alt+click a wire to remove just that wire.
+
 v2.861.2
   Editor
   - Visual script: the Add Node menu is much lighter while it is open. It now

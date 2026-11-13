@@ -30,6 +30,7 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptTemplates.hpp"
 #include "VsCanvasTools.hpp"
+#include "VsVariablePanel.hpp"
 #include "VsPlayground.hpp"
 #include "VisualScriptNames.hpp"
 #include "VisualScriptLevels.hpp"
@@ -216,7 +217,7 @@ inline const std::vector<VsDef>& Registry() {
         {"SetPosition", "Set Position", CAT_XFORM, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
         {"Rotate",      "Rotate",      CAT_XFORM, true, {""}, {"Deg"}, {}, 0, nullptr},
         // Actions
-        {"Print",     "Print",     CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"Print",     "Print",     CAT_ACTION, true, {""}, {"Text", "Value"}, {}, 0, nullptr},
         {"PlaySound", "Play Sound",CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y","Z"}, {"Object"}, 1, "prefab"},
         {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
@@ -753,8 +754,8 @@ inline const std::vector<VsDef>& Registry() {
         {"Break",           "Break",            CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         {"Continue",        "Continue",         CAT_FLOW,  true, {}, {}, {}, 0, nullptr},
         // Lists
-        {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 0, nullptr},
-        {"NewMap",          "New Map",          CAT_DATA,  false, {}, {}, {"Map"}, 0, nullptr},
+        {"NewList",         "New List",         CAT_DATA,  false, {}, {}, {"List"}, 1, "item type (optional)"},
+        {"NewMap",          "New Map",          CAT_DATA,  false, {}, {}, {"Map"}, 1, "item type (optional)"},
         {"MapSet",          "Map Set",          CAT_DATA,  true, {""}, {"Map","Key","Value"}, {}, 0, nullptr},
         {"MapRemove",       "Map Remove",       CAT_DATA,  true, {""}, {"Map","Key"}, {}, 0, nullptr},
         {"MapGet",          "Map Get",          CAT_DATA,  false, {}, {"Map","Key"}, {"Value","Found"}, 0, nullptr},
@@ -766,6 +767,22 @@ inline const std::vector<VsDef>& Registry() {
         {"ListGet",         "List Get",         CAT_DATA,  false, {}, {"List","Index"}, {"Item"}, 0, nullptr},
         {"ListLength",      "List Length",      CAT_DATA,  false, {}, {"List"}, {"Count"}, 0, nullptr},
         {"ListContains",    "List Contains",    CAT_DATA,  false, {}, {"List","Item"}, {"Bool"}, 0, nullptr},
+        {"ListInsert",      "List Insert",      CAT_DATA,  true, {""}, {"List","Index","Item"}, {}, 0, nullptr},
+        {"ListSet",         "List Set",         CAT_DATA,  true, {""}, {"List","Index","Item"}, {}, 0, nullptr},
+        {"ListFind",        "List Find",        CAT_DATA,  false, {}, {"List","Item"}, {"Index","Found"}, 0, nullptr},
+        {"ListRemoveItem",  "List Remove Item", CAT_DATA,  true, {""}, {"List","Item"}, {"Removed"}, 0, nullptr},
+        {"ListSort",        "List Sort",        CAT_DATA,  true, {""}, {"List","Descending"}, {}, 0, nullptr},
+        {"ListReverse",     "List Reverse",     CAT_DATA,  true, {""}, {"List"}, {}, 0, nullptr},
+        {"ListClear",       "List Clear",       CAT_DATA,  true, {""}, {"List"}, {}, 0, nullptr},
+        {"ListCopy",        "List Copy",        CAT_DATA,  false, {}, {"List","Deep"}, {"Copy"}, 0, nullptr},
+        {"MapClear",        "Map Clear",        CAT_DATA,  true, {""}, {"Map"}, {}, 0, nullptr},
+        {"MapCount",        "Map Count",        CAT_DATA,  false, {}, {"Map"}, {"Count"}, 0, nullptr},
+        {"MapCopy",         "Map Copy",         CAT_DATA,  false, {}, {"Map","Deep"}, {"Copy"}, 0, nullptr},
+        {"StructNew",       "New Struct",       CAT_DATA,  false, {}, {}, {"Struct"}, 1, "struct name"},
+        {"StructGet",       "Get Field",        CAT_DATA,  false, {}, {"Struct"}, {"Value"}, 1, "field"},
+        {"StructSet",       "Set Field",        CAT_DATA,  true, {""}, {"Struct","Value"}, {}, 1, "field"},
+        {"MakeColor",       "Make Color",       CAT_DATA,  false, {}, {"R","G","B","A"}, {"Color"}, 0, nullptr},
+        {"SplitColor",      "Split Color",      CAT_DATA,  false, {}, {"Color"}, {"R","G","B","A"}, 0, nullptr},
         {"AllWithTag",      "All With Tag",     CAT_XFORM, false, {}, {}, {"Objects"}, 1, "tag"},
         // Scene variables (every graph in the scene) and global ones (kept across scene loads).
         {"GetSceneVar",     "Get Scene Var",    CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
@@ -963,12 +980,42 @@ struct VsEditGraph {
     std::vector<VsExecLink> execLinks;
     std::vector<VsDataLink> dataLinks;
     std::vector<VsComment> comments;
-    // `var name value` lines: starting values the Inspector edits. Kept across save.
-    struct Exposed { std::string name; std::string value; };
+    // Declared variables: `decl name Type scope literal` lines (typed) and old
+    // `var name value` lines (typed = false: object scope, type from the value).
+    // The defaults are what the Inspector edits. Kept across save.
+    struct Exposed {
+        std::string name;
+        std::string value;               // the default: a literal for typed rows, the old plain text otherwise
+        std::string type = "Number";     // Number, Bool, Text, Vector3, Color, Object, List, List<T>, Map, Map<T>, or a struct
+        std::string scope = "object";    // object (this graph's own), scene, global
+        bool typed = false;
+    };
     std::vector<Exposed> vars;
+    /// `struct Name field:Type=literal ...` lines: record types a variable can have.
+    struct StructFieldEd { std::string name, type = "Number", value; };
+    struct StructEd { std::string name; std::vector<StructFieldEd> fields; };
+    std::vector<StructEd> structs;
     int nextId = 1;
     std::string path;      // .okayvs file (empty = unsaved)
     bool dirty = false;
+private:
+    mutable std::string m_declKey, m_declError;
+    mutable std::vector<okay::vs::VarDecl> m_decls;
+    mutable std::vector<okay::vs::StructDef> m_structDefs;
+    void refreshDecls() const {
+        const std::string key = declText();
+        if (key == m_declKey && !key.empty()) return;
+        if (key.empty()) { m_declKey.clear(); m_decls.clear(); m_structDefs.clear(); m_declError.clear(); return; }
+        m_declKey = key; m_decls.clear(); m_structDefs.clear(); m_declError.clear();
+        std::string err;
+        if (auto g = okay::vs::NodeGraph::Parse(key, &err)) { m_decls = g->Decls(); m_structDefs = g->Structs(); }
+        else {
+            m_declError = err;
+            // Struct names alone still let a type be picked while a default is wrong.
+            for (const auto& st : structs) m_structDefs.push_back({st.name, {}});
+        }
+    }
+public:
 
     VsEditNode* find(int id) { for (auto& n : nodes) if (n.id == id) return &n; return nullptr; }
     int add(const std::string& type, float x, float y) {
@@ -1017,10 +1064,19 @@ struct VsEditGraph {
         if (n) dirty = true;
         return n;
     }
+    /// Add a flow wire. An exec output may have any number of wires: they run in the
+    /// order they were added (the order of the `exec` lines in the file). The same wire
+    /// twice is one wire.
     void linkExec(int from, int pin, int to) {
-        execLinks.erase(std::remove_if(execLinks.begin(), execLinks.end(),
-                    [&](const VsExecLink& l){ return l.from == from && l.pin == pin; }), execLinks.end());
+        for (const auto& l : execLinks) if (l.from == from && l.pin == pin && l.to == to) return;
         execLinks.push_back({from, pin, to}); dirty = true;
+    }
+    /// Remove one flow wire, leaving the other wires on the same pin. False if there was none.
+    bool unlinkExec(int from, int pin, int to) {
+        const auto it = std::find_if(execLinks.begin(), execLinks.end(),
+                    [&](const VsExecLink& l){ return l.from == from && l.pin == pin && l.to == to; });
+        if (it == execLinks.end()) return false;
+        execLinks.erase(it); dirty = true; return true;
     }
     void linkData(int consumer, int inPin, int producer, int outPin) {
         dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
@@ -1028,10 +1084,134 @@ struct VsEditGraph {
         dataLinks.push_back({consumer, inPin, producer, outPin}); dirty = true;
     }
 
+    /// The struct and variable lines of the file (what a Parse of just the declarations needs).
+    std::string declText() const {
+        std::ostringstream o;
+        for (const auto& st : structs) {
+            o << "struct " << st.name;
+            for (const auto& f : st.fields) {
+                std::string tok = f.name + ":" + f.type;
+                if (!f.value.empty()) tok += "=" + f.value;
+                o << ' ' << okay::vs::QuoteIfNeeded(tok);
+            }
+            o << "\n";
+        }
+        for (const auto& v : vars) {
+            if (v.typed) {
+                o << "decl " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.type) << ' ' << v.scope;
+                if (!v.value.empty()) o << ' ' << okay::vs::QuoteText(v.value);   // blank = the type's default
+                o << "\n";
+            }
+            else o << "var " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.value) << "\n";
+        }
+        return o.str();
+    }
+    /// The declarations as the runtime reads them. Empty (with `declError()` saying why) when
+    /// the declaration lines don't load.
+    const std::vector<okay::vs::VarDecl>& typedDecls() const { refreshDecls(); return m_decls; }
+    const std::vector<okay::vs::StructDef>& structDefs() const { refreshDecls(); return m_structDefs; }
+    const std::string& declError() const { refreshDecls(); return m_declError; }
+    /// Add a typed variable at its type's default. False (with `err`) for a bad or repeated name or type.
+    bool declare(const std::string& name, const std::string& type, const std::string& scope, std::string* err = nullptr) {
+        auto bad = [&](const std::string& m) { if (err) *err = m; return false; };
+        if (!okay::vs::VsValidIdent(name)) return bad("'" + name + "' isn't a valid variable name (letters, digits and _, not starting with a digit)");
+        okay::vs::VarScope sc;
+        if (!okay::vs::VarScopeFromName(scope, sc)) return bad("the scope must be object, scene or global");
+        for (const auto& v : vars) if (v.name == name && v.scope == scope) return bad("there is already a " + scope + " variable named '" + name + "'");
+        std::string terr;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, &terr)) return bad(terr);
+        Exposed e; e.name = name; e.type = okay::vs::VarTypeText(vt); e.scope = okay::vs::VarScopeName(sc); e.typed = true;
+        e.value = okay::vs::VsToLiteral(okay::vs::VsDefaultFor(vt, structDefs()));
+        vars.push_back(e); dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Change a variable's type; the default is converted when it fits, else reset.
+    bool setVarType(std::size_t i, const std::string& type, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, structDefs(), vt, err)) return false;
+        okay::vs::VsValue cur;
+        const bool had = okay::vs::VsParseTyped(vt, vars[i].value, structDefs(), cur);
+        vars[i].type = okay::vs::VarTypeText(vt); vars[i].typed = true;
+        vars[i].value = okay::vs::VsToLiteral(had ? cur : okay::vs::VsDefaultFor(vt, structDefs()));
+        dirty = true; m_declKey.clear();
+        return true;
+    }
+    /// Set a variable's default from literal text. False (with `err`) when it doesn't fit the type.
+    bool setVarDefault(std::size_t i, const std::string& literal, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(vars[i].type, structDefs(), vt, err)) return false;
+        okay::vs::VsValue v;
+        if (!okay::vs::VsParseTyped(vt, literal, structDefs(), v, err)) return false;
+        vars[i].value = okay::vs::VsToLiteral(v); vars[i].typed = true; dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool setVarScope(std::size_t i, const std::string& scope, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        okay::vs::VarScope sc;
+        if (!okay::vs::VarScopeFromName(scope, sc)) { if (err) *err = "the scope must be object, scene or global"; return false; }
+        const std::string name = okay::vs::VarScopeName(sc);
+        for (std::size_t k = 0; k < vars.size(); ++k)
+            if (k != i && vars[k].name == vars[i].name && vars[k].scope == name) { if (err) *err = "there is already a " + name + " variable named '" + vars[i].name + "'"; return false; }
+        vars[i].scope = name; vars[i].typed = true; dirty = true; m_declKey.clear();
+        return true;
+    }
+    bool renameVar(std::size_t i, const std::string& name, std::string* err = nullptr) {
+        if (i >= vars.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid variable name"; return false; }
+        for (std::size_t k = 0; k < vars.size(); ++k)
+            if (k != i && vars[k].name == name && vars[k].scope == vars[i].scope) { if (err) *err = "there is already a variable named '" + name + "'"; return false; }
+        const std::string old = vars[i].name;
+        vars[i].name = name; dirty = true; m_declKey.clear();
+        // Nodes naming the old variable follow the rename.
+        for (auto& n : nodes) {
+            if (n.arg != old) continue;
+            const std::string& t = n.type;
+            const bool obj = t == "GetVar" || t == "SetVar" || t == "AddVar" || t == "ToggleVar" || t == "HasVar" || t == "OnVarChanged";
+            const bool scn = t == "GetSceneVar" || t == "SetSceneVar" || t == "AddSceneVar" || t == "OnSceneVarChanged";
+            const bool glb = t == "GetGlobalVar" || t == "SetGlobalVar" || t == "AddGlobalVar" || t == "OnGlobalVarChanged";
+            if ((obj && vars[i].scope == "object") || (scn && vars[i].scope == "scene") || (glb && vars[i].scope == "global")) n.arg = name;
+        }
+        return true;
+    }
+    void removeVar(std::size_t i) { if (i < vars.size()) { vars.erase(vars.begin() + (long)i); dirty = true; m_declKey.clear(); } }
+    bool declareStruct(const std::string& name, std::string* err = nullptr) {
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid struct name"; return false; }
+        for (const auto& st : structs) if (st.name == name) { if (err) *err = "there is already a struct named '" + name + "'"; return false; }
+        structs.push_back({name, {}}); dirty = true; m_declKey.clear(); return true;
+    }
+    bool addStructField(std::size_t si, const std::string& name, const std::string& type, std::string* err = nullptr) {
+        if (si >= structs.size()) return false;
+        if (!okay::vs::VsValidIdent(name)) { if (err) *err = "'" + name + "' isn't a valid field name"; return false; }
+        for (const auto& f : structs[si].fields) if (f.name == name) { if (err) *err = "the struct already has a field '" + name + "'"; return false; }
+        // A field may use only structs listed before this one (a struct can't hold itself).
+        std::vector<okay::vs::StructDef> before;
+        for (std::size_t k = 0; k < si; ++k) before.push_back({structs[k].name, {}});
+        okay::vs::VarType vt;
+        if (!okay::vs::ParseVarType(type, before, vt, err)) return false;
+        structs[si].fields.push_back({name, okay::vs::VarTypeText(vt), ""}); dirty = true; m_declKey.clear();
+        return true;
+    }
+    void removeStructField(std::size_t si, std::size_t fi) {
+        if (si < structs.size() && fi < structs[si].fields.size()) { structs[si].fields.erase(structs[si].fields.begin() + (long)fi); dirty = true; m_declKey.clear(); }
+    }
+    /// Remove a struct; variables of that type go back to Any-typed maps.
+    void removeStruct(std::size_t si) {
+        if (si >= structs.size()) return;
+        const std::string n = structs[si].name;
+        structs.erase(structs.begin() + (long)si);
+        for (auto& v : vars) if (v.type == n) { v.type = "Map"; }
+        dirty = true; m_declKey.clear();
+    }
+    /// Call after editing `vars` / `structs` fields directly.
+    void declsChanged() { m_declKey.clear(); dirty = true; }
+
     std::string toText() const {
         std::ostringstream o;
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
-        for (const auto& v : vars) o << "var " << v.name << ' ' << okay::vs::QuoteIfNeeded(v.value) << "\n";
+        o << declText();
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
             if (!n.arg.empty()) o << ' ' << (n.type == "Const" ? VsConstField(n.arg) : okay::vs::QuoteIfNeeded(n.arg));
@@ -1056,7 +1236,7 @@ struct VsEditGraph {
         f << toText();
         path = p; dirty = false; return true;
     }
-    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); nextId = 1; path.clear(); dirty = false; }
+    void clear() { nodes.clear(); execLinks.clear(); dataLinks.clear(); comments.clear(); vars.clear(); structs.clear(); m_declKey.clear(); nextId = 1; path.clear(); dirty = false; }
     bool load(const std::string& p) {
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
@@ -1110,7 +1290,34 @@ struct VsEditGraph {
                 std::string name;
                 ls >> name;
                 std::string v = restOf(ls);
-                if (!name.empty()) vars.push_back({name, v});
+                if (!name.empty()) {
+                    Exposed e; e.name = name; e.value = v;
+                    float probe = 0;
+                    e.type = (v == "true" || v == "false") ? "Bool" : okay::vs::VsParseFinite(v, probe) ? "Number" : "Text";
+                    vars.push_back(e);
+                }
+            } else if (kind == "decl" || kind == "struct") {
+                const std::vector<std::string> t = okay::vs::TokenizeLine(line);
+                auto unq = [](std::string x) { if (x.size() >= 2 && x.front() == '"' && x.back() == '"') x = x.substr(1, x.size() - 2); return x; };
+                if (kind == "decl" && t.size() >= 4) {
+                    Exposed e; e.name = unq(t[1]); e.type = unq(t[2]); e.scope = unq(t[3]); e.typed = true;
+                    e.value = t.size() > 4 ? unq(t[4]) : std::string();
+                    if (!e.name.empty()) vars.push_back(e);
+                } else if (kind == "struct" && t.size() >= 2) {
+                    StructEd st; st.name = unq(t[1]);
+                    for (std::size_t k = 2; k < t.size(); ++k) {
+                        const std::string f = unq(t[k]);
+                        const auto colon = f.find(':');
+                        if (colon == std::string::npos) continue;
+                        StructFieldEd sf; sf.name = f.substr(0, colon);
+                        std::string ty = f.substr(colon + 1);
+                        const auto eq = ty.find('=');
+                        if (eq != std::string::npos) { sf.value = ty.substr(eq + 1); ty = ty.substr(0, eq); }
+                        sf.type = ty;
+                        st.fields.push_back(sf);
+                    }
+                    if (!st.name.empty()) structs.push_back(st);
+                }
             } else if (kind == "comment") {
                 VsComment c;
                 if (!VsReadCoord(ls, c.x) || !VsReadCoord(ls, c.y) || !VsReadCoord(ls, c.w) || !VsReadCoord(ls, c.h)) continue;
@@ -1262,6 +1469,7 @@ inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin)
         const auto& pins = n->type == "FunctionStart" ? sig.params : sig.returns;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
     }
+    if (const auto dt = okay::vs::DeclOutType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::OutputType(n->type, pin, n->arg);
 }
 inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) {
@@ -1273,11 +1481,18 @@ inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) 
         const auto& pins = n->type == "Return" ? sig.returns : sig.params;
         return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
     }
+    if (const auto dt = okay::vs::DeclInType(n->type, n->arg, pin, g.typedDecls()); dt != okay::vs::PinType::Any) return dt;
     return okay::vs::InputType(n->type, pin);
 }
 inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
     return -1;
+}
+/// Every node an exec output leads to, in the order they run.
+inline std::vector<int> VsExecTargets(const VsEditGraph& g, int fromNode, int pin) {
+    std::vector<int> out;
+    for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) out.push_back(l.to);
+    return out;
 }
 inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin = 0);
 inline const VsEditNode* VsFind(const VsEditGraph& g, int id);
@@ -1612,7 +1827,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
 
     if      (t=="SetVar")      out += ind + VsIdent(arg("x")) + " = " + in(0) + "\n";
     else if (t=="AddVar")      out += ind + VsIdent(arg("x")) + " += " + in(0) + "\n";
-    else if (t=="Print")       out += ind + "Debug.Log(" + in(0,"\"\"") + ")\n";
+    else if (t=="Print")       out += ind + "Debug.Log(" + (VsInputLinkedOrSet(g,nodeId,0) && VsInputLinkedOrSet(g,nodeId,1)
+                       ? "(" + in(0,"\"\"") + " + \": \" + " + in(1,"\"\"") + ")"
+                       : VsInputLinkedOrSet(g,nodeId,1) ? in(1,"\"\"") : in(0,"\"\"")) + ")\n";
     else if (t=="LogWarn")     out += ind + "Debug.LogWarning(" + in(0,"\"\"") + ")\n";
     else if (t=="LogError")    out += ind + "Debug.LogError(" + in(0,"\"\"") + ")\n";
     else if (t=="Translate")   out += ind + "move3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
@@ -1884,7 +2101,9 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
             "ChanceBranch", "EveryN", "Condition", "While"};
         if (kSelfContinued.count(n->type)) break;
-        cur = VsExecTarget(g, cur, 0);
+        const std::vector<int> next = VsExecTargets(g, cur, 0);
+        if (next.size() > 1) { for (int t : next) VsEmitChain(g, t, out, ind, visited); break; }
+        cur = next.empty() ? -1 : next[0];
     }
 }
 inline std::string CompileToOkayScript(const VsEditGraph& g) {
@@ -1953,7 +2172,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
     if (!fields.empty()) out += fields + "\n";
     bool first = true, anyEvent = false;
     auto chain = [&](int entry, const std::string& ind) {
-        std::set<int> v; int s = VsExecTarget(g, entry, 0); if (s >= 0) VsEmitChain(g, s, out, ind, v);
+        std::set<int> v; for (int s : VsExecTargets(g, entry, 0)) VsEmitChain(g, s, out, ind, v);
     };
     auto open = [&](const std::string& sig) {
         out += std::string(first ? "" : "\n") + "    " + sig + "\n    {\n";
@@ -2218,6 +2437,7 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
         case PinType::Object: return IM_COL32(95, 165, 255, 255);
         case PinType::List:   return IM_COL32(90, 215, 220, 255);
         case PinType::Map:    return IM_COL32(180, 140, 230, 255);
+        case PinType::Color:  return IM_COL32(250, 150, 60, 255);
         default:              return IM_COL32(185, 185, 195, 255);
     }
 }
@@ -2334,10 +2554,9 @@ struct VsDebugView {
 };
 inline VsDebugView& DebugView() { static VsDebugView v; return v; }
 inline std::string VsDebugText(const okay::vs::VsValue& v) {
-    if (v.IsObject()) return v.AsObjectId() ? "'" + v.AsString() + "'" + (v.AsString().empty() ? " (destroyed)" : "") : "(no object)";
-    if (v.IsString()) return "\"" + v.AsString() + "\"";
-    if (v.IsArray()) { auto a = v.AsArray(); return "list (" + std::to_string(a ? a->size() : 0) + "): " + v.AsString(); }
-    return v.AsString();
+    // Every kind reads on one line: lists and maps show their size and first items, a colour its
+    // hex, a vector its three numbers.
+    return okay::vs::VsDescribe(v);
 }
 
 // Optional log sink (the host wires this to its console); no hard dependency on
@@ -3058,6 +3277,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
     return changed;
 }
 }  // namespace okay::editor::vsed
+#include "VisualScriptClarity.hpp"
 #include "VisualScriptPalette.hpp"
 namespace okay::editor::vsed {
 
@@ -3645,25 +3865,9 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
-            if (!g.vars.empty()) {
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Exposed values");
-                ImGui::Separator();
-                ImGui::TextWrapped("These are the numbers and text the Inspector shows. Change one, Save, then Play.");
-                for (std::size_t i = 0; i < g.vars.size(); ++i) {
-                    ImGui::PushID((int)i + 700000);
-                    ImGui::SetNextItemWidth(90);
-                    char buf[64];
-                    std::snprintf(buf, sizeof(buf), "%s", g.vars[i].value.c_str());
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted(g.vars[i].name.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::InputText("##exvar", buf, sizeof(buf))) { g.vars[i].value = buf; g.dirty = true; }
-                    ImGui::PopID();
-                }
-            }
+            VsDrawVariableDecls(g);
             ImGui::Spacing();
-            ImGui::TextUnformatted("Variables");
+            ImGui::TextUnformatted("Variables used");
             ImGui::Separator();
             if (vars.empty()) ImGui::TextWrapped("Names you type on Get Var, Set Var, scene and global variable nodes show up here.");
             VsVarScope last = VsVarScope::Object;
@@ -3958,6 +4162,8 @@ inline void Draw(EditorState& ed, bool* open) {
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
     bool startNodeDrag = false;
+    // "Connect to..." from a node's right-click menu: add this node (def) wired to one pin, or open the full list for it.
+    struct PendingConnect { bool on = false, openAll = false, exec = false, fromOutput = false; int node = -1, pin = -1; const VsDef* def = nullptr; ImVec2 at{0, 0}; } pconn;
     for (auto& n : g.nodes) {
         const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
@@ -4098,7 +4304,7 @@ inline void Draw(EditorState& ed, bool* open) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
-            VsNodeTooltip(title.c_str(), VsNodeDocFor(n.type));
+            VsNodeTooltip(title.c_str(), VsNodeDocFor(n.type), d);
         if (ImGui::BeginPopupContextItem("##nctx")) {
             if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); st.selected = n.id; }
             // Applied after the loop: the node list mustn't change while it's iterated.
@@ -4109,6 +4315,53 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::MenuItem(hasBp ? "Remove Breakpoint" : "Add Breakpoint", "F9")) toggleBreakpoint(n.id);
             if (ImGui::MenuItem("Break All Wires")) {
                 for (int k = 0; k < 2; ++k) for (int sd = 0; sd < 2; ++sd) for (int pi = 0; pi < 8; ++pi) g.unlinkPin(n.id, k, sd, pi);
+            }
+            // What can plug into this node: one entry per pin, listing the nodes that fit it (the same rule as a wire
+            // dropped in empty space). Pick one to add it already wired, or open the full list for that pin.
+            if (ImGui::BeginMenu("Connect to...")) {
+                const ImVec2 outAt = S2W(ImVec2(p0.x + NODE_W + 50.0f * z, p0.y));
+                ImVec2 inAt = S2W(ImVec2(p0.x - NODE_W_BASE - 50.0f * z, p0.y));
+                inAt.x += 170.0f;   // a new node feeding an input is shifted left by the same amount when it is added
+                auto pinMenu = [&](const std::string& label, bool exec, bool fromOutput, int pin, okay::vs::PinType pt) {
+                    if (!ImGui::BeginMenu(label.c_str())) return;
+                    const std::vector<const VsDef*>& fit = VsNodesFittingPin(exec, fromOutput, pt);
+                    if (fit.empty()) ImGui::TextDisabled("Nothing fits this pin.");
+                    const int shown = std::min((int)fit.size(), 16);
+                    for (int i = 0; i < shown; ++i) {
+                        if (ImGui::MenuItem(fit[(std::size_t)i]->title && fit[(std::size_t)i]->title[0] ? fit[(std::size_t)i]->title : fit[(std::size_t)i]->type)) {
+                            pconn.on = true; pconn.def = fit[(std::size_t)i];
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    if (!fit.empty()) {
+                        ImGui::Separator();
+                        const std::string all = "Search all " + std::to_string(fit.size()) + " that fit...";
+                        if (ImGui::MenuItem(all.c_str())) {
+                            pconn.on = true; pconn.openAll = true; pconn.def = nullptr;
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    ImGui::EndMenu();
+                };
+                ImGui::TextDisabled("Pick a pin to see what fits it");
+                bool any = false;
+                if (d->execIn) { pinMenu("Flow in  <-  what runs this node", true, false, 0, okay::vs::PinType::Any); any = true; }
+                for (int j = 0; j < (int)d->execOut.size(); ++j) {
+                    const char* lbl = d->execOut[(std::size_t)j];
+                    pinMenu(std::string("Flow out  ->  ") + (lbl && *lbl ? lbl : "Next"), true, true, j, okay::vs::PinType::Any); any = true;
+                }
+                for (int i = 0; i < (int)d->dataIn.size(); ++i) {
+                    const okay::vs::PinType pt = VsInPinType(g, n.id, i);
+                    pinMenu(std::string("Value in  <-  ") + d->dataIn[(std::size_t)i] + " (" + okay::vs::PinTypeName(pt) + ")", false, false, i, pt); any = true;
+                }
+                for (int o = 0; o < (int)d->dataOut.size(); ++o) {
+                    const okay::vs::PinType pt = VsOutPinType(g, n.id, o);
+                    pinMenu(std::string("Value out  ->  ") + d->dataOut[(std::size_t)o] + " (" + okay::vs::PinTypeName(pt) + ")", false, true, o, pt); any = true;
+                }
+                if (!any) ImGui::TextDisabled("This node has no pins.");
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete", "Del")) pendingDelete = n.id;
@@ -4147,11 +4400,6 @@ inline void Draw(EditorState& ed, bool* open) {
             dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
-            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f) {
-                std::string tip = VsPinExplain(n.type, d->dataIn[i], okay::vs::PinTypeName(pt), true, false);
-                if (req) tip += std::string("\nRequired: ") + VsRequiredWhat(n.type, i);
-                ImGui::SetTooltip("%s", tip.c_str());
-            }
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
             // Nothing wired in: type the value right here (text, number, true/false).
@@ -4201,8 +4449,6 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (is.node == n.id && is.pin == i && is.pinDir == 1 && is.severity == 0) badPin = true;
             const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
             dataDot(pp, used || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
-            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
-                ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
             text(ImVec2(p1.x - PAD - ts.x, pp.y - fs * 0.5f), labelCol, d->dataOut[i]);
             pinPos[pk(n.id, 1, 1, i)] = pp;
@@ -4446,7 +4692,9 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsNodeDoc* nd = VsNodeDocFor(n.type);
                     const VsPinDoc* pd = nd ? VsPinDocFor(*nd, input, exec, pname) : nullptr;
                     const char* tn = exec ? "Flow" : okay::vs::PinTypeName(input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx));
-                    VsPinTooltip(pd, pname.c_str(), tn);
+                    VsPinTooltip(pd, pname.c_str(), tn,
+                                 exec ? okay::vs::PinType::Any : (input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx)), !input, exec,
+                                 (input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0) ? VsRequiredWhat(n.type, idx) : nullptr);
                 }
             }
         };
@@ -4529,17 +4777,60 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y), ImVec2(b.x - dx, b.y), b, col, w);
     };
     auto hotNode = [&](int id) { return st.sel.count(id) > 0 || st.selected == id; };
+    // Alt held over a wire: it lights up, and a click breaks that wire only (the
+    // other wires on the same pin stay). Nearest wire within a few pixels wins.
+    auto bezierDist = [&](ImVec2 a, ImVec2 b) {
+        const float dx = std::max(50.0f * z, std::fabs(b.x - a.x) * 0.5f);
+        const ImVec2 c1(a.x + dx, a.y), c2(b.x - dx, b.y);
+        float best = 1.0e9f;
+        for (int i = 0; i <= 24; ++i) {
+            const float t = i / 24.0f, u = 1.0f - t;
+            const float x = u*u*u*a.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*b.x;
+            const float y = u*u*u*a.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*b.y;
+            best = std::min(best, (x - io.MousePos.x) * (x - io.MousePos.x) + (y - io.MousePos.y) * (y - io.MousePos.y));
+        }
+        return std::sqrt(best);
+    };
+    int altExec = -1, altData = -1;   // index of the wire under the mouse (Alt held)
+    if (io.KeyAlt && !st.dragging && ImGui::IsWindowHovered()) {
+        float best = 9.0f;
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const auto& l = g.execLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+            if (a == pinPos.end() || b == pinPos.end()) continue;
+            const float dd = bezierDist(a->second, b->second);
+            if (dd < best) { best = dd; altExec = i; altData = -1; }
+        }
+        for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+            const auto& l = g.dataLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
+            if (a == pinPos.end() || b == pinPos.end()) continue;
+            const float dd = bezierDist(a->second, b->second);
+            if (dd < best) { best = dd; altData = i; altExec = -1; }
+        }
+        if ((altExec >= 0 || altData >= 0) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (altExec >= 0) g.execLinks.erase(g.execLinks.begin() + altExec);
+            else g.dataLinks.erase(g.dataLinks.begin() + altData);
+            g.dirty = true; altExec = altData = -1;
+        }
+    }
+    int execIdx = -1;
     for (const auto& l : g.execLinks) {
+        ++execIdx;
         auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
         if (a == pinPos.end() || b == pinPos.end()) continue;
+        if (execIdx == altExec) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.from) || hotNode(l.to);
         const bool ran = live && st.flash.count(l.to) && st.flash[l.to] > 0.0f;
         ImU32 col = ran ? IM_COL32(255, 205, 90, 255) : hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(215, 216, 222, 200);
         bezier(a->second, b->second, col, (hot || ran ? 3.6f : 2.8f) * std::max(0.7f, z));
     }
+    int dataIdx = -1;
     for (const auto& l : g.dataLinks) {
+        ++dataIdx;
         auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
         if (a == pinPos.end() || b == pinPos.end()) continue;
+        if (dataIdx == altData) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.producer) || hotNode(l.consumer);
         // A wire whose value can't mean what the input needs (from an older graph
         // or hand-written file) is drawn red; the checker lists it too.
@@ -4709,6 +5000,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Minimap: click or drag to move the view");
     }
 
+    // "Connect to... > Search all": the wire-drop list, started from that pin of the node.
+    bool pconnPlace = false;
+    if (pconn.on && pconn.openAll) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        openPaletteNow = true; pconnPlace = true;
+    }
     // Right-click empty canvas (or Space): node palette.
     if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
         (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
@@ -4717,6 +5015,7 @@ inline void Draw(EditorState& ed, bool* open) {
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
         st.addAtCenter = false;
+        if (pconnPlace) st.paletteWorld = pconn.at;
         ImGui::OpenPopup("##vspalette");
     }
     // A template picked in the toolbar: drop its nodes in the middle of the view.
@@ -4752,6 +5051,14 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    // "Connect to... > a node": add it already wired to the pin it was chosen for.
+    if (pconn.on && !pconn.openAll && pconn.def) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        st.paletteWorld = pconn.at;
+        addFromPalette(*pconn.def);
+        st.linkPending = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
@@ -4873,6 +5180,11 @@ inline void Draw(EditorState& ed, bool* open) {
         auto row = [](const std::string& name, const okay::vs::VsValue& v) {
             ImGui::TextDisabled("%s", name.c_str());
             ImGui::SameLine(110.0f);
+            if (v.IsColor()) {   // a swatch beside the hex
+                const okay::vs::VsColor c = v.AsColor();
+                ImGui::ColorButton("##dbgcol", ImVec4(c.r, c.g, c.b, c.a), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+                ImGui::SameLine();
+            }
             ImGui::TextWrapped("%s", VsDebugText(v).c_str());
         };
         if (ImGui::CollapsingHeader("Call stack", ImGuiTreeNodeFlags_DefaultOpen)) {

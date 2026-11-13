@@ -315,7 +315,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.15.2 Main loop - `editor/main.cpp` (`main` ~43674-45136) - frame loop, panel draw order with profiler scopes, camera safety, dev screenshot hooks (`OKAY_UI_*` variables)
   - 15.15.3 Launcher gate and handshake - `editor/main.cpp` (~43267, ~43572, `DrawProjectGate` ~16655, `DrawNewProjectPopup` ~16748) - open a project from the launcher, "save and close" requests
   - 15.15.4 Single instance and multi-window - `editor/main.cpp` (~43329-43571) - hand-off to a running editor, dual-monitor viewport windows
-  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher
+  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher; the editor update and the player fetch now require a SHA-256 from `versions.json` (`updater::FetchVerified`) and the restart helper self-checks the new editor and rolls back (`docs/updater.md`)
   - 15.15.6 Theme and fonts - `editor/main.cpp` (~4273), `shared/OkayTheme.hpp` - Slate theme, accent colours, UI scale
   - 15.15.7 Headless selftest - `editor/main.cpp` (~1-445, `RunSelfTest`) - ctest `editor` runs `OkayEngine --selftest` with no display
 - **Code:** `editor/main.cpp`, `editor/EditorCommon.hpp`, `editor/EditorWidgets.*`, `editor/okayspace.rc`, `editor/okayspace.ico`

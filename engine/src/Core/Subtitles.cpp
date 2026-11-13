@@ -50,15 +50,26 @@ bool ParseTime(const std::string& in, float& seconds) {
     const std::string s = Trim(in);
     int h = 0, m = 0, sec = 0, ms = 0;
     char sep = 0;
-    if (std::sscanf(s.c_str(), "%d:%d:%d%c%d", &h, &m, &sec, &sep, &ms) == 5 && (sep == ',' || sep == '.')) {
-        int digits = 0;
-        for (std::size_t i = s.find(sep) + 1; i < s.size() && std::isdigit((unsigned char)s[i]); ++i) ++digits;
-        while (digits > 3) { ms /= 10; --digits; }
-        while (digits < 3) { ms *= 10; ++digits; }
+    // Fields are read as 64-bit and range-checked: %d overflowing is undefined behaviour, and
+    // a huge hour count would overflow the arithmetic below.
+    constexpr long long kMaxField = 100000;   // ~11 years of hours; no real subtitle gets near it
+    long long h64 = 0, m64 = 0, s64 = 0, ms64 = 0;
+    if (std::sscanf(s.c_str(), "%lld:%lld:%lld%c%lld", &h64, &m64, &s64, &sep, &ms64) == 5 && (sep == ',' || sep == '.')) {
+        if (h64 < 0 || m64 < 0 || s64 < 0 || ms64 < 0 || h64 > kMaxField || m64 > kMaxField || s64 > kMaxField) return false;
+        h = (int)h64; m = (int)m64; sec = (int)s64;
+        std::string msDigits;
+        for (std::size_t i = s.find(sep) + 1; i < s.size() && std::isdigit((unsigned char)s[i]); ++i) msDigits += s[i];
+        if (msDigits.size() > 3) msDigits.resize(3);
+        while (msDigits.size() < 3) msDigits += '0';
+        ms = std::atoi(msDigits.c_str());
         seconds = (float)h * 3600.0f + (float)m * 60.0f + (float)sec + (float)ms / 1000.0f;
         return true;
     }
-    if (std::sscanf(s.c_str(), "%d:%d:%d", &h, &m, &sec) == 3) { seconds = (float)(h * 3600 + m * 60 + sec); return true; }
+    if (std::sscanf(s.c_str(), "%lld:%lld:%lld", &h64, &m64, &s64) == 3) {
+        if (h64 < 0 || m64 < 0 || s64 < 0 || h64 > kMaxField || m64 > kMaxField || s64 > kMaxField) return false;
+        seconds = (float)(h64 * 3600 + m64 * 60 + s64);
+        return true;
+    }
     return false;
 }
 

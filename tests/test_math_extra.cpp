@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Core/SafeCast.hpp"
 #include <cmath>
+#include <limits>
 
 using namespace okay;
 
@@ -68,6 +70,36 @@ int main() {
         Quat r = q * q.Inverse();
         Vec3 v{1, 2, 3};
         CHECK(VApprox(r * v, v, 1e-2f));
+    }
+
+    // ---- SafeInt & co: float -> integer without undefined behaviour ----
+    {
+        const float inf = std::numeric_limits<float>::infinity();
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        CHECK(SafeInt(3.9f) == 3);                      // truncates toward zero, like a cast
+        CHECK(SafeInt(-3.9f) == -3);
+        CHECK(SafeInt(0.0f) == 0);
+        CHECK(SafeInt(2147483520.0f) == 2147483520);    // the largest float below 2^31
+        CHECK(SafeInt(2147483648.0f) == std::numeric_limits<int>::max());
+        CHECK(SafeInt(-2147483648.0f) == std::numeric_limits<int>::min());
+        CHECK(SafeInt(1e30f) == std::numeric_limits<int>::max());
+        CHECK(SafeInt(-1e30f) == std::numeric_limits<int>::min());
+        CHECK(SafeInt(inf) == std::numeric_limits<int>::max());
+        CHECK(SafeInt(-inf) == std::numeric_limits<int>::min());
+        CHECK(SafeInt(nan) == 0);
+        CHECK(SafeInt(1e300) == std::numeric_limits<int>::max());   // doubles too
+        CHECK(SafeInt64(-7.5f) == -7);
+        CHECK(SafeInt64(1e30f) == std::numeric_limits<long long>::max());
+        CHECK(SafeInt64(-1e30f) == std::numeric_limits<long long>::min());
+        CHECK(SafeInt64(nan) == 0);
+        CHECK(SafeUInt32(4000000000.0f) == 4000000000u);
+        CHECK(SafeUInt32(5e9f) == std::numeric_limits<std::uint32_t>::max());
+        CHECK(SafeUInt32(-1.0f) == 0u);
+        CHECK(SafeUInt32(nan) == 0u);
+        CHECK(SafeSize(12.7f) == 12u);
+        CHECK(SafeSize(-5.0f) == 0u);
+        CHECK(SafeSize(inf) == std::numeric_limits<std::size_t>::max());
+        CHECK(SafeSize(nan) == 0u);
     }
 
     TEST_MAIN_RESULT();

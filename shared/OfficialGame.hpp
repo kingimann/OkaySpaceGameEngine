@@ -98,7 +98,7 @@ inline int CompareVersions(const std::string& a, const std::string& b) {
         return v;
     };
     const auto va = parts(a), vb = parts(b);
-    for (std::size_t i = 0; i < std::max(va.size(), vb.size()); ++i) {
+    for (std::size_t i = 0; i < (std::max)(va.size(), vb.size()); ++i) {
         const unsigned long long x = i < va.size() ? va[i] : 0, y = i < vb.size() ? vb[i] : 0;
         if (x != y) return x < y ? -1 : 1;
     }

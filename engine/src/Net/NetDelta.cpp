@@ -1,5 +1,6 @@
 #include "okay/Net/NetDelta.hpp"
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 namespace okay::net {
@@ -26,7 +27,6 @@ std::int16_t QuantUnit(float c) {
     return static_cast<std::int16_t>(std::lround(x));
 }
 
-bool FitI16(std::int32_t v) { return v >= -32768 && v <= 32767; }
 
 struct W {
     std::vector<std::uint8_t> b;
@@ -113,8 +113,12 @@ std::vector<std::uint8_t> EncodeSnapshot(const DeltaBase& base, const DeltaBase&
         r.hasExtra = extra != oldExtra;
         if (r.hasExtra) r.extra = extra.size() > kMaxExtra ? extra.substr(0, kMaxExtra) : extra;
         if (bp != base.pose.end()) {
-            const std::int32_t dx = pose.x - bp->second.x, dy = pose.y - bp->second.y, dz = pose.z - bp->second.z;
-            if (FitI16(dx) && FitI16(dy) && FitI16(dz)) {
+            // 64-bit: two int32 positions can differ by more than INT32_MAX.
+            const std::int64_t dx = static_cast<std::int64_t>(pose.x) - bp->second.x,
+                               dy = static_cast<std::int64_t>(pose.y) - bp->second.y,
+                               dz = static_cast<std::int64_t>(pose.z) - bp->second.z;
+            if (dx >= INT16_MIN && dx <= INT16_MAX && dy >= INT16_MIN && dy <= INT16_MAX &&
+                dz >= INT16_MIN && dz <= INT16_MAX) {
                 r.dx = static_cast<std::int16_t>(dx);
                 r.dy = static_cast<std::int16_t>(dy);
                 r.dz = static_cast<std::int16_t>(dz);
@@ -182,9 +186,14 @@ bool DecodeSnapshot(const std::uint8_t* data, std::size_t size, const DeltaBase&
         } else {
             const auto bp = have.pose.find(c.id);
             if (bp == have.pose.end()) return false;
-            c.pose.x = bp->second.x + r.i16();
-            c.pose.y = bp->second.y + r.i16();
-            c.pose.z = bp->second.z + r.i16();
+            // A hostile delta can push a base near INT32_MAX/MIN past the range: saturate.
+            auto add = [](std::int32_t a, std::int16_t d) {
+                const std::int64_t v = static_cast<std::int64_t>(a) + d;
+                return static_cast<std::int32_t>(v > INT32_MAX ? INT32_MAX : v < INT32_MIN ? INT32_MIN : v);
+            };
+            c.pose.x = add(bp->second.x, r.i16());
+            c.pose.y = add(bp->second.y, r.i16());
+            c.pose.z = add(bp->second.z, r.i16());
         }
         c.pose.qx = r.i16(); c.pose.qy = r.i16(); c.pose.qz = r.i16(); c.pose.qw = r.i16();
         if (c.hasExtra) {

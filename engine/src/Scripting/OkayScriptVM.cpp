@@ -1,3 +1,4 @@
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -221,7 +222,7 @@ static bool FpHandsSet(FirstPersonHands* h, const std::string& p, const Value& v
     if (p == "handFov") { h->handFov = v.AsFloat(); return true; }
     if (p == "itemScale") { h->itemScale = v.AsFloat(); return true; }
     if (p == "holdMode") {
-        int m = (int)v.AsFloat();
+        int m = SafeInt(v.AsFloat());
         h->holdMode = m == 1 ? FirstPersonHands::HoldMode::Left
                     : m == 2 ? FirstPersonHands::HoldMode::Two
                              : FirstPersonHands::HoldMode::Right;
@@ -654,7 +655,7 @@ inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string&
     };
     switch (t) {
         case KInt:
-            if (v.IsNumber()) return Value{(float)(long long)v.AsFloat()};   // drops the fraction, like (int)
+            if (v.IsNumber()) return Value{(float)SafeInt64(v.AsFloat())};   // drops the fraction, like (int)
             if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
             return fail(v.IsString() ? " (use int.Parse(text))" : "");
         case KFloat:
@@ -1129,9 +1130,9 @@ struct BinaryExpr : Expr {
             case Tok::Star:    return a.AsFloat() * b.AsFloat();
             case Tok::Slash:   { float d = b.AsFloat(); return d != 0 ? a.AsFloat() / d : 0.0f; }
             case Tok::Percent: { float d = b.AsFloat(); return d != 0 ? std::fmod(a.AsFloat(), d) : 0.0f; }
-            case Tok::BitAnd: return (float)((long long)a.AsFloat() & (long long)b.AsFloat());
-            case Tok::BitOr:  return (float)((long long)a.AsFloat() | (long long)b.AsFloat());
-            case Tok::BitXor: return (float)((long long)a.AsFloat() ^ (long long)b.AsFloat());
+            case Tok::BitAnd: return (float)(SafeInt64(a.AsFloat()) & SafeInt64(b.AsFloat()));
+            case Tok::BitOr:  return (float)(SafeInt64(a.AsFloat()) | SafeInt64(b.AsFloat()));
+            case Tok::BitXor: return (float)(SafeInt64(a.AsFloat()) ^ SafeInt64(b.AsFloat()));
             case Tok::Lt: return a.AsFloat() <  b.AsFloat();
             case Tok::Gt: return a.AsFloat() >  b.AsFloat();
             case Tok::Le: return a.AsFloat() <= b.AsFloat();
@@ -1221,8 +1222,8 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
         if (m == "IndexOf")    { auto p = str.find(arg(0).AsString()); out = Value{p == std::string::npos ? -1.0f : (float)p}; return true; }
         if (m == "LastIndexOf"){ auto p = str.rfind(arg(0).AsString()); out = Value{p == std::string::npos ? -1.0f : (float)p}; return true; }
         if (m == "Substring") {
-            int st = (int)arg(0).AsFloat(); if (st < 0) st = 0; if (st > (int)str.size()) st = (int)str.size();
-            int n = a.size() > 1 ? (int)a[1].AsFloat() : (int)str.size() - st; if (n < 0) n = 0;
+            int st = SafeInt(arg(0).AsFloat()); if (st < 0) st = 0; if (st > (int)str.size()) st = (int)str.size();
+            int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : (int)str.size() - st; if (n < 0) n = 0;
             out = Value{str.substr((std::size_t)st, (std::size_t)n)}; return true;
         }
         if (m == "Replace") {
@@ -1245,15 +1246,15 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
             arr->push_back(Value{str.substr(p)}); return true;
         }
         if (m == "PadLeft" || m == "PadRight") {
-            int w = (int)arg(0).AsFloat(); char c = a.size() > 1 && !a[1].AsString().empty() ? a[1].AsString()[0] : ' ';
+            int w = SafeInt(arg(0).AsFloat()); char c = a.size() > 1 && !a[1].AsString().empty() ? a[1].AsString()[0] : ' ';
             std::string r = str;
             if ((int)r.size() < w) r = m == "PadLeft" ? std::string(w - r.size(), c) + r : r + std::string(w - r.size(), c);
             out = Value{r}; return true;
         }
-        if (m == "Insert") { std::size_t p = (std::size_t)std::max(0.0f, arg(0).AsFloat()); std::string r = str; r.insert(std::min(p, r.size()), arg(1).AsString()); out = Value{r}; return true; }
+        if (m == "Insert") { std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str; r.insert(std::min(p, r.size()), arg(1).AsString()); out = Value{r}; return true; }
         if (m == "Remove") {
-            std::size_t p = (std::size_t)std::max(0.0f, arg(0).AsFloat()); std::string r = str;
-            if (p < r.size()) r.erase(p, a.size() > 1 ? (std::size_t)std::max(0.0f, a[1].AsFloat()) : std::string::npos);
+            std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str;
+            if (p < r.size()) r.erase(p, a.size() > 1 ? SafeSize(a[1].AsFloat()) : std::string::npos);
             out = Value{r}; return true;
         }
         return false;
@@ -1302,9 +1303,9 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
         }
         if (m == "Add" || m == "Push" || m == "Enqueue") { arr->push_back(arg(0)); return true; }
         if (m == "AddRange") { if (auto o = arg(0).AsArray()) { auto copy = *o; arr->insert(arr->end(), copy.begin(), copy.end()); } return true; }
-        if (m == "Insert")   { int i = (int)arg(0).AsFloat(); i = std::max(0, std::min(i, (int)arr->size())); arr->insert(arr->begin() + i, arg(1)); return true; }
+        if (m == "Insert")   { int i = SafeInt(arg(0).AsFloat()); i = std::max(0, std::min(i, (int)arr->size())); arr->insert(arr->begin() + i, arg(1)); return true; }
         if (m == "Remove")   { int i = find(arg(0)); if (i >= 0) arr->erase(arr->begin() + i); out = Value{i >= 0}; return true; }
-        if (m == "RemoveAt") { int i = (int)arg(0).AsFloat(); if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i); return true; }
+        if (m == "RemoveAt") { int i = SafeInt(arg(0).AsFloat()); if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i); return true; }
         if (m == "Contains") { out = Value{find(arg(0)) >= 0}; return true; }
         if (m == "IndexOf")  { out = Value{(float)find(arg(0))}; return true; }
         if (m == "Clear")    { arr->clear(); return true; }
@@ -1383,7 +1384,7 @@ struct CastExpr : Expr {
         Value v = e->Eval(rt);
         if (type == "string") return Value{v.AsString()};
         if (type == "bool") return Value{v.AsBool()};
-        if (type == "char") return v.IsString() ? v : Value{std::string(1, (char)(int)v.AsFloat())};
+        if (type == "char") return v.IsString() ? v : Value{std::string(1, (char)SafeInt(v.AsFloat()))};
         if (type == "float" || type == "double" || type == "decimal") {
             if (v.IsString()) { try { return Value{std::stof(v.AsString())}; } catch (...) { return Value{0.0f}; } }
             return Value{v.AsFloat()};
@@ -1471,7 +1472,7 @@ struct IndexExpr : Expr {
         if (safe && IsNullish(a)) return Value{};
         if (IsClassInstance(a)) return rt.GetMember(a, index->Eval(rt).AsString(), true);
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i < 0 || i >= (int)v->size()) return Value{};
             return (*v)[i];
         }
@@ -1493,7 +1494,7 @@ struct IndexAssignExpr : Expr {
         Value val = value->Eval(rt);
         if (IsClassInstance(a)) { rt.SetMember(a, index->Eval(rt).AsString(), val, true); return val; }
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
             else if (i == (int)v->size()) v->push_back(val); // append at end
         } else if (auto m = a.AsMap()) {
@@ -1538,7 +1539,7 @@ struct IndexCompoundAssignExpr : Expr {
             }
         };
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i >= 0 && i < (int)v->size()) { (*v)[i] = apply((*v)[i]); return (*v)[i]; }
         } else if (auto m = a.AsMap()) {
             std::string k = index->Eval(rt).AsString();
@@ -1766,7 +1767,7 @@ struct YieldStmt : Stmt {
             if (auto it = m->find("__wait"); it != m->end()) { r.YieldCoroutine(it->second.AsFloat(), false, 0, Value{}, false, real); return; }
             if (auto it = m->find("__until"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, false); return; }
             if (auto it = m->find("__while"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, true); return; }
-            if (auto it = m->find("__co"); it != m->end()) { r.YieldCoroutine(0.0f, false, (int)it->second.AsFloat()); return; }
+            if (auto it = m->find("__co"); it != m->end()) { r.YieldCoroutine(0.0f, false, SafeInt(it->second.AsFloat())); return; }
         }
         r.YieldCoroutine(0.0f, true, 0);   // null / WaitForEndOfFrame / anything else: next frame
     }
@@ -2040,7 +2041,7 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::v
     if (!m) throw ScriptError("not a function");
     auto it = m->find("__lambda");
     if (it == m->end()) throw ScriptError("not a function");
-    auto lb = lambdas.find((int)it->second.AsFloat());
+    auto lb = lambdas.find(SafeInt(it->second.AsFloat()));
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
     CallDepthGuard depthGuard("a lambda");
     const auto& ps = *lb->second.params;
@@ -3626,14 +3627,14 @@ struct OkayScriptVM::Impl {
         auto uiN = [](std::vector<Value>& a, std::size_t i, float d) { return a.size() > i ? a[i].AsFloat() : d; };
         b["ui_heading"]   = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Heading(uiS(a, 0).c_str()); return Value{}; };
         b["ui_caption"]   = [uiS, uiN](std::vector<Value>& a) {
-            if (auto* u = GetScriptUI()) u->Caption(uiS(a, 0).c_str(), (int)uiN(a, 1, 115), (int)uiN(a, 2, 209), (int)uiN(a, 3, 143));
+            if (auto* u = GetScriptUI()) u->Caption(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 115)), SafeInt(uiN(a, 2, 209)), SafeInt(uiN(a, 3, 143)));
             return Value{};
         };
         b["ui_text_dim"]     = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextDim(uiS(a, 0).c_str()); return Value{}; };
         b["ui_text_wrapped"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextWrapped(uiS(a, 0).c_str()); return Value{}; };
         b["ui_primary_button"] = [uiS](std::vector<Value>& a) { auto* u = GetScriptUI(); return Value{u && u->PrimaryButton(uiS(a, 0).c_str()) ? 1.0f : 0.0f}; };
         b["ui_badge"]     = [uiS, uiN](std::vector<Value>& a) {
-            if (auto* u = GetScriptUI()) u->Badge(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), (int)uiN(a, 2, 0), (int)uiN(a, 3, 0));
+            if (auto* u = GetScriptUI()) u->Badge(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 0)), SafeInt(uiN(a, 2, 0)), SafeInt(uiN(a, 3, 0)));
             return Value{};
         };
         b["ui_avatar"]    = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Avatar(uiS(a, 0).c_str(), uiN(a, 1, 0.0f)); return Value{}; };
@@ -3646,9 +3647,9 @@ struct OkayScriptVM::Impl {
         };
         b["ui_key_value"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->KeyValue(uiS(a, 0).c_str(), uiS(a, 1).c_str()); return Value{}; };
         b["ui_spinner"]   = [](std::vector<Value>&) { if (auto* u = GetScriptUI()) u->Spinner(); return Value{}; };
-        b["ui_toast"]     = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Toast(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), uiN(a, 2, 3.0f)); return Value{}; };
+        b["ui_toast"]     = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Toast(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 0)), uiN(a, 2, 3.0f)); return Value{}; };
         b["ui_tabs"]      = [uiS, uiN](std::vector<Value>& a) {
-            auto* u = GetScriptUI(); const int cur = (int)uiN(a, 1, 0);
+            auto* u = GetScriptUI(); const int cur = SafeInt(uiN(a, 1, 0));
             return Value{(float)(u ? u->Tabs(uiS(a, 0).c_str(), cur) : cur)};
         };
         b["ui_input"]     = [uiS](std::vector<Value>& a) {
@@ -3854,10 +3855,10 @@ struct OkayScriptVM::Impl {
         b["mouse_x"] = [](std::vector<Value>&) { return Value{Input::MousePosition().x}; };
         b["mouse_y"] = [](std::vector<Value>&) { return Value{Input::MousePosition().y}; };
         b["mouse"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["mouse_held"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["move_towards"] = [](std::vector<Value>& a) {   // (current, target, maxDelta)
             float c = a.size() > 0 ? a[0].AsFloat() : 0.0f, t = a.size() > 1 ? a[1].AsFloat() : 0.0f, m = a.size() > 2 ? a[2].AsFloat() : 0.0f;
@@ -3868,20 +3869,20 @@ struct OkayScriptVM::Impl {
             return Value{Vec3::Dot(a[0].AsVec3(), a[1].AsVec3())};
         };
         b["to_fixed"] = [](std::vector<Value>& a) {   // (value, decimals) -> text
-            int d = a.size() > 1 ? (int)a[1].AsFloat() : 2; d = d < 0 ? 0 : (d > 6 ? 6 : d);
+            int d = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 2; d = d < 0 ? 0 : (d > 6 ? 6 : d);
             char buf[64]; std::snprintf(buf, sizeof(buf), "%.*f", d, a.empty() ? 0.0f : a[0].AsFloat());
             return Value{std::string(buf)};
         };
         b["mouse_down"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButtonDown(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["gamepad_x"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().x}; };
         b["gamepad_y"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().y}; };
         b["gamepad"] = [](std::vector<Value>& a) {
-            return Value{Input::GetGamepadButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetGamepadButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["gamepad_down"] = [](std::vector<Value>& a) {
-            return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["rand"] = [](std::vector<Value>& a) {
             float lo = a.size() > 0 ? a[0].AsFloat() : 0.0f;
@@ -4081,7 +4082,7 @@ struct OkayScriptVM::Impl {
         };
         b["get_child"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
-                int i = (int)a[1].AsFloat();
+                int i = SafeInt(a[1].AsFloat());
                 if (i >= 0 && i < g->transform->ChildCount() && g->transform->Children()[i]->gameObject)
                     return Value{g->transform->Children()[i]->gameObject->name};
             }
@@ -4111,7 +4112,7 @@ struct OkayScriptVM::Impl {
         };
         b["add_xp"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* st = g->GetComponent<Stats>()) { st->AddXP((int)a[1].AsFloat()); return Value{true}; }
+                if (auto* st = g->GetComponent<Stats>()) { st->AddXP(SafeInt(a[1].AsFloat())); return Value{true}; }
             return Value{false};
         };
         b["get_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
@@ -4240,7 +4241,7 @@ struct OkayScriptVM::Impl {
         };
         b["build_palette_select"] = [buildOf](std::vector<Value>& a) -> Value {
             BuildMode* m = buildOf(); if (!m || a.empty()) return Value{false};
-            m->SelectSlot((int)a[0].AsFloat()); return Value{true};
+            m->SelectSlot(SafeInt(a[0].AsFloat())); return Value{true};
         };
         b["build_selected"] = [buildOf](std::vector<Value>&) -> Value {
             BuildMode* m = buildOf(); return Value{(float)(m ? m->SelectedSlot() : -1)};
@@ -4552,7 +4553,7 @@ struct OkayScriptVM::Impl {
             // spawn_wave("prefab", count[, radius]): ring of prefabs around self.
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Scene* s = sceneOf(); if (!s) return Value{0.0f};
-            int count = a.size() > 1 ? (int)a[1].AsFloat() : 8;
+            int count = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 8;
             if (count < 1) count = 1;
             float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
             Vec3 c = rt.host->gameObject->transform->Position();
@@ -4785,7 +4786,7 @@ struct OkayScriptVM::Impl {
         };
         b["ui_set_dropdown"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue((int)a[1].AsFloat());
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         // Tab bars: read / select the tab (fires on_change), badge a tab (0 none,
@@ -4802,17 +4803,17 @@ struct OkayScriptVM::Impl {
         };
         b["ui_set_tab"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->Select((int)a[1].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_badge"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[1].AsFloat(), (int)a[2].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_enabled"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[1].AsFloat(), a[2].AsBool());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[1].AsFloat()), a[2].AsBool());
             return Value{};
         };
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
@@ -4828,7 +4829,7 @@ struct OkayScriptVM::Impl {
             Scene* s = sceneOf();
             GameObject* g = s ? s->Find(a[0].AsString()) : nullptr;
             if (!g) return Value{0.0f};
-            int v = a[1].IsNumber() ? (int)a[1].AsFloat() : UITheme::VariantFromName(a[1].AsString());
+            int v = a[1].IsNumber() ? SafeInt(a[1].AsFloat()) : UITheme::VariantFromName(a[1].AsString());
             if (v < 0 || v >= UITheme::kVariantCount) return Value{0.0f};
             auto* sv = g->GetComponent<UIStyleVariant>();
             if (!sv) sv = g->AddComponent<UIStyleVariant>();
@@ -4842,7 +4843,7 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{0.0f};
             Scene* s = sceneOf();
             if (!s) return Value{0.0f};
-            int p = a[0].IsNumber() ? (int)a[0].AsFloat() : UITheme::PresetFromName(a[0].AsString());
+            int p = a[0].IsNumber() ? SafeInt(a[0].AsFloat()) : UITheme::PresetFromName(a[0].AsString());
             if (p < 0 || p >= UITheme::kPresetCount) return Value{0.0f};
             UITheme* th = UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string());
             if (!th) return Value{0.0f};
@@ -4921,7 +4922,7 @@ struct OkayScriptVM::Impl {
         // grok/ui-color — pick a swatch on a named color picker (fires on_change).
         b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue((int)a[1].AsFloat());
+                if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["swatch_value"] = [sceneOf](std::vector<Value>& a) -> Value {
@@ -4977,7 +4978,7 @@ struct OkayScriptVM::Impl {
         };
         b["set_slot"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue((int)a[1].AsFloat());
+                if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["slot_value"] = [sceneOf](std::vector<Value>& a) -> Value {
@@ -4993,12 +4994,12 @@ struct OkayScriptVM::Impl {
         };
         b["set_dropdown_max"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible((int)a[1].AsFloat());
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_dropdown_icon"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon((int)a[1].AsFloat(), a[2].AsString());
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon(SafeInt(a[1].AsFloat()), a[2].AsString());
             return Value{};
         };
         b["set_scroll_inertia"] = [sceneOf](std::vector<Value>& a) {
@@ -5013,7 +5014,7 @@ struct OkayScriptVM::Impl {
         };
         b["set_scroll_bar"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle((int)a[1].AsFloat());
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tabs_closable"] = [sceneOf](std::vector<Value>& a) {
@@ -5023,7 +5024,7 @@ struct OkayScriptVM::Impl {
         };
         b["close_tab"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab((int)a[1].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tooltip_rich"] = [sceneOf](std::vector<Value>& a) {
@@ -5048,12 +5049,12 @@ struct OkayScriptVM::Impl {
         };
         b["set_input_limit"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength((int)a[1].AsFloat());
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_input_type"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType((int)a[1].AsFloat());
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         // grok/ui-toast. toast_push (not ui_toast, which is the immediate-mode popup).
@@ -5069,7 +5070,7 @@ struct OkayScriptVM::Impl {
             if (UIToast* t = firstToast())
                 t->Push(a.size() > 0 ? a[0].AsString() : std::string{},
                         a.size() > 1 ? a[1].AsString() : std::string{},
-                        a.size() > 2 ? (int)a[2].AsFloat() : 0);
+                        a.size() > 2 ? SafeInt(a[2].AsFloat()) : 0);
             return Value{};
         };
         b["set_toast_duration"] = [firstToast](std::vector<Value>& a) {
@@ -5077,11 +5078,11 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["set_toast_corner"] = [firstToast](std::vector<Value>& a) {
-            if (UIToast* t = firstToast()) t->SetCorner(a.empty() ? 0 : (int)a[0].AsFloat());
+            if (UIToast* t = firstToast()) t->SetCorner(a.empty() ? 0 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["set_toast_max"] = [firstToast](std::vector<Value>& a) {
-            if (UIToast* t = firstToast()) t->SetMaxStack(a.empty() ? 4 : (int)a[0].AsFloat());
+            if (UIToast* t = firstToast()) t->SetMaxStack(a.empty() ? 4 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["toast_count"] = [firstToast](std::vector<Value>&) -> Value {
@@ -5215,7 +5216,7 @@ struct OkayScriptVM::Impl {
         b["set_bar_segments"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* pb = g->GetComponent<UIProgressBar>())
-                    pb->segments = a.empty() ? 0 : (int)a[0].AsFloat();
+                    pb->segments = a.empty() ? 0 : SafeInt(a[0].AsFloat());
             return Value{};
         };
         b["set_bar_trail"] = [go](std::vector<Value>& a) {
@@ -5232,7 +5233,7 @@ struct OkayScriptVM::Impl {
         };
         b["ui_set_bar_segments"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = (int)a[1].AsFloat();
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = SafeInt(a[1].AsFloat());
             return Value{};
         };
         b["ui_set_bar_trail"] = [sceneOf](std::vector<Value>& a) {
@@ -5248,7 +5249,7 @@ struct OkayScriptVM::Impl {
         b["set_button_ease"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* bt = g->GetComponent<UIButton>()) {
-                    bt->transitionEase = a.empty() ? 0 : (int)a[0].AsFloat();
+                    bt->transitionEase = a.empty() ? 0 : SafeInt(a[0].AsFloat());
                     if (a.size() >= 2) bt->transitionDuration = a[1].AsFloat();
                 }
             return Value{};
@@ -5256,7 +5257,7 @@ struct OkayScriptVM::Impl {
         b["ui_set_button_ease"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* bt = g->GetComponent<UIButton>()) {
-                    bt->transitionEase = (int)a[1].AsFloat();
+                    bt->transitionEase = SafeInt(a[1].AsFloat());
                     if (a.size() >= 3) bt->transitionDuration = a[2].AsFloat();
                 }
             return Value{};
@@ -5279,17 +5280,17 @@ struct OkayScriptVM::Impl {
         };
         b["set_tab"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(a.empty() ? 0 : (int)a[0].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(a.empty() ? 0 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["set_tab_badge"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[0].AsFloat(), (int)a[1].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tab_enabled"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[0].AsFloat(), a[1].AsBool());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[0].AsFloat()), a[1].AsBool());
             return Value{};
         };
         // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).
@@ -5389,7 +5390,7 @@ struct OkayScriptVM::Impl {
         // Particle FX on a sibling ParticleSystem (explosions, dust, pickups).
         b["emit"] = [go](std::vector<Value>& a) {       // one-off burst of N
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
-                ps->Emit(a.empty() ? 1 : (int)a[0].AsFloat());
+                ps->Emit(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
@@ -5400,7 +5401,7 @@ struct OkayScriptVM::Impl {
         // explode([count]): burst particles AND remove this object — the classic death
         // effect in one call (needs a Particle System for the burst).
         b["explode"] = [this, go](std::vector<Value>& a) {
-            int n = a.empty() ? 20 : (int)a[0].AsFloat();
+            int n = a.empty() ? 20 : SafeInt(a[0].AsFloat());
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) ps->Emit(n);
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
@@ -5443,19 +5444,19 @@ struct OkayScriptVM::Impl {
         b["tile_resize"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    tm->Resize(a.size() > 0 ? (int)a[0].AsFloat() : 0, a.size() > 1 ? (int)a[1].AsFloat() : 0);
+                    tm->Resize(a.size() > 0 ? SafeInt(a[0].AsFloat()) : 0, a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0);
             return Value{};
         };
         b["set_tile"] = [go](std::vector<Value>& a) {
             if (a.size() >= 3) if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    tm->SetTile((int)a[0].AsFloat(), (int)a[1].AsFloat(), (int)a[2].AsFloat());
+                    tm->SetTile(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["get_tile"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    return Value{(float)tm->GetTile((int)a[0].AsFloat(), (int)a[1].AsFloat())};
+                    return Value{(float)tm->GetTile(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()))};
             return Value{0.0f};
         };
         b["tile_w"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Width() : 0.0f}; };
@@ -5608,7 +5609,7 @@ struct OkayScriptVM::Impl {
             if (a.empty() || a[0].AsString().empty()) { if (GameObject* g = go()) r = g->GetComponent<DialogueRunner>(); }
             if (!r && !a.empty()) r = DialogueRunner::FindByName(sceneOf(), a[0].AsString());
             if (!r) { Log::Warning("[script] start_dialogue: no Dialogue Runner named ", a.empty() ? std::string() : a[0].AsString()); return Value{false}; }
-            return Value{r->StartDialogue(a.size() > 1 ? (int)a[1].AsFloat() : -1)};
+            return Value{r->StartDialogue(a.size() > 1 ? SafeInt(a[1].AsFloat()) : -1)};
         };
         b["stop_dialogue"]   = [sceneOf](std::vector<Value>&) { if (DialogueRunner* r = DialogueRunner::ActiveIn(sceneOf())) r->Stop(); return Value{}; };
         b["dialogue_active"] = [sceneOf](std::vector<Value>&) { return Value{DialogueRunner::ActiveIn(sceneOf()) != nullptr}; };
@@ -5638,11 +5639,11 @@ struct OkayScriptVM::Impl {
         };
         b["complete_objective"] = [sceneOf](std::vector<Value>& a) {
             QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
-            return Value{q && q->CompleteObjective(a[0].AsString(), a.size() > 1 ? (int)a[1].AsFloat() : 0)};
+            return Value{q && q->CompleteObjective(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0)};
         };
         b["add_quest_progress"] = [sceneOf](std::vector<Value>& a) {
             QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
-            return Value{q && q->AddProgress(a[0].AsString(), a.size() > 1 ? (int)a[1].AsFloat() : 0, a.size() > 2 ? (int)a[2].AsFloat() : 1)};
+            return Value{q && q->AddProgress(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0, a.size() > 2 ? SafeInt(a[2].AsFloat()) : 1)};
         };
         b["complete_quest"] = [sceneOf](std::vector<Value>& a) {
             QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
@@ -5693,7 +5694,7 @@ struct OkayScriptVM::Impl {
                 }
             }
             if (i + 1 < a.size()) { rs.fogStart = a[i].AsFloat(); rs.fogEnd = a[i + 1].AsFloat(); i += 2; }
-            if (i < a.size()) { rs.fogMode = a[i].IsString() ? FogModeFromName(a[i].AsString()) : (int)Mathf::Clamp(a[i].AsFloat(), 0.0f, 2.0f); ++i; }
+            if (i < a.size()) { rs.fogMode = a[i].IsString() ? FogModeFromName(a[i].AsString()) : SafeInt(Mathf::Clamp(a[i].AsFloat(), 0.0f, 2.0f)); ++i; }
             if (i < a.size()) rs.fogDensity = Mathf::Clamp(a[i].AsFloat(), 0.0f, 10.0f);
             return Value{};
         };
@@ -5701,7 +5702,7 @@ struct OkayScriptVM::Impl {
             Scene* s = sceneOf();
             if (!s || a.empty()) return Value{};
             auto& w = s->renderSettings.weather;
-            w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : (int)Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f);
+            w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : SafeInt(Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f));
             if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
             return Value{};
         };
@@ -5907,7 +5908,7 @@ struct OkayScriptVM::Impl {
             if (!m) return Value{false};
             if (a.empty()) return Value{m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex())};
             if (a[0].IsString()) return Value{m->Play(a[0].AsString())};
-            return Value{m->Play((int)a[0].AsFloat())};
+            return Value{m->Play(SafeInt(a[0].AsFloat()))};
         };
         b["music_next"]     = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Next(); return Value{}; };
         b["music_previous"] = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Previous(); return Value{}; };
@@ -5952,7 +5953,7 @@ struct OkayScriptVM::Impl {
             // Optional filters: [, layers [, ignore_triggers]] (as for raycast3).
             std::uint32_t mask = Physics2D::kAllLayers;
             if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
-                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : SafeUInt32(a[5].AsFloat()));
             bool trig = a.size() > 6 ? !a[6].AsBool() : true;
             RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist, nullptr, mask, trig);
             sc->physics().RecordQueryRay(origin, dir, maxDist, h);
@@ -5985,7 +5986,7 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
             std::uint32_t mask = Physics2D::kAllLayers;
             if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
-                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : SafeUInt32(a[5].AsFloat()));
             bool trig = a.size() > 6 ? !a[6].AsBool() : true;
             auto hits = sc->physics().RaycastAll(*sc, origin, dir, maxDist, nullptr, mask, trig);
             sc->physics().RecordQueryRay(origin, dir, maxDist, hits.empty() ? RaycastHit2D{} : hits.front());
@@ -6021,7 +6022,7 @@ struct OkayScriptVM::Impl {
         // Scene Manager (build list) — load by index/name, next, reload, query.
         b["load_scene_index"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) return Value{SceneManager::LoadScene(*s, (int)a[0].AsFloat()) ? 1.0f : 0.0f};
+            if (s && !a.empty()) return Value{SceneManager::LoadScene(*s, SafeInt(a[0].AsFloat())) ? 1.0f : 0.0f};
             return Value{0.0f};
         };
         b["load_scene_name"] = [this](std::vector<Value>& a) {
@@ -6130,7 +6131,7 @@ struct OkayScriptVM::Impl {
         };
         // Set/get the built-in animation index (0 none,1 idle,2 walk,3 run,...).
         b["set_anim"] = [charSelf](std::vector<Value>& a) {
-            if (Character* c = charSelf(); c && !a.empty()) c->anim = (int)a[0].AsFloat();
+            if (Character* c = charSelf(); c && !a.empty()) c->anim = SafeInt(a[0].AsFloat());
             return Value{};
         };
         b["get_anim"] = [charSelf](std::vector<Value>&) {
@@ -6142,7 +6143,7 @@ struct OkayScriptVM::Impl {
             GameObject* g = selfObj();
             PlayerView* v = g ? PlayerView::FindForScript(g, true) : nullptr;
             if (!v) return Value{0.0f};
-            v->SetView(a.empty() ? 1 : (int)a[0].AsFloat());
+            v->SetView(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
             return Value{1.0f};
         };
         b["get_view"] = [selfObj](std::vector<Value>&) {
@@ -6180,7 +6181,7 @@ struct OkayScriptVM::Impl {
             UITheme* theme = name.empty() ? g->GetComponent<UITheme>() : nullptr;
             if (!theme) theme = UITheme::Find(g->scene(), name);
             if (!theme) return Value{0.0f};
-            theme->ApplyPreset(a.empty() ? 1 : (int)a[0].AsFloat());
+            theme->ApplyPreset(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
             theme->Apply();
             return Value{1.0f};
         };
@@ -6304,7 +6305,7 @@ struct OkayScriptVM::Impl {
                 world = a[0].AsVec3();
                 from = &world;
             } else if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
-            else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+            else if (!a.empty() && a[0].IsNumber()) dir = SafeInt(a[0].AsFloat());
             HumanoidActions::RequestDeath(go, dir, from);
             return Value{};
         };
@@ -6360,7 +6361,7 @@ struct OkayScriptVM::Impl {
             GameObject* seat = nullptr;
             int type = 1;
             if (!a.empty()) {
-                if (a[0].IsNumber()) type = (int)a[0].AsFloat();
+                if (a[0].IsNumber()) type = SafeInt(a[0].AsFloat());
                 else if (go->scene()) {
                     const std::string name = a[0].AsString();
                     seat = go->scene()->Find(name);
@@ -6401,14 +6402,14 @@ struct OkayScriptVM::Impl {
                 if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
             } else {
                 if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
-                else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+                else if (!a.empty() && a[0].IsNumber()) dir = SafeInt(a[0].AsFloat());
                 if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
             }
             return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
         };
         auto dirArg = [](const Value& v) {
             if (v.IsString()) return HumanoidActions::DirFromName(v.AsString());
-            return (int)v.AsFloat();
+            return SafeInt(v.AsFloat());
         };
         b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);
@@ -6615,7 +6616,7 @@ struct OkayScriptVM::Impl {
             return false;
         };
         b["set_stance"] = [setStance](std::vector<Value>& a) {
-            return Value{setStance(a.empty() ? 0 : (int)a[0].AsFloat()) ? 1.0f : 0.0f};
+            return Value{setStance(a.empty() ? 0 : SafeInt(a[0].AsFloat())) ? 1.0f : 0.0f};
         };
         b["crouch"] = [setStance](std::vector<Value>&) { return Value{setStance(1) ? 1.0f : 0.0f}; };
         b["prone"]  = [setStance](std::vector<Value>&) { return Value{setStance(2) ? 1.0f : 0.0f}; };
@@ -6707,7 +6708,7 @@ struct OkayScriptVM::Impl {
         auto itemArg = [](std::vector<Value>& a, std::size_t k) -> std::string {
             return a.size() > k ? ItemDatabase::Get().Resolve(a[k].AsString()) : std::string();
         };
-        auto intArg = [](std::vector<Value>& a, std::size_t k, int def) { return a.size() > k ? (int)a[k].AsFloat() : def; };
+        auto intArg = [](std::vector<Value>& a, std::size_t k, int def) { return a.size() > k ? SafeInt(a[k].AsFloat()) : def; };
         b["inv_add"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // -> leftover that didn't fit
             Inventory* inv = invAt(a, 2);
             const int n = intArg(a, 1, 1);
@@ -6932,13 +6933,13 @@ struct OkayScriptVM::Impl {
 
         b["net_host"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
-            std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : (int)a[0].AsFloat());
+            std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : SafeInt(a[0].AsFloat()));
             return Value{(n && n->StartServer(port)) ? 1.0f : 0.0f};
         };
         b["net_join"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             std::string host = a.empty() ? "127.0.0.1" : a[0].AsString();
-            std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : (int)a[1].AsFloat());
+            std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : SafeInt(a[1].AsFloat()));
             return Value{(n && n->StartClient(host, port)) ? 1.0f : 0.0f};
         };
         // Relay (NAT traversal): host/join through a shared relay + session code,
@@ -6946,13 +6947,13 @@ struct OkayScriptVM::Impl {
         b["net_host_relay"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             if (!n || a.size() < 3) return Value{0.0f};
-            return Value{n->HostViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+            return Value{n->HostViaRelay(a[0].AsString(), (std::uint16_t)SafeInt(a[1].AsFloat()),
                                          a[2].AsString()) ? 1.0f : 0.0f};
         };
         b["net_join_relay"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             if (!n || a.size() < 3) return Value{0.0f};
-            return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+            return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)SafeInt(a[1].AsFloat()),
                                          a[2].AsString()) ? 1.0f : 0.0f};
         };
         // Launcher integration (Steam-style): was this run started to join a friend
@@ -6981,7 +6982,7 @@ struct OkayScriptVM::Impl {
         b["net_browser_count"] = [](std::vector<Value>&) { return Value{(float)ServerBrowser::Shared().Results().size()}; };
         auto browserAt = [](std::vector<Value>& a, ServerBrowser::Entry& out) {
             if (a.empty()) return false;
-            const auto r = ServerBrowser::Shared().Results(); const int i = (int)a[0].AsFloat();
+            const auto r = ServerBrowser::Shared().Results(); const int i = SafeInt(a[0].AsFloat());
             if (i < 0 || i >= (int)r.size()) return false;
             out = r[i]; return true;
         };
@@ -7006,16 +7007,16 @@ struct OkayScriptVM::Impl {
         b["net_set_score"] = [this](std::vector<Value>& a) {   // server only: (id, score)
             NetworkManager* n = Net();
             if (!n || a.size() < 2 || !n->IsServer()) return Value{0.0f};
-            n->SetPeerScore((std::uint32_t)(int)a[0].AsFloat(), (int)a[1].AsFloat());
+            n->SetPeerScore(SafeUInt32(a[0].AsFloat()), SafeInt(a[1].AsFloat()));
             return Value{1.0f};
         };
         b["net_score"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
-            return Value{(n && !a.empty()) ? (float)n->PeerScore((std::uint32_t)(int)a[0].AsFloat()) : 0.0f};
+            return Value{(n && !a.empty()) ? (float)n->PeerScore(SafeUInt32(a[0].AsFloat())) : 0.0f};
         };
         b["net_peer_name"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
-            return Value{(n && !a.empty()) ? n->PeerName((std::uint32_t)(int)a[0].AsFloat()) : std::string{}};
+            return Value{(n && !a.empty()) ? n->PeerName(SafeUInt32(a[0].AsFloat())) : std::string{}};
         };
         b["net_roster_count"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net();
@@ -7024,7 +7025,7 @@ struct OkayScriptVM::Impl {
         b["net_roster_id"] = [this](std::vector<Value>& a) {   // (index) -> peer id, -1 if out of range
             NetworkManager* n = Net();
             if (!n || a.empty()) return Value{-1.0f};
-            const auto r = n->Roster(); const int i = (int)a[0].AsFloat();
+            const auto r = n->Roster(); const int i = SafeInt(a[0].AsFloat());
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
         };
         // ---- Matchmaking queues (docs/sql/matchmaking.sql) ----
@@ -7036,8 +7037,8 @@ struct OkayScriptVM::Impl {
             EnsureNet();   // the found match needs a NetworkManager to connect
             MatchRequest r;
             r.mode = a.size() > 0 ? a[0].AsString() : std::string();
-            r.players = a.size() > 1 ? (int)a[1].AsFloat() : 2;
-            r.minPlayers = a.size() > 2 ? (int)a[2].AsFloat() : 0;
+            r.players = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 2;
+            r.minPlayers = a.size() > 2 ? SafeInt(a[2].AsFloat()) : 0;
             r.region = a.size() > 3 ? a[3].AsString() : std::string();
             return Value{Matchmaker::Shared().Start(r) ? 1.0f : 0.0f};
         };
@@ -7075,8 +7076,8 @@ struct OkayScriptVM::Impl {
             if (!n || !n->IsServer()) return Value{0.0f};
             std::vector<std::uint32_t> winners;
             for (auto& v : a) {
-                if (auto arr = v.AsArray()) { for (auto& w : *arr) winners.push_back((std::uint32_t)(int)w.AsFloat()); }
-                else winners.push_back((std::uint32_t)(int)v.AsFloat());
+                if (auto arr = v.AsArray()) { for (auto& w : *arr) winners.push_back(SafeUInt32(w.AsFloat())); }
+                else winners.push_back(SafeUInt32(v.AsFloat()));
             }
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{EndMatchAndReport(*n, winners, std::string(), sc ? sc->Name() : std::string()) ? 1.0f : 0.0f};
@@ -7094,7 +7095,7 @@ struct OkayScriptVM::Impl {
             auto arr = v.AsArray();
             if (!arr || !Account::Exists() || !Account::IsLoggedIn()) return v;
             const std::string stat = a.empty() ? std::string("wins") : a[0].AsString();
-            const int count = a.size() > 1 ? std::max(1, (int)a[1].AsFloat()) : 10;
+            const int count = a.size() > 1 ? std::max(1, SafeInt(a[1].AsFloat())) : 10;
             std::string game = a.size() > 2 ? a[2].AsString() : std::string();
             if (game.empty()) { NetworkManager* n = Net(); game = n && !n->gameId.empty() ? n->gameId : ServerBrowser::Shared().Game(); }
             for (const auto& e : MatchResults(Account::Get()).Leaderboard(game, stat, count)) {
@@ -7120,7 +7121,7 @@ struct OkayScriptVM::Impl {
         b["net_teleport"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
             if (!n || a.size() < 3 || !n->IsServer()) return Value{0.0f};
-            n->ServerTeleport((std::uint32_t)(int)a[0].AsFloat(),
+            n->ServerTeleport(SafeUInt32(a[0].AsFloat()),
                               Vec3(a[1].AsFloat(), a[2].AsFloat(), a.size() > 3 ? a[3].AsFloat() : 0.0f));
             return Value{1.0f};
         };
@@ -7130,7 +7131,7 @@ struct OkayScriptVM::Impl {
             return Value{n ? n->maxMoveSpeed : 0.0f};
         };
         b["net_rate_limit"] = [this](std::vector<Value>& a) {
-            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = (int)a[0].AsFloat();
+            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = SafeInt(a[0].AsFloat());
             return Value{n ? (float)n->maxMessagesPerSecond : 0.0f};
         };
         // Server only: the anti-cheat (see okay/Net/AntiCheat.hpp). net_anticheat([on])
@@ -7151,7 +7152,7 @@ struct OkayScriptVM::Impl {
         };
         b["net_violations"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
-            return Value{n && !a.empty() ? (float)n->anticheat.Violations((std::uint32_t)a[0].AsFloat()) : 0.0f};
+            return Value{n && !a.empty() ? (float)n->anticheat.Violations(SafeUInt32(a[0].AsFloat())) : 0.0f};
         };
         // Claim that this peer's shot hit a networked object (its sync id), fired
         // from (ox, oy, oz) along (dx, dy, dz). The server checks it and applies
@@ -7171,7 +7172,7 @@ struct OkayScriptVM::Impl {
             if (!s || a.size() < 2) return Value{-1.0f};
             NetValidator* nv = NetValidator::BudgetFor(*s, a[1].AsString());
             if (!nv) return Value{-1.0f};
-            const auto peer = (std::uint32_t)a[0].AsFloat();
+            const auto peer = SafeUInt32(a[0].AsFloat());
             return Value{a.size() >= 3 ? nv->TopUp(peer, a[2].AsFloat()) : nv->Budget(peer)};
         };
         // Open the OkaySpace launcher's "Invite friends" window for this game.
@@ -7278,15 +7279,15 @@ struct OkayScriptVM::Impl {
         // mm_host(name, addr, port [, max, room, region]) -> session id ("" on fail).
         b["mm_host"] = [](std::vector<Value>& a) {
             if (a.size() < 3) return Value{std::string{}};
-            int max = a.size() > 3 ? (int)a[3].AsFloat() : 8;
+            int max = a.size() > 3 ? SafeInt(a[3].AsFloat()) : 8;
             std::string room   = a.size() > 4 ? a[4].AsString() : std::string{};
             std::string region = a.size() > 5 ? a[5].AsString() : std::string{};
             return Value{Matchmaking::Host(a[0].AsString(), a[1].AsString(),
-                                           (int)a[2].AsFloat(), max, room, region)};
+                                           SafeInt(a[2].AsFloat()), max, room, region)};
         };
         b["mm_heartbeat"] = [](std::vector<Value>& a) {
             if (a.size() < 2) return Value{0.0f};
-            return Value{Matchmaking::Heartbeat(a[0].AsString(), (int)a[1].AsFloat()) ? 1.0f : 0.0f};
+            return Value{Matchmaking::Heartbeat(a[0].AsString(), SafeInt(a[1].AsFloat())) ? 1.0f : 0.0f};
         };
         b["mm_unregister"] = [](std::vector<Value>& a) {
             return Value{(!a.empty() && Matchmaking::Unregister(a[0].AsString())) ? 1.0f : 0.0f};
@@ -7300,7 +7301,7 @@ struct OkayScriptVM::Impl {
         // Field getters for a cached session by index.
         auto at = [mmList](std::vector<Value>& a) -> const GameSession* {
             if (a.empty()) return nullptr;
-            std::size_t i = (std::size_t)a[0].AsFloat();
+            std::size_t i = SafeSize(a[0].AsFloat());
             return i < mmList->size() ? &(*mmList)[i] : nullptr;
         };
         b["mm_name"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? g->name : std::string{}}; };
@@ -7323,7 +7324,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["net_send_to"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a[2].AsString());
             return Value{};
         };
         // Broadcast a chat line (stamped with your name, logged everywhere).
@@ -7342,12 +7343,12 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["net_send_reliable_to"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a[2].AsString());
             return Value{};
         };
         // Moderation: host kicks a peer; clients can check if they were kicked.
         b["net_kick"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick((std::uint32_t)a[0].AsFloat(), a.size() > 1 ? a[1].AsString() : std::string{});
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick(SafeUInt32(a[0].AsFloat()), a.size() > 1 ? a[1].AsString() : std::string{});
             return Value{};
         };
         b["net_was_kicked"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->WasKicked()) ? 1.0f : 0.0f}; };
@@ -7425,7 +7426,7 @@ struct OkayScriptVM::Impl {
         };
         b["net_obj_rpc_to"] = [netObj](std::vector<Value>& a) {
             if (NetworkObject* o = netObj(); o && a.size() >= 2)
-                o->RpcTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a.size() > 2 ? a[2].AsString() : std::string{});
+                o->RpcTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a.size() > 2 ? a[2].AsString() : std::string{});
             return Value{};
         };
         b["net_obj_rpc_reliable"] = [netObj](std::vector<Value>& a) {
@@ -7507,7 +7508,7 @@ struct OkayScriptVM::Impl {
             return Value{a.empty() ? std::string{} : Steam::Get().CloudRead(a[0].AsString())};
         };
         b["steam_progress"] = [](std::vector<Value>& a) {
-            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), (std::uint32_t)a[1].AsFloat(), (std::uint32_t)a[2].AsFloat());
+            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), SafeUInt32(a[1].AsFloat()), SafeUInt32(a[2].AsFloat()));
             return Value{};
         };
         b["steam_presence"] = [](std::vector<Value>& a) {
@@ -7515,8 +7516,8 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
-        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
-        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : SafeUInt32(a[0].AsFloat())) ? 1.0f : 0.0f}; };
+        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : SafeUInt32(a[0].AsFloat())) ? 1.0f : 0.0f}; };
         b["steam_achievement_count"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().AchievementCount()}; };
         b["steam_language"] = [](std::vector<Value>&) { return Value{Steam::Get().Language()}; };
         // Top-N leaderboard entries as an array of "rank,name,score" strings.
@@ -7524,7 +7525,7 @@ struct OkayScriptVM::Impl {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 for (auto& e : Steam::Get().DownloadLeaderboardTop(a[0].AsString(), n))
                     arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
             }
@@ -7567,18 +7568,18 @@ struct OkayScriptVM::Impl {
         // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
         // counters that climb high belong here rather than in steam_*_stat.
         b["steam_set_stat_int"] = [](std::vector<Value>& a) {
-            if (a.size() >= 2) Steam::Get().SetStatInt(a[0].AsString(), (int)a[1].AsFloat());
+            if (a.size() >= 2) Steam::Get().SetStatInt(a[0].AsString(), SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["steam_get_stat_int"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? 0.0f : (float)Steam::Get().GetStatInt(a[0].AsString())};
         };
         b["steam_inc_stat_int"] = [](std::vector<Value>& a) {
-            return Value{a.size() < 2 ? 0.0f : (float)Steam::Get().IncrementStatInt(a[0].AsString(), (int)a[1].AsFloat())};
+            return Value{a.size() < 2 ? 0.0f : (float)Steam::Get().IncrementStatInt(a[0].AsString(), SafeInt(a[1].AsFloat()))};
         };
         // Achievement name by index (0..steam_achievement_count-1).
         b["steam_achievement_name"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().AchievementName((int)a[0].AsFloat())};
+            return Value{a.empty() ? std::string{} : Steam::Get().AchievementName(SafeInt(a[0].AsFloat()))};
         };
         // Read back a rich-presence value previously set with steam_presence.
         b["steam_get_presence"] = [](std::vector<Value>& a) {
@@ -7588,10 +7589,10 @@ struct OkayScriptVM::Impl {
         // Big Steam ids exceed float precision, so friend/lobby ids are passed
         // as strings in and out of these builtins.
         b["steam_friend_name"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().FriendName((int)a[0].AsFloat())};
+            return Value{a.empty() ? std::string{} : Steam::Get().FriendName(SafeInt(a[0].AsFloat()))};
         };
         b["steam_friend_id"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : std::to_string(Steam::Get().FriendId((int)a[0].AsFloat()))};
+            return Value{a.empty() ? std::string{} : std::to_string(Steam::Get().FriendId(SafeInt(a[0].AsFloat())))};
         };
         b["steam_invite"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};
@@ -7600,7 +7601,7 @@ struct OkayScriptVM::Impl {
         };
         // ---- Lobbies (Steam matchmaking) -----------------------------------
         b["steam_lobby_create"] = [](std::vector<Value>& a) {
-            int maxm = a.empty() ? 4 : (int)a[0].AsFloat();
+            int maxm = a.empty() ? 4 : SafeInt(a[0].AsFloat());
             std::string name = a.size() > 1 ? a[1].AsString() : std::string{};
             return Value{std::to_string(Steam::Get().CreateLobby(maxm, name))};
         };
@@ -7664,14 +7665,14 @@ struct OkayScriptVM::Impl {
         };
         b["pf_set_stat"] = [](std::vector<Value>& a) {        // pf_set_stat(stat, value)
             return Value{(a.size() >= 2 &&
-                          PlayFab::Get().SetStat(a[0].AsString(), (int)a[1].AsFloat())) ? 1.0f : 0.0f};
+                          PlayFab::Get().SetStat(a[0].AsString(), SafeInt(a[1].AsFloat()))) ? 1.0f : 0.0f};
         };
         // Top-N entries as an array of "rank,name,score" strings (Steam parity).
         b["pf_leaderboard_top"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 std::vector<PlayFab::Entry> rows;
                 if (PlayFab::Get().GetLeaderboard(a[0].AsString(), n, rows))
                     for (auto& e : rows)
@@ -7748,13 +7749,13 @@ struct OkayScriptVM::Impl {
         // player's best; leaderboard_top("high", n) returns "rank,name,score"
         // strings (same shape as steam_leaderboard_top).
         b["leaderboard_submit"] = [](std::vector<Value>& a) {
-            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), (long)a[1].AsFloat())) ? 1.0f : 0.0f};
+            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), SafeInt64(a[1].AsFloat()))) ? 1.0f : 0.0f};
         };
         b["leaderboard_top"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 for (auto& e : Account::LeaderboardTop(a[0].AsString(), n))
                     arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
             }
@@ -8058,7 +8059,7 @@ struct OkayScriptVM::Impl {
         };
         b["remove_at"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
-                int i = (int)a[1].AsFloat();
+                int i = SafeInt(a[1].AsFloat());
                 if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i);
             }
             return a.empty() ? Value{} : a[0];
@@ -8106,8 +8107,8 @@ struct OkayScriptVM::Impl {
             return a.empty() ? Value{} : a[0];
         };
         b["randi"] = [](std::vector<Value>& a) {
-            int lo = a.size() > 0 ? (int)a[0].AsFloat() : 0;
-            int hi = a.size() > 1 ? (int)a[1].AsFloat() : 1;
+            int lo = a.size() > 0 ? SafeInt(a[0].AsFloat()) : 0;
+            int hi = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 1;
             if (hi < lo) std::swap(lo, hi);
             return Value{(float)Random::Shared().Range(lo, hi)};
         };
@@ -8132,7 +8133,7 @@ struct OkayScriptVM::Impl {
         };
         b["insert_at"] = [](std::vector<Value>& a) {
             if (a.size() >= 3) if (auto arr = a[0].AsArray()) {
-                int i = (int)a[1].AsFloat();
+                int i = SafeInt(a[1].AsFloat());
                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
                 arr->insert(arr->begin() + i, a[2]);
             }
@@ -8142,8 +8143,8 @@ struct OkayScriptVM::Impl {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (!a.empty()) if (auto arr = a[0].AsArray()) {
                 int n = (int)arr->size();
-                int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
-                int end   = a.size() > 2 ? (int)a[2].AsFloat() : n;
+                int start = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+                int end   = a.size() > 2 ? SafeInt(a[2].AsFloat()) : n;
                 if (start < 0) start += n; if (end < 0) end += n;
                 start = start < 0 ? 0 : (start > n ? n : start);
                 end   = end   < 0 ? 0 : (end   > n ? n : end);
@@ -8229,7 +8230,7 @@ struct OkayScriptVM::Impl {
         };
         b["parse_int"] = [](std::vector<Value>& a) {
             std::string s = a.empty() ? "" : a[0].AsString();
-            int base = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+            int base = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
             return Value{(float)std::strtol(s.c_str(), nullptr, base)};
         };
         // JSON: serialize any value (arrays/maps included) to a string, and parse a
@@ -8248,11 +8249,13 @@ struct OkayScriptVM::Impl {
         // Higher-order array ops: each takes an array and the NAME of a script
         // function to apply per element, so games can write functional-style code
         // (map/filter/reduce) with a named callback. (call() lives further down.)
+        // Each walks a copy of the array: the callback runs script, which may push to, clear or
+        // remove from the very array being walked, and that must not pull it out from under the loop.
         b["map_fn"] = [this](std::vector<Value>& a) {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; res->push_back(rt.Call(fn, ca)); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; res->push_back(rt.Call(fn, ca)); }
             }
             return out;
         };
@@ -8260,7 +8263,7 @@ struct OkayScriptVM::Impl {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) res->push_back(e); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) res->push_back(e); }
             }
             return out;
         };
@@ -8270,35 +8273,35 @@ struct OkayScriptVM::Impl {
             Value acc = a.size() >= 3 ? a[2] : Value{};
             if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{acc, e}; acc = rt.Call(fn, ca); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{acc, e}; acc = rt.Call(fn, ca); }
             }
             return acc;
         };
         b["for_each"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; rt.Call(fn, ca); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; rt.Call(fn, ca); }
             }
             return a.empty() ? Value{} : a[0];
         };
         b["find_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return e; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return e; }
             }
             return Value{};
         };
         b["any_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return Value{true}; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return Value{true}; }
             }
             return Value{false};
         };
         b["all_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (!rt.Call(fn, ca).AsBool()) return Value{false}; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (!rt.Call(fn, ca).AsBool()) return Value{false}; }
             }
             return Value{true};
         };
@@ -8306,7 +8309,7 @@ struct OkayScriptVM::Impl {
             float n = 0;
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) n += 1.0f; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) n += 1.0f; }
             }
             return Value{n};
         };
@@ -8325,8 +8328,8 @@ struct OkayScriptVM::Impl {
         b["substr"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
-            int n = a.size() > 2 ? (int)a[2].AsFloat() : (int)s.size();
+            int start = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+            int n = a.size() > 2 ? SafeInt(a[2].AsFloat()) : (int)s.size();
             if (start < 0) start = 0;
             if (start > (int)s.size()) return Value{std::string{}};
             if (n < 0) n = 0;
@@ -8335,7 +8338,7 @@ struct OkayScriptVM::Impl {
         b["char_at"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int i = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int i = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             if (i < 0 || i >= (int)s.size()) return Value{std::string{}};
             return Value{std::string(1, s[i])};
         };
@@ -8418,7 +8421,7 @@ struct OkayScriptVM::Impl {
         b["repeat"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString(), out;
-            int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             for (int i = 0; i < n; ++i) out += s;
             return Value{out};
         };
@@ -8426,7 +8429,7 @@ struct OkayScriptVM::Impl {
         b["pad_left"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int width = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s.insert(s.begin(), fill);
             return Value{s};
@@ -8434,7 +8437,7 @@ struct OkayScriptVM::Impl {
         b["pad_right"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int width = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s += fill;
             return Value{s};
@@ -8773,7 +8776,7 @@ struct OkayScriptVM::Impl {
             return Value{c != 0 && Input::GetKeyUp(c)};
         };
         b["mouse_up"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButtonUp(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButtonUp(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
 
         // --- More math / utility ---
@@ -8854,7 +8857,7 @@ struct OkayScriptVM::Impl {
             return out;
         };
         auto allAt = [this](std::vector<Value>& a) -> const Runtime::LastHit* {
-            int i = a.empty() ? 0 : (int)a[0].AsFloat();
+            int i = a.empty() ? 0 : SafeInt(a[0].AsFloat());
             return (i >= 0 && i < (int)rt.lastHitAll.size()) ? &rt.lastHitAll[(std::size_t)i] : nullptr;
         };
         b["ray_all_count"]  = [this](std::vector<Value>&) -> Value { return Value{(float)rt.lastHitAll.size()}; };
@@ -8940,7 +8943,7 @@ struct OkayScriptVM::Impl {
         b["layer_mask"] = [](std::vector<Value>& a) -> Value {
             std::uint32_t m = 0;
             for (const Value& v : a)
-                m |= v.IsString() ? Layers::MaskFromList(v.AsString()) : (1u << ((int)v.AsFloat() & 31));
+                m |= v.IsString() ? Layers::MaskFromList(v.AsString()) : (1u << (SafeInt(v.AsFloat()) & 31));
             return Value{(float)(a.empty() ? Physics3D::kAllLayers : m)};
         };
         // ray3_cast(what, origin, direction [, maxDist [, layers [, ignore_triggers [, radius]]]])
@@ -9263,7 +9266,7 @@ struct OkayScriptVM::Impl {
             return Value{fr + d * t};
         };
         b["str_repeat"] = [](std::vector<Value>& a) {
-            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
         };
 
@@ -10062,7 +10065,7 @@ struct OkayScriptVM::Impl {
         };
         b["__new_array"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
-            int n = a.empty() ? 0 : (int)a[0].AsFloat();
+            int n = a.empty() ? 0 : SafeInt(a[0].AsFloat());
             if (n > 0) v.AsArray()->assign((std::size_t)std::min(n, 1 << 20), Value{0.0f});
             return v;
         };
@@ -10190,7 +10193,7 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{};
             if (auto m = a[0].AsMap()) {
                 if (auto it = m->find("__co"); it != m->end())
-                    if (auto* co = rt.FindCo((int)it->second.AsFloat())) { rt.StopCoroutine(co); rt.ReapCoroutines(); }
+                    if (auto* co = rt.FindCo(SafeInt(it->second.AsFloat()))) { rt.StopCoroutine(co); rt.ReapCoroutines(); }
                 return Value{};
             }
             rt.StopCoroutines(a[0].AsString().empty() ? std::string("\x01") : a[0].AsString());
@@ -10385,7 +10388,7 @@ struct OkayScriptVM::Impl {
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
                 if (p == "owned") o->SetOwned(v.AsBool());
-                if (p == "authority") o->authority = (NetworkObject::Authority)(int)v.AsFloat();
+                if (p == "authority") o->authority = (NetworkObject::Authority)SafeInt(v.AsFloat());
             }
             if (t == "SyncVar") if (auto* sv = g->GetComponent<SyncVar>()) {
                 if (p == "name") sv->name = v.AsString();
@@ -10450,7 +10453,7 @@ struct OkayScriptVM::Impl {
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (m == "Rpc" && !rest.empty()) o->Rpc(arg(0).AsString(), rest.size() > 1 ? arg(1).AsString() : std::string{});
-                if (m == "RpcTo" && rest.size() >= 2) o->RpcTo((std::uint32_t)arg(0).AsFloat(), arg(1).AsString(), rest.size() > 2 ? arg(2).AsString() : std::string{});
+                if (m == "RpcTo" && rest.size() >= 2) o->RpcTo(SafeUInt32(arg(0).AsFloat()), arg(1).AsString(), rest.size() > 2 ? arg(2).AsString() : std::string{});
                 if (m == "RpcReliable" && !rest.empty()) o->RpcReliable(arg(0).AsString(), rest.size() > 1 ? arg(1).AsString() : std::string{});
                 return Value{};
             }

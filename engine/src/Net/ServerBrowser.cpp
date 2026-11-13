@@ -109,7 +109,7 @@ ServerBrowser::~ServerBrowser() { m->Join(); }
 ServerBrowser& ServerBrowser::Shared() { static ServerBrowser b; return b; }
 
 void ServerBrowser::SetGame(const std::string& title) { m->lock(); m->game = title; m->unlock(); }
-const std::string& ServerBrowser::Game() const { return m->game; }
+std::string ServerBrowser::Game() const { m->lock(); std::string g = m->game; m->unlock(); return g; }
 
 void ServerBrowser::Refresh(int sources) {
     if (m->busy) return;

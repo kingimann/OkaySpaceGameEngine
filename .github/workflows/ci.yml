@@ -15,16 +15,35 @@ jobs:
   build-and-test:
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
+    # The compiler cache turns the three builds below (tests, player, editor all compile
+    # the same engine) into one cold compile; a warm run only recompiles what changed.
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative
+      # and tests that find files next to their source (test_project_state) fail. All three builds use the same
+      # source tree, so their cache keys already match without it.
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-ci-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-ci-
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build -j
@@ -38,7 +57,8 @@ jobs:
         run: |
           cmake -S . -B build-player -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-player -j
 
       # Build the editor (Dear ImGui + SDL2) and run its headless self-test so
@@ -48,7 +68,8 @@ jobs:
         run: |
           cmake -S . -B build-editor -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_TESTS=OFF \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-editor -j
           ./build-editor/bin/OkayEngine --selftest
 
@@ -59,6 +80,11 @@ jobs:
         run: |
           cp build-player/bin/okay-player build-editor/bin/
           tests/export/verify.sh build-editor/bin/OkayEngine
+
+      # The build pipeline's output layout: <Name>.exe + <Name>_Data/, only the assets the scene uses,
+      # StreamingAssets, build.json; an old flat build still runs; compact, zip and dry-run output.
+      - name: Check the build output layout
+        run: tests/export/verify_layout.sh build-editor/bin/OkayEngine
 
   # Build the scripting, visual-scripting and robustness tests with
   # AddressSanitizer and UndefinedBehaviorSanitizer and run them: any memory
@@ -103,6 +129,11 @@ jobs:
           # Robustness tests whose bugs only show up under a sanitizer.
           TESTS="$TESTS test_anim_sm_realloc test_prefs_misc test_loaders_robust test_scene_records"
           TESTS="$TESTS test_physics_callback_removal test_physics_nan test_parent_cycles test_scheduler_reentry"
+          # Model-file readers fed hostile input: memory errors in the FBX / OBJ / STL / PLY /
+          # glTF / Collada parsers only show under a sanitizer.
+          for t in test_fbx_hostile test_model_readers test_model_readers_fuzz test_collada_reader test_glb_container; do
+            if grep -q "add_executable($t " tests/CMakeLists.txt; then TESTS="$TESTS $t"; fi
+          done
           for t in test_net_hardening test_net_races; do
             if grep -q "add_executable($t " tests/CMakeLists.txt; then TESTS="$TESTS $t"; fi
           done
@@ -124,6 +155,64 @@ jobs:
             "./$t" || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+  # The model readers with Assimp compiled in (OKAY_USE_ASSIMP=ON), which no other job
+  # builds: ModelImportAssimp.cpp is compiled and the reader tests that compare the
+  # built-in readers with Assimp's run. Only the model test targets are built. Assimp's
+  # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
+  # and its objects come from ccache. The built-in-reader switches stay at their defaults.
+  assimp-models:
+    name: Model readers with Assimp
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 1G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Find the Assimp version
+        run: echo "ASSIMP_TAG=$(grep -oE 'GIT_TAG +v[0-9.]+' engine/CMakeLists.txt | head -n1 | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      - name: Restore the Assimp source
+        id: assimp-src
+        uses: actions/cache@v5
+        with:
+          path: ~/assimp-src
+          key: assimp-src-${{ env.ASSIMP_TAG }}
+
+      - name: Fetch Assimp
+        if: steps.assimp-src.outputs.cache-hit != 'true'
+        run: git clone --depth 1 --branch "$ASSIMP_TAG" https://github.com/assimp/assimp.git "$HOME/assimp-src"
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-assimp-${{ github.sha }}
+          restore-keys: ccache-assimp-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-assimp -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_USE_ASSIMP=ON \
+            -DFETCHCONTENT_SOURCE_DIR_ASSIMP="$HOME/assimp-src" -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF \
+            -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+
+      - name: Build
+        run: |
+          cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+
+      - name: Test
+        run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
 
   # Cross-compile the Windows editor + player (the release build) and the
   # visual-scripting and mesh file tests, for the windows-export job to run on real Windows.
@@ -278,7 +367,9 @@ jobs:
   # (the same kind of single-instance lock the launcher uses), exits, and the
   # helper must start the new process once. The install path is
   # "Program Files (x86)" and the new process must still see --launcher plus
-  # an argument that itself contains spaces and parentheses.
+  # an argument that itself contains spaces and parentheses. The same job runs
+  # the verified restart (a new file that is the wrong version or cannot start is
+  # rolled back and the previous program is started) and the self-update rules.
   windows-restart:
     name: Windows updater restart
     runs-on: windows-latest
@@ -294,10 +385,12 @@ jobs:
           -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF
 
       - name: Build the restart test
-        run: cmake --build build --config Release --target test_app_restart --parallel
+        run: cmake --build build --config Release --target test_app_restart test_self_update --parallel
 
-      - name: Run the restart test
-        run: ctest --test-dir build -C Release -R "^app_restart$" --output-on-failure
+      - name: Run the restart and self-update tests
+        # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
+        # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
+        run: ctest --test-dir build -C Release -R "^(app_restart|self_update)$" --output-on-failure --timeout 150 -V
 
   web-build:
     name: WebGL build (Emscripten)

@@ -579,7 +579,7 @@ struct D3D11Renderer::Impl {
     ID3D11VertexShader*     vsSkin = nullptr;      ID3D11InputLayout* layoutSkin = nullptr;
     ID3D11VertexShader*     vsDepthSkin = nullptr; ID3D11InputLayout* layoutDepthSkin = nullptr;
     ID3D11Buffer*           bonesCB = nullptr;     // 768 float4 (256 joints x 3 rows)
-    struct SkinVB { ID3D11Buffer* buf = nullptr; int count = 0; const void* vp = nullptr; std::size_t vn = 0, tn = 0; const void* jp = nullptr; unsigned lastUse = 0; };
+    struct SkinVB { ID3D11Buffer* buf = nullptr; int count = 0; const void* vp = nullptr; std::size_t vn = 0, tn = 0; const void* jp = nullptr; std::size_t nj = 0; std::uint64_t sampleHash = 0, fullHash = 0; unsigned lastFullHash = 0; unsigned lastUse = 0; };
     std::unordered_map<const void*, SkinVB> skinVB;   // key: &SkinnedMesh::bind
     SkinVB* EnsureSkinVB(const SkinnedMesh& sm);
     bool UploadBones(const SkinnedMesh& sm);
@@ -1093,6 +1093,26 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
     return h;
 }
 
+// Content hashes of a skin's joint data (indices + weights + palette size, since
+// the upload clamps against it), like the plain-mesh cache: a cheap sample each
+// frame and an exact pass about once a second, so a SkinnedMesh freed and
+// re-allocated at the same addresses can't be served the old stream.
+static std::uint64_t SkinSampleHash(const SkinnedMesh& sm) {
+    std::size_t sizes[3] = { sm.jointIdx.size(), sm.jointWt.size(), sm.palette.size() };
+    std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    const std::size_t n = sm.jointIdx.size(), step = n / 2048 + 1;
+    for (std::size_t i = 0; i < n; i += step) h = FnvBytes(&sm.jointIdx[i], sizeof(sm.jointIdx[i]), h);
+    const std::size_t wn = sm.jointWt.size(), wstep = wn / 2048 + 1;
+    for (std::size_t i = 0; i < wn; i += wstep) h = FnvBytes(&sm.jointWt[i], sizeof(sm.jointWt[i]), h);
+    return h;
+}
+static std::uint64_t SkinFullHash(const SkinnedMesh& sm) {
+    std::uint64_t h = 1469598103934665603ull;
+    if (!sm.jointIdx.empty()) h = FnvBytes(sm.jointIdx.data(), sm.jointIdx.size() * sizeof(sm.jointIdx[0]), h);
+    if (!sm.jointWt.empty())  h = FnvBytes(sm.jointWt.data(),  sm.jointWt.size()  * sizeof(sm.jointWt[0]),  h);
+    return h;
+}
+
 // Expand indexed triangles into the interleaved non-indexed layout the shader
 // consumes: pos(3)+normal(3)+uv(2)+color(3)+tangent(3) = 14 floats per vertex.
 void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
@@ -1149,7 +1169,14 @@ D3D11Renderer::Impl::SkinVB* D3D11Renderer::Impl::EnsureSkinVB(const SkinnedMesh
     SkinVB& e = skinVB[&m];
     e.lastUse = frame;
     if (e.buf && e.vp == (const void*)m.vertices.data() && e.vn == m.vertices.size() &&
-        e.tn == m.triangles.size() && e.jp == (const void*)sm.jointIdx.data()) return &e;
+        e.tn == m.triangles.size() && e.jp == (const void*)sm.jointIdx.data() && e.nj == sm.palette.size()) {
+        bool same = SkinSampleHash(sm) == e.sampleHash;
+        if (same && frame - e.lastFullHash >= 60) {   // exact check ~once a second
+            same = SkinFullHash(sm) == e.fullHash;
+            e.lastFullHash = frame;
+        }
+        if (same) return &e;
+    }
     if (e.buf) { e.buf->Release(); e.buf = nullptr; }
     const auto& T = m.triangles; const int nv = (int)m.vertices.size();
     std::vector<float> d; d.reserve(T.size() * 8);
@@ -1163,7 +1190,8 @@ D3D11Renderer::Impl::SkinVB* D3D11Renderer::Impl::EnsureSkinVB(const SkinnedMesh
             for (int q = 0; q < 4; ++q) d.push_back(ji[q] < 0 || ji[q] > maxJ ? 0.0f : jw[q]);
         }
     }
-    e.vp = m.vertices.data(); e.vn = m.vertices.size(); e.tn = m.triangles.size(); e.jp = sm.jointIdx.data();
+    e.vp = m.vertices.data(); e.vn = m.vertices.size(); e.tn = m.triangles.size(); e.jp = sm.jointIdx.data(); e.nj = sm.palette.size();
+    e.sampleHash = SkinSampleHash(sm); e.fullHash = SkinFullHash(sm); e.lastFullHash = frame;
     e.count = (int)(d.size() / 8);
     if (e.count == 0) return nullptr;
     D3D11_BUFFER_DESC bd; std::memset(&bd, 0, sizeof(bd));

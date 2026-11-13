@@ -36,6 +36,13 @@ struct Limits {
     std::size_t maxCorners      = 8u * 1024 * 1024;   ///< triangle corners built, whole scene
     std::size_t maxNodes        = 1u * 1024 * 1024;   ///< scene nodes (models)
     std::size_t maxNodeDepth    = 2048;               ///< scene hierarchy depth
+    // Animation. A small file can claim many stacks/curves/keys, or point many stacks at the same curves,
+    // so besides the per-clip cap above there is a budget for the whole file.
+    std::size_t maxAnimStacks   = 128;                ///< AnimationStack objects (takes)
+    std::size_t maxAnimLayers   = 1024;               ///< AnimationLayer objects
+    std::size_t maxAnimCurves   = 128u * 1024;        ///< AnimationCurve objects, and AnimationCurveNode objects, each
+    std::size_t maxAnimKeys     = 4u * 1024 * 1024;   ///< keys over all curves
+    std::size_t maxTotalBakedSamples = 4u * 1024 * 1024;   ///< baked evaluations over all clips: samples x animated curve nodes
 };
 
 // ---- Layer 1: the element tree -------------------------------------------

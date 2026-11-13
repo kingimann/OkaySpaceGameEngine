@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include "okay/VisualScript/VsValue.hpp"
+#include "okay/VisualScript/VsDecl.hpp"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -83,6 +84,10 @@ public:
     int id = -1;
     int fileId = -1;            ///< the node's id in the .okayvs file / editor (-1 = built in code)
     std::string type;           ///< the node's type name from the file ("ForLoop"); empty when built in code
+    /// A node the loader added itself (the Sequence behind an exec pin that has
+    /// several wires). It is not in the file, so the debugger never stops on it
+    /// and it is not counted as a step the user can see.
+    bool internal = false;
     /// The optional "Target" data input of a node that acts on an object
     /// (Translate, Get Position, Add Force...): when something feeds it, the node
     /// acts on that object instead of the graph's own (-1 = no such input).
@@ -249,10 +254,37 @@ public:
     /// All registered event names (for timers / key events that need polling).
     const std::unordered_map<std::string, std::vector<int>>& AllEntries() const { return m_entries; }
 
-    /// A `var name value` line: a starting value the Inspector can edit.
-    struct ExposedVar { std::string name; VsValue value; };
-    const std::vector<ExposedVar>& ExposedVars() const { return m_exposed; }
-    void AddExposedVar(std::string name, VsValue value) { m_exposed.push_back({std::move(name), std::move(value)}); }
+    /// Declared variables: `decl name Type scope literal` lines and old `var name value`
+    /// lines (object scope, type taken from the value). The Inspector edits the defaults.
+    using ExposedVar = VarDecl;
+    const std::vector<VarDecl>& ExposedVars() const { return m_exposed; }
+    const std::vector<VarDecl>& Decls() const { return m_exposed; }
+    void AddExposedVar(std::string name, VsValue value) {
+        VarDecl d; d.name = std::move(name); d.legacy = true;
+        d.type.base = value.IsNumber() ? PinType::Number : value.IsBool() ? PinType::Bool : value.IsString() ? PinType::Text
+                    : value.IsVec3() ? PinType::Vec3 : value.IsColor() ? PinType::Color : PinType::Any;
+        d.value = std::move(value);
+        m_exposed.push_back(std::move(d));
+    }
+    void AddDecl(VarDecl d) { m_exposed.push_back(std::move(d)); }
+    /// `struct` lines: record types (a struct value is a map with these fields).
+    const std::vector<StructDef>& Structs() const { return m_structs; }
+    void AddStruct(StructDef d) { m_structs.push_back(std::move(d)); }
+    void SetStructFields(const std::string& name, std::vector<StructField> f) {
+        for (auto& s : m_structs) if (s.name == name) s.fields = std::move(f);
+    }
+    /// The declaration of variable `name` in `scope` (nullptr = undeclared, any value goes).
+    const VarDecl* FindDecl(const std::string& name, VarScope scope) const {
+        for (const auto& d : m_exposed) if (d.name == name && d.scope == scope) return &d;
+        return nullptr;
+    }
+    /// Fit `v` to variable `name`'s declared type before it is stored. True when there is
+    /// no declaration or it fits (v may be converted); false with `err` otherwise.
+    bool CoerceForStore(const std::string& name, VarScope scope, VsValue& v, std::string* err) const {
+        const VarDecl* d = FindDecl(name, scope);
+        if (!d || d->legacy) return true;
+        return VsCoerce(d->type, v, m_structs, err);
+    }
 
     /// Record execution counts + last data values on the nodes (editor debugging).
     static bool& Tracing() { static bool on = false; return on; }
@@ -364,7 +396,8 @@ public:
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
     std::unordered_map<std::string, std::vector<int>> m_entries;
-    std::vector<ExposedVar> m_exposed;
+    std::vector<VarDecl> m_exposed;
+    std::vector<StructDef> m_structs;
     int m_execGuard = 0;     // current data-pull depth (cycle guard)
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event

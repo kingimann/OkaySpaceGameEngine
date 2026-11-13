@@ -114,5 +114,80 @@ int main() {
         }
     }
 
+    // ---- Sweep queries must always terminate (the march used to spin forever) ----
+    // A NaN reach, a NaN origin, a NaN-sized collider, and a collider so far away that
+    // one march step is smaller than the float spacing there (t + step == t).
+    {
+        Scene s("sweep3");
+        GameObject* wall = s.CreateGameObject("Wall");
+        wall->transform->localPosition = {10, 0, 0};
+        wall->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        s.Start(); s.Update(0.0f);
+        Physics3D& phys = s.physics3D();
+        RaycastHit3D h = phys.SphereCast(s, {0, 0, 0}, {1, 0, 0}, 0.5f, nan);
+        CHECK(!h.hit);                                                  // a NaN reach finds nothing
+        h = phys.SphereCast(s, {nan, 0, 0}, {1, 0, 0}, 0.5f, 100.0f);
+        CHECK(!h.hit || std::isfinite(h.distance));                     // a NaN origin just returns
+        h = phys.SphereCast(s, {0, 0, 0}, {nan, 0, 0}, 0.5f, 100.0f);
+        CHECK(!h.hit || std::isfinite(h.distance));
+
+        GameObject* bad = s.CreateGameObject("NanBox");
+        bad->transform->localPosition = {20, 0, 0};
+        bad->AddComponent<BoxCollider3D>()->size = {nan, nan, nan};
+        h = phys.SphereCast(s, {0, 0, 0}, {1, 0, 0}, 0.5f, 100.0f);
+        CHECK(h.hit && h.gameObject == wall);                           // the sane wall is still found
+        CHECK_NEAR(h.distance, 9.0f, 0.2f);
+
+        Scene distant("far3");
+        GameObject* fw = distant.CreateGameObject("FarWall");
+        fw->transform->localPosition = {1.0e6f, 0, 0};
+        fw->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        distant.Start(); distant.Update(0.0f);
+        h = distant.physics3D().SphereCast(distant, {0, 0, 0}, {1, 0, 0}, 0.5f, 2.0e6f);
+        CHECK(h.hit && h.gameObject == fw);
+        CHECK_NEAR(h.distance, 999999.0f, 1.0f);
+
+        // A near miss out there: the thin sphere is inside the box's bounds slab but clear of the
+        // box's edge, so the march must walk the whole stretch. Each step (half the sphere's
+        // width) is smaller than the float spacing near 1e6, so `t += step` never moved on and
+        // the query spun for ever.
+        Scene miss("miss3");
+        GameObject* mw = miss.CreateGameObject("MissWall");
+        mw->transform->localPosition = {1.0e6f, 0.5095f, 0.5095f};
+        mw->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        miss.Start(); miss.Update(0.0f);
+        h = miss.physics3D().SphereCast(miss, {0, 0, 0}, {1, 0, 0}, 0.01f, 2.0e6f);
+        CHECK(!h.hit);
+    }
+    {
+        Scene s("sweep2");
+        GameObject* wall = s.CreateGameObject("Wall");
+        wall->transform->localPosition = {10, 0, 0};
+        wall->AddComponent<BoxCollider2D>()->size = {1, 1};
+        s.Start(); s.Update(0.0f);
+        Physics2D& phys = s.physics();
+        RaycastHit2D h = phys.CircleCast(s, {0, 0}, {1, 0}, 0.5f, nan);
+        CHECK(!h.hit);
+        h = phys.CircleCast(s, {nan, 0}, {1, 0}, 0.5f, 100.0f);
+        CHECK(!h.hit || std::isfinite(h.distance));
+
+        GameObject* bad = s.CreateGameObject("NanBox");
+        bad->transform->localPosition = {20, 0, 0};
+        bad->AddComponent<BoxCollider2D>()->size = {nan, nan};
+        h = phys.CircleCast(s, {0, 0}, {1, 0}, 0.5f, 100.0f);
+        CHECK(h.hit && h.gameObject == wall);
+        CHECK_NEAR(h.distance, 9.0f, 0.2f);
+
+        Scene distant("far2");
+        GameObject* fw = distant.CreateGameObject("FarWall");
+        fw->transform->localPosition = {1.0e6f, 0, 0};
+        fw->AddComponent<BoxCollider2D>()->size = {1, 1};
+        distant.Start(); distant.Update(0.0f);
+        h = distant.physics().CircleCast(distant, {0, 0}, {1, 0}, 0.5f, 2.0e6f);
+        CHECK(h.hit && h.gameObject == fw);
+        CHECK_NEAR(h.distance, 999999.0f, 1.0f);
+
+    }
+
     TEST_MAIN_RESULT();
 }

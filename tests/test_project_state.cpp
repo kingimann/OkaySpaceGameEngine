@@ -229,6 +229,8 @@ int main() {
         a.shadowDistance = 150.5f; a.shadowSoftness = 4.25f; a.shadowCascades = 4; a.shadowResolution = 4096;
         a.bloom = true; a.ssao = true; a.fxaa = false; a.antialias = 2; a.gpuRenderer = false; a.preferD3D12 = true;
         a.openFolderAfter = false; a.zipAfter = true; a.fullscreenToggle = false;
+        a.layout = 2; a.stripAssets = false; a.compress = false; a.buildNumber = 41; a.autoBuildNumber = false;
+        Put(a.archiveName, "{name}_b{build}");
         a.scenes = {{"Assets/Level 1.okayscene", true}, {"Assets/Menu.okayscene", false}, {"C:/Games/x y/Final.okayscene", true}};
         a.srvTarget = 1; Put(a.srvName, "Acme Server"); a.srvPort = 45123; a.srvMaxPlayers = 64; a.srvTick = 60;
         Put(a.srvPassword, "hunter2"); a.srvAuth = true; a.srvAdvertise = true;
@@ -254,16 +256,18 @@ int main() {
             COVER(a, b, d, bloom); COVER(a, b, d, ssao); COVER(a, b, d, fxaa); COVER(a, b, d, antialias);
             COVER(a, b, d, gpuRenderer); COVER(a, b, d, preferD3D12); COVER(a, b, d, openFolderAfter); COVER(a, b, d, zipAfter);
             COVER(a, b, d, fullscreenToggle); COVER(a, b, d, scenes);
+            COVER(a, b, d, layout); COVER(a, b, d, stripAssets); COVER(a, b, d, compress); COVER(a, b, d, buildNumber);
+            COVER(a, b, d, autoBuildNumber); COVER(a, b, d, archiveName);
             COVER(a, b, d, srvTarget); COVER(a, b, d, srvName); COVER(a, b, d, srvPort); COVER(a, b, d, srvMaxPlayers);
             COVER(a, b, d, srvTick); COVER(a, b, d, srvPassword); COVER(a, b, d, srvAuth); COVER(a, b, d, srvAdvertise);
             COVER(a, b, d, srvPublicAddr); COVER(a, b, d, srvRegion); COVER(a, b, d, srvMaxSpeed); COVER(a, b, d, srvRateLimit);
             COVER(a, b, d, srvKickAfter);
-            g_values += 62 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
+            g_values += 68 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
             const std::set<std::string> declared = DeclaredFields(header, "BuildSettings");
             CHECK(g_covered == declared);
             for (const auto& f : declared) if (!g_covered.count(f)) std::cerr << "    BuildSettings." << f << " has no line in this test\n";
             for (const auto& f : g_covered) if (!declared.count(f)) std::cerr << "    " << f << " is not a BuildSettings member\n";
-            CHECK(declared.size() == 62);
+            CHECK(declared.size() == 68);
             CHECK(WriteBuildProfiles(back) == text);                      // stable
         }
         {   // the profile's own members

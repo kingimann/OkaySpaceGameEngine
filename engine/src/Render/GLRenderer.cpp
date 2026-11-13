@@ -1688,8 +1688,11 @@ void GLRenderer::BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv,
             if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
             for (int v : {a, b, c}) {
                 const auto& ji = skin->jointIdx[v]; const auto& jw = skin->jointWt[v];
-                for (int k = 0; k < 4; ++k) sv.push_back((float)ji[k]);
-                for (int k = 0; k < 4; ++k) sv.push_back(jw[k]);
+                // Same rule as the D3D11 path: an index outside the palette would read
+                // past uBones[] in the shader, so clamp it and drop its weight.
+                const int maxJ = (int)skin->palette.size() - 1;
+                for (int k = 0; k < 4; ++k) sv.push_back((float)(ji[k] < 0 ? 0 : ji[k] > maxJ ? maxJ : ji[k]));
+                for (int k = 0; k < 4; ++k) sv.push_back(ji[k] < 0 || ji[k] > maxJ ? 0.0f : jw[k]);
             }
         }
         if (!mv->skinVbo) g.GenBuffers(1, &mv->skinVbo);

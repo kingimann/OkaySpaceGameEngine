@@ -16,6 +16,10 @@ void ConsoleLog(const std::string& msg, int level = 0);
 void ConsoleClear();
 // The Console window: severity filters with counts, category, search, collapse, details.
 void DrawConsole();
+#ifdef OKAY_HAVE_OKAYUI
+// The panel's OkayUI port (the opt-in backend): called by DrawConsole in place of the ImGui body.
+void DrawConsoleOkayUI(const char* windowTitle);
+#endif
 // Demo / tests: the category dropdown starts on this name ("All" clears it).
 void ConsolePreferCategory(const std::string& category);
 

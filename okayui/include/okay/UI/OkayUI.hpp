@@ -251,6 +251,11 @@ void End();
 /// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
 /// overlays anchored to the screen, such as a dialogue box or a quest tracker.
 void PinNextWindow();
+/// Make the next Begin() a bare panel: pinned at its (x, y), sized w*h, with no title bar, no collapse caret, no close
+/// button, no dragging and no frame or background of its own: just a layout region that clips to its rectangle. For a host that gives OkayUI a rectangle of its own window to fill
+/// (the launcher's pages, the editor's panels), where a title bar would repeat what the host already shows. The title
+/// passed to Begin still names the window (it keys the widget ids and the scroll state).
+void BareNextWindow();
 /// Give the next Begin() a resize grip in its bottom-right corner (drag it to resize; the w and h
 /// passed to Begin are the starting size). The size is remembered per window. `minW`/`minH` bound it.
 void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
@@ -262,6 +267,13 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
 void EndChild();
+/// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
+/// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
+float GetScrollY();
+float GetScrollMaxY();
+/// Set the innermost child's scroll offset; it is clamped when EndChild measures the content, so SetScrollY(1e9) just
+/// before EndChild scrolls to the end (the next frame shows it). Negative or non-finite values mean the top.
+void SetScrollY(float y);
 
 /// Manually clip subsequent geometry to a rectangle (screen coords). Nestable and
 /// intersected with any enclosing clip. Pair with PopClipRect. (BeginChild uses this.)
@@ -380,6 +392,8 @@ bool InputInt(const char* label, int* value, int step = 1);
 /// A collapsing section header. Returns true while expanded — put the section's
 /// widgets in the if-body. The open/closed state is remembered per label.
 bool CollapsingHeader(const char* label);
+/// The same, with the state a header starts in the first time it is seen (later frames use what the person chose).
+bool CollapsingHeader(const char* label, bool defaultOpen);
 
 /// A dropdown selecting one of items[0..count) into *current. The open list draws
 /// on top of later widgets (overlay pass). Returns true the frame the selection

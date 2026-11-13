@@ -35,6 +35,14 @@ endif()
 
 add_library(okay::ui ALIAS okay_ui)
 
+# The real screens the launcher and the editor host as the opt-in OkayUI backend (What's New, Console). Plain functions
+# over OkayUI and the engine's console model; no SDL and no Dear ImGui in them, so the headless tests drive them as is.
+add_library(okay_ui_screens STATIC screens/OkayUIScreens.cpp)
+target_include_directories(okay_ui_screens PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/screens)
+target_include_directories(okay_ui_screens PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)   # ConsoleScriptLink.hpp
+target_link_libraries(okay_ui_screens PUBLIC okay_ui)
+add_library(okay::ui_screens ALIAS okay_ui_screens)
+
 # Standalone Direct3D 11 demo — a real DX11 app that renders an OkayUI panel.
 # Windows only (GUI subsystem). Lets you verify the DirectX backend with no SDL.
 if(WIN32)
@@ -52,15 +60,15 @@ endif()
 # okay::platform::Painter the player draws with on the own platform backend (own code, not ready, off by default).
 add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp)
 target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
-target_link_libraries(okay_ui_soft PUBLIC okay_ui)
+target_link_libraries(okay_ui_soft PUBLIC okay_ui okay_ui_screens)
 
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_screens okayui_host)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_soft)
-        target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
         target_compile_definitions(test_${t} PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
         add_test(NAME ${t} COMMAND test_${t})
         # No window, no GPU: make sure SDL never tries to open a display.

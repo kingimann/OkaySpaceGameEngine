@@ -53,6 +53,7 @@
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
@@ -62,6 +63,7 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
+#include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
@@ -2269,6 +2271,17 @@ static void FinishFrozenTick() {
     d.enabled = was;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
+// The UI backend setting (okay_settings.txt "uibackend 0|1"; absent = never chosen). OKAY_UI_BACKEND overrides it. Today the
+// Console panel has an OkayUI port; everything else is Dear ImGui either way.
+std::string g_uiBackendSetting;
+okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
+void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
+bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+#ifdef OKAY_HAVE_OKAYUI
+okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
+okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
+okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
+#endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
@@ -2499,6 +2512,7 @@ void LoadSettings() {
     while (f >> k >> v) {
         if (k == "settingsver") ver = v;
         else if (k == "autoupdate") g_autoUpdate = (v != 0);
+        else if (k == "uibackend") g_uiBackendSetting = okayuibackend::FromSettingInt(v);
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "vsync") g_vsync = (v != 0);
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
@@ -2546,6 +2560,7 @@ void LoadSettings() {
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     ApplyPhysicsDebug();
+    ResolveUiBackend();
     // One-time migration to the 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
@@ -2560,6 +2575,7 @@ void SaveSettings() {
     std::ostringstream f;
     f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
+      << (g_uiBackendSetting.empty() ? std::string() : std::string("uibackend ") + std::to_string(okayuibackend::ToSettingInt(g_uiBackendSetting)) + "\n")
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
@@ -6589,6 +6605,23 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (const char* devEnv = std::getenv("OKAY_DEV"); devEnv && devEnv[0] && devEnv[0] != '0') {
             ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+        }
+#endif
+#ifdef OKAY_HAVE_OKAYUI
+        if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
+        if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
+            const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
+            for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
+                if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
+                    g_uiBackendSetting = okayuibackend::Name(opt);
+                    ResolveUiBackend();
+                    SaveSettings();
+                }
+            ImGui::Separator();
+            ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+            ImGui::EndMenu();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
         }
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
@@ -48010,6 +48043,9 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+#ifdef OKAY_HAVE_OKAYUI
+            g_okayInput.Feed(e);   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
+#endif
             if (e.type == SDL_KEYDOWN && !e.key.repeat &&
                 e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
                 g_escapeEdge = true;
@@ -48392,6 +48428,19 @@ int main(int argc, char** argv) {
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
             uin.backspace = g_okayUIBack;
+            {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
+                // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
+                g_okayRegion.NextFrame();
+                const bool left = uin.mouseDown;
+                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool blocked = io.WantCaptureMouse && !owns;
+                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
+                if (UseOkayUIBackend()) {
+                    uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
+                    if (keys) uin = h;
+                }
+            }
             OkayUI::SetFont(OkayUI::FontDefault());
             static bool lookChosen = false;   // the Game view shows game UI exactly as the player draws it
             if (!lookChosen) { lookChosen = true; if (!std::getenv("OKAY_CLASSIC_UI")) OkayUI::UseLauncherLook(true); }
@@ -49323,6 +49372,13 @@ int main(int argc, char** argv) {
         }
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
+#ifdef OKAY_HAVE_OKAYUI
+        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+            GImGui->PlatformImeData.WantTextInput = true;
+            ImGui::SetNextFrameWantCaptureKeyboard(true);
+            SDL_StartTextInput();
+        }
+#endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);

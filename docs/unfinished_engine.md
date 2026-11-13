@@ -112,7 +112,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Respawns are not replicated | only anti-cheat teleport allowance mentions respawn (`Net/NetworkManager.hpp:106`, `AntiCheat.hpp:230`); no respawn message in `engine/src/Net` | The server respawns a player on its own and clients rely on position updates | Medium | Medium |
+| Deaths that no replicated hit caused are not replicated | `Net/NetworkManager.cpp` (`__dmg` carries hits; `__respawn` carries respawns) | A kill volume or a script that kills a player is not sent to other peers; only the respawn is (respawn, dive, hit, vault and emotes are replicated: `docs/multiplayer_audit.md`) | Low | Small |
 | Client anti-cheat probes are Windows only | `shared/AntiCheatChecks.hpp:20, 48, 129, 303` (`_WIN32`; "an empty probe = not checked on this platform") | Linux and macOS clients have no debugger, module or clock probes | Medium | Medium |
 | No replay or spectator recording over the network | no replay code in `engine/include/okay/Net`; `Core/FrameRecord.hpp` is local only and has no editor or player caller | No kill-cam, demo or server replays | Low | Large |
 | `NativeHttp` is Windows only | `Platform/NativeHttp.hpp:19, 32` | Other systems shell out to a `curl` process, so a game on a machine without curl cannot call accounts or matchmaking | Medium | Medium |

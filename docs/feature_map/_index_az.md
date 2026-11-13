@@ -3596,6 +3596,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - resource (41.2)
 - resource cache (1.11)
 - respawn (11.4, 11.12)
+- Respawn and one-shot animation replication (16.8.5)
 - respawn point (35.2)
 - Respawner (42.3.2)
 - restitution (6.1)

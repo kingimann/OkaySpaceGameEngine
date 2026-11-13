@@ -258,13 +258,13 @@ int main() {
             GameObject* av = leaver.cs.CreateGameObject("Avatar");
             av->transform->localPosition = Vec3(3.0f, 0.0f, 4.0f);
             leaver.cli->SetLocalAvatar(av->transform);
-            for (int i = 0; i < 200 && standIns() == 0; ++i) { h.ss.Update(0.02f); leaver.cs.Update(0.02f); watcher.cs.Update(0.02f); Nap(); }
-            CHECK(standIns() == 1 && made == 1);
+            for (int i = 0; i < 300 && standIns() < 2; ++i) { h.ss.Update(0.02f); leaver.cs.Update(0.02f); watcher.cs.Update(0.02f); Nap(); }
+            CHECK(standIns() == 2 && made == 2);   // the host's and the leaver's
             leaver.cli->Stop();
         }
         // The host's roster (once a second) no longer lists it.
-        for (int i = 0; i < 400 && standIns() > 0; ++i) { h.ss.Update(0.02f); watcher.cs.Update(0.02f); Nap(); }
-        CHECK(standIns() == 0);
+        for (int i = 0; i < 400 && standIns() > 1; ++i) { h.ss.Update(0.02f); watcher.cs.Update(0.02f); Nap(); }
+        CHECK(standIns() == 1);                         // only the host's is left
         CHECK(watcher.cli->Joined());
     }
 

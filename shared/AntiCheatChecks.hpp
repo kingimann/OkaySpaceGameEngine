@@ -27,6 +27,10 @@ namespace okayac {
 struct Finding {
     std::string check;    // "debugger", "module", "clock"
     std::string detail;
+    // How strongly this points at cheating, 0 (context only) to 10. The original
+    // checks leave it 0 ("unweighted"); the hardening signals (AntiCheatHardening.hpp)
+    // set 1..6 and never end a game on their own. The backend decides what a weight means.
+    int weight = 0;
 };
 
 // ---- Debugger ----------------------------------------------------------------
@@ -295,6 +299,12 @@ struct GuardProbes {
     std::function<std::uint64_t()> trustedMs;           // the verifier's clock (empty = no checks at all)
     std::function<std::uint64_t()> gameMs;              // the clock the game runs on (empty = no heartbeat)
     ModuleAllowlist allowlist;
+    // Opt-in hardening (AntiCheatHardening.hpp), both empty unless the game turned it on:
+    //  hardening: run about every 100 ms of the trusted clock; returns weighted signals that are logged and
+    //             reported but never end the game, whatever the mode;
+    //  moduleOk:  a module the allowlist doesn't know that the signed rules file does (by name or signer).
+    std::function<std::vector<Finding>(std::uint64_t nowMs)> hardening;
+    std::function<bool(const std::string& path)> moduleOk;
 };
 
 // The real probes: Windows only (elsewhere every probe is empty and the guard idles).
@@ -353,14 +363,19 @@ public:
     bool Tick() {
         if (mode_ == Mode::Off || !p_.trustedMs || quit_) return quit_;
         const std::uint64_t now = p_.trustedMs();
-        if (!started_) { started_ = true; nextDbg_ = nextMod_ = nextClock_ = now; }
+        if (!started_) { started_ = true; nextDbg_ = nextMod_ = nextClock_ = nextHard_ = now; }
         if (now >= nextDbg_) {
             nextDbg_ = now + 5000;
             for (const Finding& f : CheckDebugger(p_.debugger)) Add(f);
         }
         if (p_.modules && now >= nextMod_) {
             nextMod_ = now + 10000;
-            for (const Finding& f : CheckModules(p_.modules(), p_.allowlist)) Add(f);
+            for (const std::string& m : p_.modules())
+                if (!ModuleAllowed(p_.allowlist, m) && !(p_.moduleOk && p_.moduleOk(m))) Add({"module", "unexpected module loaded: " + m});
+        }
+        if (p_.hardening && now >= nextHard_) {
+            nextHard_ = now + 100;
+            for (const Finding& f : p_.hardening(now)) AddSignal(f);
         }
         if (p_.gameMs && now >= nextClock_) {
             nextClock_ = now + 1000;
@@ -382,6 +397,8 @@ public:
 
     const std::vector<Finding>& Findings() const { return findings_; }
     Mode mode() const { return mode_; }
+    // Sum of the weights of the weighted (hardening) findings: a number for a report, not a verdict.
+    int Score() const { int s = 0; for (const Finding& f : findings_) s += f.weight; return s; }
 
 private:
     static std::string RandomKey() { return okay::account::detail::RandomHex(32); }
@@ -395,6 +412,14 @@ private:
         if (mode_ == Mode::Enforce) quit_ = true;
     }
 
+    // A hardening signal: logged and kept for the report, never ends the game.
+    void AddSignal(const Finding& f) {
+        const std::string id = f.check + "|" + f.detail;
+        if (!seen_.insert(id).second) return;
+        findings_.push_back(f);
+        if (log_) log_("[anti-cheat] " + f.check + (f.weight > 0 ? "(w" + std::to_string(f.weight) + ")" : std::string()) + ": " + f.detail);
+    }
+
     Mode mode_ = Mode::Off;
     GuardProbes p_;
     LogFn log_;
@@ -403,7 +428,7 @@ private:
     // before it counts: one sample never ends a game.
     ClockHeartbeat hb_{hbKeyStr_, kClockTolerance, 5000, 3};
     bool started_ = false, quit_ = false, clockFlagged_ = false;
-    std::uint64_t nextDbg_ = 0, nextMod_ = 0, nextClock_ = 0;
+    std::uint64_t nextDbg_ = 0, nextMod_ = 0, nextClock_ = 0, nextHard_ = 0;
     std::set<std::string> seen_;
     std::vector<Finding> findings_;
 };

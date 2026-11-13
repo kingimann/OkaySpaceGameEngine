@@ -171,6 +171,11 @@ void Ed25519PublicFromSeed(std::uint8_t pk[32], const std::uint8_t seed[32]);
 /// Signs with the first 32 bytes of `sk` (the seed); the public key is recomputed, so a
 /// secret key whose second half was tampered with can't leak the scalar.
 void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
+/// Same signature as Ed25519Sign, but uses the public key stored in sk[32..64] as is instead of recomputing it from the seed
+/// (what libsodium always does): about twice as fast. ONLY for a sk made by Ed25519SeedKeypair/Ed25519Keypair: if the tail
+/// of sk is not the seed's public key, two signatures of the same message under different tails reveal the secret scalar.
+/// Ed25519Sign has no such precondition and is the default.
+void Ed25519SignTrustedPk(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
 /// Strict, like libsodium: S must be < L, R and the public key must not be small-order,
 /// and the public key must be a canonical encoding of a curve point.
 bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]);

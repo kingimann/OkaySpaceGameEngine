@@ -2679,6 +2679,13 @@ if(_okay_xc_sodium)
     target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
+    # The large differential test (libsodium and the TweetNaCl-derived port; structured edge-case inputs). The ctest is a smoke run;
+    # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/crypto_review_package.md).
+    add_executable(crypto_difftest crypto_difftest.cpp)
+    target_link_libraries(crypto_difftest PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_difftest SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_include_directories(crypto_difftest PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME crypto_difftest_smoke COMMAND crypto_difftest 1500)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
 add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)

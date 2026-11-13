@@ -170,7 +170,7 @@ jobs:
       # The build pipeline's output layout: <Name>.exe + <Name>_Data/, only the assets the scene uses,
       # StreamingAssets, build.json; an old flat build still runs; compact, zip and dry-run output.
       - name: Check the build output layout
-        run: tests/export/verify_layout.sh build-editor/bin/OkayEngine
+        run: tests/export/verify_layout.sh bin/OkayEngine
 
   # Build the scripting, visual-scripting and robustness tests with
   # AddressSanitizer and UndefinedBehaviorSanitizer and run them: any memory

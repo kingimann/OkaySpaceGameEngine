@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "ActionExport.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "FpHandsWindow.hpp"
@@ -21080,141 +21081,8 @@ static std::string HandlerSentence(ActionList::Trigger t, const std::string& key
     return s;
 }
 
-// ---- Visual script -> OkayScript (best-effort code generation) ----------------
-// Turns an Actions graph into readable OkayScript so a user can graduate from the
-// visual editor to code. Ops that don't map 1:1 become "// TODO" comments (always
-// valid), so the generated file parses and the user fills the gaps in.
-static std::string VsCondExpr(const ActionList::Item& c) {
-    auto a = [&](std::size_t i) { return i < c.args.size() ? c.args[i] : std::string(); };
-    const std::string& op = c.op;
-    if (op == "always" || op.empty()) return "";
-    if (op == "var_gt")  return a(0) + " > " + a(1);
-    if (op == "var_lt")  return a(0) + " < " + a(1);
-    if (op == "var_ge")  return a(0) + " >= " + a(1);
-    if (op == "var_le")  return a(0) + " <= " + a(1);
-    if (op == "var_eq")  return a(0) + " == " + a(1);
-    if (op == "var_neq") return a(0) + " != " + a(1);
-    if (op == "key")       return "key(\"" + a(0) + "\")";
-    if (op == "key_down")  return "key_down(\"" + a(0) + "\")";
-    if (op == "key_up")    return "key_up(\"" + a(0) + "\")";
-    if (op == "mouse")     return "mouse(" + a(0) + ")";
-    if (op == "mouse_down")return "mouse_down(" + a(0) + ")";
-    if (op == "dist_lt")   return "dist_to(\"" + a(0) + "\") < " + a(1);
-    if (op == "dist_gt")   return "dist_to(\"" + a(0) + "\") > " + a(1);
-    if (op == "has_tag")   return "has_tag(\"" + a(0) + "\")";
-    if (op == "exists")    return "exists(\"" + a(0) + "\")";
-    if (op == "is_active") return "self_active()";
-    return "1 /* " + op + " */";
-}
-// A single instruction as one OkayScript statement (or a // comment if not mappable).
-static std::string VsStmt(const ActionList::Item& it) {
-    auto a = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string("0"); };
-    auto q = [&](std::size_t i) { return "\"" + (i < it.args.size() ? it.args[i] : std::string()) + "\""; };
-    auto join = [&](std::size_t i) { std::string s; for (; i < it.args.size(); ++i) { if (!s.empty()) s += ' '; s += it.args[i]; } return s; };
-    const std::string& op = it.op;
-    if (op == "move")        return "move(" + a(0) + ", " + a(1) + ")";
-    if (op == "set_pos")     return "set_pos(" + a(0) + ", " + a(1) + ")";
-    if (op == "rotate")      return "rotate(" + a(2) + ")";
-    if (op == "set_scale")   return "set_scale(" + a(0) + ")";
-    if (op == "velocity")    return "set_velocity(" + a(0) + ", " + a(1) + ")";
-    if (op == "impulse")     return "add_impulse(" + a(0) + ", " + a(1) + ")";
-    if (op == "move_toward") return "follow(" + q(0) + ", " + a(1) + ")";
-    if (op == "look_at")     return "look_at(" + q(0) + ")";
-    if (op == "set_var")     return a(0) + " = " + a(1);
-    if (op == "add_var")     return a(0) + " = " + a(0) + " + " + a(1);
-    if (op == "mul_var")     return a(0) + " = " + a(0) + " * " + a(1);
-    if (op == "toggle_var")  return a(0) + " = 1 - " + a(0);
-    if (op == "copy_var")    return a(0) + " = " + a(1);
-    if (op == "destroy")     return "destroy()";
-    if (op == "destroy_obj") return "destroy_obj(" + q(0) + ")";
-    if (op == "spawn")       return "spawn(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "spawn3")      return "spawn3(" + q(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) + ")";
-    if (op == "activate")    return "activate(" + q(0) + ")";
-    if (op == "deactivate")  return "deactivate(" + q(0) + ")";
-    if (op == "set_active")  return it.args.size() > 1 && !it.args[1].empty()
-                                    ? std::string("// show/hide ") + it.args[1]
-                                    : (a(0) == "1" ? "set_active(1)" : "set_active(0)");
-    if (op == "set_color")   return "set_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", 1)";
-    if (op == "set_text")    return "set_text(\"" + join(0) + "\")";
-    if (op == "play_sound")  return "play_sound(" + q(0) + ")";
-    if (op == "emit")        return "emit(" + a(0) + ")";
-    if (op == "log")         return "print(\"" + join(0) + "\")";
-    if (op == "load_scene")  return "load_scene(" + q(0) + ")";
-    if (op == "load_next_scene") return "load_next_scene()";
-    if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
-    if (op == "camera_shake")   return "camera_shake(" + a(0) + ")";
-    if (op == "camera_zoom_to") return "camera_zoom_to(" + a(0) + ", " + a(1) + ")";
-    if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "send")        return "// send message \"" + a(0) + "\"";
-    if (op == "comment")     return "// " + join(0);
-    if (op == "tween_move")  return "tween_move(" + a(0) + ", " + a(1) + ", " + a(2) +
-                                    (it.args.size() > 3 && !it.args[3].empty() ? ", \"" + it.args[3] + "\"" : "") + ")";
-    if (op == "tween_scale") return "tween_scale(" + a(0) + ", " + a(1) +
-                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "shake")       return "shake(" + a(0) + ", " + a(1) + ")";
-    if (op == "punch_scale") return "tween_punch_scale(" + a(0) + ", " + a(1) + ")";
-    if (op == "tween_rotate") return "tween_rotate(" + a(0) + ", " + a(1) +
-                                     (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "tween_color") return "tween_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) +
-                                    (it.args.size() > 4 && !it.args[4].empty() ? ", \"" + it.args[4] + "\"" : "") + ")";
-    if (op == "fade")        return "tween_fade(" + a(0) + ", " + a(1) +
-                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "flash")       return it.args.size() > 3
-                                    ? "flash(" + a(1) + ", " + a(2) + ", " + a(3) + ", " + a(0) + ")"
-                                    : "flash(1, 1, 1, " + a(0) + ")";
-    if (op == "orbit")       return "orbit(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "follow")      return "follow(" + q(0) + ", " + a(1) + ")";
-    // Anything else (survival, waits, loops, flow) -> a comment so the file still parses.
-    std::string j = join(0);
-    return "// " + op + (j.empty() ? "" : (" " + j));
-}
-// Append a handler's gated body (indented one level inside a function) to `out`.
-static void VsEmitBody(std::string& out, const std::vector<ActionList::Item>& conds,
-                       const std::vector<ActionList::Item>& ins, const std::string& lead) {
-    std::string gate;
-    for (const auto& c : conds) { std::string e = VsCondExpr(c); if (!e.empty()) { if (!gate.empty()) gate += " && "; gate += e; } }
-    std::string inner = gate.empty() ? lead : lead + "    ";
-    std::string body;
-    if (ins.empty()) body += inner + "// (no actions)\n";
-    for (const auto& it : ins) body += inner + VsStmt(it) + "\n";
-    if (gate.empty()) out += body;
-    else out += lead + "if (" + gate + ") {\n" + body + lead + "}\n";
-}
-static std::string ActionListToCode(const ActionList& al) {
-    using T = ActionList::Trigger;
-    std::string startB, updateB, collB;
-    auto handle = [&](T trg, const std::string& key,
-                      const std::vector<ActionList::Item>& conds,
-                      const std::vector<ActionList::Item>& ins) {
-        const std::string lead = "    ";
-        if (trg == T::OnStart)  { VsEmitBody(startB, conds, ins, lead); }
-        else if (trg == T::OnUpdate || trg == T::OnLateUpdate) { VsEmitBody(updateB, conds, ins, lead); }
-        else if (trg == T::OnKey || trg == T::OnKeyUp) {
-            const char* fn = trg == T::OnKey ? "key_down" : "key_up";
-            updateB += lead + "if (" + fn + "(\"" + key + "\")) {\n";
-            VsEmitBody(updateB, conds, ins, lead + "    ");
-            updateB += lead + "}\n";
-        }
-        else if (trg == T::OnClick) {
-            updateB += lead + "if (mouse_down(0)) {   // was On Click\n";
-            VsEmitBody(updateB, conds, ins, lead + "    ");
-            updateB += lead + "}\n";
-        }
-        else if (trg == T::OnCollision || trg == T::OnCollisionStay || trg == T::OnCollisionExit
-              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit || trg == T::OnTriggerStay) {
-            VsEmitBody(collB, conds, ins, lead);
-        }
-        else { updateB += lead + "// TODO: " + std::string(TriggerPhrase(trg, key)) + " (add your own trigger check)\n"; VsEmitBody(updateB, conds, ins, lead); }
-    };
-    handle(al.trigger, al.triggerKey, al.conditions, al.instructions);
-    for (const auto& h : al.extraHandlers) handle(h.trigger, h.triggerKey, h.conditions, h.instructions);
-    std::string out = "// Generated from the visual Actions script - a starting point, tweak freely.\n\n";
-    if (!startB.empty())  out += "start() {\n" + startB + "}\n\n";
-    if (!updateB.empty()) out += "update(dt) {\n" + updateB + "}\n\n";
-    if (!collB.empty())   out += "on_collision(other) {\n" + collB + "}\n\n";
-    if (startB.empty() && updateB.empty() && collB.empty()) out += "// (this script has no actions yet)\n";
-    return out;
-}
+// Actions -> OkayScript lives in ActionExport.hpp (ActionListToCode). Every step is
+// passed to actions_load, which runs the same list the Actions component runs.
 
 // ---- OkayScript -> visual script (best-effort import) --------------------------
 // Parse a simple call "func(a, b, \"c d\")" -> name + args (quotes stripped, trimmed).

@@ -163,6 +163,7 @@ node 237 Fn.action_up
 node 238 Fn.action_value
 node 239 Fn.action_x
 node 240 Fn.action_y
+node 1461 Fn.actions_load
 node 241 Fn.activate
 node 242 Fn.add_force
 node 243 Fn.add_force3

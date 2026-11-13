@@ -1862,6 +1862,20 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
 
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited);
+// Nodes this export could not turn into script. The editor shows each one in
+// Problems and on the node; the preview does not offer a script that skips them.
+struct VsExportReport { std::vector<okay::vs::VsIssue> issues; };
+inline VsExportReport*& VsExportReportSink() { static VsExportReport* p = nullptr; return p; }
+inline void VsExportFail(int nodeId, const std::string& type) {
+    VsExportReport* r = VsExportReportSink();
+    if (!r) return;
+    for (const auto& e : r->issues) if (e.node == nodeId) return;
+    okay::vs::VsIssue is;
+    is.severity = 0;
+    is.node = nodeId;
+    is.message = "Cannot export node " + type + " (#" + std::to_string(nodeId) + "): this node has no script.";
+    r->issues.push_back(std::move(is));
+}
 // Functions generated for Wait / Delay during one CompileToOkayScript call.
 // The pointer is set for that call and restored when it returns.
 struct VsExportFns { std::vector<std::string> bodies; };
@@ -2179,7 +2193,26 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
         out += ind + "}\n";
     }
-    else if (t=="Timer") out += ind + "// Every (" + VsCommentText(arg("1")) + "s): wire actions to this node\n";
+    else if (t=="Timer") {
+        // Same rule as TimerNode: pass at most once every `seconds`, keeping the
+        // leftover (clamped to four intervals). Zero, negative, and NaN pass every time.
+        const std::string seconds = VsNum(arg("1"), "1");
+        const double sec = std::strtod(seconds.c_str(), nullptr);
+        auto follow = [&](const std::string& bodyInd) {
+            for (int s : VsExecTargets(g, nodeId, 0)) VsEmitChain(g, s, out, bodyInd, visited);
+        };
+        if (!(sec > 0.0)) {
+            follow(ind);
+        } else {
+            const std::string acc = "_vs_timer_" + std::to_string(nodeId);
+            out += ind + acc + " += Time.deltaTime\n";
+            out += ind + "if (" + acc + " >= " + seconds + ") {\n";
+            out += ind + "    " + acc + " -= " + seconds + "\n";
+            out += ind + "    if (" + acc + " > (" + seconds + " * 4)) " + acc + " = (" + seconds + " * 4)\n";
+            follow(ind + "    ");
+            out += ind + "}\n";
+        }
+    }
     else if (t=="Wait" || t=="Delay") VsEmitLatentDelay(g, nodeId, t=="Wait", VsNum(arg("1"), "1"), out, ind, visited);
     else if (t=="Action" || t=="Actions") out += ind + "run_action(" + q(n->arg) + ")\n";
     else if (t=="Condition") {
@@ -2189,7 +2222,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         if (fn>=0) { out += ind + "} else {\n"; VsEmitChain(g, fn, out, ind+"    ", visited); }
         out += ind + "}\n";
     }
-    else                 out += ind + "// unsupported node: " + t + "\n";
+    else                 VsExportFail(nodeId, t);
 }
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited) {
@@ -2201,14 +2234,20 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         VsEmitNode(g, cur, out, ind, visited);
         static const std::set<std::string> kSelfContinued = {
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
-            "ChanceBranch", "EveryN", "Condition", "While", "Wait", "Delay"};
+            "ChanceBranch", "EveryN", "Condition", "While", "Wait", "Delay", "Timer"};
         if (kSelfContinued.count(n->type)) break;
         const std::vector<int> next = VsExecTargets(g, cur, 0);
         if (next.size() > 1) { for (int t : next) VsEmitChain(g, t, out, ind, visited); break; }
         cur = next.empty() ? -1 : next[0];
     }
 }
-inline std::string CompileToOkayScript(const VsEditGraph& g) {
+inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::vs::VsIssue>* exportIssues = nullptr) {
+    VsExportReport report;
+    struct ReportScope {
+        VsExportReport* prev;
+        explicit ReportScope(VsExportReport* r) : prev(VsExportReportSink()) { VsExportReportSink() = r; }
+        ~ReportScope() { VsExportReportSink() = prev; }
+    } reportScope(&report);
     VsExportFnScope latent;   // Wait / Delay callbacks collected while the chains are emitted
     // The graph's events become Start / Update / OnCollisionEnter / OnTriggerEnter /
     // OnMouseDown functions; its state becomes fields. A script's fields and
@@ -2271,6 +2310,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         if (n.type=="TweenKillTag" || n.type=="TweenPauseTag" || n.type=="TweenPlayTag") fields += "    int _tw_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="EveryN")   fields += "    int _evn_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="OnTimer")  fields += "    float _timer_"+std::to_string(n.id)+" = 0;\n";
+        if (n.type=="Timer")    fields += "    float _vs_timer_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="Wait") {
             fields += "    bool _vs_wait_done_"+std::to_string(n.id)+" = false;\n";
             fields += "    bool _vs_wait_busy_"+std::to_string(n.id)+" = false;\n";
@@ -2445,6 +2485,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         fin += line; if (e < out.size()) fin += '\n';
         a = e + 1;
     }
+    if (exportIssues) *exportIssues = std::move(report.issues);
     return fin;
 }
 
@@ -3748,6 +3789,12 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string now = g.toText();
         if (now != st.checkedText) {
             st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
+            std::vector<okay::vs::VsIssue> exp;
+            CompileToOkayScript(g, &exp);
+            if (!exp.empty()) {
+                st.issues.insert(st.issues.end(), exp.begin(), exp.end());
+                st.showIssues = true;
+            }
             st.checkedText = std::move(now);
         }
     }
@@ -5332,6 +5379,20 @@ inline void Draw(EditorState& ed, bool* open) {
     } else if (st.showScript) {
         ImGui::SameLine();
         ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
+        std::vector<const okay::vs::VsIssue*> blocked;
+        for (const auto& is : st.issues)
+            if (is.severity == 0 && is.message.rfind("Cannot export node ", 0) == 0) blocked.push_back(&is);
+        if (!blocked.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "This graph cannot be exported.");
+            ImGui::TextWrapped("These nodes have no script. The export stops instead of skipping them.");
+            ImGui::Separator();
+            for (const okay::vs::VsIssue* is : blocked) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.48f, 1.0f));
+                ImGui::TextWrapped("%s", is->message.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndChild();
+        } else {
         std::string code = CompileToOkayScript(g);
         ImGui::TextDisabled("OkayScript (generated from the graph)");
         ImGui::SameLine();
@@ -5352,6 +5413,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::InputTextMultiline("##vsscriptview", buf.data(), buf.size(),
                                   ImVec2(-FLT_MIN, -FLT_MIN), ImGuiInputTextFlags_ReadOnly);
         ImGui::EndChild();
+        }
     } else if (st.showDetails) {
         ImGui::SameLine();
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));

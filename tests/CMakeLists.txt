@@ -1637,6 +1637,17 @@ add_executable(test_anticheat_integrity test_anticheat_integrity.cpp)
 target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
 target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
+# The same test compiled two more ways WITHOUT the engine, so shared/AntiCheatCrypto.hpp is proven to work where the
+# engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone (Ed25519 and SHA-512 from our own library,
+# the port only as the reference the test compares with), (b) with neither libsodium nor okay::crypto (the portable port).
+add_executable(test_anticheat_integrity_ownlib test_anticheat_integrity.cpp)
+target_link_libraries(test_anticheat_integrity_ownlib PRIVATE okay::crypto)
+target_include_directories(test_anticheat_integrity_ownlib PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_compile_definitions(test_anticheat_integrity_ownlib PRIVATE OKAY_OWN_CRYPTO)
+add_test(NAME anticheat_integrity_ownlib COMMAND test_anticheat_integrity_ownlib)
+add_executable(test_anticheat_integrity_portable test_anticheat_integrity.cpp)
+target_include_directories(test_anticheat_integrity_portable PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME anticheat_integrity_portable COMMAND test_anticheat_integrity_portable)
 add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
@@ -2485,6 +2496,13 @@ if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
         add_test(NAME crypto_ct_valgrind COMMAND ${OKAY_VALGRIND} -q $<TARGET_FILE:crypto_ct_valgrind>)
     endif()
 endif()
+
+# Constant-time audit 2 of 2: a dudect-style statistical timing test. NOT run by ctest at full length (it needs
+# a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
+# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
+add_executable(crypto_timing crypto_timing.cpp)
+target_link_libraries(crypto_timing PRIVATE okay::crypto)
+add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
 
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
 # smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).

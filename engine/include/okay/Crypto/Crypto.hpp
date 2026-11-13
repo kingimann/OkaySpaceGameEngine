@@ -173,5 +173,10 @@ void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, con
 /// Strict, like libsodium: S must be < L, R and the public key must not be small-order,
 /// and the public key must be a canonical encoding of a curve point.
 bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]);
+/// True for a public key no signature should ever be accepted under: a non-canonical encoding (y >= p) or a
+/// point of small order (including the identity, which "verifies" R = identity, S = 0 for any message).
+/// Exactly the key checks Ed25519Verify makes first; used to vet key lists before trusting them.
+/// A 32-byte string that is not a curve point at all is NOT reported (it fails to verify anything anyway).
+bool Ed25519IsWeakKey(const std::uint8_t pk[32]);
 
 } // namespace okay::crypto

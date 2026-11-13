@@ -228,9 +228,15 @@ bool YIsCanonical(const std::uint8_t enc[32]) {      // public data: y < p, igno
 }
 
 // A point of order 1, 2, 4 or 8 (including the identity): 8P is the identity.
+// The sign bit is ignored (negating a point does not change its order), so the two encodings that
+// RFC 8032 refuses to decode (x = 0 with the sign bit set: 0100..80 and ecff..ff) are reported too,
+// as libsodium's blocklist and the port in shared/AntiCheatCrypto.hpp do.
 bool HasSmallOrder(const Consts& k, const std::uint8_t enc[32]) {
     Point p;
-    if (!Decode(p, k.d, enc)) return false;          // not a point at all: refused elsewhere
+    std::uint8_t e[32];
+    for (int i = 0; i < 32; ++i) e[i] = enc[i];
+    e[31] &= 0x7f;
+    if (!Decode(p, k.d, e)) return false;            // not a point at all: refused elsewhere
     for (int i = 0; i < 3; ++i) PointDouble(p, p);
     return fe::IsZero(p.X) && fe::Equal(p.Y, p.Z);
 }
@@ -294,6 +300,10 @@ void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, con
     }
     sc::MulAdd(sig + 32, kk, h, r);                   // S = k a + r (mod L)
     MemZero(h, sizeof h); MemZero(digest, sizeof digest); MemZero(r, sizeof r); MemZero(&R, sizeof R);
+}
+
+bool Ed25519IsWeakKey(const std::uint8_t pk[32]) {
+    return !YIsCanonical(pk) || HasSmallOrder(GetConsts(), pk);
 }
 
 bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]) {

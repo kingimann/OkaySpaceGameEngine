@@ -8,6 +8,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Clipboard.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
@@ -4744,6 +4745,13 @@ struct OkayScriptVM::Impl {
                 if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->label};
             }
             return Value{std::string{}};
+        };
+        // The game clipboard (the same text a focused input field copies and pastes).
+        // Control characters are removed and the text is capped. See Clipboard.hpp.
+        b["get_clipboard_text"] = [](std::vector<Value>&) -> Value { return Value{GetClipboardText()}; };
+        b["set_clipboard_text"] = [](std::vector<Value>& a) -> Value {
+            const std::string t = a.empty() ? std::string() : a[0].AsString();
+            return Value{SetClipboardText(t) ? 1.0f : 0.0f};
         };
         b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))

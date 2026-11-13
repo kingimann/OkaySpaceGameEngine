@@ -93,7 +93,10 @@ public:
     /// The overlay as draw commands for a W x H screen: the fade, then the
     /// subtitle card in the launcher look (slate panel, hairline border, accent
     /// speaker). The player and the editor's Game view both draw this list.
-    static std::vector<LoadingDrawCmd> BuildOverlay(const SeqOverlay& overlay, float W, float H);
+    /// `drawSubtitle` false skips the old subtitle card (the caption widget draws
+    /// the same line). The fade and the wait hint are unchanged. Default true so
+    /// a caller that has no widget still shows the card.
+    static std::vector<LoadingDrawCmd> BuildOverlay(const SeqOverlay& overlay, float W, float H, bool drawSubtitle = true);
 
 private:
     void FireBetween(float a, float b, bool includeA);
@@ -114,6 +117,9 @@ private:
     bool  m_audioWarned = false, m_clipWarned = false;
     bool  m_skipping = false;      ///< Skip() is firing the rest: waits are ignored
     bool  m_startDeferred = false; ///< playOnStart arrived while scripts were off
+    int   m_capId = 0;             ///< the CaptionManager line for the subtitle now showing
+    std::string m_capKey;
+    void FeedSubtitle();
 };
 
 } // namespace okay

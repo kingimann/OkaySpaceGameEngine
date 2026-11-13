@@ -35,7 +35,7 @@ int main() {
         const int expected[] = {K_DropBg, K_Image, K_Panel, K_DropHi, K_Scroll, K_Progress,
                                 K_Radial, K_Minimap, K_Slider, K_Stepper, K_Rating, K_Toggle,
                                 K_Tabs, K_Button, K_Text, K_WorldUI, K_Dropdown, K_Input,
-                                K_Crosshair, K_FocusRing, K_Tooltip, K_Keybind, K_ModalDim, K_ContextMenu};
+                                K_Crosshair, K_FocusRing, K_Tooltip, K_Keybind, K_ModalDim, K_ContextMenu, K_Caption};
         CHECK((int)(sizeof(expected) / sizeof(expected[0])) == K_Count);
         for (int i = 0; i < K_Count; ++i) CHECK(expected[i] == i);   // contiguous, ascending
         CHECK(K_Minimap == 7);
@@ -72,6 +72,7 @@ int main() {
         { auto* g = mk("dd");  g->AddComponent<UIDropdown>();       cases.push_back({g, K_Dropdown}); }
         { auto* g = mk("in");  g->AddComponent<UIInputField>();     cases.push_back({g, K_Input}); }
         { auto* g = mk("ch");  g->AddComponent<Crosshair>();        cases.push_back({g, K_Crosshair}); }
+        { auto* g = mk("cap"); g->AddComponent<CaptionOverlay>();    cases.push_back({g, K_Caption}); }
         { auto* g = mk("tt");  g->AddComponent<UITooltip>();        cases.push_back({g, K_Tooltip}); }
         for (const auto& c : cases) {
             CHECK(UIDefaultLayer(c.g) == c.kind);

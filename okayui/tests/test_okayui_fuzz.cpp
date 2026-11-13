@@ -156,6 +156,12 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
                 if (r.Chance(10)) UI::SetWindowFocus("fz win");
                 break;
             }
+            if (r.Chance(8)) {   // typed drag and drop: sources, targets, payloads of every size, odd types, calls out of order
+                if (UI::BeginDragDropSource(r.Int(4))) { unsigned char buf[300] = {0}; UI::SetDragDropPayload(r.Chance(10) ? nullptr : (r.Chance(10) ? "" : "FZ"), r.Chance(10) ? nullptr : buf, r.Int(300)); UI::SetDragDropPreview(r.Chance(20) ? nullptr : "fz"); UI::EndDragDropSource(); }
+                if (UI::BeginDragDropTarget()) { UI::AcceptDragDropPayload(r.Chance(30) ? nullptr : "FZ", r.Int(2)); UI::EndDragDropTarget(); }
+                UI::EndDragDropTarget(); UI::EndDragDropSource(); UI::AcceptDragDropPayload("FZ");
+                break;
+            }
             if (r.Chance(8)) { UI::SetWindowFontScale(r.Nasty()); UI::SetMouseCursor((UI::MouseCursor)r.Int(14)); const UI::IO& io = UI::GetIO(); (void)io; UI::GetMouseCursor(); break; }
             if (r.Chance(15)) { UI::PushStyleVar((UI::StyleVar)r.Int(UI::StyleVar_COUNT + 3), UI::Vec2{r.Nasty(), r.Nasty()}); if (r.Chance(60)) UI::PopStyleVar(r.Int(4)); break; }
             if (r.Chance(25)) {   // tab bars: random items, close boxes, trailing buttons, nested bars, calls out of order

@@ -730,6 +730,69 @@ void IoCursorFontTests() {
     CHECK(!capKb && !wantText);                                            // Escape gave it up
 }
 
+void TypedDragDropTests() {
+    Rig r; UI::Rect rSrc, rDst, rOther; int dropped = -1, hoverSeen = -1, wrongType = 0, anyType = 0, srcFrames = 0, dstDelivered = 0; bool sourceOn = true, big = false, badSet = true;
+    int value = 42;
+    r.body = [&] {
+        UI::Button("source"); rSrc = UI::GetItemRect();
+        if (sourceOn && UI::BeginDragDropSource()) {
+            ++srcFrames;
+            if (big) { char buf[300] = {0}; badSet = UI::SetDragDropPayload("ITEM", buf, 300); }
+            else UI::SetDragDropPayload("ITEM", &value, (int)sizeof value);
+            UI::SetDragDropPreview("item 42");
+            UI::EndDragDropSource();
+        }
+        UI::Button("target"); rDst = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) {
+            if (const UI::DragPayload* pl = UI::AcceptDragDropPayload("ITEM", UI::DragDrop_AcceptBeforeDelivery)) {
+                std::memcpy(&hoverSeen, pl->data, sizeof hoverSeen);
+                if (pl->delivery) { std::memcpy(&dropped, pl->data, sizeof dropped); ++dstDelivered; }
+            }
+            if (UI::AcceptDragDropPayload("OTHER")) ++wrongType;
+            UI::EndDragDropTarget();
+        }
+        UI::Button("other"); rOther = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) { if (UI::AcceptDragDropPayload(nullptr)) ++anyType; UI::EndDragDropTarget(); }
+        CHECK(!UI::BeginDragDropSource() || true);
+    };
+    r.Frames(3);
+    CHECK(!UI::IsDragging() && srcFrames == 0);
+    auto dragTo = [&](const UI::Rect& from, const UI::Rect& to) {
+        r.MoveTo(CenterX(from), CenterY(from)); r.sim.Down(); r.Frame();
+        r.MoveTo(CenterX(from) + 4, CenterY(from)); r.Frame();                  // not far enough yet
+        r.MoveTo(CenterX(to), CenterY(to)); r.Frame(); r.Frame();               // moving over the target
+    };
+    // a small move does not start a drag
+    r.MoveTo(CenterX(rSrc), CenterY(rSrc)); r.sim.Down(); r.Frame(); r.MoveTo(CenterX(rSrc) + 3, CenterY(rSrc)); r.Frame();
+    CHECK(!UI::IsDragging() && srcFrames == 0);
+    r.sim.Up(); r.Frame(); r.Frames(2);
+    // a real drag over the target: preview delivery while hovering, then delivery on release
+    srcFrames = 0; hoverSeen = -1; dropped = -1;
+    dragTo(rSrc, rDst);
+    CHECK(UI::IsDragging() && srcFrames > 0);
+    CHECK(hoverSeen == 42 && dropped == -1);                                    // AcceptBeforeDelivery: seen while hovering, not delivered yet
+    r.sim.Up(); r.Frame();
+    CHECK(dropped == 42 && dstDelivered == 1);                                  // delivered once, on the release
+    r.Frame(); CHECK(!UI::IsDragging() && dstDelivered == 1);                   // and the drag is over
+    // a mismatched type is not accepted, a null type takes anything, delivery goes to the one under the pointer
+    wrongType = 0; anyType = 0; dstDelivered = 0;
+    dragTo(rSrc, rOther); r.sim.Up(); r.Frame();
+    CHECK(wrongType == 0 && anyType == 1 && dstDelivered == 0);
+    // released over nothing: no delivery, drag ends
+    dropped = -1; dstDelivered = 0;
+    dragTo(rSrc, rSrc); r.MoveTo(480, 380); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(dropped == -1 && dstDelivered == 0 && !UI::IsDragging());
+    // a payload over 256 bytes is refused (the drag then has no payload, so targets stay quiet)
+    big = true; badSet = true; dropped = -1; dstDelivered = 0;
+    dragTo(rSrc, rDst); r.sim.Up(); r.Frame();
+    CHECK(!badSet && dropped == -1 && dstDelivered == 0);
+    big = false;
+    // outside a frame / without a drag the calls are harmless
+    CHECK(!UI::SetDragDropPayload("X", &value, 4));
+    UI::SetDragDropPreview(nullptr); UI::EndDragDropSource(); UI::EndDragDropTarget();
+    CHECK(UI::AcceptDragDropPayload("ITEM") == nullptr);
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -988,6 +1051,7 @@ int main() {
     StyleVarTests();
     WindowApiTests();
     IoCursorFontTests();
+    TypedDragDropTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

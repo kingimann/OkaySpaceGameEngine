@@ -301,6 +301,12 @@ float* floatState(int id, float dflt) {
 }
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
 unsigned long long g_frameCount = 0;              // frames begun so far
+// Typed-payload drag and drop (BeginDragDropSource / BeginDragDropTarget), next to the older int-payload one (g_dd).
+struct TypedDrag {
+    bool active = false, armed = false, hasPayload = false; int srcId = 0; float armX = 0, armY = 0;
+    DragPayload pay; char preview[64] = {0};
+};
+TypedDrag g_tdd;
 float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
 MouseCursor g_cursor = MouseCursor_Arrow;
 IO g_io;                              // GetIO(): filled in BeginFrame
@@ -1340,7 +1346,18 @@ void finalizeFrame() {
         fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, ac);
         g_toOverlay = false;
     }
-    if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; }
+    if (g_tdd.active) {   // the dragged thing follows the cursor: a dot, plus the preview text when there is one
+        g_toOverlay = true;
+        fillCircle(g_in.mouseX + 10.0f, g_in.mouseY + 10.0f, 7.0f, g_theme.accent);
+        if (g_tdd.preview[0]) {
+            const float tw = labelW(g_tdd.preview), th = textH();
+            quad(g_in.mouseX + 22.0f, g_in.mouseY + 4.0f, tw + 12.0f, th + 8.0f, g_theme.border);
+            quad(g_in.mouseX + 23.0f, g_in.mouseY + 5.0f, tw + 10.0f, th + 6.0f, g_theme.panel);
+            drawText(g_in.mouseX + 28.0f, g_in.mouseY + 8.0f, g_tdd.preview, g_theme.textScale, g_theme.text);
+        }
+        g_toOverlay = false;
+    }
+    if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; g_tdd.active = false; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.preview[0] = 0; }
     mergeOverlay();
     // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
     // frames only, so a permanently too-big UI does not flood the log) and in DrawData::dropped.
@@ -3394,7 +3411,7 @@ bool BeginPopupContextItem(const char* id) {
     return beginPopupBody(pid);
 }
 
-bool IsDragging() { return g_dd.active; }
+bool IsDragging() { return g_dd.active || g_tdd.active; }
 
 bool DragSource(int payload) {
     if (!g_lay.active) return false;
@@ -3414,6 +3431,51 @@ bool DragSource(int payload) {
     }
     return g_dd.active && g_dd.payload == payload;
 }
+
+bool BeginDragDropSource(int flags) {
+    (void)flags;
+    if (!g_lay.active) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    const int sid = (int)(((unsigned)(int)(px * 4.0f) * 73856093u) ^ ((unsigned)(int)(py * 4.0f) * 19349663u) ^ (unsigned)g_lay.seed) | 1;
+    if (!g_tdd.active && !g_tdd.armed && g_pressed && hit(px, py, pw, ph)) {
+        g_tdd.armed = true; g_tdd.srcId = sid; g_tdd.armX = g_in.mouseX; g_tdd.armY = g_in.mouseY;
+    }
+    if (g_tdd.armed && g_tdd.srcId == sid && g_in.mouseDown) {
+        const float dx = g_in.mouseX - g_tdd.armX, dy = g_in.mouseY - g_tdd.armY;
+        if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) > 6.0f) { g_tdd.active = true; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.pay = DragPayload(); }
+    }
+    return g_tdd.active && g_tdd.srcId == sid;
+}
+bool SetDragDropPayload(const char* type, const void* data, int size) {
+    if (!g_tdd.active || !type || !*type || size < 0 || size > kDragPayloadMax || (size > 0 && !data)) return false;
+    std::snprintf(g_tdd.pay.type, sizeof g_tdd.pay.type, "%s", type);
+    if (size > 0) std::memcpy(g_tdd.pay.data, data, (std::size_t)size);
+    g_tdd.pay.size = size; g_tdd.hasPayload = true;
+    return true;
+}
+void SetDragDropPreview(const char* text) { if (g_tdd.active) std::snprintf(g_tdd.preview, sizeof g_tdd.preview, "%s", text ? text : ""); }
+void EndDragDropSource() {}
+
+static bool g_tddOver = false;   // BeginDragDropTarget said yes for the item being asked about
+bool BeginDragDropTarget() {
+    g_tddOver = false;
+    if (!g_lay.active || !g_tdd.active || !g_tdd.hasPayload) return false;
+    const float px = g_lay.prevX, py = g_lay.prevY, pw = g_lay.prevW, ph = g_lay.prevH;
+    if (!hit(px, py, pw, ph)) return false;
+    quad(px, py, pw, 2.0f, g_theme.accent); quad(px, py + ph - 2.0f, pw, 2.0f, g_theme.accent);   // an accent outline marks the drop spot
+    g_tddOver = true;
+    return true;
+}
+const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
+    if (!g_tddOver || !g_tdd.active || !g_tdd.hasPayload) return nullptr;
+    if (type && *type && std::strncmp(type, g_tdd.pay.type, sizeof g_tdd.pay.type - 1) != 0) return nullptr;
+    static DragPayload out;
+    out = g_tdd.pay;
+    if (g_released) { out.delivery = true; g_tdd.active = false; g_tdd.hasPayload = false; return &out; }
+    if (flags & DragDrop_AcceptBeforeDelivery) { out.delivery = false; return &out; }
+    return nullptr;
+}
+void EndDragDropTarget() { g_tddOver = false; }
 
 bool DropTarget(int* outPayload) {
     if (!g_lay.active || !g_dd.active) return false;

@@ -10,7 +10,9 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
+#include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
@@ -1274,6 +1276,10 @@ int main(int argc, char** argv) {
         pb->Log("SDL_Init failed: " + pb->LastError());
         return 1;
     }
+    // Games copy and paste through SDL. The memory clipboard stays the default
+    // everywhere else (tests, a headless run), so this does not turn okay::platform on.
+    static okay::SdlClipboard s_osClipboard;
+    okay::InstallGameClipboard(&s_osClipboard);
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
@@ -1950,6 +1956,7 @@ int main(int argc, char** argv) {
         if (keyHeld(PK::Space)) down.push_back(' ');
         if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
         if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
+        if (keyHeld(PK::LGui)   || keyHeld(PK::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
         // Editing keys for text fields (held-state; edge-detected by the field).
         if (keyHeld(PK::Backspace)) down.push_back((char)8);
         if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
@@ -1986,6 +1993,7 @@ int main(int argc, char** argv) {
         // too, before any component Update. PauseMenu used to set the flag itself,
         // which components that ran first that frame never saw.
         okay::SettingsScreen::Ensure(scene);
+        okay::CaptionOverlay::Ensure(scene);
         const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
         Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
 
@@ -2782,7 +2790,8 @@ int main(int argc, char** argv) {
         if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
             int W = 0, H = 0; renderer->OutputSize(&W, &H);
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
-            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H));
+            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H,
+                                                                    !CaptionOverlay::Any(&scene)));
             ui2d::SetUIDefaultFont(nullptr);
         }
         // Post: screen-space vignette (on top of the scene + UI, under nothing),

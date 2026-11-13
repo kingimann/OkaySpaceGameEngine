@@ -1273,7 +1273,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Timeline window (subtitle actions)
 - **Docs:** `docs/cutscenes.md`; `docs/accessibility.md`
 - **Tests:** `accessibility`
-- **Status:** Partial - cutscenes show subtitles with their own fixed look; the shared `CaptionManager` (#574, test `accessibility`) is on main but nothing connects the Sequencer, dialogue or audio to it, and there is no widget.
+- **Status:** Partial - `CaptionOverlay` draws `CaptionManager` lines in the player and in editor Play (test `accessibility_remaining`). Cutscene subtitles and dialogue call `Say`. An Audio Source `caption` calls `Sound` when sound captions are on. The Settings screen turns subtitles and sound captions on or off. Still open: subtitle size, background and speaker-name rows, and SRT import.
 - **Exists today:** The cutscene subtitle card. `docs/accessibility.md` says the Sequencer's subtitle still shows its own text rather than going through `CaptionManager`, and there is no ready-made subtitle widget.
 - **Work packages:**
   1. M - Subtitle widget component drawing `CaptionManager::Lines()` with the player's settings. Depends on: #574 (on main), 12.2.
@@ -1291,14 +1291,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand.
 - **Parts:**
   - 32.3.1 Colour vision maths (#574) - `Graphics/ColorVision` - simulate and correct for protanopia, deuteranopia, tritanopia, achromatopsia on colours and images; a colour-vision-safe palette; contrast checks
-  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, saved in Prefs, with change listeners; text size, colour filter, high contrast, reduce motion and reduce flashing are read by the player and set on the Settings screen (12.8.4); hold-to-toggle, aim assist, screen-reader hints and subtitle settings have no reader and no control
+  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, subtitles, hold-to-toggle and aim assist, saved in Prefs, with change listeners; those rows are on the Settings screen (12.8.4). Screen-reader hints still have no reader and no control
   - 32.3.3 Colour filter - `Graphics/ColorVision`, `player/main.cpp` - the rendered 3D frame of every renderer and the flat colours and text of the screen UI are daltonized (protanopia, deuteranopia, tritanopia); UI images are not; the editor has no preview
 - **Code:** `Graphics/ColorVision`, `Core/AccessibilitySettings`
 - **API:** `SimulateColorblind`, `DaltonizeColor`, `Accessibility::FilterColor`, `TextColor`, `SetColorblind`
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
 - **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
-- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion and reduce flashing change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`); the editor has no preview, UI images are not filtered, and the settings with no reader (subtitles, hold-to-toggle, aim assist, screen reader) are not offered.
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
 - **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
   1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).

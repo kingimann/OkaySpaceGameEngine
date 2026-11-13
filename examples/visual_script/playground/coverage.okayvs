@@ -1383,7 +1383,9 @@ node 1457 Fn.wrap
 node 1458 Fn.wrap_in_box
 node 1459 Fn.write_save
 node 1460 Fn.zoom_camera
-node 1461 Fn.physics_smooth
-node 1462 Fn.physics_steps
-node 1463 Fn.set_physics_smooth
-node 1464 Fn.set_physics_steps
+node 1461 Fn.get_clipboard_text
+node 1462 Fn.set_clipboard_text
+node 1463 Fn.physics_smooth
+node 1464 Fn.physics_steps
+node 1465 Fn.set_physics_smooth
+node 1466 Fn.set_physics_steps

@@ -306,7 +306,7 @@ has `enabled`.
 | UITheme, UIStyleVariant, UIDamageNumbers, UIDialogueBox | 37, 3, 15, 5 | the UI looks (12 built in), a widget's role in the theme, floating combat text and the dialogue box. See [ui_runtime.md](ui_runtime.md). `UIPanel.blocksPointer`, `UIToggle.radioGroup` and `UIDraggable.dragParent` / `keepOnScreen` were added with them |
 | Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
-| Joint2D, Joint3D | 16, 14 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way |
+| Joint2D, Joint3D | 16, 17 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way. A 3D hinge stops when `useLimits` is on (`minAngle` / `maxAngle`, degrees from the start pose) |
 | DayNightCycle, Water | 16, 16 | `DayNightCycle.time` is 0..24 hours; `Water.color` is red, green and blue (its alpha is `opacity`) |
 
 How the new types are described, so a tool can rely on it:

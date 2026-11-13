@@ -79,7 +79,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Docs:** `docs/audio.md`
 - **Tests:** `master_volume`, `audio_mixer`
 - **Status:** Works - LoadSettings and SaveSettings call sites and the focus-mute line in player/main.cpp read; the save and load round trip is exercised in `audio_mixer`
-- **Open:** the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from #574 has a "sound caption" call but no Audio Source option feeds it, 10.1, 32.2)
+- **Open:** the volume sliders belong to the pause and settings screens (area 12.8). An Audio Source `caption` is shown by the caption widget when sound captions are on (32.2)
 - **Related:** 12.8, 1.7, 32.2, 7.1
 - **Words:** volume slider, master volume, music volume, effects volume, mute, saved settings, prefs, audio.* keys, mute when unfocused, settings screen
 - **Seen as:** the volume the player chose is forgotten next launch; the volume slider changes nothing; the game is loud again after restart

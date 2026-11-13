@@ -16,7 +16,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 | Navigation | NavMeshAgent.* | Engine API NavMeshAgent, Chase Target, Patrol Waypoints |
 | Audio | Audio.*, play_sound | Engine API Audio, Play Sound Here, Fn.play_sound |
 | Input | Input.*, key | Engine API Input, Get Move Direction, On Key, Fn.key |
-| UI | UI components, ui_* builtins | Engine API UI nodes, every Fn.ui_* builtin |
+| UI | UI components, ui_* builtins, get_clipboard_text / set_clipboard_text | Engine API UI nodes, every Fn.ui_* builtin, Get Clipboard Text, Set Clipboard Text |
 | Particles | particle builtins and properties | Get/Set Property, plus Fn.particle_* builtins in the list below |
 | Terrain | terrain properties | Get/Set Property on a terrain component. No separate terrain builtin. |
 | Splines | Spline.*, SplineFollower.* | Engine API Spline / SplineFollower / LineRenderer |
@@ -33,7 +33,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1362 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1364 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -422,6 +422,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `get` | `Fn.get` |
 | `get_anim` | `Fn.get_anim` |
 | `get_child` | `Fn.get_child` |
+| `get_clipboard_text` | `Fn.get_clipboard_text` |
 | `get_hp` | `Fn.get_hp` |
 | `get_key` | `Fn.get_key` |
 | `get_key_down` | `Fn.get_key_down` |
@@ -973,6 +974,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_camera` | `Fn.set_camera` |
 | `set_camera_zoom` | `Fn.set_camera_zoom` |
 | `set_character_model` | `Fn.set_character_model` |
+| `set_clipboard_text` | `Fn.set_clipboard_text` |
 | `set_color` | `Fn.set_color` |
 | `set_dropdown_icon` | `Fn.set_dropdown_icon` |
 | `set_dropdown_max` | `Fn.set_dropdown_max` |

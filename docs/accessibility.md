@@ -10,6 +10,10 @@ The engine side of accessibility. What a player can change today, and what reall
 | High contrast | UI text is pushed to 7:1 against the last large solid fill drawn before it (the panel or button under it); text over the bare scene is measured against near black. A panel with a thin gradient or image under the text can be misjudged |
 | Reduce motion | `Camera::Shake` is ignored and a shake in progress stops. UI Animation slides, pop, drop and grow become a quarter-length fade and its loops (pulse, breathe, bob, sway) hold still |
 | Reduce flashing | The `flash` action does nothing and the UI Animation blink loop holds still |
+| Subtitles | Spoken lines (cutscene subtitles and dialogue) are drawn by the caption widget. Off, those lines are not shown |
+| Sound captions | While on, an Audio Source with a caption shows it, for example `[door slams]`. Off by default |
+| Hold to toggle | Sprint, aim and crouch stay on after the key is released, until the next press. Aim and sprint on the action list do the same. Off, they are holds |
+| Aim assist (Off, Low, Medium, High) | While the right stick is moving, the view is pulled a short way toward a nearby living target. Medium is the default. Off, the stick is not pulled. Mouse look is never pulled |
 | High-visibility focus | The keyboard and gamepad focus ring becomes a thick yellow stroke with a dark halo, instead of the theme's ring |
 | Focus thickness (0.5 to 3) | Multiplies the theme's focus-ring thickness. High-visibility focus multiplies again, and never goes under 6 pixels |
 
@@ -19,8 +23,8 @@ the Settings screen: see "Not done" at the end.
 The rest of this page: subtitles and captions, colour vision support,
 controller and keyboard navigation of UI, a controls-screen model with conflict
 detection, and one settings object a player sets once and the whole game honours.
-Everything is plain C++ (`#include <Okay.hpp>`); the captions and navigation helpers draw
-nothing, so a game's UI decides how they look.
+Everything is plain C++ (`#include <Okay.hpp>`). `CaptionOverlay` draws the shared
+caption lines. The navigation helpers still draw nothing, so a game's UI decides how those look.
 
 | Header | What it has |
 |---|---|
@@ -315,15 +319,14 @@ are fixed in code, so UI navigation itself can't be remapped.
 These settings exist in `AccessibilitySettings` but nothing reads them yet, so the Settings
 screen does not show them:
 
-* **Subtitles and sound captions** (size, background, on or off): no widget draws `CaptionManager::Lines()`,
-  the Cutscene Sequencer's Subtitle action shows its own text, and nothing calls `Sound()` for audio.
-* **Hold or toggle** (`toggleAllHolds`, `toggleActions`): `HoldToggle` is not used by the first person
-  controller, aim or crouch.
-* **Aim assist** and **screen reader hints**: no game system or platform announcer reads them.
+* **Screen reader hints**: no platform announcer reads them.
 * **Reduce motion** does not yet change first person head bob, the landing dip, parallax or sprite sway;
   only camera shake and UI animation.
 * **Achromatopsia** has no correction (a grayscale user has no hue to recover), so it is not offered as a filter.
 * **okayui** (the editor and launcher chrome) does not read the settings; only the in-game UI does.
+* Subtitle size, background, speaker names and the top-or-bottom choice are saved with the other
+  subtitle settings and the caption widget honours them, but the Settings screen only offers
+  subtitles on or off and sound captions on or off.
 * A Settings screen saved in a scene before this change lacks the new rows until the prefab is added again
   (the bindings skip rows that are missing).
 * The editor has no accessibility windows or colour-blindness preview of the Game view.

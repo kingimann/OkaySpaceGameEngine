@@ -1237,6 +1237,11 @@ target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor 
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
 
+add_executable(test_vs_clarity test_vs_clarity.cpp)
+target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_clarity PRIVATE okay::engine)
+add_test(NAME vs_clarity COMMAND test_vs_clarity)
+
 add_executable(test_doc_recovery test_doc_recovery.cpp)
 target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_doc_recovery PRIVATE okay::engine)
@@ -1288,6 +1293,11 @@ add_test(NAME frustum_culling COMMAND test_frustum_culling)
 add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+add_executable(test_vs_variables test_vs_variables.cpp)
+target_link_libraries(test_vs_variables PRIVATE okay::engine)
+target_compile_definitions(test_vs_variables PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_variables COMMAND test_vs_variables)
 
 add_executable(test_vs_refs test_vs_refs.cpp)
 target_link_libraries(test_vs_refs PRIVATE okay::engine)

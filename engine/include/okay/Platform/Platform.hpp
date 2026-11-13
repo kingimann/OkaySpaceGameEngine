@@ -163,6 +163,7 @@ public:
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    virtual unsigned DisplayDpi() const { return 96; }   // dots per inch of the display the window is on (96 = 100% scaling)
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -230,6 +231,16 @@ public:
 };
 
 // ---- The backend ---------------------------------------------------------------
+// One monitor. Rectangles are in desktop pixels; `work*` excludes taskbars and docks.
+struct DisplayInfo {
+    int x = 0, y = 0, width = 0, height = 0;
+    int workX = 0, workY = 0, workWidth = 0, workHeight = 0;
+    unsigned dpi = 96;
+    int refreshHz = 0;       // 0 = unknown
+    bool primary = false;
+    std::string name;
+};
+
 struct InitFlags {
     bool video = true, audio = true, gamepad = true;
 };
@@ -289,6 +300,8 @@ public:
     // Process-level helpers the apps used to take from SDL directly.
     /// Per-monitor DPI awareness on Windows (a hint, call before the first window). False = nothing to do here.
     virtual bool SetPerMonitorDpiAware() { return false; }
+    virtual int DisplayCount() { return 0; }                                  // 0 = this backend cannot say
+    virtual bool GetDisplayInfo(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
     /// A modal error box (title, text), parented to `parent` when given. False = no
     /// message box available (the text is written to the log instead).
     virtual bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent = nullptr);

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include "PlatformText.hpp"
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -120,14 +121,22 @@ std::string Backend::BasePath() {
 std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     if (org.empty() || app.empty()) return std::string();
 #if defined(_WIN32)
-    const char* base = std::getenv("APPDATA");
-    if (!base || !*base) return std::string();
-    std::string root = base;
+    // Wide APIs throughout: %APPDATA% and the folder names may hold non-ASCII characters, which the ANSI
+    // calls (getenv, CreateDirectoryA) would mangle.
+    wchar_t base[MAX_PATH * 2];
+    const DWORD n = GetEnvironmentVariableW(L"APPDATA", base, (DWORD)(sizeof(base) / sizeof(base[0])));
+    if (n == 0 || n >= sizeof(base) / sizeof(base[0])) return std::string();
+    std::wstring root(base, n);
     for (const std::string& part : {org, app}) {
-        root += "\\" + part;
-        CreateDirectoryA(root.c_str(), nullptr);
+        std::string clean = part;
+        for (char& c : clean) if (std::strchr("<>:\"/\\|?*", c) || (unsigned char)c < 0x20) c = '_';   // characters Windows forbids in a file name
+        const std::u16string u = text::Utf8ToUtf16(clean);
+        root += L"\\";
+        root.append(reinterpret_cast<const wchar_t*>(u.data()), u.size());
+        CreateDirectoryW(root.c_str(), nullptr);
     }
-    return root + "\\";
+    root += L"\\";
+    return text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(root.data()), root.size());
 #else
     std::string root;
     const char* xdg = std::getenv("XDG_DATA_HOME");
@@ -153,11 +162,21 @@ std::string Backend::PrefPath(const std::string& org, const std::string& app) {
 std::vector<std::string> Backend::PreferredLocales() {
     std::vector<std::string> out;
 #if defined(_WIN32)
-    wchar_t name[LOCALE_NAME_MAX_LENGTH];
-    if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) {
-        std::string s;
-        for (const wchar_t* c = name; *c; ++c) s += (*c < 128) ? (char)*c : '?';
-        if (!s.empty()) out.push_back(s);
+    // The user's UI language list (Settings > Language order), "en-US" style; the default locale as a fallback.
+    {
+        ULONG count = 0, size = 0;
+        if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, nullptr, &size) && size > 1) {
+            std::wstring buf((size_t)size, L'\0');
+            if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, &buf[0], &size)) {
+                for (const wchar_t* c = buf.c_str(); *c; c += wcslen(c) + 1)
+                    out.push_back(text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(c), wcslen(c)));
+            }
+        }
+    }
+    if (out.empty()) {
+        wchar_t name[LOCALE_NAME_MAX_LENGTH];
+        if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0)
+            out.push_back(text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(name), wcslen(name)));
     }
 #else
     // LANGUAGE is a colon list; else LC_ALL / LC_MESSAGES / LANG. "de_DE.UTF-8@euro" -> "de-DE".

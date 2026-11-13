@@ -18,8 +18,11 @@
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <unistd.h>
+#endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>   // _NSGetExecutablePath (PlayerExeStem)
 #endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
@@ -1115,6 +1118,10 @@ static std::string PlayerExeStem(const char* argv0) {
     char buf[4096];
     const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n > 0) { buf[n] = 0; self = buf; }
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t sz = (uint32_t)sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) == 0) self = buf;
 #endif
     return std::filesystem::path(self).stem().string();
 }

@@ -12,7 +12,14 @@
 #include <utility>
 #include "okay/Core/Log.hpp"
 
-#include <GL/gl.h>          // GL 1.1 types + enums only
+#if defined(__APPLE__)
+#  ifndef GL_SILENCE_DEPRECATION
+#    define GL_SILENCE_DEPRECATION   // macOS marks all of OpenGL deprecated
+#  endif
+#  include <OpenGL/gl.h>   // macOS has no <GL/gl.h>; every GL function is still loaded by name below
+#else
+#  include <GL/gl.h>       // GL 1.1 types + enums only
+#endif
 #include <cmath>
 #include <cstring>
 #include <string>

@@ -11,6 +11,11 @@
 #endif
 #include <string>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <climits>
+#include <cstdint>
+#endif
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -219,7 +224,31 @@ void TestHelpers(Backend& b) {
             CHECK(exe.find('/', base.size()) == std::string::npos);   // the exe sits directly in it
         }
     }
+#elif defined(__APPLE__)
+    {   // macOS has no /proc/self/exe; the folder must still be the executable's own (not unverified on a Mac until CI runs it)
+        char buf[4096], real[4096];
+        uint32_t sz = (uint32_t)sizeof(buf);
+        CHECK(_NSGetExecutablePath(buf, &sz) == 0);
+        if (realpath(buf, real)) {
+            const std::string exe = real;
+            CHECK(exe.compare(0, base.size(), base) == 0);
+            CHECK(exe.find('/', base.size()) == std::string::npos);
+        }
+    }
 #endif
+#if defined(__APPLE__)
+    {   // macOS: per-user data goes under ~/Library/Application Support (neither backend reads XDG_DATA_HOME there)
+        const std::string pref = b.PrefPath("OkayPlatformTest", "Pref Probe");
+        std::cout << "  PrefPath -> " << pref << "\n";
+        CHECK(!pref.empty() && pref.back() == '/');
+        CHECK(pref.find("/Library/Application Support/") != std::string::npos);
+        CHECK(access(pref.c_str(), W_OK) == 0);
+        rmdir(pref.c_str());   // pref ends in '/'; remove our two probe folders again, leave everything else alone
+        std::string org = pref.substr(0, pref.size() - 1);
+        org.resize(org.find_last_of('/'));
+        rmdir(org.c_str());
+    }
+#else
     // PrefPath: created, writable, under XDG_DATA_HOME, trailing separator.
     char tmpl[] = "/tmp/okay_prefXXXXXX";
     if (mkdtemp(tmpl)) {
@@ -234,6 +263,7 @@ void TestHelpers(Backend& b) {
         std::string rm = std::string("rm -rf ") + tmpl;
         CHECK(std::system(rm.c_str()) == 0);
     }
+#endif
     // PreferredLocales: well formed whichever backend answers; our own parsing is exact.
     for (const std::string& l : b.PreferredLocales()) CHECK(!l.empty() && l.find('_') == std::string::npos);
     if (b.Kind() == BackendKind::Own) {

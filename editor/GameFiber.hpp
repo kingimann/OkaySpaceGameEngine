@@ -17,6 +17,9 @@
 #endif
 #include <windows.h>
 #else
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 600   // macOS's <ucontext.h> is an #error without it (the calls are deprecated there, but work)
+#endif
 #include <ucontext.h>
 #endif
 

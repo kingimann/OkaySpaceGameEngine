@@ -14,6 +14,9 @@
 #else
 #  include <sys/stat.h>
 #  include <unistd.h>
+#  if defined(__APPLE__)
+#    include <mach-o/dyld.h>   // _NSGetExecutablePath (BasePath)
+#  endif
 #endif
 
 namespace okay::platform {
@@ -107,7 +110,16 @@ std::string Backend::BasePath() {
     return out;
 #else
     char buf[4096];
+#if defined(__APPLE__)
+    // macOS has no /proc: ask dyld, then resolve symlinks so the folder is the real one.
+    uint32_t sz = (uint32_t)sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return std::string();
+    char real[4096];
+    if (realpath(buf, real)) std::snprintf(buf, sizeof(buf), "%s", real);
+    const ssize_t n = (ssize_t)std::strlen(buf);
+#else
     const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+#endif
     if (n <= 0) return std::string();
     std::string p(buf, (size_t)n);
     const size_t cut = p.find_last_of('/');
@@ -132,9 +144,16 @@ std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     std::string root;
     const char* xdg = std::getenv("XDG_DATA_HOME");
     const char* home = std::getenv("HOME");
+#if defined(__APPLE__)
+    // macOS keeps per-user app data in ~/Library/Application Support (what SDL_GetPrefPath returns there too).
+    (void)xdg;
+    if (home && *home) root = std::string(home) + "/Library/Application Support";
+    else return std::string();
+#else
     if (xdg && *xdg) root = xdg;
     else if (home && *home) root = std::string(home) + "/.local/share";
     else return std::string();
+#endif
     // mkdir -p root/org/app
     std::string path;
     size_t pos = 0;

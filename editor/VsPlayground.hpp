@@ -7,6 +7,10 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>   // _NSGetExecutablePath
+#include <cstdint>
+#endif
 
 namespace okay::editor::vsed {
 
@@ -154,7 +158,12 @@ inline std::string VsPlaygroundDir() {
     std::error_code ec;
     std::vector<fs::path> seeds;
     seeds.push_back(fs::current_path(ec));
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+    {   // macOS has no /proc/self/exe
+        char buf[4096]; uint32_t sz = (uint32_t)sizeof(buf);
+        if (_NSGetExecutablePath(buf, &sz) == 0) seeds.push_back(fs::path(buf).parent_path());
+    }
+#elif !defined(_WIN32)
     seeds.push_back(fs::read_symlink("/proc/self/exe", ec).parent_path());
 #endif
     for (fs::path seed : seeds) {

@@ -509,3 +509,130 @@ jobs:
         with:
           name: okayspace-webgl
           path: build-web/web/
+
+  # ---------------------------------------------------------------------------------------------
+  # Platform coverage jobs (docs/platform_support.md). Neither is a required check: they exist to
+  # show, on every push, what builds and passes outside the Windows/Ubuntu jobs above. The macOS
+  # code paths were written without a Mac, so a red macOS job is expected to need follow-up fixes;
+  # its logs are the source of truth for the "builds in CI" column of the matrix.
+  # ---------------------------------------------------------------------------------------------
+
+  # The release's Linux flags (Ubuntu 22.04, libsodium, Release) for all four programs at once: the
+  # game server / player runtime that release.yml ships, plus the editor and launcher. The other
+  # Ubuntu jobs build without libsodium, so this is the only PR-time build with encryption on.
+  linux-release-flags:
+    name: Linux release-flag build (player, server, editor, launcher)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ ninja-build libsdl2-dev libsodium-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu2204-release-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu2204-release-
+
+      # The same configure line as release.yml's linux-server job, with the editor and launcher on.
+      - name: Configure (release flags)
+        run: |
+          cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_LAUNCHER=ON \
+            -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build-linux -j
+
+      - name: Smoke-run
+        run: |
+          ls -la build-linux/bin
+          ./build-linux/bin/okay-player --help | head -n 3
+          ./build-linux/bin/OkayEngine --selftest
+
+  # macOS (Apple silicon runner, Homebrew SDL2 + libsodium). Two parts so each fits the 45 minute limit:
+  #  core: the engine library, the player runtime and a subset of the tests that touch the platform
+  #        (paths, restart, crash reports, crypto, networking, file dialog, platform layer).
+  #  apps: the editor (Dear ImGui is fetched at configure time) and the launcher, plus the editor's
+  #        headless --selftest.
+  # `ninja -k 0` keeps compiling after a failure so one run reports every file that does not build.
+  macos:
+    name: macOS build (${{ matrix.part }})
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [core, apps]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: brew install sdl2 libsodium cmake ninja ccache pkg-config
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-macos-${{ matrix.part }}-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-${{ matrix.part }}-
+
+      - name: Toolchain versions
+        run: |
+          uname -m
+          clang++ --version | head -n 1
+          cmake --version | head -n 1
+          sdl2-config --version
+
+      - name: Configure and build (core)
+        if: matrix.part == 'core'
+        run: |
+          cmake -S . -B build-mac -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF \
+            -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_OKAYUI_TESTS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-mac -j "$(sysctl -n hw.ncpu)" \
+            --target okay-player test_platform test_platform_gamepad test_random test_crypto test_net test_net_auth \
+                     test_net_crypto test_net_crypto_own test_crash_reports test_self_update test_app_restart \
+                     test_file_dialog test_savedata test_math test_scene test_serialize \
+            -- -k 0
+
+      - name: Test (core)
+        if: matrix.part == 'core'
+        run: |
+          ctest --test-dir build-mac --output-on-failure --timeout 120 \
+            -R '^(platform|platform_default_env_sdl2|platform_gamepad|random|crypto|net|net_auth|net_crypto|net_crypto_own|crash_reports|self_update|app_restart|file_dialog|savedata|math|scene|serialize)$'
+
+      - name: Player runs
+        if: matrix.part == 'core'
+        run: ./build-mac/bin/okay-player --help | head -n 3
+
+      - name: Configure and build (editor and launcher)
+        if: matrix.part == 'apps'
+        run: |
+          cmake -S . -B build-mac -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-mac -j "$(sysctl -n hw.ncpu)" -- -k 0
+
+      - name: Editor self-test
+        if: matrix.part == 'apps'
+        run: ./build-mac/bin/OkayEngine --selftest

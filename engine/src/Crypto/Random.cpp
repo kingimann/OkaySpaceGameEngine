@@ -17,7 +17,10 @@
 #elif defined(__linux__)
   #include <errno.h>
   #include <sys/random.h>
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__EMSCRIPTEN__)
+#elif defined(__APPLE__)
+  #include <sys/random.h>   // getentropy lives here on macOS (not verified on a Mac; the CI macOS job builds it)
+  #include <unistd.h>
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__EMSCRIPTEN__)
   #include <unistd.h>
 #else
   #include <cstdio>

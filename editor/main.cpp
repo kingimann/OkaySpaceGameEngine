@@ -1911,6 +1911,11 @@ std::string SelfPath() {
     char buf[MAX_PATH];
     DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
     return std::string(buf, n);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t sz = (uint32_t)sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) == 0) return buf;   // macOS has no /proc/self/exe
+    return {};
 #else
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -7545,7 +7550,12 @@ static std::string OkayExeDir() {
     std::string p(buf); auto s = p.find_last_of("\\/");
     return s == std::string::npos ? std::string(".") : p.substr(0, s);
 #else
-    char buf[4096]; ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    char buf[4096]; ssize_t n = -1;
+#if defined(__APPLE__)
+    { uint32_t sz = (uint32_t)sizeof(buf); if (_NSGetExecutablePath(buf, &sz) == 0) n = (ssize_t)std::strlen(buf); }
+#else
+    n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+#endif
     if (n > 0) { buf[n] = '\0'; std::string p(buf); auto s = p.find_last_of('/');
                  return s == std::string::npos ? std::string(".") : p.substr(0, s); }
     return ".";

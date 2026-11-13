@@ -1383,6 +1383,8 @@ node 1457 Fn.wrap
 node 1458 Fn.wrap_in_box
 node 1459 Fn.write_save
 node 1460 Fn.zoom_camera
+node 1461 Fn.get_clipboard_text
+node 1462 Fn.set_clipboard_text
 node 1461 Fn.box_cast
 node 1462 Fn.capsule_cast
 node 1463 Fn.overlap_box

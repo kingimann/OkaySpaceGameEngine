@@ -173,6 +173,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a node is in the docs but not in the palette | [14.4](14-visual-scripting.md#144-node-library-physics-story-build-math) Node library (physics, story, build, math) |
 | a number pin refuses text | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | a one-object change shows hundreds of changed lines | [28.2](20-35-planned.md#282-diffs) Diffs |
+| a panel is covered by the OkayUI page | [40.8](40-okayui-library.md#408-opt-in-okayui-backend-in-the-launcher-and-editor) Opt-in OkayUI backend in the launcher and editor |
 | a parent cycle is refused | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a parented object does not collide | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a party member doesn't follow the leader | [17.3](17-launcher-platform.md#173-friends-following-parties) Friends, following, parties |
@@ -1093,6 +1094,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the server isn't in the browser | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |
 | the server list is empty | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | the server list window cannot be dragged | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
+| the setting does nothing (OKAY_UI_BACKEND is set and wins) | [40.8](40-okayui-library.md#408-opt-in-okayui-backend-in-the-launcher-and-editor) Opt-in OkayUI backend in the launcher and editor |
 | the Settings screen quality button changes nothing | [37.1](37-platform-windowing.md#371-window-fullscreen-and-display-settings) Window, fullscreen and display settings |
 | the settings sliders do nothing | [12.8](12-ingame-ui.md#128-loading-pause-and-settings-screens) Loading, pause and settings screens |
 | the shooter gets stuck on stairs | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
@@ -1118,6 +1120,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the water has no waves or sinks objects | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | the web build shows a blank page or freezes the tab | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | the web page is blank or the game doesn't load from a file:// URL | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
+| the What's New page looks different from the old one | [40.8](40-okayui-library.md#408-opt-in-okayui-backend-in-the-launcher-and-editor) Opt-in OkayUI backend in the launcher and editor |
 | the window cannot be resized | [37.1](37-platform-windowing.md#371-window-fullscreen-and-display-settings) Window, fullscreen and display settings |
 | the window flashes black at start | [37.1](37-platform-windowing.md#371-window-fullscreen-and-display-settings) Window, fullscreen and display settings |
 | the Windows export job fails after the cross build passed | [18.3](18-build-export-release.md#183-ci-jobs) CI jobs |
@@ -1165,6 +1168,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typing does nothing or opens game input | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
 | typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
+| typing in the OkayUI search field also triggers an editor shortcut | [40.8](40-okayui-library.md#408-opt-in-okayui-backend-in-the-launcher-and-editor) Opt-in OkayUI backend in the launcher and editor |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
 | UI is slow with many widgets | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |

@@ -949,6 +949,11 @@ if(TARGET okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
 
+# The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
+add_executable(test_ui_backend test_ui_backend.cpp)
+target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ui_backend COMMAND test_ui_backend)
+
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)
 add_test(NAME character_parts COMMAND test_character_parts)

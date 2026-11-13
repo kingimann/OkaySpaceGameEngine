@@ -525,6 +525,16 @@ static void TestTls(const std::string& scriptPath) {
         FetchResult r = Perform("GET", s.Url("localhost", "ok.http"), {}, "", o);
         CHECK_ERR(r, Err::Tls);
         CHECK(r.message.find("verif") != std::string::npos);
+        // no environment variable of any common tool turns verification off
+        NetOptions e = o;
+        e.env = [&](const char* n) -> const char* {
+            static const char* off[] = {"OKAY_OWN_HTTP_INSECURE", "OKAY_HTTP_INSECURE", "OKAY_INSECURE", "OKAY_TLS_INSECURE", "OKAY_NO_VERIFY",
+                                        "CURL_INSECURE", "SSL_NO_VERIFY", "SSL_VERIFY", "NODE_TLS_REJECT_UNAUTHORIZED", "PYTHONHTTPSVERIFY", "GIT_SSL_NO_VERIFY"};
+            for (const char* k : off) if (std::string(n) == k) return std::string(n) == "SSL_VERIFY" || std::string(n) == "PYTHONHTTPSVERIFY" || std::string(n) == "NODE_TLS_REJECT_UNAUTHORIZED" ? "0" : "1";
+            return nullptr;
+        };
+        r = Perform("GET", s.Url("localhost", "ok.http"), {}, "", e);
+        CHECK_ERR(r, Err::Tls);
     }
     {   // expired
         SServer s; CHECK(s.Start(docs, certs + "/expired.crt", certs + "/expired.key"));
@@ -595,17 +605,130 @@ static void TestTls(const std::string& scriptPath) {
     Sh("rm -rf '" + dir + "'");
 }
 
+// Hostile servers over real sockets: every cap and limit must hold, fast, and without the client hanging.
+static void TestHostile() {
+    Server s;
+    std::atomic<int> hops{0};
+    s.handler = [&](int c, const std::string& head, const std::string&) {
+        std::string path = PathOf(head);
+        if (path == "/headline") {   // one header line that never ends (no newline), far past the head cap
+            SendAll(c, "HTTP/1.1 200 OK\r\nX-Long: ");
+            std::string z(8192, 'a'); for (int i = 0; i < 64 && !s.stop; ++i) SendAll(c, z);
+        } else if (path == "/headmany") {
+            std::string h = "HTTP/1.1 200 OK\r\n"; for (int i = 0; i < 150; ++i) h += "X-" + std::to_string(i) + ": v\r\n";
+            SendAll(c, h + "Content-Length: 0\r\n\r\n");
+        } else if (path == "/headbytes") {   // 90 headers of ~1 KiB: under the count cap, over the byte cap
+            std::string h = "HTTP/1.1 200 OK\r\n"; for (int i = 0; i < 90; ++i) h += "X-" + std::to_string(i) + ": " + std::string(1000, 'v') + "\r\n";
+            SendAll(c, h + "Content-Length: 0\r\n\r\n");
+        } else if (path == "/status") SendAll(c, "HTTP/1.1 200 " + std::string(6000, 'R') + "\r\nContent-Length: 0\r\n\r\n");
+        else if (path == "/interim") { for (int i = 0; i < 40; ++i) SendAll(c, "HTTP/1.1 102 Processing\r\n\r\n"); SendAll(c, Ok("late")); }
+        else if (path == "/trailers") {
+            std::string t = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n";
+            for (int i = 0; i < 400; ++i) t += "X-T" + std::to_string(i) + ": " + std::string(60, 't') + "\r\n";
+            SendAll(c, t + "\r\n");
+        } else if (path == "/endless") {   // no length, never stops: the body cap must end it
+            SendAll(c, "HTTP/1.1 200 OK\r\n\r\n"); std::string z(65536, 'e'); for (int i = 0; i < 2000 && !s.stop; ++i) SendAll(c, z);
+        } else if (path == "/endlesschunks") {   // many tiny chunks, never the last one
+            SendAll(c, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+            for (int i = 0; i < 200000 && !s.stop; ++i) { std::string b; for (int k = 0; k < 64; ++k) b += "1\r\nx\r\n"; SendAll(c, b); }
+        } else if (path == "/hugeloc") SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /" + std::string(20000, 'a') + "\r\nContent-Length: 0\r\n\r\n");
+        else if (path == "/hop") { ++hops; SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /hop\r\nContent-Length: 0\r\n\r\n"); }
+        else if (path == "/redirbody") {   // a redirect that carries an enormous body
+            SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /ok\r\nContent-Length: 104857600\r\n\r\n"); std::string z(65536, 'r'); for (int i = 0; i < 1600 && !s.stop; ++i) SendAll(c, z);
+        } else if (path == "/ok") SendAll(c, Ok("hello"));
+        else if (path == "/stall") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello"); while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        else if (path == "/stallhead") { SendAll(c, "HTTP/1.1 200 OK\r\nX-A: b\r\n"); while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        else SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    auto ms = [](Clock::time_point t0) { return (long)std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count(); };
+    NetOptions o = Opts(); FetchResult r; Clock::time_point t0;
+
+    // response head limits
+    t0 = Clock::now(); r = Perform("GET", base + "/headline", {}, "", o);
+    CHECK(!r.ok && (r.err == Err::TooLarge || r.err == Err::BadResponse)); CHECK(ms(t0) < 2500);
+    r = Perform("GET", base + "/headmany", {}, "", o);  CHECK_ERR(r, Err::TooLarge);
+    r = Perform("GET", base + "/headbytes", {}, "", o); CHECK_ERR(r, Err::TooLarge);
+    r = Perform("GET", base + "/status", {}, "", o);    CHECK_ERR(r, Err::BadResponse);
+    r = Perform("GET", base + "/interim", {}, "", o);   CHECK_ERR(r, Err::BadResponse);
+    r = Perform("GET", base + "/trailers", {}, "", o);  CHECK_ERR(r, Err::TooLarge);
+    {   // the limits are the caller's to tighten
+        NetOptions t = Opts(); t.limits.maxHeaders = 3;
+        r = Perform("GET", base + "/headmany", {}, "", t); CHECK_ERR(r, Err::TooLarge);
+    }
+
+    // body caps hold for unframed and chunked bodies, and the data handed to a streaming caller never passes the cap
+    {
+        NetOptions t = Opts(); t.limits.maxBodyBytes = 1u << 20;
+        t0 = Clock::now(); r = Perform("GET", base + "/endless", {}, "", t);
+        CHECK_ERR(r, Err::TooLarge); CHECK(ms(t0) < 4000);
+        uint64_t got = 0; FetchHooks h; h.onData = [&](const char*, size_t n) { got += n; return true; };
+        r = Perform("GET", base + "/endless", {}, "", t, h);
+        CHECK_ERR(r, Err::TooLarge); CHECK(got <= t.limits.maxBodyBytes);
+        t0 = Clock::now(); r = Perform("GET", base + "/endlesschunks", {}, "", t);
+        CHECK_ERR(r, Err::TooLarge); CHECK(ms(t0) < 8000);
+    }
+    {   // the caller can abort a download at any point
+        FetchHooks h; uint64_t got = 0; h.onData = [&](const char*, size_t n) { got += n; return got < 100000; };
+        NetOptions t = Opts();
+        r = Perform("GET", base + "/endless", {}, "", t, h);
+        CHECK_ERR(r, Err::Aborted); CHECK(got < 100000 + 65536 * 2);
+    }
+
+    // redirects: a hop cap that can be tightened, a huge Location, an enormous body behind a redirect
+    {
+        NetOptions t = Opts(); t.limits.maxRedirects = 3; hops = 0;
+        r = Perform("GET", base + "/hop", {}, "", t);
+        CHECK_ERR(r, Err::TooManyRedirects); CHECK(hops == 4);   // the first request plus exactly three followed hops
+        hops = 0; r = Perform("GET", base + "/hop", {}, "", Opts());
+        CHECK_ERR(r, Err::TooManyRedirects); CHECK(hops == 11);
+    }
+    r = Perform("GET", base + "/hugeloc", {}, "", o); CHECK(!r.ok);
+    t0 = Clock::now(); r = Perform("GET", base + "/redirbody", {}, "", o);
+    CHECK(ms(t0) < 4000);   // the redirect's own body is capped (1 MiB), whatever the outcome
+
+    // timeouts: silence in the middle of the head, in the middle of the body, and the total limit
+    {
+        NetOptions t = Opts(); t.ioMs = 400;
+        t0 = Clock::now(); r = Perform("GET", base + "/stallhead", {}, "", t); CHECK_ERR(r, Err::Timeout); CHECK(ms(t0) < 2000);
+        t0 = Clock::now(); r = Perform("GET", base + "/stall", {}, "", t);     CHECK_ERR(r, Err::Timeout); CHECK(ms(t0) < 2000);
+        t = Opts(); t.totalMs = 500; t.ioMs = 20000;
+        t0 = Clock::now(); r = Perform("GET", base + "/stall", {}, "", t);     CHECK_ERR(r, Err::Timeout); CHECK(ms(t0) < 2000);
+    }
+    r = Perform("GET", base + "/ok", {}, "", o); CHECK(r.ok && r.response.body == "hello");   // the server is still fine afterwards
+    s.Stop();
+}
+
+// Certificate verification can not be switched off: not by options, not by any environment variable we or other
+// tools know of, and the source never asks OpenSSL for SSL_VERIFY_NONE.
+static void TestNoVerifyBypass(const std::string& srcDir) {
+    std::ifstream f(srcDir + "/engine/include/okay/Platform/OwnHttpNet.hpp", std::ios::binary);
+    std::stringstream ss; ss << f.rdbuf(); std::string src = ss.str();
+    CHECK(!src.empty());
+    if (!src.empty()) {
+        CHECK(src.find("VERIFY_NONE") == std::string::npos);
+        CHECK(src.find("SSL_set_verify") == std::string::npos);
+        CHECK(src.find("set_cert_verify_callback") == std::string::npos);
+        CHECK(src.find("SSL_CTX_set_verify(ctx, 1 /* SSL_VERIFY_PEER */") != std::string::npos);
+        size_t n = 0, p = 0; while ((p = src.find("SSL_CTX_set_verify(", p)) != std::string::npos) { ++n; p += 5; }
+        CHECK(n == 1);   // exactly one call, with SSL_VERIFY_PEER
+    }
+}
+
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);   // the transports must not depend on this, but test servers write to closed sockets
     std::string script = argc > 1 ? argv[1] : "tests/scripts/gen_http_test_certs.sh";
     TestNoProxyList();
     TestPlain();
+    TestHostile();
     TestNativeHttp();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");
     }
     TestTls(script);
+    TestNoVerifyBypass(argc > 2 ? argv[2] : ".");
     std::printf("own_http_net: %d checks, %d failed, %d skipped sections\n", g_checks, g_fail, g_skips);
     return g_fail ? 1 : 0;
 }

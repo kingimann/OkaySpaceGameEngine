@@ -13,6 +13,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/AimAssist.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Core/Game.hpp"
@@ -309,6 +310,8 @@ public:
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
         bool aim = !uiBlocked && Input::GetMouseButton(1);
+        if (Accessibility::ToggleFor("Aim")) aim = m_aimLatch.Update(aim, true);
+        else m_aimLatch.Reset();
         in.yaw = yaw; in.pitch = pitch;
         const int mouseSpace = MouseSpaceGeneration();
         const bool spaceChanged = mouseSpace != m_mouseSpace;
@@ -351,6 +354,9 @@ public:
         float wheel = uiBlocked ? 0.0f : Input::MouseWheel();
         if (wheel != 0.0f) distance = Mathf::Clamp(distance - wheel * zoomSpeed, minDistance, maxDistance);
         if (aim) in.held |= PlayerInput::AltFire;
+        ApplyStickLook(uiBlocked, false);   // orbit pitch: positive looks down
+        in.yaw = yaw;
+        in.pitch = pitch;
 
         // ---- Movement relative to the camera's yaw (keyboard or gamepad) ----
         in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
@@ -810,23 +816,55 @@ private:
         if (vertical && below) m_groundContact = 0.10f;
     }
 
+    void ApplyStickLook(bool uiBlocked, bool pitchUp) {
+        if (uiBlocked || m_lookDt <= 0.0f) return;
+        const Vec2 stick = Input::GamepadRightAxis();
+        if (std::fabs(stick.x) + std::fabs(stick.y) <= kStickLookDeadzone) return;
+        float dYaw = 0.0f, dPitch = 0.0f;
+        StickLookDelta(stick.x, stick.y, m_lookDt, pitchUp, invertY, dYaw, dPitch);
+        const float strength = Accessibility::AimAssistStrength();
+        std::vector<LookAim> targets;
+        if (strength > 0.0f) {
+            Vec3 eye = transform ? transform->Position() + Vec3{0.0f, cameraHeight, 0.0f} : Vec3{};
+            Scene* sc = gameObject ? gameObject->scene() : nullptr;
+            if (sc && sc->mainCamera && sc->mainCamera->transform) eye = sc->mainCamera->transform->Position();
+            GatherAimTargets(sc, gameObject, eye, pitchUp, targets);
+        }
+        const StickAim aimed = ApplyStickAim(yaw, pitch, dYaw, dPitch, strength, m_lookDt,
+                                             targets.empty() ? nullptr : targets.data(), (int)targets.size());
+        yaw = aimed.yaw;
+        float lo = minPitch, hi = maxPitch;
+        if (gameObject)
+            if (auto* view = gameObject->GetComponent<PlayerView>())
+                view->LookLimits(true, minPitch, maxPitch, lo, hi);
+        ClampPitchWindow(lo, hi);
+        pitch = ClampLookPitch(Mathf::Clamp(aimed.pitch, lo, hi));
+    }
+
     bool IsRunHeld(const PlayerInput& in) {
         if (!sprintKey) return false;
-        if (toggleRun) {
+        if (toggleRun || Accessibility::ToggleFor("Sprint")) {
             if (in.Pressed(PlayerInput::Sprint)) m_runToggled = !m_runToggled;
             return m_runToggled;
         }
+        m_runToggled = false;
         return in.Held(PlayerInput::Sprint);
     }
     // Resolve the stance from the keys / gamepad, then size the body for it.
     // Toggle mode remembers what you asked for, so a stand-up blocked by a low
     // ceiling happens on its own once you crawl out from under it.
     void UpdateStance(const PlayerInput& in, float dt) {
-        if (toggleStance) {
-            if (crouchKey && in.Pressed(PlayerInput::Crouch))
+        const bool crouchToggles = toggleStance || Accessibility::ToggleFor("Crouch");
+        const bool proneToggles = toggleStance || Accessibility::ToggleFor("Prone");
+        if (crouchToggles || proneToggles) {
+            if (crouchToggles && crouchKey && in.Pressed(PlayerInput::Crouch))
                 m_wantStance = (m_wantStance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
-            if (allowProne && proneKey && in.Pressed(PlayerInput::Prone))
+            if (proneToggles && allowProne && proneKey && in.Pressed(PlayerInput::Prone))
                 m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
+            if (!crouchToggles && crouchKey && in.Held(PlayerInput::Crouch))
+                m_wantStance = Stance::Crouch;
+            if (!proneToggles && allowProne && proneKey && in.Held(PlayerInput::Prone))
+                m_wantStance = Stance::Prone;
         } else {
             // Held keys win; with none held you're in the stance the gamepad last set.
             if (allowProne && proneKey && in.Held(PlayerInput::Prone))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
@@ -878,6 +916,7 @@ private:
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_haveMouse = false;
     bool m_runToggled = false;
+    HoldToggle m_aimLatch;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     float m_prevBodyYaw = 0.0f;      // last body heading, for the yaw rate sent to Character
     bool  m_haveBodyYaw = false;

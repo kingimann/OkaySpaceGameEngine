@@ -1,5 +1,87 @@
 OkaySpace Game Engine — Changelog
 
+v2.865.0
+  Editor and visual scripting
+  - Exporting a visual script turns Wait and Delay into after(seconds, fn).
+    The nodes that follow run in that function after the delay, instead of
+    running immediately. A test runs the exported script and the graph for
+    the same Wait and Delay.
+  - A built-in file dialog is cancelled when the scene is rebuilt (undo,
+    redo, load, new scene, delete, play and stop). Scene shortcuts do not
+    fire while one is open.
+  - Creating a prefab variant fails the step if the new file cannot be read
+    back, instead of recording an empty file for undo.
+  - The prefab override count is remembered by object id, and stale entries
+    are dropped, so a new object cannot inherit a destroyed object's count.
+
+  Saving
+  - A negative number, such as an audio pitch of -1, no longer looks like
+    missing fields, so the rest of that component is kept on the next save.
+  - Build profile names cannot inject extra keys, and profile text values
+    are escaped.
+  - A guid written on an object's header line is used when diffing and
+    merging scenes.
+
+  Launcher
+  - Content-Length is parsed without overflow. A download that announces
+    itself over 2 GiB is refused, and curl is given the same cap.
+  - Link previews are not fetched when the host is loopback, private,
+    link-local, or does not resolve.
+  - Tenor preview sizes are read from the tinygif dims, and the read stays
+    inside the response.
+  - A voice clip copies the loaded WAV into its own buffer and frees SDL's
+    buffer at load.
+
+  Scripts and models
+  - repeat, pad_left and pad_right truncate huge counts instead of hanging
+    or running out of memory. format() with an index past the arguments
+    yields an empty field.
+  - An MTL texture path that is absolute, or that climbs out of the model's
+    directory with "..", is dropped.
+  - FBX up, front and coord axis selectors are clamped to 0, 1 or 2.
+  - A corrupted FBX deflate block can no longer shift by 63 or more bits.
+
+  OkayUI
+  - BeginChild past 8 deep and a popup past 4 deep do not start, so the
+    matching end cannot restore a layout that was never saved.
+  - BeginFrame clears the per-frame stacks. PushID past 32 deep is skipped,
+    and the matching PopID does not restore a seed that was never saved.
+
+v2.864.0
+  Editor and visual scripting
+  - Visual scripts can declare typed variables (numbers, text, colours, lists,
+    maps and structs) with scopes. The editor has panels for variables and
+    structs, the Inspector edits them live, and the debugger can watch them.
+    Note: Add Var on a Vector3 now adds component by component.
+  - Pins show a tooltip saying what can connect, and nodes show what they do,
+    need and give.
+  - New navigation obstacles can carve holes in the navigation mesh; the editor
+    previews them.
+  - The Build window follows a <Name>_Data folder layout, strips unused assets,
+    supports StreamingAssets and writes a build report (with a dry run). The
+    player has --build-info.
+
+  Multiplayer
+  - A client now notices when the host has gone away or refuses the join,
+    instead of waiting forever.
+  - The relay only accepts a repeated hello with a valid cookie, limits how
+    fast one address can send them, and will not downgrade the protocol
+    version. Session codes no longer appear in logs, the relay checks its port
+    range, and the per-address session count follows a host that moves.
+  - Games in this release speak relay protocol version 4. The live relay has
+    to be upgraded with this release. A game drops welcomes from an older
+    relay unless it sets allowUnverifiedRelay.
+  - Position updates at the edge of the number range no longer overflow.
+
+  Engine
+  - Hostile or damaged model files (FBX, GLB, PLY) no longer crash or hang:
+    depth, node and animation limits are enforced and out-of-range numbers are
+    clamped. Skinned meshes with bad joint indices are repaired.
+  - Physics sweeps with NaN or huge distances, huge navigation grids and path
+    searches, and array functions that changed the list while walking it no
+    longer hang or overflow.
+  - Fixed data races in the server browser and voice chat.
+
 v2.863.0
   Launcher and updates
   - Updates are checked before they are used. The Versions page no longer has

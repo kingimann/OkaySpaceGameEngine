@@ -123,6 +123,11 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// flipped (v = 1 - v) like the other bottom-up formats. Without normals,
 /// smooth normals are generated.
 bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// True when `path` is a PLY whose header declares `element vertex` more than once.
+/// Our reader rejects that file. Assimp still loads it, and the two blocks' normals
+/// and UVs no longer line up with positions, so the import seam refuses it before
+/// either backend runs. A missing file, or a PLY with one vertex element, is false.
+bool PlyFileDeclaresDuplicateVertex(const std::string& path);
 
 /// COLLADA (.dae) 1.4 / 1.5. Reads geometry (triangles, polylist, polygons; fan-triangulated,
 /// welded per position+normal+uv, smooth normals when the file has none), materials (phong /

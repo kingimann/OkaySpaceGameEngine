@@ -402,9 +402,9 @@ struct Builder {
     void Settings() {
         Props gp;
         if (const Elem* g = doc.root.Find("GlobalSettings")) LoadProps(*g, gp);
-        sc.settings.upAxis = SafeInt(gp.Get("UpAxis", 1));       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.frontAxis = SafeInt(gp.Get("FrontAxis", 2)); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.coordAxis = SafeInt(gp.Get("CoordAxis", 0)); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.upAxis = std::clamp(SafeInt(gp.Get("UpAxis", 1)), 0, 2);       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.frontAxis = std::clamp(SafeInt(gp.Get("FrontAxis", 2)), 0, 2); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.coordAxis = std::clamp(SafeInt(gp.Get("CoordAxis", 0)), 0, 2); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.unitScaleFactor = gp.Get("UnitScaleFactor", 1.0);
         if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = cr->props[0].s;
         if (!opt.convertToYUpMeters) { sc.settings.appliedScale = 1.0; return; }

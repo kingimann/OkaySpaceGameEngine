@@ -295,10 +295,18 @@ void Scene::FlushPending() {
     // Update the first frame it can run.
 }
 
-void Scene::StartComponent(Component* c) {
+bool Scene::StartComponent(Component* c) {
+    // OnEnable may remove or destroy this component (or its whole object); the watch
+    // records the removals by address (compare only, never a dereference), so the
+    // callbacks below are skipped for a component a previous one freed (#735).
+    RemovalWatch watch(*this);
     if (!c->m_live) { c->m_live = true; c->OnEnable(); }   // OnEnable, then the first Start
+    bool gone = watch.Gone(c);
+    if (!gone && c->gameObject && IsDestroyPending(c->gameObject)) gone = true;   // OnEnable queued its whole object for destruction (#735)
+    if (gone) return false;                       // OnEnable removed/destroyed it: Start would be a use-after-free
     c->Start();
     c->m_started = true;
+    return true;
 }
 
 void Scene::Start() {
@@ -430,7 +438,7 @@ void Scene::Update(float deltaTime) {
         for (Component* c : m_active) {
             if (c && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy()) {
                 if (!c->m_started) {   // switched on since it joined: its Start comes first
-                    StartComponent(c);
+                    if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone
                     if (!CanRun(c)) continue;
                 }
                 c->Update(deltaTime);

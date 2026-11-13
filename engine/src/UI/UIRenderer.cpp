@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -608,6 +609,29 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
         const auto& up = scene.Objects()[_slot.index];
         // Every UI object carries a focus-ring item; skip it outright unless focused.
         if (_it.kind == K_FocusRing && !UIShowsFocusRing(up.get())) continue;
+        if (_it.kind == K_Caption) {   // subtitle and sound-caption lines
+            auto* cap = up->GetComponent<CaptionOverlay>();
+            if (!cap || !up->active || UIHidden(up.get())) continue;
+            std::vector<CaptionOverlay::Mark> marks;
+            cap->Layout((float)w, (float)h, marks);
+            const float op = _slot.opacity;
+            for (const CaptionOverlay::Mark& m : marks) {
+                const float a = m.color.a * op;
+                if (a < 0.01f) continue;
+                if (m.box) {
+                    if (m.w < 1.0f || m.h < 1.0f) continue;
+                    p.SetDrawColor((std::uint8_t)(m.color.r * 255), (std::uint8_t)(m.color.g * 255),
+                                   (std::uint8_t)(m.color.b * 255), (std::uint8_t)(a * 255));
+                    Rect box{(int)m.x, (int)m.y, (int)m.w, (int)m.h};
+                    if (box.w > 0 && box.h > 0) p.FillRect(&box);
+                } else if (!m.text.empty()) {
+                    RGBA col{(std::uint8_t)(m.color.r * 255), (std::uint8_t)(m.color.g * 255),
+                             (std::uint8_t)(m.color.b * 255), (std::uint8_t)(a * 255)};
+                    DrawUIText(p, m.text, m.x, m.y, m.pixel, col, 0.0f, 0.0f, m.italic);
+                }
+            }
+            continue;
+        }
         // A mask with its graphic hidden only clips: its own widget doesn't draw.
         if (const UIMask* mk = up->GetComponent<UIMask>(); mk && !mk->showGraphic && _it.kind != K_FocusRing) continue;
         {

@@ -349,6 +349,7 @@ std::string Input::KeyName(char key) {
         case '\t':     return "Tab";
         case KeyShift: return "Shift";
         case KeyCtrl:  return "Ctrl";
+        case KeyCmd:   return "Command";
         case KeyUp:    return "Up";
         case KeyDown:  return "Down";
         case KeyLeft:  return "Left";

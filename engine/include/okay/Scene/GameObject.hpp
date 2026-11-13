@@ -249,13 +249,10 @@ public:
         for (const auto& c : m_components) out.push_back(c.get());
     }
     /// Free every component except the Transform (used when the scene destroys
-    /// the object: the shell stays alive so stale pointers never dangle).
-    void StripToTransform() {
-        for (std::size_t i = m_components.size(); i-- > 0;)
-            if (m_components[i].get() != static_cast<Component*>(transform)) m_components.erase(m_components.begin() + (long)i);
-        active = false;
-        m_destroyed = true;
-    }
+    /// the object: the shell stays alive so stale pointers never dangle). The
+    /// scene records the freed addresses in its removal watches first, so code
+    /// holding raw pointers across this (a StartComponent's watch) skips them.
+    void StripToTransform();
     /// True if some component has been told OnEnable and not yet OnDisable (it is
     /// "live"). An object switched off this frame still reads true until the Scene
     /// delivers OnDisable at the start of the next one.

@@ -469,6 +469,14 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
+    // Our reader rejects a second `element vertex`. Assimp still loads that file,
+    // and the default choice would hand it to Assimp after our reader said no.
+    // The two blocks then contribute normals and UVs that do not line up with
+    // positions. Refuse the file before either backend runs.
+    if (ext == ".ply" && PlyFileDeclaresDuplicateVertex(path)) {
+        if (err) *err = "PLY declares more than one vertex element";
+        return false;
+    }
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Assimp) {
 #ifdef OKAY_HAVE_ASSIMP

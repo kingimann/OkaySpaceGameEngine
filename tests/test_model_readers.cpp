@@ -169,6 +169,85 @@ int main() {
         CHECK(ok.parts[0].mesh.normals.size() == ok.parts[0].mesh.vertices.size());
     }
 
+    // Issue #752. Two ASCII files that declare `element vertex` twice. The first
+    // block carries nx/ny/nz and the second does not, so the second block's
+    // vertices used to come back with the first block's normals (the reported
+    // value was (0,1,0)). The second file gives the blocks different property
+    // subsets, which used to concatenate normals and UVs that no longer lined up
+    // with positions. Both are a parse error, and a single block of the same
+    // data still keeps the authored normal (not the face normal) and its UVs.
+    {
+        auto rejected = [](const std::string& ply) {
+            ImportedModel m; std::string e;
+            CHECK(!ReadPlyBuffer(ply, m, &e));
+            CHECK(e.find("more than one vertex element") != std::string::npos);
+            CHECK(m.parts.empty());
+        };
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 0 1\n0 0 1 0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0 0 0\n0 0 1 1 1\n3 0 1 2\n");
+        const std::string single =
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 1 0 0 1\n3 0 1 2\n";
+        ImportedModel one; std::string e;
+        CHECK(ReadPlyBuffer(single, one, &e));
+        if (!one.parts.empty()) {
+            const Mesh& me = one.parts[0].mesh;
+            CHECK(me.vertices.size() == 3 && me.normals.size() == 3 && me.uvs.size() == 3);
+            for (const Vec3& n : me.normals) { CHECK_NEAR(n.x, 0.0, 1e-6); CHECK_NEAR(n.y, 1.0, 1e-6); CHECK_NEAR(n.z, 0.0, 1e-6); }
+            CHECK_NEAR(me.uvs[0].y, 1.0, 1e-6);
+            CHECK_NEAR(me.uvs[2].x, 0.0, 1e-6); CHECK_NEAR(me.uvs[2].y, 0.0, 1e-6);
+        }
+        // The same bytes through ImportModelScene (the path the report exercised).
+        SetImportBackend(".ply", ImportBackend::Own);
+        Spit("mr_dup_vertex.ply",
+             "ply\nformat ascii 1.0\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "property float nx\nproperty float ny\nproperty float nz\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+             "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        Scene dup; dup.physicsEnabled = false;
+        bool dok = true; GameObject* dr = ImportModelScene(dup, "mr_dup_vertex.ply", &dok);
+        CHECK(!dok && dr == nullptr);
+        int meshes = 0; for (const auto& go : dup.Objects()) if (go->GetComponent<MeshRenderer>()) ++meshes;
+        CHECK(meshes == 0);
+        // Assimp loads this file. The seam must still refuse it, including when
+        // Assimp is the backend the default choice would have used.
+        SetImportBackend(".ply", ImportBackend::Default);
+        Scene dupAssimp; dupAssimp.physicsEnabled = false;
+        bool aok = true; GameObject* ar = ImportModelScene(dupAssimp, "mr_dup_vertex.ply", &aok);
+        CHECK(!aok && ar == nullptr);
+        ImportedModel via; std::string ae;
+        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Assimp, false, &ae));
+        CHECK(ae.find("more than one vertex element") != std::string::npos);
+        CHECK(via.parts.empty());
+        std::remove("mr_dup_vertex.ply");
+        SetImportBackend(".ply", ImportBackend::Default);
+    }
+
     // ---------------- OBJ + MTL ----------------
     ImportedModel obj;
     {
@@ -191,6 +270,23 @@ int main() {
         CHECK(blue.texture == kDir + "blue.png");               // "-s 1 1 1" option skipped
         CHECK(blue.normalMap == kDir + "blue_n.png");           // "-bm 1.0" option skipped
         CHECK(blue.specularMap == kDir + "spec.png");
+        // #753: a texture that climbs out of the model's directory (or is absolute) must not be
+        // kept: an untrusted model must not point the engine at any file on the machine. In-tree
+        // ".."s still resolve. Scratch files in the current directory (the build dir), like above.
+        {
+            Spit("mr_trav.obj", "mtllib mr_trav.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl climb\nf 1 2 3\n");
+            Spit("mr_trav.mtl", "newmtl climb\nmap_Kd ../../../../../../etc/passwd\n");
+            ImportedModel t1;
+            CHECK(ReadObjFile("mr_trav.obj", t1, &err));
+            CHECK(t1.materials.size() == 1 && t1.materials[0].texture.empty());   // dropped, not stored
+            Spit("mr_inside.obj", "mtllib mr_inside.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl ok\nf 1 2 3\n");
+            Spit("mr_inside.mtl", "newmtl ok\nmap_Kd ./sub/../mr_inside.png\n");
+            ImportedModel t2;
+            CHECK(ReadObjFile("mr_inside.obj", t2, &err));
+            CHECK(t2.materials.size() == 1 && t2.materials[0].texture == "mr_inside.png");   // in-tree ".." still resolves
+            std::remove("mr_trav.obj"); std::remove("mr_trav.mtl");
+            std::remove("mr_inside.obj"); std::remove("mr_inside.mtl");
+        }
         // Same triangles as the engine's long-standing Mesh::LoadOBJ (one merged mesh).
         bool lok = false; Mesh legacy = Mesh::LoadOBJ(kDir + "cube.obj", &lok);
         CHECK(lok);

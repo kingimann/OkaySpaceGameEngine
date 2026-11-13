@@ -1,5 +1,6 @@
 // okay::crypto utilities: MemZero and ConstantTimeEqual. UNREVIEWED (see Crypto.hpp).
 #include <okay/Crypto/Crypto.hpp>
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto {
 
@@ -17,7 +18,9 @@ bool ConstantTimeEqual(const void* a, const void* b, std::size_t n) {
     std::uint32_t d = 0;
     for (std::size_t i = 0; i < n; ++i) d |= static_cast<std::uint32_t>(x[i] ^ y[i]);
     // d == 0 -> 1, otherwise 0, without a branch on d.
-    return ((d - 1u) >> 31) == 1u;
+    const bool equal = ((d - 1u) >> 31) == 1u;
+    OKAY_CT_PUBLIC(equal);   // by design: whether a tag/signature matched is public
+    return equal;
 }
 
 } // namespace okay::crypto

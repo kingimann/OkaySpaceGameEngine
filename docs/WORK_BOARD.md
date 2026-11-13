@@ -124,7 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
-| Renderer feature notes: which lighting, post, fog, sky and spot/point shadow switches do nothing on each backend | John | `john/renderer-feature-notes` (#772) |
+| Visual script export: Timer, Actions steps, and a hard error for a node with no script | John | `john/vs-export-timer-actions` |
 
 ## Free (unclaimed, safe small tasks)
 

@@ -16,7 +16,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 | Navigation | NavMeshAgent.* | Engine API NavMeshAgent, Chase Target, Patrol Waypoints |
 | Audio | Audio.*, play_sound | Engine API Audio, Play Sound Here, Fn.play_sound |
 | Input | Input.*, key | Engine API Input, Get Move Direction, On Key, Fn.key |
-| UI | UI components, ui_* builtins, get_clipboard_text / set_clipboard_text | Engine API UI nodes, every Fn.ui_* builtin, Get Clipboard Text, Set Clipboard Text |
+| UI | UI components, ui_* builtins | Engine API UI nodes, every Fn.ui_* builtin |
 | Particles | particle builtins and properties | Get/Set Property, plus Fn.particle_* builtins in the list below |
 | Terrain | terrain properties | Get/Set Property on a terrain component. No separate terrain builtin. |
 | Splines | Spline.*, SplineFollower.* | Engine API Spline / SplineFollower / LineRenderer |
@@ -33,7 +33,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1364 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1363 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -109,14 +109,9 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `Object.Destroy` | `Fn.Object.Destroy` |
 | `Object.Instantiate` | `Fn.Object.Instantiate` |
 | `Physics.Raycast` | `Fn.Physics.Raycast` |
-| `Physics2D.BoxCast` | `Fn.Physics2D.BoxCast` |
-| `Physics2D.CapsuleCast` | `Fn.Physics2D.CapsuleCast` |
-| `Physics2D.OverlapBox` | `Fn.Physics2D.OverlapBox` |
-| `Physics2D.OverlapCapsule` | `Fn.Physics2D.OverlapCapsule` |
 | `Physics2D.Raycast` | `Fn.Physics2D.Raycast` |
 | `Quaternion.Euler` | `Fn.Quaternion.Euler` |
 | `Random.Range` | `Fn.Random.Range` |
-| `Rigidbody2D.AddExplosionForce` | `Fn.Rigidbody2D.AddExplosionForce` |
 | `SceneManager.LoadScene` | `Fn.SceneManager.LoadScene` |
 | `SetUITheme` | `Fn.SetUITheme` |
 | `SetView` | `Fn.SetView` |
@@ -183,8 +178,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `action_value` | `Fn.action_value` |
 | `action_x` | `Fn.action_x` |
 | `action_y` | `Fn.action_y` |
+| `actions_load` | `Fn.actions_load` |
 | `activate` | `Fn.activate` |
-| `add_explosion_force` | `Fn.add_explosion_force` |
 | `add_force` | `Fn.add_force` |
 | `add_force3` | `Fn.add_force3` |
 | `add_impulse` | `Fn.add_impulse` |
@@ -241,7 +236,6 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `blink` | `Fn.blink` |
 | `bob` | `Fn.bob` |
 | `bounce_in_box` | `Fn.bounce_in_box` |
-| `box_cast` | `Fn.box_cast` |
 | `box_cast3` | `Fn.box_cast3` |
 | `broadcast_event` | `Fn.broadcast_event` |
 | `bt_get` | `Fn.bt_get` |
@@ -282,7 +276,6 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `can_dive` | `Fn.can_dive` |
 | `cancel_timers` | `Fn.cancel_timers` |
 | `capitalize` | `Fn.capitalize` |
-| `capsule_cast` | `Fn.capsule_cast` |
 | `capsule_cast3` | `Fn.capsule_cast3` |
 | `capture_pose` | `Fn.capture_pose` |
 | `cast_ray` | `Fn.cast_ray` |
@@ -430,7 +423,6 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `get` | `Fn.get` |
 | `get_anim` | `Fn.get_anim` |
 | `get_child` | `Fn.get_child` |
-| `get_clipboard_text` | `Fn.get_clipboard_text` |
 | `get_hp` | `Fn.get_hp` |
 | `get_key` | `Fn.get_key` |
 | `get_key_down` | `Fn.get_key_down` |
@@ -778,9 +770,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `orbit` | `Fn.orbit` |
 | `overlap` | `Fn.overlap` |
 | `overlap3` | `Fn.overlap3` |
-| `overlap_box` | `Fn.overlap_box` |
 | `overlap_box3` | `Fn.overlap_box3` |
-| `overlap_capsule` | `Fn.overlap_capsule` |
 | `overlap_capsule3` | `Fn.overlap_capsule3` |
 | `overlap_sphere3` | `Fn.overlap_sphere3` |
 | `pad_left` | `Fn.pad_left` |
@@ -984,7 +974,6 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_camera` | `Fn.set_camera` |
 | `set_camera_zoom` | `Fn.set_camera_zoom` |
 | `set_character_model` | `Fn.set_character_model` |
-| `set_clipboard_text` | `Fn.set_clipboard_text` |
 | `set_color` | `Fn.set_color` |
 | `set_dropdown_icon` | `Fn.set_dropdown_icon` |
 | `set_dropdown_max` | `Fn.set_dropdown_max` |

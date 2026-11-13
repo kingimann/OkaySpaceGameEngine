@@ -580,6 +580,15 @@ void TestPicker() {
         p.sim.Move(p.origin.x + totalW * 0.75f, p.origin.y + p.side + 6.0f + rowH * 0.5f); p.F(); p.sim.Down(); p.F(); p.sim.Up(); p.F();
         CHECK_NEAR(p.c[0], 0.2, 0.002); CHECK_NEAR(p.c[1], 0.4, 0.002); CHECK_NEAR(p.c[2], 0.6, 0.002);
     }
+    {   // a picture of the picker (golden): a mid orange with alpha, the hue bar and the hex row
+        PickerRig p; p.c[0] = 0.9f; p.c[1] = 0.5f; p.c[2] = 0.2f; p.c[3] = 0.7f; p.F(3);
+        p.Drag(p.SvX(0.8f), p.SvY(0.7f), p.SvX(0.8f), p.SvY(0.7f));
+        p.sim.Move(480, 500); p.F(2);
+        std::string why;
+        const bool ok = MatchesGolden("colorpicker", p.sim.Draw(12, 14, 20), &why);
+        if (!ok) std::cerr << "  golden colorpicker: " << why << "\n";
+        CHECK(ok);
+    }
     {   // the hex field follows the colour and applies typed colours; the cells show 0..255
         PickerRig p; p.c[0] = 1; p.c[1] = 0.5f; p.c[2] = 0; p.F(3);
         const float totalW = p.side + 2.0f * (p.barW + p.gap) - p.gap;

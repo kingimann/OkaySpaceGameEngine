@@ -1,0 +1,7 @@
+okaybt 1
+name Recover
+key tookSecond bool false
+root 0
+node 0 Selector parent=-1 x=200 y=0 name=Recover
+node 1 RunSubtree parent=0 x=40 y=120 name=Fail tree=fail.okaybt
+node 2 SetBlackboard parent=0 x=360 y=120 key=tookSecond value=true

@@ -17,6 +17,8 @@
 #include "okay/Components/SurvivalComponents.hpp"    // HealthStat
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -28,6 +30,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <sstream>
 
@@ -89,6 +92,20 @@ AudioSource* FindAudio(GameObject* go) {
 
 } // namespace
 
+namespace {
+BehaviorTreeRunner::PauseHook g_pauseHook = nullptr;
+
+std::string PointerId(const BehaviorTree* tree) {
+    if (!tree) return {};
+    return "mem:" + std::to_string(static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(tree)));
+}
+} // namespace
+
+void BehaviorTreeRunner::SetPauseHook(PauseHook hook) { g_pauseHook = hook; }
+
+BehaviorTreeRunner::BehaviorTreeRunner() = default;
+BehaviorTreeRunner::~BehaviorTreeRunner() { ReleaseBreak(); }
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -116,8 +133,143 @@ bool BehaviorTreeRunner::LoadTree(const std::string& path, std::string* error) {
 int BehaviorTreeRunner::Index(int id) const { return m_tree ? m_tree->IndexOf(id) : -1; }
 
 const BehaviorTreeRunner::NodeState* BehaviorTreeRunner::State(int nodeId) const {
-    const int i = Index(nodeId);
+    if (!m_tree) return nullptr;
+    const int i = m_tree->IndexOf(nodeId);
     return (i >= 0 && i < (int)m_rt.size()) ? &m_rt[(std::size_t)i] : nullptr;
+}
+
+const BehaviorTreeRunner::SubFrame* BehaviorTreeRunner::FindFrame(const std::map<int, std::unique_ptr<SubFrame>>& kids, const std::string& path) const {
+    for (const auto& kv : kids) {
+        const SubFrame* f = kv.second.get();
+        if (!f) continue;
+        if (f->path == path && f->tree) return f;
+        if (const SubFrame* nested = FindFrame(f->children, path)) return nested;
+    }
+    return nullptr;
+}
+BehaviorTreeRunner::SubFrame* BehaviorTreeRunner::FindFrame(std::map<int, std::unique_ptr<SubFrame>>& kids, const std::string& path) {
+    for (auto& kv : kids) {
+        SubFrame* f = kv.second.get();
+        if (!f) continue;
+        if (f->path == path && f->tree) return f;
+        if (SubFrame* nested = FindFrame(f->children, path)) return nested;
+    }
+    return nullptr;
+}
+
+const BehaviorTreeRunner::NodeState* BehaviorTreeRunner::StateFor(const std::string& treePath, int nodeId) const {
+    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const std::string root = TreeIdentity();
+    if (want.empty() || want == root || want == m_activePath) return State(nodeId);
+    const SubFrame* frame = FindFrame(m_children, want);
+    if (!frame || !frame->tree) return nullptr;
+    const int i = frame->tree->IndexOf(nodeId);
+    return (i >= 0 && i < (int)frame->rt.size()) ? &frame->rt[(std::size_t)i] : nullptr;
+}
+
+std::vector<int> BehaviorTreeRunner::ActivePathFor(const std::string& treePath) const {
+    std::vector<int> out;
+    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const BehaviorTree* tree = nullptr;
+    const std::vector<Rt>* rt = nullptr;
+    const std::string root = TreeIdentity();
+    if (want.empty() || want == root || want == m_activePath) {
+        tree = m_tree.get();
+        rt = &m_rt;
+    } else if (const SubFrame* frame = FindFrame(m_children, want)) {
+        tree = frame->tree.get();
+        rt = &frame->rt;
+    }
+    if (!tree || !rt) return out;
+    for (int id : tree->Order()) {
+        const int i = tree->IndexOf(id);
+        if (i >= 0 && i < (int)rt->size() && (*rt)[(std::size_t)i].running) out.push_back(id);
+    }
+    return out;
+}
+
+Blackboard* BehaviorTreeRunner::BoardFor(const std::string& treePath) {
+    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const std::string root = TreeIdentity();
+    if (want.empty() || want == root || want == m_activePath) return &blackboard;
+    if (SubFrame* frame = FindFrame(m_children, want)) return &frame->board;
+    return nullptr;
+}
+const Blackboard* BehaviorTreeRunner::BoardFor(const std::string& treePath) const {
+    return const_cast<BehaviorTreeRunner*>(this)->BoardFor(treePath);
+}
+
+Blackboard& BehaviorTreeRunner::ActiveBoard() { return blackboard; }
+const Blackboard& BehaviorTreeRunner::ActiveBoard() const { return blackboard; }
+
+bool BehaviorTreeRunner::IsBreakPaused() const {
+    return m_breakLatched && Game::IsPausedBy(kBreakPause);
+}
+
+void BehaviorTreeRunner::ReleaseBreak() {
+    if (!m_breakLatched) return;
+    m_breakLatched = false;
+    m_breakNode = -1;
+    m_breakPath.clear();
+    Game::ClearPause(kBreakPause);
+}
+
+std::string BehaviorTreeRunner::TreeIdentity() const {
+    if (!treePath.empty()) return BehaviorTree::ResolvePath(treePath);
+    return PointerId(m_tree.get());
+}
+
+bool BehaviorTreeRunner::PathOnStack(const std::string& path) const {
+    if (path.empty()) return false;
+    for (const std::string& s : m_runStack) if (s == path) return true;
+    return false;
+}
+
+void BehaviorTreeRunner::NoteBreak(int nodeId) {
+    m_breakNode = nodeId;
+    m_breakPath = m_activePath;
+    if (!m_breakLatched) {
+        m_breakLatched = true;
+        if (!Game::IsPausedBy(kBreakPause)) Game::PushPause(kBreakPause);
+    }
+    if (g_pauseHook) g_pauseHook(*this, nodeId);
+}
+
+void BehaviorTreeRunner::ApplyKeyMap(const std::string& mapText, Blackboard& parent, Blackboard& child, bool intoChild) {
+    for (const BtKeyLink& link : BtParseKeyMap(mapText)) {
+        if (link.parent.empty() || link.child.empty()) continue;
+        const bool inward = link.way == '>' || link.way == '=';
+        const bool outward = link.way == '<' || link.way == '=';
+        if (intoChild && inward) {
+            if (const BtValue* v = parent.Find(link.parent)) child.Set(link.child, *v);
+        } else if (!intoChild && outward) {
+            if (const BtValue* v = child.Find(link.child)) parent.Set(link.parent, *v);
+        }
+    }
+}
+
+void BehaviorTreeRunner::WithFrame(SubFrame& frame, const std::function<void()>& fn) {
+    std::shared_ptr<const BehaviorTree> tree = std::move(m_tree);
+    std::vector<Rt> rt = std::move(m_rt);
+    Blackboard board = std::move(blackboard);
+    std::map<int, std::unique_ptr<SubFrame>> children = std::move(m_children);
+    const std::string path = m_activePath;
+    m_tree = std::move(frame.tree);
+    m_rt = std::move(frame.rt);
+    blackboard = std::move(frame.board);
+    m_children = std::move(frame.children);
+    m_activePath = frame.path;
+    fn();
+    frame.tree = std::move(m_tree);
+    frame.rt = std::move(m_rt);
+    frame.board = std::move(blackboard);
+    frame.children = std::move(m_children);
+    frame.path = m_activePath;
+    m_tree = std::move(tree);
+    m_rt = std::move(rt);
+    blackboard = std::move(board);
+    m_children = std::move(children);
+    m_activePath = path;
 }
 
 std::vector<int> BehaviorTreeRunner::ActivePath() const {
@@ -157,6 +309,9 @@ void BehaviorTreeRunner::Start() {
 void BehaviorTreeRunner::Run() {
     if (!m_tree || m_tree->root < 0 || m_tree->IndexOf(m_tree->root) < 0) { m_running = false; return; }
     if (m_running) Abort(Index(m_tree->root));
+    m_children.clear();
+    ReleaseBreak();
+    m_activePath = TreeIdentity();
     m_rt.assign(m_tree->nodes.size(), Rt{});
     blackboard.Clear();
     for (const auto& k : m_tree->keys) blackboard.Declare(k.name, k.value);
@@ -177,7 +332,9 @@ void BehaviorTreeRunner::Stop() {
         const int r = Index(m_tree->root);
         if (r >= 0) Abort(r);
     }
+    m_children.clear();
     m_running = false;
+    ReleaseBreak();
     StopMoving();
 }
 
@@ -185,11 +342,20 @@ void BehaviorTreeRunner::OnDisable() { StopMoving(); }
 
 void BehaviorTreeRunner::OnDestroy() {
     m_running = false;
+    ReleaseBreak();
     if (m_npc) m_npc->SetExternalBrain(false);
 }
 
 void BehaviorTreeRunner::Update(float dt) {
-    if (!transform || !gameObject || dt <= 0.0f) return;
+    if (!transform || !gameObject) return;
+    if (m_breakLatched && !Game::IsPausedBy(kBreakPause)) {
+        m_breakLatched = false;
+        m_breakNode = -1;
+        m_breakPath.clear();
+    }
+    const bool stepping = GameLoop::Current() && GameLoop::Current()->IsStepping();
+    if (m_breakLatched && Game::IsPausedBy(kBreakPause) && !stepping) return;
+    if (dt <= 0.0f) return;
     if (!IsLocallyControlled(gameObject)) return;   // MP: the authority runs the tree; others follow via NetworkSync
     if (m_running && m_tree && m_tree->root >= 0) {
         m_time += dt;
@@ -198,6 +364,10 @@ void BehaviorTreeRunner::Update(float dt) {
         if (m_acc >= period) {
             const float tdt = m_acc;
             m_acc = 0.0f;
+            m_activePath = TreeIdentity();
+            m_runStack.clear();
+            if (!treePath.empty()) m_runStack.push_back(BehaviorTree::ResolvePath(treePath));
+            if (m_tree) m_runStack.push_back(PointerId(m_tree.get()));
             const int r = Index(m_tree->root);
             if (r >= 0) {
                 const BtStatus s = Tick(r, tdt);
@@ -207,6 +377,7 @@ void BehaviorTreeRunner::Update(float dt) {
                     if (debug) Log::Info("[bt] '", gameObject->name, "': tree finished with ", BtStatusName(s), " (run ", m_completions, ")");
                 }
             }
+            m_runStack.clear();
         }
     }
     StepMover(dt);
@@ -229,60 +400,90 @@ void BehaviorTreeRunner::Enter(int idx) {
     r.flag = false;
     r.hasGoal = false;
     r.entered = false;
+    r.bpSeen = false;
 }
 
 void BehaviorTreeRunner::Finish(int idx, BtStatus s) {
-    Rt& r = m_rt[(std::size_t)idx];
-    r.running = false;
-    r.status = s;
-    const BtNode& n = m_tree->nodes[(std::size_t)idx];
-    for (int sv : m_tree->Services(n.id)) if (const int si = Index(sv); si >= 0) m_rt[(std::size_t)si].running = false;
+    if (idx < 0 || idx >= (int)m_rt.size() || !m_tree) return;
+    m_rt[(std::size_t)idx].running = false;
+    m_rt[(std::size_t)idx].status = s;
+    const int id = m_tree->nodes[(std::size_t)idx].id;
+    const std::string title = m_tree->nodes[(std::size_t)idx].Def().title;
+    const std::string name = m_tree->nodes[(std::size_t)idx].name;
+    for (int sv : m_tree->Services(id)) if (const int si = Index(sv); si >= 0) m_rt[(std::size_t)si].running = false;
     // A finished node's children are done too (a child still marked running was
-    // left behind by a composite that gave up on it).
-    for (int c : m_tree->FlowChildren(n.id)) if (const int ci = Index(c); ci >= 0 && m_rt[(std::size_t)ci].running) Abort(ci);
+    // left behind by a composite that gave up on it). Aborting a Run Sub-Tree
+    // swaps the runner's state and puts it back, so look the child up again after.
+    for (int c : m_tree->FlowChildren(id)) if (const int ci = Index(c); ci >= 0 && m_rt[(std::size_t)ci].running) Abort(ci);
     if (debug && (s == BtStatus::Success || s == BtStatus::Failure))
-        Log::Info("[bt] '", gameObject ? gameObject->name : std::string("?"), "': ", n.Def().title,
-                  n.name.empty() ? std::string() : " '" + n.name + "'", " -> ", BtStatusName(s));
+        Log::Info("[bt] '", gameObject ? gameObject->name : std::string("?"), "': ", title,
+                  name.empty() ? std::string() : " '" + name + "'", " -> ", BtStatusName(s));
 }
 
 void BehaviorTreeRunner::Abort(int idx) {
-    if (idx < 0 || idx >= (int)m_rt.size()) return;
-    Rt& r = m_rt[(std::size_t)idx];
-    if (!r.running) return;
+    if (idx < 0 || idx >= (int)m_rt.size() || !m_tree) return;
+    if (!m_rt[(std::size_t)idx].running) return;
+    const bool entered = m_rt[(std::size_t)idx].entered;
+    const bool flag = m_rt[(std::size_t)idx].flag;
     const BtNode& n = m_tree->nodes[(std::size_t)idx];
-    for (int c : m_tree->FlowChildren(n.id)) if (const int ci = Index(c); ci >= 0) Abort(ci);
-    for (int sv : m_tree->Services(n.id)) if (const int si = Index(sv); si >= 0) m_rt[(std::size_t)si].running = false;
+    const int id = n.id;
+    for (int c : m_tree->FlowChildren(id)) if (const int ci = Index(c); ci >= 0) Abort(ci);
+    for (int sv : m_tree->Services(id)) if (const int si = Index(sv); si >= 0 && si < (int)m_rt.size()) m_rt[(std::size_t)si].running = false;
     switch (n.type) {
         case BtNodeType::MoveTo: case BtNodeType::Patrol: case BtNodeType::Wander:
         case BtNodeType::Chase: case BtNodeType::Flee:
             StopMoving();
             break;
         case BtNodeType::Custom:
-            if (r.entered) CallCustom(n, r, "abort");
+            if (entered && idx < (int)m_rt.size()) CallCustom(n, m_rt[(std::size_t)idx], "abort");
             break;
         case BtNodeType::PlayAnimation:
             if (n.Flag("wait")) StopClipFrom(gameObject);
             break;
         case BtNodeType::StartDialogue:   // end the conversation this task started
-            if (r.flag) if (auto* dr = gameObject->GetComponent<DialogueRunner>(); dr && dr->IsActive()) dr->Stop();
+            if (flag) if (auto* dr = gameObject->GetComponent<DialogueRunner>(); dr && dr->IsActive()) dr->Stop();
             break;
+        case BtNodeType::RunSubtree: {
+            auto it = m_children.find(id);
+            if (it != m_children.end() && it->second) {
+                std::unique_ptr<SubFrame> child = std::move(it->second);
+                m_children.erase(it);
+                const int rootId = child->tree ? child->tree->root : -1;
+                if (rootId >= 0) WithFrame(*child, [&] {
+                    const int r = Index(rootId);
+                    if (r >= 0 && r < (int)m_rt.size() && m_rt[(std::size_t)r].running) Abort(r);
+                });
+            }
+            break;
+        }
         default: break;
     }
-    r.running = false;
-    r.status = BtStatus::Aborted;
+    if (idx < (int)m_rt.size()) {
+        m_rt[(std::size_t)idx].running = false;
+        m_rt[(std::size_t)idx].status = BtStatus::Aborted;
+    }
 }
 
 BtStatus BehaviorTreeRunner::Tick(int idx, float dt) {
-    if (idx < 0 || idx >= (int)m_rt.size()) return BtStatus::Failure;
-    Rt& r = m_rt[(std::size_t)idx];
-    const bool first = !r.running;
+    if (idx < 0 || idx >= (int)m_rt.size() || !m_tree) return BtStatus::Failure;
+    const bool first = !m_rt[(std::size_t)idx].running;
     if (first) Enter(idx);
-    ++r.ticks;
-    r.lastTick = m_time;
+    const BtNode& n = m_tree->nodes[(std::size_t)idx];
+    if (n.breakpoint && !m_rt[(std::size_t)idx].bpSeen) {
+        m_rt[(std::size_t)idx].bpSeen = true;
+        m_rt[(std::size_t)idx].lastTick = m_time;
+        ++m_rt[(std::size_t)idx].ticks;
+        m_rt[(std::size_t)idx].status = BtStatus::Running;
+        NoteBreak(n.id);
+        return BtStatus::Running;
+    }
+    ++m_rt[(std::size_t)idx].ticks;
+    m_rt[(std::size_t)idx].lastTick = m_time;
     RunServices(idx, dt);
     const BtStatus s = TickNode(idx, dt, first);
+    if (idx >= (int)m_rt.size()) return s;
     if (s != BtStatus::Running) Finish(idx, s);
-    else r.status = BtStatus::Running;
+    else m_rt[(std::size_t)idx].status = BtStatus::Running;
     return s;
 }
 
@@ -393,11 +594,12 @@ BtStatus BehaviorTreeRunner::TickComposite(int idx, float dt) {
                     if (r.cur < count) Abort(kids[(std::size_t)r.cur]);
                     return BtStatus::Failure;
                 }
-            while (r.cur < count) {
-                const BtStatus s = Tick(kids[(std::size_t)r.cur], dt);
+            while (m_rt[(std::size_t)idx].cur < count) {
+                const int child = kids[(std::size_t)m_rt[(std::size_t)idx].cur];
+                const BtStatus s = Tick(child, dt);
                 if (s == BtStatus::Running) return s;
                 if (s != BtStatus::Success) return BtStatus::Failure;
-                ++r.cur;
+                ++m_rt[(std::size_t)idx].cur;
             }
             return BtStatus::Success;
         }
@@ -408,11 +610,12 @@ BtStatus BehaviorTreeRunner::TickComposite(int idx, float dt) {
                     r.cur = i;
                     break;
                 }
-            while (r.cur < count) {
-                const BtStatus s = Tick(kids[(std::size_t)r.cur], dt);
+            while (m_rt[(std::size_t)idx].cur < count) {
+                const int child = kids[(std::size_t)m_rt[(std::size_t)idx].cur];
+                const BtStatus s = Tick(child, dt);
                 if (s == BtStatus::Running) return s;
                 if (s == BtStatus::Success) return s;
-                ++r.cur;
+                ++m_rt[(std::size_t)idx].cur;
             }
             return BtStatus::Failure;
         }
@@ -436,26 +639,31 @@ BtStatus BehaviorTreeRunner::TickComposite(int idx, float dt) {
                 }
                 r.cur = 0;
             }
-            while (r.cur < (int)r.order.size()) {
-                const BtStatus s = Tick(r.order[(std::size_t)r.cur], dt);
+            while (m_rt[(std::size_t)idx].cur < (int)m_rt[(std::size_t)idx].order.size()) {
+                const int child = m_rt[(std::size_t)idx].order[(std::size_t)m_rt[(std::size_t)idx].cur];
+                const BtStatus s = Tick(child, dt);
                 if (s == BtStatus::Running) return s;
                 if (s == BtStatus::Success) return s;
-                ++r.cur;
+                ++m_rt[(std::size_t)idx].cur;
             }
             return BtStatus::Failure;
         }
         case BtNodeType::Parallel: {
-            if ((int)r.results.size() != count) r.results.assign((std::size_t)count, BtStatus::Invalid);
+            if ((int)m_rt[(std::size_t)idx].results.size() != count) m_rt[(std::size_t)idx].results.assign((std::size_t)count, BtStatus::Invalid);
             int succ = 0, fail = 0, running = 0;
             for (int i = 0; i < count; ++i) {
-                BtStatus& s = r.results[(std::size_t)i];
+                BtStatus s = m_rt[(std::size_t)idx].results[(std::size_t)i];
                 if (s == BtStatus::Invalid || s == BtStatus::Running) s = Tick(kids[(std::size_t)i], dt);
+                if (idx < (int)m_rt.size()) m_rt[(std::size_t)idx].results[(std::size_t)i] = s;
                 if (s == BtStatus::Success) ++succ;
                 else if (s == BtStatus::Running) ++running;
                 else ++fail;
             }
             const bool succOne = n.Str("success") == "one", failOne = n.Str("failure") == "one";
-            auto abortRest = [&]() { for (int i = 0; i < count; ++i) if (r.results[(std::size_t)i] == BtStatus::Running) Abort(kids[(std::size_t)i]); };
+            auto abortRest = [&]() {
+                for (int i = 0; i < count; ++i)
+                    if (idx < (int)m_rt.size() && m_rt[(std::size_t)idx].results[(std::size_t)i] == BtStatus::Running) Abort(kids[(std::size_t)i]);
+            };
             if (failOne && fail > 0) { abortRest(); return BtStatus::Failure; }
             if (succOne && succ > 0) { abortRest(); return BtStatus::Success; }
             if (running > 0) return BtStatus::Running;
@@ -488,8 +696,8 @@ BtStatus BehaviorTreeRunner::TickDecorator(int idx, float dt) {
             const int want = n.Int("count");
             const BtStatus s = Tick(child, dt);
             if (s == BtStatus::Running) return s;
-            ++r.count;
-            if (want > 0 && r.count >= want) return BtStatus::Success;
+            if (idx < (int)m_rt.size()) ++m_rt[(std::size_t)idx].count;
+            if (want > 0 && idx < (int)m_rt.size() && m_rt[(std::size_t)idx].count >= want) return BtStatus::Success;
             return BtStatus::Running;   // again next tick
         }
         case BtNodeType::UntilFail: {
@@ -502,7 +710,7 @@ BtStatus BehaviorTreeRunner::TickDecorator(int idx, float dt) {
             if (child < 0) return BtStatus::Failure;
             if (!childRunning && m_time < r.until) return BtStatus::Failure;
             const BtStatus s = Tick(child, dt);
-            if (s != BtStatus::Running) r.until = m_time + n.Num("seconds");
+            if (s != BtStatus::Running && idx < (int)m_rt.size()) m_rt[(std::size_t)idx].until = m_time + n.Num("seconds");
             return s;
         }
         case BtNodeType::TimeLimit: {
@@ -882,9 +1090,100 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
         }
         case BtNodeType::Custom:
             return CallCustom(n, r, first ? "enter" : "tick");
+        case BtNodeType::RunSubtree:
+            return TickSubtree(idx, dt, first);
         default:
             return BtStatus::Failure;
     }
+}
+
+BtStatus BehaviorTreeRunner::TickSubtree(int idx, float dt, bool first) {
+    if (!m_tree || idx < 0 || idx >= (int)m_tree->nodes.size()) return BtStatus::Failure;
+    const int nodeId = m_tree->nodes[(std::size_t)idx].id;
+    const std::string spec = m_tree->nodes[(std::size_t)idx].Str("tree");
+    const std::string mapText = m_tree->nodes[(std::size_t)idx].Str("map");
+    auto fail = [&](const std::string& why) {
+        if (m_error != why) Log::Warning("[bt] ", why);
+        m_error = why;
+        return BtStatus::Failure;
+    };
+    if (spec.empty()) return fail("Run Sub-Tree names no tree");
+    const std::string path = BehaviorTree::ResolvePath(spec);
+    if (m_runStack.size() >= 64) return fail("Run Sub-Tree refused: the tree is nested too deep");
+    std::unique_ptr<SubFrame> child;
+    if (auto it = m_children.find(nodeId); it != m_children.end()) {
+        child = std::move(it->second);
+        m_children.erase(it);
+    }
+    if (first || !child || child->path != path || !child->tree) {
+        if (child && child->tree && child->tree->root >= 0) {
+            const int oldRoot = child->tree->root;
+            WithFrame(*child, [&] {
+                const int r = Index(oldRoot);
+                if (r >= 0 && r < (int)m_rt.size() && m_rt[(std::size_t)r].running) Abort(r);
+            });
+        }
+        std::string err;
+        std::shared_ptr<const BehaviorTree> tree = BehaviorTree::Load(spec, &err);
+        if (!tree || tree->root < 0 || tree->IndexOf(tree->root) < 0)
+            return fail(err.empty() ? "Run Sub-Tree cannot read '" + spec + "'" : err);
+        const std::string pointer = PointerId(tree.get());
+        if (PathOnStack(path) || PathOnStack(pointer))
+            return fail("Run Sub-Tree refused: '" + spec + "' is already running");
+        child = std::make_unique<SubFrame>();
+        child->tree = std::move(tree);
+        child->path = path;
+        child->rt.resize(child->tree->nodes.size());
+        for (const auto& k : child->tree->keys) child->board.Declare(k.name, k.value);
+    } else if (PathOnStack(path) || PathOnStack(PointerId(child->tree.get()))) {
+        const int rootId = child->tree->root;
+        WithFrame(*child, [&] {
+            const int r = Index(rootId);
+            if (r >= 0 && r < (int)m_rt.size() && m_rt[(std::size_t)r].running) Abort(r);
+        });
+        return fail("Run Sub-Tree refused: '" + spec + "' is already running");
+    }
+    ApplyKeyMap(mapText, blackboard, child->board, true);
+    const int rootId = child->tree->root;
+    const std::string pointer = PointerId(child->tree.get());
+    const std::size_t mark = m_runStack.size();
+    if (!path.empty()) m_runStack.push_back(path);
+    if (!pointer.empty()) m_runStack.push_back(pointer);
+    BtStatus status = BtStatus::Failure;
+    WithFrame(*child, [&] {
+        const int r = Index(rootId);
+        if (r >= 0) status = Tick(r, dt);
+    });
+    m_runStack.resize(mark);
+    ApplyKeyMap(mapText, blackboard, child->board, false);
+    if (status == BtStatus::Running) m_children[nodeId] = std::move(child);
+    return status;
+}
+
+std::vector<BehaviorTreeRunner::TraceStep> BehaviorTreeRunner::ActiveTrace() const {
+    std::vector<TraceStep> out;
+    const std::function<void(const BehaviorTree*, const std::vector<Rt>&, const std::map<int, std::unique_ptr<SubFrame>>&, const std::string&)> walk =
+        [&](const BehaviorTree* tree, const std::vector<Rt>& rt, const std::map<int, std::unique_ptr<SubFrame>>& kids, const std::string& path) {
+            if (!tree) return;
+            for (int id : tree->Order()) {
+                const int i = tree->IndexOf(id);
+                if (i < 0 || i >= (int)rt.size() || !rt[(std::size_t)i].running) continue;
+                const BtNode& n = tree->nodes[(std::size_t)i];
+                TraceStep step;
+                step.path = path;
+                step.treeName = tree->name;
+                step.nodeId = id;
+                step.title = n.name.empty() ? n.Def().title : n.name;
+                out.push_back(step);
+                if (n.type == BtNodeType::RunSubtree) {
+                    auto it = kids.find(id);
+                    if (it != kids.end() && it->second && it->second->tree)
+                        walk(it->second->tree.get(), it->second->rt, it->second->children, it->second->path);
+                }
+            }
+        };
+    walk(m_tree.get(), m_rt, m_children, m_activePath.empty() ? TreeIdentity() : m_activePath);
+    return out;
 }
 
 // ---------------------------------------------------------------------------

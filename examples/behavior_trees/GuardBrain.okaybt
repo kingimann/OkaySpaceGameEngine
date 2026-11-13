@@ -1,0 +1,6 @@
+okaybt 1
+name "Guard brain"
+key target object Player
+key greeted string ""
+root 0
+node 0 RunSubtree parent=-1 x=0 y=0 name=Greet tree=greet.okaybt map=target>target,greeted<greeted

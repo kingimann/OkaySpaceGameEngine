@@ -774,6 +774,18 @@ bool IsMouseDragging(int button = 0, float threshold = -1.0f);
 bool IsKeyDown(KeyId key);
 bool IsKeyPressed(KeyId key, bool repeat = true);
 bool IsKeyReleased(KeyId key);
+/// Temporarily change a style value until the matching PopStyleVar (they nest; up to 32 deep; an unbalanced push is undone at the
+/// next frame). Supported: ItemSpacing (x, y between widgets), WindowPadding (x), FrameRounding and ChildRounding (corner radius),
+/// WindowRounding, BorderSize (all three ImGui border sizes). The others are accepted and do nothing, so ported code compiles:
+/// FramePadding, ButtonTextAlign, SelectableTextAlign, ItemInnerSpacing, ScrollbarSize, Alpha.
+enum StyleVar : int {
+    StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
+    StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT
+};
+void PushStyleVar(StyleVar var, float value);
+void PushStyleVar(StyleVar var, Vec2 value);
+void PopStyleVar(int count = 1);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
 
 /// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with

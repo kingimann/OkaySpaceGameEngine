@@ -578,6 +578,41 @@ void KeyStateTests() {
     r.sim.ctrl = false; r.sim.shift = false;
 }
 
+void StyleVarTests() {
+    Rig r; UI::Rect a1, a2, b1, b2; float roundIn = -1, roundAfter = -1, padIn = -1, padAfter = -1, borderIn = -1, borderAfter = -1;
+    float round0 = 0, pad0 = 0, border0 = 0; bool run = true;
+    r.body = [&] {
+        round0 = UI::Style().rounding; pad0 = UI::Style().windowPadding; border0 = UI::Style().borderPx;
+        UI::Button("a"); a1 = UI::GetItemRect(); UI::Button("b"); a2 = UI::GetItemRect();       // normal spacing
+        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{4.0f, 30.0f});
+        UI::Button("c"); b1 = UI::GetItemRect(); UI::Button("d"); b2 = UI::GetItemRect();       // spacing 30 below
+        UI::PushStyleVar(UI::StyleVar_FrameRounding, 11.0f); UI::PushStyleVar(UI::StyleVar_WindowPadding, 33.0f);
+        UI::PushStyleVar(UI::StyleVar_BorderSize, 3.0f);
+        roundIn = UI::Style().rounding; padIn = UI::Style().windowPadding; borderIn = UI::Style().borderPx;
+        UI::PopStyleVar(3);
+        UI::PopStyleVar();                                                                      // the spacing
+        roundAfter = UI::Style().rounding; padAfter = UI::Style().windowPadding; borderAfter = UI::Style().borderPx;
+        UI::PushStyleVar(UI::StyleVar_Alpha, 0.5f); UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{1, 2});   // accepted, no effect
+        UI::PushStyleVar(UI::StyleVar_ButtonTextAlign, UI::Vec2{0, 0}); UI::PopStyleVar(3);
+        UI::PopStyleVar(5);                                                                      // more pops than pushes: harmless
+        UI::PopStyleVar(-2); UI::PopStyleVar(0);
+        for (int i = 0; i < 40; ++i) UI::PushStyleVar(UI::StyleVar_FrameRounding, (float)i);     // deeper than the stack: the extra pushes are ignored
+        if (run) { UI::PopStyleVar(40); }                                                        // (and unbalanced when run is false: reset next frame)
+    };
+    r.Frames(3);
+    const float normalGap = a2.y - (a1.y + a1.h), wideGap = b2.y - (b1.y + b1.h);
+    CHECK(wideGap > normalGap + 15.0f && std::fabs(wideGap - 30.0f) < 1.0f);                    // ItemSpacing y took effect
+    CHECK_NEAR(roundIn, 11.0f, 1e-4); CHECK_NEAR(padIn, 33.0f, 1e-4); CHECK_NEAR(borderIn, 3.0f, 1e-4);
+    CHECK_NEAR(roundAfter, round0, 1e-4); CHECK_NEAR(padAfter, pad0, 1e-4); CHECK_NEAR(borderAfter, border0, 1e-4);   // restored
+    // a push that is never popped does not leak into the next frame
+    const float defRound = round0;                                                               // what a clean frame starts with
+    run = false; r.Frames(3);
+    CHECK_NEAR(round0, defRound, 1e-4);                                                          // read at the start of a frame: the 32 leftover pushes were undone
+    // the spacing is back to normal for the next widgets after the pop
+    run = true; r.Frames(2);
+    CHECK(std::fabs((a2.y - (a1.y + a1.h)) - normalGap) < 0.01f);
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -833,6 +868,7 @@ int main() {
     TabBarTests();
     TooltipAndHelperTests();
     KeyStateTests();
+    StyleVarTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

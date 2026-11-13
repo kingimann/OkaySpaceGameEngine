@@ -806,6 +806,7 @@ void BeginFrame(const Input& in) {
     g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
     g_popupTop = 0;
+    PopStyleVar(32);                                // an unbalanced PushStyleVar never leaks into the next frame
     ++g_frameCount;
     g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
     for (int k = 0; k < KeyId_COUNT; ++k) {   // named keys: keep last frame's state, take this frame's
@@ -2056,6 +2057,42 @@ void EndTabBar() {
     // The chosen tab vanished (closed or removed): fall back to the first.
     if (!g_tabBar.seenSel && g_tabBar.firstId != 0) *g_tabBar.sel = g_tabBar.firstId;
     g_tabBar.active = false;
+}
+
+// ---- Style variables (PushStyleVar / PopStyleVar) -----------------------------------------------------
+namespace {
+struct StyleSave { int var; float a, b; };
+StyleSave g_styleStack[32];
+int g_styleTop = 0;
+}
+void PushStyleVar(StyleVar var, Vec2 value) {
+    if (g_styleTop >= 32) return;                    // too deep: ignored (and the matching Pop is ignored too, see PopStyleVar)
+    StyleSave s{(int)var, 0.0f, 0.0f};
+    switch (var) {
+        case StyleVar_ItemSpacing:   s.a = g_lay.spacingX; s.b = g_lay.spacingY; g_lay.spacingX = value.x; g_lay.spacingY = value.y; break;
+        case StyleVar_WindowPadding: s.a = g_theme.windowPadding; g_theme.windowPadding = value.x; break;
+        case StyleVar_FrameRounding:
+        case StyleVar_ChildRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
+        case StyleVar_WindowRounding: s.a = g_theme.windowRounding; g_theme.windowRounding = value.x; break;
+        case StyleVar_BorderSize:    s.a = g_theme.borderPx; g_theme.borderPx = value.x; break;
+        default: break;                              // accepted, nothing to change (see the header)
+    }
+    g_styleStack[g_styleTop++] = s;
+}
+void PushStyleVar(StyleVar var, float value) { PushStyleVar(var, Vec2{value, value}); }
+void PopStyleVar(int count) {
+    while (count-- > 0 && g_styleTop > 0) {
+        const StyleSave s = g_styleStack[--g_styleTop];
+        switch ((StyleVar)s.var) {
+            case StyleVar_ItemSpacing:   g_lay.spacingX = s.a; g_lay.spacingY = s.b; break;
+            case StyleVar_WindowPadding: g_theme.windowPadding = s.a; break;
+            case StyleVar_FrameRounding:
+            case StyleVar_ChildRounding: g_theme.rounding = s.a; break;
+            case StyleVar_WindowRounding: g_theme.windowRounding = s.a; break;
+            case StyleVar_BorderSize:    g_theme.borderPx = s.a; break;
+            default: break;
+        }
+    }
 }
 
 bool Checkbox(const char* label, bool* value) {

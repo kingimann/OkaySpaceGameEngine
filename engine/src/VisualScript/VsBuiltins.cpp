@@ -349,7 +349,7 @@ std::string CoverageTableMarkdown() {
         {"Navigation", "NavMeshAgent.*", "Engine API NavMeshAgent, Chase Target, Patrol Waypoints"},
         {"Audio", "Audio.*, play_sound", "Engine API Audio, Play Sound Here, Fn.play_sound"},
         {"Input", "Input.*, key", "Engine API Input, Get Move Direction, On Key, Fn.key"},
-        {"UI", "UI components, ui_* builtins", "Engine API UI nodes, every Fn.ui_* builtin"},
+        {"UI", "UI components, ui_* builtins, get_clipboard_text / set_clipboard_text", "Engine API UI nodes, every Fn.ui_* builtin, Get Clipboard Text, Set Clipboard Text"},
         {"Particles", "particle builtins and properties", "Get/Set Property, plus Fn.particle_* builtins in the list below"},
         {"Terrain", "terrain properties", "Get/Set Property on a terrain component. No separate terrain builtin."},
         {"Splines", "Spline.*, SplineFollower.*", "Engine API Spline / SplineFollower / LineRenderer"},

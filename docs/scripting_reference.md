@@ -156,6 +156,7 @@ function update(dt) {
 | Function | Description |
 |---|---|
 | `ui_set_text("n", "s")` / `ui_get_text("n")` | Text/button label/input text |
+| `get_clipboard_text()` / `set_clipboard_text("s")` | The text a player can copy and paste. `set_clipboard_text` returns 1 when the clipboard accepted it. Control characters are removed (a tab and a newline stay) and text past 8192 characters is cut short. A focused input field uses the same clipboard: Ctrl or Command with C, X and V |
 | `ui_clicked("n")` | True the frame a named button was clicked |
 | `ui_set_interactable("n", on)` | Enable/grey-out a button |
 | `ui_slider_value("n")` / `ui_set_slider("n", v)` | Read/set a slider (0..1) |

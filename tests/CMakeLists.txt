@@ -2656,3 +2656,10 @@ add_test(NAME net_rejoin COMMAND test_net_rejoin)
 add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
 target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
 add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
+
+# Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
+add_executable(test_clipboard test_clipboard.cpp)
+target_link_libraries(test_clipboard PRIVATE okay::engine)
+target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME clipboard COMMAND test_clipboard)

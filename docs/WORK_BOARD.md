@@ -126,6 +126,7 @@ Nothing user-visible, nothing default.
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Joint3D hinge angle limits (doors and levers stop at min/max; reuse `Math/JointLimit.hpp`) | John | `john/joint3d-hinge-limits` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
+| Game clipboard: copy and paste text in fields, scripts and visual script | John | `john/game-clipboard` |
 
 ## Free (unclaimed, safe small tasks)
 

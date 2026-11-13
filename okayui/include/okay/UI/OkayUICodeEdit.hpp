@@ -202,6 +202,16 @@ public:
     /// Scroll so the line is in the middle of the view (or just visible) and put the caret at its start.
     void GoToLine(int line);
     void ScrollToCaret() { reveal_ = true; }
+    // ---- input method (IME): see Input::composition / Input::commit ----
+    /// While the input method composes (Input::composition, only when this editor has the keyboard and is not read-only) the
+    /// preedit is drawn underlined at the caret (in place of a selection), the keys are left to the input method, and
+    /// Input::commit is inserted like typed text. Cancelling (the host stops sending a preedit) changes nothing.
+    bool Composing() const { return comp_.active; }
+    /// The caret on screen (pixels) for the last Draw, kept inside the text area, or a zero rectangle when the editor is not focused:
+    /// where a host puts the system candidate window. While composing it is the caret inside the preedit.
+    Rect ImeCaretRect() const { return imeCaret_; }
+    /// The preedit's span on screen (zero width when not composing).
+    Rect ImeCompositionRect() const { return imeComp_; }
     int FirstVisibleLine() const { return firstLine_; }
     int VisibleLineCount() const { return visLines_; }
     // Geometry of the last Draw (screen pixels), so callers and tests can find things on screen.
@@ -288,6 +298,7 @@ private:
     double lastClickT_ = -10; float lastClickX_ = 0, lastClickY_ = 0; int clicks_ = 0;
     double lastActivity_ = 0;
     int wid_ = 0; bool wantFocus_ = false, handleKeys_ = true;
+    Composition comp_; int compCells_ = 0, compCaretCells_ = 0; Rect imeCaret_, imeComp_;
     CodeLanguage language_; bool haveLanguage_ = false;
     // bracket cache
     unsigned bVersion_ = 0; CodePos bCaret_{-1, -1}; bool bOk_ = false; CodePos bA_, bB_;

@@ -1507,9 +1507,17 @@ int main(int argc, char** argv) {
     if (!cfg.showCursor) pb->ShowCursor(false);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     wd.title = title;
+    // A zero or negative size in the config would make every backend refuse the window.
+    cfg.width  = okay::platform::ValidWindowExtent(cfg.width, 960);
+    cfg.height = okay::platform::ValidWindowExtent(cfg.height, 600);
     wd.width = cfg.width; wd.height = cfg.height;
     std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
     okay::platform::Window* window = windowOwner.get();
+    if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
+        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Shutdown();
+        return 1;
+    }
     if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
         window->SetMinimumSize(cfg.minWidth, cfg.minHeight);
     // Window/taskbar icon: load the PNG and apply it.

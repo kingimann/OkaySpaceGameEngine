@@ -324,7 +324,18 @@ Index LoadIndex(const Sources& src, const FetchTextFn& fetch) {
         const std::string body = Fetch(fetch, base + "versions.json");
         if (body.empty()) why = "The version list could not be downloaded.";
         else {
+            // With a trusted key built in, the index counts only when its signature verifies. A refusal is final: it never falls back
+            // to the unsigned VERSION.txt heads, so a forged index cannot be replaced by a "softer" one that still offers installs.
+            okayupdate::Verdict sig;
+            if (!src.trustedKeys.empty()) sig = okayupdate::Check(src.trustedKeys, body, Fetch(fetch, base + okayupdate::kSigName));
+            if (!sig.Accepts()) {
+                Index refused;
+                refused.signatureRefused = true;
+                refused.error = sig.message;
+                return refused;
+            }
             Index idx = ParseIndex(body);
+            idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
             if (idx.ok) {
                 if (idx.archive.empty()) idx.archive = src.archiveTemplate.compare(0, 8, "https://") == 0 ? src.archiveTemplate : std::string();
                 const std::string v = ParseVersionTxt(Fetch(fetch, base + "VERSION.txt")), l = ParseVersionTxt(Fetch(fetch, base + "LTS.txt"));

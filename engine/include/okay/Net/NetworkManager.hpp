@@ -100,6 +100,17 @@ public:
     /// its own (the player sets these from the signed-in OkaySpace account).
     static void SetDefaultIdentity(const std::string& token, const std::string& name);
 
+    // ---- Join gate (session tickets) -------------------------------------
+    /// What a client must do before it joins: called at the start of StartClient / JoinViaRelay (so also for a launcher join, a
+    /// reconnect and a script's net_join), before any socket is opened or key made. The gate may fetch a session ticket
+    /// (TicketBinding(), then SetAuthToken(ticket)); returning false refuses the join: nothing is sent and the call returns false
+    /// with the reason in LastJoinRefusal(). No gate (the default) = every join goes ahead as before. See shared/TicketJoin.hpp.
+    using JoinGate = std::function<bool(NetworkManager& nm, const std::string& host, std::uint16_t port,
+                                        bool relayed, const std::string& relayCode, std::string& why)>;
+    static void SetJoinGate(JoinGate gate);
+    /// Why the gate refused the most recent join ("" = it did not).
+    static std::string LastJoinRefusal();
+
     // ---- Server authority (basic anti-cheat) ----------------------------
     /// Server: the fastest a client's avatar may move (world units per second;
     /// 0 = no check). A faster move is rejected and the client is snapped back to

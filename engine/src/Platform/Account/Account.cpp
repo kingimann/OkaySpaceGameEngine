@@ -99,6 +99,11 @@ account::ApiResponse Account::Api(const std::string& path, const std::string& me
     return Get().Api(path, method, jsonBody, extraHeader);
 }
 
+account::ApiResponse Account::ApiTimed(const std::string& path, const std::string& method, const std::string& jsonBody,
+                                       const std::string& extraHeader, int timeoutSec) {
+    return Get().ApiTimed(path, method, jsonBody, extraHeader, timeoutSec);
+}
+
 bool Account::CloudSave(const std::string& key, const std::string& data) {
     return Get().CloudSave(key, data);
 }

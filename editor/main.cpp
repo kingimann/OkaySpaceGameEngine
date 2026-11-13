@@ -17094,6 +17094,10 @@ static void RequestStop(EditorState& ed);
 
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
+    // A built-in file dialog is modal by convention only: its callback runs on a later
+    // frame and many call sites hold raw component pointers until then (#732). Scene
+    // shortcuts must not fire while it is open (the same guard DrawProjectGate uses).
+    if (okay::filedialog::BuiltinOpen()) return;
     ImGuiIO& io = ImGui::GetIO();
     // Play/Stop before the text-field return. The Script Editor tab (even with
     // no file open) owns every shortcut, so Ctrl+P, and a click that never
@@ -46722,6 +46726,7 @@ static int g_pendingAction = 0;          // 1 play, 2 stop, 3 load scene
 static std::string g_pendingPath;
 static void StartPlayNow(EditorState& ed) {
     if (ed.InPrefabMode()) { ConsoleLog(ed.PlayBlockedReason(), 1); return; }
+    okay::filedialog::CancelBuiltin();   // play may rebuild objects; a queued dialog holds raw pointers into them (#732)
     if (g_clearConsoleOnPlay) ConsoleClear();
     StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
     okay::editor::apreview::Stop(ed.scene());
@@ -46735,6 +46740,7 @@ static void StartPlayNow(EditorState& ed) {
     g_showGame = true; g_focusGameOnPlay = true;
 }
 static void StopPlayNow(EditorState& ed) {
+    okay::filedialog::CancelBuiltin();   // Stop restores the edit-time scene from a snapshot (#732)
     okay::editor::apreview::Stop(ed.scene());
     ed.Stop(); g_paused = false; ConsoleLog("Stop");
 }

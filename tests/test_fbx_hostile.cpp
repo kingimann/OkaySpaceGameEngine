@@ -217,6 +217,30 @@ static std::string ModelChain(int n, bool cycle) {
 static void Hierarchies() {
     RUN_SUITE("hostile scene graphs");
     auto A = [](const std::string& s) { return Bytes(s.begin(), s.end()); };
+    // #754: GlobalSettings axis selectors cast to int without a range check made sanitizer
+    // builds abort (float-cast-overflow) on a hostile file; Release had wraparound UB.
+    {
+        const std::string probe =
+            "; FBX 7.4.0 project file\n"
+            "GlobalSettings: 1, \"GlobalSettings::\", \"\" {\n"
+            "\tProperties70:  {\n"
+            "\t\tP: \"UpAxis\", \"int\", \"Integer\", \"\", 4.6e18\n"
+            "\t\tP: \"FrontAxis\", \"int\", \"Integer\", \"\", -4.6e18\n"
+            "\t\tP: \"CoordAxis\", \"int\", \"Integer\", \"\", 1e300\n"
+            "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\", 1.0\n"
+            "\t}\n"
+            "}\n"
+            "Objects:  {\n"
+            "}\n"
+            "Connections:  {\n"
+            "}\n";
+        fbx::Scene s;
+        std::string err;
+        CHECK(fbx::LoadMemory(A(probe).data(), probe.size(), s, &err, Tight()));   // must not crash: clamped into [0..2]
+        CHECK(s.settings.upAxis >= 0 && s.settings.upAxis <= 2);
+        CHECK(s.settings.frontAxis >= 0 && s.settings.frontAxis <= 2);
+        CHECK(s.settings.coordAxis >= 0 && s.settings.coordAxis <= 2);
+    }
     fbx::Scene s; std::string err;
     CHECK(fbx::LoadMemory(A(ModelChain(1000, false)).data(), ModelChain(1000, false).size(), s, &err) && s.nodes.size() == 1000);
     if (s.nodes.size() == 1000) { CHECK(s.nodes[999].parent == 998 && s.roots.size() == 1); }

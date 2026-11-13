@@ -20,6 +20,7 @@
 #include <fstream>
 #include <sstream>
 #include "../shared/ProjectCreate.hpp"
+#include "../shared/FileDialog.hpp"      // CancelBuiltin: scene rebuilds drop queued built-in dialogs (#732)
 
 namespace {
 // Every new 3D primitive ships with a collider fitted to its mesh, so
@@ -134,6 +135,7 @@ SelectionRef EditorState::CaptureSelection() const {
 // selection). Every object is rebuilt, so the pointers change and the GUIDs carry the selection across.
 bool EditorState::ApplySceneText(const std::string& text, const SelectionRef& sel) {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
+    okay::filedialog::CancelBuiltin();   // every object is rebuilt; a queued dialog may hold one of its pointers (#732)
     const SelectionRef want = sel.valid ? sel : CaptureSelection();
     StopNetwork();
     if (!SceneSerializer::Deserialize(m_scene, text)) return false;   // all or nothing: the scene is as it was
@@ -289,6 +291,9 @@ void EditorState::PushUndoText(std::string before, const std::string& name, std:
 
 bool EditorState::Undo() {
     if (m_playing) return false;
+    // The step's objects go away: a built-in dialog queued earlier would write through a
+    // pointer into them on accept (#732). The same for Redo and Load.
+    okay::filedialog::CancelBuiltin();
     ++m_undoSerial;
     SyncHistory();
     if (!m_stack->CanUndo()) return false;
@@ -297,6 +302,7 @@ bool EditorState::Undo() {
 
 bool EditorState::Redo() {
     if (m_playing) return false;
+    okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the rebuilt scene (#732)
     ++m_undoSerial;
     SyncHistory();
     if (!m_stack->CanRedo()) return false;
@@ -494,6 +500,7 @@ GameObject* EditorState::GroupSelected(const std::string& name) {
 void EditorState::DeleteSelected() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_multi.empty() && !m_selected) return;
+    okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer to a deleted object (#732)
     PushUndo();
     // Delete the whole selection (multi-select), not just the primary object.
     std::vector<GameObject*> targets = m_multi.empty() ? std::vector<GameObject*>{m_selected} : m_multi;
@@ -532,6 +539,7 @@ void EditorState::NewScene() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
     StopNetwork();
+    okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the cleared scene (#732)
     m_scene.Clear();
     m_scene.SetName("Untitled");
     // Every scene starts with a Main Camera so a fresh/empty scene can
@@ -1004,6 +1012,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (m_playing) Stop();
     StopNetwork();
+    okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
     // A different scene is a different document: its undo history is its own. (Keeping the old one
@@ -1138,6 +1147,7 @@ void EditorState::Play() {
 void EditorState::Stop() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (!m_playing) return;
+    okay::filedialog::CancelBuiltin();   // the deserialize below rebuilds every object (#732)
     m_playing = false;
     m_scene.UseFixedStepPhysics(false);
     m_loop.BeginSession();   // unpause, clear quit and any script's time scale, so the next Play starts clean

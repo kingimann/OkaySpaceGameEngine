@@ -124,6 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Mesh Collider 3D: convex hull so a mesh can be a dynamic body, and collision callbacks when a body lands on it | John | `john/mesh-collider-convex` |
+| Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
 
 ## Free (unclaimed, safe small tasks)
 

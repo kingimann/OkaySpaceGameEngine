@@ -214,6 +214,8 @@ TableState g_tbl;
 struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
+extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
+extern int g_ncards;         // defined with the card stack below (reset here in BeginFrame)
 
 // Drag & drop: a single int payload. `armed` records a press on a source before it
 // has moved far enough to count as a drag; `active` means a drag is in flight.
@@ -255,11 +257,19 @@ float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 unsigned g_idSeed = 0;
 unsigned g_idStack[32];
 int      g_idTop = 0;
+int g_idSkipped = 0;                 // pushes skipped while the ID stack was full, so matching pops are skipped too
 inline void pushIdSeed(unsigned mix) {
-    if (g_idTop < 32) g_idStack[g_idTop++] = g_idSeed;
+    if (g_idTop >= 32) {   // stack full: skip the push entirely so PopID cannot restore a seed it never saved
+        ++g_idSkipped;
+        return;
+    }
+    g_idStack[g_idTop++] = g_idSeed;
     g_idSeed = (g_idSeed ^ mix) * 16777619u;
 }
-inline void popIdSeed() { if (g_idTop > 0) g_idSeed = g_idStack[--g_idTop]; }
+inline void popIdSeed() {
+    if (g_idSkipped > 0) { --g_idSkipped; return; }   // this pop matches a skipped push: leave the stack alone
+    if (g_idTop > 0) g_idSeed = g_idStack[--g_idTop];
+}
 
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
 inline int hashLabel(const char* s) {
@@ -759,10 +769,12 @@ void BeginFrame(const Input& in) {
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
     g_inMenuBar = false; g_curMenu.active = false;
-    g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
+    g_idSeed = 0; g_idTop = 0; g_idSkipped = 0;   // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
     g_colTop = 0;
+    while (g_textScaleTop > 0) PopTextScale();   // an unbalanced PushTextScale never leaks into the next frame
+    g_ncards = 0;                        // reset card stack (BeginCard reserves per frame)
     g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
     g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
     g_curClipOn = false; g_curTex = g_defTex;
@@ -1611,7 +1623,12 @@ void End() {
 }
 
 bool BeginChild(const char* id, float w, float h, bool border) {
-    if (!g_lay.active) return false;
+    // Depth guard first: past the child-stack capacity the parent layout cannot
+    // be saved, so the child cannot begin at all -- otherwise EndChild would pop
+    // a slot that was never pushed and corrupt the parent's scroll/clip state.
+    // Returning before place()/wheel handling also keeps the parent layout
+    // cursor and scroll slots untouched on the skip path.
+    if (!g_lay.active || g_childTop >= 8) return false;
     const int cid = hashLabel(id);
     const float pad = 6.0f;
     const float rw = w > 0.0f ? w : availW();
@@ -1631,11 +1648,9 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     PushClipRect(rx, ry, rw, rh);
 
     // Save the parent layout, then set up the child's inner layout (scrolled).
-    if (g_childTop < 8) {
-        ChildSave& c = g_childStack[g_childTop++];
-        c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered;
-    }
+    ChildSave& c = g_childStack[g_childTop++];
+    c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
+    c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered;
     g_lay.ox = rx + pad;
     g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
     g_lay.bottom = ry + rh - pad;
@@ -2496,6 +2511,10 @@ void CloseCurrentPopup() {
 // Shared popup body setup: redirect layout into a floating overlay box at (px,py),
 // drawing the background using last frame's measured height. Returns true if open.
 static bool beginPopupBody(int id) {
+    // Depth guard first: past the popup-stack capacity the parent layout cannot
+    // be saved, so the popup cannot begin -- otherwise EndPopup would restore a
+    // state that was never saved and stomp another popup's measured height.
+    if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
     const float w = 160.0f, pad = 6.0f;
@@ -2506,10 +2525,8 @@ static bool beginPopupBody(int id) {
     g_toOverlay = true;
     Panel(px, py, w, *hSlot + pad * 2.0f);
     // Save parent layout; set up the popup's inner layout.
-    if (g_popupTop < 4) {
-        PopupCtx& c = g_popupStack[g_popupTop++];
-        c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
-    }
+    PopupCtx& c = g_popupStack[g_popupTop++];
+    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
     g_lay.active = true;
     g_lay.ox = px + pad; g_lay.oy = py + pad;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
@@ -3366,7 +3383,7 @@ void ResetState() {
     for (TextSlot& t : g_texts) t = TextSlot();
     g_dd = DragDrop(); g_curMenu = CurMenu(); g_inMenuBar = false;
     g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState();
-    g_childTop = g_popupTop = g_colTop = g_idTop = g_itemWTop = g_clipTop = 0;
+    g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = 0;
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false;
     g_ovCurN = g_ovPrevN = 0;

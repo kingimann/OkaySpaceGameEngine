@@ -2505,7 +2505,11 @@ void LoadSettings() {
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
         else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
-        else if (k == "volumekinds") oked::g_volumeKinds = (unsigned)v & oked::kVolumeKindsAll;
+        else if (k == "volumekinds") {
+            unsigned m = (unsigned)v;
+            if (m == 0x3Fu) m = oked::kVolumeKindsAll;   // the old "show everything", before the reverb switch
+            oked::g_volumeKinds = m & oked::kVolumeKindsAll;
+        }
         else if (k == "showgrid") g_showGrid = (v != 0);
         else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
         else if (k == "wireframeall") g_wireframeAll = (v != 0);
@@ -36600,6 +36604,35 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Linear: straight fade. Inverse: like real sound, loud up close.\n"
                                       "Logarithmic: loud up close with a long quiet tail.");
+                ImGui::Separator();
+                if (ImGui::Checkbox("Pitch follows speed", &a->doppler)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Raises the pitch when this sound or the listener is moving closer,\n"
+                                      "and lowers it when they move apart. Off leaves the pitch as set above.");
+                if (a->doppler) {
+                    if (ImGui::SliderFloat("Speed amount", &a->dopplerScale, 0.0f, 5.0f, "%.2f")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 matches real speed. 0 is no shift. Higher exaggerates it.");
+                }
+                if (ImGui::Checkbox("Quieter behind walls", &a->occlude)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("A solid wall between this and the listener lowers the volume and muffles it.\n"
+                                      "Triggers are ignored. Off leaves the sound as if nothing is in the way.");
+                if (a->occlude) {
+                    if (ImGui::SliderFloat("Loudness behind a wall", &a->occlusionVolume, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How loud it stays when blocked. 1 is no quieter, 0 is silent.");
+                    if (ImGui::SliderFloat("Muffle behind a wall", &a->occlusionLowPass, 80.0f, 8000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cutoff while blocked, in Hz. Lower is duller.");
+                }
+                if (ImGui::Checkbox("Muffle with distance", &a->distanceLowPass)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The sound stays bright up close and gets duller toward Max Distance.\n"
+                                      "Off keeps the tone the same at every distance.");
+                if (a->distanceLowPass) {
+                    if (ImGui::SliderFloat("Muffle at the far edge", &a->distanceLowPassHz, 80.0f, 8000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Cutoff at Max Distance. The fade follows a curve, so the middle\n"
+                                          "stays brighter than a straight line.");
+                }
             }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
@@ -48538,6 +48571,7 @@ int main(int argc, char** argv) {
                 }
             } else {
                 audioDev->ClearQueued();
+                AudioMixer::ResetSpatial();
             }
         }
 

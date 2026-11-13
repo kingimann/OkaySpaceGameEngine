@@ -156,6 +156,7 @@ add_library(okay_engine
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/SpatialFx.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/Audio/AudioStream.cpp

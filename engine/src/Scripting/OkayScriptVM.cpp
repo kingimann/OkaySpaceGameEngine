@@ -10364,6 +10364,13 @@ struct OkayScriptVM::Impl {
                 if (p == "pitch") return Value{au->pitch};
                 if (p == "pan") return Value{au->pan};
                 if (p == "lowPass") return Value{au->lowPass};
+                if (p == "doppler") return Value{au->doppler};
+                if (p == "dopplerScale") return Value{au->dopplerScale};
+                if (p == "occlude") return Value{au->occlude};
+                if (p == "occlusionVolume") return Value{au->occlusionVolume};
+                if (p == "occlusionLowPass") return Value{au->occlusionLowPass};
+                if (p == "distanceLowPass") return Value{au->distanceLowPass};
+                if (p == "distanceLowPassHz") return Value{au->distanceLowPassHz};
                 if (p == "isPlaying") return Value{au->IsPlaying()};
             }
             if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
@@ -10407,6 +10414,13 @@ struct OkayScriptVM::Impl {
                 if (p == "pitch") au->pitch = v.AsFloat();
                 if (p == "pan") au->pan = v.AsFloat();
                 if (p == "lowPass") au->lowPass = v.AsFloat();
+                if (p == "doppler") au->doppler = v.AsBool();
+                if (p == "dopplerScale") au->dopplerScale = v.AsFloat();
+                if (p == "occlude") au->occlude = v.AsBool();
+                if (p == "occlusionVolume") au->occlusionVolume = v.AsFloat();
+                if (p == "occlusionLowPass") au->occlusionLowPass = v.AsFloat();
+                if (p == "distanceLowPass") au->distanceLowPass = v.AsBool();
+                if (p == "distanceLowPassHz") au->distanceLowPassHz = v.AsFloat();
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();

@@ -43,7 +43,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan or balance, `kSpatialPan`); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
+| ~~No reverb, doppler, occlusion or distance filtering~~ Resolved: a Schroeder reverb on Reverb volumes (room, hall, cave, outdoor, blended at the edges), doppler from listener and source speed, occlusion by a physics ray, and a distance low-pass curve. All off unless turned on, so existing scenes are unchanged. 2D and streamed clips stay as they were. See `docs/audio.md`. | `Audio/SpatialFx`, `Audio/AudioMixer`, `Components/Volume` kind Reverb | Done. Not done: only one listener; no per-source reverb send beyond the zone; occlusion is one ray, not a multi-bounce obstruction. | Medium | Medium |
 | Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | Import options for audio (and texture compress) have no effect. Already hidden in the UI, but the data path is dead | Low | Small |
 | Only four fixed buses, no effect chain or snapshots | `AudioMixer.hpp:40` (`SFX, Music, UI, Voice`) | Games cannot add an Ambience or Dialogue bus | Low | Medium |
 | Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | Common asset format rejected with an error | Low | Small |

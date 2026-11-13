@@ -15,8 +15,8 @@ using namespace okay;
 using namespace okay::testing;
 namespace fs = std::filesystem;
 
-// Volumes: the shared shape (box, sphere, cylinder), the five zone kinds that use it (checkpoint, kill, force,
-// atmosphere, ambience), saving them in a scene and a prefab, and the validator rules for them.
+// Volumes: the shared shape (box, sphere, cylinder), the zone kinds that use it (checkpoint, kill, force,
+// atmosphere, ambience, reverb), saving them in a scene and a prefab, and the validator rules for them.
 
 namespace {
 
@@ -483,9 +483,55 @@ int main() {
         CHECK(Volume::KindColor(Volume::Kind::Kill).r != Volume::KindColor(Volume::Kind::Force).r);
     }
 
+    // ---- Reverb --------------------------------------------------------------------------------
+    // The listener's weight fades from the edge, and a 3D sound inside gains a tail the dry mix does not have.
+    {
+        Scene s("reverb-zone");
+        GameObject* cam = AddCamera(s, {0, 0, 0});
+        Volume* v = MakeVolume(s, "Cave", Volume::Kind::Reverb, {0, 0, 0}, {10, 10, 10});
+        v->blend = 1.0f;
+        v->reverbPreset = (int)ReverbPreset::Cave;
+        v->reverbAmount = 1.0f;
+        s.Start();
+        Run(s, 1);
+        CHECK_NEAR(v->ViewerWeight(), 1.0f, 1e-3f);
+        CHECK_NEAR(v->WeightAt({2.5f, 0, 0}), 0.5f, 1e-3f);   // halfway to a face, blend 1: smoothstep(0.5)
+        cam->transform->SetPosition({40, 0, 0});
+        Run(s, 1);
+        CHECK_NEAR(v->ViewerWeight(), 0.0f, 1e-6f);
+
+        AudioMixer::sampleRate = 44100;
+        AudioMixer::ResetSpatial();
+        AudioMixer::SetListener({0, 0, 0});
+        auto* a = s.CreateGameObject("Tone")->AddComponent<AudioSource>();
+        a->spatial = true;
+        a->minDistance = 50.0f;
+        a->maxDistance = 100.0f;
+        a->clip.sampleRate = 44100;
+        a->clip.samples.assign(8000, 0.0f);
+        a->clip.samples[0] = 1.0f;
+        a->Play();
+        std::vector<float> wet(8000 * 2);
+        AudioMixer::RenderStereo(s, wet.data(), 8000);
+        double tail = 0.0;
+        for (int i = 4000; i < 16000; ++i) tail += std::fabs(wet[(size_t)i]);
+        CHECK(tail > 0.02);
+
+        AudioMixer::ResetSpatial();
+        v->enabled = false;
+        a->Play();
+        std::vector<float> dry(8000 * 2);
+        AudioMixer::SetListener({0, 0, 0});
+        AudioMixer::RenderStereo(s, dry.data(), 8000);
+        double dryTail = 0.0;
+        for (int i = 4000; i < 16000; ++i) dryTail += std::fabs(dry[(size_t)i]);
+        CHECK(dryTail < 1.0e-3);
+        CHECK(tail > dryTail * 20.0);
+    }
+
     // ---- Only built kinds are offered ----------------------------------------------------------
-    // Reverb, post-process, nav-area and convex-mesh volumes are not built: the Kind list (Inspector,
-    // scene file, scripts) holds exactly the kinds the engine acts on, nothing else is selectable.
+    // Post-process, nav-area and convex-mesh volumes are not built. Reverb is: it is one of the kinds
+    // the Kind list offers, and the block above shows the echo it adds.
     {
         auto info = PropertyRegistry::FindByName("Volume");
         CHECK(info != nullptr);
@@ -498,15 +544,12 @@ int main() {
             for (const std::string& o : kind->enumOptions) {
                 std::string low = o;
                 for (char& ch : low) ch = (char)std::tolower((unsigned char)ch);
-                CHECK(low.find("reverb") == std::string::npos);
                 CHECK(low.find("post") == std::string::npos);
                 CHECK(low.find("nav") == std::string::npos);
                 CHECK(low.find("convex") == std::string::npos);
             }
         }
-        // Every offered kind does something a test can see (Checkpoint, Kill, Force, Atmosphere and Ambience
-        // are each exercised above); a count change must come with a new behaviour and a new test here.
-        CHECK(Volume::kKindCount == 5);
+        CHECK(Volume::kKindCount == 6);
     }
 
     TEST_MAIN_RESULT();

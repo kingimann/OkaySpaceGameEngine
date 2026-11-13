@@ -2856,7 +2856,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
             << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
             << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
-            << au->lowPass << " " << (au->stream ? 1 : 0) << "\n";
+            << au->lowPass << " " << (au->stream ? 1 : 0);
+        // The spatial-effect fields are only written when one of them is not the
+        // default, so an older reader (and the stream flag an older file strips)
+        // still sees the line it always did. All off keeps today's sound.
+        const bool spatialFx = au->doppler || std::fabs(au->dopplerScale - 1.0f) > 1.0e-6f
+            || au->occlude || std::fabs(au->occlusionVolume - 0.25f) > 1.0e-6f
+            || std::fabs(au->occlusionLowPass - 800.0f) > 1.0e-3f
+            || au->distanceLowPass || std::fabs(au->distanceLowPassHz - 2000.0f) > 1.0e-3f;
+        if (spatialFx)
+            out << " " << (au->doppler ? 1 : 0) << " " << au->dopplerScale << " "
+                << (au->occlude ? 1 : 0) << " " << au->occlusionVolume << " " << au->occlusionLowPass << " "
+                << (au->distanceLowPass ? 1 : 0) << " " << au->distanceLowPassHz;
+        out << "\n";
     }
     if (auto* mp = go->GetComponent<MusicPlayer>()) {
         out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
@@ -6974,7 +6986,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             if (std::isdigit(in.peek())) {
                                 in >> au->lowPass;
                                 in >> std::ws;   // optional stream flag
-                                if (std::isdigit(in.peek())) { int stv = 0; in >> stv; au->stream = stv != 0; }
+                                if (std::isdigit(in.peek())) {
+                                    int stv = 0; in >> stv; au->stream = stv != 0;
+                                    // optional spatial effects: doppler scale occlude volume hz distance-filter hz
+                                    if (LooksNumeric(in)) {
+                                        int dop = 0, occ = 0, dlp = 0;
+                                        in >> dop >> au->dopplerScale >> occ >> au->occlusionVolume >> au->occlusionLowPass >> dlp >> au->distanceLowPassHz;
+                                        au->doppler = dop != 0;
+                                        au->occlude = occ != 0;
+                                        au->distanceLowPass = dlp != 0;
+                                    }
+                                }
                             }
                         }
                     }
@@ -9248,7 +9270,7 @@ void RegisterBuiltinComponentSerializers() {
              ("fshape", v->forceShape)("fx", v->forceDirection.x)("fy", v->forceDirection.y)("fz", v->forceDirection.z)
              .b("flocal", v->forceLocal)("fstr", v->forceStrength)
              .col("fog", v->fogColor)("fstart", v->fogStart)("fend", v->fogEnd)("vig", v->vignette)("blend", v->blend)
-             ("fade", v->fadeTime);
+             ("fade", v->fadeTime)("rpre", v->reverbPreset)("ramt", v->reverbAmount);
             out << "\n";
         }
     };
@@ -9266,7 +9288,10 @@ void RegisterBuiltinComponentSerializers() {
         k.i("fshape", v->forceShape); k.f("fx", v->forceDirection.x); k.f("fy", v->forceDirection.y); k.f("fz", v->forceDirection.z);
         k.b("flocal", v->forceLocal); k.f("fstr", v->forceStrength);
         k.col("fog", v->fogColor); k.f("fstart", v->fogStart); k.f("fend", v->fogEnd); k.f("vig", v->vignette); k.f("blend", v->blend);
-        k.f("fade", v->fadeTime);
+        k.f("fade", v->fadeTime); k.i("rpre", v->reverbPreset); k.f("ramt", v->reverbAmount);
+        if (v->reverbPreset < 0 || v->reverbPreset > 3) v->reverbPreset = 0;
+        if (!(v->reverbAmount >= 0.0f)) v->reverbAmount = 0.0f;
+        if (v->reverbAmount > 1.0f) v->reverbAmount = 1.0f;
     };
     ComponentSerializerRegistry::Register(std::move(vol));
 

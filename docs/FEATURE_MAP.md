@@ -243,8 +243,8 @@ Details for every sub-area and numbered part: [docs/feature_map/06-physics.md](f
 
 ## 7. Audio
 
-Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, a music player and saved volume settings. Code is
-`engine/include/okay/Audio/*` (6 headers), `engine/src/Audio/*` (about 1,800 lines) and two components; the host programs
+Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, doppler, occlusion and distance muffling, reverb zones, a music player and saved volume settings. Code is
+`engine/include/okay/Audio/*` (7 headers), `engine/src/Audio/*` and two components; the host programs
 (`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
 model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
@@ -252,7 +252,7 @@ Details for every sub-area and numbered part: [docs/feature_map/07-audio.md](fea
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [7.1](feature_map/07-audio.md#71-mixer-and-audio-mixer) | Mixer and Audio Mixer | Works | The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice and distance panning... | only four fixed groups (no user-made buses, effect chain or snapshots); low-pass is the only effect; no reverb, occlusion or... |
+| [7.1](feature_map/07-audio.md#71-mixer-and-audio-mixer) | Mixer and Audio Mixer | Works | The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice, distance panning, and... | only four fixed groups (no user-made buses, effect chain or snapshots); levels set in the editor panel are for the editor session... |
 | [7.2](feature_map/07-audio.md#72-formats-and-clips) | Formats and clips | Works | Audio files (WAV, OGG, MP3) are decoded once into float clips that keep their channels (mono or stereo; downmix only on request) at the mixer's rate... | the Vorbis decoder rejects more than 32 channels and codebooks that claim more than 2M entries, and floor type 0 (written by no... |
 | [7.3](feature_map/07-audio.md#73-audio-sources-and-music-player) | Audio sources and music player | Works | The AudioSource component plays a clip or, with Stream, a file read as it plays, with volume, pitch, pan or balance, loop, seek, 3D falloff... | one listener (the main camera); Seek is C++ only (no script or visual-script call); the editor Add Component menu labels and... |
 | [7.4](feature_map/07-audio.md#74-saved-volume-settings) | Saved volume settings | Works | The player's master, group volumes and mutes are saved to Prefs (`audio.*` keys) and loaded on the next start; the Pause Menu and Settings screen... | the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from... |
@@ -333,7 +333,7 @@ Details for every sub-area and numbered part: [docs/feature_map/11-gameplay-syst
 | [11.9](feature_map/11-gameplay-systems.md#119-rpg-stats-and-xp) | RPG stats and XP | Works | A simple RPG character sheet: health, mana, level and XP with attributes, damage mitigated by defense, healing and levelling that fire script events. | a fourth health model next to HealthStat, SurvivalStats and NPCController (possible duplication, see 11.4); no skill tree, buff... |
 | [11.10](feature_map/11-gameplay-systems.md#1110-no-code-behaviours-move-spin-lifetime) | No-code behaviours: move, spin, lifetime | Works | Three tiny components that need no script: Mover (constant velocity), Spinner (constant rotation) and Lifetime (destroy after N seconds). | the Lifetime header says it counts from when the scene starts running (ambiguous for objects spawned later; not checked); no... |
 | [11.11](feature_map/11-gameplay-systems.md#1111-world-drag-and-drop) | World drag and drop | Works | Lets players drag world-space sprites with the mouse and drop them on drop zones, with snap and tag filtering and script callbacks. | no doc; world-space only (the UI version, `UIDraggable`, is area 12); 2D orthographic camera only |
-| [11.12](feature_map/11-gameplay-systems.md#1112-volumes-and-zones) | Volumes and zones | Works | One region shape (box, sphere or cylinder, no collider needed) with five zone kinds: checkpoint and kill (a respawn point per body), force (wind... | no reverb (the mixer has only a low-pass), no per-scene post settings beyond fog and vignette, no navigation-area volume, no... |
+| [11.12](feature_map/11-gameplay-systems.md#1112-volumes-and-zones) | Volumes and zones | Works | One region shape (box, sphere or cylinder, no collider needed) with six zone kinds: checkpoint and kill (a respawn point per body), force (wind... | no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D... |
 
 ## 12. In-game UI
 

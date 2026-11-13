@@ -63,6 +63,11 @@ add_executable(test_audio_mixer test_audio_mixer.cpp)
 target_link_libraries(test_audio_mixer PRIVATE okay::engine)
 add_test(NAME audio_mixer COMMAND test_audio_mixer)
 
+add_executable(test_spatial_audio test_spatial_audio.cpp)
+target_link_libraries(test_spatial_audio PRIVATE okay::engine)
+target_compile_definitions(test_spatial_audio PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME spatial_audio COMMAND test_spatial_audio)
+
 add_executable(test_audio_formats test_audio_formats.cpp)
 target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

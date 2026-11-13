@@ -1,6 +1,7 @@
 // Node Playground: every high-level gameplay node is used in a demo scene, and
 // every demo scene loads and runs without a visual-script error.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include <Okay.hpp>
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -58,6 +59,7 @@ static void OnErr(const vs::VsRuntimeError& e) {
 
 int main() {
     RUN_SUITE("vs_playground");
+    okaytest::Sandbox sandbox("vs_playground", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     const std::string dir = Dir();
     CHECK(std::filesystem::exists(dir));
 
@@ -116,5 +118,6 @@ int main() {
     CHECK(ran == 19);
     vs::SetRuntimeErrorHook(nullptr);
     Time::SetTimeScale(1);
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

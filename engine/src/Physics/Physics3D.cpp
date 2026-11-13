@@ -1518,6 +1518,7 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
         Vec3 n, p;
         if (skipStartOverlaps && ShapeTouch(c, q, n, p)) continue;
         Vec3 mn, mx; c->WorldAABB(mn, mx);
+        if (!(std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z))) continue;   // NaN or infinite bounds: not a place to hit
         float t0, t1;
         if (!RaySlabs(o, dir, mn - ext, mx + ext, t0, t1)) continue;
         if (t1 < 0.0f || t0 > maxDist) continue;
@@ -1528,10 +1529,15 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
     if (cands.empty()) return best;
     if (dir.SqrMagnitude() < 1e-12f) hi = lo;   // no direction: just test where it stands
     float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    // A NaN or infinite reach (or shape) gives a span the march cannot walk: nothing to find.
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !std::isfinite(step)) return best;
     if ((hi - lo) / step > 20000.0f) step = (hi - lo) / 20000.0f;   // bound the work
     float prev = lo;
+    // The count is the backstop: far from the origin one step can be smaller than the float
+    // spacing (t + step == t), and a float comparison alone would then never end the march.
+    int samples = 0;
     for (float t = lo; ; t += step) {
-        bool last = t >= hi;
+        bool last = t >= hi || ++samples > 20002;   // the 20000-step bound above, plus the first and last samples
         if (last) t = hi;
         QueryShape s = q.Moved(dir * t);
         float bestT = 1e30f; Collider3D* bestC = nullptr;

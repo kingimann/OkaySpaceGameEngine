@@ -78,7 +78,7 @@ inline int VsSubOrder(const char* sub) {
         "Loops", "Timing", "Functions",
         "Compare", "Change", "Shared", "Saved", "Story",
         "Random", "Vectors", "Angles", "Curves",
-        "Lists", "Maps",
+        "Lists", "Maps", "Structs", "Color",
         "Items", "Appearance", "Lines", "Survival",
         "Turn", "Size", "Tweens",
         "Character", "IK", "Cutscenes",
@@ -191,6 +191,8 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
     if (VsIs(type, "ShuffleList") || VsIs(type, "ListMin") || VsIs(type, "ListMax"))
         return VsAt("Lists & Maps", "Lists");
     if (VsPre(type, "Map") || VsIs(type, "NewMap")) return VsAt("Lists & Maps", "Maps");
+    if (VsIs(type, "StructNew") || VsIs(type, "StructGet") || VsIs(type, "StructSet")) return VsAt("Lists & Maps", "Structs");
+    if (VsIs(type, "MakeColor") || VsIs(type, "SplitColor")) return VsAt("Math", "Color");
     if (VsIs(type, "IsValid")) return VsAt("Math", "Compare");
     if (VsIs(type, "NotAnd") || VsIs(type, "NotOr") || VsIs(type, "AllTrue") || VsIs(type, "AnyTrue") ||
         VsIs(type, "IsEven") || VsIs(type, "IsOdd") || VsIs(type, "PickByIndex") || VsIs(type, "FirstValid") ||

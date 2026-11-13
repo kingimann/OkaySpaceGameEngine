@@ -3552,7 +3552,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     if (auto* no = go->GetComponent<NavMeshObstacle>()) {
         out << "  navobstacle";
         KvOut k{out};
-        k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z);
+        k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z)
+         ("shape", (int)no->shape)("cr", no->capsuleRadius)("ch", no->capsuleHeight).b("carve", no->carve)
+         .b("still", no->carveOnlyWhenStationary)("tts", no->timeToStationary)("move", no->moveThreshold);
         out << "\n";
     }
     // ---- Dialogue and quests: own key=value records, so older scenes skip nothing
@@ -8439,6 +8441,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     KvIn k(in);
                     k.f("sx", no->size.x); k.f("sy", no->size.y); k.f("sz", no->size.z);
                     k.f("cx", no->center.x); k.f("cy", no->center.y); k.f("cz", no->center.z);
+                    int sh = 0; k.i("shape", sh); no->shape = (NavMeshObstacle::Shape)std::clamp(sh, 0, 1);
+                    k.f("cr", no->capsuleRadius); k.f("ch", no->capsuleHeight);
+                    k.b("carve", no->carve); k.b("still", no->carveOnlyWhenStationary);
+                    k.f("tts", no->timeToStationary); k.f("move", no->moveThreshold);
                 } else if (field == "storystate") {
                     // Dialogue + quests: the story's global variables and flags.
                     auto* st = go->AddComponent<StoryState>();

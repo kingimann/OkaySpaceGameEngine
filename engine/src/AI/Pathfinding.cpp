@@ -21,9 +21,12 @@ std::vector<Pathfinding::Cell> Pathfinding::AStar(
     };
 
     if (width <= 0 || height <= 0) return {};
+    // The product is taken in 64 bits: as an int it wraps for large grids, which sized the work
+    // arrays short while the cell indices still ran past them. A grid over the limit has no path.
+    if (static_cast<long long>(width) * height > kMaxCells) return {};
     if (!passable(sx, sy) || !passable(gx, gy)) return {};
 
-    const int N = width * height;
+    const int N = width * height;   // at most kMaxCells, so it fits
     auto idx = [&](int x, int y) { return y * width + x; };
 
     std::vector<float> g(N, std::numeric_limits<float>::infinity());
@@ -96,6 +99,7 @@ std::vector<Pathfinding::Cell> Pathfinding::AStar(
 std::vector<Pathfinding::Cell> Pathfinding::OnTilemap(
     const Tilemap& map, int sx, int sy, int gx, int gy, bool allowDiagonal) {
     int w = map.Width(), h = map.Height();
+    if (static_cast<long long>(w) * h > kMaxCells) return {};   // before the walkable copy is made
     std::vector<bool> walkable(static_cast<std::size_t>(w) * h, false);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x)

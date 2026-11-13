@@ -408,5 +408,47 @@ int main() {
         CHECK(Dist2D(g->transform->Position(), {-5, 0, 2}) < 1.0f);
     }
 
+    // --- A hostile .navmesh must be refused or load safely, never abort the load ---
+    // (an infinite or enormous extent made the cell grid size a garbage int, and the
+    // grid allocation threw std::length_error out of Deserialize)
+    {
+        auto mesh = [](const char* v0, const char* v1, const char* v2, const char* v3) {
+            return std::string("okaynav 1\nverts 4\n") + "v " + v0 + "\nv " + v1 + "\nv " + v2 + "\nv " + v3 +
+                   "\npolys 1\np 0 1 2 3 0\nlinks 0\n";
+        };
+        const char* bad[][4] = {
+            {"0 0 0", "inf 0 0", "inf 0 inf", "0 0 inf"},
+            {"nan 0 0", "1 0 0", "1 0 1", "0 0 1"},
+            {"-inf 0 -inf", "1 0 0", "1 0 1", "0 0 1"},
+        };
+        for (auto& b : bad) {
+            NavMesh m; std::string err; bool ok = true, threw = false;
+            try { ok = m.Deserialize(mesh(b[0], b[1], b[2], b[3]), &err); } catch (...) { threw = true; }
+            CHECK(!threw);
+            CHECK(!ok);                                          // refused with a message, not loaded
+            CHECK(!err.empty());
+            CHECK(m.polys.empty());
+        }
+        // Finite but astronomically large: the extent overflows float. Must not throw; queries stay safe.
+        {
+            NavMesh m; std::string err; bool threw = false;
+            try { m.Deserialize(mesh("-3e38 0 -3e38", "3e38 0 -3e38", "3e38 0 3e38", "-3e38 0 3e38"), &err); }
+            catch (...) { threw = true; }
+            CHECK(!threw);
+            std::vector<Vec3> path;
+            threw = false;
+            try { m.FindPath({0, 0, 0}, {1, 0, 1}, path); } catch (...) { threw = true; }
+            CHECK(!threw);
+        }
+        // Large but finite: the grid is capped, so this loads and answers queries.
+        {
+            NavMesh m; std::string err;
+            CHECK(m.Deserialize(mesh("0 0 0", "100000000 0 0", "100000000 0 100000000", "0 0 100000000"), &err));
+            CHECK(m.polys.size() == 1);
+            Vec3 out;
+            CHECK(m.SamplePosition({5, 0, 5}, 1.0f, out));
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

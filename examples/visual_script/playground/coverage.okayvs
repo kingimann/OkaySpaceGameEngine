@@ -1383,8 +1383,10 @@ node 1457 Fn.wrap
 node 1458 Fn.wrap_in_box
 node 1459 Fn.write_save
 node 1460 Fn.zoom_camera
-node 1461 Fn.weapon_ammo
-node 1462 Fn.weapon_fire
-node 1463 Fn.weapon_reload
-node 1464 Fn.weapon_set
-node 1465 Fn.weapon_swing
+node 1461 Fn.get_clipboard_text
+node 1462 Fn.set_clipboard_text
+node 1463 Fn.weapon_ammo
+node 1464 Fn.weapon_fire
+node 1465 Fn.weapon_reload
+node 1466 Fn.weapon_set
+node 1467 Fn.weapon_swing

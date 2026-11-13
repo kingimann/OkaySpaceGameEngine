@@ -1,11 +1,14 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// Joint3D — a positional constraint between this body and either a world anchor or
-// another Rigidbody3D. Solved each physics step by Physics3D (impulse + position
-// correction). Three modes (all linear — no angular/hinge yet):
+// Joint3D — a constraint between this body and either a world anchor or another
+// Rigidbody3D. Solved each physics step by Physics3D (impulse + position correction):
 //   * Distance — keep the two points a fixed distance apart (a rigid rod / taut rope).
 //   * Spring   — a damped Hookean spring pulling toward the rest length (bouncy).
 //   * Pin      — weld: lock this body to the anchor/other body at their start offset.
+//   * Hinge    — pin a point and spin about `axis`. Optional motor. Optional angle
+//                limits (degrees from the pose at the start) clamped with
+//                Math/JointLimit.hpp, so a door or lever stops instead of spinning
+//                a full circle. Limits are off until `useLimits` is set.
 //
 // Put it on the dynamic body. Leave `connectedBody` empty to anchor to a fixed world
 // point (`anchor`); set it to another object's name to link two bodies.
@@ -37,6 +40,9 @@ public:
     bool  useMotor = false;           ///< drive the spin about the axis toward motorSpeed
     float motorSpeed = 0.0f;          ///< target angular speed about the axis (deg/s)
     float maxMotorTorque = 1000.0f;   ///< torque the motor can apply to reach it
+    bool  useLimits = false;          ///< clamp the hinge angle to [minAngle, maxAngle]
+    float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle)
+    float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle)
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;

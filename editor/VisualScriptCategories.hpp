@@ -110,6 +110,7 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     std::string low = name ? name : "";
     for (char& c : low) c = (char)std::tolower((unsigned char)c);
     auto has = [&](const char* t) { return VsTokenIs(low, t); };
+    if (has("clipboard")) return VsAt("Text");   // get_clipboard_text, set_clipboard_text
     if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
         return VsAt("Debug");
     if (low.rfind("game_", 0) == 0 && (has("save") || has("load") || has("slot") || has("continue") || has("autosave")))

@@ -49,6 +49,10 @@ inline const char* VsStepCatBlurb(bool cond) {
 
 inline const char* VsNodeHelp(const char* type) {
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
+        if (std::strcmp(type, "Fn.get_clipboard_text") == 0)
+            return "The text on the clipboard. Empty when there is nothing to paste.";
+        if (std::strcmp(type, "Fn.set_clipboard_text") == 0)
+            return "Puts the text wired into First onto the clipboard. Control characters are removed, and text past the limit is cut short.";
         // The builtins that end the game or replace the scene say so, because they cannot be undone mid-play.
         const std::string t = type;
         if (t.find("quit") != std::string::npos || t.find("Quit") != std::string::npos)

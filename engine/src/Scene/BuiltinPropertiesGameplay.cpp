@@ -912,7 +912,10 @@ void RegisterJoint3D() {
      .AddVec3("axis", &Joint3D::axis).Range(-kBig, kBig, 0.1).Tooltip("World hinge axis the body may spin about")
      .AddBool("useMotor", &Joint3D::useMotor).Tooltip("Drive the spin about the axis toward motorSpeed")
      .AddFloat("motorSpeed", &Joint3D::motorSpeed).Range(-10000, 10000, 0.1).Tooltip("Target angular speed about the axis (deg/s)")
-     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it");
+     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it")
+     .AddBool("useLimits", &Joint3D::useLimits).Tooltip("Clamp the hinge angle to [minAngle, maxAngle]")
+     .AddFloat("minAngle", &Joint3D::minAngle).Range(-360, 360, 1).Tooltip("Lower limit (deg, relative to the start angle)")
+     .AddFloat("maxAngle", &Joint3D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)");
     b.Commit();
 }
 

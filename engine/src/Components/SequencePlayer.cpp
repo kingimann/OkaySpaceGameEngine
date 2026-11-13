@@ -8,6 +8,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Subtitles.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -79,6 +80,7 @@ bool SequencePlayer::Play(const std::string& path) {
 }
 
 void SequencePlayer::Finish() {
+    if (m_capId) { CaptionManager::Main().Cancel(m_capId); m_capId = 0; m_capKey.clear(); }
     if (!m_playing) return;
     m_playing = false; m_paused = false; m_waiting = false;
     m_binding.RestoreCamera();
@@ -284,6 +286,7 @@ void SequencePlayer::Update(float dt) {
     if (!m_playing) return;
     if (skipKey && Input::GetKeyDown(skipKey)) { Skip(); return; }
     Step(dt);
+    FeedSubtitle();
 }
 
 void SequencePlayer::LateUpdate(float) {
@@ -329,7 +332,30 @@ bool SequencePlayer::PlayByName(Scene& scene, GameObject* from, const std::strin
 }
 
 // ---- Overlay ------------------------------------------------------------------------
-std::vector<LoadingDrawCmd> SequencePlayer::BuildOverlay(const SeqOverlay& ov, float W, float H) {
+void SequencePlayer::FeedSubtitle() {
+    if (!m_playing || m_skipping) {
+        if (m_capId) { CaptionManager::Main().Cancel(m_capId); m_capId = 0; m_capKey.clear(); }
+        return;
+    }
+    const SeqOverlay o = Overlay();
+    if (o.text.empty() || o.subtitle < 0.02f) {
+        if (m_capId) { CaptionManager::Main().Cancel(m_capId); m_capId = 0; m_capKey.clear(); }
+        return;
+    }
+    const std::string key = o.speaker + "\n" + o.text;
+    if (key == m_capKey && m_capId) return;
+    if (m_capId) CaptionManager::Main().Cancel(m_capId);
+    m_capKey = key;
+    SubtitleLine line;
+    line.speaker = o.speaker;
+    line.text = o.text;
+    line.duration = 30.0f;   // the overlay clears it when the cue ends
+    line.priority = 1;
+    m_capId = CaptionManager::Main().Say(line);
+    if (!m_capId) m_capKey.clear();
+}
+
+std::vector<LoadingDrawCmd> SequencePlayer::BuildOverlay(const SeqOverlay& ov, float W, float H, bool drawSubtitle) {
     using K = LoadingDrawCmd::Kind;
     std::vector<LoadingDrawCmd> out;
     if (W <= 0.0f || H <= 0.0f) return out;
@@ -340,7 +366,7 @@ std::vector<LoadingDrawCmd> SequencePlayer::BuildOverlay(const SeqOverlay& ov, f
     }
     // The subtitle card: the launcher's slate panel with a hairline border, the
     // speaker in the accent colour above the line, low on the screen.
-    if (!ov.text.empty() && ov.subtitle > 0.001f) {
+    if (drawSubtitle && !ov.text.empty() && ov.subtitle > 0.001f) {
         const float a = Mathf::Clamp01(ov.subtitle);
         const float th = Mathf::Clamp(H * 0.03f, 14.0f, 28.0f);        // text height
         const float sh = ov.speaker.empty() ? 0.0f : th * 0.85f;        // speaker line

@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/AudioStream.hpp"
+#include "okay/Core/Subtitles.hpp"
 #include <cmath>
 #include <memory>
 #include <string>
@@ -49,6 +50,9 @@ public:
     AudioGroup group = AudioGroup::SFX;
     bool  loop = false;
     bool  playOnAwake = false;
+    /// Shown as a sound caption ("[door slams]") when this source plays, and only
+    /// while the player's sound captions are on. Empty means no caption.
+    std::string caption;
     /// 3D positional audio: when true, the mixer fades the source by its
     /// distance to the listener (AudioMixer::SetListener) and pans it to the
     /// side it is on. Full volume within minDistance, silent past maxDistance.
@@ -122,7 +126,10 @@ public:
     /// One-shots still sounding (PlayOneShot), not counting the main clip.
     std::size_t ActiveOneShots() const { return m_shots.size(); }
 
-    void Play()  { m_playing = true; m_pos = 0.0; RewindStream(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false; }
+    void Play()  {
+        m_playing = true; m_pos = 0.0; RewindStream(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false;
+        if (!caption.empty()) CaptionManager::Main().Sound(caption, Duration());
+    }
     void Stop()  { m_playing = false; m_pos = 0.0; m_shots.clear(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false; }
 
     /// Start from silence and rise to full volume over `seconds` (restarts the

@@ -169,6 +169,85 @@ int main() {
         CHECK(ok.parts[0].mesh.normals.size() == ok.parts[0].mesh.vertices.size());
     }
 
+    // Issue #752. Two ASCII files that declare `element vertex` twice. The first
+    // block carries nx/ny/nz and the second does not, so the second block's
+    // vertices used to come back with the first block's normals (the reported
+    // value was (0,1,0)). The second file gives the blocks different property
+    // subsets, which used to concatenate normals and UVs that no longer lined up
+    // with positions. Both are a parse error, and a single block of the same
+    // data still keeps the authored normal (not the face normal) and its UVs.
+    {
+        auto rejected = [](const std::string& ply) {
+            ImportedModel m; std::string e;
+            CHECK(!ReadPlyBuffer(ply, m, &e));
+            CHECK(e.find("more than one vertex element") != std::string::npos);
+            CHECK(m.parts.empty());
+        };
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 0 1\n0 0 1 0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0 0 0\n0 0 1 1 1\n3 0 1 2\n");
+        const std::string single =
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 1 0 0 1\n3 0 1 2\n";
+        ImportedModel one; std::string e;
+        CHECK(ReadPlyBuffer(single, one, &e));
+        if (!one.parts.empty()) {
+            const Mesh& me = one.parts[0].mesh;
+            CHECK(me.vertices.size() == 3 && me.normals.size() == 3 && me.uvs.size() == 3);
+            for (const Vec3& n : me.normals) { CHECK_NEAR(n.x, 0.0, 1e-6); CHECK_NEAR(n.y, 1.0, 1e-6); CHECK_NEAR(n.z, 0.0, 1e-6); }
+            CHECK_NEAR(me.uvs[0].y, 1.0, 1e-6);
+            CHECK_NEAR(me.uvs[2].x, 0.0, 1e-6); CHECK_NEAR(me.uvs[2].y, 0.0, 1e-6);
+        }
+        // The same bytes through ImportModelScene (the path the report exercised).
+        SetImportBackend(".ply", ImportBackend::Own);
+        Spit("mr_dup_vertex.ply",
+             "ply\nformat ascii 1.0\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "property float nx\nproperty float ny\nproperty float nz\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+             "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        Scene dup; dup.physicsEnabled = false;
+        bool dok = true; GameObject* dr = ImportModelScene(dup, "mr_dup_vertex.ply", &dok);
+        CHECK(!dok && dr == nullptr);
+        int meshes = 0; for (const auto& go : dup.Objects()) if (go->GetComponent<MeshRenderer>()) ++meshes;
+        CHECK(meshes == 0);
+        // Assimp loads this file. The seam must still refuse it, including when
+        // Assimp is the backend the default choice would have used.
+        SetImportBackend(".ply", ImportBackend::Default);
+        Scene dupAssimp; dupAssimp.physicsEnabled = false;
+        bool aok = true; GameObject* ar = ImportModelScene(dupAssimp, "mr_dup_vertex.ply", &aok);
+        CHECK(!aok && ar == nullptr);
+        ImportedModel via; std::string ae;
+        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Assimp, false, &ae));
+        CHECK(ae.find("more than one vertex element") != std::string::npos);
+        CHECK(via.parts.empty());
+        std::remove("mr_dup_vertex.ply");
+        SetImportBackend(".ply", ImportBackend::Default);
+    }
+
     // ---------------- OBJ + MTL ----------------
     ImportedModel obj;
     {

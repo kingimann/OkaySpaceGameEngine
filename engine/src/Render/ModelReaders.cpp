@@ -553,6 +553,14 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
             if (elems.size() >= 64) return Fail(err, "too many PLY elements");
             char* q = nullptr; unsigned long long c = std::strtoull(w[2].c_str(), &q, 10);
             if (!q || *q != '\0' || w[2][0] == '-') return Fail(err, "bad PLY element count");
+            // A second `element vertex` is not another slice of one vertex list.
+            // Reading it used to keep the first block's normal bytes on the second
+            // block's vertices, or concatenate a different property subset so
+            // normals and UVs no longer lined up with positions. Refuse it here,
+            // before any vertex is written.
+            if (w[1] == "vertex")
+                for (const PlyElement& prev : elems)
+                    if (prev.name == "vertex") return Fail(err, "PLY declares more than one vertex element");
             PlyElement e; e.name = w[1]; e.count = c; elems.push_back(std::move(e));
         } else if (w[0] == "property") {
             if (elems.empty()) return Fail(err, "PLY property before any element");
@@ -586,8 +594,8 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
         const bool isVertex = el.name == "vertex", isFace = el.name == "face";
         int ix = -1, iy = -1, iz = -1, inx = -1, iny = -1, inz = -1, iu = -1, iv = -1, ifaceList = -1;
         if (isVertex) {
-            // A second vertex element would leave the normals / UVs of the two blocks
-            // out of step with the vertex list (hasN true, fewer normals than vertices).
+            // Header parsing rejects this first. This is the write-site guard: a
+            // second block must not append positions onto normals/UVs from the first.
             if (sawVertex) return Fail(err, "PLY declares more than one vertex element");
             for (std::size_t k = 0; k < el.props.size(); ++k) {
                 const std::string& n = el.props[k].name; int ki = (int)k;
@@ -654,6 +662,10 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
     for (std::uint32_t i : faceIdx) if (i >= mesh.vertices.size()) return Fail(err, "PLY face index out of range");
     mesh.triangles.assign(faceIdx.begin(), faceIdx.end());
     if (!hasN) mesh.ComputeSmoothNormals();   // what Assimp's GenSmoothNormals does for the same file
+    // Normals cover every position (authored, or the smooth fill above). UVs are
+    // all or nothing: a short list would be read as belonging to the wrong vertices.
+    if (mesh.normals.size() != mesh.vertices.size()) return Fail(err, "PLY normals do not cover every vertex");
+    if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.vertices.size()) return Fail(err, "PLY UVs do not cover every vertex");
     out.parts.resize(1);
     out.parts[0].mesh = std::move(mesh);
     return true;
@@ -671,6 +683,64 @@ bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err) 
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err) {
     std::string d; if (!ReadAllBytes(path, kMaxFileBytes, d, err)) return false;
     return ReadPlyBuffer(d, out, err);
+}
+
+bool PlyFileDeclaresDuplicateVertex(const std::string& path) {
+    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    if (!fp) return false;
+    std::string pending;
+    pending.reserve(8192);
+    char buf[4096];
+    int vertexElems = 0;
+    int headerLines = 0;
+    bool sawMagic = false;
+    bool done = false;
+    bool duplicate = false;
+    auto words = [](const std::string& l) {
+        std::vector<std::string> w; std::size_t i = 0;
+        while (i < l.size()) {
+            while (i < l.size() && IsSpace(l[i])) ++i;
+            std::size_t a = i;
+            while (i < l.size() && !IsSpace(l[i])) ++i;
+            if (i > a) w.push_back(l.substr(a, i - a));
+        }
+        return w;
+    };
+    auto take = [&](std::string line) {
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!sawMagic) {
+            if (Trim(line).empty()) return;
+            sawMagic = true;
+            if (Trim(line) != "ply") done = true;
+            return;
+        }
+        if (++headerLines > 4096) { done = true; return; }
+        std::vector<std::string> w = words(line);
+        if (w.empty() || w[0] == "comment" || w[0] == "obj_info") return;
+        if (w[0] == "end_header") { done = true; return; }
+        if (w[0] == "element" && w.size() == 3 && w[1] == "vertex" && ++vertexElems > 1) {
+            duplicate = true;
+            done = true;
+        }
+    };
+    std::size_t got = 0;
+    while (!done && got < 1024u * 1024u) {
+        std::size_t n = std::fread(buf, 1, sizeof(buf), fp);
+        if (n == 0) break;
+        got += n;
+        pending.append(buf, n);
+        std::size_t start = 0;
+        for (;;) {
+            std::size_t nl = pending.find('\n', start);
+            if (nl == std::string::npos) { pending.erase(0, start); break; }
+            take(pending.substr(start, nl - start));
+            start = nl + 1;
+            if (done) break;
+        }
+    }
+    if (!done && !pending.empty()) take(pending);
+    std::fclose(fp);
+    return duplicate;
 }
 
 } // namespace okay

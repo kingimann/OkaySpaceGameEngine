@@ -129,6 +129,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -8418,26 +8419,42 @@ struct OkayScriptVM::Impl {
             return Value{s};
         };
         // Repeat a string n times ("=" * 10 style separators/bars).
-        b["repeat"] = [](std::vector<Value>& a) {
+        // Script-supplied counts are capped so one line can't hang the frame or
+        // exhaust memory (issue #719); longer results are truncated, not errors.
+        constexpr int kMaxRepeatCount = 1 << 20;
+        auto repeatCount = [](std::vector<Value>& a) {
+            const double raw = a.size() > 1 ? a[1].AsFloat() : 0.0;
+            if (!(raw > 0.0)) return 0;   // also covers NaN
+            const double capped = raw < (double)kMaxRepeatCount ? raw : (double)kMaxRepeatCount;
+            return (int)capped;
+        };
+        b["repeat"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
-            std::string s = a[0].AsString(), out;
-            int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+            const std::string s = a[0].AsString();
+            int n = repeatCount(a);
+            // A cap can still make n copies of a long s huge, so the budget is on
+            // the result size: shrink the count until it fits.
+            if (!s.empty()) {
+                const std::size_t maxLen = (std::size_t)kMaxRepeatCount * s.size() > (1u << 22) ? (1u << 22) / s.size() : kMaxRepeatCount;
+                if ((std::size_t)n > maxLen) n = (int)maxLen;
+            }
+            std::string out;
             for (int i = 0; i < n; ++i) out += s;
             return Value{out};
         };
         // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"
-        b["pad_left"] = [](std::vector<Value>& a) {
+        b["pad_left"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+            const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s.insert(s.begin(), fill);
             return Value{s};
         };
-        b["pad_right"] = [](std::vector<Value>& a) {
+        b["pad_right"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+            const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s += fill;
             return Value{s};
@@ -8458,8 +8475,14 @@ struct OkayScriptVM::Impl {
                         } else {
                             bool num = !inside.empty();
                             for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
-                            if (num) { std::size_t idx = (std::size_t)std::stoi(inside) + 1;
-                                       if (idx < a.size()) out += a[idx].AsString(); }
+                            // Digits only, parsed without exceptions: std::stoi throws
+                            // std::out_of_range on a huge index and aborts the frame
+                            // (issue #719). An index beyond the args is an empty field.
+                            if (num) {
+                                long long idx = 0;
+                                const auto r = std::from_chars(inside.data(), inside.data() + inside.size(), idx);
+                                if (r.ec == std::errc() && idx >= 0 && (std::size_t)idx + 1 < a.size()) out += a[(std::size_t)idx + 1].AsString();
+                            }
                             else { out += '{'; out += inside; out += '}'; }   // leave literal
                         }
                         i = close;

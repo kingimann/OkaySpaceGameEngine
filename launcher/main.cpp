@@ -4974,18 +4974,20 @@ struct VoiceClip {
     std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
-    ~VoiceClip() { if (pcmIsSdl && pcm) { SDL_FreeWAV(pcm); } pcm = nullptr; }   // never leak the SDL_LoadWAV buffer
+    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
+    // released at load, so there is no SDL buffer left for this destructor to free (#718).
+    ~VoiceClip() = default;
     VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
     VoiceClip& operator=(const VoiceClip&) = delete;
     VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
     VoiceClip& operator=(VoiceClip&& o) noexcept {
         if (this != &o) {
-            if (pcmIsSdl && pcm) SDL_FreeWAV(pcm);
-            ok = o.ok; pcm = o.pcm; len = o.len; pcmIsSdl = o.pcmIsSdl; spec = o.spec;
+            ok = o.ok; pcm = o.pcm; len = o.len; spec = o.spec;
             secs = o.secs; bytesPerSec = o.bytesPerSec;
             for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
             owned = std::move(o.owned); fast = std::move(o.fast);
-            o.pcm = nullptr; o.len = 0; o.pcmIsSdl = false; o.ok = false;
+            // pcm pointed into o.owned; vector move transfers that buffer, so the pointer stays valid.
+            o.pcm = nullptr; o.len = 0; o.ok = false;
         }
         return *this;
     }
@@ -4998,11 +5000,10 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
-    // The samples are read from the SDL_LoadWAV buffer; once the converted
-    // samples live in c.owned, that original buffer is freed here (it used to
-    // be dropped on the floor when c.pcm was re-pointed).
-    Uint8* sdlPcm = c.pcm;
-    const bool wasSdl = c.pcmIsSdl;
+    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
+    // and frees it before this runs, so the bytes are read from `owned` and the
+    // old vector storage is released when it is replaced. SDL_FreeWAV here would
+    // free that storage a second time (#718).
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -5027,7 +5028,6 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     c.owned = std::move(out);
     c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
     c.spec.format = AUDIO_S16SYS;
-    if (wasSdl && sdlPcm) { SDL_FreeWAV(sdlPcm); c.pcmIsSdl = false; }   // conversion consumed the SDL buffer
 }
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev

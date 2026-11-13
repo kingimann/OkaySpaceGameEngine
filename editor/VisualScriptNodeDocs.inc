@@ -2288,6 +2288,58 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "GridMoveTo";
+        d.title = "Walk the Grid";
+        d.description = "Sends this object's Grid Path Agent walking to the cell that contains world point X, Y.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target), and a tilemap in the scene. Runs in Play mode.";
+        d.component = "GridPathAgent2D";
+        d.example = "Put Walk the Grid after On Start, and type the world point into X and Y.";
+        d.related = "Stop Grid Walk, Grid Arrived";
+        d.keywords = "grid path, tilemap, walk";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Walk the Grid runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Walk the Grid finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "X", "Number", "World X of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Y", "Number", "World Y of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GridStop";
+        d.title = "Stop Grid Walk";
+        d.description = "Stops this object's Grid Path Agent where it is and drops the path.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target). Runs in Play mode.";
+        d.component = "GridPathAgent2D";
+        d.example = "Put Stop Grid Walk on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "Walk the Grid";
+        d.keywords = "grid stop, path";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Stop Grid Walk runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Stop Grid Walk finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GridArrived";
+        d.title = "Grid Arrived";
+        d.description = "True once the Grid Path Agent reached its last cell.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target). False when there is none.";
+        d.component = "GridPathAgent2D";
+        d.example = "Wire Grid Arrived's Arrived output into a Branch, to do something when the walk finishes.";
+        d.related = "Walk the Grid";
+        d.keywords = "grid arrived, path done";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Arrived", "Bool", "True once the last cell was reached. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "BtSet";
         d.title = "Set Blackboard";
         d.description = "Writes a value into the Behavior Tree Runner's blackboard (the key is the setting).";

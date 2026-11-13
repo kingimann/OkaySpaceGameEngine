@@ -438,8 +438,16 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `get_y` | `Fn.get_y` |
 | `get_z` | `Fn.get_z` |
 | `grid_add` | `Fn.grid_add` |
+| `grid_arrived` | `Fn.grid_arrived` |
+| `grid_block` | `Fn.grid_block` |
+| `grid_clear` | `Fn.grid_clear` |
 | `grid_fits` | `Fn.grid_fits` |
+| `grid_move_cell` | `Fn.grid_move_cell` |
+| `grid_move_to` | `Fn.grid_move_to` |
+| `grid_set_cell_cost` | `Fn.grid_set_cell_cost` |
+| `grid_set_tile_cost` | `Fn.grid_set_tile_cost` |
 | `grid_snap` | `Fn.grid_snap` |
+| `grid_stop` | `Fn.grid_stop` |
 | `grid_weight` | `Fn.grid_weight` |
 | `group_volume` | `Fn.group_volume` |
 | `has_clip` | `Fn.has_clip` |

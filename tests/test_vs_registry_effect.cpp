@@ -15,6 +15,8 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/Tilemap.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Audio/AudioMixer.hpp"
@@ -122,6 +124,7 @@ static std::string Snapshot(Scene& s) {
         if (auto* st = g->GetComponent<Seat>()) { std::snprintf(b, sizeof b, "ST%d", (int)st->occupied); out += b; }
         if (auto* ch = g->GetComponent<Character>()) { std::snprintf(b, sizeof b, "CH%d", (int)ch->IsPlayingClip()); out += b; }
         if (auto* nv = g->GetComponent<NavMeshAgent>()) { const Vec3 d = nv->Destination(); std::snprintf(b, sizeof b, "NV%.2f,%.2f,%.2f,%d,%d", d.x, d.y, d.z, (int)nv->IsStopped(), (int)nv->Arrived()); out += b; }
+        if (auto* gp = g->GetComponent<GridPathAgent2D>()) { std::snprintf(b, sizeof b, "GP%d,%d,%d", (int)gp->HasGoal(), (int)gp->HasPath(), (int)gp->Arrived()); out += b; }
         if (auto* bt = g->GetComponent<BehaviorTreeRunner>()) { for (const char* k : {"x", "Other", "1", "key"}) if (const BtValue* v = bt->blackboard.Find(k)) out += std::string("BT") + k + Str(v->ToVs()); }
         if (auto* ik = g->GetComponent<FullBodyIK>()) { std::snprintf(b, sizeof b, "IK%d,%.2f,%.2f,%.2f,%.2f", (int)ik->lookEnabled, ik->lookPosition.x, ik->lookPosition.y, ik->lookPosition.z, ik->lookWeight); out += b;
             for (int l : {(int)FullBodyIK::LeftHand, (int)FullBodyIK::RightHand}) { const auto& e = ik->effectors[l]; std::snprintf(b, sizeof b, "E%d,%.2f,%.2f,%.2f,%.2f", (int)e.enabled, e.position.x, e.position.y, e.position.z, e.positionWeight); out += b; } }
@@ -215,6 +218,15 @@ static void RichPopulate(Scene& s, GameObject*& me, int variant) {
         sm->states.push_back(st);
     }
     me->AddComponent<NavMeshAgent>();
+    auto* tiles = s.CreateGameObject("Tiles")->AddComponent<Tilemap>();
+    tiles->Resize(8, 8);
+    me->AddComponent<GridPathAgent2D>();
+    if (variant == 1) {
+        auto* grid = me->GetComponent<GridPathAgent2D>();
+        grid->speed = 0.4f;
+        me->transform->SetPosition(tiles->CellToWorld(0, 0));
+        grid->SetCell(6, 0);
+    }
     me->AddComponent<BehaviorTreeRunner>();
     me->AddComponent<FullBodyIK>();
     auto* ps = me->AddComponent<ParticleSystem>();

@@ -17,6 +17,9 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/Joint3D.hpp"
@@ -806,6 +809,43 @@ void RegisterTriggerZone() {
     b.Commit();
 }
 
+// Grid path agent, its tile prices, and a cell blocker (2D).
+void RegisterGridPathAgent2D() {
+    PropertyBuilder<GridPathAgent2D> b("GridPathAgent2D", "gridpath2d", "Gameplay");
+    b.AddString("mapName", &GridPathAgent2D::mapName).Tooltip("Name of the tilemap to walk. Leave empty to use the first tilemap in the scene")
+     .AddFloat("speed", &GridPathAgent2D::speed).Range(0, 10000, 0.1).Tooltip("How fast it walks, in world units per second")
+     .AddFloat("stopDistance", &GridPathAgent2D::stopDistance).Range(0, 1000, 0.05).Tooltip("How close to the last cell counts as arrived")
+     .AddBool("allowDiagonal", &GridPathAgent2D::allowDiagonal).Tooltip("Also step diagonally. A diagonal step never squeezes between two walls")
+     .AddBool("smoothPath", &GridPathAgent2D::smoothPath).Tooltip("Straighten the route wherever the line of sight is clear, so it is not a staircase of cells")
+     .AddBool("useCosts", &GridPathAgent2D::useCosts).Tooltip("Pay the tilemap's movement costs. Off: only empty tiles are open, and every step costs the same")
+     .AddFloat("repathInterval", &GridPathAgent2D::repathInterval).Range(0, 60, 0.05).Tooltip("Seconds between fresh plans. A new obstacle on the route plans again at once");
+    b.Commit();
+}
+void RegisterGridCostLayer() {
+    PropertyBuilder<GridCostLayer> b("GridCostLayer", "gridcost2d", "Gameplay");
+    b.AddInt("roadTile", &GridCostLayer::roadTile).Range(0, 4095, 1).Tooltip("Tile number that is a road")
+     .AddFloat("roadCost", &GridCostLayer::roadCost).Range(0, 1000, 0.05).Tooltip("How hard a road step is. Lower is cheaper. 0 blocks the tile")
+     .AddInt("mudTile", &GridCostLayer::mudTile).Range(0, 4095, 1).Tooltip("Tile number that is mud")
+     .AddFloat("mudCost", &GridCostLayer::mudCost).Range(0, 1000, 0.05).Tooltip("How hard a mud step is. Higher is slower. 0 blocks the tile")
+     .Custom("extraTiles", PropertyType::String,
+             [](const GridCostLayer& c) { return PropertyValue::MakeString(c.ExtraTiles()); },
+             [](GridCostLayer& c, const PropertyValue& v) { c.SetExtraTiles(v.AsString()); return true; })
+        .Hidden().Tooltip("Other tile prices, written as id:cost,id:cost")
+     .Custom("cellText", PropertyType::String,
+             [](const GridCostLayer& c) { return PropertyValue::MakeString(c.CellText()); },
+             [](GridCostLayer& c, const PropertyValue& v) { c.SetCellText(v.AsString()); return true; })
+        .Hidden().Tooltip("Per-cell prices, written as x,y,cost;x,y,cost");
+    b.Commit();
+}
+void RegisterGridObstacle2D() {
+    PropertyBuilder<GridObstacle2D> b("GridObstacle2D", "gridblock2d", "Gameplay");
+    b.AddString("mapName", &GridObstacle2D::mapName).Tooltip("Name of the tilemap these cells belong to. Leave empty for the first tilemap")
+     .AddInt("cellsWide", &GridObstacle2D::cellsWide).Range(1, 256, 1).Tooltip("How many cells across this blocks")
+     .AddInt("cellsTall", &GridObstacle2D::cellsTall).Range(1, 256, 1).Tooltip("How many cells down this blocks")
+     .AddBool("blocks", &GridObstacle2D::blocks).Tooltip("On: these cells are walls. An agent already walking through them plans a new route");
+    b.Commit();
+}
+
 // FollowTarget2D
 void RegisterFollowTarget2D() {
     PropertyBuilder<FollowTarget2D> b("FollowTarget2D", "follow2d", "Gameplay");
@@ -1122,6 +1162,9 @@ void RegisterGameplayProperties() {
     RegisterJumpPad();
     RegisterTriggerZone();
     RegisterFollowTarget2D();
+    RegisterGridPathAgent2D();
+    RegisterGridCostLayer();
+    RegisterGridObstacle2D();
     RegisterDestructible();
     RegisterDraggable();
     RegisterDropZone();

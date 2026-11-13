@@ -450,6 +450,44 @@ Walks the object along the scene's navigation mesh (the grid when none is baked)
 | `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
 | `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
 
+## GridPathAgent2D
+
+Walks the object over a 2D tilemap. Empty tiles are open until Pay for mud and roads is on. The object needs a Grid Path Agent.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridPathAgent2D>().speed` | `GridPathAgent2D.speed` | value | Target (Object) | speed (Number) | How fast it walks, in world units per second. |
+| `GetComponent<GridPathAgent2D>().speed = speed` | `GridPathAgent2D.speed=` | step | speed (Number), Target (Object) | - | How fast it walks, in world units per second. |
+| `GetComponent<GridPathAgent2D>().allowDiagonal` | `GridPathAgent2D.allowDiagonal` | value | Target (Object) | allowDiagonal (Bool) | Also step diagonally. A diagonal step never squeezes between two walls. |
+| `GetComponent<GridPathAgent2D>().allowDiagonal = allowDiagonal` | `GridPathAgent2D.allowDiagonal=` | step | allowDiagonal (Bool), Target (Object) | - | Also step diagonally. A diagonal step never squeezes between two walls. |
+| `GetComponent<GridPathAgent2D>().smoothPath` | `GridPathAgent2D.smoothPath` | value | Target (Object) | smoothPath (Bool) | Straighten the route wherever the line of sight is clear. |
+| `GetComponent<GridPathAgent2D>().smoothPath = smoothPath` | `GridPathAgent2D.smoothPath=` | step | smoothPath (Bool), Target (Object) | - | Straighten the route wherever the line of sight is clear. |
+| `GetComponent<GridPathAgent2D>().useCosts` | `GridPathAgent2D.useCosts` | value | Target (Object) | useCosts (Bool) | Pay the tilemap's movement costs. Off keeps every open cell the same price. |
+| `GetComponent<GridPathAgent2D>().useCosts = useCosts` | `GridPathAgent2D.useCosts=` | step | useCosts (Bool), Target (Object) | - | Pay the tilemap's movement costs. Off keeps every open cell the same price. |
+| `GetComponent<GridPathAgent2D>().SetDestination(x, y)` | `GridPathAgent2D.SetDestination/2` | step | x (Number), y (Number), Target (Object) | - | Plan a path to the cell that contains this world point, and start walking. |
+| `GetComponent<GridPathAgent2D>().SetCell(x, y)` | `GridPathAgent2D.SetCell/2` | step | x (Number), y (Number), Target (Object) | - | Plan a path to this cell, and start walking. |
+| `GetComponent<GridPathAgent2D>().Stop()` | `GridPathAgent2D.Stop/0` | step | Target (Object) | - | Stop where it is and drop the path. |
+| `GetComponent<GridPathAgent2D>().Arrived()` | `GridPathAgent2D.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last cell was reached. |
+| `GetComponent<GridPathAgent2D>().HasPath()` | `GridPathAgent2D.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking a path. |
+
+## GridCostLayer
+
+Prices for a 2D tilemap: a road is cheap, mud is slow, and 0 blocks the tile. A Grid Path Agent pays them when Pay for mud and roads is on.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridCostLayer>().SetTileCost(tile, cost)` | `GridCostLayer.SetTileCost/2` | step | tile (Number), cost (Number), Target (Object) | - | Set the price of one tile number. 0 or less makes that tile a wall. Agents on that tile plan again. |
+| `GetComponent<GridCostLayer>().SetCellCost(x, y, cost)` | `GridCostLayer.SetCellCost/3` | step | x (Number), y (Number), cost (Number), Target (Object) | - | Set the price of one cell, on top of its tile. 0 or less blocks it. |
+
+## GridObstacle2D
+
+Blocks cells on a 2D tilemap. An agent whose path runs through them plans a new route at once.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridObstacle2D>().Place(x, y)` | `GridObstacle2D.Place/2` | step | x (Number), y (Number), Target (Object) | - | Block cells starting at this cell. Agents whose path used one of them plan again. |
+| `GetComponent<GridObstacle2D>().Clear()` | `GridObstacle2D.Clear/0` | step | Target (Object) | - | Stop blocking cells. |
+
 ## Dialogue
 
 Conversations: start an object's Dialogue Runner (by the object's or the graph's name) and ask whether one runs.

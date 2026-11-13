@@ -162,6 +162,7 @@ add_library(okay_engine
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
     src/AI/Pathfinding.cpp
+    src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
     src/AI/NavMeshCarve.cpp

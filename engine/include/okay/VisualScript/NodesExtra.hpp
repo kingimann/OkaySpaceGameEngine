@@ -17,6 +17,7 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/Camera.hpp"
@@ -484,6 +485,30 @@ struct NavStopNode : VsNode {
 struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was reached
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
         auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
+        return a != nullptr && a->Arrived();
+    }
+};
+// 2D grid: the Grid Path Agent on this object (or the Target).
+struct GridMoveToNode : VsNode {   // in0 = world X, in1 = world Y
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<GridPathAgent2D>())
+                a->SetDestination(In(0, g, ctx, VsValue{0.0f}).AsFloat(), In(1, g, ctx, VsValue{0.0f}).AsFloat());
+        return 0;
+    }
+};
+struct GridStopNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<GridPathAgent2D>()) a->Stop();
+        return 0;
+    }
+};
+struct GridArrivedNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<GridPathAgent2D>() : nullptr;
         return a != nullptr && a->Arrived();
     }
 };

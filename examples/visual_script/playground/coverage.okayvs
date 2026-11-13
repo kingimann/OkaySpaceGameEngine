@@ -1383,3 +1383,11 @@ node 1457 Fn.wrap
 node 1458 Fn.wrap_in_box
 node 1459 Fn.write_save
 node 1460 Fn.zoom_camera
+node 1461 Fn.grid_arrived
+node 1462 Fn.grid_block
+node 1463 Fn.grid_clear
+node 1464 Fn.grid_move_cell
+node 1465 Fn.grid_move_to
+node 1466 Fn.grid_set_cell_cost
+node 1467 Fn.grid_set_tile_cost
+node 1468 Fn.grid_stop

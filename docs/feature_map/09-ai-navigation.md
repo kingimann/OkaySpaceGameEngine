@@ -3,7 +3,7 @@
 Baked navigation meshes with agents and obstacles, the older probe grid and 2D grid A*, behavior trees with a blackboard, and
 the NPC Controller with built-in perception. Code is `engine/include/okay/AI/*` (6 headers), `engine/src/AI/*` (about 4.5k lines),
 seven navigation components and two editor windows. Docs: `docs/navigation.md`, `docs/behavior_trees.md`, `docs/npcs_and_crafting.md`.
-No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
+The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
 
 ## 9. AI & navigation
 
@@ -48,17 +48,18 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Ask me like:** "make the guard walk to the player and stop 2 m away"; "enemies keep stacking on each other"
 
 ### 9.3 Grid pathfinding (older)
-- **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, with optional diagonal moves, for 2D games and tower-defense routing.
+- **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, for 2D games and tower-defense routing. Optional per-cell costs, diagonal steps and line-of-sight smoothing; a Grid Obstacle blocks cells and replans only the agents it covers. All three stay off unless the agent or the call asks, so an old path is unchanged.
 - **Parts:**
-  - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls
-  - 9.3.2 Tilemap paths - `AI/Pathfinding` - `OnTilemap` treats tile id 0 as walkable and any other tile as a wall
-- **Code:** `AI/Pathfinding`
-- **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::Cell`
-- **Editor:** none
+  - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls; an optional cost per cell (0 or less blocks); `smooth` string-pulls the line of sight
+  - 9.3.2 Tilemap paths - `AI/Pathfinding` - `OnTilemap` treats tile id 0 as walkable and any other tile as a wall, unless a tile-id cost table is passed
+  - 9.3.3 Agent, costs and obstacles - `Components/GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D` - the agent walks the tilemap; the cost layer prices a road tile and a mud tile (and script-set tiles or cells); an obstacle blocks a rectangle of cells and replans agents whose current path used one
+- **Code:** `AI/Pathfinding`, `AI/GridPath2D.cpp`, `Components/GridPathAgent2D`, `Components/GridCostLayer`, `Components/GridObstacle2D`
+- **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::LineClear`, `Pathfinding::Smooth`, `Pathfinding::Cell`, `GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D`, script `grid_move_to`, `grid_move_cell`, `grid_stop`, `grid_arrived`, `grid_set_tile_cost`, `grid_set_cell_cost`, `grid_block`, `grid_clear`, visual-script Walk the Grid, Stop Grid Walk, Grid Arrived
+- **Editor:** Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D). Inspector labels: Which tilemap, Walk speed, Stop this close, Allow diagonal steps, Smooth the path, Pay for mud and roads, Plan again every (seconds), Road tile number, Road cost, Mud tile number, Mud cost, How many cells across, How many cells down, Block the path
 - **Docs:** `docs/navigation.md`
 - **Tests:** `pathfinding`
-- **Status:** Works - Pathfinding.hpp and Pathfinding.cpp read in full (A* with Manhattan or octile cost); covered by `pathfinding` (detours, no path, diagonals, tilemap)
-- **Open:** 2D grid only; no weighted cells, no path smoothing, no moving obstacles; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; not used by the 3D agents, which go through `Navigation` (9.1.4)
+- **Status:** Works - covered by `pathfinding` (detours, no path, diagonals that do not cut a corner, tilemap, a cheap road preferred over mud, a smoothed path shorter than the staircase and clear of walls, an obstacle on the path replans that agent and leaves another agent's path alone)
+- **Open:** 2D grid only; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; smoothing does not re-price the route (it only refuses walls); not used by the 3D agents, which go through `Navigation` (9.1.4)
 - **Related:** 9.1, 4.3, 2.6
 - **Words:** A*, astar, grid pathfinding, tilemap path, walkable grid, tower defense, 2D pathfinding, Pathfinding
 - **Seen as:** 2D enemies cut through walls or cannot find a route on a tilemap; a path zig-zags; no route is found when one exists

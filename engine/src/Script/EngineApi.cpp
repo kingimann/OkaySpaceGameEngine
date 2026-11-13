@@ -37,6 +37,9 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
@@ -1219,6 +1222,86 @@ EngineApi Build() {
             [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->Destination()}; },
             "The point it was last sent to."));
         api.types.push_back(std::move(na));
+    }
+    // ---- 2D grid path agent, costs and obstacles ----
+    {
+        ApiType ag; ag.name = "GridPathAgent2D"; ag.isComponent = true;
+        ag.doc = "Walks the object over a 2D tilemap. Empty tiles are open until Pay for mud and roads is on. The object needs a Grid Path Agent.";
+        ag.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridPathAgent2D>() : nullptr; };
+        auto agentOf = [](const Value& self, CallContext& c) -> GridPathAgent2D* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* a = g->GetComponent<GridPathAgent2D>();
+            if (!a) throw RuntimeError("'" + g->name + "' has no Grid Path Agent (add one in the Inspector)", c.loc);
+            return a;
+        };
+        ag.methods.push_back(method("SetDestination", {tFloat, tFloat}, {"x", "y"}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>& a, CallContext& c) { agentOf(s, c)->SetDestination(F(a[0]), F(a[1])); return Value{}; },
+            "Plan a path to the cell that contains this world point, and start walking."));
+        ag.methods.push_back(method("SetCell", {tInt, tInt}, {"x", "y"}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>& a, CallContext& c) { agentOf(s, c)->SetCell(I(a[0]), I(a[1])); return Value{}; },
+            "Plan a path to this cell, and start walking."));
+        ag.methods.push_back(method("Stop", {}, {}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { agentOf(s, c)->Stop(); return Value{}; },
+            "Stop where it is and drop the path."));
+        ApiMethod arrived = method("Arrived", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->Arrived()}; },
+            "True once the last cell was reached.");
+        arrived.pure = true; ag.methods.push_back(std::move(arrived));
+        ApiMethod hasPath = method("HasPath", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->HasPath()}; },
+            "True while it is walking a path.");
+        hasPath.pure = true; ag.methods.push_back(std::move(hasPath));
+        ag.props.push_back(prop("speed", tFloat,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->speed}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->speed = std::max(0.0f, F(v)); },
+            "How fast it walks, in world units per second."));
+        ag.props.push_back(prop("allowDiagonal", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->allowDiagonal}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->allowDiagonal = std::get<bool>(v); },
+            "Also step diagonally. A diagonal step never squeezes between two walls."));
+        ag.props.push_back(prop("smoothPath", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->smoothPath}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->smoothPath = std::get<bool>(v); },
+            "Straighten the route wherever the line of sight is clear."));
+        ag.props.push_back(prop("useCosts", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->useCosts}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->useCosts = std::get<bool>(v); },
+            "Pay the tilemap's movement costs. Off keeps every open cell the same price."));
+        api.types.push_back(std::move(ag));
+
+        ApiType cost; cost.name = "GridCostLayer"; cost.isComponent = true;
+        cost.doc = "Prices for a 2D tilemap: a road is cheap, mud is slow, and 0 blocks the tile. A Grid Path Agent pays them when Pay for mud and roads is on.";
+        cost.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridCostLayer>() : nullptr; };
+        auto costOf = [](const Value& self, CallContext& c) -> GridCostLayer* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* layer = g->GetComponent<GridCostLayer>();
+            if (!layer) throw RuntimeError("'" + g->name + "' has no Grid Movement Costs (add one in the Inspector)", c.loc);
+            return layer;
+        };
+        cost.methods.push_back(method("SetTileCost", {tInt, tFloat}, {"tile", "cost"}, tVoid,
+            [costOf](const Value& s, std::vector<Value>& a, CallContext& c) { costOf(s, c)->SetTileCost(I(a[0]), F(a[1])); return Value{}; },
+            "Set the price of one tile number. 0 or less makes that tile a wall. Agents on that tile plan again."));
+        cost.methods.push_back(method("SetCellCost", {tInt, tInt, tFloat}, {"x", "y", "cost"}, tVoid,
+            [costOf](const Value& s, std::vector<Value>& a, CallContext& c) { costOf(s, c)->SetCellCost(I(a[0]), I(a[1]), F(a[2])); return Value{}; },
+            "Set the price of one cell, on top of its tile. 0 or less blocks it."));
+        api.types.push_back(std::move(cost));
+
+        ApiType block; block.name = "GridObstacle2D"; block.isComponent = true;
+        block.doc = "Blocks cells on a 2D tilemap. An agent whose path runs through them plans a new route at once.";
+        block.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridObstacle2D>() : nullptr; };
+        auto blockOf = [](const Value& self, CallContext& c) -> GridObstacle2D* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) throw RuntimeError("'" + g->name + "' has no Grid Obstacle (add one in the Inspector)", c.loc);
+            return o;
+        };
+        block.methods.push_back(method("Place", {tInt, tInt}, {"x", "y"}, tVoid,
+            [blockOf](const Value& s, std::vector<Value>& a, CallContext& c) { blockOf(s, c)->Place(I(a[0]), I(a[1])); return Value{}; },
+            "Block cells starting at this cell. Agents whose path used one of them plan again."));
+        block.methods.push_back(method("Clear", {}, {}, tVoid,
+            [blockOf](const Value& s, std::vector<Value>&, CallContext& c) { blockOf(s, c)->Clear(); return Value{}; },
+            "Stop blocking cells."));
+        api.types.push_back(std::move(block));
     }
     // ---- Dialogue / Story / Quest ----
     {

@@ -346,6 +346,7 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
     if (VsIs(type, "LoadScene") || VsIs(type, "PauseGame") || VsIs(type, "QuitGame")) return VsAt("Scene");
     if (VsPre(type, "Nav") || VsIs(type, "NavArrived")) return VsAt("Scene", "Navigation");
+    if (VsPre(type, "Grid")) return VsAt("Scene", "Navigation");
     if (VsIs(type, "PlaySequence") || VsIs(type, "StopSequence") || VsIs(type, "StartDialogue") ||
         VsIs(type, "StartQuest") || VsIs(type, "CompleteObjective") || VsIs(type, "QuestState") ||
         VsIs(type, "EventValue") || VsIs(type, "EventName")) return VsAt("Scene", "Story");
@@ -420,6 +421,8 @@ inline VsPlace VsPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "Sequence")) return VsAt("Animation", "Cutscenes");
     if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather")) return VsAt("Scene", "Atmosphere");
     if (VsIs(apiType, "NavMeshAgent")) return VsAt("Scene", "Navigation");
+    if (VsIs(apiType, "GridPathAgent2D") || VsIs(apiType, "GridCostLayer") || VsIs(apiType, "GridObstacle2D"))
+        return VsAt("Scene", "Navigation");
     if (VsIs(apiType, "Dialogue") || VsIs(apiType, "Story") || VsIs(apiType, "Quest")) return VsAt("Scene", "Story");
     if (VsIs(apiType, "BehaviorTree")) return VsAt("Advanced", "Behavior");
     if (VsIs(apiType, "Animator")) return VsAt("Animation");

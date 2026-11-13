@@ -24,6 +24,7 @@ namespace OkayUI {
 
 /// A 2D point or size.
 struct Vec2 { float x = 0.0f, y = 0.0f; };
+typedef unsigned Color32;   // a packed colour, 0xAABBGGRR
 
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
 /// Named keys for IsKeyDown / IsKeyPressed / IsKeyReleased. The host fills Input::keyDown[id] with whether each key is held this frame.
@@ -637,21 +638,61 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
 ///     }
 /// Set the columns up right after BeginTable (up to 16). A Col_WidthFixed column keeps `widthOrWeight` pixels at first; the others
 /// share the rest by weight (0 = weight 1). Users can still drag the borders unless Table_NoResize is set.
+///
+/// Sorting (Table_Sortable): clicking a header sorts by that column (the arrow shows the direction); clicking the sorted column again
+/// flips it. With Table_SortMulti a Ctrl+click adds the column as a further sort key (up to four) or flips it; with Table_SortTristate
+/// a third click removes it. The table does not sort anything itself: after TableHeadersRow, ask for the specs and sort your data:
+///     if (TableSortSpecs* sp = TableGetSortSpecs()) if (sp->specsDirty) { sort(by sp->specs[0..specsCount)); sp->specsDirty = false; }
+/// A column flagged Col_DefaultSort starts as a sort key (specsDirty is true on the first frame so you sort once).
+/// Scrolling (Table_ScrollX / Table_ScrollY): the table is a box of the given outer size whose rows (Y) and columns (X) scroll with the
+/// wheel (Shift+wheel for X) and scroll bars; TableSetupScrollFreeze(cols, rows) keeps the first columns and rows (the header row counts
+/// as a row) in place. With Table_ScrollX the columns keep their pixel widths: stretch columns share `innerWidth` (or the box's width).
+/// Row backgrounds (Table_RowBg): even rows use Col_TableRowBg (clear unless set), odd rows Col_TableRowBgAlt; a band is as tall as
+/// the row was last frame (one text row on the first). TableSetBgColor paints a row or a cell: call it right after TableNextRow /
+/// TableSetColumnIndex, before the cell's widgets, so they draw on top.
 enum TableFlags : int {
     Table_None         = 0,
-    Table_RowBg        = 1,   // every second row gets a faint band (drawn one text row tall)
+    Table_RowBg        = 1,   // rows alternate between Col_TableRowBg and Col_TableRowBgAlt (the faint band on every second row)
     Table_BordersInnerH = 2,  // a hairline between rows
     Table_NoResize     = 4,   // the column borders cannot be dragged
+    Table_Sortable     = 8,   // header clicks sort (see TableGetSortSpecs)
+    Table_SortMulti    = 16,  // Ctrl+click on a header adds a sort key
+    Table_SortTristate = 32,  // ascending, descending, then unsorted
+    Table_ScrollX      = 64,  // horizontal scrolling inside the outer size
+    Table_ScrollY      = 128, // vertical scrolling inside the outer size
 };
 enum TableColumnFlags : int {
     Col_None       = 0,
     Col_WidthFixed = 1,       // `widthOrWeight` is pixels
+    Col_NoSort     = 2,       // a Sortable table's header click does not sort by this column
+    Col_DefaultSort = 4,      // starts as a sort key
+    Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
 };
 inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
 bool BeginTable(const char* id, int columns, TableFlags flags);
-void TableSetupColumn(const char* label, int columnFlags = 0, float widthOrWeight = 0.0f);
+/// BeginTable with a box: `outerSize.x` <= 0 is the width left; `outerSize.y` <= 0 is the height left (at least four rows) for a
+/// ScrollY table and the content's height (as of the last frame) for a table that scrolls only sideways. `innerWidth` > 0 is the width the
+/// columns add up to in a ScrollX table. Without Table_ScrollX / Table_ScrollY it is the plain table (the size is ignored).
+bool BeginTable(const char* id, int columns, TableFlags flags, Vec2 outerSize, float innerWidth = 0.0f);
+/// `userId` comes back in the sort specs.
+void TableSetupColumn(const char* label, int columnFlags = 0, float widthOrWeight = 0.0f, unsigned userId = 0);
+/// Keep the first `cols` columns and `rows` rows (the header row counts) fixed while the rest scrolls (ScrollX / ScrollY tables).
+void TableSetupScrollFreeze(int cols, int rows);
 /// The header bar with the labels given to TableSetupColumn.
 void TableHeadersRow();
+/// One sort key: the column, its position among the keys (0 = main) and the direction.
+struct TableColumnSortSpecs { unsigned columnUserId = 0; int columnIndex = 0; int sortOrder = 0; bool descending = false; };
+struct TableSortSpecs { const TableColumnSortSpecs* specs = nullptr; int specsCount = 0; bool specsDirty = false; };
+/// The sort keys of the current Sortable table (null when it is not sortable). Valid until EndTable; clear `specsDirty` once you have sorted.
+TableSortSpecs* TableGetSortSpecs();
+enum TableBgTarget : int { TableBg_RowBg0 = 1, TableBg_RowBg1 = 2, TableBg_CellBg = 3 };
+/// Paint the current row (RowBg0 replaces the even-row colour, RowBg1 the odd-row one, whichever the row is) or a cell (`column` < 0: the
+/// current one) with a packed colour (RGBA()).
+void TableSetBgColor(TableBgTarget target, Color32 color, int column = -1);
+/// The scroll position of the current ScrollX / ScrollY table, and a way to set it (clamped to the content on the next frame).
+float TableGetScrollX();
+float TableGetScrollY();
+void TableSetScroll(float x, float y);
 /// Jump to column `column` of the current row (false when it does not exist); like TableNextColumn but not in order.
 bool TableSetColumnIndex(int column);
 int  TableGetColumnIndex();   // -1 before the first cell of a row
@@ -785,8 +826,7 @@ void ResetState();
 // a point, and the cursor and size queries that let it sit inside the auto-layout. All coordinates are screen pixels.
 // Every call ignores non-finite or absurd (beyond 1e7) numbers instead of drawing them.
 
-/// A packed colour, 0xAABBGGRR: the bytes in memory are R, G, B, A (this is the byte order of the draw-list vertices).
-typedef unsigned Color32;
+/// A packed colour, 0xAABBGGRR: the bytes in memory are R, G, B, A (this is the byte order of the draw-list vertices); see RGBA().
 constexpr Color32 RGBA(unsigned r, unsigned g, unsigned b, unsigned a = 255u) {
     return (r & 0xffu) | ((g & 0xffu) << 8) | ((b & 0xffu) << 16) | ((a & 0xffu) << 24);
 }

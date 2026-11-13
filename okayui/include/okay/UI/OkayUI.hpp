@@ -683,6 +683,12 @@ bool WantsTextInput();
 /// GetClipboardText() is valid until the next call. Text fields copy (Input::copy), cut (Input::cut) and paste (Input::paste) with it.
 void SetClipboardText(const char* text);
 const char* GetClipboardText();
+/// Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
+/// gives the keyboard to the widget with this id (the GetItemID() of its InvisibleButton) and marks this frame's click as taken, so
+/// the click does not drop the focus again; 0 releases it.
+const Input& GetFrameInput();
+int GetKeyboardFocusId();
+void SetKeyboardFocusId(int id);
 /// Forget all remembered state: window positions and collapsed flags, tree / header / combo
 /// open flags, scroll offsets, popups, keyboard focus, text carets, toasts, the theme and font
 /// (back to the classic defaults). For tests and for returning to a clean slate.

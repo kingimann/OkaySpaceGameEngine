@@ -3993,6 +3993,9 @@ bool IsItemHovered() {
 }
 
 bool WantsTextInput() { return g_focus != 0; }
+const Input& GetFrameInput() { return g_in; }
+int GetKeyboardFocusId() { return g_focus; }
+void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = true; }
 
 // The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
 static char g_clip[kClipboardMax] = {0};

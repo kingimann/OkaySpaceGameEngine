@@ -159,26 +159,26 @@ gltf	models/glTF2/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris
 gltf	models/glTF2/BoxWithInfinites-glTF-Binary/BoxWithInfinites.glb	ok	area=-nan	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-inf,-nan,-nan,inf,-nan,-nan	verts=24	tex=0	nodes=3	uv=0	nrm=1
 gltf	models/glTF2/ClearCoat-glTF/ClearCoatTest.gltf	ok	area=261.0980	meshes=27	tris=37116	bones=0	skinned=0	clips=0	dur=0.000	mat=19	bbox=-7.358,-6.250,-0.060,3.100,6.855,1.050	verts=20106	tex=5	nodes=34	uv=1	nrm=1
 gltf	models/glTF2/IncorrectVertexArrays/Cube.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=9	uv=0	nrm=0
-gltf	models/glTF2/IndexOutOfRange/AllIndicesOutOfRange.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
+gltf	models/glTF2/IndexOutOfRange/AllIndicesOutOfRange.gltf	FAIL	scene import failed
 gltf	models/glTF2/IndexOutOfRange/IndexOutOfRange.gltf	ok	area=5.5000	meshes=1	tris=11	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
-gltf	models/glTF2/MissingBin/BoxTextured.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/MissingBin/BoxTextured.gltf	FAIL	scene import failed
 gltf	models/glTF2/RecursiveNodes/RecursiveNodes.gltf	FAIL	scene import failed
-gltf	models/glTF2/SchemaFailures/sceneWrongType.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/SchemaFailures/sceneWrongType.gltf	FAIL	scene import failed
 gltf	models/glTF2/TestNoRootNode/NoScene.gltf	FAIL	scene import failed
 gltf	models/glTF2/TestNoRootNode/SceneWithoutNodes.gltf	FAIL	scene import failed
 gltf	models/glTF2/cameras/Cameras.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,-0.708,1.000,0.707,0.000	verts=4	tex=0	nodes=4	uv=0	nrm=0
-gltf	models/glTF2/draco/2CylinderEngine.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=34	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=83	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_00.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_01.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_02.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_03.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/draco/2CylinderEngine.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_00.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_01.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_02.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_03.gltf	FAIL	scene import failed
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_04.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_05.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_06.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=6	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_07.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_08.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_09.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_10.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_07.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_08.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_09.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_10.gltf	FAIL	scene import failed
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_11.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_12.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_13.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
@@ -189,7 +189,7 @@ gltf	models/glTF2/issue_3269/texcoord_crash.gltf	ok	area=8.0000	meshes=5	tris=10
 gltf	models/glTF2/simple_skin/quad_skin.glb	ok	area=40000.0009	meshes=1	tris=2	bones=10	skinned=1	clips=0	dur=0.000	mat=2	bbox=-100.000,-0.000,-100.000,100.000,0.000,100.000	verts=4	tex=0	nodes=24	uv=1	nrm=1
 gltf	models/glTF2/simple_skin/simple_skin.gltf	ok	area=2.0000	meshes=1	tris=8	bones=2	skinned=1	clips=1	dur=5.500	mat=0	bbox=0.000,0.000,0.000,1.000,2.000,0.000	verts=10	tex=0	nodes=4	uv=0	nrm=0
 gltf	models/glTF2/textureTransform/TextureTransformTest.gltf	ok	area=6.1100	meshes=12	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=9	bbox=-1.600,-1.141,0.000,1.600,1.050,0.010	verts=48	tex=5	nodes=13	uv=1	nrm=0
-gltf	models/glTF2/wrongTypes/badArray.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/wrongTypes/badArray.gltf	FAIL	scene import failed
 gltf	models/glTF2/wrongTypes/badExtension.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badNumber.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badObject.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1

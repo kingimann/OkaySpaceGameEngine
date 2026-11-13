@@ -1576,6 +1576,14 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    // A file that cannot be read without an extension we do not have would import as an empty scene: say so instead.
+    if (const JVal* req = doc.root.Find("extensionsRequired"))
+        for (const JVal& e : req->arr)
+            if (e.type == JVal::Str && (e.str == "KHR_draco_mesh_compression" || e.str == "EXT_meshopt_compression")) {
+                Log::Error("model import '", path, "': the glTF needs the extension ", e.str, ", which is not supported");
+                if (ok) *ok = false;
+                return nullptr;
+            }
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
@@ -1908,6 +1916,25 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
                 ++ai;
             }
             ma->active = 0; ma->autoPlay = true;
+        }
+    }
+    // Nodes that name a mesh but nothing came out (the .bin file is missing, the data is malformed, only points or lines):
+    // the import failed, it did not produce an empty model.
+    {
+        bool wantsMesh = false;
+        for (int i = 0; i < nodeCount && !wantsMesh; ++i) wantsMesh = nodes->arr[i].Find("mesh") != nullptr;
+        bool anyTriangles = false;
+        for (const auto& up : scene.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (mr->mesh.TriangleCount() > 0) { anyTriangles = true; break; } }
+            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (sm->bind.TriangleCount() > 0) { anyTriangles = true; break; } }
+        }
+        if (wantsMesh && !anyTriangles) {
+            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file, malformed accessors, or only points and lines)");
+            scene.Destroy(root);
+            if (ok) *ok = false;
+            return nullptr;
         }
     }
     NormalizeImportedClips(root);

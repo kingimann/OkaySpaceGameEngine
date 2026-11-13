@@ -405,21 +405,30 @@ int main() {
             else if (i + 2 == in.size()) { unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8); o += t[v >> 18]; o += t[(v >> 12) & 63]; o += t[(v >> 6) & 63]; o += '='; }
             return o;
         };
-        auto gltfTris = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, int* trisOut) {
+        auto gltfJson = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, const char* extra) {
             std::string buf;
             for (int i = 0; i < nPos; ++i) { float f[3] = {(float)i, (i & 1) ? 1.0f : 0.0f, 0.0f}; buf.append((const char*)f, 12); }
             const std::size_t posBytes = buf.size();
             for (std::uint16_t v : idx) buf.append((const char*)&v, 2);
             while (buf.size() % 4) buf.push_back('\0');
-            std::string j = "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"byteLength\":" + std::to_string(buf.size()) + ",\"uri\":\"data:application/octet-stream;base64," + b64(buf) + "\"}],"
+            return "{\"asset\":{\"version\":\"2.0\"}," + std::string(extra) + "\"buffers\":[{\"byteLength\":" + std::to_string(buf.size()) + ",\"uri\":\"data:application/octet-stream;base64," + b64(buf) + "\"}],"
                 "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":" + std::to_string(posBytes) + "},{\"buffer\":0,\"byteOffset\":" + std::to_string(posBytes) + ",\"byteLength\":" + std::to_string(idx.size() * 2) + "}],"
                 "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":" + std::to_string(nPos) + ",\"type\":\"VEC3\"},{\"bufferView\":1,\"componentType\":5123,\"count\":" + std::to_string(idx.size()) + ",\"type\":\"SCALAR\"}],"
-                "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}," + (useIdx ? "\"indices\":1," : "") + "\"mode\":" + std::to_string(mode) + "}]}]}";
-            Spit("mr_mode.gltf", j);
+                "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}," + (useIdx ? "\"indices\":1," : "") + "\"mode\":" + std::to_string(mode) + "}]}],\"nodes\":[{\"mesh\":0}],\"scenes\":[{\"nodes\":[0]}]}";
+        };
+        auto gltfTris = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, int* trisOut) {
+            Spit("mr_mode.gltf", gltfJson(mode, idx, useIdx, nPos, ""));
             bool ok = false; Mesh m = LoadGLTF("mr_mode.gltf", &ok);
             std::remove("mr_mode.gltf");
             *trisOut = m.TriangleCount();
             return ok;
+        };
+        auto sceneOk = [&](const std::string& json) {
+            Spit("mr_scene.gltf", json);
+            Scene sc; sc.physicsEnabled = false; bool ok = true;
+            GameObject* r = ImportModelScene(sc, "mr_scene.gltf", &ok);
+            std::remove("mr_scene.gltf");
+            return ok && r != nullptr;
         };
         int n = -1;
         CHECK(gltfTris(4, {0, 1, 2, 3, 4}, true, 5, &n) && n == 1);                 // TRIANGLES: the two trailing indices make no triangle
@@ -430,6 +439,11 @@ int main() {
         CHECK(!gltfTris(0, {}, false, 5, &n) || n == 0);                            // POINTS
         CHECK(gltfTris(4, {0, 1, 2, 0, 1, 9}, true, 5, &n) && n == 1);              // one triangle with an index past the vertices is dropped, the other stays
         CHECK(gltfTris(5, {0, 1, 1, 2, 3}, true, 5, &n) && n == 1);                 // strip: the two triangles with a repeated index are dropped, (1,2,3) stays
+        // a file whose meshes cannot be read fails the import; it does not give an empty model
+        CHECK(sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "")));
+        CHECK(!sceneOk(gltfJson(1, {0, 1, 2}, true, 3, "")));                                         // lines only
+        CHECK(!sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],")));   // compressed geometry we cannot decode
+        { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); const std::size_t u = j.find("data:application/octet-stream;base64,"); j.replace(u, j.find('"', u) - u, "nothere.bin"); CHECK(!sceneOk(j)); }   // missing .bin
         // random modes, index lists (some past the vertices) and vertex counts: never a triangle that reads outside the mesh
         unsigned seed = 12345u;
         auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };

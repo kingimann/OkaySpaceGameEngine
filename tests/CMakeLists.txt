@@ -2585,7 +2585,7 @@ if(_okay_xc_sodium)
     target_compile_definitions(bench_crypto PRIVATE OKAY_BENCH_SODIUM)
 endif()
 
-# Constant-time audit 2 of 2: a dudect-style statistical timing test. NOT run by ctest at full length (it needs
+# Constant-time audit 2 of 2: a fixed-versus-random statistical timing test. NOT run by ctest at full length (it needs
 # a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
 # harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
 add_executable(crypto_timing crypto_timing.cpp)

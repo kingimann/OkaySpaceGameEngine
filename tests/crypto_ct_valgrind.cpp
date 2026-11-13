@@ -1,5 +1,5 @@
 // Constant-time audit, method 1 of 2: secret-dependent branches and memory addresses, found with
-// valgrind (the "ctgrind" technique). Every secret is marked as undefined memory; valgrind's memcheck
+// valgrind (the technique of marking secrets as undefined memory). Every secret is marked as undefined memory; valgrind's memcheck
 // then reports "conditional jump or move depends on uninitialised value" for a branch on a secret and
 // "use of uninitialised value" for a table index / address built from one. Run under valgrind:
 //     valgrind -q ./crypto_ct_valgrind        (exit status 1 if any case is not as expected; the two positive
@@ -59,7 +59,7 @@ __attribute__((noinline)) static std::uint8_t LeakyIndex(const std::uint8_t* sec
 int main() {
     g_under = RUNNING_ON_VALGRIND != 0;
     if (!g_under) { std::printf("crypto_ct_valgrind: not running under valgrind; nothing checked (run: valgrind -q %s)\n", "crypto_ct_valgrind"); return 0; }
-    std::printf("[ctgrind] secrets are marked undefined; any branch or address that depends on them is an error\n");
+    std::printf("[ct-audit] secrets are marked undefined; any branch or address that depends on them is an error\n");
     // Warm up everything that lazily builds public tables (so those are not under test).
     {
         std::uint8_t s[32] = {1}, pk[32], sk[64], sig[64];

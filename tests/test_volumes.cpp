@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <vector>
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include <cctype>
+#include <string>
 
 using namespace okay;
 using namespace okay::testing;
@@ -478,6 +481,32 @@ int main() {
             CHECK(c.r + c.g + c.b > 0.1f);
         }
         CHECK(Volume::KindColor(Volume::Kind::Kill).r != Volume::KindColor(Volume::Kind::Force).r);
+    }
+
+    // ---- Only built kinds are offered ----------------------------------------------------------
+    // Reverb, post-process, nav-area and convex-mesh volumes are not built: the Kind list (Inspector,
+    // scene file, scripts) holds exactly the kinds the engine acts on, nothing else is selectable.
+    {
+        auto info = PropertyRegistry::FindByName("Volume");
+        CHECK(info != nullptr);
+        const PropertyDesc* kind = info ? info->Find("kind") : nullptr;
+        CHECK(kind != nullptr);
+        if (kind) {
+            CHECK((int)kind->enumOptions.size() == Volume::kKindCount);
+            for (int k = 0; k < Volume::kKindCount && k < (int)kind->enumOptions.size(); ++k)
+                CHECK(kind->enumOptions[(size_t)k] == Volume::KindName((Volume::Kind)k));
+            for (const std::string& o : kind->enumOptions) {
+                std::string low = o;
+                for (char& ch : low) ch = (char)std::tolower((unsigned char)ch);
+                CHECK(low.find("reverb") == std::string::npos);
+                CHECK(low.find("post") == std::string::npos);
+                CHECK(low.find("nav") == std::string::npos);
+                CHECK(low.find("convex") == std::string::npos);
+            }
+        }
+        // Every offered kind does something a test can see (Checkpoint, Kill, Force, Atmosphere and Ambience
+        // are each exercised above); a count change must come with a new behaviour and a new test here.
+        CHECK(Volume::kKindCount == 5);
     }
 
     TEST_MAIN_RESULT();

@@ -47416,7 +47416,7 @@ int main(int argc, char** argv) {
     // here in the editor during Play — the same code path the shipped player uses.
     // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
     static okay::OkayUIScriptBridge g_editorUIBridge;
-    g_editorUIBridge.renderer = renderer;   // dialogue portraits as textures
+    g_editorUIBridge.SetRenderer(renderer);   // dialogue portraits as textures
     okay::SetScriptUI(&g_editorUIBridge);
 #endif
 
@@ -48117,7 +48117,19 @@ int main(int argc, char** argv) {
                 if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }
         }
-        if (!AnyUnsavedWork(ed)) DocRecovery().OnSaved();
+        // The unsaved-work check serializes the whole scene and hashes it whenever the dirty flag is
+        // down (the normal state while playing or after a save), so paying it every frame costs real
+        // frame time on large scenes. Like the prefab bar's forgotten-edit sweep, run it every 20th
+        // frame: autosave writes are interval-gated anyway, and clearing stale recovery copies a
+        // third of a second later is invisible. OnSaved() then fires only when work actually went
+        // from unsaved to saved, instead of touching the file system on every clean frame.
+        static int s_unsavedTick = 0;
+        static bool s_hadUnsaved = true;   // assume unsaved, so a clean session still clears old copies once
+        if ((s_unsavedTick++ % 20) == 0) {
+            const bool unsaved = AnyUnsavedWork(ed);
+            if (s_hadUnsaved && !unsaved) DocRecovery().OnSaved();
+            s_hadUnsaved = unsaved;
+        }
         SyncProjectFiles(ed);   // project + build settings follow their edits to disk
 
         // Pump audio while playing (stereo float, queued). Top the queue up to a

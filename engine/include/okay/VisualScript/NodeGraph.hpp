@@ -83,6 +83,10 @@ public:
     int id = -1;
     int fileId = -1;            ///< the node's id in the .okayvs file / editor (-1 = built in code)
     std::string type;           ///< the node's type name from the file ("ForLoop"); empty when built in code
+    /// A node the loader added itself (the Sequence behind an exec pin that has
+    /// several wires). It is not in the file, so the debugger never stops on it
+    /// and it is not counted as a step the user can see.
+    bool internal = false;
     /// The optional "Target" data input of a node that acts on an object
     /// (Translate, Get Position, Add Force...): when something feeds it, the node
     /// acts on that object instead of the graph's own (-1 = no such input).

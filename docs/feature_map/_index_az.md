@@ -5209,6 +5209,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - 2D controller (4.3)
 - 2D lighting (43.4)
 - 2D lights (43.4)
+- 2D painter (17.17.6)
 - 2D pathfinding (9.3)
 - 2D physics (6.1)
 - 2D queries (6.5.3)

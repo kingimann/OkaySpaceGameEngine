@@ -376,6 +376,89 @@ int main() {
         }
     }
 
+    // ---- An exec output takes any number of wires; they run in the order made ----
+    {
+        VsEditGraph g;
+        const int start = g.add("OnStart", 0, 0), a = g.add("SetVar", 0, 0), b = g.add("SetVar", 0, 0), c = g.add("SetVar", 0, 0);
+        for (int id : {a, b, c}) g.find(id)->arg = "s";
+        const int fa = g.add("Format", 0, 0), fb = g.add("Format", 0, 0), fc = g.add("Format", 0, 0), gv = g.add("GetVar", 0, 0);
+        g.find(fa)->arg = "{0}A"; g.find(fb)->arg = "{0}B"; g.find(fc)->arg = "{0}C"; g.find(gv)->arg = "s";
+        g.linkData(a, 0, fa, 0); g.linkData(b, 0, fb, 0); g.linkData(c, 0, fc, 0);
+        for (int f : {fa, fb, fc}) g.linkData(f, 0, gv, 0);   // a data output feeds many inputs
+        g.linkExec(start, 0, a); g.linkExec(start, 0, b); g.linkExec(start, 0, c);
+        g.linkExec(start, 0, b);                               // the same wire twice is one wire
+        CHECK(g.execLinks.size() == 3);                        // the 2nd and 3rd were added, not replacing the 1st
+        CHECK((VsExecTargets(g, start, 0) == std::vector<int>{a, b, c}));
+        CHECK(g.dataLinks.size() == 6);
+        const std::string text = g.toText();
+        VsEditGraph back; back.fromText(text);
+        CHECK((VsExecTargets(back, start, 0) == std::vector<int>{a, b, c}));   // order survives save and load
+        CHECK(back.toText() == text);
+        // Runs all three, in the order the wires were made, each finishing first.
+        CHECK(RunVar(text, "s").s == "0ABC");
+        // Reversing the wire order reverses the run order.
+        VsEditGraph rev; rev.fromText(text);
+        rev.execLinks.clear(); rev.linkExec(start, 0, c); rev.linkExec(start, 0, b); rev.linkExec(start, 0, a);
+        CHECK(RunVar(rev.toText(), "s").s == "0CBA");
+        // Breaking one wire keeps the others (and their order).
+        CHECK(back.unlinkExec(start, 0, b) && !back.unlinkExec(start, 0, b));
+        CHECK((VsExecTargets(back, start, 0) == std::vector<int>{a, c}));
+        CHECK(RunVar(back.toText(), "s").s == "0AC");
+        // The checker raises no error and no "nothing runs this node" for any of them.
+        for (const auto& i : okay::vs::ValidateGraphText(text)) CHECK(i.severity != 0 && i.message.find("nothing runs") == std::string::npos);
+        // A graph with one wire per pin saves exactly as before.
+        VsEditGraph one; const int s1 = one.add("OnStart", 0, 0), p1 = one.add("Print", 0, 0);
+        one.linkExec(s1, 0, p1);
+        VsEditGraph one2; one2.fromText(one.toText());
+        CHECK(one2.toText() == one.toText());
+    }
+
+    // ---- A step that can't run does not skip the other wires on its pin ----------
+    {
+        const std::string text =
+            "node 1 OnStart\nentry OnStart 1\n"
+            "node 2 SetVar s\ndefault 2 0 \"a\"\n"
+            "node 3 Translate\ndefault 3 3 \"nobody_here\"\n"   // its Target object does not exist: reported and skipped
+            "node 4 SetVar t\ndefault 4 0 \"c\"\n"
+            "exec 1 0 2\nexec 1 0 3\nexec 1 0 4\n";
+        CHECK(RunVar(text, "s").s == "a");
+        CHECK(RunVar(text, "t").s == "c");
+    }
+
+    // ---- A key / mouse input value can be logged; a Key node has no flow pins ----
+    {
+        VsEditGraph g;
+        const int print = g.add("Print", 0, 0);
+        const char* inputs[] = {"Key", "KeyDown", "KeyUp", "MouseButton", "MouseButtonDown", "MouseX", "MouseY", "MouseWheel", "MouseGround"};
+        for (const char* t : inputs) {
+            const int k = g.add(t, 0, 0);
+            const VsDef* d = FindDef(t);
+            CHECK(d && !d->execIn && d->execOut.empty());                     // value nodes: wired by their data pins
+            for (int o = 0; o < (int)d->dataOut.size(); ++o) {
+                std::string why;
+                CHECK(VsWireOk(g, print, 0, k, o, &why));                     // any output prints (Bool becomes true / false)
+                g.linkData(print, 0, k, o);
+            }
+        }
+    }
+
+    // ---- The exported script for Print: text, value, or both ----------------------------------
+    {
+        for (int mode = 0; mode < 3; ++mode) {
+            VsEditGraph g;
+            const int st = g.add("OnStart", 0, 0), pr = g.add("Print", 0, 0), k = g.add("Key", 0, 0);
+            g.find(k)->arg = "space";
+            if (mode != 1) g.find(pr)->pinDefault[0] = "msg";
+            if (mode != 0) g.linkData(pr, 1, k, 0);
+            g.linkExec(st, 0, pr);
+            const std::string code = CompileToOkayScript(g);
+            std::string err;
+            auto vm = CreateScriptVM("okayscript");
+            CHECK(vm && vm->Load(code, &err));
+            CHECK(mode != 2 || code.find("\": \"") != std::string::npos);
+        }
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

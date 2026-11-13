@@ -12,7 +12,10 @@
 #include <cfloat>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <string>
+#include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -154,7 +157,8 @@ inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* type
         ImGui::TextWrapped("%s", pin->meaning.c_str());
         if (!pin->fallback.empty()) ImGui::TextDisabled("Default: %s", pin->fallback.c_str());
     }
-    ImGui::TextDisabled("Drag to wire. Alt+click breaks wires.");
+    ImGui::TextDisabled("Drag to wire. A flow output can have many wires (they run in the order made).");
+    ImGui::TextDisabled("Alt+click a pin breaks its wires; Alt+click a wire breaks just that one.");
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
@@ -197,30 +201,99 @@ inline bool VsPaletteHiddenUntilTested(const char* type) {
 /// True when a Registry row is the same job as a hand-written node of the same title
 /// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
 inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
+    // Indexes over the registry, built once per registry size: the checks below used to walk the whole registry
+    // for every row, which made the first opening of the Add Node menu take most of a tenth of a second.
+    struct Index {
+        std::size_t n = (std::size_t)-1;
+        std::unordered_map<std::string, const VsDef*> firstByTitle;      // first row with this title
+        std::unordered_map<std::string, const VsDef*> firstApiByTitle;   // first engine-API row with this title
+        std::unordered_map<std::string, bool> handTitle;                 // a hand-written (no '.', not Fn.) row has this title
+        std::unordered_map<std::string, bool> handLower;                 // lower-cased type of each hand-written row (no '.')
+        std::unordered_map<std::string, bool> handTitleNoDot;            // title of each hand-written row
+    };
+    static Index ix;
+    if (ix.n != Registry().size()) {
+        ix = Index();
+        ix.n = Registry().size();
+        for (const auto& h : Registry()) {
+            const bool fn = std::strncmp(h.type, "Fn.", 3) == 0, dotted = std::strchr(h.type, '.') != nullptr;
+            if (h.title) {
+                ix.firstByTitle.emplace(h.title, &h);
+                if (!fn) ix.handTitle[h.title] = true;
+                if (okay::vs::VsApiFind(h.type)) ix.firstApiByTitle.emplace(h.title, &h);
+            }
+            if (!dotted) {
+                std::string lo; for (const char* c = h.type; *c; ++c) lo += (char)std::tolower((unsigned char)*c);
+                ix.handLower[lo] = true;
+                if (h.title) ix.handTitleNoDot[h.title] = true;
+            }
+        }
+    }
     // A text-script alias (play_sfx next to play_sound, vec2 next to vec3): one row per title.
     if (std::strncmp(d.type, "Fn.", 3) == 0) {
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        }
-        for (const auto& h : Registry())
-            if (std::strncmp(h.type, "Fn.", 3) != 0 && h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        return false;
+        if (!d.title) return false;
+        const auto it = ix.firstByTitle.find(d.title);
+        if (it != ix.firstByTitle.end() && it->second != &d) return true;   // an earlier row has this title
+        return ix.handTitle.count(d.title) > 0;                              // or a hand-written one does
     }
     const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
     if (api) {
-        for (const auto& h : Registry()) {
-            if (std::strchr(h.type, '.') || &h == &d) continue;
-            if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) return true;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && !std::strchr(h.type, '.')) return true;
-        }
+        // Same job as a hand-written node: its name, or Get/Set + its name (see VsApiDuplicatesHandNode), or its title.
+        std::string m; for (const char* c = api->member.c_str(); *c; ++c) m += (char)std::tolower((unsigned char)*c);
+        if (!m.empty() && (ix.handLower.count(m) || ix.handLower.count("get" + m) || ix.handLower.count("set" + m))) return true;
+        if (d.title && ix.handTitleNoDot.count(d.title)) return true;
         // Two overloads of one binding with the same title: the first one is the row.
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && okay::vs::VsApiFind(h.type)) return true;
+        if (d.title) {
+            const auto it = ix.firstApiByTitle.find(d.title);
+            if (it != ix.firstApiByTitle.end() && it->second != &d) {
+                // only an EARLIER row counts
+                for (const auto& h : Registry()) { if (&h == &d) break; if (&h == it->second) return true; }
+            }
         }
     }
     return false;
+}
+
+/// Hidden from the palette (a duplicate of another row, or waiting to be tested). Worked out once per row: the
+/// duplicate check walks the whole registry, which is slow to repeat.
+inline bool VsPaletteHidden(const VsDef& d) {
+    static std::unordered_map<const VsDef*, bool> memo;
+    static std::size_t memoN = (std::size_t)-1;
+    if (Registry().size() != memoN) { memo.clear(); memoN = Registry().size(); }
+    const auto it = memo.find(&d);
+    if (it != memo.end()) return it->second;
+    const bool hidden = VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type);
+    memo.emplace(&d, hidden);
+    return hidden;
+}
+
+/// The listed nodes that can take (fromOutput) or give (!fromOutput) a wire at one pin of a node, easiest first.
+/// This is the same rule as the list shown when a wire is dropped in empty space (VsCompatible), so the node
+/// right-click "Connect to..." menu and the wire-drop palette always agree.
+inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOutput, okay::vs::PinType pin) {
+    static std::map<std::tuple<bool, bool, int>, std::vector<const VsDef*>> cache;
+    static std::size_t cacheN = (std::size_t)-1;
+    if (Registry().size() != cacheN) { cache.clear(); cacheN = Registry().size(); }
+    const auto key = std::make_tuple(exec, fromOutput, exec ? 0 : (int)pin);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    std::vector<const VsDef*> out;
+    for (const auto& d : Registry()) {
+        if (!VsCompatible(d, exec, fromOutput, pin) || VsPaletteHidden(d)) continue;
+        out.push_back(&d);
+    }
+    // A pin of exactly the same type is a better suggestion than one that merely accepts it (Any, or a conversion).
+    auto exactMatch = [&](const VsDef* d) {
+        if (exec || pin == okay::vs::PinType::Any) return false;
+        if (fromOutput) { for (int i = 0; i < (int)d->dataIn.size(); ++i) if (okay::vs::InputType(d->type, i) == pin) return true; }
+        else            { for (int i = 0; i < (int)d->dataOut.size(); ++i) if (okay::vs::OutputType(d->type, i, "") == pin) return true; }
+        return false;
+    };
+    std::vector<std::pair<const VsDef*, int>> ranked;   // (node, rank): lower is listed first
+    for (const VsDef* d : out) ranked.push_back({d, (int)d->level * 4 + (exactMatch(d) ? 0 : 2) + (std::strchr(d->type, '.') ? 1 : 0)});
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.second < b.second; });   // easy first, exact type first, hand-written before engine-API
+    for (std::size_t i = 0; i < ranked.size(); ++i) out[i] = ranked[i].first;
+    return cache.emplace(key, std::move(out)).first->second;
 }
 
 /// An Actions step with the same label as a hand-written node: the node is the one row.
@@ -256,6 +329,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const VsNodeDoc* doc = nullptr;
         VsLevel level = VsLevel::Intermediate;
         int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
+        bool fits = true;                       // can take the wire being dragged (set each frame, cheap)
+        std::string titleLower;                 // lower-cased once, when the list is built
+        mutable std::string blobLower;          // everything searchable, lower-cased on first use
+        mutable bool blobBuilt = false;
     };
     auto catColor = [&](int index) {
         // Stable hues so a topic keeps its dot. Common topics stay in the documented order.
@@ -271,12 +348,22 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const int n = (int)(sizeof cols / sizeof cols[0]);
         return cols[(index >= 0 && index < n) ? index : 0];
     };
-    std::vector<Entry> all;
-    for (const auto& d : Registry()) {
-        if (!fits(d)) continue;
+    // The list is built once and reused every frame: rebuilding ~2300 entries (a dozen strings and several
+    // lookups each) 60 times a second is what made the pop-up drop the frame rate. It is rebuilt only when
+    // the registry or a step catalogue changes size (a plugin or graph function was added or removed).
+    static std::vector<Entry> s_all;
+    static std::size_t s_regN = (std::size_t)-1, s_actN = (std::size_t)-1, s_condN = (std::size_t)-1;
+    const std::size_t regN = Registry().size();
+    const std::size_t actN = StepCatalog ? (StepCatalog(false) ? StepCatalog(false)->size() : 0) : 0;
+    const std::size_t condN = StepCatalog ? (StepCatalog(true) ? StepCatalog(true)->size() : 0) : 0;
+    const bool rebuild = regN != s_regN || actN != s_actN || condN != s_condN;
+    std::vector<Entry>& all = s_all;
+    static std::size_t s_gen = 0;                       // bumped each time the list is rebuilt (pointers into it go stale)
+    if (rebuild) { all.clear(); s_regN = regN; s_actN = actN; s_condN = condN; ++s_gen; }
+    if (rebuild) for (const auto& d : Registry()) {
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-        if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
+        if (VsPaletteHidden(d)) continue;   // one row per job; untested nodes wait
         const bool dup = false;
         Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
         e.cat = place.category ? place.category : "";
@@ -313,12 +400,13 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (!out.empty()) e.desc += "Gives: " + out + ". ";
         if (!ex.empty())  e.desc += "Continues to: " + ex + ". ";
         if (d.param && d.paramHint) e.desc += std::string("Setting: ") + d.paramHint + ".";
+        e.titleLower = lower(e.title);
         all.push_back(std::move(e));
     }
-    for (int pass = 0; pass < 2; ++pass) {
+    if (rebuild) for (int pass = 0; pass < 2; ++pass) {
         const bool cond = pass == 1;
         const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-        if (!StepCatalog || !sd || !fits(*sd)) continue;
+        if (!StepCatalog || !sd) continue;
         if (const auto* cat = StepCatalog(cond))
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
@@ -336,11 +424,13 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
                 e.keywords = si.group + (cond ? " check something" : " do something");
                 e.col = bright(catColor(e.catIndex));
+                e.titleLower = lower(e.title);
                 all.push_back(std::move(e));
             }
     }
     // Favourites and recently added, remembered between sessions.
     static std::vector<std::string> s_fav, s_recent;
+    static std::size_t s_listVer = 0;   // bumped when favourites or recents change (the cached rows depend on them)
     static int s_filter = 0;   // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
     static bool s_loaded = false;
     auto saveLists = [&] {
@@ -366,6 +456,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         s_recent.erase(std::remove(s_recent.begin(), s_recent.end(), e.key), s_recent.end());
         s_recent.insert(s_recent.begin(), e.key);
         if (s_recent.size() > 12) s_recent.resize(12);
+        ++s_listVer;
         saveLists();
         ImGui::CloseCurrentPopup();
     };
@@ -409,7 +500,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
         hits.clear();
         if (needle.empty()) return 1;
-        const std::string t = lower(e.title);
+        const std::string& t = e.titleLower;
         if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
         std::size_t p = t.find(needle);
         if (p != std::string::npos) {
@@ -425,19 +516,22 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         }
         if (j == needle.size()) return 100 + sc;
         hits.clear();
-        std::string pins;
-        if (e.def) {
-            for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
-            for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
-                pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+        if (!e.blobBuilt) {   // the long searchable text is built the first time a search reaches this entry
+            std::string pins;
+            if (e.def) {
+                for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
+                for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+            }
+            e.blobLower = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
+                                (e.def ? e.def->type : "") + " " +
+                                (e.def ? VsNodeSearchText(e.def->type) : std::string()) + " " +
+                                (e.step ? e.step->op : "") + " " + e.desc + " " + pins +
+                                (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
+            e.blobBuilt = true;
         }
-        const std::string extra = lower(e.cat + " " + e.sub + " " + e.keywords + " " +
-                                        (e.def ? e.def->type : "") + " " +
-                                        (e.def ? VsNodeSearchText(e.def->type) : std::string()) + " " +
-                                        (e.step ? e.step->op : "") + " " + e.desc + " " + pins +
-                                        (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
-        return extra.find(needle) != std::string::npos ? 40 : 0;
+        return e.blobLower.find(needle) != std::string::npos ? 40 : 0;
     };
 
     // ---- Sidebar ----
@@ -475,48 +569,57 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::PopID();
         return clicked;
     };
-    auto browseCount = [&](int cat, const std::string& sub, bool anySub) {
-        int n = 0;
-        for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != cat) continue;
-            if (!anySub && e.sub != sub) continue;
-            ++n;
+    // The counts, the subcategories and the "fits the wire" flags only change when one of these does, so they are
+    // worked out then and not on every frame the pop-up is open.
+    static std::vector<int> s_catCount;
+    static int s_browseAll = 0, s_starterN = 0;
+    static std::vector<std::pair<std::string, int>> s_subs;
+    {
+        using SideKey = std::tuple<std::size_t, bool, bool, bool, int, long long, long long, int, int>;
+        static SideKey s_sideKey{};
+        static bool s_sideInit = false;
+        const SideKey key{s_gen, st.linkPending, st.linkExec, st.linkFromOutput, (int)dragged,
+                          (long long)st.linkNode, (long long)st.linkPin, s_filter, s_side};
+        if (!s_sideInit || !(key == s_sideKey)) {
+            s_sideKey = key; s_sideInit = true;
+            for (auto& e : all) e.fits = !st.linkPending || !e.def || fits(*e.def);
+            s_catCount.assign((std::size_t)std::max(1, VsPaletteCategoryCount()), 0);
+            s_browseAll = 0; s_starterN = 0; s_subs.clear();
+            for (const auto& e : all) {
+                if (!e.fits || !e.browse || !passesLevel(e.level)) continue;
+                ++s_browseAll;
+                if (e.def && VsIsStarter(e.def->type)) ++s_starterN;
+                if (e.catIndex >= 0 && e.catIndex < (int)s_catCount.size()) ++s_catCount[(std::size_t)e.catIndex];
+                if (s_side >= 0 && e.catIndex == s_side && !e.sub.empty()) {
+                    bool found = false;
+                    for (auto& sb : s_subs) if (sb.first == e.sub) { ++sb.second; found = true; break; }
+                    if (!found) s_subs.push_back({e.sub, 1});
+                }
+            }
+            std::stable_sort(s_subs.begin(), s_subs.end(), [](const auto& a, const auto& b) {
+                const int ao = VsSubOrder(a.first.c_str()), bo = VsSubOrder(b.first.c_str());
+                if (ao != bo) return ao < bo;
+                return a.first < b.first;
+            });
         }
-        return n;
-    };
-    int browseAll = 0, starterN = 0;
-    for (const auto& e : all) if (e.browse && passesLevel(e.level)) {
-        ++browseAll;
-        if (e.def && VsIsStarter(e.def->type)) ++starterN;
     }
+    const int browseAll = s_browseAll, starterN = s_starterN;
     if (sideItem(-4, "Starter", 0, starterN, s_side == -4, 0)) { s_side = -4; s_sub = -1; s_subName.clear(); }
     if (sideItem(-2, "Recently used", 0, -1, s_side == -2, 0)) { s_side = -2; s_sub = -1; s_subName.clear(); }
     if (sideItem(-3, "All", 0, browseAll, s_side == -3, 0)) { s_side = -3; s_sub = -1; s_subName.clear(); }
     if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1, 0)) { s_side = -1; s_sub = -1; s_subName.clear(); }
     ImGui::Separator();
     for (int c = 0; c < VsPaletteCategoryCount(); ++c) {
-        const int n = browseCount(c, "", true);
+        const int n = c < (int)s_catCount.size() ? s_catCount[(std::size_t)c] : 0;
         if (!n) continue;
         if (sideItem(c, kPaletteCategories[c].name, bright(catColor(c)), n, s_side == c && s_sub < 0, 0)) {
             s_side = c; s_sub = -1; s_subName.clear();
         }
         if (s_side != c) continue;   // expanded: the topic you are in shows its subcategories
-        std::vector<std::pair<std::string, int>> subs;
-        for (const auto& e : all) {
-            if (!e.browse || !passesLevel(e.level) || e.catIndex != c || e.sub.empty()) continue;
-            bool found = false;
-            for (auto& s : subs) if (s.first == e.sub) { ++s.second; found = true; break; }
-            if (!found) subs.push_back({e.sub, 1});
-        }
-        if (subs.size() < 2) continue;
-        std::stable_sort(subs.begin(), subs.end(), [](const auto& a, const auto& b) {
-            const int ao = VsSubOrder(a.first.c_str()), bo = VsSubOrder(b.first.c_str());
-            if (ao != bo) return ao < bo;
-            return a.first < b.first;
-        });
-        for (int i = 0; i < (int)subs.size(); ++i) {
-            if (sideItem(1000 + c * 40 + i, subs[i].first.c_str(), 0, subs[i].second, s_side == c && s_sub == i, 1)) {
-                s_side = c; s_sub = i; s_subName = subs[i].first;
+        if (s_subs.size() < 2) continue;
+        for (int i = 0; i < (int)s_subs.size(); ++i) {
+            if (sideItem(1000 + c * 40 + i, s_subs[i].first.c_str(), 0, s_subs[i].second, s_side == c && s_sub == i, 1)) {
+                s_side = c; s_sub = i; s_subName = s_subs[i].first;
             }
         }
     }
@@ -525,56 +628,87 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::SameLine();
 
     // ---- Results ----
-    struct Row { const Entry* e; int sc; std::vector<int> hits; };
-    std::vector<Row> rows;
-    auto recentRank = [&](const std::string& key) {
-        const auto it = std::find(s_recent.begin(), s_recent.end(), key);
-        return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
-    };
-    for (const auto& e : all) {
-        if (!passesLevel(e.level)) continue;
-        if (needle.empty() && !e.browse) continue;
-        // Typing searches every topic, so a name is found wherever it lives.
-        // Only the level filter still applies.
-        if (needle.empty()) {
-            if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
-            if (s_side >= 0 && e.catIndex != s_side) continue;
-            if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
-            if (s_side == -1 && !isFav(e.key)) continue;
-            if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
+    // The rows (which entries, in which order, under which headers) only change when the search text, the topic, the
+    // level, the wire being dragged, the favourites/recents or the list itself change, so they are worked out then and
+    // kept. Only the rows on screen are drawn each frame (a clipper), so an open pop-up costs about the same however
+    // many nodes there are.
+    struct Row { const Entry* e; int sc; };
+    struct Disp { int row; const char* header; };     // one list line: a row, or a topic header (row = -1)
+    static std::vector<Row> s_rows;
+    static std::vector<Disp> s_disp;
+    static std::vector<int> s_rowDisp;                 // row index -> line in s_disp
+    {
+        using RowKey = std::tuple<std::size_t, std::size_t, bool, bool, bool, int, long long, long long, int, int, int, std::string, std::string>;
+        static RowKey s_rowKey{};
+        static bool s_rowInit = false;
+        const RowKey key{s_gen, s_listVer, st.linkPending, st.linkExec, st.linkFromOutput, (int)dragged,
+                         (long long)st.linkNode, (long long)st.linkPin, s_filter, s_side, s_sub, s_subName, needle};
+        if (!s_rowInit || !(key == s_rowKey)) {
+            s_rowKey = key; s_rowInit = true;
+            s_rows.clear(); s_disp.clear(); s_rowDisp.clear();
+            auto recentRank = [&](const std::string& k) {
+                const auto it = std::find(s_recent.begin(), s_recent.end(), k);
+                return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
+            };
+            std::vector<int> hits;
+            for (const auto& e : all) {
+                if (!e.fits || !passesLevel(e.level)) continue;
+                if (needle.empty() && !e.browse) continue;
+                // Typing searches every topic, so a name is found wherever it lives.
+                // Only the level filter still applies.
+                if (needle.empty()) {
+                    if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
+                    if (s_side >= 0 && e.catIndex != s_side) continue;
+                    if (s_side >= 0 && s_sub >= 0 && e.sub != s_subName) continue;
+                    if (s_side == -1 && !isFav(e.key)) continue;
+                    if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
+                }
+                const int sc = score(e, hits);
+                if (sc > 0) s_rows.push_back(Row{&e, sc});
+            }
+            if (!needle.empty())
+                std::stable_sort(s_rows.begin(), s_rows.end(), [&](const Row& a, const Row& b) {
+                    return VsSearchRanksBefore(a.sc, a.e->level, recentRank(a.e->key),
+                                               b.sc, b.e->level, recentRank(b.e->key));
+                });
+            else if (s_side == -2)
+                std::stable_sort(s_rows.begin(), s_rows.end(), [&](const Row& a, const Row& b) {
+                    return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
+                });
+            else if (s_side == -4)
+                std::stable_sort(s_rows.begin(), s_rows.end(), [](const Row& a, const Row& b) {
+                    return VsStarterIndex(a.e->def ? a.e->def->type : "") < VsStarterIndex(b.e->def ? b.e->def->type : "");
+                });
+            else if (st.linkPending)
+                std::stable_sort(s_rows.begin(), s_rows.end(), [](const Row& a, const Row& b) {
+                    if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
+                    if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
+                    return a.e->rank < b.e->rank;
+                });
+            else
+                std::stable_sort(s_rows.begin(), s_rows.end(), [](const Row& a, const Row& b) {
+                    if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
+                    const int ao = VsSubOrder(a.e->sub.c_str()), bo = VsSubOrder(b.e->sub.c_str());
+                    if (ao != bo) return ao < bo;
+                    if (a.e->sub != b.e->sub) return a.e->sub < b.e->sub;
+                    if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
+                    return a.e->rank < b.e->rank;
+                });
+            // Topic headers while browsing (not while searching). Inside a topic, the header is the subcategory.
+            const bool headers = needle.empty() && !st.linkPending && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0;
+            const char* lastHeader = nullptr;
+            for (int i = 0; i < (int)s_rows.size(); ++i) {
+                if (headers) {
+                    const std::string& h = s_side < 0 ? s_rows[i].e->cat : s_rows[i].e->sub;
+                    if (!h.empty() && (!lastHeader || h != lastHeader)) { lastHeader = h.c_str(); s_disp.push_back(Disp{-1, lastHeader}); }
+                }
+                s_rowDisp.push_back((int)s_disp.size());
+                s_disp.push_back(Disp{i, nullptr});
+            }
         }
-        Row r{&e, 0, {}};
-        r.sc = score(e, r.hits);
-        if (r.sc > 0) rows.push_back(std::move(r));
     }
-    if (!needle.empty())
-        std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-            return VsSearchRanksBefore(a.sc, a.e->level, recentRank(a.e->key),
-                                       b.sc, b.e->level, recentRank(b.e->key));
-        });
-    else if (s_side == -2)
-        std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
-            return std::find(s_recent.begin(), s_recent.end(), a.e->key) < std::find(s_recent.begin(), s_recent.end(), b.e->key);
-        });
-    else if (s_side == -4)
-        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-            return VsStarterIndex(a.e->def ? a.e->def->type : "") < VsStarterIndex(b.e->def ? b.e->def->type : "");
-        });
-    else if (st.linkPending)
-        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-            if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
-            if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
-            return a.e->rank < b.e->rank;
-        });
-    else
-        std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
-            if (a.e->catIndex != b.e->catIndex) return a.e->catIndex < b.e->catIndex;
-            const int ao = VsSubOrder(a.e->sub.c_str()), bo = VsSubOrder(b.e->sub.c_str());
-            if (ao != bo) return ao < bo;
-            if (a.e->sub != b.e->sub) return a.e->sub < b.e->sub;
-            if (a.e->level != b.e->level) return (int)a.e->level < (int)b.e->level;
-            return a.e->rank < b.e->rank;
-        });
+    const std::vector<Row>& rows = s_rows;
+    const bool kbMoved = ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow);
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) s_kb = std::min(s_kb + 1, (int)rows.size() - 1);
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   s_kb = std::max(s_kb - 1, 0);
     if (s_kb >= (int)rows.size()) s_kb = std::max(0, (int)rows.size() - 1);
@@ -595,18 +729,22 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::TextDisabled("Start here");
     }
     const float lh = ImGui::GetTextLineHeight();
-    std::string lastHeader;
-    for (int i = 0; i < (int)rows.size(); ++i) {
-        const Entry& e = *rows[i].e;
-        // Topic headers while browsing (not while searching). Inside a topic, the header is the subcategory.
-        if (needle.empty() && !st.linkPending && s_side != -1 && s_side != -2 && s_side != -4 && s_sub < 0) {
-            const std::string header = s_side < 0 ? e.cat : e.sub;
-            if (!header.empty() && header != lastHeader) {
-                lastHeader = header;
-                if (i) ImGui::Spacing();
-                ImGui::TextDisabled("%s", header.c_str());
-            }
+    const float lineH = lh + 14;                                   // every line (row or header) is this tall, which the clipper needs
+    ImGuiListClipper clip;
+    clip.Begin((int)s_disp.size(), lineH + ImGui::GetStyle().ItemSpacing.y);
+    if (kbMoved && s_kb >= 0 && s_kb < (int)s_rowDisp.size()) clip.IncludeItemByIndex(s_rowDisp[(std::size_t)s_kb]);
+    std::vector<int> hitsNow;
+    while (clip.Step())
+    for (int di = clip.DisplayStart; di < clip.DisplayEnd; ++di) {
+        if (s_disp[(std::size_t)di].row < 0) {
+            const ImVec2 hp = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(1.0f, lineH));
+            ImGui::GetWindowDrawList()->AddText(ImVec2(hp.x + 4.0f, hp.y + lineH - lh - 2.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), s_disp[(std::size_t)di].header);
+            continue;
         }
+        const int i = s_disp[(std::size_t)di].row;
+        const Entry& e = *rows[i].e;
+        score(e, hitsNow);
         ImGui::PushID(i);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool kbSel = i == s_kb;
@@ -633,7 +771,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
         for (int c = 0; c < (int)e.title.size(); ++c) {
             const char buf[2] = {e.title[c], 0};
-            const bool h = std::find(rows[i].hits.begin(), rows[i].hits.end(), c) != rows[i].hits.end();
+            const bool h = std::find(hitsNow.begin(), hitsNow.end(), c) != hitsNow.end();
             rdl->AddText(ImVec2(x, p.y + 2), h ? hit : normal, buf);
             x += ImGui::CalcTextSize(buf).x;
         }
@@ -661,6 +799,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
             if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
             else s_fav.push_back(e.key);
+            ++s_listVer;
             saveLists();
         }
         const bool sh = ImGui::IsItemHovered();

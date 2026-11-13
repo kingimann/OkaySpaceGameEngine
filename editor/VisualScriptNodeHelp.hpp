@@ -300,7 +300,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"NearestWithTag", "The name of the closest object with this tag. Good for targeting enemies or pickups."},
         {"CountWithTag",   "How many objects have this tag (e.g. enemies left)."},
         // ---- Actions ----
-        {"Print",          "Writes Value to the Console. Great for checking what your script is doing."},
+        {"Print",          "Writes a message to the Console. Type your own Text, wire in a Value (a key being held, a number, a position...) or both: with both it prints Text: Value."},
         {"LogWarn",        "Writes Value to the Console as a yellow warning."},
         {"LogError",       "Writes Value to the Console as a red error."},
         {"PlaySound",      "Plays this object's Audio Source."},

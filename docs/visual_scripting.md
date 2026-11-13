@@ -15,6 +15,18 @@ entry <name> <id>            # mark an entry node ("OnStart" / "OnUpdate")
 # comments start with '#'
 ```
 
+An exec output may have **any number of `exec` lines**. They run in the order the
+lines appear in the file (the editor writes them in the order the wires were made,
+and keeps that order across save and load), each one to the end of its chain
+before the next starts, exactly as a Sequence's outputs do. A Delay or Wait in
+one chain parks only that chain; the others still run the same frame. A step that
+cannot run (a missing Target, say) is reported and skipped without skipping the
+other wires; only a runaway-loop stop ends the whole event. The loader puts an
+invisible Sequence behind such a pin, so the debugger steps into each wire in turn
+and never stops on that helper. A **Sequence** node stays useful for a visible,
+labelled order; a plain fan-out is the same thing without the extra node. A data
+output can feed any number of inputs, an input takes one wire.
+
 ## Node types
 
 **Events** (1 exec out): `OnStart`, `OnUpdate`
@@ -293,7 +305,10 @@ Submit Score.
 - **Dragging from a pin:** only the nodes that fit that pin are listed.
 
 **Typed values:** every unconnected input has an inline box, so a Print node
-can print text without wiring a Const. Graphs attach from the Inspector (Add
+can print text without wiring a Const. Print has a **Text** box and an optional
+**Value** input: Text alone prints the text, Value alone prints the value, both
+print `Text: Value` (Key Held into Value with the text `Space held` logs
+`Space held: true`). Graphs saved before Value existed print exactly as before. Graphs attach from the Inspector (Add
 Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragging a
 `.okayvs` onto an object, or with **Attach to Selected** in the node editor.
 
@@ -359,7 +374,16 @@ Every N Times.
 - **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;
   **Del** deletes the selection; **Ctrl+A** selects everything.
 - **Ctrl+Z / Ctrl+Y** undo and redo every edit (moves, wiring, values).
-- **Alt+click a pin** to break its wires; right-click a node ▸ Break All Wires.
+- A flow output (On Start, On Update, any step) takes **as many wires as you like**;
+  drag from it again to add another. They run in the order you made them.
+- **Alt+click a pin** to break its wires; **Alt+click a wire** to break just that
+  one; right-click a node ▸ Break All Wires.
+- **Right-click a node ▸ Connect to...** shows what can plug into it. Each pin of
+  the node (flow in, each flow out, each value in and out) has its own list of
+  the nodes that fit that pin, easiest first and exact type matches ahead of
+  nodes that merely accept it. Pick one and it is added already wired; **Search
+  all** opens the full list for that pin (the same list as dropping a wire on
+  empty canvas).
 - **Comments** (toolbar *Comment*, or **C**): a titled, coloured frame around the
   selected nodes. Drag its title to move the group, drag the corner to resize,
   double-click to rename, right-click for colour / delete.
@@ -1167,7 +1191,7 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 
 ### Actions
 
-- **Print** (`Print`) — in Value
+- **Print** (`Print`) — in Text, Value
 - **Play Sound** (`PlaySound`)
 - **Spawn** (`Spawn`) — in X, Y, Z; out Object; setting: prefab
 - **Destroy** (`Destroy`) — in Target

@@ -35,13 +35,15 @@
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/TooltipPlace.hpp"
-#include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
+#include "okay/UI/UIPainterSDL.hpp"     // (the SDL colour/rect conversions; the painter itself is okay::platform::Painter)
+#include "okay/Platform/Painter.hpp"    // ...drawn through the platform painter
 #include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
 #include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
+#include "OkayUI_SoftPainter.hpp"   // the software painter of the own platform backend (own code, not ready)
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
@@ -80,12 +82,11 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
 
 // UI drawing helpers. The implementations live in the engine (okay::ui2d in
 // UIRenderer.hpp, shared with the in-game UI pass); these keep the player's own
-// overlays (inventory, crafting, loading screen, effects) on their SDL_Renderer.
-static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+// overlays (inventory, crafting, loading screen, effects) on the platform painter.
+static void FillUIShape(okay::platform::Painter* ren, const SDL_Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
                         float op, int diag = 0, int cornerMask = UICornerAll) {
-    ui2d::SDLPainter p(ren);
-    ui2d::FillUIShape(p, ui2d::FromSDL(r), shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
+    ui2d::FillUIShape(*ren, ui2d::FromSDL(r), shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
@@ -96,87 +97,79 @@ static SDL_Color TileColor(int id) {
 }
 
 // Draw a world-space axis-aligned quad (used for tiles and particles).
-static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, float hWorld,
+static void FillWorldQuad(okay::platform::Painter* r, const Vec3& center, float wWorld, float hWorld,
                           const Vec3& camPos, float scale, int w, int h, SDL_Color col) {
     SDL_Point c = W2S(center, camPos, scale, w, h);
     int hw = (int)(wWorld * 0.5f * scale), hh = (int)(hWorld * 0.5f * scale);
     SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
-    SDL_RenderFillRect(r, &rect);
+    r->SetDrawColor(col.r, col.g, col.b, col.a);
+    r->FillRect((const ui2d::Rect*)&rect);
 }
 
-static void MMFillCircle(SDL_Renderer* r, int cx, int cy, int rad, SDL_Color col) {
-    ui2d::SDLPainter p(r);
-    ui2d::MMFillCircle(p, cx, cy, rad, ui2d::FromSDL(col));
+static void MMFillCircle(okay::platform::Painter* r, int cx, int cy, int rad, SDL_Color col) {
+    ui2d::MMFillCircle(*r, cx, cy, rad, ui2d::FromSDL(col));
 }
-static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
-    ui2d::SDLPainter p(r);
-    ui2d::MMThickLine(p, x0, y0, x1, y1, width, ui2d::FromSDL(col));
+static void MMThickLine(okay::platform::Painter* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
+    ui2d::MMThickLine(*r, x0, y0, x1, y1, width, ui2d::FromSDL(col));
 }
 // Width of `text` in screen pixels at font-pixel size `px` (the scene's UI font while
 // one is set, else the 8x8 bitmap font).
 static float UITextW(const std::string& text, float px) { return ui2d::UITextW(text, px); }
-static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
+static void DrawText(okay::platform::Painter* r, const std::string& text, float ox, float oy,
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
-    ui2d::SDLPainter p(r);
-    ui2d::DrawUIText(p, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
+    ui2d::DrawUIText(*r, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
                    ui2d::FromSDL(col2), ttf);
 }
 // Load (and cache) a sprite texture; nullptr if the image can't be read (callers fall
 // back to a flat colored quad).
-static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
-                               const std::string& baseDir,
-                               std::unordered_map<std::string, SDL_Texture*>& cache) {
-    return ui2d::LoadSDLTexture(r, path, baseDir, cache);
+static ui2d::Tex GetTexture(okay::platform::Painter* r, const std::string& path) {
+    return r->LoadTexture(path);
 }
 
 // Line and Trail Renderers seen through `vp`, in the view rect: SDL geometry with a
 // colour per vertex, alpha-blended like the particles (the same on every backend).
-static void DrawLineDraws(SDL_Renderer* r, const Scene& scene, const Mat4& vp, const Vec3& eye, float vx, float vy,
-                          float vw, float vh, const GameObject* ignore, int cullingMask, LineOcclusionFn occluded,
-                          const std::string& baseDir, std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawLineDraws(okay::platform::Painter* r, const Scene& scene, const Mat4& vp, const Vec3& eye, float vx, float vy,
+                          float vw, float vh, const GameObject* ignore, int cullingMask, LineOcclusionFn occluded) {
     static std::vector<LineDraw> draws;
     static std::vector<SDL_Vertex> verts;
     CollectLineDraws(scene, vp, eye, vx, vy, vw, vh, draws, ignore, cullingMask, occluded);
     if (draws.empty()) return;
     auto byte = [](float c) { return (Uint8)(c <= 0.0f ? 0 : c >= 1.0f ? 255 : (int)(c * 255.0f + 0.5f)); };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     for (const LineDraw& d : draws) {
-        SDL_Texture* tex = d.texture.empty() ? nullptr : GetTexture(r, d.texture, baseDir, cache);
+        ui2d::Tex tex = d.texture.empty() ? nullptr : GetTexture(r, d.texture);
         if (tex) {   // the vertex colours tint it
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureColorMod(tex, 255, 255, 255);
-            SDL_SetTextureAlphaMod(tex, 255);
+            r->SetTextureBlendMode(tex, okay::platform::BlendMode::Blend);
+            r->SetTextureColorMod(tex, 255, 255, 255);
+            r->SetTextureAlphaMod(tex, 255);
         }
         verts.clear();
         for (const LineDrawVertex& q : d.tris)
             verts.push_back(SDL_Vertex{SDL_FPoint{q.x, q.y}, SDL_Color{byte(q.color.r), byte(q.color.g), byte(q.color.b), byte(q.color.a)},
                                        SDL_FPoint{q.u, q.v}});
-        SDL_RenderGeometry(r, tex, verts.data(), (int)verts.size(), nullptr, 0);
+        r->Geometry(tex, (const ui2d::Vertex*)verts.data(), (int)verts.size(), nullptr, 0);
     }
 }
 
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
-static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
-                                std::unordered_map<std::string, SDL_Texture*>& cache) {
-    return path.empty() ? nullptr : GetTexture(r, path, baseDir, cache);
+static ui2d::Tex IconTexture(okay::platform::Painter* r, const std::string& path) {
+    return path.empty() ? nullptr : GetTexture(r, path);
 }
 
 // The item's picture, or a colour tile with its initials when the file is missing.
 // An atlas definition samples a UV cell of the sheet.
-static void DrawItemIcon(SDL_Renderer* r, const std::string& folder, const std::string& item,
-                         const std::string& baseDir, std::unordered_map<std::string, SDL_Texture*>& cache,
+static void DrawItemIcon(okay::platform::Painter* r, const std::string& folder, const std::string& item,
                          float x, float y, float w, float h) {
     const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
-    if (SDL_Texture* tex = IconTexture(r, ref.path, baseDir, cache)) {
+    if (ui2d::Tex tex = IconTexture(r, ref.path)) {
         SDL_Rect dst{(int)x, (int)y, (int)w, (int)h};
         SDL_Rect src{};
         SDL_Rect* sp = nullptr;
         if (ref.atlas) {
             int tw = 0, th = 0;
-            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            r->QueryTexture(tex, &tw, &th);
             if (tw > 0 && th > 0) {
                 src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
                 src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
@@ -184,7 +177,7 @@ static void DrawItemIcon(SDL_Renderer* r, const std::string& folder, const std::
                 sp = &src;
             }
         }
-        SDL_RenderCopy(r, tex, sp, &dst);
+        r->Copy(tex, (const ui2d::Rect*)sp, (const ui2d::Rect*)&dst);
         return;
     }
     const okay::ItemGlyph g = okay::GlyphFor(item);
@@ -198,7 +191,7 @@ static void DrawItemIcon(SDL_Renderer* r, const std::string& folder, const std::
              SDL_Color{(Uint8)(g.fg.r * 255), (Uint8)(g.fg.g * 255), (Uint8)(g.fg.b * 255), 255});
 }
 
-static void DrawItemTip(SDL_Renderer* r, const okay::ItemTip& tip, float mx, float my, float px,
+static void DrawItemTip(okay::platform::Painter* r, const okay::ItemTip& tip, float mx, float my, float px,
                         const Color& bg, const Color& text, int W, int H) {
     if (tip.lines.empty()) return;
     if (px < 1.0f) px = 1.0f;
@@ -221,14 +214,14 @@ static void DrawItemTip(SDL_Renderer* r, const okay::ItemTip& tip, float mx, flo
 // Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
 // the corners. A cheap post overlay of stepped 1px border frames fading inward, so
 // it looks the same regardless of which 3D backend rendered the scene beneath it.
-static void DrawVignette(SDL_Renderer* r, float strength) {
+static void DrawVignette(okay::platform::Painter* r, float strength) {
     if (strength <= 0.0f) return;
     if (strength > 1.0f) strength = 1.0f;
     int w = 0, h = 0;
-    SDL_GetRendererOutputSize(r, &w, &h);
+    r->OutputSize(&w, &h);
     if (w <= 2 || h <= 2) return;
-    SDL_BlendMode prev; SDL_GetRenderDrawBlendMode(r, &prev);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const okay::platform::BlendMode prev = r->GetBlendMode();
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     const int steps = 56;
     const float maxInset = 0.42f * (float)std::min(w, h);   // how far the fade reaches
     for (int i = 0; i < steps; ++i) {
@@ -237,22 +230,21 @@ static void DrawVignette(SDL_Renderer* r, float strength) {
         if (w - 2 * inset <= 0 || h - 2 * inset <= 0) break;
         Uint8 a = (Uint8)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
         if (a == 0) continue;
-        SDL_SetRenderDrawColor(r, 0, 0, 0, a);
+        r->SetDrawColor(0, 0, 0, a);
         SDL_Rect top{inset, inset, w - 2 * inset, 1};
         SDL_Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
         SDL_Rect lft{inset, inset, 1, h - 2 * inset};
         SDL_Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
-        SDL_RenderFillRect(r, &top); SDL_RenderFillRect(r, &bot);
-        SDL_RenderFillRect(r, &lft); SDL_RenderFillRect(r, &rgt);
+        r->FillRect((const ui2d::Rect*)&top); r->FillRect((const ui2d::Rect*)&bot);
+        r->FillRect((const ui2d::Rect*)&lft); r->FillRect((const ui2d::Rect*)&rgt);
     }
-    SDL_SetRenderDrawBlendMode(r, prev);
+    r->SetBlendMode(prev);
 }
 
 // Draw an overlay's command list (a loading screen, a cutscene's fade and
 // subtitle); the editor's Play view draws the same list, so both look the same.
-static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDrawCmd>& cmds, const std::string& baseDir,
-                            std::unordered_map<std::string, SDL_Texture*>& cache) {
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::LoadingDrawCmd>& cmds) {
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     auto sc = [](const Color& c, float a) {
         return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                          (Uint8)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
@@ -271,17 +263,17 @@ static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDraw
             break;
         case K::Outline: {
             SDL_Color c = sc(d.color, d.alpha);
-            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
-            SDL_RenderDrawRect(r, &box);
+            r->SetDrawColor(c.r, c.g, c.b, c.a);
+            r->DrawRect((const ui2d::Rect*)&box);
             break;
         }
         case K::Image: {
-            SDL_Texture* tex = GetTexture(r, d.text, baseDir, cache);
+            ui2d::Tex tex = GetTexture(r, d.text);
             if (!tex) break;
-            int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            int tw = 0, th = 0; r->QueryTexture(tex, &tw, &th);
             SDL_Rect src{(int)(d.u0 * tw), (int)(d.v0 * th), (int)((d.u1 - d.u0) * tw), (int)((d.v1 - d.v0) * th)};
-            SDL_SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
-            SDL_RenderCopy(r, tex, &src, &box);
+            r->SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
+            r->Copy(tex, (const ui2d::Rect*)&src, (const ui2d::Rect*)&box);
             break;
         }
         case K::Text: {
@@ -299,7 +291,7 @@ static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDraw
             break;
         case K::Arc: {   // exact pixel spans of the ring, so a see-through track has no seams
             SDL_Color c = sc(d.color, d.alpha);
-            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+            r->SetDrawColor(c.r, c.g, c.b, c.a);
             const float ro = d.w + d.radius * 0.5f, ri = std::max(0.0f, d.w - d.radius * 0.5f);
             const float span = d.u1 - d.u0;
             const bool full = std::fabs(span) >= 6.2831853f - 1e-3f;
@@ -318,12 +310,12 @@ static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDraw
                                          {(int)std::lround(d.x + xi), (int)std::lround(d.x + xo)}};
                 for (int k = 0; k < (xi > 0.0f ? 2 : 1); ++k) {
                     int s0 = spans[k][0], s1 = xi > 0.0f ? spans[k][1] : spans[1][1];
-                    if (full) { if (s1 > s0) SDL_RenderDrawLine(r, s0, yy, s1 - 1, yy); continue; }
+                    if (full) { if (s1 > s0) r->DrawLine(s0, yy, s1 - 1, yy); continue; }
                     int run = -1;   // draw the runs of pixels inside the arc's angle range
                     for (int xx = s0; xx <= s1; ++xx) {
                         const bool in = xx < s1 && inArc(xx + 0.5f, yy + 0.5f);
                         if (in && run < 0) run = xx;
-                        else if (!in && run >= 0) { SDL_RenderDrawLine(r, run, yy, xx - 1, yy); run = -1; }
+                        else if (!in && run >= 0) { r->DrawLine(run, yy, xx - 1, yy); run = -1; }
                     }
                 }
             }
@@ -334,11 +326,10 @@ static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDraw
 }
 
 // Full-screen loading-screen overlay: the layout BuildLoadingScreen() makes.
-static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
-                              std::unordered_map<std::string, SDL_Texture*>& cache) {
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+static void DrawLoadingScreen(okay::platform::Painter* r, okay::LoadingScreen& ls) {
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
-    DrawOverlayCmds(r, okay::BuildLoadingScreen(ls, (float)W, (float)H), baseDir, cache);
+    DrawOverlayCmds(r, okay::BuildLoadingScreen(ls, (float)W, (float)H));
 }
 
 // "okay://match?mode=duel&players=2&min=2&region=EU" — the launcher's "Find match"
@@ -589,20 +580,18 @@ static void DrawMatchmakingBanner(okay::platform::Window* window) {
 }
 #endif
 
-static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::string& baseDir,
-                            std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
     okay::Inventory* inv = ui.Inv();
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::HotbarLayout L = okay::InventoryInput::LayoutHotbar(ui, (float)W, (float)H);
     const int n = L.hotbar, total = L.total, bpRows = L.rows;
     const float uiScale = L.scale, sz = L.sz, gap = L.gap, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
-        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
-                               (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     const float cr = ui.cornerRadius;
     const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
     // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
@@ -630,7 +619,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
             int ins = (int)(ui.iconInset * uiScale);
-            DrawItemIcon(r, ui.iconFolder, it.item, baseDir, cache, (float)(inner.x + ins), (float)(inner.y + ins),
+            DrawItemIcon(r, ui.iconFolder, it.item, (float)(inner.x + ins), (float)(inner.y + ins),
                          (float)(inner.w - 2 * ins), (float)(inner.h - 2 * ins));
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
@@ -654,13 +643,13 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             setc(ui.panelBorder);
             for (int k = 0; k < bw; ++k) {
                 SDL_Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
-                if (fr.w > 0 && fr.h > 0) SDL_RenderDrawRect(r, &fr);
+                if (fr.w > 0 && fr.h > 0) r->DrawRect((const ui2d::Rect*)&fr);
             }
         }
     };
     // Backpack (when open): darken, then the grid.
     if (ui.open && bpRows > 0) {
-        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
         if (ui.showPanel) {
             float t = bpY(0), b = bpY(bpRows - 1);
             float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
@@ -685,7 +674,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     // Equipment column (worn items) beside the open backpack.
     auto equipIcon = [&](const std::string& item, float x, float y) {
         int ins = (int)(ui.iconInset * uiScale);
-        DrawItemIcon(r, ui.iconFolder, item, baseDir, cache, x + ins, y + ins, sz - 2 * ins, sz - 2 * ins);
+        DrawItemIcon(r, ui.iconFolder, item, x + ins, y + ins, sz - 2 * ins, sz - 2 * ins);
     };
     if (L.equip && L.equipN > 0) {
         float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
@@ -721,7 +710,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         float sx, sy; L.SlotXY(ui.navSlot, sx, sy);
         setc(ui.selectedColor);
         SDL_Rect nr{(int)sx - 2, (int)sy - 2, (int)sz + 4, (int)sz + 4};
-        SDL_RenderDrawRect(r, &nr);
+        r->DrawRect((const ui2d::Rect*)&nr);
     }
     // Tooltip: the item's definition, and a compare against whatever is worn in that slot.
     okay::Vec2 mpos = okay::Input::MousePosition();
@@ -787,7 +776,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
         slot(x, y, -2, false);   // an empty slot frame floating under the cursor
-        DrawItemIcon(r, ui.iconFolder, it.item, baseDir, cache, x + 4, y + 4, sz - 8, sz - 8);
+        DrawItemIcon(r, ui.iconFolder, it.item, x + 4, y + 4, sz - 8, sz - 8);
         // The carried count (the split amount, or the whole stack).
         int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
         if (ui.showCounts && carried > 1) {
@@ -804,18 +793,17 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 // Unturned-style multi-container inventory: the player's own grid + every worn
 // clothing/bag grid stacked in a left column, and nearby ground containers in a
 // right column. Drag-and-drop works across all of them (cross-bag / loot moves).
-static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
-                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI& ui) {
     okay::GridInventory* primary = ui.Inv();
     if (!primary || !primary->open) { ui.CancelDrag(); return; }
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::GridLayout GL = okay::InventoryInput::LayoutGrid(ui, *primary, (float)W, (float)H);
     const float cs = GL.cs, gp = GL.gp;
     const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
-        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
@@ -831,7 +819,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     auto darken  = [&](Color c, float f) { return Color{c.r * (1 - f), c.g * (1 - f), c.b * (1 - f), c.a}; };
     auto shadow  = [&](float x, float y, float w, float h, float rad) { if (ui.dropShadows) fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
     auto stroke  = [&](float x, float y, float w, float h, const Color& c, int a) {
-        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; SDL_RenderDrawRect(r, &bx);
+        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; r->DrawRect((const ui2d::Rect*)&bx);
     };
 
     const std::vector<okay::GridInventory*>& equipped = GL.equipped;
@@ -840,8 +828,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     const float lw = GL.lw, lh = GL.lh, rw = GL.rw, rh = GL.rh, startX = GL.startX, startY = GL.startY;
     const bool hasNear = GL.hasNear;
 
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
     // Backing panels (drop shadow + soft vertical gradient + hairline rim) per column.
     auto backing = [&](float x, float y, float w, float h) {
         shadow(x, y, w, h, cr + 3);
@@ -890,13 +878,13 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
-        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconOf(u.iconFolder, it.name).path, baseDir, cache)) {
-            SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255);
+        if (ui2d::Tex icon = IconTexture(r, okay::ItemIconOf(u.iconFolder, it.name).path)) {
+            r->SetTextureAlphaMod(icon, ghost ? 160 : 255);
             const okay::ItemIconRef ref = okay::ItemIconOf(u.iconFolder, it.name);
             SDL_Rect src{}, d{box.x + 6, box.y + 6, box.w - 12, box.h - 12};
             SDL_Rect* sp = nullptr;
             if (ref.atlas) {
-                int tw = 0, th = 0; SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
+                int tw = 0, th = 0; r->QueryTexture(icon, &tw, &th);
                 if (tw > 0 && th > 0) {
                     src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
                     src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
@@ -904,8 +892,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
                     sp = &src;
                 }
             }
-            SDL_RenderCopy(r, icon, sp, &d);
-            if (ghost) SDL_SetTextureAlphaMod(icon, 255);
+            r->Copy(icon, (const ui2d::Rect*)sp, (const ui2d::Rect*)&d);
+            if (ghost) r->SetTextureAlphaMod(icon, 255);
         } else {
             const okay::ItemGlyph g = okay::GlyphFor(it.name);
             fill(px0 + 4, py0 + 4, w - 8, h - 8, g.bg, cr);
@@ -987,10 +975,10 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
 }
 
 // Crafting bench panel: lists recipes, tints by affordability, crafts on click.
-static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
+static void DrawCrafting(okay::platform::Painter* r, okay::CraftingStation& cs) {
     if (!cs.open) return;
     okay::Inventory* inv = cs.Inv();
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     const float cr = cs.cornerRadius;
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
@@ -998,7 +986,7 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
         SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(cs, (float)W, (float)H);
     const float px = L.px, py = L.py, pw = L.pw, ph = L.ph;
@@ -1036,16 +1024,15 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
 
 // A lootable chest: chest contents on top, your inventory below. Click a stack to
 // move the whole thing to the other side (take loot / stash items).
-static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::string& baseDir,
-                      std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
     if (!ch.open) return;
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
+    int W = 0, H = 0; r->OutputSize(&W, &H); if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::ChestLayout L = okay::InventoryInput::LayoutChest(ch, (float)W, (float)H);
     if (!L.chest) return;
     const float cr = ch.cornerRadius;
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    if (ch.darkenWhenOpen) { r->SetDrawColor(0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&f); }
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
         SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
@@ -1064,7 +1051,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
     L.Pick(mp.x, mp.y, hovSide, hovIdx);
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
-        DrawItemIcon(r, ch.iconFolder, it.item, baseDir, cache, x + 4, y + 4, sz - 8, sz - 8);
+        DrawItemIcon(r, ch.iconFolder, it.item, x + 4, y + 4, sz - 8, sz - 8);
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
             DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
@@ -1083,12 +1070,12 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     };
     if (L.scrolling) {
         SDL_Rect clip{(int)(L.panelX - 12), (int)L.viewY, (int)(L.panelW + 24), (int)L.viewH};
-        SDL_RenderSetClipRect(r, &clip);
+        r->SetClipRect((const ui2d::Rect*)&clip);
     }
     grid(0);
     DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6 - (L.scrolling ? ch.scroll : 0.0f), 1.2f, sc(ch.textColor));
     if (L.player) grid(1);
-    if (L.scrolling) SDL_RenderSetClipRect(r, nullptr);
+    if (L.scrolling) r->SetClipRect(nullptr);
     // Hover tooltip on whichever stack the cursor is over.
     if (hovIdx >= 0) {
         okay::Inventory* hinv = L.Inv(hovSide);
@@ -1531,25 +1518,36 @@ int main(int argc, char** argv) {
         if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon))
             window->SetIcon((const uint8_t*)ico.Data(), ico.Width(), ico.Height());
     }
-    // The 2D drawing (SDL_Renderer, the OkayUI backend) needs an SDL window. Only the sdl2
-    // backend makes one; our own backend's windows (X11 / Win32) cannot be drawn on yet.
-    SDL_Window* sdlWindow = nullptr;
-    if (window && pb->Kind() == okay::platform::BackendKind::Sdl2) sdlWindow = (SDL_Window*)window->NativeHandle();
-    else if (window) {
-        pb->Log(std::string("the player draws through SDL_Renderer, which needs the sdl2 platform backend; backend '") +
-                pb->Name() + "' made its window but has no 2D painter yet (see docs/platform_layer.md)");
-        windowOwner.reset();
-        pb->Shutdown();
-        return 2;
+    // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
+    // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
+    // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
+    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform_layer.md).
+    std::unique_ptr<okay::platform::Painter> painterOwner;
+    if (window) {
+        okay::platform::PainterDesc pd;
+        pd.vsync = cfg.vsync;
+        std::string perr;
+        if (pb->Kind() == okay::platform::BackendKind::Sdl2) painterOwner = okay::platform::CreateSdl2Painter(*window, pd, &perr);
+#ifdef OKAY_HAVE_OKAYUI
+        else painterOwner = OkayUI::soft::CreateWindowPainter(*window, pd, &perr);
+#else
+        else perr = "this build has no software painter (OkayUI is not part of it)";
+#endif
+        if (!painterOwner) {
+            pb->Log(std::string("no 2D painter for backend '") + pb->Name() + "': " + perr);
+            windowOwner.reset();
+            pb->Shutdown();
+            return 2;
+        }
+        painterOwner->SetBaseDir(baseDir);
+        pb->Log(std::string("2D painter: ") + painterOwner->Name());
     }
-    Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
-    SDL_Renderer* renderer = SDL_CreateRenderer(sdlWindow, -1, renFlags);
-    if (!renderer) renderer = SDL_CreateRenderer(sdlWindow, -1, 0);
+    okay::platform::Painter* renderer = painterOwner.get();
 
     // ---- Boot splash: the project's branded loading frame, shown immediately so
     // the game doesn't flash a black window while the renderer / GPU / scene set
     // up. Matches the editor/launcher loading screen. Reveal the window on it.
-    SDL_Texture* bootTex = nullptr;
+    ui2d::Tex bootTex = nullptr;
     if (renderer && window) {
         okay::SplashStyle st;
         if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
@@ -1560,15 +1558,13 @@ int main(int argc, char** argv) {
         if (!cfg.bootLogo.empty()) {
             okay::Image img;
             if (img.Load(cfg.bootLogo) || img.Load(baseDir + cfg.bootLogo)) {
-                if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
-                        (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                    bootTex = SDL_CreateTextureFromSurface(renderer, s);
-                    SDL_FreeSurface(s);
-                }
+                okay::platform::TextureDesc td;
+                td.width = img.Width(); td.height = img.Height();
+                bootTex = renderer->CreateTexture(td, (const std::uint8_t*)img.Data());
             }
         }
         st.logo = bootTex;
-        int bw = cfg.width, bh = cfg.height; SDL_GetRendererOutputSize(renderer, &bw, &bh);
+        int bw = cfg.width, bh = cfg.height; renderer->OutputSize(&bw, &bh);
         okay::DrawSplashStyled(renderer, bw, bh, st);
 #if !defined(__EMSCRIPTEN__)
         window->Show(); window->Raise();
@@ -1652,17 +1648,15 @@ int main(int argc, char** argv) {
     InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
-    std::unordered_map<std::string, SDL_Texture*> textureCache;
     // The UI pass draws through one batcher for the whole run: it keeps the UI atlas
     // (fonts + images) and its vertex buffers between frames.
-    ui2d::SDLPainter uiPainter(renderer, &textureCache, baseDir);
-    ui2d::BatchPainter uiBatch(uiPainter, [&baseDir](const std::string& path, Image& out) {
+    ui2d::BatchPainter uiBatch(*renderer, [&baseDir](const std::string& path, Image& out) {
         return out.Load(path) || out.Load(baseDir + path);
     });
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
     // overlapping faces occlude correctly, then blitted under the 2D/UI layers.
     Raster mesh3D;
-    SDL_Texture* mesh3DTex = nullptr;
+    ui2d::Tex mesh3DTex = nullptr;
     int mesh3DW = 0, mesh3DH = 0;
 
     // Load the audio files (WAV, OGG, MP3) AudioSources name, resampled to the mix rate.
@@ -1716,7 +1710,10 @@ int main(int argc, char** argv) {
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
-    g_uiBridge.renderer = renderer;   // dialogue portraits as textures
+    g_uiBridge.painter = renderer;    // dialogue portraits as textures
+    // OkayUI's frame on a painter without an SDL_Renderer behind it (the software painter of the own backend).
+    std::unique_ptr<OkayUI::soft::FrameDrawer> uiFrame;
+    if (!renderer->NativeRenderer()) uiFrame.reset(new OkayUI::soft::FrameDrawer(*renderer));
     okay::SetScriptUI(&g_uiBridge);
 #endif
     // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
@@ -1841,7 +1838,7 @@ int main(int argc, char** argv) {
             if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
                 // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
                 int ow = 0, oh = 0;
-                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                renderer->OutputSize(&ow, &oh);
                 const int state = e.type == ET::FingerDown ? 0 : e.type == ET::FingerMotion ? 1 : 2;
                 Input::FeedTouch(e.fingerId, state, Vec2{e.fx * ow, e.fy * oh});
             }
@@ -1972,7 +1969,7 @@ int main(int argc, char** argv) {
             // slots, buttons — lines up with what's on screen.
             int ww = 0, wh = 0, ow = 0, oh = 0;
             window->GetSize(ww, wh);
-            SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            renderer->OutputSize(&ow, &oh);
             float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
             if (confined && ww > 1 && wh > 1) {
                 if (ax < 0) ax = 0;
@@ -1998,7 +1995,7 @@ int main(int argc, char** argv) {
                 s_dispGen = gen;
                 window->SetFullscreen(okay::DisplaySettings::Fullscreen());
                 cfg.vsync = okay::DisplaySettings::VSync();
-                SDL_RenderSetVSync(renderer, cfg.vsync ? 1 : 0);
+                renderer->SetVSync((cfg.vsync ? 1 : 0) != 0);
                 okay::DisplaySettings::ApplyQuality();
             }
         }
@@ -2028,7 +2025,7 @@ int main(int argc, char** argv) {
 
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
-        { int cw, ch; SDL_GetRendererOutputSize(renderer, &cw, &ch);
+        { int cw, ch; renderer->OutputSize(&cw, &ch);
           UICanvas::Set((float)cw, (float)ch);
           // Make the world-space UI projector live during scene.Update too, so a
           // world-space button's Contains() hit-tests where it actually appears
@@ -2151,12 +2148,11 @@ int main(int argc, char** argv) {
             }
         }
 
-        int w, h; SDL_GetRendererOutputSize(renderer, &w, &h);
+        int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;
         Color bg = cam ? cam->backgroundColor : Color::Black;
-        SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                               (Uint8)(bg.b * 255), 255);
-        SDL_RenderClear(renderer);
+        renderer->SetDrawColor((Uint8)(bg.r * 255), (Uint8)(bg.g * 255), (Uint8)(bg.b * 255), 255);
+        renderer->Clear();
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
         // A camera set to "Solid Color" clear flags suppresses the skybox (the
@@ -2184,7 +2180,7 @@ int main(int argc, char** argv) {
             const Color skyTop{topV.x, topV.y, topV.z, 1.0f}, skyHorizon{horV.x, horV.y, horV.z, 1.0f},
                         skyBottom{botV.x, botV.y, botV.z, 1.0f};
             const bool procedural = rs.skyMode == Scene::RenderSettings::SkyProcedural;
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            renderer->SetBlendMode(okay::platform::BlendMode::None);
             float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
             const int strips = h < 128 ? h : 128;     // smooth enough, cheap
             for (int s = 0; s < strips; ++s) {
@@ -2202,26 +2198,25 @@ int main(int argc, char** argv) {
                                std::fmin(skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
                     c = lerp(c, haze, hz * 0.5f);
                 }
-                SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
-                                       (Uint8)(c.b * 255), 255);
+                renderer->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
                 int y1 = (int)((float)(s + 1) / strips * h);
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
-                SDL_RenderFillRect(renderer, &rrect);
+                renderer->FillRect((const ui2d::Rect*)&rrect);
             }
             // Optional star field in the upper sky (above the horizon band). The
             // procedural sky draws its own stars and sun.
             if (rs.skyStars && !procedural) {
                 int horizonPx = (int)(hp * h);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                renderer->SetBlendMode(okay::platform::BlendMode::Blend);
                 for (const auto& st : okay::SkyStars((float)w, (float)h, (float)horizonPx,
                                                      rs.skyStarDensity, rs.skyStarBright)) {
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, st.a);
+                    renderer->SetDrawColor(255, 255, 255, st.a);
                     int r = (int)(st.r + 0.5f); if (r < 1) r = 1;
                     SDL_Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
-                    SDL_RenderFillRect(renderer, &sq);
+                    renderer->FillRect((const ui2d::Rect*)&sq);
                 }
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+                renderer->SetBlendMode(okay::platform::BlendMode::None);
             }
             // Optional sun disc: a filled circle + soft glow at a screen-space position.
             if (rs.skySun && !procedural) {
@@ -2229,13 +2224,13 @@ int main(int argc, char** argv) {
                 int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
                 const Color& sk = rs.skySunColor;
                 Uint8 sr = (Uint8)(sk.r * 255), sg = (Uint8)(sk.g * 255), sb = (Uint8)(sk.b * 255);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                renderer->SetBlendMode(okay::platform::BlendMode::Blend);
                 auto fillDisc = [&](int r, Uint8 a) {
-                    SDL_SetRenderDrawColor(renderer, sr, sg, sb, a);
+                    renderer->SetDrawColor(sr, sg, sb, a);
                     for (int dy = -r; dy <= r; ++dy) {
                         int dx = (int)std::sqrt((double)(r * r - dy * dy));
                         SDL_Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
-                        SDL_RenderFillRect(renderer, &row);
+                        renderer->FillRect((const ui2d::Rect*)&row);
                     }
                 };
                 // Broad sun-scattering glow: faint warm discs brightening the sky
@@ -2248,7 +2243,7 @@ int main(int argc, char** argv) {
                 }
                 for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(40 - g * 6));
                 fillDisc(rad, 255);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+                renderer->SetBlendMode(okay::platform::BlendMode::None);
             }
         }
 
@@ -2355,10 +2350,10 @@ int main(int argc, char** argv) {
                     okay::StoreCameraTarget(cam->renderTarget, px, vw, vh);
                 if (px) {
                     if (!mesh3DTex || mesh3DW != vw || mesh3DH != vh) {
-                        if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-                        mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                                                      SDL_TEXTUREACCESS_STREAMING, vw, vh);
-                        SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
+                        if (mesh3DTex) renderer->DestroyTexture(mesh3DTex);
+                        okay::platform::TextureDesc td;
+                        td.width = vw; td.height = vh; td.streaming = true;
+                        mesh3DTex = renderer->CreateTexture(td, nullptr);
                         mesh3DW = vw; mesh3DH = vh;
                     }
                     if (okay::Accessibility::Get().colorblind != okay::ColorblindMode::None) {   // colour vision filter over the 3D frame
@@ -2367,15 +2362,15 @@ int main(int argc, char** argv) {
                         okay::Accessibility::FilterFrame((std::uint8_t*)a11yFrame.data(), a11yFrame.size());
                         px = a11yFrame.data();
                     }
-                    SDL_UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
-                    if (fullView) SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                    renderer->UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
+                    if (fullView) renderer->Copy(mesh3DTex, nullptr, nullptr);
                     else {   // outside the camera's rect stays black, like an empty screen area
-                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        renderer->SetDrawColor(0, 0, 0, 255);
                         const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
                                                   {0, vy, vx, vh}, {vx + vw, vy, w - vx - vw, vh}};
-                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) SDL_RenderFillRect(renderer, &b);
+                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) renderer->FillRect((const ui2d::Rect*)&b);
                         const SDL_Rect dst{vx, vy, vw, vh};
-                        SDL_RenderCopy(renderer, mesh3DTex, nullptr, &dst);
+                        renderer->Copy(mesh3DTex, nullptr, (const ui2d::Rect*)&dst);
                     }
                 }
                 // Depth occlusion on the GPU color path: the GPU renderers don't read
@@ -2399,13 +2394,13 @@ int main(int argc, char** argv) {
                 // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
                 {
                     // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
-                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; SDL_Texture* tex; bool stretch; };
+                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; ui2d::Tex tex; bool stretch; };
                     std::vector<PP> pp;
                     for (const auto& up : scene.Objects()) {
                         auto* ps = up->GetComponent<ParticleSystem>();
                         if (!ps || !up->active || UIHidden(up.get())) continue;
-                        SDL_Texture* ptex = ps->texture.empty() ? nullptr
-                                            : GetTexture(renderer, ps->texture, baseDir, textureCache);
+                        ui2d::Tex ptex = ps->texture.empty() ? nullptr
+                                            : GetTexture(renderer, ps->texture);
                         const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
                         for (const auto& p : ps->Particles()) {
                             if (!p.alive) continue;
@@ -2441,11 +2436,11 @@ int main(int argc, char** argv) {
                     for (const PP& q : pp) {
                         if (q.tex) {
                             // Rotated, tinted sprite — elongated along velocity in stretch mode.
-                            SDL_SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
-                            SDL_SetTextureAlphaMod(q.tex, q.col.a);
-                            SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+                            renderer->SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
+                            renderer->SetTextureAlphaMod(q.tex, q.col.a);
+                            renderer->SetTextureBlendMode(q.tex, okay::platform::BlendMode::Blend);
                             SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
-                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.ang, nullptr, SDL_FLIP_NONE);
+                            renderer->CopyExF(q.tex, nullptr, (const ui2d::FRect*)&dst, q.ang, nullptr, ui2d::FlipNone);
                         } else if (q.stretch) {
                             // Untextured streak: a thick line along the velocity.
                             float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
@@ -2459,8 +2454,7 @@ int main(int argc, char** argv) {
                 }
                 // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
                 DrawLineDraws(renderer, scene, vp, camPos, (float)vx, (float)vy, (float)vw, (float)vh, ignore,
-                              RenderCullingMask(), SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr,
-                              baseDir, textureCache);
+                              RenderCullingMask(), SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr);
             }
         } else {
             float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
@@ -2488,9 +2482,8 @@ int main(int argc, char** argv) {
                 // Texture coords map the image upright onto the quad corners
                 // (corner 3 = top-left in world = texture uvMin). Honors the
                 // sprite's uv sub-region so sprite sheets / atlases work.
-                SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
-                if (tex) SDL_SetTextureScaleMode(tex,
-                    sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+                ui2d::Tex tex = GetTexture(renderer, sr->texture);
+                if (tex) renderer->SetTextureScaleMode(tex, sr->texFilter == SpriteRenderer::TexFilter::Pixel ? okay::platform::ScaleMode::Nearest : okay::platform::ScaleMode::Linear);
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
                 if (sr->flipX) std::swap(u0, u1);
                 if (sr->flipY) std::swap(v0, v1);
@@ -2502,11 +2495,11 @@ int main(int argc, char** argv) {
                     vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, uv[k]};
                 }
                 const int idx[6] = {0, 1, 2, 0, 2, 3};
-                SDL_RenderGeometry(renderer, tex, vtx, 4, idx, 6);
+                renderer->Geometry(tex, (const ui2d::Vertex*)vtx, 4, idx, 6);
             }
 
             // Drop-zone highlight: tint a zone while a valid item hovers it.
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            renderer->SetBlendMode(okay::platform::BlendMode::Blend);
             for (const auto& up : scene.Objects()) {
                 auto* dz = up->GetComponent<DropZone>();
                 auto* sr = up->GetComponent<SpriteRenderer>();
@@ -2518,7 +2511,7 @@ int main(int argc, char** argv) {
             }
 
             // Tilemaps: draw each non-empty cell as a colored quad.
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            renderer->SetBlendMode(okay::platform::BlendMode::Blend);
             for (const auto& up : scene.Objects()) {
                 auto* tm = up->GetComponent<Tilemap>();
                 if (!tm || !up->active || UIHidden(up.get())) continue;
@@ -2545,7 +2538,7 @@ int main(int argc, char** argv) {
             }
             // Lines and trails in 2D, on the same mapping as the sprites.
             DrawLineDraws(renderer, scene, LineView2D(camPos, scale, (float)w, (float)h), camPos - Vec3{0, 0, 1000.0f},
-                          0.0f, 0.0f, (float)w, (float)h, nullptr, cam ? cam->cullingMask : ~0, nullptr, baseDir, textureCache);
+                          0.0f, 0.0f, (float)w, (float)h, nullptr, cam ? cam->cullingMask : ~0, nullptr);
         }
 
         // World-space text only (sits with the 2D scene). Screen-space HUD text is
@@ -2587,7 +2580,7 @@ int main(int argc, char** argv) {
         // every widget (Canvas sortOrder, uiDrawOrder / type layer, hierarchy order),
         // done by the engine's UI renderer (okay::ui2d::RenderSceneUI) on this
         // SDL_Renderer.
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        renderer->SetBlendMode(okay::platform::BlendMode::Blend);
         // World-space Canvas projection: hand the shared UI layout helpers a camera
         // projector for this frame so any widget under a world-space Canvas renders
         // (and hit-tests) in 3D. Cleared after the pass; screen-space UI is untouched.
@@ -2620,8 +2613,8 @@ int main(int argc, char** argv) {
             float px = 2.0f;
             float tw = UITextW(buf, px);
             SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
-            SDL_RenderFillRect(renderer, &bg);
+            renderer->SetDrawColor(0, 0, 0, 160);
+            renderer->FillRect((const ui2d::Rect*)&bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
         }
         if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
@@ -2632,8 +2625,8 @@ int main(int argc, char** argv) {
             int y = h - (int)(Font8x8::Height * px) - 12;
             if (x < 8) x = 8;
             SDL_Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
-            SDL_RenderFillRect(renderer, &bg);
+            renderer->SetDrawColor(0, 0, 0, 140);
+            renderer->FillRect((const ui2d::Rect*)&bg);
             DrawText(renderer, hint, (float)x, (float)y, px, SDL_Color{230, 245, 230, 230});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
@@ -2670,20 +2663,26 @@ int main(int argc, char** argv) {
             OkayUI::EndChild();
             OkayUI::End();
         }
-        OkayUI::EndFrame(renderer);
+        if (uiFrame) {
+            int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
+            OkayUI::EndFrameData(uw, uh);
+            uiFrame->Draw(OkayUI::GetDrawData());
+        } else {
+            OkayUI::EndFrame((SDL_Renderer*)renderer->NativeRenderer());
+        }
         pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
             if (!ui) continue;
-            DrawInventoryUI(renderer, *ui, baseDir, textureCache);
+            DrawInventoryUI(renderer, *ui);
             break;
         }
         for (const auto& up : scene.Objects()) {
             auto* gui = up ? up->GetComponent<GridInventoryUI>() : nullptr;
             if (!gui) continue;
-            DrawGridInventory(renderer, *gui, baseDir, textureCache);
+            DrawGridInventory(renderer, *gui);
             break;
         }
         for (const auto& up : scene.Objects()) {
@@ -2695,7 +2694,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {
             auto* ce = up ? up->GetComponent<ChestInventory>() : nullptr;
             if (!ce || !ce->open) continue;
-            DrawChest(renderer, *ce, baseDir, textureCache);
+            DrawChest(renderer, *ce);
             break;
         }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
@@ -2703,21 +2702,21 @@ int main(int argc, char** argv) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
             if (!ls || !ls->Active()) continue;
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));   // same text as the game's UI
-            DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
+            DrawLoadingScreen(renderer, *ls);
             ui2d::SetUIDefaultFont(nullptr);
             break;
         }
         // Cutscene overlay (the fade to black and the subtitle) of a playing sequence.
         if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
-            int W = 0, H = 0; SDL_GetRendererOutputSize(renderer, &W, &H);
+            int W = 0, H = 0; renderer->OutputSize(&W, &H);
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
-            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H), baseDir, textureCache);
+            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H));
             ui2d::SetUIDefaultFont(nullptr);
         }
         // Post: screen-space vignette (on top of the scene + UI, under nothing),
         // unless the GPU post chain already drew it into the frame.
         if (!okay::PostVignetteHandled()) DrawVignette(renderer, scene.renderSettings.vignette);
-        SDL_RenderPresent(renderer);
+        renderer->Present();
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.
         if (cfg.fpsCap > 0) {
@@ -2739,7 +2738,7 @@ int main(int argc, char** argv) {
     // Startup splash: show a logo over a solid colour, fading in and
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
-        if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
+        if (ui2d::Tex stex = GetTexture(renderer, cfg.splash)) {
             Uint64 t0 = okay::platform::PerfCounter();
             const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
             const double fade = std::min(0.5, dur * 0.3);
@@ -2757,19 +2756,19 @@ int main(int argc, char** argv) {
                 if (el < fade) a = el / fade;
                 else if (el > dur - fade) a = (dur - el) / fade;
                 if (a < 0) a = 0; if (a > 1) a = 1;
-                int w = 0, h = 0; SDL_GetRendererOutputSize(renderer, &w, &h);
-                SDL_SetRenderDrawColor(renderer, (Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
-                SDL_RenderClear(renderer);
-                int iw = 0, ih = 0; SDL_QueryTexture(stex, nullptr, nullptr, &iw, &ih);
+                int w = 0, h = 0; renderer->OutputSize(&w, &h);
+                renderer->SetDrawColor((Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
+                renderer->Clear();
+                int iw = 0, ih = 0; renderer->QueryTexture(stex, &iw, &ih);
                 if (iw > 0 && ih > 0) {
                     double fit = std::min((double)w / iw, (double)h / ih) * 0.55;  // 55% of the window
                     int dw = (int)(iw * fit), dh = (int)(ih * fit);
                     SDL_Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
-                    SDL_SetTextureBlendMode(stex, SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureAlphaMod(stex, (Uint8)(a * 255));
-                    SDL_RenderCopy(renderer, stex, nullptr, &dst);
+                    renderer->SetTextureBlendMode(stex, okay::platform::BlendMode::Blend);
+                    renderer->SetTextureAlphaMod(stex, (Uint8)(a * 255));
+                    renderer->Copy(stex, nullptr, (const ui2d::Rect*)&dst);
                 }
-                SDL_RenderPresent(renderer);
+                renderer->Present();
                 okay::platform::DelayMs(8);
             }
         }
@@ -2790,9 +2789,8 @@ int main(int argc, char** argv) {
     okay::devlog::Stop();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
-    for (auto& kv : textureCache)
-        if (kv.second) SDL_DestroyTexture(kv.second);
-    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
+    if (mesh3DTex) renderer->DestroyTexture(mesh3DTex);
+    if (bootTex) renderer->DestroyTexture(bootTex);   // the painter frees the textures it cached itself
     audioDev.reset();
 #if defined(_WIN32)
     if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
@@ -2804,7 +2802,10 @@ int main(int argc, char** argv) {
         okay::platform::Default()->ReleaseCurrent();
     }
     glWindow.reset();   // destroys its GL context, then the hidden window
-    SDL_DestroyRenderer(renderer);
+#ifdef OKAY_HAVE_OKAYUI
+    uiFrame.reset();      // it holds a texture of the painter
+#endif
+    painterOwner.reset();
     windowOwner.reset();
     pb->Shutdown();
     return 0;

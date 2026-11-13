@@ -208,4 +208,4 @@ components and scripts need no changes.
 
 ## License
 
-MIT, see `LICENSE`.
+Proprietary, all rights reserved. You may make and sell games with the engine without royalty; see `LICENSE`. Earlier versions published under MIT stay MIT for those copies.

@@ -58,7 +58,13 @@ std::vector<std::uint8_t> OrderedEnd::Push(const std::string& channel, const std
     if (!ChannelNameOk(channel) || data.size() > kChannelPayloadMax) return {};
     if (!m_out.count(channel) && m_out.size() >= kMaxChannels) return {};
     OutStream& st = m_out[channel];
-    if (st.pending.size() >= kOrderedWindow || st.next == 0xFFFFFFFFu) return {};
+    if (st.next == 0xFFFFFFFFu) return {};
+    if (st.pending.size() >= kOrderedWindow || !st.backlog.empty()) {
+        // Window full: keep the message (and its order) instead of dropping it silently.
+        if (st.backlog.size() >= kOrderedBacklogMax) return {};
+        st.backlog.push_back(Queued{data, cookie});
+        return {};
+    }
     const std::uint32_t seq = st.next++;
     std::vector<std::uint8_t> bytes = BuildChanRel(seq, channel, data, cookie);
     st.pending.emplace(seq, Slot{bytes, 0.0f});
@@ -67,6 +73,14 @@ std::vector<std::uint8_t> OrderedEnd::Push(const std::string& channel, const std
 
 void OrderedEnd::CollectResend(float dt, std::vector<std::vector<std::uint8_t>>& due) {
     for (auto& stream : m_out) {
+        OutStream& os = stream.second;
+        // Acks have freed window space: move queued messages in; they are due straight away.
+        while (!os.backlog.empty() && os.pending.size() < kOrderedWindow && os.next != 0xFFFFFFFFu) {
+            const std::uint32_t seq = os.next++;
+            std::vector<std::uint8_t> bytes = BuildChanRel(seq, stream.first, os.backlog.front().data, os.backlog.front().cookie);
+            os.pending.emplace(seq, Slot{std::move(bytes), kChannelResend});
+            os.backlog.pop_front();
+        }
         for (auto& item : stream.second.pending) {
             item.second.age += dt;
             if (item.second.age >= kChannelResend) {

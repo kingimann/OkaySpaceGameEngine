@@ -2458,6 +2458,16 @@ add_executable(test_crypto test_crypto.cpp)
 target_link_libraries(test_crypto PRIVATE okay::crypto)
 add_test(NAME crypto COMMAND test_crypto)
 
+# The embedded fonts in our own OKF1 container (shared/OkfDecode.hpp): decoded bytes must equal the original TrueType files
+# (pinned by size and SHA-256 in assets/fonts/embedded_fonts.sha256), the decoder's every token form and damaged input.
+# EmbeddedFont.cpp is compiled in directly, so this needs only okay::crypto (for SHA-256), not the engine.
+add_executable(test_embedded_font test_embedded_font.cpp ${CMAKE_SOURCE_DIR}/engine/src/Graphics/EmbeddedFont.cpp)
+target_link_libraries(test_embedded_font PRIVATE okay::crypto)
+target_include_directories(test_embedded_font PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_embedded_font PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME embedded_font COMMAND test_embedded_font)
+add_test(NAME embedded_font_generator COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen_embedded_fonts.py --check)
+
 # The internal arithmetic: the 51-bit and the portable 16-bit field against each other, the Barrett scalar
 # reduction against a bit-by-bit reference (includes engine/src/Crypto headers; needs __int128).
 add_executable(test_crypto_field test_crypto_field.cpp)

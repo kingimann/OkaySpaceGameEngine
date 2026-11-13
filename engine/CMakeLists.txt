@@ -278,7 +278,7 @@ endif()
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
 set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
-# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
+# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.

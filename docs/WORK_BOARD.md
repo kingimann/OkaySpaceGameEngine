@@ -123,6 +123,7 @@ Nothing user-visible, nothing default.
 | Editor Play keys and pads, Direct3D 11 SSAO, Direct3D 12 label | Claude | `claude/engine-top-items` |
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
+| Subtitles and captions, hold-to-toggle, aim assist | John | `john/accessibility-remaining` |
 
 ## Free (unclaimed, safe small tasks)
 
@@ -131,7 +132,6 @@ Nothing user-visible, nothing default.
 | 3DS (.3ds) reader behind the import seam | Follow the COLLADA reader's structure; off by default |
 | BVH animation reader | Animation only; off by default |
 | `.off` and other simple mesh formats | One format per task |
-| Subtitles and captions, hold-to-toggle, aim assist | `unfinished_engine.md` section 14 |
 
 ## Queued next (do not start without asking)
 

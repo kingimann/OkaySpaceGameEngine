@@ -1817,6 +1817,61 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
 
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited);
+// Functions generated for Wait / Delay during one CompileToOkayScript call.
+// The pointer is set for that call and restored when it returns.
+struct VsExportFns { std::vector<std::string> bodies; };
+inline VsExportFns*& VsExportFnSink() { static VsExportFns* p = nullptr; return p; }
+struct VsExportFnScope {
+    VsExportFns fns;
+    VsExportFns* prev;
+    VsExportFnScope() : prev(VsExportFnSink()) { VsExportFnSink() = &fns; }
+    ~VsExportFnScope() { VsExportFnSink() = prev; }
+    VsExportFnScope(const VsExportFnScope&) = delete;
+    VsExportFnScope& operator=(const VsExportFnScope&) = delete;
+};
+// Wait (once) and Delay (every time) park the chain. The nodes that follow run
+// in `fn` after the seconds, via after(seconds, "fn"). Zero, negative, and NaN
+// do not park: `fn` runs at once, the same as the nodes. A later reach of Wait
+// runs at once; a reach of Delay while one is still counting does nothing.
+inline void VsEmitLatentDelay(const VsEditGraph& g, int nodeId, bool once,
+                              const std::string& seconds, std::string& out,
+                              const std::string& ind, std::set<int>& visited) {
+    const std::string id = std::to_string(nodeId);
+    const std::string fn = "_vs_after_" + id;
+    const double sec = std::strtod(seconds.c_str(), nullptr);
+    const bool now = !(sec > 0.0);
+    if (once) {
+        const std::string done = "_vs_wait_done_" + id, busy = "_vs_wait_busy_" + id;
+        if (now) out += ind + fn + "()\n";
+        else {
+            out += ind + "if (" + done + ") {\n";
+            out += ind + "    " + fn + "()\n";
+            out += ind + "} else if (!" + busy + ") {\n";
+            out += ind + "    " + busy + " = true\n";
+            out += ind + "    after(" + seconds + ", " + VsStrLit(fn) + ")\n";
+            out += ind + "}\n";
+        }
+    } else if (now) {
+        out += ind + fn + "()\n";
+    } else {
+        const std::string busy = "_vs_delay_busy_" + id;
+        out += ind + "if (!" + busy + ") {\n";
+        out += ind + "    " + busy + " = true\n";
+        out += ind + "    after(" + seconds + ", " + VsStrLit(fn) + ")\n";
+        out += ind + "}\n";
+    }
+    std::string body;
+    if (once) {
+        body += "        _vs_wait_busy_" + id + " = false\n";
+        body += "        _vs_wait_done_" + id + " = true\n";
+    } else {
+        body += "        _vs_delay_busy_" + id + " = false\n";
+    }
+    std::set<int> vis = visited;
+    for (int nxt : VsExecTargets(g, nodeId, 0)) VsEmitChain(g, nxt, body, "        ", vis);
+    if (VsExportFns* sink = VsExportFnSink())
+        sink->bodies.push_back("\n    void " + fn + "()\n    {\n" + body + "    }\n");
+}
 inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
                        const std::string& ind, std::set<int>& visited) {
     const VsEditNode* n = VsFind(g, nodeId); if (!n) return;
@@ -2077,8 +2132,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         out += ind + "}\n";
     }
     else if (t=="Timer") out += ind + "// Every (" + VsCommentText(arg("1")) + "s): wire actions to this node\n";
-    else if (t=="Wait")  out += ind + "// Wait (" + VsCommentText(arg("1")) + "s): use after(t, fn) for a delay\n";
-    else if (t=="Delay") out += ind + "// Delay (" + VsCommentText(arg("1")) + "s): put what follows in after(" + VsCommentText(arg("1")) + ", fn)\n";
+    else if (t=="Wait" || t=="Delay") VsEmitLatentDelay(g, nodeId, t=="Wait", VsNum(arg("1"), "1"), out, ind, visited);
     else if (t=="Action" || t=="Actions") out += ind + "run_action(" + q(n->arg) + ")\n";
     else if (t=="Condition") {
         out += ind + "if (check_action(" + q(n->arg) + ")) {\n";
@@ -2099,7 +2153,7 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         VsEmitNode(g, cur, out, ind, visited);
         static const std::set<std::string> kSelfContinued = {
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
-            "ChanceBranch", "EveryN", "Condition", "While"};
+            "ChanceBranch", "EveryN", "Condition", "While", "Wait", "Delay"};
         if (kSelfContinued.count(n->type)) break;
         const std::vector<int> next = VsExecTargets(g, cur, 0);
         if (next.size() > 1) { for (int t : next) VsEmitChain(g, t, out, ind, visited); break; }
@@ -2107,6 +2161,7 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
     }
 }
 inline std::string CompileToOkayScript(const VsEditGraph& g) {
+    VsExportFnScope latent;   // Wait / Delay callbacks collected while the chains are emitted
     // The graph's events become Start / Update / OnCollisionEnter / OnTriggerEnter /
     // OnMouseDown functions; its state becomes fields. A script's fields and
     // functions are the component, so there's no class wrapper. (Built indented
@@ -2168,6 +2223,11 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         if (n.type=="TweenKillTag" || n.type=="TweenPauseTag" || n.type=="TweenPlayTag") fields += "    int _tw_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="EveryN")   fields += "    int _evn_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="OnTimer")  fields += "    float _timer_"+std::to_string(n.id)+" = 0;\n";
+        if (n.type=="Wait") {
+            fields += "    bool _vs_wait_done_"+std::to_string(n.id)+" = false;\n";
+            fields += "    bool _vs_wait_busy_"+std::to_string(n.id)+" = false;\n";
+        }
+        if (n.type=="Delay") fields += "    bool _vs_delay_busy_"+std::to_string(n.id)+" = false;\n";
     }
     if (!fields.empty()) out += fields + "\n";
     bool first = true, anyEvent = false;
@@ -2319,6 +2379,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
     }
     if (!anyEvent)
         out += "    // Add an On Start / On Update event node to generate runnable code.\n";
+    for (const std::string& b : latent.fns.bodies) out += b;
     // C# statement terminators inside method bodies (8+ spaces of indent), then
     // dedent everything one level.
     std::string fin; fin.reserve(out.size() + 64);

@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include <Okay.hpp>
 #include <climits>
 #include <set>
@@ -529,6 +530,84 @@ int main() {
         g.linkExec(start, 0, add); g.linkData(add, 0, get, 0); g.linkData(add, 1, mk, 0);
         CHECK(RunVar(g.toText(), "pts").s == "[(1, 0, 0), (0, 2, 0), (0, 0, 0)]");
         for (const auto& i : vs::ValidateGraphText(g.toText())) CHECK(i.severity != 0);   // no errors
+    }
+
+    // export_wait_delay_matches_runtime: Wait and Delay export as after(seconds, "fn").
+    // The variable after the node stays unset until the delay has passed, in the
+    // exported script and in the graph. A comment (the old export) would set it in Start.
+    {
+        for (const char* kind : {"Wait", "Delay"}) {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0);
+            const int early = g.add("SetVar", 0, 0);
+            const int pause = g.add(kind, 0, 0);
+            const int hit = g.add("SetVar", 0, 0);
+            const int oneA = g.add("Const", 0, 0);
+            const int oneB = g.add("Const", 0, 0);
+            g.find(early)->arg = "early";
+            g.find(hit)->arg = "hit";
+            g.find(pause)->arg = "0.5";
+            g.find(oneA)->arg = "1";
+            g.find(oneB)->arg = "1";
+            g.linkExec(start, 0, early);
+            g.linkExec(early, 0, pause);
+            g.linkExec(pause, 0, hit);
+            g.linkData(early, 0, oneA, 0);
+            g.linkData(hit, 0, oneB, 0);
+
+            const std::string code = CompileToOkayScript(g);
+            const auto afterAt = code.find("after(0.5,");
+            const auto earlyAt = code.find("early = 1");
+            const auto hitAt = code.find("hit = 1");
+            CHECK(afterAt != std::string::npos);
+            CHECK(code.find("// Wait") == std::string::npos);
+            CHECK(code.find("// Delay") == std::string::npos);
+            CHECK(code.find("NOT TRANSLATED") == std::string::npos);
+            CHECK(earlyAt != std::string::npos && hitAt != std::string::npos && afterAt != std::string::npos);
+            CHECK(earlyAt < afterAt && afterAt < hitAt);
+
+            std::string err;
+            Scene graphScene(std::string("graph-") + kind);
+            auto* vs = graphScene.CreateGameObject("G")->AddComponent<VisualScriptComponent>();
+            CHECK(vs->LoadFromText(g.toText(), &err));
+            if (!err.empty()) std::printf("  graph %s: %s\n", kind, err.c_str());
+
+            Scene scriptScene(std::string("script-") + kind);
+            auto* sc = scriptScene.CreateGameObject("S")->AddComponent<ScriptComponent>("okayscript");
+            const bool loaded = sc->LoadSource(code, &err);
+            if (!loaded) std::printf("  export %s failed: %s\n%s\n", kind, err.c_str(), code.c_str());
+            CHECK(loaded);
+            if (!loaded || !sc->VM()) continue;
+
+            graphScene.Start();
+            scriptScene.Start();
+            auto gEarly = [&] { return vs->GetVariable("early").AsFloat(); };
+            auto gHit = [&] { return vs->GetVariable("hit").AsFloat(); };
+            auto sEarly = [&] { return sc->VM()->GetGlobal("early").AsFloat(); };
+            auto sHit = [&] { return sc->VM()->GetGlobal("hit").AsFloat(); };
+            auto dump = [&](const char* when) {
+                std::printf("  %s %s graph early=%.3f hit=%.3f script early=%.3f hit=%.3f\n%s\n",
+                            kind, when, gEarly(), gHit(), sEarly(), sHit(), code.c_str());
+            };
+            if (std::fabs(gEarly() - 1.f) > 0.001f || std::fabs(sEarly() - 1.f) > 0.001f ||
+                std::fabs(gHit()) > 0.001f || std::fabs(sHit()) > 0.001f) dump("at start");
+            CHECK_NEAR(gEarly(), 1.0f, 0.001f);
+            CHECK_NEAR(sEarly(), 1.0f, 0.001f);
+            CHECK_NEAR(gHit(), 0.0f, 0.001f);
+            CHECK_NEAR(sHit(), 0.0f, 0.001f);   // a comment export would have set hit already
+
+            graphScene.Update(0.2f);
+            scriptScene.Update(0.2f);
+            if (std::fabs(gHit()) > 0.001f || std::fabs(sHit()) > 0.001f) dump("at 0.2s");
+            CHECK_NEAR(gHit(), 0.0f, 0.001f);
+            CHECK_NEAR(sHit(), 0.0f, 0.001f);
+
+            graphScene.Update(0.4f);
+            scriptScene.Update(0.4f);
+            if (std::fabs(gHit() - 1.f) > 0.001f || std::fabs(sHit() - 1.f) > 0.001f) dump("at 0.6s");
+            CHECK_NEAR(gHit(), 1.0f, 0.001f);
+            CHECK_NEAR(sHit(), 1.0f, 0.001f);
+        }
     }
 
     Log::sink = sink;

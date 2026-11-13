@@ -124,7 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
-| Every component instance round-trips through save and load | John | `john/save-duplicate-components` |
+| Behavior tree: Run Sub-Tree node (own blackboard, key mapping, recursion guard) and node breakpoints that pause Play | John | `john/bt-subtree` |
 
 ## Free (unclaimed, safe small tasks)
 

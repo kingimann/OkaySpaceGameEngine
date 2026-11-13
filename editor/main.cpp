@@ -43,6 +43,7 @@
 #include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"   // Saveable: pick registry properties to save
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
@@ -40958,7 +40959,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         bool have = false;
         if (auto* sp = okay::SequencePlayer::Playing(ed.scene())) { ov = sp->Overlay(); have = true; }
         else have = TimelinePreviewOverlay(ov);
-        if (have) DrawOverlayCmds(dl, okay::SequencePlayer::BuildOverlay(ov, canvasSize.x, canvasSize.y), canvasPos, canvasSize);
+        if (have) DrawOverlayCmds(dl, okay::SequencePlayer::BuildOverlay(ov, canvasSize.x, canvasSize.y,
+                                                                        !okay::CaptionOverlay::Any(&ed.scene())), canvasPos, canvasSize);
     }
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }
@@ -48397,6 +48399,7 @@ int main(int argc, char** argv) {
                 }
             // Pause, typing, a modal and a click on UI, independent of PauseMenu's Update.
             if (ed.isPlaying()) okay::SettingsScreen::Ensure(ed.scene());
+            if (ed.isPlaying()) okay::CaptionOverlay::Ensure(ed.scene());
             const bool gameModal = invModal || (ed.isPlaying() && (okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&ed.scene())));
             okay::Input::SetUICaptured(gameModal || (ed.isPlaying() && okay::GameInputBlocked(&ed.scene(), (unsigned)okay::GameInputMask::World)));
             {

@@ -11,6 +11,7 @@
 
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
 #include "okay/Core/Paths.hpp"
@@ -1974,6 +1975,7 @@ int main(int argc, char** argv) {
         // too, before any component Update. PauseMenu used to set the flag itself,
         // which components that ran first that frame never saw.
         okay::SettingsScreen::Ensure(scene);
+        okay::CaptionOverlay::Ensure(scene);
         const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
         Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
 
@@ -2770,7 +2772,8 @@ int main(int argc, char** argv) {
         if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
             int W = 0, H = 0; renderer->OutputSize(&W, &H);
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
-            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H));
+            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H,
+                                                                    !CaptionOverlay::Any(&scene)));
             ui2d::SetUIDefaultFont(nullptr);
         }
         // Post: screen-space vignette (on top of the scene + UI, under nothing),

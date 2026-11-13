@@ -1,9 +1,11 @@
 #include "okay/Input/InputActions.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Prefs.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <unordered_map>
 
 namespace okay {
 
@@ -350,6 +352,18 @@ void InputActions::Tick() {
     if (!blocked)
         for (Action& a : Actions())
             if (IsBase(a.context)) sample(a, claimed);
+
+    // Hold-to-toggle: a button action the player asked to toggle stays on after
+    // the key comes up, until the next press. Direction actions (Move, Look) are
+    // left as sampled. Off, the raw value is what Get/Down/Up already used.
+    static std::unordered_map<std::string, HoldToggle> latches;
+    for (Action& a : Actions()) {
+        if (a.direction) continue;
+        HoldToggle& latch = latches[Lower(a.name)];
+        if (!Accessibility::ToggleFor(a.name)) { latch.Reset(); continue; }
+        const bool down = a.value >= a.threshold;
+        a.value = latch.Update(down, true) ? 1.0f : 0.0f;
+    }
 }
 
 void InputActions::DefineIn(const std::string& context, const std::string& name,

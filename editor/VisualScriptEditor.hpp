@@ -3277,6 +3277,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
     return changed;
 }
 }  // namespace okay::editor::vsed
+#include "VisualScriptClarity.hpp"
 #include "VisualScriptPalette.hpp"
 namespace okay::editor::vsed {
 
@@ -4303,7 +4304,7 @@ inline void Draw(EditorState& ed, bool* open) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
-            VsNodeTooltip(title.c_str(), VsNodeDocFor(n.type));
+            VsNodeTooltip(title.c_str(), VsNodeDocFor(n.type), d);
         if (ImGui::BeginPopupContextItem("##nctx")) {
             if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); st.selected = n.id; }
             // Applied after the loop: the node list mustn't change while it's iterated.
@@ -4399,11 +4400,6 @@ inline void Draw(EditorState& ed, bool* open) {
             dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
             const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
-            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f) {
-                std::string tip = VsPinExplain(n.type, d->dataIn[i], okay::vs::PinTypeName(pt), true, false);
-                if (req) tip += std::string("\nRequired: ") + VsRequiredWhat(n.type, i);
-                ImGui::SetTooltip("%s", tip.c_str());
-            }
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
             // Nothing wired in: type the value right here (text, number, true/false).
@@ -4453,8 +4449,6 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (is.node == n.id && is.pin == i && is.pinDir == 1 && is.severity == 0) badPin = true;
             const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
             dataDot(pp, used || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
-            if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
-                ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
             ImVec2 ts = ImGui::CalcTextSize(d->dataOut[i]);
             text(ImVec2(p1.x - PAD - ts.x, pp.y - fs * 0.5f), labelCol, d->dataOut[i]);
             pinPos[pk(n.id, 1, 1, i)] = pp;
@@ -4698,7 +4692,9 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsNodeDoc* nd = VsNodeDocFor(n.type);
                     const VsPinDoc* pd = nd ? VsPinDocFor(*nd, input, exec, pname) : nullptr;
                     const char* tn = exec ? "Flow" : okay::vs::PinTypeName(input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx));
-                    VsPinTooltip(pd, pname.c_str(), tn);
+                    VsPinTooltip(pd, pname.c_str(), tn,
+                                 exec ? okay::vs::PinType::Any : (input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx)), !input, exec,
+                                 (input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0) ? VsRequiredWhat(n.type, idx) : nullptr);
                 }
             }
         };

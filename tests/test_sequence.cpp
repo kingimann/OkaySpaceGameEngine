@@ -5,9 +5,12 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/Sequence.hpp"
 #include "okay/Components/SequencePlayer.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -427,6 +430,262 @@ int main() {
         CHECK(SceneSerializer::Deserialize(m, minimal, &err));
         auto* mp = m.Find("Director") ? m.Find("Director")->GetComponent<SequencePlayer>() : nullptr;
         CHECK(mp && !mp->playOnStart && mp->skipKey == 27 && mp->lockPlayer && std::fabs(mp->timeScale - 1.0f) < 1e-6f);
+    }
+
+    // ---- Letterbox, coloured fade, shake and a nested sequence: save, then the effect in a scene ----
+    {
+        Sequence s; s.name = "Picture"; s.length = 3.0f;
+        s.letterbox.on = true;
+        s.letterbox.color = {0.1f, 0.1f, 0.12f, 1.0f};
+        s.letterbox.keys = {{0.0f, 0.0f, Ease::Linear}, {1.0f, 0.2f, Ease::SineInOut}};
+        s.shake.on = true;
+        s.shake.strength = {{0.0f, 0.0f, Ease::Linear}, {1.0f, 1.0f, Ease::Linear}};
+        s.shake.frequency = {{0.0f, 12.0f, Ease::Linear}};
+        s.fade.on = true;
+        s.fade.keys = {{0.0f, Color{1.0f, 0.0f, 0.0f, 0.0f}, Ease::Linear}, {1.0f, Color{1.0f, 0.0f, 0.0f, 0.5f}, Ease::Linear}};
+        SeqNestTrack nest; nest.name = "Door";
+        nest.cues = {{2.0f, "door.okayseq", 0.0f}};
+        s.nests.push_back(nest);
+        const std::string text = s.Write();
+        Sequence p; std::string err;
+        CHECK(Sequence::Parse(text, p, &err));
+        CHECK(err.empty());
+        CHECK(p.letterbox.on && p.shake.on && p.fade.on && p.nests.size() == 1);
+        CHECK(p.letterbox.keys.size() == 2 && p.letterbox.keys[1].ease == Ease::SineInOut);
+        CHECK_NEAR(p.letterbox.keys[1].value, 0.2f, 1e-5f);
+        CHECK_NEAR(p.letterbox.color.b, 0.12f, 1e-5f);
+        CHECK(p.shake.strength.size() == 2 && p.shake.frequency.size() == 1);
+        CHECK_NEAR(p.shake.frequency[0].value, 12.0f, 1e-5f);
+        CHECK(p.fade.keys.size() == 2 && std::fabs(p.fade.keys[1].color.a - 0.5f) < 1e-5f && p.fade.keys[1].color.r > 0.99f);
+        CHECK(p.nests[0].name == "Door" && p.nests[0].cues.size() == 1 && p.nests[0].cues[0].path == "door.okayseq");
+        CHECK(p.Write() == text);
+        float mid = 0.0f;
+        CHECK(Sequence::FloatAt(p.letterbox.keys, 0.5f, mid));
+        CHECK(mid > 0.02f && mid < 0.18f);   // sine in the middle of 0..0.2, not the linear 0.1
+        Color fc;
+        CHECK(Sequence::ColorAt(p.fade.keys, 1.0f, fc));
+        CHECK_NEAR(fc.a, 0.5f, 1e-4f);
+        CHECK_NEAR(fc.r, 1.0f, 1e-4f);
+    }
+
+    // Letterbox bars: the playing sequence covers a real camera's frame with two strips.
+    {
+        World w;
+        Sequence s; s.name = "Bars"; s.length = 2.0f;
+        s.letterbox.on = true;
+        s.letterbox.keys = {{0.0f, 0.0f, Ease::Linear}, {1.0f, 0.2f, Ease::Linear}};
+        w.sp->SetSequence(s);
+        CHECK(w.sp->Play());
+        w.sp->Step(1.0f);
+        const SeqOverlay o = w.sp->Overlay();
+        CHECK_NEAR(o.letterbox, 0.2f, 1e-4f);
+        const auto cmds = SequencePlayer::BuildOverlay(o, 1000.0f, 500.0f);
+        int bars = 0;
+        bool top = false, bot = false;
+        for (const auto& c : cmds) {
+            if (c.kind != LoadingDrawCmd::Kind::Rect) continue;
+            if (std::fabs(c.w - 1000.0f) > 1.0f || std::fabs(c.h - 100.0f) > 1.0f) continue;
+            if (std::fabs(c.y) < 1.0f) top = true;
+            if (std::fabs(c.y - 400.0f) < 1.0f) bot = true;
+            ++bars;
+        }
+        CHECK(bars == 2 && top && bot);
+        w.sp->Seek(0.0f);
+        CHECK(w.sp->Overlay().letterbox < 1e-4f);
+        CHECK(SequencePlayer::BuildOverlay(w.sp->Overlay(), 1000.0f, 500.0f).empty());
+    }
+
+    // Screen fade: a colour and an opacity, drawn as one full-screen rectangle.
+    {
+        World w;
+        Sequence s; s.name = "Fade"; s.length = 2.0f;
+        s.fade.on = true;
+        s.fade.keys = {{0.0f, Color{0.0f, 0.2f, 0.8f, 0.0f}, Ease::Linear},
+                       {1.0f, Color{0.0f, 0.2f, 0.8f, 0.5f}, Ease::Linear}};
+        w.sp->SetSequence(s);
+        CHECK(w.sp->Play());
+        w.sp->Seek(0.0f);
+        CHECK(w.sp->Overlay().screen.a < 1e-4f);
+        w.sp->Step(1.0f);
+        const SeqOverlay o = w.sp->Overlay();
+        CHECK_NEAR(o.screen.a, 0.5f, 1e-4f);
+        CHECK_NEAR(o.screen.b, 0.8f, 1e-4f);
+        CHECK_NEAR(o.screen.g, 0.2f, 1e-4f);
+        const auto cmds = SequencePlayer::BuildOverlay(o, 800.0f, 600.0f);
+        CHECK(!cmds.empty());
+        CHECK(cmds[0].kind == LoadingDrawCmd::Kind::Rect);
+        CHECK_NEAR(cmds[0].w, 800.0f, 1e-3f);
+        CHECK_NEAR(cmds[0].h, 600.0f, 1e-3f);
+        CHECK_NEAR(cmds[0].alpha, 0.5f, 1e-4f);
+        CHECK_NEAR(cmds[0].color.b, 0.8f, 1e-4f);
+        // The event-track fade to black is unchanged, and stacks under the bars.
+        Sequence both = s;
+        SeqEventTrack ev; ev.events = {{0.0f, SeqEvent::Kind::FadeOut, "", "", 0.0f}};
+        both.events.push_back(ev);
+        both.letterbox.on = true;
+        both.letterbox.keys = {{0.0f, 0.1f, Ease::Linear}};
+        const SeqOverlay stacked = both.OverlayAt(0.0f);
+        CHECK_NEAR(stacked.fade, 1.0f, 1e-4f);
+        CHECK_NEAR(stacked.letterbox, 0.1f, 1e-4f);
+        const auto all = SequencePlayer::BuildOverlay(stacked, 200.0f, 100.0f);
+        CHECK(all.size() >= 3);
+    }
+
+    // Camera shake: the view moves, the same time moves it the same way, reduced motion does not.
+    {
+        World w;
+        Sequence s; s.name = "Shake"; s.length = 2.0f;
+        s.shake.on = true;
+        s.shake.strength = {{0.0f, 0.0f, Ease::Linear}, {1.0f, 1.0f, Ease::Linear}};
+        s.shake.frequency = {{0.0f, 12.0f, Ease::Linear}};
+        Camera* cam = w.cam->GetComponent<Camera>();
+        CHECK(cam != nullptr);
+        cam->shakeAmount = 0.4f;
+        cam->shakeAngle = 4.0f;
+        w.sp->SetSequence(s);
+        CHECK(w.sp->Play());
+        w.sp->Evaluate(0.0f);
+        const Vec3 origin = w.cam->transform->Position();
+        CHECK(Vec3::Distance(cam->RenderPosition(), origin) < 1e-4f);
+        w.sp->Evaluate(1.0f);
+        const Vec3 shaken = cam->RenderPosition();
+        CHECK(Vec3::Distance(shaken, origin) > 0.05f);
+        CHECK(Vec3::Distance(w.cam->transform->Position(), origin) < 1e-4f);   // the object stays; the view shakes
+        w.sp->Evaluate(0.25f);
+        w.sp->Evaluate(1.0f);
+        CHECK(Vec3::Distance(cam->RenderPosition(), shaken) < 1e-4f);        // pure in t
+        Vec3 pos, rot;
+        s.ShakeAt(1.0f, nullptr, pos, rot);
+        CHECK(pos.SqrMagnitude() > 0.01f);
+        Accessibility::SetReduceMotion(true);
+        w.sp->Evaluate(1.0f);
+        CHECK(Vec3::Distance(cam->RenderPosition(), origin) < 1e-4f);
+        s.ShakeAt(1.0f, nullptr, pos, rot);
+        CHECK(pos.SqrMagnitude() < 1e-8f && rot.SqrMagnitude() < 1e-8f);
+        Accessibility::Reset();
+    }
+
+    // Nested sequence: the child's move, bars and event happen on the parent's clock, and not before.
+    {
+        World w;
+        Sequence child; child.name = "Door move"; child.length = 1.0f;
+        SeqTransformTrack door; door.object = "Door";
+        door.position = {{0.0f, {0, 0, 0}, Ease::Linear}, {1.0f, {5, 0, 0}, Ease::Linear}};
+        child.transforms.push_back(door);
+        child.letterbox.on = true;
+        child.letterbox.keys = {{0.0f, 0.25f, Ease::Linear}};
+        SeqEventTrack ev; ev.events = {{0.5f, SeqEvent::Kind::Named, "opened", "", 0.0f}};
+        child.events.push_back(ev);
+
+        Sequence parent; parent.name = "Main"; parent.length = 4.0f;
+        SeqNestTrack nest; nest.name = "Door";
+        nest.cues = {{2.0f, "door.okayseq", 0.0f}};
+        parent.nests.push_back(nest);
+        w.sp->SetSequence(parent);
+        w.sp->library().Add("door.okayseq", child);
+        CHECK(w.sp->Play());
+        w.sp->Step(1.0f);
+        CHECK_NEAR(w.door->transform->localPosition.x, 0.0f, 1e-4f);
+        CHECK(w.sp->Overlay().letterbox < 1e-4f);
+        CHECK(w.events == 0);
+        w.sp->Step(1.5f);   // 2.5 s: halfway through the child
+        CHECK_NEAR(w.sp->Time(), 2.5f, 1e-4f);
+        CHECK_NEAR(w.door->transform->localPosition.x, 2.5f, 1e-3f);
+        CHECK_NEAR(w.sp->Overlay().letterbox, 0.25f, 1e-4f);
+        CHECK(w.events == 1 && w.last == "opened");
+        const auto cmds = SequencePlayer::BuildOverlay(w.sp->Overlay(), 400.0f, 200.0f);
+        bool bar = false;
+        for (const auto& c : cmds)
+            if (c.kind == LoadingDrawCmd::Kind::Rect && std::fabs(c.h - 50.0f) < 1.0f) bar = true;
+        CHECK(bar);
+        w.sp->Seek(1.0f);   // scrubbing back undoes the child's move
+        CHECK_NEAR(w.door->transform->localPosition.x, 0.0f, 1e-4f);
+        CHECK(w.sp->Overlay().letterbox < 1e-4f);
+    }
+
+    // A nested file loads from disk (a temp folder, never the source tree), and a sequence that nests itself does not loop forever.
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_seq_tracks";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        Sequence child; child.name = "Child"; child.length = 1.0f;
+        SeqTransformTrack door; door.object = "Door";
+        door.position = {{0.0f, {0, 0, 0}, Ease::Linear}, {1.0f, {3, 0, 0}, Ease::Linear}};
+        child.transforms.push_back(door);
+        std::string err;
+        CHECK(child.SaveToFile((dir / "child.okayseq").string(), &err));
+        const std::string parentText =
+            "okayseq 1\nsequence \"Parent\"\nlength 3\nnest \"Child\"\n  play 1 \"child.okayseq\" 0\n";
+        CHECK(std::ofstream((dir / "parent.okayseq").string()) << parentText);
+        const std::string cycleText =
+            "okayseq 1\nsequence \"Cycle\"\nlength 2\nnest \"Self\"\n  play 0 \"cycle.okayseq\" 0\n";
+        CHECK(std::ofstream((dir / "cycle.okayseq").string()) << cycleText);
+
+        World w;
+        w.sp->sequencePath = (dir / "parent.okayseq").string();
+        CHECK(w.sp->Load(&err));
+        CHECK(w.sp->library().Find("child.okayseq") != nullptr);
+        CHECK(w.sp->Play());
+        w.sp->Step(1.5f);   // child local 0.5
+        CHECK_NEAR(w.door->transform->localPosition.x, 1.5f, 1e-3f);
+
+        Sequence cycle;
+        CHECK(Sequence::LoadFromFile((dir / "cycle.okayseq").string(), cycle, &err));
+        SeqLibrary lib;
+        std::string note;
+        lib.LoadFrom(cycle, (dir / "cycle.okayseq").string(), &note);
+        CHECK(lib.Find("cycle.okayseq") == nullptr);
+        CHECK(note.find("nests itself") != std::string::npos);
+        cycle.nests[0].cues[0].path = "cycle.okayseq";
+        // Evaluating must return (a cycle in the library would too).
+        lib.Add("cycle.okayseq", cycle);
+        const SeqOverlay o = cycle.OverlayAt(1.0f, &lib);
+        CHECK(o.letterbox == 0.0f);
+        fs::remove_all(dir, ec);
+    }
+
+    // The example cutscene: bars, a coloured fade, a shake and a nested door, in the scene file.
+    {
+        const std::string dir = std::string(OKAY_SOURCE_DIR) + "/examples/cutscene";
+        const std::string saved = Character::AssetBaseDir();
+        Character::SetAssetBaseDir(dir);
+        Scene scene;
+        std::string err;
+        CHECK(SceneSerializer::LoadFromFile(scene, dir + "/intro.okayscene", &err));
+        scene.Start();
+        GameObject* director = scene.Find("Director");
+        GameObject* hero = scene.Find("Hero");
+        GameObject* door = scene.Find("Door");
+        Camera* cam = scene.Find("Main Camera") ? scene.Find("Main Camera")->GetComponent<Camera>() : nullptr;
+        SequencePlayer* sp = director ? director->GetComponent<SequencePlayer>() : nullptr;
+        CHECK(sp && hero && door && cam);
+        if (sp && hero && door && cam) {
+            CHECK(sp->Play());
+            sp->Step(0.5f);
+            CHECK(sp->Overlay().letterbox > 0.02f);          // bars are coming in
+            CHECK(sp->Overlay().screen.a > 0.2f);            // the opening colour is still up
+            const auto opening = SequencePlayer::BuildOverlay(sp->Overlay(), 1280.0f, 720.0f);
+            bool fadeRect = false, barRect = false;
+            for (const auto& c : opening) {
+                if (c.kind != LoadingDrawCmd::Kind::Rect) continue;
+                if (c.h > 600.0f && c.alpha > 0.2f) fadeRect = true;
+                if (c.h < 200.0f && c.h > 8.0f && c.w > 1000.0f) barRect = true;
+            }
+            CHECK(fadeRect && barRect);
+            sp->Seek(2.2f);
+            CHECK(sp->Overlay().screen.a < 0.05f);           // the picture is clear
+            CHECK(sp->Overlay().letterbox > 0.08f);          // the bars are up
+            CHECK(hero->transform->localPosition.x > 0.4f);  // the hero has walked
+            sp->Seek(3.55f);
+            const Vec3 body = cam->transform->Position();
+            CHECK(Vec3::Distance(cam->RenderPosition(), body) > 0.02f);   // the bump shakes the view, not the object
+            CHECK(door->transform->localRotation.ToEuler().y < -10.0f);   // the nested sequence is opening the door
+            sp->Seek(2.0f);
+            CHECK(std::fabs(door->transform->localRotation.ToEuler().y) < 1.0f);   // not yet
+        }
+        Character::SetAssetBaseDir(saved);
     }
 
     TEST_MAIN_RESULT();

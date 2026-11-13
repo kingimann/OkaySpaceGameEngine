@@ -73,7 +73,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Sequence has only camera, transform, animation, audio, event tracks | `Components/Sequence.hpp:60` (`SeqTransformTrack` and siblings) | No letterbox, shake, fade or nested-sequence track. A cutscene needs script for bars or screen shake | Medium | Medium |
+| ~~Sequence has only camera, transform, animation, audio, event tracks~~ Resolved: letterbox bars, camera shake, a coloured screen fade and nested sequences, each with keys and curves, saved in the `.okayseq` file, edited in the Timeline and drawn on top of every renderer. `examples/cutscene` plays one. See `docs/cutscenes.md`. | `Components/Sequence.hpp` (`SeqLetterboxTrack`, `SeqShakeTrack`, `SeqFadeTrack`, `SeqNestTrack`) | Done. Not done: playback is still not saved, and in multiplayer each client plays its own copy. | Medium | Medium |
 | Cinematics, dialogue and quests are per client in multiplayer and not saved | feature map 10.x | A save mid-dialogue loses it; clients can desync quests | Medium | Medium |
 | Sound captions never fed | `Core/Subtitles.hpp` (`CaptionManager`) has no caller outside `Subtitles.*` and `AccessibilitySettings.*` (no Audio Source option, no `SequencePlayer` link) | Deaf and hard-of-hearing players get no sound captions | Medium | Small |
 

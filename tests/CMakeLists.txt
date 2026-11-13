@@ -1124,6 +1124,7 @@ add_test(NAME ik_state_weight COMMAND test_ik_state_weight)
 # Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
 add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
+target_compile_definitions(test_sequence PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME sequence COMMAND test_sequence)
 
 # Localization: .okayloc / CSV round trips, fallback, plurals, settings, localized widgets, scripts, fonts

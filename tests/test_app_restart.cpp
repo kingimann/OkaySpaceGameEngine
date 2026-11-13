@@ -6,7 +6,10 @@
 #include "AppRestart.hpp"
 
 #include <cerrno>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -142,7 +145,7 @@ static std::string ExpandCmdPercent(std::string s) {
 
 static void SetEnv(const char* key, const char* value) {
 #if defined(_WIN32)
-    _putenv_s(key, value ? value : "0");
+    _putenv_s(key, value ? value : "");   // an empty value removes the variable on Windows (a "0" here made every scenario report version 0)
 #else
     if (value) ::setenv(key, value, 1);
     else ::unsetenv(key);
@@ -233,6 +236,7 @@ static int ChildMain(int argc, char** argv) {
     bool got = false;
     bool mutexFree = false;
     ProbeLock(lock, got, mutexFree);
+    if (const char* sf = std::getenv("OKAY_TEST_STATE_FILE"); sf && *sf) okay::selfupdate::Clear(sf);   // what a new launcher does when it finds itself at the expected version
     std::error_code ec;
     const fs::path cwd = fs::current_path(ec);
     std::ofstream o(result, std::ios::binary | std::ios::trunc);
@@ -423,6 +427,10 @@ static bool HasArg(const std::string& body, const std::string& value) {
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    {   // This binary plays "the new launcher": `--okay-selfcheck <v>` answers with the version OKAY_TEST_VERSION (default 9.9.9).
+        const char* v = std::getenv("OKAY_TEST_VERSION");
+        if (int code = okay::selfupdate::SelfCheck(argc, argv, v && *v ? v : "9.9.9"); code >= 0) return code;
+    }
     if (argc > 1 && std::string(argv[1]) == "--restart-child") return ChildMain(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "--restart-holder") return HolderMain(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "--restart-sleep") {
@@ -496,6 +504,11 @@ int main(int argc, char** argv) {
         req.minBytes = 100000;
         req.keepBackup = true;
         req.logFile = fs::path("Okay Space") / "okay_update.log";
+        req.expectVersion = "2.856.0";
+        req.rollbackTarget = fs::path("Okay Space") / "OkaySpace.exe";
+        req.replaceBackup = fs::path("Okay Space") / "OkaySpace.exe.old";
+        req.stateFile = fs::path("Okay Space") / "okay_selfupdate.state";
+        req.confirmMs = 777;
         fs::path written;
         std::string err;
         CHECK(okay::restart::WriteRequest(req, written, err));
@@ -508,6 +521,8 @@ int main(int argc, char** argv) {
         CHECK(back.timeoutMs == 4321);
         CHECK(back.minBytes == 100000);
         CHECK(back.keepBackup);
+        CHECK(back.expectVersion == "2.856.0" && back.rollbackTarget == req.rollbackTarget && back.replaceBackup == req.replaceBackup &&
+              back.stateFile == req.stateFile && back.confirmMs == 777);
         std::error_code ec;
         fs::remove(written, ec);
     }
@@ -624,6 +639,111 @@ int main(int argc, char** argv) {
             KillPid(sleeper);
         }
         fs::remove_all(dir, ec);
+    }
+
+    // --- Verified restart: the new program must be the published version before it starts; otherwise the previous one is put back. ---
+    {
+        std::error_code ec;
+        const fs::path root = fs::temp_directory_path(ec) / ("okay-restart-verify-" + std::to_string(okay::restart::CurrentPid()));
+        const fs::path self = okay::restart::CurrentExecutable();
+        const std::string selfBytes = ReadFile(self);
+        namespace su = okay::selfupdate;
+#if defined(_WIN32)
+        const char* exeName = "OkaySpace.exe";
+#else
+        const char* exeName = "OkaySpace";
+#endif
+        // One scenario: the launcher swapped `target` already (old file in target.old), then the helper runs. `newBytes` is the new file.
+        struct Outcome { int rc = -1; std::string log, targetBytes, failedBytes, resultBody; su::State state; bool resultThere = false, failedThere = false; };
+        auto scenario = [&](const std::string& tag, const std::string& newBytes, const std::string& oldBytes, bool keepOld, const char* testVersion, bool newClearsState) {
+            const fs::path dir = root / tag;
+            fs::remove_all(dir, ec);
+            fs::create_directories(dir, ec);
+            const fs::path target = dir / exeName, backup = su::BackupPath(target), state = su::StatePath(dir);
+            const fs::path log = dir / "okay_update.log", result = dir / "result.txt", up = dir / "up.txt", lock = dir / "lock";
+            WriteFile(target, newBytes);
+            if (keepOld) WriteFile(backup, oldBytes);
+            if (newBytes.rfind(selfBytes, 0) == 0) fs::permissions(target, fs::perms::owner_all, ec);
+            if (keepOld && oldBytes.rfind(selfBytes, 0) == 0) fs::permissions(backup, fs::perms::owner_all, ec);
+            std::string err;
+            su::State sw; sw.phase = su::Phase::Swapped; sw.from = "9.9.8"; sw.to = "9.9.9"; sw.attempts = 1;
+            CHECK(su::Write(state, sw, err));
+            Request req;
+            req.executable = target;
+            req.rollbackTarget = target;
+            req.replaceBackup = backup;
+            req.stateFile = state;
+            req.expectVersion = "9.9.9";
+            req.confirmMs = 400;
+            req.logFile = log;
+            req.workingDirectory = dir;
+            req.arguments = {"--restart-child", result.string(), up.string(), lock.string()};
+            SetEnv("OKAY_TEST_VERSION", testVersion);
+            SetEnv("OKAY_TEST_STATE_FILE", newClearsState ? state.string().c_str() : nullptr);
+            Outcome o;
+            // A scenario that stalls is reported with its log so far (CI would otherwise only show a bare timeout), then the test stops.
+            std::mutex wdMx; std::condition_variable wdCv; bool wdDone = false;
+            std::thread watchdog([&] {
+                std::unique_lock<std::mutex> lk(wdMx);
+                if (!wdCv.wait_for(lk, std::chrono::seconds(40), [&] { return wdDone; })) {
+                    std::fprintf(stderr, "--- scenario %s STALLED for 40 s; log so far:\n%s\n", tag.c_str(), ReadFile(log).c_str());
+                    std::fflush(stderr);
+                    std::_Exit(3);
+                }
+            });
+            o.rc = okay::restart::RunHelper(req);
+            { std::lock_guard<std::mutex> lk(wdMx); wdDone = true; }
+            wdCv.notify_all();
+            watchdog.join();
+            SetEnv("OKAY_TEST_VERSION", nullptr);
+            SetEnv("OKAY_TEST_STATE_FILE", nullptr);
+            // The launched child writes its result file a moment after it starts.
+            for (int i = 0; i < 50 && !fs::exists(result, ec); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            o.log = ReadFile(log);
+            o.targetBytes = ReadFile(target);
+            o.failedThere = fs::exists(su::FailedPath(target), ec);
+            if (o.failedThere) o.failedBytes = ReadFile(su::FailedPath(target));
+            o.resultThere = fs::exists(result, ec);
+            if (o.resultThere) o.resultBody = ReadFile(result);
+            o.state = su::Read(state);
+            std::fprintf(stderr, "--- scenario %s: rc=%d, target %zu bytes, result file %s, state phase %d\n%s\n", tag.c_str(), o.rc,
+                         o.targetBytes.size(), o.resultThere ? "there" : "missing", (int)o.state.phase, o.log.c_str());   // shown by ctest -V
+            return o;
+        };
+        const std::string oldProg = selfBytes + "OLD-LAUNCHER", newProg = selfBytes + "NEW-LAUNCHER";
+
+        // 1. the new file is the published version: self-check passes, it is launched once, it confirms, nothing is rolled back.
+        Outcome o = scenario("good", newProg, oldProg, true, nullptr, true);
+        CHECK(o.rc == 0 && o.log.find("self-check passed") != std::string::npos && o.log.find("confirmed the update") != std::string::npos);
+        CHECK(o.resultThere && !o.failedThere && o.targetBytes == newProg && o.state.phase == su::Phase::None);
+        // 1b. a new file that starts but never confirms is left alone (it may just be slow); the log says so.
+        o = scenario("slow", newProg, oldProg, true, nullptr, false);
+        CHECK(o.rc == 0 && o.log.find("did not confirm within") != std::string::npos && o.targetBytes == newProg && o.state.phase == su::Phase::Swapped);
+
+        // 2. the new file reports another version (the swapped-in build is not the published one): rolled back, the old one is started.
+        o = scenario("wrongver", newProg, oldProg, true, "9.9.8", false);
+        CHECK(o.rc != 0 && o.log.find("self-check of the new program failed") != std::string::npos && o.log.find("rolled back") != std::string::npos);
+        CHECK(o.targetBytes == oldProg && o.failedThere && o.failedBytes == newProg);                  // the previous launcher is back; the bad file is kept aside
+        CHECK(o.state.phase == su::Phase::Failed && o.state.to == "9.9.9" && o.state.attempts == 1 && o.state.notified == 0 &&
+              o.state.reason.find("start-up check") != std::string::npos && o.state.reason.find("previous version was put back") != std::string::npos);
+        CHECK(o.resultThere);                                                                          // the previous launcher was started
+        int launches = 0;
+        for (std::size_t p = 0; (p = o.log.find("launched the previous program", p)) != std::string::npos; p += 10) ++launches;
+        CHECK(launches == 1);
+        // ...and at its next start the verdict is what the person sees.
+        const su::Startup v = su::EvaluateStartup(o.state, "9.9.8");
+        CHECK(v.kind == su::StartupKind::FailedBefore && v.showDialog && v.message.find("start-up check") != std::string::npos);
+
+        // 3. the new file cannot be started at all (damaged, or a scanner replaced it with something else): same rollback.
+        o = scenario("broken", "this is not a program\n", oldProg, true, nullptr, false);
+        CHECK(o.rc != 0 && o.log.find("could not be started") != std::string::npos && o.log.find("rolled back") != std::string::npos);
+        CHECK(o.targetBytes == oldProg && o.failedBytes == "this is not a program\n" && o.state.phase == su::Phase::Failed && o.resultThere);
+
+        // 4. nothing to go back to: say so, change nothing else, and do NOT start a file nobody has checked.
+        o = scenario("nobackup", "this is not a program\n", "", false, nullptr, false);
+        CHECK(o.rc != 0 && o.log.find("rollback failed") != std::string::npos && o.log.find("no previous file") != std::string::npos);
+        CHECK(!o.resultThere && o.state.phase == su::Phase::Failed && o.state.reason.find("could not be put back") != std::string::npos);
+        fs::remove_all(root, ec);
     }
 
     // --- Old order: start the new process while this one holds the lock. It exits. ---

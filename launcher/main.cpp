@@ -20,6 +20,7 @@
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
@@ -154,6 +155,7 @@ SDL_mutex* g_upMutex = nullptr;
 std::string g_upMessage = "Checking for updates...";
 std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
+bool g_upVerdictShown = false;    // the start-up verdict of the last launcher update is on screen: the launch check leaves it alone
 SDL_Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
@@ -434,18 +436,10 @@ long long HeadSize(const std::string& url) {
     std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
                       "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
     RunCmd(cmd, true);
-    long long total = 0;
     std::ifstream f(hdr);
-    std::string line;
-    while (std::getline(f, line)) {
-        std::string low = line;
-        for (char& c : low) c = (char)std::tolower((unsigned char)c);
-        if (low.rfind("content-length:", 0) == 0) {
-            try { total = std::stoll(line.substr(15)); } catch (...) {}
-        }
-    }
+    std::string dump((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close(); fs::remove(hdr, ec);
-    return total;
+    return okay::netguard::ParseLastContentLength(dump);
 }
 
 struct DlItem {
@@ -466,16 +460,25 @@ long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
 }
 
+// Hard cap for launcher downloads (2 GiB): a malicious or wrong URL must not
+// be able to fill the user's disk. Enforced both as a curl flag and against
+// the HEAD-probed Content-Length.
+static constexpr long long kMaxDownloadBytes = 2ll << 30;
+
 int DlWorker(void* data) {
     DlItem* d = static_cast<DlItem*>(data);
     auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
     set([&]{ d->status = 1; });
     long long total = HeadSize(d->url);
     set([&]{ d->total = total; });
+    // HeadSize is a hard limit, not just a progress hint: refuse to download
+    // anything that already announced itself larger than the cap.
+    if (total > kMaxDownloadBytes) { set([&]{ d->status = 3; }); return 0; }
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
+                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
     set([&]{ d->proc = p; });
@@ -687,13 +690,8 @@ long long RemoteSize(const std::string& url) {
         for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
         auto p = low.find("content-length:");
         if (p != std::string::npos) {
-            long long v = 0; bool any = false;
-            for (std::size_t i = p + 15; i < line.size(); ++i) {
-                char d = line[i];
-                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
-                else if (any) break;
-            }
-            if (any) sz = v;
+            const long long v = okay::netguard::ParseContentLengthLine(line);
+            if (v > 0) sz = v;
         }
     }
     f.close(); fs::remove(hf, ec);
@@ -713,7 +711,7 @@ int DlMonitorThread(void* p) {
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
     DlMonitor d; d.url = url; d.out = out;
     SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
     SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
@@ -745,6 +743,47 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
         });
     if (!o.ok) UpFail(o.reason);
     return o.ok;
+}
+// The launcher's own file as it was when this process started. CurrentExecutable() is wrong after the swap on Linux
+// (/proc/self/exe follows the renamed file to "<name>.old"), so the path captured at start is the one to swap and to restart.
+static fs::path SelfProgramPath() {
+    if (!g_selfPath.empty()) return fs::path(g_selfPath);
+    return okay::restart::CurrentExecutable();
+}
+static fs::path SelfUpdateStateFile() { return okay::selfupdate::StatePath(fs::path(g_exeDir)); }
+// Remember how the last self-update went (see shared/SelfUpdate.hpp); a failure to write it is logged, never silent.
+static void RecordSelfUpdate(const std::string& from, const std::string& to, bool swapped, const std::string& reason) {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State next = okay::selfupdate::AfterAttempt(okay::selfupdate::Read(file), from, to, swapped, reason);
+    std::string err;
+    if (!okay::selfupdate::Write(file, next, err)) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "could not record the update state: " + err);
+}
+// Runs once at start (main thread, before the first frame): decides from the state file whether the last launcher update was confirmed,
+// did not apply, or failed, and puts the answer where the person sees it (the update dialog and the sidebar note) and in okay_update.log.
+static void ApplyStartupUpdateVerdict() {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State st = okay::selfupdate::Read(file);
+    const okay::selfupdate::Startup v = okay::selfupdate::EvaluateStartup(st, OKAY_ENGINE_VERSION);
+    if (v.kind == okay::selfupdate::StartupKind::Nothing) return;
+    const fs::path log = fs::path(g_exeDir) / "okay_update.log";
+    okay::restart::AppendLog(log, v.logLine);
+    std::error_code ec;
+    if (v.removeBackup && !g_selfPath.empty()) fs::remove(okay::selfupdate::BackupPath(fs::path(g_selfPath)), ec);
+    if (v.resetVersionFile) {   // VERSION.txt must not claim a version that is not installed (it would hide the update from the next check)
+        std::ofstream(fs::path(g_exeDir) / "VERSION.txt") << OKAY_ENGINE_VERSION << "\n";
+    }
+    if (v.clearState) okay::selfupdate::Clear(file);
+    else {
+        std::string err;
+        if (!okay::selfupdate::Write(file, v.next, err)) okay::restart::AppendLog(log, "could not record the update state: " + err);
+    }
+    if (v.message.empty()) return;
+    SetUpMsg(v.message);
+    SetUpStep("Update failed: your current version is unchanged", 0, 3);
+    SetUpVers(OKAY_ENGINE_VERSION, v.next.to);
+    SetState(Up_Failed);
+    g_upModalOpen = v.showDialog;
+    g_upVerdictShown = v.showDialog;   // the dialog is the person's first sight of it: the launch check stays out of its way once; later starts may retry (AutoRetryAllowed stops it after 2)
 }
 bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
     const okayupdater::Outcome o = okayupdater::Commit(name, dest, 100000, /*keepBackup=*/inUse);
@@ -916,6 +955,7 @@ static void FetchSupabaseNews(const std::string& ver) {
 }
 
 okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
+bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
@@ -974,6 +1014,16 @@ int RunUpdateCheck(void*) {
         return 0;
     }
 
+    if (newer && g_upAutomatic) {   // the check at launch must not retry a release that already failed twice (a click on Retry always may)
+        std::string why;
+        if (!okay::selfupdate::AutoRetryAllowed(okay::selfupdate::Read(SelfUpdateStateFile()), latest, why)) {
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "automatic update skipped: " + why);
+            SetUpMsg(why);
+            SetUpStep("Update paused after repeated failures", 0, 3);
+            SetState(Up_Failed);
+            return 0;
+        }
+    }
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -990,7 +1040,8 @@ int RunUpdateCheck(void*) {
     };
     if (const std::string why = okayupdater::IndexProblem(vindex, ventry, latest); !why.empty()) {
         UpFail(why);
-        SetUpMsg(why);
+        if (newer) RecordSelfUpdate(local, latest, false, why);
+        SetUpMsg("Update refused. " + why);
         SetUpStep("Update refused: no checksums", 0, kSteps);
         SetState(Up_Failed);
         return 0;
@@ -1036,8 +1087,7 @@ int RunUpdateCheck(void*) {
     if (ok && newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
-        fs::path selfExe = okay::restart::CurrentExecutable();
-        if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
+        const fs::path selfExe = SelfProgramPath();
         if (selfExe.empty()) {
             UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
             ok = false;
@@ -1049,19 +1099,24 @@ int RunUpdateCheck(void*) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
         SetUpMsg("Installing...");
-        for (const Item& it : items) {
-            if (!CommitFile(it.name, it.dest, it.inUse)) {
-                ok = false;
-                for (const Item& rest : items) okayupdater::Discard(rest.dest);   // (a failed swap already put its old file back)
-                break;
-            }
-            if (it.name == "OkaySpace.exe") launcherOk = true;
+        // The launcher goes first (the swap most likely to be refused: a security scanner holding the file) and the others only if it worked;
+        // if any swap fails everything already swapped is put back, so the install stays whole (okayupdater::CommitAll).
+        std::vector<okayupdater::CommitItem> order;
+        for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
+        for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
+        const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
+        if (!co.ok) {
+            UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
+            ok = false;
+        } else {
+            for (const Item& it : items) if (it.name == "OkaySpace.exe") launcherOk = true;
         }
     }
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
         g_upRelaunchNeeded = launcherOk;
+        if (launcherOk) RecordSelfUpdate(local, latest, true, "");
         // The kept copies beyond "Keep previous versions: N" go (never the LTS line's newest installed patch, never the default editor).
         if (newer) {
             okayversions::RemoveGuards guards;
@@ -1080,6 +1135,7 @@ int RunUpdateCheck(void*) {
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
         const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
+        if (newer) RecordSelfUpdate(local, latest, false, why);
         SetUpMsg("Update failed. " + why);
         SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
@@ -1093,6 +1149,7 @@ void StartUpdateCheck(bool showDialog = true) {
     if (s == Up_Checking || s == Up_Downloading) return;
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
+    g_upAutomatic = !showDialog;
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
@@ -1372,17 +1429,29 @@ static bool BeginUpdatedRestart() {
     static bool started = false;
     if (started) return true;
     okay::restart::Request req;
-    req.executable = okay::restart::CurrentExecutable();
-    if (req.executable.empty() && !g_selfPath.empty()) req.executable = fs::path(g_selfPath);
+    req.executable = SelfProgramPath();
     req.arguments = okay::restart::CurrentArguments();
     std::error_code ec;
     req.workingDirectory = fs::current_path(ec);
     req.waitForPid = CurrentPid();
     req.keepBackup = true;
     if (!req.executable.empty()) req.logFile = req.executable.parent_path() / "okay_update.log";
+    {   // the helper checks the new file is the published version before starting it, and puts the previous launcher back if it is not
+        std::string fromV, toV; GetUpVers(fromV, toV);
+        const okay::selfupdate::State pending = okay::selfupdate::Read(req.stateFile.empty() ? SelfUpdateStateFile() : req.stateFile);
+        req.expectVersion = pending.phase == okay::selfupdate::Phase::Swapped ? pending.to : toV;   // (the state file survives a later update check that cleared `toV`)
+        if (req.expectVersion.empty())
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart without a start-up check: the version that was installed is not known");
+        req.rollbackTarget = req.executable;
+        req.replaceBackup = okay::selfupdate::BackupPath(req.executable);
+        req.stateFile = SelfUpdateStateFile();
+    }
     std::string err;
     if (!okay::restart::StartHelper(req, err)) {
-        Toast(err.empty() ? "Couldn't restart after the update. See okay_update.log next to the app." : err, 2);
+        const std::string msg = (err.empty() ? std::string("Couldn't restart the launcher.") : "Couldn't restart the launcher (" + err + ").") +
+            " The update is installed: close OkaySpace and open it again to finish. Details: okay_update.log next to the app.";
+        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart after the update failed: " + msg);
+        Toast(msg, 2);
         return false;
     }
     started = true;
@@ -2874,7 +2943,10 @@ static int LinkPreviewWorker(void*) {
         url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
         SDL_UnlockMutex(g_lpMutex);
         LinkPreview lp; lp.state = 2;
-        if (ShellSafeUrl(url)) {
+        // SSRF guard: never fetch a link whose host resolves to a private,
+        // loopback or link-local address (chat links come from other people).
+        if (ShellSafeUrl(url) &&
+            okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
@@ -4895,12 +4967,28 @@ static void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;
+    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
+    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    VoiceClip() = default;
+    ~VoiceClip() { if (pcmIsSdl && pcm) { SDL_FreeWAV(pcm); } pcm = nullptr; }   // never leak the SDL_LoadWAV buffer
+    VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
+    VoiceClip& operator=(const VoiceClip&) = delete;
+    VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
+    VoiceClip& operator=(VoiceClip&& o) noexcept {
+        if (this != &o) {
+            if (pcmIsSdl && pcm) SDL_FreeWAV(pcm);
+            ok = o.ok; pcm = o.pcm; len = o.len; pcmIsSdl = o.pcmIsSdl; spec = o.spec;
+            secs = o.secs; bytesPerSec = o.bytesPerSec;
+            for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
+            owned = std::move(o.owned); fast = std::move(o.fast);
+            o.pcm = nullptr; o.len = 0; o.pcmIsSdl = false; o.ok = false;
+        }
+        return *this;
+    }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
 // The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
@@ -4910,6 +4998,11 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
+    // The samples are read from the SDL_LoadWAV buffer; once the converted
+    // samples live in c.owned, that original buffer is freed here (it used to
+    // be dropped on the floor when c.pcm was re-pointed).
+    Uint8* sdlPcm = c.pcm;
+    const bool wasSdl = c.pcmIsSdl;
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -4934,6 +5027,7 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     c.owned = std::move(out);
     c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
     c.spec.format = AUDIO_S16SYS;
+    if (wasSdl && sdlPcm) { SDL_FreeWAV(sdlPcm); c.pcmIsSdl = false; }   // conversion consumed the SDL buffer
 }
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
@@ -5008,7 +5102,17 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
+        // clip's own storage and free SDL's at once, so no path (a converted clip, an
+        // unsupported width, a replaced entry) can leave it behind (#718).
+        Uint8* wavBuf = nullptr; Uint32 wavLen = 0; SDL_AudioSpec wavSpec{};
+        if (!failed && SDL_LoadWAV(cache.string().c_str(), &wavSpec, &wavBuf, &wavLen)) {
+            c.spec = wavSpec;
+            if (wavBuf && wavLen) c.owned.assign(wavBuf, wavBuf + wavLen);
+            else c.owned.clear();
+            SDL_FreeWAV(wavBuf);
+            c.pcm = c.owned.empty() ? nullptr : c.owned.data();
+            c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
@@ -15659,11 +15763,9 @@ static int GifSearchWorker(void*) {
                         g.preview = urlIn("\"tinygif\"");
                         g.full = urlIn("\"gif\":");
                         g.desc = okay::Messages::Field(o, "content_description");
-                        std::size_t tp = o.find("\"tinygif\"");
-                        if (tp != std::string::npos) {
-                            std::size_t d = o.find("\"dims\"", tp);
-                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
-                        }
+                        // start after the format the preview uses: the first "dims" in the object may belong to another one
+                        const std::size_t tg = o.find("\"tinygif\"");
+                        okay::netguard::ParseGifDims(o, tg, g.w, g.h);   // bounds-checked; npos-safe
                         if (!g.preview.empty()) out.push_back(g);
                     }
                 } else if (c == ']' && depth == 0) break;
@@ -17403,7 +17505,6 @@ static const okayversionsui::Host& VersionsHost() {
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
         h.fetchText = [](const std::string& url, std::string& out) { return FetchTextFile(url, out); };
-        h.headSize = [](const std::string& url) { return (std::uint64_t)std::max<long long>(0, RemoteSize(url)); };
     }
     if (builtAt == 0 || now - builtAt > 1000) {
         builtAt = now;
@@ -17422,6 +17523,7 @@ static const okayversionsui::Host& VersionsHost() {
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     SDL_SetMainReady();
     {
@@ -17468,6 +17570,7 @@ int main(int argc, char** argv) {
     g_dlMutex = SDL_CreateMutex();
     g_gitMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
+    ApplyStartupUpdateVerdict();   // was the last launcher update confirmed, not applied, or rolled back? Say so before anything else.
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
     LoadNotifs();                // the notifications feed + what was read / cleared
@@ -17686,7 +17789,7 @@ int main(int argc, char** argv) {
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    if (g_updateOnLaunch && !g_upVerdictShown) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
@@ -18108,6 +18211,16 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
                 }
                 ImGui::TextUnformatted(GetUpStep().c_str());
+                if (us == Up_Failed) {   // the reason and what to do, in full (the sidebar note only has room for the start of it)
+                    const std::string why = GetUpMsg();
+                    if (!why.empty()) {
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1.0f), "%s", why.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::Dummy(ImVec2(0, 2));
+                    }
+                }
 
                 // Overall step progress (engine / player / launcher).
                 int si = SDL_AtomicGet(&g_upStepIdx), stt = SDL_AtomicGet(&g_upStepTotal);
@@ -18145,7 +18258,7 @@ int main(int argc, char** argv) {
 
                 // Changelog / what's-new.
                 std::string cl = GetUpChangelog();
-                if (!cl.empty()) {
+                if (!cl.empty() && us != Up_Failed) {   // (a failure needs the room for its reason and the Retry button)
                     ImGui::Dummy(ImVec2(0, 4));
                     ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
                                         toV.empty() ? "" : toV.c_str());

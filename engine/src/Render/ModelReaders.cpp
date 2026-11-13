@@ -60,7 +60,28 @@ std::string Trim(const std::string& s) {
 std::string ResolveTexturePath(std::string tp, const std::string& baseDir) {
     for (char& c : tp) if (c == '\\') c = '/';
     const bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    return abs ? tp : baseDir + tp;
+    if (abs) return tp;
+    // Stay inside the model's own directory tree: an untrusted model must not be able to point the
+    // engine at any file on the machine ("map_Kd ../../../../etc/passwd" used to be kept verbatim).
+    // The ".."s are resolved here; one that climbs out of the model's directory drops the texture.
+    std::vector<std::string> parts;
+    std::size_t i = 0;
+    while (i < tp.size()) {
+        std::size_t a = i;
+        while (a < tp.size() && tp[a] != '/') ++a;   // one path component
+        const std::string comp = tp.substr(i, a - i);
+        i = a + 1;
+        if (comp.empty() || comp == ".") continue;
+        if (comp == "..") {
+            if (parts.empty()) return {};
+            parts.pop_back();
+            continue;
+        }
+        parts.push_back(comp);
+    }
+    std::string out;
+    for (const std::string& p : parts) { if (!out.empty()) out += '/'; out += p; }
+    return baseDir + out;
 }
 
 // The file name of a texture statement ("map_Kd -s 1 1 1 wood.png"): skip the
@@ -565,6 +586,9 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
         const bool isVertex = el.name == "vertex", isFace = el.name == "face";
         int ix = -1, iy = -1, iz = -1, inx = -1, iny = -1, inz = -1, iu = -1, iv = -1, ifaceList = -1;
         if (isVertex) {
+            // A second vertex element would leave the normals / UVs of the two blocks
+            // out of step with the vertex list (hasN true, fewer normals than vertices).
+            if (sawVertex) return Fail(err, "PLY declares more than one vertex element");
             for (std::size_t k = 0; k < el.props.size(); ++k) {
                 const std::string& n = el.props[k].name; int ki = (int)k;
                 if (el.props[k].list) continue;

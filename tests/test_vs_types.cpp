@@ -427,5 +427,86 @@ entry OnStart 0
         CHECK(sawNan);
     }
 
+    // ---- Anything can be logged: every output of every node (Bool, Number, Text, Vector3,
+    // Object, List, Map, Any) can be wired into the value input of the log steps, and every
+    // key / mouse input node's outputs print (Bool as true / false) ------------------------
+    {
+        std::vector<std::string> sinks = {"Print", "LogWarn", "LogError", "LogOnce"};
+        for (const auto& e : VsApiEntries()) if (e.apiType == "Debug" && e.member.rfind("Log", 0) == 0) sinks.push_back(e.type);
+        CHECK(sinks.size() >= 5);   // plus Debug.Log / LogWarning / LogError from the script API
+        for (const std::string& sink : sinks) {
+            const NodeSignature* ss = SignatureFor(sink);
+            CHECK(ss && ss->execIn && !ss->ins.empty());
+            if (!ss || ss->ins.empty()) continue;
+            for (const std::string& t : AllNodeTypes()) {
+                const NodeSignature* s = SignatureFor(t);
+                for (int o = 0; s && o < (int)s->outs.size(); ++o)
+                    if (!PinCompatible(OutputType(t, o), InputType(sink, 0)))
+                        std::fprintf(stderr, "  %s output %d can't feed %s\n", t.c_str(), o, sink.c_str());
+            }
+        }
+        int bad = 0;
+        for (const std::string& sink : sinks)
+            for (const std::string& t : AllNodeTypes()) {
+                const NodeSignature* s = SignatureFor(t);
+                for (int o = 0; s && o < (int)s->outs.size(); ++o) bad += !PinCompatible(OutputType(t, o), InputType(sink, 0));
+            }
+        CHECK(bad == 0);
+        for (const char* t : {"Key", "KeyDown", "KeyUp", "MouseButton", "MouseButtonDown", "MouseWheel"}) {
+            const NodeSignature* s = SignatureFor(t);
+            CHECK(s && !s->execIn && !s->outs.empty());
+        }
+        CHECK(OutputType("Key", 0) == PinType::Bool && OutputType("KeyUp", 0) == PinType::Bool);
+        // The log prints what it was given: a held key is "true" / "false".
+        std::vector<std::string> printed;
+        auto sink = Log::sink;
+        Log::sink = [&](Log::Level, const std::string& m) { printed.push_back(m); };
+        for (bool down : {false, true}) {
+            Scene sc("KeyLog");
+            auto* v = sc.CreateGameObject("K")->AddComponent<VisualScriptComponent>();
+            CHECK(v->LoadFromText("node 1 OnStart\nentry OnStart 1\nnode 2 Key space\nnode 3 Print\n"
+                                  "exec 1 0 3\ndata 3 0 2 0\n"));
+            Input::FeedKeys(down ? std::vector<char>{' '} : std::vector<char>{});
+            sc.Start();
+            Input::FeedKeys({});
+        }
+        Log::sink = sink;
+        CHECK(printed.size() == 2);
+        if (printed.size() == 2) CHECK(printed[0].find("false") != std::string::npos && printed[1].find("true") != std::string::npos);
+    }
+
+    // ---- Print: typed text, an optional value, or both ----------------------------------------
+    {
+        auto run = [&](const std::string& body) {
+            std::vector<std::string> printed;
+            auto sink = Log::sink;
+            Log::sink = [&](Log::Level, const std::string& m) { printed.push_back(m); };
+            Scene sc("PrintTest");
+            auto* v = sc.CreateGameObject("P")->AddComponent<VisualScriptComponent>();
+            CHECK(v->LoadFromText("node 1 OnStart\nentry OnStart 1\nnode 3 Print\nexec 1 0 3\n" + body));
+            Input::FeedKeys(std::vector<char>{' '});
+            sc.Start();
+            Input::FeedKeys({});
+            Log::sink = sink;
+            return printed.empty() ? std::string("<none>") : printed.back();
+        };
+        auto has = [](const std::string& m, const std::string& want) { return m.size() >= want.size() && m.compare(m.size() - want.size(), want.size(), want) == 0; };
+        CHECK(SignatureFor("Print") && SignatureFor("Print")->ins == "TA");
+        // Text only (pin 0 as it always was).
+        CHECK(has(run("default 3 0 \"hello there\"\n"), "hello there"));
+        // Value only: a held key is true.
+        CHECK(has(run("node 2 Key space\ndata 3 1 2 0\n"), "true"));
+        // Both: the typed message, a colon, the value.
+        const std::string both = run("default 3 0 \"Space held\"\nnode 2 Key space\ndata 3 1 2 0\n");
+        CHECK(has(both, "Space held: true"));
+        CHECK(has(run("default 3 0 \"Hit\"\nnode 2 KeyDown z\ndata 3 1 2 0\n"), "Hit: false"));
+        CHECK(has(run("default 3 0 \"n\"\ndefault 3 1 42\n"), "n: 42"));
+        // An old graph: a value wired into pin 0 (and nothing on Value) prints just that value.
+        CHECK(has(run("node 2 Key space\ndata 3 0 2 0\n"), "true"));
+        CHECK(has(run(""), "") && run("") != "<none>");   // nothing typed prints an empty line, as before
+        // Typed value in the Value box.
+        CHECK(has(run("default 3 1 \"only\"\n"), "only"));
+    }
+
     TEST_MAIN_RESULT();
 }

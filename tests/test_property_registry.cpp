@@ -1521,6 +1521,14 @@ static void TestNavNetUiRegistrations() {
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.avoidancePriority", PropertyValue::MakeInt(150)) && agent->avoidancePriority == 99);
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.stoppingDistance", PropertyValue::MakeFloat(-3.0f)) && agent->stoppingDistance == 0.0f);
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.size", PropertyValue::MakeVec3(Vec3{2, 3, 4})) && go->GetComponent<NavMeshObstacle>()->size.z == 4.0f);
+        auto* obstacle = go->GetComponent<NavMeshObstacle>();   // carving: shape, capsule size and the carve timing, clamped
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.shape", PropertyValue::MakeEnum(1)) && obstacle->shape == NavMeshObstacle::Shape::Capsule);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.capsuleRadius", PropertyValue::MakeFloat(0.75f)) && obstacle->capsuleRadius == 0.75f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.capsuleHeight", PropertyValue::MakeFloat(1.5f)) && obstacle->capsuleHeight == 1.5f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.carve", PropertyValue::MakeBool(true)) && obstacle->carve);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.carveOnlyWhenStationary", PropertyValue::MakeBool(false)) && !obstacle->carveOnlyWhenStationary);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.timeToStationary", PropertyValue::MakeFloat(-2.0f)) && obstacle->timeToStationary == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.moveThreshold", PropertyValue::MakeFloat(0.3f)) && obstacle->moveThreshold == 0.3f);
         auto* surface = go->GetComponent<NavMeshSurface>();
         CHECK(PropertyRegistry::GetProperty(*go, "NavMeshSurface.agentRadius") == PropertyValue::MakeFloat(surface->settings.agentRadius));
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentRadius", PropertyValue::MakeFloat(0.75f)) && surface->settings.agentRadius == 0.75f);

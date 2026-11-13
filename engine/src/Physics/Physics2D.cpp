@@ -946,6 +946,7 @@ RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const V
         Vec2 n, p;
         if (skipStartOverlaps && CircleTouch(col, origin, radius, n, p)) continue;
         Vec2 mn, mx; col->WorldAABB(mn, mx);
+        if (!(std::isfinite(mn.x + mn.y + mx.x + mx.y))) continue;   // NaN or infinite bounds: not a place to hit
         mn = mn - Vec2{radius, radius}; mx = mx + Vec2{radius, radius};
         // Slab test of the centre's path against the inflated bounds.
         float t0 = -1e30f, t1 = 1e30f; bool miss = false;
@@ -966,10 +967,15 @@ RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const V
     if (cands.empty()) return best;
     if (dir.SqrMagnitude() < 1e-12f) hi = lo;   // no direction: just test where it stands
     float step = Mathf::Max(radius * 0.5f, 0.02f);
+    // A NaN or infinite reach (or radius) gives a span the march cannot walk: nothing to find.
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !std::isfinite(step)) return best;
     if ((hi - lo) / step > 20000.0f) step = (hi - lo) / 20000.0f;   // bound the work
     float prev = lo;
+    // The count is the backstop: far from the origin one step can be smaller than the float
+    // spacing (t + step == t), and a float comparison alone would then never end the march.
+    int samples = 0;
     for (float t = lo; ; t += step) {
-        bool last = t >= hi;
+        bool last = t >= hi || ++samples > 20002;   // the 20000-step bound above, plus the first and last samples
         if (last) t = hi;
         float bestT = 1e30f; Collider2D* bestC = nullptr;
         for (const Cand& cd : cands) {

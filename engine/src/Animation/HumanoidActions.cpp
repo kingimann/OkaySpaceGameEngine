@@ -30,6 +30,19 @@
 
 namespace okay {
 namespace HumanoidActions {
+
+namespace {
+// Replication: a one-shot the owner started is noted on its Character so the
+// network layer can send it once (see Character::netEventSeq).
+void NoteNetEvent(GameObject* go, int id, float param) {
+    if (!go) return;
+    if (Character* c = go->GetComponent<Character>()) {
+        c->netEventId = id;
+        c->netEventParam = param;
+        ++c->netEventSeq;
+    }
+}
+} // namespace
 namespace {
 
 using SM = AnimStateMachine;
@@ -1561,7 +1574,9 @@ bool BeginDive(GameObject* go) {
     if (!sm || !HasState(*sm, "Dive")) return false;
     sm->SetTrigger("dived");
     if (sm->Current() == "Dive") return true;
-    return sm->GoTo("Dive", 0.12f);
+    const bool ok = sm->GoTo("Dive", 0.12f);
+    if (ok) NoteNetEvent(go, 5, 0.0f);
+    return ok;
 }
 
 bool TakeDivePending(GameObject* go) {
@@ -1710,7 +1725,9 @@ bool PlayEmote(GameObject* go, int which) {
     if (which < 0) which = 0;
     if (which > 2) which = 2;
     if (SM* sm = BaseMachine(go)) sm->SetInt("emoteId", which);
-    return Play(go, kEmoteNames[which], 0.12f);
+    const bool ok = Play(go, kEmoteNames[which], 0.12f);
+    if (ok) NoteNetEvent(go, 8, (float)which);
+    return ok;
 }
 
 bool PlayEmote(GameObject* go, const std::string& name) {
@@ -1828,7 +1845,18 @@ int HitDirFromWorld(GameObject* go, const Vec3& fromWorld) {
     return kOpp[DirFromWorld(go, fromWorld)];
 }
 
+namespace {
+bool HitReactNow(GameObject* go, int dir, bool heavy);
+}
 bool HitReact(GameObject* go, int dir, bool heavy) {
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    const bool ok = HitReactNow(go, dir, heavy);
+    if (ok) NoteNetEvent(go, 6, (float)(dir + (heavy ? 4 : 0)));
+    return ok;
+}
+namespace {
+bool HitReactNow(GameObject* go, int dir, bool heavy) {
     if (!go || IsDead(go)) return false;
     if (dir < 0) dir = 0;
     if (dir > 3) dir = 3;
@@ -1862,6 +1890,7 @@ bool HitReact(GameObject* go, int dir, bool heavy) {
     static const char* kHeavy[] = {"Hit_Heavy_F", "Hit_Heavy_B", "Hit_Heavy_F", "Hit_Heavy_B"};
     return Play(go, heavy ? kHeavy[dir] : kLight[dir], 0.1f);
 }
+} // namespace
 
 float StaggerScale(const GameObject* go) {
     const SM* sm = BaseMachine(const_cast<GameObject*>(go));
@@ -1956,6 +1985,8 @@ bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
     else if (p.kind == TraverseKind::Ledge) { state = "LedgeGrab"; clip = "LedgeGrab"; }
     if (p.kind == TraverseKind::Ledge) SetHanging(go, true);
     PlayNamed(go, state, clip);
+    NoteNetEvent(go, 7, p.kind == TraverseKind::MantleLow ? 1.0f : p.kind == TraverseKind::MantleHigh ? 2.0f
+                        : p.kind == TraverseKind::Ledge ? 3.0f : 0.0f);
     BeginTraverse(go, p);
     if (p.kind == TraverseKind::Ledge) {
         auto it = TraverseJobs().find(go);
@@ -1965,6 +1996,19 @@ bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
 }
 
 } // namespace
+
+bool PlayTraverse(GameObject* go, TraverseClip clip) {
+    if (!go || IsDead(go)) return false;
+    static const char* kState[] = {"Vault", "MantleLow", "MantleHigh", "LedgeGrab", "ClimbUp", "LetGo"};
+    static const char* kClip[] = {"Vault", "Mantle_Low", "Mantle_High", "LedgeGrab", "ClimbUp", "LetGo"};
+    const int i = (int)clip;
+    if (i < 0 || i > 5) return false;
+    if (clip == TraverseClip::LedgeGrab) SetHanging(go, true);
+    else if (clip == TraverseClip::ClimbUp || clip == TraverseClip::LetGo) SetHanging(go, false);
+    const bool ok = PlayNamed(go, kState[i], kClip[i]);
+    if (ok) NoteNetEvent(go, 7, (float)i);
+    return ok;
+}
 
 bool RequestVault(GameObject* go) {
     if (!go || IsDead(go) || TraverseBusy(go)) return false;
@@ -1993,6 +2037,7 @@ bool RequestClimbUp(GameObject* go) {
     AbortTraverse(go);
     SetHanging(go, false);
     const bool played = PlayNamed(go, "ClimbUp", "ClimbUp");
+    if (played) NoteNetEvent(go, 7, 4.0f);
     auto it = HangPoints().find(go);
     if (it != HangPoints().end() && go->transform) {
         TraverseProbe p;
@@ -2014,7 +2059,7 @@ void RequestLetGo(GameObject* go) {
     TraverseValidate(go);
     AbortTraverse(go);
     SetHanging(go, false);
-    PlayNamed(go, "LetGo", "LetGo");
+    if (PlayNamed(go, "LetGo", "LetGo")) NoteNetEvent(go, 7, 5.0f);
     HangPoints().erase(go);
     RestoreHangGravity(go);
 }

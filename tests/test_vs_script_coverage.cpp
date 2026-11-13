@@ -1,6 +1,7 @@
 // Every text-script builtin has a visual-script node, each of those nodes runs,
 // and the escape hatches do what they say. The coverage scene runs without errors.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include <Okay.hpp>
 #include "okay/Components/Light.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -35,6 +36,9 @@ static bool RunGraph(Scene& s, GameObject* go, const std::string& text) {
 
 int main() {
     RUN_SUITE("vs_script_coverage");
+    // Every builtin node runs with the dummy argument "x": the file builtins (prefs, creations, save slots)
+    // would write files of that name into the folder the test was started from.
+    okaytest::Sandbox sandbox("vs_script_coverage", OKAY_SOURCE_DIR);
     vs::SetRuntimeErrorHook(&OnErr);
     Time::SetTimeScale(1);
 
@@ -196,6 +200,7 @@ int main() {
         CHECK(md.find("Get Property") != std::string::npos);
     }
 
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     vs::SetRuntimeErrorHook(nullptr);
     Time::SetTimeScale(1);
     TEST_MAIN_RESULT();

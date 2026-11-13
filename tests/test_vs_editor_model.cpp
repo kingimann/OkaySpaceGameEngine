@@ -2,6 +2,7 @@
 // back in the editor and in the runtime unchanged, quotes, '#' and all; paste
 // never invents wires; and layout coordinates / ids can't hit undefined casts.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
 #include <Okay.hpp>
 #include <climits>
@@ -21,6 +22,7 @@ VsValueStr RunVar(const std::string& text, const char* var, std::string* err = n
 
 int main() {
     RUN_SUITE("vs_editor_model");
+    okaytest::Sandbox sandbox("vs_editor_model", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
@@ -376,7 +378,161 @@ int main() {
         }
     }
 
+    // ---- An exec output takes any number of wires; they run in the order made ----
+    {
+        VsEditGraph g;
+        const int start = g.add("OnStart", 0, 0), a = g.add("SetVar", 0, 0), b = g.add("SetVar", 0, 0), c = g.add("SetVar", 0, 0);
+        for (int id : {a, b, c}) g.find(id)->arg = "s";
+        const int fa = g.add("Format", 0, 0), fb = g.add("Format", 0, 0), fc = g.add("Format", 0, 0), gv = g.add("GetVar", 0, 0);
+        g.find(fa)->arg = "{0}A"; g.find(fb)->arg = "{0}B"; g.find(fc)->arg = "{0}C"; g.find(gv)->arg = "s";
+        g.linkData(a, 0, fa, 0); g.linkData(b, 0, fb, 0); g.linkData(c, 0, fc, 0);
+        for (int f : {fa, fb, fc}) g.linkData(f, 0, gv, 0);   // a data output feeds many inputs
+        g.linkExec(start, 0, a); g.linkExec(start, 0, b); g.linkExec(start, 0, c);
+        g.linkExec(start, 0, b);                               // the same wire twice is one wire
+        CHECK(g.execLinks.size() == 3);                        // the 2nd and 3rd were added, not replacing the 1st
+        CHECK((VsExecTargets(g, start, 0) == std::vector<int>{a, b, c}));
+        CHECK(g.dataLinks.size() == 6);
+        const std::string text = g.toText();
+        VsEditGraph back; back.fromText(text);
+        CHECK((VsExecTargets(back, start, 0) == std::vector<int>{a, b, c}));   // order survives save and load
+        CHECK(back.toText() == text);
+        // Runs all three, in the order the wires were made, each finishing first.
+        CHECK(RunVar(text, "s").s == "0ABC");
+        // Reversing the wire order reverses the run order.
+        VsEditGraph rev; rev.fromText(text);
+        rev.execLinks.clear(); rev.linkExec(start, 0, c); rev.linkExec(start, 0, b); rev.linkExec(start, 0, a);
+        CHECK(RunVar(rev.toText(), "s").s == "0CBA");
+        // Breaking one wire keeps the others (and their order).
+        CHECK(back.unlinkExec(start, 0, b) && !back.unlinkExec(start, 0, b));
+        CHECK((VsExecTargets(back, start, 0) == std::vector<int>{a, c}));
+        CHECK(RunVar(back.toText(), "s").s == "0AC");
+        // The checker raises no error and no "nothing runs this node" for any of them.
+        for (const auto& i : okay::vs::ValidateGraphText(text)) CHECK(i.severity != 0 && i.message.find("nothing runs") == std::string::npos);
+        // A graph with one wire per pin saves exactly as before.
+        VsEditGraph one; const int s1 = one.add("OnStart", 0, 0), p1 = one.add("Print", 0, 0);
+        one.linkExec(s1, 0, p1);
+        VsEditGraph one2; one2.fromText(one.toText());
+        CHECK(one2.toText() == one.toText());
+    }
+
+    // ---- A step that can't run does not skip the other wires on its pin ----------
+    {
+        const std::string text =
+            "node 1 OnStart\nentry OnStart 1\n"
+            "node 2 SetVar s\ndefault 2 0 \"a\"\n"
+            "node 3 Translate\ndefault 3 3 \"nobody_here\"\n"   // its Target object does not exist: reported and skipped
+            "node 4 SetVar t\ndefault 4 0 \"c\"\n"
+            "exec 1 0 2\nexec 1 0 3\nexec 1 0 4\n";
+        CHECK(RunVar(text, "s").s == "a");
+        CHECK(RunVar(text, "t").s == "c");
+    }
+
+    // ---- A key / mouse input value can be logged; a Key node has no flow pins ----
+    {
+        VsEditGraph g;
+        const int print = g.add("Print", 0, 0);
+        const char* inputs[] = {"Key", "KeyDown", "KeyUp", "MouseButton", "MouseButtonDown", "MouseX", "MouseY", "MouseWheel", "MouseGround"};
+        for (const char* t : inputs) {
+            const int k = g.add(t, 0, 0);
+            const VsDef* d = FindDef(t);
+            CHECK(d && !d->execIn && d->execOut.empty());                     // value nodes: wired by their data pins
+            for (int o = 0; o < (int)d->dataOut.size(); ++o) {
+                std::string why;
+                CHECK(VsWireOk(g, print, 0, k, o, &why));                     // any output prints (Bool becomes true / false)
+                g.linkData(print, 0, k, o);
+            }
+        }
+    }
+
+    // ---- The exported script for Print: text, value, or both ----------------------------------
+    {
+        for (int mode = 0; mode < 3; ++mode) {
+            VsEditGraph g;
+            const int st = g.add("OnStart", 0, 0), pr = g.add("Print", 0, 0), k = g.add("Key", 0, 0);
+            g.find(k)->arg = "space";
+            if (mode != 1) g.find(pr)->pinDefault[0] = "msg";
+            if (mode != 0) g.linkData(pr, 1, k, 0);
+            g.linkExec(st, 0, pr);
+            const std::string code = CompileToOkayScript(g);
+            std::string err;
+            auto vm = CreateScriptVM("okayscript");
+            CHECK(vm && vm->Load(code, &err));
+            CHECK(mode != 2 || code.find("\": \"") != std::string::npos);
+        }
+    }
+
+    // ---- Declared variables: the editor model declares, types, edits, renames and saves them ----
+    {
+        VsEditGraph g;
+        std::string err;
+        CHECK(g.declare("health", "Number", "object", &err));
+        CHECK(g.declare("path", "List<Vector3>", "object", &err));
+        CHECK(g.declare("tint", "Color", "scene", &err));
+        CHECK(!g.declare("health", "Number", "object", &err) && err.find("already") != std::string::npos);
+        CHECK(g.declare("health", "Number", "global", &err));              // another scope may reuse the name
+        CHECK(!g.declare("9bad", "Number", "object", &err));
+        CHECK(!g.declare("x", "Banana", "object", &err));
+        CHECK(!g.declare("x", "Number", "planet", &err));
+        CHECK(g.declareStruct("Enemy", &err) && g.addStructField(0, "hp", "Number", &err) && g.addStructField(0, "pos", "Vector3", &err));
+        CHECK(!g.addStructField(0, "hp", "Number", &err));                  // listed twice
+        CHECK(!g.addStructField(0, "me", "Enemy", &err));                   // a struct can't hold itself
+        CHECK(g.declare("boss", "Enemy", "object", &err));
+        CHECK(g.setVarDefault(0, "80", &err));
+        CHECK(!g.setVarDefault(0, "(1, 2, 3)", &err));                      // a vector isn't a number: refused, default kept
+        CHECK(g.vars[0].value == "80");
+        CHECK(g.setVarDefault(1, "[(0, 0, 0), (1, 1, 1)]", &err));
+        CHECK(!g.setVarDefault(1, "[\"x\"]", &err) && err.find("item 0") != std::string::npos);
+        CHECK(g.declError().empty());
+        // the file reads back the same, in the editor and in the runtime
+        const std::string text = g.toText();
+        VsEditGraph back; back.fromText(text);
+        CHECK(back.vars.size() == g.vars.size() && back.structs.size() == 1 && back.structs[0].fields.size() == 2);
+        CHECK(back.vars[0].value == "80" && back.vars[1].type == "List<Vector3>" && back.vars[2].scope == "scene");
+        CHECK(back.toText() == text);
+        std::string perr;
+        auto parsed = vs::NodeGraph::Parse(text, &perr);
+        CHECK(parsed && parsed->Decls().size() == 5);
+        // converting a type keeps what fits
+        CHECK(g.setVarType(0, "Text", &err) && g.vars[0].value == "\"80\"");
+        CHECK(g.setVarType(0, "Number", &err) && g.vars[0].value == "80");
+        CHECK(g.setVarType(0, "Vector3", &err) && g.vars[0].value == "(80, 80, 80)");
+        // a rename follows the nodes that use the variable
+        const int get = g.add("GetVar", 0, 0), sget = g.add("GetSceneVar", 0, 0);
+        g.find(get)->arg = "path"; g.find(sget)->arg = "path";
+        CHECK(g.renameVar(1, "route", &err));
+        CHECK(g.find(get)->arg == "route" && g.find(sget)->arg == "path");  // only the object-scope node moved
+        CHECK(!g.renameVar(1, "health", &err));                              // taken (same scope)
+        // the pins take the declared types, so a bad wire is refused when dropped
+        VsEditGraph w;
+        w.declare("pos", "Vector3", "object"); w.declare("n", "Number", "object");
+        const int gp = w.add("GetVar", 0, 0), gn = w.add("GetVar", 0, 0), sum = w.add("Add", 0, 0), setn = w.add("SetVar", 0, 0);
+        w.find(gp)->arg = "pos"; w.find(gn)->arg = "n"; w.find(setn)->arg = "n";
+        CHECK(VsOutPinType(w, gp, 0) == vs::PinType::Vec3 && VsOutPinType(w, gn, 0) == vs::PinType::Number);
+        CHECK(!VsWireOk(w, sum, 0, gp, 0));                                  // Vector3 -> Number input
+        CHECK(VsWireOk(w, sum, 0, gn, 0));
+        CHECK(!VsWireOk(w, setn, 0, gp, 0));                                 // Set Var n takes a Number
+        CHECK(VsInPinType(w, setn, 0) == vs::PinType::Number);
+        // editing a default in graph text changes just that line; an old var line becomes a typed one
+        std::string out;
+        const std::string src = "decl a Number object \"1\"\nvar b 2\nnode 1 OnStart\n# keep me\n";
+        CHECK(VsSetDeclDefaultInText(src, "a", vs::VarScope::Object, "9", "Number", out) && out == "decl a Number object \"9\"\nvar b 2\nnode 1 OnStart\n# keep me\n");
+        CHECK(VsSetDeclDefaultInText(src, "b", vs::VarScope::Object, "5", "Number", out) && out.find("decl b Number object \"5\"") != std::string::npos);
+        CHECK(!VsSetDeclDefaultInText(src, "zzz", vs::VarScope::Object, "5", "Number", out));
+        CHECK(!VsSetDeclDefaultInText(src, "a", vs::VarScope::Scene, "5", "Number", out));   // other scope: not that line
+    }
+    {   // the declarations the editor wrote drive a real run
+        VsEditGraph g; std::string err;
+        g.declare("pts", "List<Vector3>", "object");
+        g.setVarDefault(0, "[(1, 0, 0), (0, 2, 0)]");
+        const int start = g.add("OnStart", 0, 0), get = g.add("GetVar", 0, 0), add = g.add("ListAdd", 0, 0), mk = g.add("MakeVec3", 0, 0);
+        g.find(get)->arg = "pts";
+        g.linkExec(start, 0, add); g.linkData(add, 0, get, 0); g.linkData(add, 1, mk, 0);
+        CHECK(RunVar(g.toText(), "pts").s == "[(1, 0, 0), (0, 2, 0), (0, 0, 0)]");
+        for (const auto& i : vs::ValidateGraphText(g.toText())) CHECK(i.severity != 0);   // no errors
+    }
+
     Log::sink = sink;
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }
 

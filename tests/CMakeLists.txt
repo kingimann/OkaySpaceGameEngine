@@ -1,3 +1,8 @@
+# The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
+add_executable(test_sandbox test_sandbox.cpp)
+target_link_libraries(test_sandbox PRIVATE okay::engine)
+add_test(NAME sandbox COMMAND test_sandbox)
+
 add_executable(test_math test_math.cpp)
 target_link_libraries(test_math PRIVATE okay::engine)
 add_test(NAME math COMMAND test_math)
@@ -5,10 +10,6 @@ add_test(NAME math COMMAND test_math)
 add_executable(test_scene test_scene.cpp)
 target_link_libraries(test_scene PRIVATE okay::engine)
 add_test(NAME scene COMMAND test_scene)
-
-add_executable(test_console_renderer_robust test_console_renderer_robust.cpp)
-target_link_libraries(test_console_renderer_robust PRIVATE okay::engine)
-add_test(NAME console_renderer_robust COMMAND test_console_renderer_robust)
 
 # Scene::StructureVersion changes only when the hierarchy does (animation caches key on it)
 add_executable(test_structure_version test_structure_version.cpp)
@@ -498,6 +499,10 @@ add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)
 
+add_executable(test_net_guard test_net_guard.cpp)
+target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
+add_test(NAME net_guard COMMAND test_net_guard)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)
@@ -730,7 +735,7 @@ target_compile_definitions(test_runtime_ui PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE
 add_test(NAME runtime_ui COMMAND test_runtime_ui)
 
 # File > Examples: the UI Gallery builds and saves itself into the project (ImGui-free part of the editor).
-add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
 target_include_directories(test_example_scenes PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
@@ -759,48 +764,54 @@ target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
 add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
 
 # UIFrame conversion and mirroring; also drives the editor's (ImGui-free) undo stack.
-add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # EditorState cancels queued built-in dialogs on scene rebuilds (#732)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
-add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
-add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
-add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_mode PRIVATE okay::engine)
 add_test(NAME prefab_mode COMMAND test_prefab_mode)
 
 # The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
 # other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
-add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_editor PRIVATE okay::engine)
 add_test(NAME prefab_editor COMMAND test_prefab_editor)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
-add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
 add_test(NAME project_save COMMAND test_project_save)
 
 # The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+# The build pipeline's pure logic (okay/Core/BuildPipeline.hpp): layout planner, data-folder lookup, dependency walk,
+# build manifest, report, zip, and the Build Settings text. The end-to-end export check is tests/export/verify_layout.sh.
+add_executable(test_build_pipeline test_build_pipeline.cpp)
+target_link_libraries(test_build_pipeline PRIVATE okay::engine)
+add_test(NAME build_pipeline COMMAND test_build_pipeline)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
@@ -1033,6 +1044,10 @@ add_executable(test_gltf_import test_gltf_import.cpp)
 target_link_libraries(test_gltf_import PRIVATE okay::engine)
 add_test(NAME gltf_import COMMAND test_gltf_import)
 
+add_executable(test_glb_container test_glb_container.cpp)
+target_link_libraries(test_glb_container PRIVATE okay::engine)
+add_test(NAME glb_container COMMAND test_glb_container)
+
 add_executable(test_skinning test_skinning.cpp)
 target_link_libraries(test_skinning PRIVATE okay::engine)
 add_test(NAME skinning COMMAND test_skinning)
@@ -1171,6 +1186,7 @@ target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
 add_executable(test_vs_inventory test_vs_inventory.cpp)
 target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
@@ -1189,6 +1205,7 @@ endif()
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
 add_executable(test_vs_names test_vs_names.cpp)
@@ -1223,6 +1240,11 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_vs_clarity test_vs_clarity.cpp)
+target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_clarity PRIVATE okay::engine)
+add_test(NAME vs_clarity COMMAND test_vs_clarity)
 
 add_executable(test_doc_recovery test_doc_recovery.cpp)
 target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1275,6 +1297,11 @@ add_test(NAME frustum_culling COMMAND test_frustum_culling)
 add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+add_executable(test_vs_variables test_vs_variables.cpp)
+target_link_libraries(test_vs_variables PRIVATE okay::engine)
+target_compile_definitions(test_vs_variables PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_variables COMMAND test_vs_variables)
 
 add_executable(test_vs_refs test_vs_refs.cpp)
 target_link_libraries(test_vs_refs PRIVATE okay::engine)
@@ -1389,6 +1416,7 @@ add_test(NAME vs_runtime COMMAND test_vs_runtime)
 
 add_executable(test_vs_gameplay test_vs_gameplay.cpp)
 target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
 
 add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
@@ -1416,6 +1444,7 @@ add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
 target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+target_compile_definitions(test_vs_registry_effect PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
 
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)
@@ -1566,6 +1595,17 @@ target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
+
+# The self-update decisions (shared/SelfUpdate.hpp, launcher/UpdaterCore.hpp): state file, start-up verdict, retry rule, self-check, rollback,
+# all-or-nothing swap, hostile versions.json. Temp folders only; no window, no network.
+add_executable(test_self_update test_self_update.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_self_update PRIVATE cxx_std_17)
+target_include_directories(test_self_update PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_self_update PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_self_update PRIVATE shell32)
+endif()
+add_test(NAME self_update COMMAND test_self_update)
 
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
@@ -1783,6 +1823,16 @@ add_executable(test_relay_security test_relay_security.cpp)
 target_link_libraries(test_relay_security PRIVATE okay::engine)
 add_test(NAME relay_security COMMAND test_relay_security)
 
+# The relay client trusts nothing on its socket: welcome timeout, nonce echo, refusal codes
+add_executable(test_net_relay_hardening test_net_relay_hardening.cpp)
+target_link_libraries(test_net_relay_hardening PRIVATE okay::engine)
+add_test(NAME net_relay_hardening COMMAND test_net_relay_hardening)
+
+# The packet wire format is little-endian on every host: pinned byte for byte
+add_executable(test_net_packet_layout test_net_packet_layout.cpp)
+target_link_libraries(test_net_packet_layout PRIVATE okay::engine)
+add_test(NAME net_packet_layout COMMAND test_net_packet_layout)
+
 # Script file APIs stay inside the game's folders (no absolute paths, no "..")
 add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)
@@ -1820,6 +1870,17 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
+target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
+add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
+
+# The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
+if(SDL2_FOUND)
+    add_executable(test_voice_races test_voice_races.cpp)
+    target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME voice_races COMMAND test_voice_races)
+endif()
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)
@@ -1864,6 +1925,10 @@ add_test(NAME navmesh COMMAND test_navmesh)
 add_executable(test_navmesh_areas test_navmesh_areas.cpp)
 target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
 add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
+# Navigation obstacle carving: footprint strips, polygon subtraction, portals, stationary timing, agents replanning, scene file, validator
+add_executable(test_navmesh_carving test_navmesh_carving.cpp)
+target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
+add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -2545,6 +2610,11 @@ target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
+# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
+target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
+add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
+
 # Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
 #   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
 add_executable(test_fbx_hostile test_fbx_hostile.cpp
@@ -2558,3 +2628,28 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+add_executable(test_net_reconnect test_net_reconnect.cpp)
+target_link_libraries(test_net_reconnect PRIVATE okay::engine)
+add_test(NAME net_reconnect COMMAND test_net_reconnect)
+
+add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
+target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
+add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
+
+add_executable(test_net_lossy test_net_lossy.cpp)
+target_link_libraries(test_net_lossy PRIVATE okay::engine)
+add_test(NAME net_lossy COMMAND test_net_lossy)
+
+add_executable(test_net_fuzz test_net_fuzz.cpp)
+target_link_libraries(test_net_fuzz PRIVATE okay::engine)
+add_test(NAME net_fuzz COMMAND test_net_fuzz)
+
+add_executable(test_net_rejoin test_net_rejoin.cpp)
+target_link_libraries(test_net_rejoin PRIVATE okay::engine)
+add_test(NAME net_rejoin COMMAND test_net_rejoin)
+
+
+add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
+target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
+add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)

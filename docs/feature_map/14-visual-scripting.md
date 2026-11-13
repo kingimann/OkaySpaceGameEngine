@@ -39,11 +39,12 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.2.3 Values - `VisualScript/VsValue` - one value type; `VsObject` holds an instance id, never a pointer
   - 14.2.4 Scene and global variables - `VisualScript/VsVariables` - scene variables go with the scene, globals survive loading another scene
   - 14.2.5 Function signatures - `VisualScript/VsTypes` - `FunctionSig` parsing for Function / Call / Return nodes
-- **Code:** `VisualScript/VsTypes`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `editor/EditorState.*`
+  - 14.2.6 Declared variables and structs - `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp` - `decl` and `struct` lines: typed variables (Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>`, structs) at object, scene or global scope with editable defaults; Set nodes fit or refuse a value; value literals; the Variables panel and the Inspector edit the defaults
+- **Code:** `VisualScript/VsTypes`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp`, `editor/EditorState.*`
 - **API:** `vs::PinType`, `vs::SignatureFor`, `vs::ValidateGraphText`, `vs::ValidateSceneGraphs`, `vs::VsValue`, `vs::VsObject`
 - **Editor:** pin colours and wire refusal in the graph editor; problems list in the toolbar; Play logs graph errors and warnings to the Console (`EditorState::Play`); Build Settings stops the build on graph errors and offers a retry
-- **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables")
-- **Tests:** `vs_types`, `vs_pin_defaults`, `vs_acceptance`
+- **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables", "Declared variables, lists, maps and structs")
+- **Tests:** `vs_types`, `vs_pin_defaults`, `vs_acceptance`, `vs_variables` (literals, declarations, typing, copy versus reference, checker, save and scene round trips, hostile input)
 - **Status:** Works - table and checker are on main and exercised by `vs_types`; `vs_acceptance` saves and reloads real scenes
 - **Open:** none found; object variables and SyncVars are covered in 14.4
 - **Related:** 14.1, 14.3, 15.7, 1.5
@@ -56,7 +57,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Parts:**
   - 14.3.1 Functions - `VisualScript/NodesFunctions` - Function start (signature in its text field), Return, Call Function, local variables for one call
   - 14.3.2 Loops - `VisualScript/NodesLoops` - While, For Each, Break and Continue (loop jump)
-  - 14.3.3 Lists - `VisualScript/NodesLoops` - New List, Add, Remove At, Get, Length, Contains, all objects with a tag
+  - 14.3.3 Lists, maps and structs - `VisualScript/NodesLoops`, `VisualScript/NodesLogic` - New List, Add, Insert, Set, Get, Find, Remove At / Item, Sort, Reverse, Clear, Copy, Length, Contains; maps with Clear, Count, Copy; New Struct / Get Field / Set Field; Make / Split Color; all objects with a tag
   - 14.3.4 Core flow nodes - `VisualScript/Nodes` - Branch, Sequence, Once, Repeat, Toggle, Flip Flop, Timer, Wait, Select, Chance
   - 14.3.5 Event entries - `VisualScript/Nodes`, `VisualScript/NodesWave4` - On Start, On Update, On Key, timers, custom events, collision and mouse entries
 - **Code:** `VisualScript/NodesFunctions`, `VisualScript/NodesLoops`, `VisualScript/Nodes`

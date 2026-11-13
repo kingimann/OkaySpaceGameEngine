@@ -417,7 +417,7 @@ int main() {
         const Index idx = ParseIndex(IndexJson({EntryJson("2.856.0", "latest", true), EntryJson("2.850.1", "lts", true), EntryJson("2.800.0", "latest", false)}, "2.856.0", "2.850.1"));
 
         InstallPlan p = PlanFor(idx, "2.850.1", launcher);
-        CHECK(p.ok && p.version == "2.850.1" && p.files.size() == 3 && !p.needsConfirmation);
+        CHECK(p.ok && p.version == "2.850.1" && p.files.size() == 3);
         CHECK(p.files[0].asset == Asset::Editor && p.files[0].indexName == "OkayEngine.exe" && p.files[0].diskName == okayver::EditorExeName());
         CHECK(p.files[0].urls.size() == 2 && p.files[0].urls[0] == std::string(kBucket) + "v2.850.1/OkayEngine.exe" &&
               p.files[0].urls[1] == "https://github.example/o/r/releases/download/v2.850.1/OkayEngine.exe");   // the bucket first, GitHub after it
@@ -443,25 +443,24 @@ int main() {
         const InstallPlan nosdl = PlanInstall(idx, "2.850.1", kBucket, t.path / "nowhere" / "SDL2.dll", false);
         CHECK(nosdl.ok && nosdl.files.size() == 2);                                                     // elsewhere the system's SDL is used
 
-        // A head that the index has no entry for (versions.json is written last and can lag): planned without checksums.
+        // A head that the index has no entry for (versions.json is written last and can lag): REFUSED, never planned without checksums.
         Index lag = idx;
         lag.latest = "2.857.0";
         const InstallPlan lp = PlanFor(lag, "2.857.0", launcher);
-        CHECK(lp.ok && lp.needsConfirmation && !lp.files[0].verified && lp.files[0].size == 0 && !lp.files[0].urls.empty());
+        CHECK(!lp.ok && lp.files.empty() && Has(lp.error, "no checksum") && Has(lp.error, "not in versions.json yet") && Has(lp.error, "never installed without a checksum"));
         CHECK(!PlanFor(lag, "2.858.0", launcher).ok);
 
-        // The fallback index (no versions.json) has no checksums either.
+        // The fallback index (no versions.json) has no checksums either: refused, with the reason named.
         const Index fb = FallbackIndex("2.856.0", "2.850.1", kArchive, true);
         const InstallPlan fp = PlanFor(fb, "2.850.1", launcher);
-        CHECK(fp.ok && fp.needsConfirmation && !fp.files[0].verified && fp.files[0].sha256.empty());
-        std::vector<std::string> asked;
-        InstallPlan fp1 = fp;
-        CHECK(!FillUnknownSizes(fp1, [&](const std::string& u) { asked.push_back(u); return std::uint64_t(0); }) && !asked.empty());   // the server did not say
-        InstallPlan fp2 = fp;
-        CHECK(FillUnknownSizes(fp2, [&](const std::string&) { return std::uint64_t(1234); }) && fp2.files[0].size == 1234 && fp2.files[1].size == 1234);
-        CHECK(fp2.files[2].size == Body("sdl", "SDL2.dll").size());                                     // the local copy keeps its own size
-        InstallPlan fp3 = fp;
-        CHECK(!FillUnknownSizes(fp3, [&](const std::string&) { return kMaxFileBytes + 1; }) && fp3.files[0].size == 0);   // an impossible size is no size
+        CHECK(!fp.ok && Has(fp.error, "no checksum") && Has(fp.error, "versions.json could not be read"));
+        // A listed file whose checksum is missing or not 64 hex digits is refused too.
+        for (const char* bad : {"", "abc", "ZZ", "0123456789012345678901234567890123456789012345678901234567890123x"}) {
+            Index weak = idx;
+            for (Entry& e : weak.versions) if (e.version == "2.850.1") e.files["OkayEngine.exe"].sha256 = bad;
+            const InstallPlan wp = PlanFor(weak, "2.850.1", launcher);
+            CHECK(!wp.ok && Has(wp.error, "OkayEngine.exe has no checksum"));
+        }
     }
 
     // ---- installing: the good path, and the folder layout ---------------------------------------------------------------------
@@ -679,36 +678,28 @@ int main() {
         CHECK(Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, MakeIO(srv)).ok() && Complete(launcher, "2.850.1"));   // and afterwards it works
     }
 
-    // ---- installing without a checksum -------------------------------------------------------------------------------------------
+    // ---- installing without a checksum is never possible -------------------------------------------------------------------------
     {
         TempDir t;
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
         const Index fb = FallbackIndex("2.856.0", "2.850.1", kArchive, true);                       // no versions.json
         Server srv;
         srv.AddRelease("2.850.1", true, true);
-        InstallPlan plan = PlanFor(fb, "2.850.1", launcher);
-        CHECK(plan.needsConfirmation);
-
-        // Not confirmed: nothing is downloaded or run.
+        CHECK(!PlanFor(fb, "2.850.1", launcher).ok);
+        // A hand-built plan (the struct is plain data) that lists a downloaded file without a checksum or size: Install refuses, fetches nothing.
+        InstallPlan plan = PlanFor(Index{}, "2.850.1", launcher);
+        plan.ok = true; plan.version = "2.850.1";
+        PlanFile pf; pf.asset = Asset::Editor; pf.indexName = "OkayEngine.exe"; pf.diskName = "OkayEngine.exe";
+        pf.urls = {std::string(kBucket) + "v2.850.1/OkayEngine.exe"}; pf.size = 1234; pf.verified = false;
+        plan.files = {pf};
         Result r = Install(launcher, plan, {}, MakeIO(srv));
-        CHECK(r.outcome == Outcome::NeedsConfirmation && srv.requested.empty() && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1"));
-        // Confirmed, but the server never told the size: refused (an unchecked file of unknown size is never run).
-        InstallOptions yes;
-        yes.confirmedUnverified = true;
-        r = Install(launcher, plan, yes, MakeIO(srv));
-        CHECK(r.outcome == Outcome::Refused && Has(r.message, "can't be checked") && srv.requested.empty() && NoScratch(launcher));
-        // Confirmed, size known and matching: installed.
-        InstallPlan sized = plan;
-        CHECK(FillUnknownSizes(sized, [&](const std::string& url) { const auto it = srv.files.find(url); return it == srv.files.end() ? std::uint64_t(0) : (std::uint64_t)it->second.size(); }));
-        r = Install(launcher, sized, yes, MakeIO(srv));
-        CHECK(r.outcome == Outcome::Installed && Complete(launcher, "2.850.1"));
-        // Confirmed, size known but the file is another size: not kept.
-        TempDir t2;
-        const fs::path l2 = MakeLauncher(t2.path, "2.856.0");
-        InstallPlan wrong = sized;
-        for (PlanFile& f : wrong.files) if (f.localCopy.empty()) f.size += 7;
-        r = Install(l2, wrong, yes, MakeIO(srv));
-        CHECK(r.outcome == Outcome::Failed && !fs::exists(okayver::VersionsDir(l2) / "2.850.1") && NoScratch(l2));
+        CHECK(r.outcome == Outcome::Refused && Has(r.message, "no checksum") && srv.requested.empty() && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1") && NoScratch(launcher));
+        plan.files[0].verified = true;   // "verified" without the digest itself is not enough
+        r = Install(launcher, plan, {}, MakeIO(srv));
+        CHECK(r.outcome == Outcome::Refused && srv.requested.empty());
+        plan.files[0].sha256 = Sha("something else"); plan.files[0].size = 0;
+        r = Install(launcher, plan, {}, MakeIO(srv));
+        CHECK(r.outcome == Outcome::Refused && srv.requested.empty());
     }
 
     // ---- removing ----------------------------------------------------------------------------------------------------------------

@@ -120,6 +120,8 @@ public:
         Fire(entry, other);
     }
     /// Set a blackboard variable from outside (Set Object Var node, gameplay code).
+    /// Put each declared variable's default in its scope (object / scene / global) unless already set.
+    void ApplyDeclDefaults();
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 
     /// Most custom events that may trigger each other in a chain within one call.

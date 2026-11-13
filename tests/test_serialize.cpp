@@ -1,7 +1,9 @@
 #include "test_framework.hpp"
+#include "../editor/ProjectState.hpp"
 #include <Okay.hpp>
 
 using namespace okay;
+using namespace oked;
 
 int main() {
     RUN_SUITE("serialize");
@@ -172,6 +174,73 @@ int main() {
         Scene back("back"); std::string e2;
         CHECK(SceneSerializer::Deserialize(back, SceneSerializer::Serialize(scn), &e2));
         CHECK(back.Find("Turret")->prefabSource == path);
+    }
+
+    // A negative pitch must not make the loader drop the AudioSource's optional
+    // mixer fields: the gate peeked for digits only, '-' failed it, the rest of
+    // the line was left on the stream, and the next save wrote the source wrong.
+    {
+        Scene s("audio");
+        GameObject* g = s.CreateGameObject("Negative pitch");
+        auto* au = g->AddComponent<AudioSource>();
+        au->clipPath = "tone.wav";
+        au->volume = 0.8f;
+        au->pitch = -1.0f;
+        au->pan = -0.5f;
+        au->spatial = true;
+        au->minDistance = 2.0f; au->maxDistance = 30.0f;
+        au->group = AudioGroup::Voice;
+        au->rolloff = AudioRolloff::Inverse;
+        const std::string text = SceneSerializer::Serialize(s);
+        Scene r("r");
+        std::vector<std::string> warnings;
+        CHECK(SceneSerializer::Deserialize(r, text, nullptr, &warnings));
+        CHECK(warnings.empty());
+        GameObject* back = r.Find("Negative pitch");
+        CHECK(back != nullptr);
+        if (back) {
+            auto* got = back->GetComponent<AudioSource>();
+            CHECK(got != nullptr);
+            if (got) {
+                CHECK(got->clipPath == "tone.wav" && got->volume == 0.8f && got->pitch == -1.0f);
+                CHECK(got->pan == -0.5f && got->spatial && got->minDistance == 2.0f && got->maxDistance == 30.0f);
+                CHECK(got->group == AudioGroup::Voice && got->rolloff == AudioRolloff::Inverse);
+            }
+        }
+        CHECK(SceneSerializer::Serialize(r) == text);   // the reload saves the same thing
+    }
+
+    // Build-profile file text (ProjectState.hpp): a hostile profile name cannot
+    // inject keys or extra "@profile" blocks, and values keep '=', '|' and '\\'
+    // through escape/unescape.
+    {
+        const std::string evil = "X\nproduct=hacked\n@profile Injected\ndir=/evil";
+        const std::vector<BuildProfile> one = ParseBuildProfiles(WriteBuildProfiles({BuildProfile{evil, BuildSettings{}, "", "", 0}}));
+        CHECK(one.size() == 1);   // no forged second profile, no forged keys
+        CHECK(one[0].name.find('\n') == std::string::npos && one[0].name.find('=') == std::string::npos);
+        CHECK(one[0].productName.empty() && one[0].outputDir.empty());
+        const std::string evilText = WriteBuildProfiles(one);
+        CHECK(evilText.find("product=hacked") == std::string::npos && evilText.find("dir=/evil") == std::string::npos);
+        {   // exactly one line starts with "@profile " (the name cannot start one, even mid-line)
+            int blocks = 0;
+            std::istringstream lf(evilText);
+            for (std::string l; std::getline(lf, l);) if (l.rfind("@profile ", 0) == 0) ++blocks;
+            CHECK(blocks == 1);
+        }
+
+        BuildProfile hostile; hostile.name = "bad=name";   // '=' in the name is stripped, not a key break
+        hostile.productName = "a=b"; hostile.outputDir = "p|q=r\\s";
+        std::snprintf(hostile.settings.company, sizeof(hostile.settings.company), "c|d=e\\f"); std::snprintf(hostile.settings.version, sizeof(hostile.settings.version), "v=x");
+        hostile.settings.scenes = {{"a|b=c\\d", true}, {"plain", false}};
+        const std::string htext = WriteBuildProfiles({hostile});
+        CHECK(htext.find("\nproduct=a=b") == std::string::npos);   // still one key=value line
+        const auto hb = ParseBuildProfiles(htext);
+        CHECK(hb.size() == 1 && hb[0].name == "badname");
+        CHECK(hb[0].productName == "a=b" && hb[0].outputDir == "p|q=r\\s");
+        CHECK(std::string(hb[0].settings.company) == "c|d=e\\f" && std::string(hb[0].settings.version) == "v=x");
+        CHECK(hb[0].settings.scenes.size() == 2 && hb[0].settings.scenes[0].path == "a|b=c\\d" && hb[0].settings.scenes[0].on);
+        CHECK(hb[0].settings.scenes[1].path == "plain" && !hb[0].settings.scenes[1].on);
+        CHECK(WriteBuildProfiles(hb) == htext);   // stable
     }
 
     TEST_MAIN_RESULT();

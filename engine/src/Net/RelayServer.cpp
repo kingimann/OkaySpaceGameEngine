@@ -50,7 +50,20 @@ RelayServer::Peer* RelayServer::FindBySlot(std::uint32_t slot) {
     return p != m_peers.end() ? &p->second : nullptr;
 }
 
+// A peer chooses its session code, so before it reaches a log line anything
+// that isn't printable ASCII is escaped (a code can't forge log lines).
+std::string RelayLogSafe(const std::string& s) {
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (unsigned char ch : s) {
+        if (ch >= 0x20 && ch < 0x7F && ch != '\\') out.push_back(static_cast<char>(ch));
+        else { out += "\\x"; out.push_back(hex[ch >> 4]); out.push_back(hex[ch & 15]); }
+    }
+    return out;
+}
+
 namespace {
+
 void WriteKey(Packet& p, std::uint64_t key) {
     p.Write(static_cast<std::uint32_t>(key));
     p.Write(static_cast<std::uint32_t>(key >> 32));
@@ -64,6 +77,11 @@ void RelayServer::SendWelcome(const Endpoint& to, std::uint32_t yourSlot, std::u
     w.Write(hostSlot);
     w.Write(kRelayProtocolVersion);   // version-1 peers stop reading before this
     WriteKey(w, hostKey);
+    // Version 4: echo the nonce the peer's hello carried, so the peer can tell this
+    // welcome from one an off-path sender forged. Peers without one get the
+    // 18-byte welcome older versions send.
+    if (auto it = m_peers.find(to); it != m_peers.end() && it->second.nonce != 0)
+        WriteKey(w, it->second.nonce);
     m_socket.SendTo(to, w.Data(), w.Size());
 }
 
@@ -227,11 +245,17 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         if (p.Ok()) { version = v; key = (static_cast<std::uint64_t>(hi) << 32) | lo; }
     }
     Cookie cookie{};
+    std::uint64_t nonce = 0;
     if (version >= 3) {
         // [tag][role][u32 length + code][version][u64 key], then the cookie.
         const std::size_t at = 1 + 1 + 4 + code.size() + 1 + 8;
         if (len < kRelayHelloMinBytes || len < at + cookie.size()) return;
         std::memcpy(cookie.data(), data + at, cookie.size());
+        // Version 4 follows the cookie with a u64 nonce for the welcome to echo.
+        const std::size_t nat = at + cookie.size();
+        if (version >= 4 && len >= nat + 8)
+            nonce = static_cast<std::uint64_t>(LoadU32LE(data + nat)) |
+                    (static_cast<std::uint64_t>(LoadU32LE(data + nat + 4)) << 32);
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
 
@@ -239,6 +263,20 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     // started with, so a NAT-keepalive hello is idempotent.
     if (auto existing = m_peers.find(from); existing != m_peers.end()) {
         Peer& peer = existing->second;
+        // A hello is not proof of anything until it carries this address's
+        // cookie: without that, a spoofed datagram could keep a dead peer
+        // alive, flip its version, take a vacant host slot or make the relay
+        // answer a victim. So re-hellos are rate-limited like new ones, a
+        // cookie-proven peer can't be re-helloed at an older version, and a
+        // version-3+ hello must carry a valid cookie (else it is sent one).
+        if (!HelloAllowed(from.address)) return;
+        if (version >= 3) {
+            if (!CookieValid(from, cookie)) { SendCookie(from); return; }
+        } else {
+            if (peer.version >= 3) return;   // downgrade of a proven peer
+            ++m_legacyHellos;
+            if (!m_legacyHello) return;
+        }
         peer.idle = 0.0f;
         peer.version = version;
         auto sit = m_sessions.find(peer.code);
@@ -289,10 +327,19 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             Peer moved = old->second;
             moved.idle = 0.0f;
             moved.version = version;
+            moved.nonce = nonce;
             auto opa = m_perAddress.find(old->first.address);
             if (opa != m_perAddress.end() && --opa->second == 0) m_perAddress.erase(opa);
             m_peers.erase(old);
             m_perAddress[from.address]++;
+            if (s.opener == slotEp->second.address && from.address != s.opener) {
+                // The session's cap charge follows its host to the new address,
+                // so teardown later credits the address that was charged.
+                auto so = m_sessionsPerAddress.find(s.opener);
+                if (so != m_sessionsPerAddress.end() && --so->second == 0) m_sessionsPerAddress.erase(so);
+                m_sessionsPerAddress[from.address]++;
+                s.opener = from.address;
+            }
             slotEp->second = from;
             m_peers.emplace(from, moved);
             SendWelcome(from, moved.slot, s.hostSlot, s.hostKey);
@@ -323,6 +370,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.host = asHost;
     peer.hub = asHub;
     peer.version = version;
+    peer.nonce = nonce;
     peer.packets = 2.0f * kPacketsPerSecond;
     peer.bytes = 2.0f * kBytesPerSecond;
     peer.refilled = m_now;
@@ -340,7 +388,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     if (m_logBudget >= 1.0f) {
         m_logBudget -= 1.0f;
         OKAY_INFO("relay: peer slot ", peer.slot, peer.host ? " (host)" : " (client)",
-                  " joined session '", code, "'",
+                  " joined session '", RelayLogSafe(code), "'",
                   m_quietJoins ? " (+" + std::to_string(m_quietJoins) + " more not logged)" : std::string());
         m_quietJoins = 0;
     } else {
@@ -388,7 +436,7 @@ void RelayServer::HandleData(const Endpoint& from, const std::uint8_t* data, std
     const std::uint32_t src = sender->second.slot;
     m_out.resize(len);
     m_out[0] = RelayData;
-    std::memcpy(m_out.data() + 1, &src, sizeof(src));   // Packet's layout: native u32
+    StoreU32LE(m_out.data() + 1, src);   // Packet's layout: little-endian u32
     if (len > payloadOff) std::memcpy(m_out.data() + payloadOff, data + payloadOff, len - payloadOff);
     m_socket.SendTo(destEp->second, m_out.data(), len);
 }

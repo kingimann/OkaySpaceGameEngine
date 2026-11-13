@@ -145,6 +145,30 @@ int main() {
         for (const Vec3& n : tet.parts[0].mesh.normals) CHECK_NEAR(n.Magnitude(), 1.0, 1e-4);
     }
 
+    // A PLY that declares the vertex element twice (the second block with normals) used to
+    // come out with hasN set and fewer normals than vertices; it is rejected now.
+    {
+        const std::string twice =
+            "ply\nformat ascii 1.0\n"
+            "element vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "element vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0\n1 0 0\n0 1 0\n0 0 1 0 0 1\n1 0 1 0 0 1\n0 1 1 0 0 1\n3 0 1 2\n";
+        ImportedModel m; std::string e;
+        CHECK(!ReadPlyBuffer(twice, m, &e));
+        CHECK(e.find("more than one vertex element") != std::string::npos);
+        // The same data with one vertex element is fine, and normals match vertices.
+        const std::string once =
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 0 1\n1 0 0 0 0 1\n0 1 0 0 0 1\n3 0 1 2\n";
+        ImportedModel ok;
+        CHECK(ReadPlyBuffer(once, ok, &e));
+        CHECK(ok.parts[0].mesh.normals.size() == ok.parts[0].mesh.vertices.size());
+    }
+
     // ---------------- OBJ + MTL ----------------
     ImportedModel obj;
     {
@@ -167,6 +191,23 @@ int main() {
         CHECK(blue.texture == kDir + "blue.png");               // "-s 1 1 1" option skipped
         CHECK(blue.normalMap == kDir + "blue_n.png");           // "-bm 1.0" option skipped
         CHECK(blue.specularMap == kDir + "spec.png");
+        // #753: a texture that climbs out of the model's directory (or is absolute) must not be
+        // kept: an untrusted model must not point the engine at any file on the machine. In-tree
+        // ".."s still resolve. Scratch files in the current directory (the build dir), like above.
+        {
+            Spit("mr_trav.obj", "mtllib mr_trav.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl climb\nf 1 2 3\n");
+            Spit("mr_trav.mtl", "newmtl climb\nmap_Kd ../../../../../../etc/passwd\n");
+            ImportedModel t1;
+            CHECK(ReadObjFile("mr_trav.obj", t1, &err));
+            CHECK(t1.materials.size() == 1 && t1.materials[0].texture.empty());   // dropped, not stored
+            Spit("mr_inside.obj", "mtllib mr_inside.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl ok\nf 1 2 3\n");
+            Spit("mr_inside.mtl", "newmtl ok\nmap_Kd ./sub/../mr_inside.png\n");
+            ImportedModel t2;
+            CHECK(ReadObjFile("mr_inside.obj", t2, &err));
+            CHECK(t2.materials.size() == 1 && t2.materials[0].texture == "mr_inside.png");   // in-tree ".." still resolves
+            std::remove("mr_trav.obj"); std::remove("mr_trav.mtl");
+            std::remove("mr_inside.obj"); std::remove("mr_inside.mtl");
+        }
         // Same triangles as the engine's long-standing Mesh::LoadOBJ (one merged mesh).
         bool lok = false; Mesh legacy = Mesh::LoadOBJ(kDir + "cube.obj", &lok);
         CHECK(lok);

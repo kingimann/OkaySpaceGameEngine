@@ -474,15 +474,44 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
     if (s_showObstacles) {
         for (NavMeshObstacle* o : Navigation::Obstacles(sc)) {
             if (!o || !o->transform || !o->gameObject || !o->gameObject->active) continue;
-            const Vec3 c = o->WorldCenter(), s = o->size * o->transform->LossyScale() * 0.5f;
-            const Quat q = o->transform->Rotation();
-            Vec3 cr[8];
-            for (int i = 0; i < 8; ++i)
-                cr[i] = c + q * Vec3{(i & 1) ? s.x : -s.x, (i & 2) ? s.y : -s.y, (i & 4) ? s.z : -s.z};
-            static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
             const ImU32 col = ed.selected() == o->gameObject ? IM_COL32(255, 200, 90, 255) : IM_COL32(255, 160, 60, 200);
-            for (auto& ed2 : e) v.Line(dl, cr[ed2[0]], cr[ed2[1]], col, 1.5f);
-            v.Ring(dl, Vec3{c.x, c.y - s.y + 0.03f, c.z}, o->Radius(), IM_COL32(255, 160, 60, 120), 1.0f);
+            const NavCarveVolume live = o->LiveVolume();
+            const Vec3 c = o->WorldCenter();
+            if (o->shape == NavMeshObstacle::Shape::Capsule) {
+                const float r = o->Radius();
+                v.Ring(dl, Vec3{c.x, live.minY + r, c.z}, r, col, 1.5f);
+                v.Ring(dl, Vec3{c.x, live.maxY - r, c.z}, r, col, 1.5f);
+                for (int k = 0; k < 4; ++k) {
+                    const float a = 1.5707963f * (float)k;
+                    const Vec3 d{std::cos(a) * r, 0.0f, std::sin(a) * r};
+                    v.Line(dl, Vec3{c.x + d.x, live.minY + r, c.z + d.z}, Vec3{c.x + d.x, live.maxY - r, c.z + d.z}, col, 1.5f);
+                }
+            } else {
+                const Vec3 s = o->size * o->transform->LossyScale() * 0.5f;
+                const Quat q = o->transform->Rotation();
+                Vec3 cr[8];
+                for (int i = 0; i < 8; ++i)
+                    cr[i] = c + q * Vec3{(i & 1) ? s.x : -s.x, (i & 2) ? s.y : -s.y, (i & 4) ? s.z : -s.z};
+                static const int e[12][2] = {{0,1},{1,3},{3,2},{2,0},{4,5},{5,7},{7,6},{6,4},{0,4},{1,5},{2,6},{3,7}};
+                for (auto& ed2 : e) v.Line(dl, cr[ed2[0]], cr[ed2[1]], col, 1.5f);
+                v.Ring(dl, Vec3{c.x, live.minY + 0.03f, c.z}, o->Radius(), IM_COL32(255, 160, 60, 120), 1.0f);
+            }
+            // The hole it cuts in the navigation mesh: solid red while it is carved (Play), a faint outline
+            // where it would be cut (Carve on, but not stationary yet or not playing).
+            if (o->carve) {
+                const bool carved = o->Carving();
+                const NavCarveVolume& vol = carved ? o->CarvedVolume() : live;
+                const NavMesh* base = Navigation::BakedMesh(sc);
+                const float inflate = base ? base->settings.agentRadius : 0.4f, cell = base ? base->settings.cellSize : 0.25f;
+                std::vector<NavCarveRect> rects;
+                NavCarveRects(vol, inflate, cell, rects);
+                for (const NavCarveRect& r : rects) {
+                    const float y = vol.minY + 0.06f;
+                    const Vec3 w[4] = {{r.minX, y, r.minZ}, {r.maxX, y, r.minZ}, {r.maxX, y, r.maxZ}, {r.minX, y, r.maxZ}};
+                    v.Poly(dl, w, 4, carved ? IM_COL32(235, 60, 60, 110) : IM_COL32(255, 200, 60, 35),
+                           carved ? IM_COL32(255, 90, 90, 230) : IM_COL32(255, 200, 60, 140), 1.0f);
+                }
+            }
         }
     }
     if (s_showPaths) {
@@ -649,20 +678,58 @@ void DrawNavigationInspector(EditorState& ed, GameObject* go, Component* comp, C
     }
     if (auto* no = dynamic_cast<NavMeshObstacle*>(comp)) {
         if (header("Nav Mesh Obstacle", no, &toRemove, true)) {
-            if (ImGui::DragFloat3("Size##navo", &no->size.x, 0.05f, 0.01f, 100.0f)) ed.dirty = true;
-            if (ImGui::DragFloat3("Center##navo", &no->center.x, 0.05f)) ed.dirty = true;
-            if (auto* mr = go->GetComponent<MeshRenderer>()) {
-                if (ImGui::SmallButton("Fit To Mesh##navo")) {
-                    Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
-                    ed.PushUndo();
-                    no->size = hi - lo; no->center = (lo + hi) * 0.5f;
-                    ed.dirty = true;
-                }
+            int sh = (int)no->shape;
+            if (ImGui::Combo("Shape##navo", &sh, "Box\0Capsule\0")) { ed.PushUndo(); no->shape = (NavMeshObstacle::Shape)sh; ed.dirty = true; }
+            Tip("The solid agents go around: a box, or an upright capsule (a pillar, a barrel).");
+            if (no->shape == NavMeshObstacle::Shape::Box) {
+                if (ImGui::DragFloat3("Size##navo", &no->size.x, 0.05f, 0.01f, 100.0f)) ed.dirty = true;
+            } else {
+                if (ImGui::DragFloat("Radius##navo", &no->capsuleRadius, 0.02f, 0.01f, 50.0f, "%.2f")) { no->capsuleRadius = std::max(no->capsuleRadius, 0.01f); ed.dirty = true; }
+                if (ImGui::DragFloat("Height##navo", &no->capsuleHeight, 0.05f, 0.02f, 100.0f, "%.2f")) { no->capsuleHeight = std::max(no->capsuleHeight, 0.02f); ed.dirty = true; }
             }
-            ImGui::TextDisabled("Agents steer around it as it moves; it is not baked.");
+            if (ImGui::DragFloat3("Center##navo", &no->center.x, 0.05f)) ed.dirty = true;
+            if (no->shape == NavMeshObstacle::Shape::Box)
+                if (auto* mr = go->GetComponent<MeshRenderer>()) {
+                    if (ImGui::SmallButton("Fit To Mesh##navo")) {
+                        Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+                        ed.PushUndo();
+                        no->size = hi - lo; no->center = (lo + hi) * 0.5f;
+                        ed.dirty = true;
+                    }
+                }
+            if (ImGui::Checkbox("Carve##navo", &no->carve)) { ed.PushUndo(); ed.dirty = true; }
+            Tip("Cut a hole in the navigation mesh while it stands still, so agents plan their route around it instead of only dodging it up close. Needs a baked Nav Mesh Surface. Works in Play.");
+            if (no->carve) {
+                if (ImGui::Checkbox("Carve Only When Stationary##navo", &no->carveOnlyWhenStationary)) ed.dirty = true;
+                Tip("On: the hole appears once it has stopped moving and closes when it moves, so a moving obstacle does not rebuild the mesh every frame. Off: the hole follows it.");
+                if (no->carveOnlyWhenStationary) {
+                    if (ImGui::DragFloat("Time To Stationary##navo", &no->timeToStationary, 0.05f, 0.0f, 60.0f, "%.2f s")) { no->timeToStationary = std::max(no->timeToStationary, 0.0f); ed.dirty = true; }
+                    Tip("Seconds without moving before it counts as stationary and carves.");
+                } else {
+                    if (ImGui::DragFloat("Move Threshold##navo", &no->moveThreshold, 0.01f, 0.0f, 50.0f, "%.2f")) { no->moveThreshold = std::max(no->moveThreshold, 0.0f); ed.dirty = true; }
+                    Tip("The hole is rebuilt after the obstacle has moved this far.");
+                }
+                if (!Navigation::BakedMesh(ed.scene())) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No baked mesh: nothing to carve. Bake the surface first.");
+                else if (no->Carving()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "Carving now: agents route around it.");
+                else if (no->carveOnlyWhenStationary && no->StationaryTime() > 0.0f) ImGui::TextDisabled("Still for %.1f s of %.1f s.", no->StationaryTime(), no->timeToStationary);
+                else ImGui::TextDisabled("Not carving (carves in Play%s).", no->carveOnlyWhenStationary ? ", once still" : "");
+            }
+            ImGui::TextDisabled("Agents always steer around it locally; it is never baked.");
             if (ImGui::SmallButton("Remove##navobst")) toRemove = no;
         }
     }
+}
+
+// Add a Nav Mesh Obstacle sized to the object's mesh. From the editor it is meant to block routes, so it carves; the
+// component's own default is off so older scenes keep their behaviour.
+static NavMeshObstacle* AddObstacleTo(GameObject* go) {
+    NavMeshObstacle* o = go->AddComponent<NavMeshObstacle>();
+    o->carve = true;
+    if (auto* mr = go->GetComponent<MeshRenderer>()) {
+        Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+        o->size = hi - lo; o->center = (lo + hi) * 0.5f;
+    }
+    return o;
 }
 
 void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item) {
@@ -687,13 +754,9 @@ void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::fun
     if (item(!go->GetComponent<NavMeshLink>(), "Nav Mesh Link (jump, drop or ladder between two points)")) {
         ed.PushUndo(); go->AddComponent<NavMeshLink>(); ed.dirty = true;
     }
-    if (item(!go->GetComponent<NavMeshObstacle>(), "Nav Mesh Obstacle (agents steer around it)")) {
+    if (item(!go->GetComponent<NavMeshObstacle>(), "Nav Mesh Obstacle (agents go around it; carves the mesh)")) {
         ed.PushUndo();
-        NavMeshObstacle* o = go->AddComponent<NavMeshObstacle>();
-        if (auto* mr = go->GetComponent<MeshRenderer>()) {
-            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
-            o->size = hi - lo; o->center = (lo + hi) * 0.5f;
-        }
+        AddObstacleTo(go);
         ed.dirty = true;
     }
 }
@@ -728,7 +791,18 @@ void NavigationDevHooks(EditorState& ed) {
                     if (lo.y < -0.01f) a->baseOffset = -lo.y * g->transform->LossyScale().y;
                 }
                 a->speed = 2.5f;
+                if (const char* sp = std::getenv("OKAY_UI_NAVSPEED")) a->speed = std::max(0.1f, (float)std::atof(sp));   // slow it down for screenshots
             }
+            ed.Select(g);
+        }
+    }
+    // OKAY_UI_NAVOBSTACLE=<object name>[,nocarve]: the "Nav Mesh Obstacle" Add Component item on that object (dev screenshots).
+    if (const char* on = std::getenv("OKAY_UI_NAVOBSTACLE"); on && s_frame == 34) {
+        std::string name = on; bool carve = true;
+        const std::size_t comma = name.find(',');
+        if (comma != std::string::npos) { carve = name.substr(comma + 1) != "nocarve"; name = name.substr(0, comma); }
+        if (GameObject* g = ed.scene().Find(name)) {
+            if (!g->GetComponent<NavMeshObstacle>()) AddObstacleTo(g)->carve = carve;
             ed.Select(g);
         }
     }

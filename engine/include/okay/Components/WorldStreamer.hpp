@@ -4,7 +4,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include <cstdint>
 #include <map>
 #include <vector>
 #include <string>
@@ -54,7 +56,7 @@ public:
 
     void OnDestroy() override {
         Scene* s = GetScene();
-        if (s) for (auto& kv : m_loaded) if (kv.second) s->Destroy(kv.second);
+        if (s) for (auto& kv : m_loaded) DestroyCell(*s, kv.second);
         m_loaded.clear();
     }
 
@@ -85,13 +87,21 @@ public:
     void SyncNow() { Evaluate(true); }
 
 private:
-    std::map<std::pair<int,int>, GameObject*> m_loaded;
+    // A cell is held by instance id, not by pointer: a script or a network cleanup can destroy
+    // a streamed root at any time, and the id resolves to null once the object is gone.
+    // 0 = a cell with no file (recorded so it is not retried every frame).
+    std::map<std::pair<int,int>, std::uint64_t> m_loaded;
+
+    static void DestroyCell(Scene& s, std::uint64_t id) {
+        if (id == 0) return;
+        if (GameObject* go = GameObject::FromInstanceId(id)) s.Destroy(go);
+    }
     int  m_curX = 0, m_curZ = 0;
     bool m_haveCell = false;
 
     int CellOf(float v) const {
         if (cellSize <= 0.0f) return 0;
-        return (int)std::floor(v / cellSize);
+        return SafeInt(std::floor(v / cellSize));
     }
 
     bool TargetPos(Vec3& out) const {
@@ -124,7 +134,7 @@ private:
             int dx = std::abs(it->first.first - cx);
             int dz = std::abs(it->first.second - cz);
             if (std::max(dx, dz) > unloadRadius) {
-                if (it->second) s->Destroy(it->second);
+                DestroyCell(*s, it->second);
                 it = m_loaded.erase(it);
             } else {
                 ++it;
@@ -141,7 +151,7 @@ private:
                 GameObject* root = SceneSerializer::InstantiateFromFile(*s, CellFile(x, z), &err);
                 // Record the slot even when the file is missing/empty (root ==
                 // nullptr) so we don't retry a non-existent cell every frame.
-                m_loaded[key] = root;
+                m_loaded[key] = root ? root->InstanceId() : 0;
             }
         }
     }

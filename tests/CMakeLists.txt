@@ -2652,6 +2652,15 @@ else()
     add_test(NAME crypto_fuzz_net_smoke COMMAND fuzz_net_crypto_smoke 300)
 endif()
 
+# Project Wycheproof vectors (Apache-2.0, copied unmodified into tests/wycheproof/): every X25519, Ed25519, ChaCha20-Poly1305,
+# XChaCha20-Poly1305, HMAC (built on our SHA-2), HKDF and ChaCha20 counter vector. OKAY_WYCHEPROOF_DIR points the test at another
+# copy (e.g. a fresh clone's testvectors_v1/). With libsodium installed (found below) every X25519 and Ed25519 vector is also
+# compared with it.
+add_executable(test_crypto_wycheproof test_crypto_wycheproof.cpp)
+target_link_libraries(test_crypto_wycheproof PRIVATE okay::crypto)
+target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WYCHEPROOF_DEFAULT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/wycheproof")
+add_test(NAME crypto_wycheproof COMMAND test_crypto_wycheproof)
+
 # Cross-checks against other implementations (both directions, thousands of random cases).
 # 1) libsodium, in process (only when it is installed; independent of OKAY_USE_SODIUM / OKAY_OWN_CRYPTO).
 find_package(PkgConfig QUIET)
@@ -2663,6 +2672,9 @@ if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find t
     endif()
 endif()
 if(_okay_xc_sodium)
+    target_link_libraries(test_crypto_wycheproof PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(test_crypto_wycheproof SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WY_SODIUM)
     add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
     target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})

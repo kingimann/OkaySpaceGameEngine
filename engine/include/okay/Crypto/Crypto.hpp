@@ -64,8 +64,9 @@ void MemZero(void* p, std::size_t n);
 bool ConstantTimeEqual(const void* a, const void* b, std::size_t n);
 
 // ---- ChaCha20 / Poly1305 (RFC 8439) -------------------------------------------
-/// out = in XOR keystream (in-place allowed). 32-bit block counter, 96-bit nonce.
-void ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+/// out = in XOR keystream (in-place allowed). 32-bit block counter, 96-bit nonce. Returns false, writing nothing, when the
+/// message needs more blocks than the counter has left (a wrap would reuse keystream); true otherwise.
+bool ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
                  const std::uint8_t key[32], const std::uint8_t nonce[12], std::uint32_t counter);
 /// HChaCha20 (the XChaCha20 subkey step): 32-byte key, 16-byte input -> 32-byte subkey.
 void HChaCha20(std::uint8_t out[32], const std::uint8_t key[32], const std::uint8_t in[16]);

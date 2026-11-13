@@ -6,7 +6,10 @@
 #include "AppRestart.hpp"
 
 #include <cerrno>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -678,7 +681,20 @@ int main(int argc, char** argv) {
             SetEnv("OKAY_TEST_VERSION", testVersion);
             SetEnv("OKAY_TEST_STATE_FILE", newClearsState ? state.string().c_str() : nullptr);
             Outcome o;
+            // A scenario that stalls is reported with its log so far (CI would otherwise only show a bare timeout), then the test stops.
+            std::mutex wdMx; std::condition_variable wdCv; bool wdDone = false;
+            std::thread watchdog([&] {
+                std::unique_lock<std::mutex> lk(wdMx);
+                if (!wdCv.wait_for(lk, std::chrono::seconds(40), [&] { return wdDone; })) {
+                    std::fprintf(stderr, "--- scenario %s STALLED for 40 s; log so far:\n%s\n", tag.c_str(), ReadFile(log).c_str());
+                    std::fflush(stderr);
+                    std::_Exit(3);
+                }
+            });
             o.rc = okay::restart::RunHelper(req);
+            { std::lock_guard<std::mutex> lk(wdMx); wdDone = true; }
+            wdCv.notify_all();
+            watchdog.join();
             SetEnv("OKAY_TEST_VERSION", nullptr);
             SetEnv("OKAY_TEST_STATE_FILE", nullptr);
             // The launched child writes its result file a moment after it starts.

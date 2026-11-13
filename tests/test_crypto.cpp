@@ -302,6 +302,19 @@ int main() {
         CHECK(z);
     }
 
+    // ---- ChaCha20 counter: a message that would wrap the 32-bit block counter is refused, nothing written -------------
+    {
+        Bytes key(32, 7), nonce(12, 9), in(200, 1), out(200, 0xAA);
+        CHECK(ChaCha20Xor(out.data(), in.data(), 64, key.data(), nonce.data(), 0xffffffffu));      // exactly the last block
+        CHECK(!ChaCha20Xor(out.data(), in.data(), 65, key.data(), nonce.data(), 0xffffffffu));
+        CHECK(!ChaCha20Xor(out.data(), in.data(), 129, key.data(), nonce.data(), 0xfffffffeu));
+        CHECK(ChaCha20Xor(out.data(), in.data(), 128, key.data(), nonce.data(), 0xfffffffeu));
+        Bytes untouched(200, 0xAA);
+        CHECK(!ChaCha20Xor(untouched.data(), in.data(), 200, key.data(), nonce.data(), 0xfffffffdu));
+        CHECK(untouched == Bytes(200, 0xAA));
+        CHECK(ChaCha20Xor(out.data(), in.data(), 0, key.data(), nonce.data(), 0xffffffffu));          // empty: always fine
+    }
+
     // ---- Ed25519 (RFC 8032 7.1) ----------------------------------------------------------------------------------
     for (const char* n : {"1", "2", "3", "1024", "sha"}) {
         const std::string p = std::string("ed_") + n;
@@ -313,6 +326,17 @@ int main() {
         CHECK(Bytes(sk.begin() + 32, sk.end()) == pk);
         Ed25519Sign(gotSig.data(), msg.data(), msg.size(), sk.data());
         CHECK(gotSig == sig);
+        {   // the stored-key variant gives the same bytes for a sk made by SeedKeypair; Ed25519Sign never trusts the tail
+            Bytes fast(64);
+            Ed25519SignTrustedPk(fast.data(), msg.data(), msg.size(), sk.data());
+            CHECK(fast == sig);
+            Bytes tampered = sk, viaSign(64), viaFast(64);
+            tampered[40] ^= 1;
+            Ed25519Sign(viaSign.data(), msg.data(), msg.size(), tampered.data());
+            CHECK(viaSign == sig);                                   // default: the public key is recomputed, the tail is ignored
+            Ed25519SignTrustedPk(viaFast.data(), msg.data(), msg.size(), tampered.data());
+            CHECK(viaFast != sig);                                   // documented precondition: the stored key is used as is
+        }
         CHECK(Ed25519Verify(sig.data(), msg.data(), msg.size(), pk.data()));
         // Every flipped bit of the signature, the message and the public key fails.
         // (Verify costs milliseconds, so the longer vectors are sampled; vectors 1 and 2 flip every bit.)

@@ -111,6 +111,13 @@ int main() {
         Ed25519Sign(sig.data(), m.data(), m.size(), sk.data());
         Public(sig.data(), 64);
     });
+    Case("Ed25519SignTrustedPk (secret key, public message)", false, [] {
+        Bytes seed = Rnd(32), pk(32), sk(64), sig(64), m = Rnd(100);
+        Ed25519SeedKeypair(pk.data(), sk.data(), seed.data());
+        Secret(sk);
+        Ed25519SignTrustedPk(sig.data(), m.data(), m.size(), sk.data());
+        Public(sig.data(), 64);
+    });
     Case("Ed25519Sign (secret key, secret message)", false, [] {
         Bytes seed = Rnd(32), pk(32), sk(64), sig(64), m = Rnd(200);
         Ed25519SeedKeypair(pk.data(), sk.data(), seed.data());

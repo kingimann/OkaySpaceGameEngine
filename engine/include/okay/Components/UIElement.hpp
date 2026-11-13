@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -15,7 +16,6 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
-#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -129,7 +129,10 @@ inline void UIFrameSync(UIFrame* f, UIRect& legacy) {
 inline UIRect GetUIRect(GameObject* go) {
     UIRect r;
     if (!go) return r;
-    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
+    if (auto* j = go->GetComponent<VirtualJoystick>())   { r.valid = true; r.anchor = j->anchor; r.anchorPtr = &j->anchor; r.position = &j->position; r.sizePtr = &j->size; r.size = j->size; }
+    else if (auto* d = go->GetComponent<TouchDPad>())    { r.valid = true; r.anchor = d->anchor; r.anchorPtr = &d->anchor; r.position = &d->position; r.sizePtr = &d->size; r.size = d->size; }
+    else if (auto* tb = go->GetComponent<TouchButton>()) { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
+    else if (auto* b = go->GetComponent<UIButton>())     { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
     else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
     else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
     else if (auto* ri = go->GetComponent<UIRawImage>())   { r.valid = true; r.anchor = ri->anchor; r.anchorPtr = &ri->anchor; r.position = &ri->position; r.sizePtr = &ri->size; r.size = ri->size; }
@@ -488,7 +491,9 @@ enum : int {
     K_Keybind,      // UIKeybindField
     K_ModalDim,     // an open UIModal's backdrop (drawn first in its raised group)
     K_ContextMenu,  // an open UIContextMenu (drawn last, in screen pixels)
-    K_Caption,      // CaptionOverlay: subtitle and sound-caption lines
+    K_TouchStick,   // virtual joystick (on top, so a thumb can always reach it)
+    K_TouchPad,     // on-screen directional pad
+    K_TouchButton,  // on-screen action button
     K_Count
 };
 } // namespace uilayers
@@ -499,7 +504,7 @@ inline const char* UILayerName(int kind) {
         "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
-        "keybind", "modal dim", "context menu", "captions"};
+        "keybind", "modal dim", "context menu", "virtual stick", "d-pad", "touch button"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -525,6 +530,9 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIToggle>())         add(K_Toggle);
     if (g->GetComponent<UITabs>())           add(K_Tabs);
     if (g->GetComponent<UIButton>())         add(K_Button);
+    if (g->GetComponent<VirtualJoystick>())  add(K_TouchStick);
+    if (g->GetComponent<TouchDPad>())        add(K_TouchPad);
+    if (g->GetComponent<TouchButton>())      add(K_TouchButton);
     if (g->GetComponent<TextRenderer>())     add(K_Text);
     if (g->GetComponent<WorldUI>())          add(K_WorldUI);
     if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
@@ -535,7 +543,6 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIKeybindField>())   add(K_Keybind);
     if (g->GetComponent<UIModal>())          add(K_ModalDim);
     if (g->GetComponent<UIContextMenu>())    add(K_ContextMenu);
-    if (g->GetComponent<CaptionOverlay>())   add(K_Caption);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -561,12 +568,14 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIRating>())         return K_Rating;
     if (go->GetComponent<UIToggle>())         return K_Toggle;
     if (go->GetComponent<UITabs>())           return K_Tabs;
+    if (go->GetComponent<VirtualJoystick>())  return K_TouchStick;
+    if (go->GetComponent<TouchDPad>())        return K_TouchPad;
+    if (go->GetComponent<TouchButton>())      return K_TouchButton;
     if (go->GetComponent<UIButton>())         return K_Button;
     if (go->GetComponent<WorldUI>())          return K_WorldUI;
     if (go->GetComponent<UIDropdown>())       return K_Dropdown;
     if (go->GetComponent<UIInputField>())     return K_Input;
     if (go->GetComponent<Crosshair>())        return K_Crosshair;
-    if (go->GetComponent<CaptionOverlay>())   return K_Caption;
     if (go->GetComponent<UITooltip>())        return K_Tooltip;
     if (go->GetComponent<UIKeybindField>())   return K_Keybind;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;

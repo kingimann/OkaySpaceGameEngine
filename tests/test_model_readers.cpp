@@ -191,6 +191,23 @@ int main() {
         CHECK(blue.texture == kDir + "blue.png");               // "-s 1 1 1" option skipped
         CHECK(blue.normalMap == kDir + "blue_n.png");           // "-bm 1.0" option skipped
         CHECK(blue.specularMap == kDir + "spec.png");
+        // #753: a texture that climbs out of the model's directory (or is absolute) must not be
+        // kept: an untrusted model must not point the engine at any file on the machine. In-tree
+        // ".."s still resolve. Scratch files in the current directory (the build dir), like above.
+        {
+            Spit("mr_trav.obj", "mtllib mr_trav.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl climb\nf 1 2 3\n");
+            Spit("mr_trav.mtl", "newmtl climb\nmap_Kd ../../../../../../etc/passwd\n");
+            ImportedModel t1;
+            CHECK(ReadObjFile("mr_trav.obj", t1, &err));
+            CHECK(t1.materials.size() == 1 && t1.materials[0].texture.empty());   // dropped, not stored
+            Spit("mr_inside.obj", "mtllib mr_inside.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl ok\nf 1 2 3\n");
+            Spit("mr_inside.mtl", "newmtl ok\nmap_Kd ./sub/../mr_inside.png\n");
+            ImportedModel t2;
+            CHECK(ReadObjFile("mr_inside.obj", t2, &err));
+            CHECK(t2.materials.size() == 1 && t2.materials[0].texture == "mr_inside.png");   // in-tree ".." still resolves
+            std::remove("mr_trav.obj"); std::remove("mr_trav.mtl");
+            std::remove("mr_inside.obj"); std::remove("mr_inside.mtl");
+        }
         // Same triangles as the engine's long-standing Mesh::LoadOBJ (one merged mesh).
         bool lok = false; Mesh legacy = Mesh::LoadOBJ(kDir + "cube.obj", &lok);
         CHECK(lok);

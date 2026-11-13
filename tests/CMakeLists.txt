@@ -499,6 +499,10 @@ add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)
 
+add_executable(test_net_guard test_net_guard.cpp)
+target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
+add_test(NAME net_guard COMMAND test_net_guard)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)
@@ -731,7 +735,7 @@ target_compile_definitions(test_runtime_ui PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE
 add_test(NAME runtime_ui COMMAND test_runtime_ui)
 
 # File > Examples: the UI Gallery builds and saves itself into the project (ImGui-free part of the editor).
-add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
 target_include_directories(test_example_scenes PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
@@ -760,44 +764,44 @@ target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
 add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
 
 # UIFrame conversion and mirroring; also drives the editor's (ImGui-free) undo stack.
-add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # EditorState cancels queued built-in dialogs on scene rebuilds (#732)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
-add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
-add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
-add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_mode PRIVATE okay::engine)
 add_test(NAME prefab_mode COMMAND test_prefab_mode)
 
 # The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
 # other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
-add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_editor PRIVATE okay::engine)
 add_test(NAME prefab_editor COMMAND test_prefab_editor)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
-add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
 add_test(NAME project_save COMMAND test_project_save)
 

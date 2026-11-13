@@ -427,6 +427,67 @@ static void TestConflicts() {
     }
 }
 
+static void TestHeaderTailGuid() {
+    RUN_SUITE("merge: a guid in the object header tail is the object's identity");
+    // The header form the loader also accepts: `gameobject N "Name" guid "g"`.
+    // BuildModel must lift it into the model guid (out of headerTail) so diff and
+    // merge key on it, and the validator must still check it.
+    const std::string headerForm =
+        "okayscene 3\n"
+        "name \"Level\"\n"
+        "gameobject 0 \"Root\" guid \"b1\"\n  active 1\n  parent -1\n  transform 0 0 0 0 0 0 1 1 1 1\nend\n"
+        "gameobject 1 \"Child\" guid \"b2\"\n  active 1\n  parent 0\n  transform 1 0 0 0 0 0 1 1 1 1\nend\n";
+    {
+        SceneText::Model m;
+        std::string err;
+        CHECK(SceneText::BuildModel(headerForm, m, &err));
+        CHECK(m.objects[0].guid == "b1" && m.objects[1].guid == "b2");
+        CHECK(m.objects[0].headerTail.empty() && m.objects[1].headerTail.empty());
+        CHECK(SceneText::Validate(headerForm).ok);
+        CHECK(Loads(headerForm));
+    }
+    // Same scene written as records: identical model, so the two forms interoperate
+    // in merge (an edit to the record form pairs with the header-tail base).
+    const std::string recordForm =
+        "okayscene 3\n"
+        "name \"Level\"\n"
+        "gameobject 0 \"Root\"\n  guid \"b1\"\n  active 1\n  parent -1\n  transform 0 0 0 0 0 0 1 1 1 1\nend\n"
+        "gameobject 1 \"Child\"\n  guid \"b2\"\n  active 1\n  parent 0\n  transform 1 0 0 0 0 0 1 1 1 1\nend\n";
+    {
+        SceneText::Model h, r;
+        CHECK(SceneText::BuildModel(headerForm, h) && SceneText::BuildModel(recordForm, r));
+        CHECK(h.objects[0].guid == r.objects[0].guid && h.objects[1].guid == r.objects[1].guid);
+    }
+    // Three-way merge: ours renamed Root in the record form, theirs moved Child;
+    // the header-tail guids keep the pairing by identity.
+    {
+        SceneText::Model b;
+        CHECK(SceneText::BuildModel(headerForm, b));
+        b.objects[0].name = "Hero";
+        const std::string ours = SceneText::Emit(b);
+        SceneText::Model t;
+        CHECK(SceneText::BuildModel(headerForm, t));
+        t.objects[1].records.push_back({"tag", "tag \"mob\""});
+        const std::string theirs = SceneText::Emit(t);
+        const auto m = SceneMerge::Merge(headerForm, ours, theirs);
+        CHECK(m.ok && m.Clean() && !m.fellBack);
+        CHECK(Has(m.text, "Hero") && RecordOf(m.text, "b2", "tag") == "tag \"mob\"");
+        CHECK(SceneText::Validate(m.text).ok && Loads(m.text));
+    }
+    // Malformed and duplicated header-tail guids are reported, like the record form.
+    {
+        const std::string badGuid =
+            "okayscene 3\n"
+            "gameobject 0 \"A\" guid \"ZZ\"\n  active 1\n  parent -1\nend\n";
+        CHECK(!SceneText::Validate(badGuid).ok);
+        const std::string dupGuid =
+            "okayscene 3\n"
+            "gameobject 0 \"A\" guid \"aa\"\n  active 1\n  parent -1\nend\n"
+            "gameobject 1 \"B\"\n  guid \"aa\"\n  active 1\n  parent -1\nend\n";
+        CHECK(!SceneText::Validate(dupGuid).ok);
+    }
+}
+
 static void TestOrder() {
     RUN_SUITE("merge: object and sibling order");
     // Both add after the same sibling: stable, symmetric.
@@ -943,6 +1004,7 @@ int main() {
     TestAutoMerge();
     TestConflicts();
     TestOrder();
+    TestHeaderTailGuid();
     TestInputs();
     TestIdentities();
     TestPartitioned();

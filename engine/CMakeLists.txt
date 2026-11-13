@@ -309,6 +309,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
+# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
+    target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
     target_link_libraries(okay_engine PUBLIC ws2_32 winhttp)   # winhttp: NativeHttp (backend calls without spawning curl)

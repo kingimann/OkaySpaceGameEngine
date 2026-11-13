@@ -245,7 +245,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open =
 /// `cond` says when the call takes effect: always (and then the window cannot be dragged / resized), only the first time the
 /// window is ever seen, or each time it appears again after not being drawn for a frame.
 enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Appearing = 8 };
-enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2 };   // the only two flags OkayUI honours
+enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4 };   // the only flags OkayUI honours (no title bar: no collapse, close button or drag handle either; docked windows use it)
 
 void End();
 /// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for

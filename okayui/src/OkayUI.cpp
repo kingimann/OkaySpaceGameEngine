@@ -18,6 +18,7 @@
 // conflict with it. No STL is used here: fixed C arrays, C strings, plain ints.
 
 namespace OkayUI {
+void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock layout too
 namespace {
 
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
@@ -283,7 +284,7 @@ DragDrop g_dd;
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
                  bool posInit = false, sizeInit = false; unsigned long long lastFrame = 0; };
-WinSlot g_wins[16];
+WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
 struct OpenSlot { int id = 0; bool open = false; bool used = false; };
@@ -1622,6 +1623,7 @@ static int g_focusWin = 0;
 struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; };
 static NextWin g_nextWinPos, g_nextWinSize;
 void PinNextWindow() { g_pinNext = true; }
+static bool  g_noTitleNext = false;  // Window_NoTitleBar: the next Begin has no title bar (docked windows)
 static bool  g_resizeNext = false;   // ResizableNextWindow: the next Begin gets a resize grip
 static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
 void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resizeMinW = minW; g_resizeMinH = minH; }
@@ -1646,8 +1648,11 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (pinned && slot) { slot->x = x; slot->y = y; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
     if (pinned) { wx = x; wy = y; }
-    const float titleH = rowH();
+    const bool noTitle = g_noTitleNext;
+    g_noTitleNext = false;
+    const float titleH = noTitle ? 0.0f : rowH();
     bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
+    if (noTitle) *collapsed = false;
 
     // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
     // right, and the draggable strip in between.
@@ -1710,13 +1715,15 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
         rrect(wx, wy, w, bodyH, wr, g_theme.border);
         rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.panel);
-        rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.titleBg);
-        if (!*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, g_theme.titleBg);
-        if (!*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
+        if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.titleBg);
+        if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, g_theme.titleBg);
+        if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
         const float s0 = g_theme.textScale;
+        if (!noTitle) {
         chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : g_theme.textDim);
         if (title && *title) drawText(wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
-        if (p_open) {
+        }
+        if (p_open && !noTitle) {
             unsigned char tmp[4];
             const unsigned char white[4] = {255, 255, 255, 255};
             if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
@@ -1724,7 +1731,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         }
     } else
     Panel(wx, wy, w, bodyH);
-    if (!g_look) {
+    if (!g_look && !noTitle) {
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
     // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
     const float rd = rnd();
@@ -1820,7 +1827,8 @@ bool Begin(const char* title, bool* p_open, int flags) {
     const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
     if (pin) PinNextWindow();
     if (!(flags & Window_NoResize)) ResizableNextWindow(96.0f, 64.0f);
-    return Begin(title, x, y, w, h, p_open);
+    g_noTitleNext = (flags & Window_NoTitleBar) != 0;
+    return Begin(title, x, y, w, h, (flags & Window_NoTitleBar) ? nullptr : p_open);
 }
 
 Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
@@ -4412,7 +4420,8 @@ void ResetState() {
     g_lay = LayoutState(); g_col = ColumnState(); g_tbl = TableState();
     g_childTop = g_popupTop = g_colTop = g_idTop = g_idSkipped = g_itemWTop = g_clipTop = 0;
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
-    g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false;
+    g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false; g_noTitleNext = false;
+    DockReset();
     g_ovCurN = g_ovPrevN = 0;
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }

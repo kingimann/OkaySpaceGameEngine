@@ -2673,8 +2673,8 @@ int main(int argc, char** argv) {
             const float px = 2.0f;
             const float tw = UITextW(badge.c_str(), px);
             SDL_Rect bg{4, h - (int)(Font8x8::Height * px + 8) - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
-            SDL_RenderFillRect(renderer, &bg);
+            renderer->SetDrawColor(0, 0, 0, 160);
+            renderer->FillRect((const ui2d::Rect*)&bg);
             DrawText(renderer, badge.c_str(), 8, bg.y + 4, px, SDL_Color{255, 200, 80, 255});
         }
         if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {

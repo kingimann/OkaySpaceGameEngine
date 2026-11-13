@@ -43,6 +43,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
@@ -310,6 +311,20 @@ static std::vector<Fix> BuildFixes() {
         add(x);
     }
     { Fix x{"ClearTrail"}; x.setup = [](Scene&, GameObject* me) { me->AddComponent<TrailRenderer>(); if (auto* rb = me->GetComponent<Rigidbody3D>()) rb->velocity = Vec3(0, 0, -6); }; add(x); }
+    {
+        // The plain graph's blast centre is a unit away and its radius is 1, so it misses.
+        // This one is centred on the body. A 2D body with gravity off slides; the graph without the node stays put.
+        Fix x{"AddExplosionForce"};
+        x.graph = "node 1 OnStart\nentry OnStart 1\nnode 2 AddExplosionForce\ndefault 2 1 20\ndefault 2 2 10\ndefault 2 3 0\n"
+                  "node 3 MakeVec3\ndefault 3 0 0\ndefault 3 1 0\ndefault 3 2 0\nexec 1 0 2\ndata 2 0 3 0\n";
+        x.base = "node 1 OnStart\nentry OnStart 1\n";
+        x.setup = [](Scene&, GameObject* me) {
+            if (auto* r3 = me->GetComponent<Rigidbody3D>()) r3->gravityScale = 0.0f;
+            auto* rb = me->AddComponent<Rigidbody2D>();
+            rb->gravityScale = 0.0f;
+        };
+        add(x);
+    }
     { Fix x{"MusicResume"}; x.setup = [](Scene& s, GameObject*) { if (auto* mp = Find(s, "Music")->GetComponent<MusicPlayer>()) { mp->Play(0); mp->Pause(); } }; add(x); }
     { Fix x{"StopAnimation"}; x.setup = [](Scene&, GameObject* me) { auto* c = me->AddComponent<Character>(); AnimClip k; k.name = "wave"; k.loop = true; c->AddClip(k); c->PlayClip("wave"); }; add(x); }
     {

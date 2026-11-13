@@ -20,6 +20,7 @@
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
@@ -435,18 +436,10 @@ long long HeadSize(const std::string& url) {
     std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
                       "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
     RunCmd(cmd, true);
-    long long total = 0;
     std::ifstream f(hdr);
-    std::string line;
-    while (std::getline(f, line)) {
-        std::string low = line;
-        for (char& c : low) c = (char)std::tolower((unsigned char)c);
-        if (low.rfind("content-length:", 0) == 0) {
-            try { total = std::stoll(line.substr(15)); } catch (...) {}
-        }
-    }
+    std::string dump((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close(); fs::remove(hdr, ec);
-    return total;
+    return okay::netguard::ParseLastContentLength(dump);
 }
 
 struct DlItem {
@@ -467,16 +460,25 @@ long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
 }
 
+// Hard cap for launcher downloads (2 GiB): a malicious or wrong URL must not
+// be able to fill the user's disk. Enforced both as a curl flag and against
+// the HEAD-probed Content-Length.
+static constexpr long long kMaxDownloadBytes = 2ll << 30;
+
 int DlWorker(void* data) {
     DlItem* d = static_cast<DlItem*>(data);
     auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
     set([&]{ d->status = 1; });
     long long total = HeadSize(d->url);
     set([&]{ d->total = total; });
+    // HeadSize is a hard limit, not just a progress hint: refuse to download
+    // anything that already announced itself larger than the cap.
+    if (total > kMaxDownloadBytes) { set([&]{ d->status = 3; }); return 0; }
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
+                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
     set([&]{ d->proc = p; });
@@ -688,13 +690,8 @@ long long RemoteSize(const std::string& url) {
         for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
         auto p = low.find("content-length:");
         if (p != std::string::npos) {
-            long long v = 0; bool any = false;
-            for (std::size_t i = p + 15; i < line.size(); ++i) {
-                char d = line[i];
-                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
-                else if (any) break;
-            }
-            if (any) sz = v;
+            const long long v = okay::netguard::ParseContentLengthLine(line);
+            if (v > 0) sz = v;
         }
     }
     f.close(); fs::remove(hf, ec);
@@ -714,7 +711,7 @@ int DlMonitorThread(void* p) {
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
     DlMonitor d; d.url = url; d.out = out;
     SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
     SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
@@ -2946,7 +2943,10 @@ static int LinkPreviewWorker(void*) {
         url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
         SDL_UnlockMutex(g_lpMutex);
         LinkPreview lp; lp.state = 2;
-        if (ShellSafeUrl(url)) {
+        // SSRF guard: never fetch a link whose host resolves to a private,
+        // loopback or link-local address (chat links come from other people).
+        if (ShellSafeUrl(url) &&
+            okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
@@ -4967,12 +4967,30 @@ static void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;
+    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
+    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    VoiceClip() = default;
+    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
+    // released at load, so there is no SDL buffer left for this destructor to free (#718).
+    ~VoiceClip() = default;
+    VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
+    VoiceClip& operator=(const VoiceClip&) = delete;
+    VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
+    VoiceClip& operator=(VoiceClip&& o) noexcept {
+        if (this != &o) {
+            ok = o.ok; pcm = o.pcm; len = o.len; spec = o.spec;
+            secs = o.secs; bytesPerSec = o.bytesPerSec;
+            for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
+            owned = std::move(o.owned); fast = std::move(o.fast);
+            // pcm pointed into o.owned; vector move transfers that buffer, so the pointer stays valid.
+            o.pcm = nullptr; o.len = 0; o.ok = false;
+        }
+        return *this;
+    }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
 // The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
@@ -4982,6 +5000,10 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
+    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
+    // and frees it before this runs, so the bytes are read from `owned` and the
+    // old vector storage is released when it is replaced. SDL_FreeWAV here would
+    // free that storage a second time (#718).
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -5080,7 +5102,17 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
+        // clip's own storage and free SDL's at once, so no path (a converted clip, an
+        // unsupported width, a replaced entry) can leave it behind (#718).
+        Uint8* wavBuf = nullptr; Uint32 wavLen = 0; SDL_AudioSpec wavSpec{};
+        if (!failed && SDL_LoadWAV(cache.string().c_str(), &wavSpec, &wavBuf, &wavLen)) {
+            c.spec = wavSpec;
+            if (wavBuf && wavLen) c.owned.assign(wavBuf, wavBuf + wavLen);
+            else c.owned.clear();
+            SDL_FreeWAV(wavBuf);
+            c.pcm = c.owned.empty() ? nullptr : c.owned.data();
+            c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
@@ -15731,11 +15763,9 @@ static int GifSearchWorker(void*) {
                         g.preview = urlIn("\"tinygif\"");
                         g.full = urlIn("\"gif\":");
                         g.desc = okay::Messages::Field(o, "content_description");
-                        std::size_t tp = o.find("\"tinygif\"");
-                        if (tp != std::string::npos) {
-                            std::size_t d = o.find("\"dims\"", tp);
-                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
-                        }
+                        // start after the format the preview uses: the first "dims" in the object may belong to another one
+                        const std::size_t tg = o.find("\"tinygif\"");
+                        okay::netguard::ParseGifDims(o, tg, g.w, g.h);   // bounds-checked; npos-safe
                         if (!g.preview.empty()) out.push_back(g);
                     }
                 } else if (c == ']' && depth == 0) break;

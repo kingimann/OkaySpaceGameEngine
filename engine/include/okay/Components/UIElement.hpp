@@ -15,6 +15,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -487,6 +488,7 @@ enum : int {
     K_Keybind,      // UIKeybindField
     K_ModalDim,     // an open UIModal's backdrop (drawn first in its raised group)
     K_ContextMenu,  // an open UIContextMenu (drawn last, in screen pixels)
+    K_Caption,      // CaptionOverlay: subtitle and sound-caption lines
     K_Count
 };
 } // namespace uilayers
@@ -497,7 +499,7 @@ inline const char* UILayerName(int kind) {
         "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
-        "keybind", "modal dim", "context menu"};
+        "keybind", "modal dim", "context menu", "captions"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -533,6 +535,7 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIKeybindField>())   add(K_Keybind);
     if (g->GetComponent<UIModal>())          add(K_ModalDim);
     if (g->GetComponent<UIContextMenu>())    add(K_ContextMenu);
+    if (g->GetComponent<CaptionOverlay>())   add(K_Caption);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -563,6 +566,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIDropdown>())       return K_Dropdown;
     if (go->GetComponent<UIInputField>())     return K_Input;
     if (go->GetComponent<Crosshair>())        return K_Crosshair;
+    if (go->GetComponent<CaptionOverlay>())   return K_Caption;
     if (go->GetComponent<UITooltip>())        return K_Tooltip;
     if (go->GetComponent<UIKeybindField>())   return K_Keybind;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;

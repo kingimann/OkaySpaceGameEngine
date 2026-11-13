@@ -408,7 +408,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | cannot make a custom effect without editing engine code | [26.1](20-35-planned.md#261-visual-shader-graphs) Visual shader graphs |
 | cannot paint a path or sand patch | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
 | cannot paint tiles in the editor | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
-| cannot paste into a game text field | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | cannot play a pre-rendered cutscene or intro movie | [50.4](43-proposals.md#504-video-playback) Video playback |
 | cannot publish to the Play Store from the editor | [56.2](43-proposals.md#562-mobile-packaging) Mobile packaging |
 | cannot reach a button with the gamepad | [32.1](20-35-planned.md#321-controller-navigation) Controller navigation |

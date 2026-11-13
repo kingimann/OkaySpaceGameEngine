@@ -34,6 +34,9 @@ bool SimulatorActive();
 /// Drop any datagrams still waiting. Settings stay as they are.
 void ResetSimulator();
 
+/// Drop the datagrams still waiting for `socket` only (another manager's stay).
+void ResetSimulator(const UdpSocket& socket);
+
 /// Send due outbound datagrams. Call once a frame.
 void PumpSimulator(UdpSocket& socket);
 

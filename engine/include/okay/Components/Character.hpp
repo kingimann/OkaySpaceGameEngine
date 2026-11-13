@@ -435,10 +435,17 @@ public:
     /// bumps each time it changes so a proxy can replay it. Not saved.
     /// `netActionParam` is that action's direction or swim speed (sit: 10 + type
     /// while standing up). An older peer that stops before this field still
-    /// reads the look. Dive, hit, vault and emotes are not replicated here.
+    /// reads the look.
     int netActionId = 0;
     int netActionSeq = 0;
     float netActionParam = 0.0f;
+    /// Replicated one-shots: the owner bumps `netEventSeq` each time one starts and
+    /// sets `netEventId` (5 dive, 6 hit, 7 traverse, 8 emote) and `netEventParam`
+    /// (hit: direction 0..3 plus 4 when heavy; traverse: HumanoidActions::TraverseClip;
+    /// emote: which). A proxy plays each new sequence once. Not saved.
+    int netEventId = 0;
+    int netEventSeq = 0;
+    float netEventParam = 0.0f;
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }

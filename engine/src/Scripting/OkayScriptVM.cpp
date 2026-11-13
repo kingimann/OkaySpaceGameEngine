@@ -8,6 +8,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Clipboard.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -4746,6 +4747,13 @@ struct OkayScriptVM::Impl {
             }
             return Value{std::string{}};
         };
+        // The game clipboard (the same text a focused input field copies and pastes).
+        // Control characters are removed and the text is capped. See Clipboard.hpp.
+        b["get_clipboard_text"] = [](std::vector<Value>&) -> Value { return Value{GetClipboardText()}; };
+        b["set_clipboard_text"] = [](std::vector<Value>& a) -> Value {
+            const std::string t = a.empty() ? std::string() : a[0].AsString();
+            return Value{SetClipboardText(t) ? 1.0f : 0.0f};
+        };
         b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->WasClicked()};
@@ -5375,6 +5383,15 @@ struct OkayScriptVM::Impl {
                 if (auto* rb = g->GetComponent<Rigidbody2D>()) rb->AddImpulse({arg3(a, 0), arg3(a, 1)});
                 else if (auto* r3 = g->GetComponent<Rigidbody3D>()) r3->AddImpulse(Vec3{arg3(a, 0), arg3(a, 1), arg3(a, 2)});
             }
+            return Value{};
+        };
+        // add_explosion_force(cx, cy, force, radius [, up]) — shove this 2D body
+        // away from (cx, cy). Linear falloff; nothing past the radius. up > 0 pops it.
+        b["add_explosion_force"] = [go](std::vector<Value>& a) {
+            if (a.size() < 4) return Value{};
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->AddExplosionForce(a[2].AsFloat(), {a[0].AsFloat(), a[1].AsFloat()},
+                                      a[3].AsFloat(), a.size() > 4 ? a[4].AsFloat() : 0.0f);
             return Value{};
         };
         // Set a sibling UIImage's texture from script (swap icons, states).
@@ -9006,6 +9023,93 @@ struct OkayScriptVM::Impl {
             rt.lastHit3D = toHit(h);
             return Value{rt.lastHit3D.object};
         };
+        // 2D shape casts fill the same ray_* details as raycast() (not ray3_*).
+        // A leading word ("hit", "point", "normal", "distance", "object") picks one
+        // detail; without it the call returns the hit object's name.
+        // box_cast([what,] cx, cy, hx, hy, dx, dy [, maxDist [, layers [, ignore_triggers [, angle_deg]]]])
+        auto toHit2 = [](const RaycastHit2D& h) {
+            Runtime::LastHit l;
+            if (!h.hit) return l;
+            l.hit = true;
+            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.px = h.point.x; l.py = h.point.y;
+            l.nx = h.normal.x; l.ny = h.normal.y;
+            l.dist = h.distance;
+            return l;
+        };
+        auto detail2 = [](const std::string& what, const RaycastHit2D& h) -> Value {
+            if (what == "hit") return Value{h.hit};
+            if (what == "point") return Value{Vec3{h.point.x, h.point.y, 0.0f}};
+            if (what == "normal") return Value{Vec3{h.normal.x, h.normal.y, 0.0f}};
+            if (what == "distance") return Value{h.distance};
+            return Value{h.gameObject ? h.gameObject->name : std::string{}};
+        };
+        auto miss2 = [](const std::string& what) -> Value {
+            if (what == "hit") return Value{false};
+            if (what == "point" || what == "normal") return Value{Vec3::Zero};
+            if (what == "distance") return Value{0.0f};
+            return Value{std::string{}};
+        };
+        b["box_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 6 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 c{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 h2{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            Vec2 d{a[b + 4].AsFloat(), a[b + 5].AsFloat()};
+            float maxDist = a.size() > b + 6 ? a[b + 6].AsFloat() : 1e9f;
+            float angle = (a.size() > b + 9 ? a[b + 9].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            RaycastHit2D h = sc->physics().BoxCast(*sc, c, h2, d, angle, maxDist, nullptr,
+                                                   maskArg(a, b + 7), trigArg(a, b + 8, false));
+            sc->physics().RecordQueryRay(c, d, maxDist, h, Mathf::Min(Mathf::Abs(h2.x), Mathf::Abs(h2.y)));
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        // capsule_cast([what,] ax, ay, bx, by, radius, dx, dy [, maxDist [, layers [, ignore_triggers]]])
+        b["capsule_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 7 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 p0{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 p1{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            float r = a[b + 4].AsFloat();
+            Vec2 d{a[b + 5].AsFloat(), a[b + 6].AsFloat()};
+            float maxDist = a.size() > b + 7 ? a[b + 7].AsFloat() : 1e9f;
+            RaycastHit2D h = sc->physics().CapsuleCast(*sc, p0, p1, r, d, maxDist, nullptr,
+                                                       maskArg(a, b + 8), trigArg(a, b + 9, false));
+            sc->physics().RecordQueryRay((p0 + p1) * 0.5f, d, maxDist, h, r);
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        auto names2 = [](const std::vector<Collider2D*>& cols) {
+            Value out = Value::MakeArray();
+            for (Collider2D* c : cols)
+                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            return out;
+        };
+        // overlap_box(cx, cy, hx, hy [, layers [, ignore_triggers [, angle_deg]]])
+        b["overlap_box"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            float angle = (a.size() > 6 ? a[6].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            return names2(sc->physics().OverlapBox(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                   {a[2].AsFloat(), a[3].AsFloat()},
+                                                   maskArg(a, 4), trigArg(a, 5, true), nullptr, angle));
+        };
+        // overlap_capsule(ax, ay, bx, by, radius [, layers [, ignore_triggers]])
+        b["overlap_capsule"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 5 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names2(sc->physics().OverlapCapsule(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                       {a[2].AsFloat(), a[3].AsFloat()}, a[4].AsFloat(),
+                                                       maskArg(a, 5), trigArg(a, 6, true)));
+        };
         // Overlaps -> the names of every collider's object inside the shape.
         auto names3 = [](const std::vector<Collider3D*>& cols) {
             Value out = Value::MakeArray();
@@ -9211,7 +9315,20 @@ struct OkayScriptVM::Impl {
             ActionList runner;
             runner.gameObject = me; runner.transform = me->transform;
             runner.instructions = ActionList::DecodeItems(a[0].AsString());
-            if (runner.BeginRun()) runner.Update(0.0f);
+            if (runner.BeginRun()) runner.Update(rt.host ? rt.host->deltaTime : 0.0f);
+            return Value{};
+        };
+        // actions_load(text): the Actions export. Adds the list described by `text`
+        // (ActionList::ToText) to this object. The scene starts it and ticks it, so
+        // every step, wait, branch, and trigger behaves as it does on an Actions component.
+        b["actions_load"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{};
+            const std::string text = a[0].AsString();
+            for (ActionList* have : me->GetComponents<ActionList>())
+                if (have->ToText() == text) return Value{};
+            ActionList* al = me->AddComponent<ActionList>();
+            al->FromText(text);
             return Value{};
         };
         b["check_action"] = [this](std::vector<Value>& a) {
@@ -10033,6 +10150,9 @@ struct OkayScriptVM::Impl {
         alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
         alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
         alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
+        alias("Physics2D.BoxCast", "box_cast"); alias("Physics2D.CapsuleCast", "capsule_cast");
+        alias("Physics2D.OverlapBox", "overlap_box"); alias("Physics2D.OverlapCapsule", "overlap_capsule");
+        alias("Rigidbody2D.AddExplosionForce", "add_explosion_force");
         alias("SceneManager.LoadScene", "load_scene_name");
         alias("Application.Quit", "quit");
         alias("GameObject.Find", "exists");
@@ -10528,6 +10648,23 @@ struct OkayScriptVM::Impl {
                 Vec3 f = arg(0).IsVec3() ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), 0.0f};
                 const bool impulse = rest.size() >= 2 && arg(0).IsVec3() && arg(1).AsFloat() != 0.0f;   // ForceMode2D.Impulse
                 if (m == "AddForce") { if (impulse) rb->AddImpulse({f.x, f.y}); else rb->AddForce({f.x, f.y}); }
+                if (m == "AddExplosionForce") {
+                    float up = 0.0f;
+                    Vec2 c; float force = 0.0f, radius = 0.0f;
+                    if (arg(0).IsVec3()) {
+                        Vec3 v = arg(0).AsVec3();
+                        c = {v.x, v.y};
+                        force = rest.size() > 1 ? arg(1).AsFloat() : 0.0f;
+                        radius = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        up = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                    } else {
+                        c = {arg(0).AsFloat(), rest.size() > 1 ? arg(1).AsFloat() : 0.0f};
+                        force = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        radius = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                        up = rest.size() > 4 ? arg(4).AsFloat() : 0.0f;
+                    }
+                    rb->AddExplosionForce(force, c, radius, up);
+                }
                 if (m == "MovePosition" && g->transform) g->transform->localPosition = {f.x, f.y, g->transform->localPosition.z};
                 return Value{};
             }

@@ -1,6 +1,6 @@
 #pragma once
 // Internal to OkayUI: the TrueType glyph atlas behind the "launcher look". The
-// launcher's own font (Roboto Medium, shared/RobotoFont.h) is baked once at a few
+// launcher's own font (Roboto Medium, shared/RobotoFontOwn.h (OKF1)) is baked once at a few
 // pixel sizes into one RGBA atlas (white, coverage in alpha) with a solid white
 // patch, so flat shapes and text share a single texture and draw in one batch.
 

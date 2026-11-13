@@ -10,8 +10,8 @@ then base64 (RFC 4648, with padding), cut into lines of 100 characters that beco
 Modes
   --from-legacy   One-time migration: read the old Dear ImGui base85 arrays (shared/RobotoFont.h and
                   shared/JetBrainsMonoFont.h), decode them with the reader below, print size and SHA-256 of
-                  each font, and write the OKF1 headers. (The legacy headers stay while Dear ImGui is in the tree:
-                  the editor and launcher still load them through ImGui's own loader.)
+                  each font, and write the OKF1 headers. (The legacy headers were deleted once the editor and launcher
+                  switched to OKF1 and AddFontFromMemoryTTF; to rerun this, restore them from git history.)
   --from-ttf NAME FILE   Encode a TrueType file as shared/<NAME>FontOwn.h (NAME = Roboto or JetBrainsMono).
   --check         Decode the generated headers with an independent Python decoder, compare size, CRC-32 and
                   SHA-256 with the pins in assets/fonts/embedded_fonts.sha256, and check that re-encoding gives the

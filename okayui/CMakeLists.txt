@@ -19,7 +19,7 @@ endif()
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
 add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
+# The launcher look's font: Roboto (shared/RobotoFontOwn.h (OKF1)) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
 target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 if(NOT TARGET SDL2::SDL2)

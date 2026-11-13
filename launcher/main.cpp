@@ -42,8 +42,7 @@
 #include "imgui_internal.h"   // ClearActiveID: Esc leaves the name field
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
-#include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
-#include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
+#include "OkfFonts.hpp"   // embedded Roboto Medium (shared with the editor) and JetBrains Mono (`code` in chat), as OKF1 data
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser
 
 // Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
@@ -16148,10 +16147,14 @@ static bool ChatHostCreate() {
     {   // same fonts as the launcher (each renderer needs its own atlas texture)
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
+        fc.FontDataOwnedByAtlas = false;   // the decoded bytes (okf_fonts) live for the whole process
+        const auto& robotoTtf = okf_fonts::RobotoMedium();
+        const auto& monoTtf = okf_fonts::JetBrainsMono();
+        if (robotoTtf.empty() || !ImGui::GetIO().Fonts->AddFontFromMemoryTTF((void*)robotoTtf.data(), (int)robotoTtf.size(), 17.0f, &fc))
             ImGui::GetIO().Fonts->AddFontDefault();
         MergeEmojiFallback(17.0f);
-        g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
+        g_chatHost.mono = monoTtf.empty() ? nullptr
+            : ImGui::GetIO().Fonts->AddFontFromMemoryTTF((void*)monoTtf.data(), (int)monoTtf.size(), 16.0f, &fc);
     }
     ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
     ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
@@ -17642,13 +17645,15 @@ int main(int argc, char** argv) {
     {
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
-        if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
-                RobotoMedium_compressed_data_base85, 17.0f, &fc))
+        fc.FontDataOwnedByAtlas = false;   // the decoded bytes (okf_fonts) live for the whole process
+        const auto& robotoTtf = okf_fonts::RobotoMedium();
+        const auto& monoTtf = okf_fonts::JetBrainsMono();
+        if (robotoTtf.empty() || !ImGui::GetIO().Fonts->AddFontFromMemoryTTF((void*)robotoTtf.data(), (int)robotoTtf.size(), 17.0f, &fc))
             ImGui::GetIO().Fonts->AddFontDefault();
         MergeEmojiFallback(17.0f);
         // JetBrains Mono (same as the editor's script editor) for `code` in chat.
-        g_fontMono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(
-            JetBrainsMono_compressed_data_base85, 16.0f, &fc);
+        g_fontMono = monoTtf.empty() ? nullptr
+            : ImGui::GetIO().Fonts->AddFontFromMemoryTTF((void*)monoTtf.data(), (int)monoTtf.size(), 16.0f, &fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);

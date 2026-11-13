@@ -350,10 +350,8 @@ void TestPicture() {
     RUN_SUITE("tables: a picture");
     // a sortable, scrolling box with a frozen header and first column, scrolled down and sideways, drawn in both looks (golden)
     for (int look = 0; look < 2; ++look) {
-        Reset();
+        Rig r(420, 300);                       // (its constructor resets OkayUI: switch the look after it)
         if (look) { UI::UseLauncherLook(true); UI::Style().caretBlink = false; }
-        Rig r(420, 300);
-        int dummy = 0; (void)dummy;
         r.body = [&] {
             if (UI::BeginTable("pic", 4, UI::Table_ScrollX | UI::Table_ScrollY | UI::Table_RowBg | UI::Table_Sortable | UI::Table_BordersInnerH, V(360, 200))) {
                 UI::TableSetupColumn("Name", UI::Col_WidthFixed | UI::Col_DefaultSort, 90); UI::TableSetupColumn("Kind", UI::Col_WidthFixed, 120);

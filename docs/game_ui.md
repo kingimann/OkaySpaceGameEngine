@@ -38,6 +38,9 @@ The **UI** button on the Scene toolbar switches to the UI editing view. Its
 | **Kit (launcher look)** | Ready-styled building blocks: Card, Heading, List Row, Badge, Avatar, Divider, Primary / Secondary / Danger / Ghost buttons, Switch, Spinner and Notification. |
 | **Prebuilt Screens** | Whole screens. **Menus:** Main Menu, Pause Menu, Settings, Confirm Dialog, Loading Screens (see below). **In game:** HUD, Health Bar, Dialog Box, Notification, Shop, Game Over. **Multiplayer:** Lobby, Scoreboard, Leaderboard, Matchmaking. |
 
+The minimap (blips, zoom, a map you draw, the big map) is written up in
+[minimap.md](minimap.md).
+
 Select a panel or card first and new widgets and kit pieces go **inside** it.
 Otherwise they go on the scene's Canvas, which is created if it's missing.
 Everything you add is ordinary objects, so you can drag, resize, restyle or

@@ -71,6 +71,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Game UI
 - [game_ui.md](game_ui.md): game UI in the launcher's look.
+- [minimap.md](minimap.md): the corner map (blips, zoom, heading-up, a map you draw) and turn order.
 - [ui_runtime.md](ui_runtime.md): the twelve UI looks, widget roles, radio buttons, windows, damage numbers, dialogue box, UI Gallery and the script and C++ calls.
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.

@@ -1018,6 +1018,10 @@ add_executable(test_npc_ai test_npc_ai.cpp)
 target_link_libraries(test_npc_ai PRIVATE okay::engine)
 add_test(NAME npc_ai COMMAND test_npc_ai)
 
+add_executable(test_perception test_perception.cpp)
+target_link_libraries(test_perception PRIVATE okay::engine)
+add_test(NAME perception COMMAND test_perception)
+
 add_executable(test_mp_controllers test_mp_controllers.cpp)
 target_link_libraries(test_mp_controllers PRIVATE okay::engine)
 add_test(NAME mp_controllers COMMAND test_mp_controllers)

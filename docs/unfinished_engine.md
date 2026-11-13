@@ -67,7 +67,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | NavMesh polygons are axis-aligned rectangles, one agent radius per bake, one surface per scene | feature map 9.1 | Angled walls become staircases; two NPC sizes need two scenes | Medium | Large |
 | 2D grid pathfinder: no weights, smoothing or moving obstacles | `AI/Pathfinding.hpp` | 2D games get jagged unweighted paths | Low | Medium |
 | Behavior tree cannot run another tree; no breakpoints | `AI/BehaviorTree.hpp:100-110` (no sub-tree node type) | Large trees cannot be modular | Medium | Medium |
-| Perception code duplicated (component and tree service) | feature map 9.5 | Two systems to tune | Low | Medium |
+| ~~Perception code duplicated (component and tree service)~~ Resolved: the NPC Controller, the behavior tree Perception service and its line-of-sight test call one check (`AI/Perception`). Each keeps its own numbers, so a new NPC and a new Perception node still start as they did. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check. | `AI/Perception.hpp`, `Components/NPCController`, `AI/BehaviorTreeRunner` | Done for the component and the tree. Not done: folding the visual-script nodes in (that would change graphs). | Low | Medium |
 
 ## 7. Cinematics, dialogue, quests
 
@@ -85,7 +85,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Melee only hits NPCs; no weapon definitions tied to items; no ranged weapon component except projectiles | feature map 11.x (`Open:` on combat row) | Weapons are hand-built every time | Medium | Large |
 | No loot-table, recipe-book or item editor windows | `.okayitems`, `.okayloot`, recipe book are text files (feature map 11.2, 11.3) | Designers edit text by hand | Medium | Medium |
 | Build mode placements are not synced between players | `docs/build_mode.md` "Not covered yet" | Multiplayer building diverges | Medium | Medium |
-| Minimap is 2D top-down only; Turn Manager and Minimap have no docs | feature map 11.x | No 3D or tilted minimap and no doc pages | Low | Medium |
+| ~~Turn Manager and Minimap have no docs~~ Resolved: `docs/minimap.md` (the corner map, blips, zoom, heading-up, a map you draw, the big map, and turn order). Still open: the minimap is a flat top-down picture, with no tilted or perspective view. | feature map 11.6, `docs/minimap.md` | Docs are written. Not done: a 3D or tilted minimap. | Low | Medium |
 
 ## 9. In-game UI
 

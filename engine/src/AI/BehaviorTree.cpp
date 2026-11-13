@@ -393,7 +393,7 @@ const std::vector<BtNodeDef>& Defs() {
          {{"function", "Function", K::Function, "bt_task", "The script function that runs the task.", nullptr}}},
         // ---- services ----
         {BtNodeType::Perception, "Perception", "Perception", BtNodeKind::Service,
-         "While its node runs: looks for the target in a sight cone (with a clear line of sight) and a hearing radius, and keeps the blackboard's target, can-see, last-seen position and seconds-since-seen keys up to date.",
+         "While its node runs: looks for the target with the same sight cone, line of sight and hearing as an NPC Controller, and keeps the blackboard's target, can-see, last-seen position and seconds-since-seen keys up to date. The numbers here are this node's own.",
          {{"targetName", "Target Object", K::Object, "Player", "The object looked for.", nullptr},
           {"range", "Sight Range", K::Number, "12", "How far it can see.", nullptr},
           {"angle", "Field Of View", K::Number, "120", "The sight cone, in degrees (360 = all around).", nullptr},

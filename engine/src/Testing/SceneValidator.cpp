@@ -17,6 +17,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NoCode.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -424,6 +425,32 @@ struct Checker {
         }
     }
 
+    // Navigation obstacles: a solid with no size blocks nothing, and carving needs a baked mesh to cut.
+    void NavObstacles(const GameObject& go, const std::string& path) {
+        for (auto* o : go.GetComponents<NavMeshObstacle>()) {
+            const bool capsule = o->shape == NavMeshObstacle::Shape::Capsule;
+            if (capsule ? !(o->capsuleRadius > 0.0f && o->capsuleHeight > 0.0f)
+                        : !(o->size.x > 0.0f && o->size.y > 0.0f && o->size.z > 0.0f))
+                Add(Severity::Warning, "navobstacle.zero_size", path, "NavMeshObstacle",
+                    capsule ? "Capsule has a radius or height of zero or less: it fills no space, so agents do not avoid it and it carves nothing"
+                            : "Box has a size of zero or less on an axis (" + Num(o->size.x) + " x " + Num(o->size.y) + " x " + Num(o->size.z) +
+                              "): it fills no space, so agents do not avoid it and it carves nothing");
+            if (!o->carve) continue;
+            const auto surfaces = scene.FindObjectsOfType<NavMeshSurface>();
+            bool baked = false;
+            for (auto* sf : surfaces) if (sf->HasMesh() || !sf->navPath.empty()) baked = true;
+            if (surfaces.empty())
+                Add(Severity::Warning, "navobstacle.carve_no_surface", path, "NavMeshObstacle",
+                    "Carve is on but the scene has no Nav Mesh Surface: there is no mesh to cut a hole in (agents only dodge it locally)");
+            else if (!baked)
+                Add(Severity::Warning, "navobstacle.carve_no_mesh", path, "NavMeshObstacle",
+                    "Carve is on but the Nav Mesh Surface has no baked mesh (bake it, or turn Bake Before Play on): nothing is carved until it has one");
+            if (!o->carveOnlyWhenStationary && o->moveThreshold <= 0.0f)
+                Add(Severity::Warning, "navobstacle.carve_every_frame", path, "NavMeshObstacle",
+                    "Carve Only When Stationary is off and Move Threshold is 0: the mesh is rebuilt every frame the obstacle moves; raise the threshold");
+        }
+    }
+
     static int CountDescendants(const Transform* t) {
         int n = 0;
         for (const Transform* c : t->Children()) n += 1 + CountDescendants(c);
@@ -501,7 +528,7 @@ struct Checker {
             if (opt.checkScripts) Scripts(go, path);
             if (opt.checkReferences) { References(go, path); IoLinks(go, path); }
             FoliageRules(go, path);
-            if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); }
+            if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); NavObstacles(go, path); }
             if (opt.checkInactive) Inactive(go, path);
         }
         if (opt.checkAssets && !scene.uiFont.empty() && !SceneValidator::AssetExists(scene.uiFont, opt))

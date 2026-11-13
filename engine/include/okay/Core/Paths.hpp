@@ -63,6 +63,13 @@ public:
     /// `relative` under the asset folder; an absolute path (or one with a drive letter) is returned as is.
     static std::string Resolve(const std::string& relative);
     static bool IsAbsolute(const std::string& path);
+    /// The StreamingAssets folder of a built game: files the game opens by name at run time, copied from the
+    /// project's StreamingAssets/ folder as they are (<Name>_Data/StreamingAssets/). Empty when the game has none.
+    /// The player sets it at startup; it ends in '/'.
+    static void SetStreamingAssetsDir(const std::string& dir);
+    static const std::string& StreamingAssetsDir();
+    /// `relative` under StreamingAssets (the file may not exist); "" when the game has no StreamingAssets folder.
+    static std::string StreamingPath(const std::string& relative);
     /// Call `fn(newDir)` now and on every later SetAssetBaseDir. Returns an id for RemoveAssetBaseDirListener.
     static int  AddAssetBaseDirListener(std::function<void(const std::string&)> fn);
     static void RemoveAssetBaseDirListener(int id);

@@ -282,6 +282,8 @@ void NavMeshAgent::Update(float dt) {
     m_stuckT = wedged ? m_stuckT + dt : 0.0f;
     m_lastPos = pos;
     bool needPlan = m_path.empty() || (autoRepath && m_repath <= 0.0f);
+    const std::uint32_t carveGen = Navigation::CarveGeneration(scene);
+    if (carveGen != m_carveGen) { m_carveGen = carveGen; needPlan = true; }   // an obstacle's hole came, moved or went
     if (m_stuckT > 0.8f) {
         m_stuckT = 0.0f; needPlan = true;
         if (++m_stuckCount > 4) { m_hasDest = false; m_path.clear(); m_velocity = Vec3{0, 0, 0}; Move(scene, pos, m_velocity, dt); return; }

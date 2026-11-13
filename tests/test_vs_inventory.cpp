@@ -1,6 +1,7 @@
 // Visual-script inventory nodes: Add / Remove / Has / Count / Equip / Craft / Loot Roll /
 // Spawn Pickup run in a small graph against a real Inventory.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include <Okay.hpp>
 #include <okay/Components/Equipment.hpp>
 #include <okay/Components/ItemPickup.hpp>
@@ -11,6 +12,7 @@ using namespace okay;
 
 int main() {
     RUN_SUITE("vs_inventory");
+    okaytest::Sandbox sandbox("vs_inventory", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     ItemDatabase& db = ItemDatabase::Get();
     db.Clear();
     db.LoadText("okayitems 1\n"
@@ -78,5 +80,6 @@ int main() {
         CHECK(v2->GetVariable("left").AsFloat() == 3.0f && i2->Count("wood") == 0);
     }
 
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

@@ -327,5 +327,14 @@ int main(int argc, char** argv) {
 #if defined(__linux__)
     if (IsCompiledIn(BackendKind::Own)) TestEvdevMapping();
 #endif
+
+    // A window size from a config file: zero, negative and absurd values are not sizes.
+    CHECK(ValidWindowExtent(960, 1) == 960);
+    CHECK(ValidWindowExtent(1, 960) == 1);
+    CHECK(ValidWindowExtent(kMaxWindowExtent, 960) == kMaxWindowExtent);
+    CHECK(ValidWindowExtent(0, 960) == 960);
+    CHECK(ValidWindowExtent(-5, 600) == 600);
+    CHECK(ValidWindowExtent(kMaxWindowExtent + 1, 600) == 600);
+    CHECK(ValidWindowExtent(2147483647, 600) == 600);
     TEST_MAIN_RESULT();
 }

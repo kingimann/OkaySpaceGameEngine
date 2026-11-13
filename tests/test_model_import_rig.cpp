@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -175,6 +176,45 @@ int main() {
     CHECK(rep.clips == 1);
     CHECK(rep.warnings.empty());
     CHECK(rep.Summary().find("2 bones") != std::string::npos);
+
+    // A skin whose JOINTS_0 name a joint the skin does not have (the importer used to accept any
+    // index below 65536): the imported SkinnedMesh must only hold valid indices, with the stray
+    // influence dropped, so the CPU skinner and both GPU backends agree.
+    {
+        GltfBuilder c;
+        int p0 = c.Add(GltfBuilder::F({0, 0, 0,  1, 0, 0,  0, 1, 0}), 5126, 3, "VEC3");
+        int ix = c.Add(GltfBuilder::U16({0, 1, 2}), 5123, 3, "SCALAR");
+        int jj = c.Add(GltfBuilder::U16({0,0,0,0, 1,0,0,0, 7,0,0,0}), 5123, 3, "VEC4");   // vertex 2 -> joint 7 of 2
+        int ww = c.Add(GltfBuilder::U8({255,0,0,0, 255,0,0,0, 255,0,0,0}), 5121, 3, "VEC4", true);
+        int ibm = c.Add(GltfBuilder::F({1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1,  1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}), 5126, 2, "MAT4");
+        std::string j =
+            "{\"asset\":{\"version\":\"2.0\"},"
+            "\"buffers\":[{\"byteLength\":" + std::to_string(c.buf.size()) +
+                ",\"uri\":\"data:application/octet-stream;base64," + c.B64() + "\"}],"
+            "\"bufferViews\":[" + c.views + "],\"accessors\":[" + c.accs + "],"
+            "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":" + std::to_string(p0) +
+                ",\"JOINTS_0\":" + std::to_string(jj) + ",\"WEIGHTS_0\":" + std::to_string(ww) +
+                "},\"indices\":" + std::to_string(ix) + "}]}],"
+            "\"nodes\":[{\"name\":\"JA\",\"children\":[1]},{\"name\":\"JB\"},{\"name\":\"Skin\",\"mesh\":0,\"skin\":0}],"
+            "\"skins\":[{\"joints\":[0,1],\"inverseBindMatrices\":" + std::to_string(ibm) + "}]}";
+        const std::string p2 = (std::filesystem::temp_directory_path() / "okay_test_rig_badjoint.gltf").string();
+        { std::ofstream o(p2); o << j; }
+        Scene s2("badjoint");
+        bool ok2 = false;
+        GameObject* root2 = ImportModelScene(s2, p2.c_str(), &ok2);
+        std::filesystem::remove(p2);
+        CHECK(ok2 && root2);
+        GameObject* skin = s2.Find("Skin");
+        SkinnedMesh* sm2 = skin ? skin->GetComponent<SkinnedMesh>() : nullptr;
+        CHECK(sm2 != nullptr);
+        if (sm2) {
+            CHECK(sm2->joints.size() == 2 && sm2->jointIdx.size() == 3);
+            for (const auto& ji : sm2->jointIdx) for (int q = 0; q < 4; ++q) CHECK(ji[q] >= 0 && ji[q] < 2);
+            CHECK(sm2->jointIdx[1][0] == 1 && sm2->jointWt[1][0] > 0.99f);   // a valid joint is kept
+            CHECK(sm2->jointWt[2][0] == 0.0f);                                // the joint-7 influence is gone
+            CHECK(sm2->SanitizeJoints(sm2->joints.size()) == 0);
+        }
+    }
 
     TEST_MAIN_RESULT();
 }

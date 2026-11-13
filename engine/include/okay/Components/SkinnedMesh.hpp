@@ -196,6 +196,31 @@ public:
         return c;
     }
 
+    /// Make every per-vertex joint index valid for `jointCount` joints: an index
+    /// outside [0, jointCount) (a corrupt or hostile asset) is set to joint 0 with
+    /// its weight zeroed, and the vertex's remaining weights are renormalized, so
+    /// the CPU skinner and every GPU backend see the same data. Returns how many
+    /// influences were changed (0 = the data was already valid). Importers call
+    /// this once the joint list is known and report a non-zero result.
+    int SanitizeJoints(std::size_t jointCount) {
+        int bad = 0;
+        const std::size_t n = jointIdx.size() < jointWt.size() ? jointIdx.size() : jointWt.size();
+        for (std::size_t v = 0; v < n; ++v) {
+            bool fixed = false;
+            for (int k = 0; k < 4; ++k) {
+                const int j = jointIdx[v][k];
+                if (j >= 0 && (std::size_t)j < jointCount) continue;
+                jointIdx[v][k] = 0; jointWt[v][k] = 0.0f; fixed = true; ++bad;
+            }
+            if (!fixed) continue;
+            float sum = 0.0f;
+            for (int k = 0; k < 4; ++k) sum += jointWt[v][k];
+            if (sum > 1e-6f) for (int k = 0; k < 4; ++k) jointWt[v][k] /= sum;
+        }
+        if (bad) { m_haveHash = false; m_bindDirty = true; }
+        return bad;
+    }
+
     /// Call after changing `bind` (blend shapes): the next Skin() redeforms, and
     /// a GPU-skinned mesh re-uploads its bind pose.
     void BindChanged() { m_haveHash = false; m_bindDirty = true; }

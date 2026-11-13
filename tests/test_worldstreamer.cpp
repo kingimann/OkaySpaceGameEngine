@@ -111,6 +111,34 @@ int main() {
         }
     }
 
+    // --- A streamed cell freed by someone else (a script, a network cleanup) ------
+    // The streamer must not call Destroy on the dangling pointer, on an unload or on its own teardown.
+    {
+        GameObject* gone = scene.Find("cell_4_2");
+        CHECK(gone != nullptr);
+        scene.DestroyImmediate(gone);                    // freed behind the streamer's back
+        scene.Update(0.016f);                            // (the frame flush retires it ...)
+        for (int i = 0; i < 20100; ++i) scene.Destroy(scene.CreateGameObject("junk"));
+        scene.Update(0.016f);                            // ... and enough more retirements free the oldest shells
+        CHECK(scene.Find("cell_4_2") == nullptr);
+        player->transform->localPosition = Vec3{kCell * 5 + 5.0f, 0.0f, kCell * 5 + 5.0f};  // cell (5,5): (4,2) is now out of range
+        ws->Update(0.016f);                              // unload pass reaches the freed cell
+        CHECK(!ws->IsCellLoaded(4, 2));
+        scene.Update(0.016f);
+        CHECK(ws->IsCellLoaded(5, 5));
+
+        GameObject* alsoGone = scene.Find("cell_5_5");
+        CHECK(alsoGone != nullptr);
+        scene.DestroyImmediate(alsoGone);
+        scene.Update(0.016f);
+        for (int i = 0; i < 20100; ++i) scene.Destroy(scene.CreateGameObject("junk"));
+        scene.Update(0.016f);
+        scene.DestroyImmediate(streamObj);               // OnDestroy walks the loaded cells, one of them freed
+        scene.Update(0.016f);
+        CHECK(scene.Find("cell_4_4") == nullptr);        // the live ones went with it
+        CHECK(scene.Find("Streamer") == nullptr);
+    }
+
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

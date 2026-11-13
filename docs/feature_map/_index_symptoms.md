@@ -95,6 +95,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
+| a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | a flood fills the relay | [39.8](39-security-anticheat.md#398-relay-hardening) Relay hardening |
 | a frame hitch when many bullets spawn | [1.13](01-core-scene.md#113-object-pooling) Object pooling |

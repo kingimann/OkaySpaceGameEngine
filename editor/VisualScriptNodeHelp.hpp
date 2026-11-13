@@ -49,8 +49,24 @@ inline const char* VsStepCatBlurb(bool cond) {
 
 inline const char* VsNodeHelp(const char* type) {
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
-        // The builtins that end the game or replace the scene say so, because they cannot be undone mid-play.
         const std::string t = type;
+        if (t == "Fn.get_monitor") return "The name of the monitor the game is using. Empty when none was chosen.";
+        if (t == "Fn.get_monitors") return "The names of the monitors connected right now.";
+        if (t == "Fn.set_monitor") return "Use a connected monitor. First is its name, or its number starting at 0.";
+        if (t == "Fn.get_display_mode") return "How the window is shown: windowed, borderless or fullscreen.";
+        if (t == "Fn.set_display_mode") return "Show the game windowed, borderless or fullscreen. First is that word.";
+        if (t == "Fn.get_display_width") return "The chosen width in pixels, or 0 when the game is using its own size.";
+        if (t == "Fn.get_display_height") return "The chosen height in pixels, or 0 when the game is using its own size.";
+        if (t == "Fn.set_display_resolution") return "Set the width and height in pixels. First is the width, Second is the height.";
+        if (t == "Fn.get_refresh_rate") return "The chosen refresh rate in hertz, or 0 when the monitor may choose.";
+        if (t == "Fn.set_refresh_rate") return "Set the refresh rate in hertz. First is the rate. 0 lets the monitor choose.";
+        if (t == "Fn.get_display_resolutions") return "The sizes the current monitor offers, as text like 1920 x 1080.";
+        if (t == "Fn.get_refresh_rates") return "The refresh rates for a size. First and Second are the width and height; leave them empty for the current size.";
+        if (t == "Fn.begin_display_confirm") return "Remember the current display and start the 10-second question: keep these settings, or put the old ones back.";
+        if (t == "Fn.keep_display_settings") return "Keep the display change and stop the countdown.";
+        if (t == "Fn.revert_display_settings") return "Put the previous monitor, mode, size and refresh rate back.";
+        if (t == "Fn.get_display_confirm_seconds") return "How many seconds are left to keep the display change. 0 when no question is waiting.";
+        // The builtins that end the game or replace the scene say so, because they cannot be undone mid-play.
         if (t.find("quit") != std::string::npos || t.find("Quit") != std::string::npos)
             return "Closes the game. Anything that is not saved is lost. Requires nothing wired.";
         if (t.find("load_scene") != std::string::npos || t.find("LoadScene") != std::string::npos)

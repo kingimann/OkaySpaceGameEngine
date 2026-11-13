@@ -75,6 +75,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
+    ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})

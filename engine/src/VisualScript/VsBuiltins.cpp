@@ -355,6 +355,7 @@ std::string CoverageTableMarkdown() {
         {"Splines", "Spline.*, SplineFollower.*", "Engine API Spline / SplineFollower / LineRenderer"},
         {"Networking", "net_* builtins", "Every Fn.net_* builtin in the list below"},
         {"Saves", "SaveGame.*, game_save / game_load / game_continue ...", "Engine API SaveGame, Save Checkpoint, Load Checkpoint, Fn.game_* save-slot nodes (Saveable component marks what is stored)"},
+        {"Display", "get_monitor, set_display_mode, set_display_resolution, set_refresh_rate, begin_display_confirm", "Fn.get_monitor, Fn.set_display_mode, Fn.set_display_resolution, Fn.set_refresh_rate, Fn.begin_display_confirm, Fn.keep_display_settings, Fn.revert_display_settings"},
         {"Scenes and prefabs", "instantiate, load_scene", "Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Another Graph"},
         {"Time", "Time.*, time", "Engine API Time, Fn.time, Delta Time"},
         {"Tweens and timers", "tween builtins, Every, Delay", "Fn.tween_* builtins, Tween Position, Every, Delay, Count Down"},

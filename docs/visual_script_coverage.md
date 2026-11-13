@@ -22,6 +22,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 | Splines | Spline.*, SplineFollower.* | Engine API Spline / SplineFollower / LineRenderer |
 | Networking | net_* builtins | Every Fn.net_* builtin in the list below |
 | Saves | SaveGame.*, game_save / game_load / game_continue ... | Engine API SaveGame, Save Checkpoint, Load Checkpoint, Fn.game_* save-slot nodes (Saveable component marks what is stored) |
+| Display | get_monitor, set_display_mode, set_display_resolution, set_refresh_rate, begin_display_confirm | Fn.get_monitor, Fn.set_display_mode, Fn.set_display_resolution, Fn.set_refresh_rate, Fn.begin_display_confirm, Fn.keep_display_settings, Fn.revert_display_settings |
 | Scenes and prefabs | instantiate, load_scene | Fn.instantiate, Fn.load_scene, Spawn Projectile, Run Another Graph |
 | Time | Time.*, time | Engine API Time, Fn.time, Delta Time |
 | Tweens and timers | tween builtins, Every, Delay | Fn.tween_* builtins, Tween Position, Every, Delay, Count Down |
@@ -33,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1362 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1378 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -219,6 +220,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `avg` | `Fn.avg` |
 | `axis_x` | `Fn.axis_x` |
 | `axis_y` | `Fn.axis_y` |
+| `begin_display_confirm` | `Fn.begin_display_confirm` |
 | `bit_and` | `Fn.bit_and` |
 | `bit_clear` | `Fn.bit_clear` |
 | `bit_not` | `Fn.bit_not` |
@@ -422,13 +424,22 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `get` | `Fn.get` |
 | `get_anim` | `Fn.get_anim` |
 | `get_child` | `Fn.get_child` |
+| `get_display_confirm_seconds` | `Fn.get_display_confirm_seconds` |
+| `get_display_height` | `Fn.get_display_height` |
+| `get_display_mode` | `Fn.get_display_mode` |
+| `get_display_resolutions` | `Fn.get_display_resolutions` |
+| `get_display_width` | `Fn.get_display_width` |
 | `get_hp` | `Fn.get_hp` |
 | `get_key` | `Fn.get_key` |
 | `get_key_down` | `Fn.get_key_down` |
 | `get_key_up` | `Fn.get_key_up` |
 | `get_language` | `Fn.get_language` |
 | `get_max_hp` | `Fn.get_max_hp` |
+| `get_monitor` | `Fn.get_monitor` |
+| `get_monitors` | `Fn.get_monitors` |
 | `get_object_var` | `Fn.get_object_var` |
+| `get_refresh_rate` | `Fn.get_refresh_rate` |
+| `get_refresh_rates` | `Fn.get_refresh_rates` |
 | `get_story` | `Fn.get_story` |
 | `get_tile` | `Fn.get_tile` |
 | `get_velocity_x` | `Fn.get_velocity_x` |
@@ -525,6 +536,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `json_parse` | `Fn.json_parse` |
 | `json_stringify` | `Fn.json_stringify` |
 | `jump` | `Fn.jump` |
+| `keep_display_settings` | `Fn.keep_display_settings` |
 | `keep_in_box` | `Fn.keep_in_box` |
 | `key` | `Fn.key` |
 | `key_down` | `Fn.key_down` |
@@ -894,6 +906,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `repeat_every` | `Fn.repeat_every` |
 | `replace` | `Fn.replace` |
 | `reverse` | `Fn.reverse` |
+| `revert_display_settings` | `Fn.revert_display_settings` |
 | `revive` | `Fn.revive` |
 | `right_x` | `Fn.right_x` |
 | `right_y` | `Fn.right_y` |
@@ -974,6 +987,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_camera_zoom` | `Fn.set_camera_zoom` |
 | `set_character_model` | `Fn.set_character_model` |
 | `set_color` | `Fn.set_color` |
+| `set_display_mode` | `Fn.set_display_mode` |
+| `set_display_resolution` | `Fn.set_display_resolution` |
 | `set_dropdown_icon` | `Fn.set_dropdown_icon` |
 | `set_dropdown_max` | `Fn.set_dropdown_max` |
 | `set_dropdown_search` | `Fn.set_dropdown_search` |
@@ -999,6 +1014,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_light_range` | `Fn.set_light_range` |
 | `set_master_volume` | `Fn.set_master_volume` |
 | `set_mesh` | `Fn.set_mesh` |
+| `set_monitor` | `Fn.set_monitor` |
 | `set_mesh_texture` | `Fn.set_mesh_texture` |
 | `set_modal_cancel` | `Fn.set_modal_cancel` |
 | `set_modal_confirm` | `Fn.set_modal_confirm` |
@@ -1017,6 +1033,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_progress` | `Fn.set_progress` |
 | `set_progress_bar` | `Fn.set_progress_bar` |
 | `set_radial` | `Fn.set_radial` |
+| `set_refresh_rate` | `Fn.set_refresh_rate` |
 | `set_radial_clockwise` | `Fn.set_radial_clockwise` |
 | `set_radial_percent` | `Fn.set_radial_percent` |
 | `set_radial_spin` | `Fn.set_radial_spin` |

@@ -126,7 +126,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | Android and iOS export only produce assets plus a README | `editor/main.cpp` Build code; tooltip says "Export an Android Studio project" (feature map 18.2) | Misleading label; there is no mobile project in the repo | Medium | Large |
 | Web and mobile have no touch gestures beyond mouse emulation | feature map 18.2 / 37.x | See section 5 | Medium | Medium |
-| No multi-monitor or resolution list; no shared window layer | feature map 37.1; each host repeats SDL setup | Fullscreen picks the default monitor; no resolution menu in the shipped Settings screen | Medium | Medium |
+| Each host still creates its own SDL window | feature map 37.1 | The player and the editor share `shared/SdlDisplays` for the monitor list and for applying a mode, and the Settings screen has Monitor, Display mode, Resolution and Refresh rate with a 10-second revert. There is still no one window class for the player, editor and launcher | Low | Large |
 | No clipboard API for games or scripts | no `clipboard` in `engine/include`, `engine/src`, `player` (only a comment in `SceneSerializer.hpp:123`) | Cannot paste into in-game text fields | Medium | Small |
 | No file dialog for scripts or the player | each editor window calls tinyfd directly (feature map 37.3) | Games cannot ask for a file | Low | Small |
 | Fonts not bundled; only fixed font paths | feature map 37.4 | A Linux machine without the fonts shows missing glyphs | Medium | Small |

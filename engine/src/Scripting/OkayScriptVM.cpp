@@ -8,6 +8,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/DisplaySettings.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
@@ -5551,6 +5552,78 @@ struct OkayScriptVM::Impl {
         b["game_slot_text"]    = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::SavedText(gameSlot(a))}; };
         b["game_slot_label"]   = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Label(gameSlot(a))}; };
         b["game_can_continue"] = [](std::vector<Value>&) { return Value{GameSaves::CanContinue() ? 1.0f : 0.0f}; };
+        // Display: the monitor, window mode, resolution and refresh the Settings screen edits.
+        // set_* applies at once and is saved. begin_display_confirm remembers the current
+        // choice and starts the 10-second "keep these settings?" clock; keep_display_settings
+        // accepts it and revert_display_settings puts the previous choice back.
+        b["get_monitor"] = [](std::vector<Value>&) { return Value{DisplaySettings::MonitorName()}; };
+        b["get_monitors"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayMonitor& m : DisplaySettings::Monitors()) list.AsArray()->push_back(Value{m.name});
+            return list;
+        };
+        b["set_monitor"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            if (a[0].IsNumber()) {
+                DisplaySettings::SetMonitorIndex((int)a[0].AsFloat());
+                return Value{1.0f};
+            }
+            const std::string name = a[0].AsString();
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) { DisplaySettings::SetMonitorIndex(std::atoi(name.c_str())); return Value{1.0f}; }
+            const bool ok = DisplaySettings::SetMonitorName(name);
+            if (!ok) Log::Warning("[script] set_monitor: no connected monitor named \"", name, "\"");
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["get_display_mode"] = [](std::vector<Value>&) { return Value{std::string(DisplaySettings::ModeName(DisplaySettings::Mode()))}; };
+        b["set_display_mode"] = [](std::vector<Value>& a) {
+            WindowMode mode = WindowMode::Windowed;
+            const std::string text = a.empty() ? std::string() : a[0].AsString();
+            if (!DisplaySettings::ParseMode(text, mode)) {
+                Log::Warning("[script] set_display_mode: use windowed, borderless or fullscreen, not \"", text, "\"");
+                return Value{0.0f};
+            }
+            DisplaySettings::SetMode(mode);
+            return Value{1.0f};
+        };
+        b["get_display_width"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Width()}; };
+        b["get_display_height"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Height()}; };
+        b["set_display_resolution"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) { Log::Warning("[script] set_display_resolution: needs a width and a height"); return Value{0.0f}; }
+            DisplaySettings::SetResolution((int)a[0].AsFloat(), (int)a[1].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_refresh_rate"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::RefreshHz()}; };
+        b["set_refresh_rate"] = [](std::vector<Value>& a) {
+            if (a.empty()) { Log::Warning("[script] set_refresh_rate: needs a rate in hertz"); return Value{0.0f}; }
+            DisplaySettings::SetRefreshHz((int)a[0].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_display_resolutions"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayResolution& r : DisplaySettings::Resolutions()) list.AsArray()->push_back(Value{r.Label()});
+            return list;
+        };
+        b["get_refresh_rates"] = [](std::vector<Value>& a) {
+            const int w = a.size() >= 2 ? (int)a[0].AsFloat() : DisplaySettings::Width();
+            const int h = a.size() >= 2 ? (int)a[1].AsFloat() : DisplaySettings::Height();
+            Value list = Value::MakeArray();
+            for (int hz : DisplaySettings::RefreshRatesForResolution(w, h)) list.AsArray()->push_back(Value{(float)hz});
+            return list;
+        };
+        b["begin_display_confirm"] = [](std::vector<Value>&) { DisplaySettings::BeginTrial(10.f); return Value{1.0f}; };
+        b["keep_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::KeepTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["revert_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::RevertTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["get_display_confirm_seconds"] = [](std::vector<Value>&) { return Value{DisplaySettings::TrialSecondsLeft()}; };
         // Localization (docs/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and

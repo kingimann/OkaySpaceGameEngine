@@ -377,52 +377,61 @@ inline GameObject* AddPauseMenu(Scene& scene) {
     return root;
 }
 
-// Settings panel: Music / SFX sliders, Fullscreen / VSync switches, Quality dropdown, Accessibility rows, Back.
+// Settings panel: audio, the display (monitor, mode, resolution, refresh), quality, accessibility.
+// Display rows wait for Apply, then "Keep these settings?" for 10 seconds.
 inline GameObject* AddSettings(Scene& scene) {
     using namespace detail;
     GameObject* canvas = EnsureCanvas(scene);
-    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {440, 680},
+    GameObject* root = Panel(scene, canvas, "Settings", UIAnchor::Center, {0, 0}, {960, 620},
                              slate::Panel(), 16.0f, true);
-    Text(scene, root, "Title", "Settings", UIAnchor::TopLeft, {32, 24}, {376, 40}, 30.0f, slate::Text(), 0, true);
-    Caption(scene, root, "AudioCaption", "AUDIO", UIAnchor::TopLeft, {32, 82}, 376);
+    Text(scene, root, "Title", "Settings", UIAnchor::TopLeft, {28, 18}, {900, 36}, 28.0f, slate::Text(), 0, true);
+
+    Caption(scene, root, "AudioCaption", "AUDIO", UIAnchor::TopLeft, {28, 64}, 430);
     auto slider = [&](const char* name, const char* label, float y, float v) {
-        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {32, y}, {110, 24}, 16.0f);
+        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {28, y}, {110, 24}, 16.0f);
         GameObject* g = Child(scene, root, (std::string(name) + "Slider").c_str());
         auto* sl = g->AddComponent<UISlider>();
-        sl->anchor = UIAnchor::TopLeft; sl->position = {150, y + 6}; sl->size = {258, 12}; sl->value = v;
+        sl->anchor = UIAnchor::TopLeft; sl->position = {150, y + 6}; sl->size = {280, 12}; sl->value = v;
     };
-    slider("Music", "Music", 106, 0.8f);
-    slider("Sfx", "Effects", 144, 0.7f);
-    Divider(scene, root, UIAnchor::TopLeft, {32, 190}, 376);
-    Caption(scene, root, "VideoCaption", "VIDEO", UIAnchor::TopLeft, {32, 206}, 376);
-    auto toggle = [&](const char* name, const char* label, float y, bool on) {
-        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {32, y}, {200, 24}, 16.0f);
-        GameObject* g = Child(scene, root, (std::string(name) + "Toggle").c_str());
-        auto* tg = g->AddComponent<UIToggle>();
-        tg->anchor = UIAnchor::TopLeft; tg->position = {364, y}; tg->size = {44, 24};
-        tg->style = UIToggle::Style::Switch; tg->label = ""; tg->on = on;
-    };
-    toggle("Fullscreen", "Fullscreen", 230, false);
-    toggle("Vsync", "VSync", 266, true);
-    Text(scene, root, "QualityLabel", "Quality", UIAnchor::TopLeft, {32, 306}, {110, 32}, 16.0f);
-    { GameObject* g = Child(scene, root, "QualityDropdown"); auto* dd = g->AddComponent<UIDropdown>();
-      dd->anchor = UIAnchor::TopLeft; dd->position = {208, 306}; dd->size = {200, 32};
-      dd->options = {"Low", "Medium", "High"}; dd->value = 2; }
-    Divider(scene, root, UIAnchor::TopLeft, {32, 356}, 376);
-    Caption(scene, root, "AccessibilityCaption", "ACCESSIBILITY", UIAnchor::TopLeft, {32, 372}, 376);
-    auto dropdown = [&](const char* name, const char* label, float y, std::vector<std::string> opts, int v) {
-        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {32, y}, {170, 32}, 16.0f);
+    slider("Music", "Music", 88, 0.8f);
+    slider("Sfx", "Effects", 124, 0.7f);
+
+    Caption(scene, root, "VideoCaption", "VIDEO", UIAnchor::TopLeft, {28, 164}, 430);
+    auto dropdownAt = [&](const char* name, const char* label, float x, float y, float labelW,
+                          std::vector<std::string> opts, int v) {
+        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {x, y}, {labelW, 32}, 16.0f);
         GameObject* g = Child(scene, root, (std::string(name) + "Dropdown").c_str());
         auto* dd = g->AddComponent<UIDropdown>();
-        dd->anchor = UIAnchor::TopLeft; dd->position = {208, y}; dd->size = {200, 32};
+        dd->anchor = UIAnchor::TopLeft; dd->position = {x + labelW, y}; dd->size = {220, 32};
         dd->options = std::move(opts); dd->value = v;
     };
-    dropdown("TextSize", "Text size", 396, {"75%", "100%", "125%", "150%", "200%"}, 1);
-    dropdown("ColorFilter", "Colour filter", 436, {"Off", "Protanopia", "Deuteranopia", "Tritanopia"}, 0);
-    toggle("HighContrast", "High contrast", 484, false);
-    toggle("ReduceMotion", "Reduce motion", 520, false);
-    toggle("ReduceFlashing", "Reduce flashing", 556, false);
-    Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -28}, {376, 48});
+    dropdownAt("Monitor", "Monitor", 28, 192, 150, {"This display"}, 0);
+    dropdownAt("DisplayMode", "Display mode", 28, 232, 150, {"Windowed", "Borderless", "Fullscreen"}, 0);
+    dropdownAt("Resolution", "Resolution", 28, 272, 150, {"1920 x 1080"}, 0);
+    dropdownAt("Refresh", "Refresh rate", 28, 312, 150, {"Default"}, 0);
+    auto toggleAt = [&](const char* name, const char* label, float x, float y, bool on) {
+        Text(scene, root, (std::string(name) + "Label").c_str(), label, UIAnchor::TopLeft, {x, y}, {200, 24}, 16.0f);
+        GameObject* g = Child(scene, root, (std::string(name) + "Toggle").c_str());
+        auto* tg = g->AddComponent<UIToggle>();
+        tg->anchor = UIAnchor::TopLeft; tg->position = {x + 360, y}; tg->size = {44, 24};
+        tg->style = UIToggle::Style::Switch; tg->label = ""; tg->on = on;
+    };
+    toggleAt("Vsync", "VSync", 28, 356, true);
+    dropdownAt("Quality", "Quality", 28, 392, 150, {"Low", "Medium", "High"}, 2);
+    Button(scene, root, "ApplyButton", "Apply", UIAnchor::TopLeft, {28, 440}, {400, 40});
+    Text(scene, root, "ConfirmLabel", "Keep these settings? 10", UIAnchor::TopLeft, {28, 488}, {400, 24}, 16.0f, slate::Accent())->active = false;
+    GameObject* keep = Button(scene, root, "KeepButton", "Keep", UIAnchor::TopLeft, {28, 520}, {190, 40});
+    GameObject* revert = Button(scene, root, "RevertButton", "Revert", UIAnchor::TopLeft, {232, 520}, {196, 40}, ButtonKind::Secondary);
+    keep->active = false;
+    revert->active = false;
+
+    Caption(scene, root, "AccessibilityCaption", "ACCESSIBILITY", UIAnchor::TopLeft, {500, 64}, 430);
+    dropdownAt("TextSize", "Text size", 500, 96, 160, {"75%", "100%", "125%", "150%", "200%"}, 1);
+    dropdownAt("ColorFilter", "Colour filter", 500, 144, 160, {"Off", "Protanopia", "Deuteranopia", "Tritanopia"}, 0);
+    toggleAt("HighContrast", "High contrast", 500, 196, false);
+    toggleAt("ReduceMotion", "Reduce motion", 500, 236, false);
+    toggleAt("ReduceFlashing", "Reduce flashing", 500, 276, false);
+    Button(scene, root, "BackButton", "Done", UIAnchor::TopLeft, {500, 520}, {420, 44}, ButtonKind::Secondary);
     root->AddComponent<SettingsScreen>();
     return root;
 }

@@ -732,6 +732,15 @@ inline const std::vector<VsDef>& Registry() {
                                                 {"Count", "Objects", "Nearest"}, 1, "layers (blank = all)"},
         {"OverlapSphere3D", "Overlap Sphere",   CAT_INPUT, false, {}, {"Center", "Radius"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
         {"OverlapBox3D",    "Overlap Box",      CAT_INPUT, false, {}, {"Center", "Half Size"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"BoxCast2D",       "Box Cast",         CAT_INPUT, false, {}, {"Center", "Flat Half", "Heading", "Box Angle", "Reach"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"CapsuleCast2D",   "Capsule Cast",     CAT_INPUT, false, {}, {"Segment Start", "Segment End", "Capsule Radius", "Heading", "Reach"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"OverlapBox2D",    "Overlap Rectangle", CAT_INPUT, false, {}, {"Center", "Flat Half", "Box Angle"},
+                                                {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"OverlapCapsule2D","Overlap Capsule",  CAT_INPUT, false, {}, {"Segment Start", "Segment End", "Capsule Radius"},
+                                                {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"AddExplosionForce", "Add Explosion Force", CAT_ACTION, true, {""}, {"Blast Point", "Blast Force", "Blast Radius", "Upward Bias"}, {}, 0, nullptr},
         {"ContactPoint",    "Contact Point",    CAT_DATA,  false, {}, {}, {"Point"}, 0, nullptr},
         {"ContactNormal",   "Contact Normal",   CAT_DATA,  false, {}, {}, {"Normal"}, 0, nullptr},
         {"ImpactSpeed",     "Impact Speed",     CAT_DATA,  false, {}, {}, {"Speed"}, 0, nullptr},
@@ -1738,6 +1747,42 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
                            ", " + VsInput(g, nodeId, 1, box ? "vec3(0.5, 0.5, 0.5)" : "1") + ", " + q(lit("")) + ")";
         return outPin == 0 ? "count(" + call + ")" : call;
     }
+    // Flat casts. A leading word selects the output, the same way ray3_cast does.
+    if (t == "BoxCast2D" || t == "CapsuleCast2D") {
+        auto xy = [&](int pin, const char* def, char axis) {
+            return std::string("vec_") + axis + "(" + VsInput(g, nodeId, pin, def) + ")";
+        };
+        static const char* kWhat[] = {"hit", "point", "normal", "distance", "object"};
+        const int w = outPin >= 0 && outPin < 5 ? outPin : 0;
+        const std::string layers = q(lit(""));
+        if (t == "BoxCast2D")
+            return "box_cast(" + q(kWhat[w]) + ", " + xy(0, "transform.position", 'x') + ", " +
+                   xy(0, "transform.position", 'y') + ", " + xy(1, "vec3(0.5, 0.5, 0)", 'x') + ", " +
+                   xy(1, "vec3(0.5, 0.5, 0)", 'y') + ", " + xy(2, "vec3(1, 0, 0)", 'x') + ", " +
+                   xy(2, "vec3(1, 0, 0)", 'y') + ", " + VsInput(g, nodeId, 4, "100") + ", " +
+                   layers + ", true, " + VsInput(g, nodeId, 3, "0") + ")";
+        return "capsule_cast(" + q(kWhat[w]) + ", " + xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'x') + ", " +
+               xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'y') + ", " +
+               xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'x') + ", " +
+               xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'y') + ", " +
+               VsInput(g, nodeId, 2, "0.5") + ", " + xy(3, "vec3(1, 0, 0)", 'x') + ", " +
+               xy(3, "vec3(1, 0, 0)", 'y') + ", " + VsInput(g, nodeId, 4, "100") + ", " + layers + ", true)";
+    }
+    if (t == "OverlapBox2D" || t == "OverlapCapsule2D") {
+        auto xy = [&](int pin, const char* def, char axis) {
+            return std::string("vec_") + axis + "(" + VsInput(g, nodeId, pin, def) + ")";
+        };
+        std::string call = t == "OverlapBox2D"
+            ? "overlap_box(" + xy(0, "transform.position", 'x') + ", " + xy(0, "transform.position", 'y') + ", " +
+              xy(1, "vec3(0.5, 0.5, 0)", 'x') + ", " + xy(1, "vec3(0.5, 0.5, 0)", 'y') + ", \"\", false, " +
+              VsInput(g, nodeId, 2, "0") + ")"
+            : "overlap_capsule(" + xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'x') + ", " +
+              xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'y') + ", " +
+              xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'x') + ", " +
+              xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'y') + ", " +
+              VsInput(g, nodeId, 2, "0.5") + ")";
+        return outPin == 0 ? "count(" + call + ")" : call;
+    }
     if (t == "ContactPoint")  return "contact_point";
     if (t == "ContactNormal") return "contact_normal";
     if (t == "ImpactSpeed")   return "impact_speed";
@@ -1896,6 +1941,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="Spawn")       out += ind + "spawn3(" + q(arg("")) + ", " + in(0, "transform.position.x") + ", " + in(1, "transform.position.y") + ", " + in(2, "transform.position.z") + ")\n";
     else if (t=="Destroy")     out += ind + "destroy()\n";
     else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="AddExplosionForce")
+        out += ind + "add_explosion_force(vec_x(" + in(0, "vec3(0, 0, 0)") + "), vec_y(" + in(0, "vec3(0, 0, 0)") +
+               "), " + in(1, "10") + ", " + in(2, "5") + ", " + in(3, "0") + ")\n";
     else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="AddImpulse")  out += ind + "add_impulse(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="Branch") {

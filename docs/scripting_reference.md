@@ -108,6 +108,7 @@ function update(dt) {
 | `set_vx/set_vy/set_vz(v)` | Set one velocity axis |
 | `velocity_x()` / `velocity_y()` / `velocity_z()` | Read velocity |
 | `add_force(x, y)` / `add_force3(x, y, z)` | Accumulate a force |
+| `add_explosion_force(x, y, force, radius [, up])` | Shove this 2D body away from a point; fades to nothing at the radius |
 | `add_impulse(...)` / `add_impulse3(...)` | Instant velocity change |
 | `jump(v)` | Set upward velocity (2D or 3D body) |
 | `set_gravity(x, y)` / `set_gravity3(x, y, z)` | Change world gravity |
@@ -514,6 +515,8 @@ Intuitive names for common builtins so code reads naturally:
 | `raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `raycast_all3(...)` / `raycast_all(ox,oy,dx,dy ...)` | Every object hit, nearest first (`ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3` / `box_cast3` / `capsule_cast3` | Thick shape casts (skip triggers); details via `ray3_*` |
+| `box_cast` / `capsule_cast` | Flat box and capsule casts (skip triggers); details via `ray_*`. A leading `"hit"` / `"point"` / `"normal"` / `"distance"` returns that detail |
+| `overlap_box` / `overlap_capsule` | Names of the objects inside a flat box or capsule |
 | `overlap_sphere3` / `overlap_box3` / `overlap_capsule3` | Names of the objects inside a 3D shape |
 | `layer_mask("Default", "Enemy")` | A layers value (or pass `"0,3"` / `"Default,Enemy"` directly) |
 | `overlap(x, y)` | A 2D collider contains this point? |

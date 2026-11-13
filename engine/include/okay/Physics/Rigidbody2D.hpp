@@ -1,9 +1,11 @@
 #pragma once
 #include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Physics/ForceMode.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -76,6 +78,23 @@ public:
         Vec2 r{point.x - c.x, point.y - c.y};
         m_torqueAccum += r.x * force.y - r.y * force.x;   // 2D cross product
         WakeUp();
+    }
+
+    /// Explosion: shove this body away from `center` with `force`, falling off
+    /// linearly to zero at `radius` (bodies past the radius are untouched).
+    /// `upModifier` biases the push upward (so debris pops up, not just outward).
+    /// No effect on kinematic/static bodies (infinite mass). Same rule as
+    /// Rigidbody3D::AddExplosionForce, in the XY plane.
+    void AddExplosionForce(float force, const Vec2& center, float radius, float upModifier = 0.0f) {
+        if (!gameObject || !gameObject->transform || radius <= 0.0f) return;
+        Vec3 p = gameObject->transform->Position();
+        Vec2 d{p.x - center.x, p.y - center.y};
+        float dist = std::sqrt(d.x * d.x + d.y * d.y);
+        if (dist > radius) return;
+        float falloff = 1.0f - dist / radius;
+        Vec2 dir = dist > 1e-5f ? Vec2{d.x / dist, d.y / dist} : Vec2{0.0f, 1.0f};
+        dir.y += upModifier;
+        AddImpulse(dir * (force * falloff));
     }
 
     /// Back to rest, as a fresh body starts: no velocity, no spin, no force or torque waiting for the next

@@ -28,7 +28,8 @@ inline VsChoiceKind VsArgChoice(const std::string& type) {
     if (type == "OnEvent" || type == "SendEvent" || type == "BroadcastEvent") return VsChoiceKind::Event;
     if (type == "MusicPlay") return VsChoiceKind::Sound;
     if (type == "Raycast" || type == "Raycast3D" || type == "OverlapBox" || type == "OverlapSphere" ||
-        type == "OverlapBox3D" || type == "OverlapSphere3D")
+        type == "OverlapBox3D" || type == "OverlapSphere3D" || type == "BoxCast2D" ||
+        type == "CapsuleCast2D" || type == "OverlapBox2D" || type == "OverlapCapsule2D")
         return VsChoiceKind::Layer;
     return VsChoiceKind::None;
 }

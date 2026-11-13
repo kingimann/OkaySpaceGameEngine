@@ -267,33 +267,33 @@ HAVE means OkayUI has an equivalent with the same job. PARTIAL names what is lef
 
 | # | Family | Call sites | Status | What is there, what is missing | Difficulty |
 |---|---|---|---|---|---|
-| 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemFocused`, `IsItemEdited`, `IsItemVisible`, `IsItemDeactivatedAfterEdit` (17), `GetItemID`, `IsAnyItemActive` | S |
-| 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. Missing: `BeginGroup`/`EndGroup` (92), `GetContentRegionMax` (25), `CalcItemWidth`, `NewLine` | S |
-| 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. Missing: printf-style formatting (callers format first), `PushTextWrapPos`/`PopTextWrapPos` (164) | S |
+| 1 | Item and hover queries, tooltips | 3,274 | PARTIAL | `IsItemHovered`, `Tooltip(text)`, and now `IsItemActive`, `IsItemActivated`, `IsItemDeactivated`, `IsItemClicked`. `IsItemFocused`, `IsItemVisible`, `GetItemID`, `IsAnyItemActive` (step 6). Missing: hover flags and delays, `BeginTooltip` blocks with widgets inside (26), `IsItemEdited`, `IsItemDeactivatedAfterEdit` (17) | S |
+| 2 | Layout and cursor | 4,613 | PARTIAL | `SameLine`, `Dummy`, `Spacing`, `Indent`, item width, and now `GetCursorScreenPos`, `SetCursorScreenPos`, `GetCursorPos`/`SetCursorPos` (and X, Y), `GetContentRegionAvail`. `BeginGroup`/`EndGroup` and `NewLine` (steps 3 and 7). Missing: `GetContentRegionMax` (25), `CalcItemWidth` | S |
+| 3 | Text | 2,851 | PARTIAL | `Text`, `TextColored`, `TextDisabled`, `TextWrapped`, `BulletText`, `SeparatorText`, `LabelText`. `PushTextWrapPos`/`PopTextWrapPos` (step 5; takes a width, not an x position). Missing: printf-style formatting (callers format first) | S |
 | 4 | Draw list (custom drawing) | 2,520 | HAVE (this step) | See 4.2. Missing: `AddConcavePolyFilled` (5), `AddImageRounded` (17), rounding on chosen corners only, anti-aliasing, `AddCallback` | done |
 | 5 | Buttons, checkbox, radio | 2,387 | PARTIAL | `Button`, `SmallButton`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `ImageButton`, now `InvisibleButton`. Missing: `ArrowButton` (18), `ColorButton` (6), explicit button size | S |
 | 6 | Style and colours | 1,896 | PARTIAL | `Style()`, `PushStyleColor` for 8 colours, `PushTextScale`, now `GetColorU32`. Missing: `PushStyleVar`/`PopStyleVar` (375), the other ~40 `ImGuiCol` colours, `GetStyleColorVec4` (39), colour converters, `PushFont`/`PopFont` of arbitrary fonts | M |
-| 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`. Missing: `DragFloat2/3/4` (about 175, the vector fields of the Inspector), `DragInt2/3`, `DragFloatRange2`, `SliderFloat2/3`, `InputFloat`, format strings, typing a value into a drag or slider | M |
+| 7 | Value widgets (drag, slider, input number) | 1,610 | PARTIAL (step 2) | `DragFloat`, `DragInt`, `SliderFloat`, `SliderInt`, `InputInt`, and now `DragFloat2/3/4`, `DragInt2/3/4` and `DragFloatRange2` (several drag cells in one row sharing a label; each cell scrubs alone, clamps, range cells never cross). Missing: `DragIntRange2`, format strings, typing into the single-value `DragFloat`/`SliderFloat` (the multi-cell ones can, step 10), a drag-speed modifier key | M |
 | 8 | Window, child, scroll | 1,074 | PARTIAL | `Begin`/`End`, `BeginChild`, resize grip, pin, `SetNextWindow*` as arguments. Missing: window flags (auto-resize 72, no scrollbar 47, no title bar, no background and others), z-order and click to front, `SetNextWindowSizeConstraints`, window queries (`IsWindowFocused` 38, `IsWindowHovered` 39), `GetScrollY`/`SetScrollY`, `SetScrollHereY` | M |
 | 9 | Popups | 1,038 | PARTIAL | `OpenPopup`, `BeginPopup`, `BeginPopupContextItem`, `CloseCurrentPopup`. Missing: `BeginPopupModal` (85) with dimming, `BeginPopupContextWindow`, `IsPopupOpen` (41) | M |
-| 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. Missing: nested sub-menus, shortcut text, checked and enabled state, `Shortcut` | M |
+| 10 | Menus | 957 | PARTIAL | menu bar, `BeginMenu`, `MenuItem(label)`. shortcut text, checked and enabled state, `MenuSeparator` (step 11). Missing: nested sub-menus, `Shortcut` handling (the text is display only) | M |
 | 11 | Mouse, keys, IO | 901 | PARTIAL | mouse position, buttons, wheel, text, 9 key edges, and now `IsMouseDown/Clicked/Released`, `GetMousePos`, `GetMouseDelta`. Missing: Ctrl and Alt, key down, about 30 more keys, middle button, double click, drag deltas, mouse cursor shapes (92) | M |
 | 12 | IDs | 792 | HAVE | `PushID`, `PopID`. Missing: `GetID` (11), `GetStateStorage` | S |
-| 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. Missing: `BeginCombo`/`EndCombo` (86) with custom content, selectable size and flags | S |
-| 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8. Missing: `InputTextWithHint` (207), multi-line (25), password, `SetKeyboardFocusHere` (54), callbacks | M |
+| 13 | Combo and selectable | 618 | PARTIAL | `Combo(items)`, `Selectable`, `ListBox`. `BeginCombo`/`EndCombo` (step 9). Missing: selectable size and flags | S |
+| 14 | Text input | 545 | PARTIAL | single line with caret, selection, UTF-8, and now IME composition (`Input::composition`, `compositionCaret`, `commit`; underlined preedit, commit, cancel, caret rectangle for a host's candidate window; step 27). `InputTextWithHint` and `SetKeyboardFocusHere` (step 4). A separate multi-line code editor widget, `OkayUI::CodeEdit` (step 25, `docs/own_ui_code_editor.md`; not `InputTextMultiline` itself). Missing: `InputTextMultiline` as a plain call (25), password, callbacks | M |
 | 15 | Disabled blocks | 369 | HAVE (this step) | `BeginDisabled`/`EndDisabled`/`IsDisabled` | done |
 | 16 | Tables | 233 | PARTIAL | `BeginTable` with headers, weights, drag-resizable columns, `Columns`. Missing: sorting, scroll and frozen rows, row background, `TableSetColumnIndex` (29), flags | M |
-| 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. Missing: `TreeNodeEx` flags (28: leaf, selected, open on arrow), `SetNextItemOpen` (14), `IsItemToggledOpen` | S |
+| 17 | Tree nodes | 201 | PARTIAL | `TreeNode`, `CollapsingHeader`. `TreeNodeEx` (default open, leaf, selected), `SetNextItemOpen`, `IsItemToggledOpen` (step 8). Missing: open on arrow only, bullet, span full width flags | S |
 | 18 | Colour editors | 168 | PARTIAL | `ColorEdit3`, `ColorPicker3`. Missing: `ColorEdit4` with alpha (137), `ColorPicker4` | S |
 | 19 | Drag and drop | 123 | PARTIAL | `DragSource(int)`, `DropTarget(int*)`. Missing: typed payloads, a preview while dragging, drop on custom rectangles | M |
 | 20 | Tabs | 55 | PARTIAL | `TabBar(labels)`. Missing: `BeginTabBar`/`BeginTabItem` with content, closable and reorderable tabs, `TabItemButton` | M |
 | 21 | Clipboard | 52 | GAP | none. Needs the clipboard in `okay::platform`, and copy, cut and paste in the text field | S |
-| 22 | Docking and viewports | 36 + 6 mentions of viewport flags | GAP | none. The editor layout depends on it, and it uses ImGui internals. Multi-viewports need OS windows from `okay::platform` | L |
-| 23 | Fonts, IME, emoji | 150 `SetWindowFontScale`, 7 `PushFont`, 26 IME mentions | PARTIAL | the 8x8 font, a bold variant, the launcher look's Roboto atlas with engine TrueType fallback. Missing: arbitrary fonts and a monospace code font, merged icon fonts, IME composition and candidate window, colour emoji | L |
+| 22 | Docking and viewports | 36 + 6 mentions of viewport flags | PARTIAL (step 26) | `DockSpace`, `DockBegin`/`DockEnd`, dock into the left, right, top, bottom or centre of a node, splitters with minimum sizes, tabs (reorder, close, tear off), drag a title bar or tab onto drop targets with a preview, layout save and load as text, repair of damaged layouts (`okayui/include/okay/UI/OkayUIDock.hpp`, section 4.30). Missing: multi-viewports (OS windows from `okay::platform`), the `DockBuilder*` call shapes, z-order of floating windows, central node and node flags | L |
+| 23 | Fonts, IME, emoji | 150 `SetWindowFontScale`, 7 `PushFont`, 26 IME mentions | PARTIAL | the 8x8 font, a bold variant, the launcher look's Roboto atlas with engine TrueType fallback. IME composition input and the caret rectangle for the candidate window (API only; step 27, section 4.31). Missing: arbitrary fonts and a monospace code font, merged icon fonts, the operating-system side of IME (no host code anywhere sends `Input::composition` yet), wide-character cells, colour emoji | L |
 | 24 | Images, plots, progress | 3 plots, 16 images | HAVE | `PlotLines`, `PlotHistogram`, `Image`, `ProgressBar`. The software test backend does not draw textures | done |
 | 25 | Backends | not counted | PARTIAL | SDL_Renderer, Direct3D 11 (ignores clip spans and textures), CPU software. No OpenGL, no Direct3D 12 | M |
 
-Reading the table: the biggest single block that was missing outright was custom drawing (family 4), then cursor and measurement (family 2), then item and mouse queries (family 1), then style (family 6), then vector value fields (family 7). The Inspector alone calls `DragFloat2/3` about 170 times, so family 7 is the best next step after this one: it is mostly composition of what `DragFloat` already does. Docking (family 22) and IME (family 23) are the two real obstacles; neither has been started, and until they exist the editor cannot leave Dear ImGui.
+Reading the table: the biggest single block that was missing outright was custom drawing (family 4), then cursor and measurement (family 2), then item and mouse queries (family 1), then style (family 6), then vector value fields (family 7). The Inspector alone calls `DragFloat2/3` about 170 times, so family 7 is the best next step after this one: it is mostly composition of what `DragFloat` already does. Docking (family 22) and IME (family 23) were the two real obstacles; both now exist headless (sections 4.30 and 4.31), but no host feeds IME events and nothing in the editor uses either, so the editor still cannot leave Dear ImGui.
 
 ### 4.2 What was built
 
@@ -329,3 +329,221 @@ All of it is in `okayui/include/okay/UI/OkayUI.hpp` and `okayui/src/OkayUI.cpp`,
 - **Text field UTF-8 corruption (found by the fuzz test, fixed).** `OKAYUI_FUZZ_SEED=4 OKAYUI_FUZZ_ITERS=4000` left a lead byte followed by an ASCII byte in the buffer. Root cause: the field keeps three byte offsets between frames (caret, selection anchor, first shown character). An edit below the first shown character (a selection from the left that had scrolled out of view, replaced by typed multi-byte text) changed the characters under that offset, so it pointed into the middle of a new character; a click then put the caret there and Delete cut the character in half. Fix: the three offsets are snapped back to a character boundary every frame (also after edits, and when the caller rewrites the buffer between frames). A second hole in the same area: a caller buffer that is full and not terminated got its last byte overwritten with NUL, which could cut a multi-byte character in half; an incomplete trailing sequence is now removed. Typed or pasted text that does not fit is dropped whole, as before, and invalid sequences are never inserted. Regression tests: `Utf8BufferTests` in `okayui/tests/test_okayui_behaviour.cpp` (deterministic; 4 of its checks fail on the unfixed field), plus the fuzz scenario. Fuzz clean under AddressSanitizer, UBSan and float-cast-overflow for seeds 1 to 8 at 4,000 iterations.
 - **Batch overflow no longer silent.** See the vertex batch bullet in 4.4. Test: `LargeDrawListTests` in `okayui/tests/test_okayui_drawlist.cpp` (50,000 vertices drawn exactly, 100,000 across both layers, 70,000 shapes reported as dropped), and the fuzz scenario now fills the real limit.
 
+
+### 4.6 Gap-closing step 2: vector value fields (family 7)
+
+Built: `DragFloat2/3/4`, `DragInt2/3/4`, `DragFloatRange2` (`okayui/src/OkayUI.cpp`, one shared routine). A row of 2 to 4 cells with a 4 px gap, one label to the right of the last cell, each cell its own id (label id plus cell number), so scrubbing one cell never moves another. `minV < maxV` clamps every cell; the range widget keeps the low cell at or below the high cell. A NaN or infinite speed or value changes nothing. Null pointers are refused. Cells narrower than 64 px show one decimal.
+
+Tested (`okayui/tests/test_okayui_values.cpp`, 24 checks, headless): each cell alone, clamping at both ends, two and four cells, integers with clamping, the range rule from both sides, NaN speed, null pointers, a long label. The fuzz test now also draws the four new shapes with hostile numbers.
+
+Not done: typing a number into a cell (double click), `SliderFloat2/3`, `InputFloat`, a speed modifier key, per-cell colour labels (X, Y, Z), and the editor's Inspector does not use these (the editor is still on Dear ImGui, and OkayUI stays off).
+
+### 4.7 Gap-closing step 3: sliders in a row, float field, small widgets
+
+Built: `SliderFloat2/3/4` (cells in one row, one label), `InputFloat` (the float twin of `InputInt`: [-] and [+] steppers; a NaN or infinite step, or one that would overflow the value, changes nothing), `ArrowButton` (left, right, up, down), `ColorButton` (a clickable swatch), `ColorEdit4` (swatch with the alpha on its left half plus four sliders) and `NewLine`. Families 2, 5, 7 and 18.
+
+Tested in `okayui/tests/test_okayui_values.cpp` (37 checks in total, headless) and drawn with hostile numbers by the fuzz test.
+
+Not done: `BeginGroup`/`EndGroup` (since built, section 4.11), typing into `InputInt`/`InputFloat` (since built, section 4.20), `ColorPicker4`, `SliderInt2/3`, arrow buttons with a drawn triangle (they use the font glyphs `<`, `>`, `^`, `v`).
+
+### 4.8 Gap-closing step 4: placeholder text and keyboard focus (family 14)
+
+Built: `InputTextWithHint` (a dim placeholder while the field is empty; it never touches the buffer) and `SetKeyboardFocusHere` (the next text field takes the keyboard, caret at the end). 207 and 54 call sites in the editor and launcher.
+
+Tested (`test_okayui_values.cpp`, 43 checks in total): the placeholder is drawn only while empty (pixel count in the field), typing after `SetKeyboardFocusHere` reaches the field with no click, a null hint and a null buffer are refused; the fuzz test draws both with hostile buffers.
+
+Not done: multi-line text, password fields, text callbacks, the hint while the field is focused and empty is shown (same as Dear ImGui) but with no separate colour setting.
+
+### 4.9 Gap-closing step 5: text wrap (family 3)
+
+Built: `PushTextWrapPos(width)` and `PopTextWrapPos()`. While on, `Text`, `TextColored` and `TextDisabled` break at word boundaries (`TextWrapped` now shares the same routine). Width 0 wraps at the right edge of the window, a positive width wraps there or at the edge, whichever is nearer. **Difference from Dear ImGui:** it takes a width, not an x position, and it does not nest (Pop turns it off). A forgotten Pop is cleared at the start of the next frame; NaN and negative widths mean the right edge.
+
+Tested (47 checks in `test_okayui_values.cpp`): both text calls wrap onto several lines, the text after Pop is one line again, a missing Pop does not leak, hostile widths; the fuzz test leaves a wrap open on purpose. Golden-image (15) and draw-list (184) suites unchanged.
+
+Not done: wrapping `BulletText` and widgets' own labels, a wrap position measured from the cursor.
+
+### 4.10 Gap-closing step 6: item queries (family 1)
+
+Built: `IsItemFocused`, `GetItemID`, `IsAnyItemActive`, `IsItemVisible` (the last item against the current clip rectangle). Tested in `test_okayui_values.cpp` (55 checks in total): ids are non-zero and different per widget, focus follows a click into a text field and drops on a click elsewhere, a held press is "any active", an item outside a small clip is not visible. Behaviour (149), fuzz (12), golden (15), drawlist (184) and soft (18) suites unchanged.
+
+Not done: `IsItemEdited` and `IsItemDeactivatedAfterEdit` (need every widget to record that it changed), hover flags and delays, tooltips with widgets in them.
+
+### 4.11 Gap-closing step 7: groups (family 2)
+
+Built: `BeginGroup` / `EndGroup`. Everything placed in between is one item: `GetItemRect`, `IsItemHovered` and `SameLine` refer to the whole block (columns of widgets side by side). Nesting up to 8 deep; an empty group is a zero-size item; an unmatched `EndGroup` is ignored; a missing one is cleared at the start of the next frame. 92 call sites in the editor and launcher.
+
+Tested (63 checks in `test_okayui_values.cpp`): the group starts where its first item starts and covers both stacked buttons, `SameLine` after it goes next to its top, nested groups, empty and unmatched groups, hover on any part. Fuzz (12, now drawing random nested groups), behaviour (149), golden (15), drawlist (184), soft (18) unchanged.
+
+Not done: `GetContentRegionMax`, `CalcItemWidth`, group-wide `IsItemActive`.
+
+### 4.12 Gap-closing step 8: tree node flags (family 17)
+
+Built: `TreeNodeEx(label, flags)` with `TreeNode_DefaultOpen`, `TreeNode_Leaf` (no arrow, never toggles, returns true and indents until `TreePop` like Dear ImGui's leaf) and `TreeNode_Selected` (accent highlight); `SetNextItemOpen(bool)` (forces the next tree node or collapsing header once); `IsItemToggledOpen()` (the last node was opened or closed by a click this frame). `TreeNode` is `TreeNodeEx(label, 0)`.
+
+Tested (70 checks in `test_okayui_values.cpp`): default closed, default open, a leaf returns true, a click opens and then closes, the toggle is reported, a forced open and close, a leaf click never toggles. Fuzz draws random flags and forced states; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: open on arrow only, bullet nodes, full-width selection flag.
+
+### 4.13 Gap-closing step 9: combo with custom content (family 13)
+
+Built: `BeginCombo(label, preview)` / `EndCombo()`. The box shows `preview`; while open, whatever is drawn between the two (usually `Selectable` rows that call `CloseCurrentPopup`) fills a popup under the box, as wide as the box (popups can now have a width: `PopupSlot::w`, 0 keeps the old 160 px). Clicking the box again, or outside the list, closes it; `GetItemRect` right after `BeginCombo` is the box. A null preview draws nothing. 86 call sites.
+
+Tested (80 checks in `test_okayui_values.cpp`): closed until clicked, opens on click, rows sit under the box in order, picking a row sets the value and closes, the box toggles, a click outside closes without changing the value. Fuzz draws random content in a combo; behaviour 149, golden 15, drawlist 184, soft 18 unchanged. A test mistake (reading the item rect from inside the open popup) found that `GetItemRect` was returning the popup's rect, which is why it now returns the box.
+
+Not done: selectable size and flags, keyboard navigation of the list, a height limit with scrolling.
+
+### 4.14 Gap-closing step 10: typing a number into a drag or slider cell (family 7)
+
+Built: Ctrl+click on a cell of `DragFloat2/3/4`, `DragInt2/3/4`, `DragFloatRange2` or `SliderFloat2/3/4` turns it into a text box with the whole value selected. Enter or a click elsewhere commits (clamped to the cell's range, rounded for integers, the range widget keeps low <= high); Escape cancels; text that is not a finite number keeps the old value. `Input` gained `ctrl` (Ctrl held); hosts do not set it yet, so the editor and launcher integration (`shared/OkayUIHost.hpp`) is still to do.
+
+A bug found while testing: the press that starts the edit also reached the text box's own click-to-place-caret code, which overwrote the select-all, so typed text was appended to the old value. Forced focus (`SetKeyboardFocusHere` and this) is now applied after the click handling.
+
+Tested (91 checks in `test_okayui_values.cpp`): typed value, clamp, Escape, non-number, integer rounding and clamp, slider cell, plain click still scrubs, click-away commits. Behaviour 149, fuzz 12, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: a double click; the host sets `ctrl`. (The single-value `DragFloat`, `DragInt`, `SliderFloat` and `SliderInt` take Ctrl+click too; this line used to say they did not.)
+
+Step 10b: the single-value `DragFloat`, `DragInt`, `SliderFloat` and `SliderInt` take Ctrl+click typing too (same rules; `SliderInt` rounds). 99 checks in `test_okayui_values.cpp`; other suites unchanged. Still not done: the host does not set `Input::ctrl` yet.
+
+### 4.15 Gap-closing step 11: menu items (family 10)
+
+Built: `MenuItem(label, shortcut, selected, enabled)` (right-aligned dim shortcut text, shown only when it fits; a small filled square for a checked item; a disabled item is dim, ignores clicks and keeps the menu open) and `MenuSeparator()`. 957 menu call sites in the editor.
+
+Tested (109 checks in `test_okayui_values.cpp`): a normal item with a shortcut clicks and closes the menu, a disabled item does nothing, a checked item still clicks, the item below a separator, the shortcut pixels are drawn, null labels and calls outside a menu are harmless. Fuzz draws random items, shortcuts, states and separators; behaviour 149, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: nested sub-menus, acting on the shortcut keys (the text is for display), keyboard navigation of menus.
+
+### 4.16 Gap-closing step 12: modal popups (family 9)
+
+Built: `BeginPopupModal(name, bool* open)` / `IsPopupOpen(name)` plus `Input::displayW/H`. The dialog is centred in the display, the area behind is dimmed and inert, a click outside does not close it, Escape closes it, and an optional close button clears `*open`.
+
+Tested (121 checks in `test_okayui_values.cpp`): opens and reports open, centred position, background pixel darker on every colour channel, outside click ignored, widgets behind inert, Escape and the close button close it, null names harmless. Fuzz and the other suites unchanged.
+
+Not done: the host must set `Input::displayW/H` and `ctrl` (shared/OkayUIHost.hpp), a sizing option, keyboard navigation inside the dialog.
+
+### 4.17 Gap-closing step 13: nested sub-menus (family 10)
+
+Built: `BeginMenu` inside a `BeginMenu` block is a sub-menu. It is a row with an arrow; the list opens to its right while the pointer is on the row or on the list (up to four levels deep, a fifth is refused), picking any item runs it and closes the whole chain, a press outside closes everything, and a press inside a deeper list does not count as "outside" for the lists above it. Each level is closed with `EndMenu()` like the first.
+
+Tested (133 checks in `test_okayui_values.cpp`): closed until the row is pointed at, opens on hover, stays open while the pointer is in its list, a second level opens, a deep item runs and closes every level, leaving a sub-menu closes just it, an outside press closes all, a plain item beside it still works, a null label is harmless. Fuzz now nests sub-menus up to five levels with null labels; behaviour 149, fuzz 12, golden 15, drawlist 184, soft 18 unchanged.
+
+Not done: keyboard navigation (arrow keys, Enter), a hover delay before opening, flipping to the left near the display edge, acting on the shortcut keys.
+
+### 4.18 Gap-closing step 14: flag-style tables (family 4)
+
+Built: `BeginTable(id, columns, flags)` with `TableSetupColumn(label, columnFlags, widthOrWeight)`, `TableHeadersRow()`, `TableSetColumnIndex(column)` (cells in any order, false for a missing column), `TableGetColumnIndex()` / `TableGetRowIndex()`, flags `Table_RowBg` (faint band on every second row), `Table_BordersInnerH` (a hairline between rows) and `Table_NoResize`, and `Col_WidthFixed` (pixels; the other columns share the rest by weight). The old `BeginTable(id, n, headers[, weights])` still works. Borders and resize handles now start at the table's own top edge (before, a table without headers had them reach one row above it). The editor uses these calls about 20 times.
+
+Tested (141 checks in `test_okayui_values.cpp`): cells land in their columns, also when set out of order, the fixed column keeps 100 px and the weighted ones split the rest 1:3 (95 and 285 px), a second row lands below the first, a missing column and calls outside a table are harmless, dragging a border resizes unless `Table_NoResize`, the band shows in the pixels. Older suites unchanged.
+
+Not done: sorting (clickable headers), hiding columns, scrolling a table with a fixed header, a band that follows a tall row (it is one text row tall), sizing a stretch column by content.
+
+### 4.19 Gap-closing step 15: keyboard navigation of menus (family 10)
+
+Built: while a menu is open, Down and Up move a highlight over its enabled items (wrapping; disabled items and separators are skipped), Enter runs the highlighted item and closes the whole chain, Right (or Enter) opens a highlighted sub-menu, Left closes a sub-menu, Escape closes the innermost open menu, and the mouse moves the same highlight so the two never disagree. Only the innermost open menu reacts to the keys. New `Input::up` / `Input::down` (key edges like the others). A sub-menu opened from the keyboard no longer closes under a parked pointer (leaving a sub-menu with the mouse only closes it while the mouse is moving).
+
+Tested (154 checks in `test_okayui_values.cpp`): Down highlights the first item and Enter runs it, a disabled row is skipped, Up from nothing wraps to the last, Right/Down/Enter inside a sub-menu runs its item and closes everything, Left closes just the sub-menu, Escape closes inner then outer, keys do nothing with no menu open, Enter with no highlight runs nothing. Fuzz now also sends random Up/Down edges.
+
+Not done: Left/Right moving between the menus of a menu bar, typing a letter to jump to an item, the editor host sending Up/Down (it does not set any key edges yet).
+
+### 4.20 Gap-closing step 16: typing into InputInt and InputFloat (family 7)
+
+Built: a plain click on the value box of `InputInt` or `InputFloat` starts typing (no Ctrl needed, unlike the drag and slider boxes); Enter or clicking away applies, Escape cancels, text that is not a number leaves the value alone, `InputInt` rounds and clamps to the int range, `InputFloat` ignores `nan`, `inf` and numbers that do not fit a float. The `-` / `+` steppers work as before. This was the last number widget that could only be changed with its buttons.
+
+Tested (164 checks in `test_okayui_values.cpp`): typed `42`, a rounded `-7.6`, `x` unchanged, `99999999999` clamped to 2147483647, floats `3.25` and `-0.5`, `nan` and `1e50` unchanged, a stepper still moves the value, Escape cancels a half-typed edit.
+
+Not done: auto-repeat when a stepper is held down, a thousands separator, undo inside the edit, the host setting `ctrl` for the drag and slider boxes (shared/OkayUIHost.hpp is not on this branch).
+
+### 4.21 Gap-closing step 17: tab bars with tab bodies (family 15)
+
+Built: `BeginTabBar(id)` / `EndTabBar()`, `BeginTabItem(label, bool* open = nullptr, flags)` / `EndTabItem()` and `TabItemButton(label, flags)`; flags `Tab_SetSelected`, `Tab_Trailing` (right-aligned) and `Tab_NoTooltip` (accepted; there are no tab tooltips). The first tab is chosen at the start, a click chooses another, only the chosen tab's `BeginTabItem` returns true so its body is the only one that runs, `Tab_SetSelected` chooses a tab, a small x appears when a `bool*` is given (clicking it clears the bool and the first tab takes over), and `GetItemRect()` right after a tab call is that header. The choice is remembered per bar id. The existing array-style `TabBar(labels, count, &current)` is unchanged. The editor uses `BeginTabBar` / `BeginTabItem` about 20 times.
+
+Tested (`test_okayui_values.cpp`): the first tab is chosen at the start with only its body running, headers sit left to right with the trailing button at the right end, a click switches the body, `Tab_SetSelected` wins while it is passed and the choice sticks without it, the x closes a tab and the first takes over, the trailing button reports its click, calls outside a bar are harmless. Fuzz now throws random tab bars at it (null ids and labels, nested bars, random flags, closing boxes).
+
+Not done: reordering by dragging, scrolling or shrinking tabs that do not fit (they run past the right edge), a drop-down list of all tabs, keyboard switching with Ctrl+Tab.
+
+### 4.22 Gap-closing step 18: tooltips and small helpers (families 5, 16)
+
+Built: `SetTooltip(fmt, ...)` (printf-style, always shown: the caller decides, usually `if (IsItemHovered())`; about 1500 calls in the editor), tooltips of several lines ("\n"), and every tooltip box now stays inside the display (`Input::displayW/H`) by flipping to the left of the cursor or above it; `TextUnformatted(text, end)`; `GetItemRectMin/Max/Size`; `GetTime()` and `GetFrameCount()` (new `Input::time`, otherwise frames / 60); `IsMouseDoubleClicked()` (second press within 0.3 s and 6 px, a third press is a new first press); `IsMouseDragging(button, threshold)` (left button held and moved more than the threshold, default 4 px); and `AlignTextToFramePadding()`, which does nothing because text in a row is already vertically centred.
+
+Tested (`test_okayui_values.cpp`): the item rectangle corner helpers equal `GetItemRect`, `SetTooltip` draws a box, a second line makes it taller, near the right edge it flips to the left, double click true for two quick presses and false for a third, a slow second press and a far one, dragging true only after the threshold and only for the left button, time and frame count advance, null arguments are harmless.
+
+Not done: `BeginTooltip` / `EndTooltip` (tooltips with widgets inside), a hover delay, wrapping a long tooltip line, the other 120 or so ImGui names the editor uses that OkayUI does not have (the biggest: `IsKeyPressed` 356 calls, `PushStyleVar` / `PopStyleVar` 384, `GetIO` 190, `SetWindowFontScale` 150, `SetMouseCursor` 92, `SetNextWindowSize/Pos` 154).
+
+### 4.23 Gap-closing step 19: named key state (family 16)
+
+Built: `Input::keyDown[KeyId_COUNT]` (the host says which named keys are held: Tab, arrows, PageUp/Down, Home/End, Insert, Delete, Backspace, Space, Enter, Escape, A to Z, 0 to 9, F1 to F12, Ctrl, Shift, Alt) and `IsKeyDown(key)`, `IsKeyPressed(key, repeat = true)` (true on the frame the key goes down; with `repeat`, again every 0.05 s once held for 0.5 s) and `IsKeyReleased(key)`. Ctrl and Shift are also down while `Input::ctrl` / `Input::shift` are. An id out of range is "not down". The editor calls `IsKeyPressed` about 356 times and `IsKeyDown` 13 times.
+
+Tested (`test_okayui_values.cpp`): idle keys are not down, a key reports pressed only on the frame it goes down, a held key is not pressed again for the first half second and then repeats several times a second (and never repeats with `repeat` off), released on the frame it goes up, ids out of range, Ctrl and Shift following the older flags. Fuzz sends random key states.
+
+Not done: key chords (`IsKeyChordPressed`), mouse buttons as keys, text-input keys that come with a character, the host (shared/OkayUIHost.hpp, not on this branch) filling `keyDown` from SDL scancodes, `GetIO().KeyCtrl` style access.
+
+### 4.24 Gap-closing step 20: style variables (family 18)
+
+Built: `PushStyleVar(StyleVar, float | Vec2)` / `PopStyleVar(count)`. They nest (32 deep; a deeper push is ignored), more pops than pushes do nothing, and pushes left unpopped are undone at the start of the next frame. Supported: `StyleVar_ItemSpacing` (x, y gap between widgets), `StyleVar_WindowPadding` (x), `StyleVar_FrameRounding` and `StyleVar_ChildRounding` (corner radius), `StyleVar_WindowRounding`, `StyleVar_BorderSize` (stands in for the window, frame and child border sizes). Accepted without effect so ported code compiles: `FramePadding`, `ButtonTextAlign`, `SelectableTextAlign`, `ItemInnerSpacing`, `ScrollbarSize`, `Alpha`. The editor calls `PushStyleVar` about 226 times (WindowPadding 64, FramePadding 40, ChildRounding 34, FrameRounding 33, ItemSpacing 24).
+
+Tested (`test_okayui_values.cpp`): a pushed `ItemSpacing` of 30 px really puts the next widgets 30 px apart and the pop brings the normal gap back, rounding, padding and border are changed inside and restored after, ignored kinds, extra pops, negative counts and a stack deeper than 32 are harmless, and a push left open does not reach the next frame.
+
+Not done: `Alpha` (would need every draw call to fade), `FramePadding` and the text-alignment variables (would need every widget to read them), `ScrollbarSize`, per-axis `WindowPadding` (OkayUI has one value), `PushStyleColor` (there is `Style()` to set colours).
+
+### 4.25 Gap-closing step 21: ImGui-style windows and window queries (families 11, 16)
+
+Built: `SetNextWindowPos(pos, cond)`, `SetNextWindowSize(size, cond)` and the `Begin(title, p_open, flags)` that takes them (first-use defaults 60, 60 and 320 x 240; the user can drag it by the title bar and resize it by the corner grip); conditions `Cond_Always` (applied every frame, so the window cannot be moved or resized), `Cond_Once` / `Cond_FirstUseEver` (only the first time the window exists) and `Cond_Appearing` (each time it is drawn again after a frame without it); flags `Window_NoResize` and `Window_NoMove`; and the window queries `GetWindowPos`, `GetWindowSize`, `GetWindowWidth`, `GetWindowHeight`, `IsWindowHovered`, `IsWindowFocused` (the last window clicked), `IsWindowAppearing`, `SetWindowFocus(title)`. The editor calls `SetNextWindowPos/Size` about 154 times and the window queries about 140 times. The old `Begin(title, x, y, w, h, p_open)` is unchanged.
+
+Tested (`test_okayui_values.cpp`): the defaults, `FirstUseEver` spent by an existing window, `Always` winning every frame, a new window taking its first-use values, hover following the pointer, click-to-focus across two windows and `SetWindowFocus`, appearing after a frame without the window (and `Cond_Appearing` placing it), `Window_NoMove` surviving a drag, a null title, queries outside a window answering zeros. Fuzz throws random positions, sizes, conditions, flags and nested `Begin` calls at it.
+
+Not done: `IsWindowHovered` does not check whether another window covers the pointer, docking (since step 26 there is a separate dock layer, section 4.30; `Window_NoTitleBar` exists now too), `NoCollapse`, `AlwaysAutoResize` and the other ImGui window flags (not defined, so code that uses them fails to compile instead of silently doing nothing), `SetNextWindowSizeConstraints`, a pivot for `SetNextWindowPos`, windows inside windows.
+
+### 4.26 Gap-closing step 22: font scale, mouse cursor and frame facts (family 16)
+
+Built: `SetWindowFontScale(scale)` (multiplies the text size, and with it the row heights, of the current window until its `End`; kept between 0.25 and 8, NaN ignored, a window left open never keeps its scale into the next frame); `SetMouseCursor(MouseCursor)` / `GetMouseCursor()` (the shape the UI wants this frame, reset to the arrow at the start of each frame; the host reads it after the frame and shows the matching system cursor); and `GetIO()` with the pointer, pointer delta, wheel, display size, Ctrl/Shift/Alt, the frame time (`Input::time` when the host gives it) and `wantCaptureMouse` (the pointer is over a window, or a widget is being pressed) and `wantCaptureKeyboard` / `wantTextInput` (a text field has focus), so a host knows not to also give the mouse or keyboard to a game. The editor uses these about 150 (`SetWindowFontScale`), 92 (`SetMouseCursor`) and 190 (`GetIO`) times.
+
+Tested (`test_okayui_values.cpp`): double scale doubles the text but not the row padding, it ends with the window and does not touch the next window, NaN is ignored and 1000 is clamped, outside a window it is harmless, the cursor starts as the arrow each frame and the last one set wins and junk becomes the arrow, the IO fields follow the inputs, the mouse is wanted over either window and not over empty space, the keyboard is wanted exactly while a text field has focus and Escape ends it. Fuzz sends random scales, cursors and IO reads.
+
+Not done: the host (shared/OkayUIHost.hpp, not on this branch) mapping `MouseCursor` to SDL system cursors, automatic cursor changes over text fields and resize grips, `wantCaptureMouse` knowing whether another window covers the pointer, the rest of the ImGui IO fields (`KeyMods`, `MouseClicked`, font atlas settings).
+
+### 4.27 Gap-closing step 23: typed drag and drop (family 12)
+
+Built: the ImGui way of dragging things around: `BeginDragDropSource` / `SetDragDropPayload(type, data, size)` / `SetDragDropPreview(text)` / `EndDragDropSource` and `BeginDragDropTarget` / `AcceptDragDropPayload(type, flags)` / `EndDragDropTarget`. The source starts a drag once the pointer has moved a few pixels while pressed on the item before it; the payload is a byte copy of up to 256 bytes with a type name of up to 32 characters; the target outlines the item while a drag with a payload is over it, hands the payload over on the frame the button is released (`delivery` true) or on every hover frame with `DragDrop_AcceptBeforeDelivery`, a mismatched type is not accepted and a null type takes anything. The older int-payload `DragSource` / `DropTarget` keep working and `IsDragging()` covers both. The editor calls these about 90 times (asset paths, object pointers, reorder rows).
+
+Tested (`test_okayui_values.cpp`): a small move does not start a drag, a real drag starts and shows the preview, the target sees the payload while hovering with `AcceptBeforeDelivery` and gets it once on release, a mismatched type is refused and a null type is accepted, releasing over nothing delivers nothing, a payload of 300 bytes is refused, calls outside a drag are harmless. Fuzz throws random sources, targets, sizes, types and out-of-order calls at it.
+
+Not done: widgets drawn inside the source block are drawn in the window (not in a floating box that follows the pointer; use `SetDragDropPreview` instead), drag sources from the keyboard, dropping onto a window title, `AcceptNoDrawDefaultRect` and the other accept flags, several drags at once, a payload bigger than 256 bytes (pass an index or an id).
+
+### 4.28 Gap-closing step 24: clipboard and copy / cut / paste in text fields (family 6)
+
+Built: `SetClipboardText` / `GetClipboardText` (up to 4095 bytes, never cut inside a UTF-8 character; mirrored to the system clipboard when a window system is running, kept inside OkayUI when there is none, so it works in tests and on servers) and `Input::copy` / `cut` / `paste` (the host sends them for Ctrl+C / X / V). A focused text field copies its selection, cuts it (not when read-only) and pastes at the caret or over the selection; new lines, tabs and carriage returns in pasted text become spaces because the field is one line; what does not fit the buffer is dropped whole characters at a time; pasting an empty clipboard changes nothing. The editor calls `SetClipboardText` about 50 times.
+
+Tested (`test_okayui_values.cpp`): the plain clipboard (set, read, clear), copy leaves the field alone, paste at the end, cut empties the field, copy with no selection keeps the clipboard, paste replaces a selection and flattens lines, a read-only field copies but cannot cut or paste, a paste longer than the buffer is cut at the end, a 6000-byte clipboard is cut at a character boundary, an empty clipboard pastes nothing. Fuzz sends random copy / cut / paste edges.
+
+Not done: the host (shared/OkayUIHost.hpp, not on this branch) turning Ctrl+C / X / V into these edges, multi-line paste (there is no multi-line field), undo of a paste, images or other clipboard formats.
+
+### 4.29 Gap-closing step 25: a code editor widget (family 14, multi-line text; also ImGuiColorTextEdit)
+
+Built, in new files so `OkayUI.cpp` is untouched apart from three small hooks: `OkayUI::CodeEdit` (`okayui/include/okay/UI/OkayUICodeEdit.hpp`, `okayui/src/OkayUICodeEdit.cpp`), a multi-line code editor with a line-number gutter, caret and selection (mouse and keys, word and line selection, UTF-8 safe), typing, Enter with auto-indent, Tab and Shift+Tab, clipboard through step 24, grouped undo and redo, find (next, previous, highlight all, replace), bracket matching, scrolling (wheel, scroll bars, caret kept visible), a pluggable highlighter callback with a built-in C-like and OkayScript one, read-only mode, caller error markers and breakpoint marks with a click callback, and 100,000 lines at under half a millisecond per frame. The hooks: `GetFrameInput()`, `GetKeyboardFocusId()`, `SetKeyboardFocusId(id)`. Full description, the HAVE and GAP table against what the script editor uses of ImGuiColorTextEdit, the numbers and the NOT DONE list are in `docs/own_ui_code_editor.md`.
+
+Tested: `test_okayui_codeedit.cpp` (407 checks: every editing operation, movement, UTF-8 selection edge cases, undo grouping, find, highlighting, brackets, the widget driven by synthetic mouse and keys, pixels, a golden image, a 100k-line performance check) and `test_okayui_codeedit_fuzz.cpp` (flat-string model fuzz and random mouse, wheel, keys and API calls; clean under ASan and UBSan).
+
+Not done: IME, ligatures, multiple cursors, folding, word wrap, a code font (the cell width assumes a monospaced font; family 23), wide-character cells, autocomplete popup (the editor draws its own on the widget's geometry), a real window or GPU check, the script editor itself still on ImGuiColorTextEdit. The multi-line paste named as not done in 4.28 is now possible in this widget (the single-line text field is unchanged).
+
+### 4.30 Gap-closing step 26: docking (family 22)
+
+Built, in new files so `OkayUI.cpp` is touched in five small places: `okayui/include/okay/UI/OkayUIDock.hpp`, `okayui/src/OkayUIDockLayout.cpp` (the data model) and `okayui/src/OkayUIDock.cpp` (drawing and mouse). Off by default and not wired into any program.
+
+The model, `DockLayout`, knows nothing about drawing or input. It is a binary tree of nodes (a split of two children with a direction and a ratio, or a leaf holding tabs) plus a list of floating windows; every window name is in exactly one place. Operations: `Dock(window, leaf, Center | Left | Right | Top | Bottom)` (a side splits the leaf and gives the new half to the window; a centre adds a tab), `DockRoot` (a strip along a side of the whole dock space), `Float`, `Close`, `SetActive`, `MoveTab`, `SetRatio`, `SetSplitterPos`, `SetMinSize`. A leaf that loses its last tab disappears and its sibling takes the place of their parent. `Compute(area, tabH)` gives each node a rectangle; a child never gets less than its minimum size (64 px wide, 40 px plus the tab strip high, or what a window asked for) unless the area cannot hold both, then the space is shared in proportion to the minimums, never negative and never overlapping. `Validate` checks the invariants (a valid binary tree with unique ids and consistent parent links, no empty leaf except an empty root, no window twice or missing, ratios finite in (0, 1), the chosen tab in range, node and window counts within 256 and 128). `Save` writes a line-based text blob (`okaydock 1`, `root`, `node ... split|leaf`, `float ...`; names escaped; floats with nine digits so the text round-trips exactly) and `Load` reads one back. `Load` and `Repair` rebuild the layout from whatever they are given: broken links, cycles, repeated names, NaN and out-of-range numbers and empty leaves are dropped or clamped, a window found in a broken part is kept floating, and the number of fixes is returned; only a blob without the header is refused (the layout is left alone).
+
+The immediate-mode layer drives one layout kept in the OkayUI context (`GetDockLayout()`): call `DockSpace(area)` once a frame before the windows (the area is cut to the display), then `DockBegin(title, &open, flags)` / `DockEnd()` in place of `Begin` / `End`. A window the layout has not seen starts floating. A docked window has no title bar of its own and fills its node's content area (below a tab strip drawn with the existing `Tab` widget plus a close box); only the chosen tab of a node returns true from `DockBegin`. Dragging a tab inside its strip reorders, dragging it out of the strip tears it off into a floating window that follows the pointer; dragging a floating window by its title bar (or the torn-off one) shows drop targets under the pointer: the centre or the tab strip of a node joins its tabs, the outer quarter of a node docks to that side, a 10 px band along the edge of the dock space docks against the whole tree, with a translucent preview of the result and guide boxes, and releasing docks. Splitters drag with the resize cursor and respect the minimum sizes. Clicking the close box removes the window from the layout and sets its `*open` false. `DockSaveLayout()` / `DockLoadLayout(blob)` wrap `Save` / `Load`; `GetDockDrop()` says what a drag in progress would do. The dock ignores the pointer where a floating window was drawn the frame before.
+
+Hooks in existing files: `Window_NoTitleBar` (new `WindowFlags` value, honoured by `Begin(title, p_open, flags)`: no title bar, collapse, close or drag handle) with a `g_noTitleNext` flag in `OkayUI.cpp`; the window slot table grew from 16 to 64 entries (docked windows use slots too); `ResetState` calls `DockReset()`.
+
+Tested: `test_okayui_dock.cpp` (356 checks: every operation on the model and the tree shape it gives, collapse when a leaf empties, no-op cases, limits, geometry and minimum sizes and tiny or NaN areas, save and load round trip as exact text, a dozen kinds of damaged blob, `Repair` of a deliberately broken layout; then the dock space driven with synthetic mouse frames: content rectangles, tab choice, dock by dragging a title bar onto the left of a node, onto its centre and onto the bottom edge, no dock on a short click or a release over nothing, tab click, reorder, close, tear off and drop, splitter drag held at the minimum on both sides and at a window's own minimum, cursors, save and load through the UI, `ResetState`, and two golden images `dock_layout.png` and `dock_drop_preview.png`) and `test_okayui_dock_fuzz.cpp` (random sequences of dock, dock to the root, float, close, choose tab, reorder, resize, compute, save and load on the model; random and byte-damaged blobs; random mouse frames, layout edits and blob loads against the dock space; invariants: the tree validates after every step, the set of windows is exactly what the operations say, leaves stay inside the area and never overlap, a loaded layout saves and loads to identical text, nothing is lost from a blob; clean under ASan and UBSan, a few hundred thousand checks).
+
+Not done: multi-viewports (windows outside the main window need OS windows from `okay::platform`); the `DockBuilder*` call shapes (the layout API is its own); a central node, node flags, auto-hide tab bars; z-order: floating windows draw in call order, there is no click-to-front, and a click on a floating window over a docked button still reaches the button (the dock itself avoids this, other widgets do not; this is the toolkit's general lack of occlusion between windows); plain `Begin` windows cannot dock (use `DockBegin`); windows are keyed by title, so a renamed window is a new one (a hidden `##id` suffix is not shown in tabs); a tab strip with too many tabs shrinks them instead of scrolling; a window's minimum size is set with `DockLayout::SetMinSize`, `DockBegin` does not derive it; docked content has no scroll bar of its own (use `BeginChild`); the layout blob stores floating positions but not window contents; the editor's saved layout format is not read; not run in a real window, with a GPU or on Windows; the editor does not use any of it.
+
+### 4.31 Gap-closing step 27: text input composition (family 23, and family 14)
+
+Built: three fields on `Input` (`composition`, `compositionCaret`, `commit`), the calls `GetComposition()`, `GetImeRect()` and `SetImeRect()`, and support in `TextField` / `InputText` and `OkayUI::CodeEdit`. API only; there is no operating-system code, so a host has to forward its input method's events (SDL's text-editing event, Win32 `WM_IME_COMPOSITION`) into `Input` and read the rectangle back.
+
+The preedit is a state: while the user composes, the host passes the current text every frame in `Input::composition` (UTF-8) and the caret inside it as a byte offset in `compositionCaret` (-1: at the end). Null or empty ends the composition; with no commit that is a cancel and the text was never touched. The finished text comes once in `Input::commit` and is inserted like typed text, replacing a selection. While composing, the focused field shows the preedit underlined (with a faint wash) at the caret, in place of a selection (the selected text is hidden, not deleted, so a cancel leaves it), and draws its caret inside the preedit; Backspace, Delete, the arrows, Home, End, Enter, Escape, select-all and clipboard keys are left to the input method and do nothing. `GetComposition()` returns the cleaned preedit: printable valid UTF-8 only, at most 256 bytes cut at a whole character, a caret that fell inside a character moved to its start. `GetImeRect()` gives the caret rectangle of the focused text input in screen pixels (kept inside the field) and the preedit's span, valid for the frame just built; the host puts the system candidate window there. `CodeEdit` does the same (the preedit in cell units, the rest of the line shifted right, the view scrolled to keep the preedit's caret visible, `ImeCaretRect()`, `ImeCompositionRect()`, `Composing()`); a commit drops newlines and tabs and turns invalid bytes into `?` like typed text, and undoes in one step. Read-only fields and editors ignore composition and commits; an unfocused field ignores both. A commit that does not fit the buffer is cut at a whole character.
+
+Tested: `test_okayui_compose.cpp` (cleaning of the preedit: control and invalid bytes, surrogates and overlong forms, 256-byte cap, caret snapping inside a 3-byte character; text field: preedit not in the buffer, underline pixels present and gone on cancel, commit, commit with the preedit still sent, commit in the middle, replace a selection, cancel keeping it, partial selection, keys ignored while composing and working again after, read-only and unfocused, buffer limit by whole characters, invalid and cut bytes in a commit, the caret rectangle with and without composition and for a long preedit; `CodeEdit`: the same plus undo of a commit in one step, multi-line selection replaced, newline in a commit dropped, scrolling; two golden images `compose_field.png` and `compose_code.png`; a fuzz of random preedits, carets, commits, text, keys and read-only flips against both widgets checking the text stays valid UTF-8 and the rectangle finite; clean under ASan and UBSan).
+
+Not done: the host side (nothing sends `Input::composition` yet and nothing moves a candidate window), the selected segment inside a preedit (SDL gives a length; only the caret is kept), reconversion and surrounding-text queries, wide-character cells in `CodeEdit` (the preedit is measured and rounded up to cells; CJK text is not laid out as double-width), right-to-left and combining marks, composition while the field is scrolled so far that the caret is out of view in a read-only state, a check with a real input method or on Windows.

@@ -660,6 +660,13 @@ public:
         std::uint32_t peer = 0;
         std::string name, userId;
         std::vector<CheatReport> recent;
+        /// Detection engine (detect.enabled): the peer's risk score, whether the
+        /// kick was a BAN REQUEST (risk past banAt), and its evidence bundle as
+        /// JSON (no account / address; call anticheat.detector.Bundle from the
+        /// handler to add them). Empty / 0 when the engine is off.
+        float risk = 0.0f;
+        bool banRequested = false;
+        std::string evidence;
     };
     /// Server: called for every anti-cheat kick, before the player is dropped.
     /// The dedicated server's --report-kicks files these for admin review.
@@ -888,6 +895,8 @@ private:
     void HandleHitClaim(Client& c, const std::string& data);
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
+    float m_hitDist = 0.0f, m_hitOff = 0.0f, m_hitAllowed = 0.0f;   // the last CheckHitView's numbers (for the detector)
+    void FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why);
     int m_hitsApplied = 0, m_hitsRefused = 0;
     std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;

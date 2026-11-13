@@ -1525,6 +1525,16 @@ target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
 # Anti-cheat plan phase 1: always-on holes, OkayScript handlers, uninstall, RPC rate limit
+# The detection engine (behavioural detectors, risk score, evidence bundle), driven with fake time
+add_executable(test_cheat_detect test_cheat_detect.cpp)
+target_link_libraries(test_cheat_detect PRIVATE okay::engine)
+add_test(NAME cheat_detect COMMAND test_cheat_detect)
+
+# Scripted cheating and honest players against the detection engine and a real NetworkManager server (prints detection / false-positive rates)
+add_executable(test_anticheat_sim test_anticheat_sim.cpp)
+target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
+add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)

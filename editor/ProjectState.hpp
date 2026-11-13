@@ -127,17 +127,47 @@ struct BuildProfile {
     int           platform = 0;
 };
 // Serialize one profile as an "@profile <name>" block of key=value lines.
+// The name and the free-text values must survive the line format: a name is one
+// sanitized word (control characters and '=' stripped, so it cannot start or
+// forge a key, or inject a new "@profile" block); values keep their characters
+// and are escaped (\n becomes \\n, '=' becomes \\=, '|' becomes \\|) so the
+// first '=' still splits the key and '|' still separates scene entries.
+inline std::string SanitizeProfileName(const std::string& name) {
+    std::string out;
+    for (char ch : name)
+        if ((unsigned char)ch >= ' ' && ch != '=') out.push_back(ch);
+    return out;
+}
+inline std::string EscapeProfileValue(const std::string& v) {
+    std::string out;
+    out.reserve(v.size());
+    for (char ch : v) {
+        if (ch == '\\' || ch == '=' || ch == '|') out.push_back('\\');
+        out.push_back(ch);
+    }
+    return out;
+}
+inline std::string UnescapeProfileValue(const std::string& v) {
+    if (v.find('\\') == std::string::npos) return v;
+    std::string out;
+    out.reserve(v.size());
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] == '\\' && i + 1 < v.size()) ++i;   // \\x -> x (so \\\\ -> \\ and \\= -> =)
+        out.push_back(v[i]);
+    }
+    return out;
+}
 inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     const BuildSettings& b = p.settings;
-    o << "@profile " << p.name << "\n";
-    o << "product="  << p.productName << "\n";
-    o << "dir="      << p.outputDir << "\n";
+    o << "@profile " << SanitizeProfileName(p.name) << "\n";
+    o << "product="  << EscapeProfileValue(p.productName) << "\n";
+    o << "dir="      << EscapeProfileValue(p.outputDir) << "\n";
     o << "platform=" << p.platform << "\n";
-    o << "company="  << b.company << "\n";
-    o << "version="  << b.version << "\n";
-    o << "bundleId=" << b.bundleId << "\n";
-    o << "icon="     << b.icon << "\n";
-    o << "splash="   << b.splash << "\n";
+    o << "company="  << EscapeProfileValue(b.company) << "\n";
+    o << "version="  << EscapeProfileValue(b.version) << "\n";
+    o << "bundleId=" << EscapeProfileValue(b.bundleId) << "\n";
+    o << "icon="     << EscapeProfileValue(b.icon) << "\n";
+    o << "splash="   << EscapeProfileValue(b.splash) << "\n";
     o << "width="    << b.width << "\n" << "height=" << b.height << "\n";
     o << "minWidth=" << b.minWidth << "\n" << "minHeight=" << b.minHeight << "\n";
     o << "fullscreen=" << b.fullscreen << "\n" << "borderless=" << b.borderless << "\n";
@@ -162,12 +192,12 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "layout=" << b.layout << "\n" << "strip=" << b.stripAssets << "\n" << "compress=" << b.compress << "\n";
     o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << b.archiveName << "\n";
     o << "fsToggle=" << b.fullscreenToggle << "\n";
-    o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << b.srvName << "\n" << "srvPort=" << b.srvPort << "\n";
-    o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << b.srvPassword << "\n";
-    o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << b.srvPublicAddr << "\n";
-    o << "srvRegion=" << b.srvRegion << "\n" << "srvMaxSpeed=" << FloatText(b.srvMaxSpeed) << "\n" << "srvRate=" << b.srvRateLimit << "\n";
+    o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << EscapeProfileValue(b.srvName) << "\n" << "srvPort=" << b.srvPort << "\n";
+    o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << EscapeProfileValue(b.srvPassword) << "\n";
+    o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << EscapeProfileValue(b.srvPublicAddr) << "\n";
+    o << "srvRegion=" << EscapeProfileValue(b.srvRegion) << "\n" << "srvMaxSpeed=" << FloatText(b.srvMaxSpeed) << "\n" << "srvRate=" << b.srvRateLimit << "\n";
     o << "srvKick=" << b.srvKickAfter << "\n";
-    for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << sc.path << "\n";
+    for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
 // Apply one key=value line to a profile being read.
@@ -176,9 +206,9 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     auto I = [&]{ return std::atoi(v.c_str()); };
     auto F = [&]{ return (float)std::atof(v.c_str()); };
     auto B = [&]{ return std::atoi(v.c_str()) != 0; };
-    auto S = [&](char* dst, size_t n){ std::snprintf(dst, n, "%s", v.c_str()); };
-    if      (k == "product")   p.productName = v;
-    else if (k == "dir")       p.outputDir = v;
+    auto S = [&](char* dst, size_t n){ std::snprintf(dst, n, "%s", UnescapeProfileValue(v).c_str()); };
+    if      (k == "product")   p.productName = UnescapeProfileValue(v);
+    else if (k == "dir")       p.outputDir = UnescapeProfileValue(v);
     else if (k == "platform")  p.platform = I();
     else if (k == "company")   S(b.company, sizeof(b.company));
     else if (k == "version")   S(b.version, sizeof(b.version));
@@ -201,7 +231,7 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "showFps")   b.showFps = B();
     else if (k == "includeAll") b.includeAllProjectScenes = B();
     else if (k == "fsToggle")  b.fullscreenToggle = B();
-    else if (k == "scene" && v.size() > 2 && v[1] == '|') b.scenes.push_back(BuildScene{v.substr(2), v[0] == '1'});
+    else if (k == "scene" && v.size() > 2 && v[1] == '|') b.scenes.push_back(BuildScene{UnescapeProfileValue(v.substr(2)), v[0] == '1'});
     else if (k == "dev")       b.developmentBuild = B();
     else if (k == "clean")     b.cleanOutput = B();
     else if (k == "dataFolder") b.dataFolder = B();
@@ -275,7 +305,9 @@ inline std::vector<BuildProfile> ParseBuildProfiles(const std::string& text) {
         if (line.empty() || line[0] == '#') continue;
         if (line.rfind("@profile ", 0) == 0) {
             if (have) out.push_back(cur);
-            cur = BuildProfile{}; cur.name = line.substr(9); have = true;
+            // The name is one word (control characters and '=' never reach the
+            // file), so an old or hostile file cannot forge keys or profiles.
+            cur = BuildProfile{}; cur.name = SanitizeProfileName(line.substr(9)); have = true;
             continue;
         }
         auto eq = line.find('=');

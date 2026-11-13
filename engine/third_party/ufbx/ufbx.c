@@ -905,11 +905,10 @@ ufbx_static_assert(source_header_version, UFBX_SOURCE_VERSION/1000u == UFBX_HEAD
 
 // -- Wrapping right shift
 
-#if !defined(UFBX_UBSAN) && UFBXI_ARCH_X64
-	#define ufbxi_wrap_shr64(a, b) ((a) >> (b))
-#else
-	#define ufbxi_wrap_shr64(a, b) ((a) >> ((b) & 63))
-#endif
+// The masked form everywhere: a corrupted deflate block can reach the raw shift with a count
+// over 63 (undefined behavior, a UBSan abort in hardened builds). Masking only changes shifts
+// that were undefined anyway, so the correct decode paths are unaffected.
+#define ufbxi_wrap_shr64(a, b) ((a) >> ((b) & 63))
 
 // -- Bit manipulation
 

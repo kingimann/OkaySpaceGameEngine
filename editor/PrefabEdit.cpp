@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -59,8 +60,12 @@ KindEntry ReadKind(const std::string& path) {
 }
 
 // ---- Hierarchy marker cache ------------------------------------------------------------------------
+// Keyed by InstanceId, not by pointer: a destroyed object's slot can be handed to a new
+// object right after a scene change, and a raw-pointer key would then hand the new
+// object the old object's stale count. InstanceIds are never reused, so a lookup can
+// only ever hit the object it was computed for.
 struct CountEntry { int count = 0; double stamp = 0; };
-std::map<const GameObject*, CountEntry>& CountCache() { static std::map<const GameObject*, CountEntry> c; return c; }
+std::map<std::uint64_t, CountEntry>& CountCache() { static std::map<std::uint64_t, CountEntry> c; return c; }
 
 // ---- scene helpers ---------------------------------------------------------------------------------
 void Walk(GameObject* g, std::vector<GameObject*>& out) {
@@ -351,15 +356,23 @@ std::vector<PrefabObjectChange> PrefabObjectChangesOf(GameObject& root) {
 int PrefabOverrideCount(GameObject& root) {
     const double now = Now();
     auto& c = CountCache();
-    auto it = c.find(&root);
+    const std::uint64_t id = root.InstanceId();
+    auto it = c.find(id);
     if (it != c.end() && now - it->second.stamp < 1.5) return it->second.count;
     int n = 0;
     if (!root.prefabSource.empty()) {
         PrefabDiff d;
         if (PrefabTools::Diff(root, d)) n = (int)d.records.size() + (int)d.objects.size();
     }
+    // Entries age out quickly, so the map cannot grow with every object ever counted.
+    if (c.size() >= 512) {
+        for (auto jt = c.begin(); jt != c.end() && c.size() >= 384;) {
+            if (now - jt->second.stamp >= 1.5) jt = c.erase(jt); else ++jt;
+        }
+        while (c.size() >= 512) c.erase(c.begin());   // oldest stamps first, as a hard stop
+    }
     CountEntry e; e.count = n; e.stamp = now;
-    c[&root] = e;
+    c[id] = e;
     return n;
 }
 
@@ -572,7 +585,9 @@ PrefabOpResult PrefabCreateVariant(EditorState& ed, GameObject& root, const std:
     if (!PrefabTools::SaveVariant(root, variantPath, &err)) { ed.DiscardLastUndo(); return Fail("Create Variant failed: " + err); }
     EditorState::FileEdit fe;
     fe.path = Norm(variantPath); fe.hadBefore = false; fe.hasAfter = true;
-    EditorState::ReadTextFile(variantPath, fe.after);
+    // The file was just written and the step must carry what it holds: a failed read
+    // would make Undo write an empty variant over the scene's changes.
+    if (!EditorState::ReadTextFile(variantPath, fe.after)) { ed.DiscardLastUndo(); return Fail("Create Variant failed: cannot read back " + FileName(variantPath)); }
     // The instance now is an instance of the new variant: what it changed is stored there.
     const std::string baseName = FileName(root.prefabSource);
     root.prefabSource = variantPath;
@@ -599,7 +614,7 @@ PrefabOpResult PrefabNewVariantFile(EditorState& ed, const std::string& basePath
     ed.PushUndo("Create Prefab Variant");   // the scene does not change; the step carries the new file so Undo deletes it
     EditorState::FileEdit fe;
     fe.path = Norm(variantPath); fe.hadBefore = false; fe.hasAfter = true;
-    EditorState::ReadTextFile(variantPath, fe.after);
+    if (!EditorState::ReadTextFile(variantPath, fe.after)) { ed.DiscardLastUndo(); return Fail("Create Variant failed: cannot read back " + FileName(variantPath)); }
     ed.AttachUndoFiles({fe});
     ClearPrefabInfoCache();
     PrefabOpResult r; r.ok = true; r.message = "Created variant " + FileName(variantPath) + " of " + FileName(basePath);

@@ -1,5 +1,6 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
+#include "okay/Scene/SceneText.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -307,6 +308,18 @@ void UseRoundTripFloats(std::ostream& o) {
     // The facet has refs=0, so the locale owns it.
     static const std::locale* loc = new std::locale(std::locale::classic(), new RoundTripNumPut(0));
     o.imbue(*loc);
+}
+// True when the next token on the stream is a number the reader accepts. The writer
+// prints floats through std::to_chars, which emits '-', '+', '.' and digits, so
+// optional-field gates have to accept all of them: a gate that peeked for digits
+// only made a negative value (an audio pitch of -1) look like absent fields, the
+// rest of the line was dropped, and the next save wrote the component wrong.
+// Compares against eof before isdigit, which is undefined for a negative int.
+inline bool LooksNumeric(std::istream& in) {
+    in >> std::ws;
+    const int c = in.peek();
+    if (c == std::char_traits<char>::eof()) return false;
+    return c == '-' || c == '+' || c == '.' || std::isdigit(c) != 0;
 }
 // Quote a string for the line-based format (escapes quotes/backslashes).
 std::string Quote(const std::string& s) {
@@ -5544,11 +5557,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         cm->rotateRightKey = KeyFromToken(rrk);
                         cm->cameraDamping = cdamp;
                         in >> std::ws; // optional arrival radius (added later)
-                        if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->arriveRadius;
+                        if (LooksNumeric(in)) in >> cm->arriveRadius;
                         in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; cm->footIK = (fik != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int sc = 1; in >> sc; cm->showCursor = (sc != 0); }
                         in >> std::ws; if (std::isdigit(in.peek())) { int pf = 1; in >> pf; cm->usePathfinding = (pf != 0); }
-                        in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '.') in >> cm->repathInterval;
+                        if (LooksNumeric(in)) in >> cm->repathInterval;
                     }
                 } else if (field == "follow2d") {
                     std::string tn = ReadQuoted(in);
@@ -6952,8 +6965,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sp = 0; in >> sp >> au->minDistance >> au->maxDistance;
                         au->spatial = (sp != 0);
                         // optional mixer fields: pitch pan group rolloff
-                        in >> std::ws;
-                        if (std::isdigit(in.peek()) || in.peek() == '.') {
+                        if (LooksNumeric(in)) {
                             int grp = 0, ro = 0;
                             in >> au->pitch >> au->pan >> grp >> ro;
                             if (grp >= 0 && grp < (int)AudioGroup::Count) au->group = (AudioGroup)grp;
@@ -7420,7 +7432,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (nv->maxBytes < 0) nv->maxBytes = 0;
                     if (!std::isfinite(nv->maxPerSecond) || nv->maxPerSecond < 0.0f) nv->maxPerSecond = 0.0f;
                     in >> std::ws;   // cooldown / budget / refill came later (an older scene has none)
-                    if (std::isdigit(in.peek()) || in.peek() == '.') {
+                    if (LooksNumeric(in)) {
                         in >> nv->cooldown >> nv->budget >> nv->refillPerSecond;
                         for (float* f : {&nv->cooldown, &nv->budget, &nv->refillPerSecond})
                             if (!std::isfinite(*f) || *f < 0.0f) *f = 0.0f;
@@ -7905,7 +7917,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             int p3 = in.peek();
                             if (std::isdigit(p3) || p3 == '-') { int bb = 1; in >> bb; cv->billboard = (bb != 0); }
                             in >> std::ws;
-                            if (std::isdigit(in.peek())) { int smm = 0; in >> smm; cv->screenMatch = (Canvas::ScreenMatch)std::clamp(smm, 0, 2); }
+                            if (LooksNumeric(in)) { int smm = 0; in >> smm; cv->screenMatch = (Canvas::ScreenMatch)std::clamp(smm, 0, 2); }
                         }
                     }
                 } else if (field == "worldui3d") {
@@ -9630,6 +9642,18 @@ void ScanSceneLinks(const std::string& text, std::vector<ScanObj>& objs, SceneVa
             const bool indented = !line.empty() && (line[0] == ' ' || line[0] == '\t');
             if (!indented && word == "gameobject") {
                 ScanObj o; ls >> o.index; o.name = ReadQuoted(ls);
+                // A guid may also sit on the header line after the name (the loader takes it):
+                // check it here too, so duplicates and malformed ids are reported wherever they sit.
+                std::string tailWord;
+                while (ls >> tailWord) {
+                    if (tailWord != "guid") continue;
+                    std::string g = ReadQuoted(ls);
+                    if (g.empty()) { ls.clear(); ls >> g; }
+                    const std::string label = o.name + " (#" + std::to_string(o.index) + ")";
+                    if (g.empty() || !SceneText::IsValidGuid(g)) { add(SceneIssue::Kind::DuplicateGuid, label, "malformed guid in the object header"); continue; }
+                    auto ins = guidOwner.emplace(g, label);
+                    if (!ins.second) add(SceneIssue::Kind::DuplicateGuid, label, "guid " + g + " is also used by " + ins.first->second);
+                }
                 objs.push_back(o); cur = &objs.back();
                 known[o.index] = true;
             } else if (!indented && word == "end") {

@@ -43,3 +43,7 @@ __pycache__/
 
 # fixtures are checked in
 !tests/data/models/*.obj
+
+# scripts/release-local.sh working files
+.release-cache/
+release-out/

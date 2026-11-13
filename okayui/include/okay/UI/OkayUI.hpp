@@ -697,6 +697,9 @@ void TableSetScroll(float x, float y);
 bool TableSetColumnIndex(int column);
 int  TableGetColumnIndex();   // -1 before the first cell of a row
 int  TableGetRowIndex();      // -1 before the first row
+/// The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
+void SetTableRowClipping(bool on);
+bool TableRowIsVisible();     // false while the current row is wholly outside the clip (the row clipper): its widgets still lay out but emit no geometry, so skip expensive cell content
 /// Width in pixels of `text` in the current UI font (for fitting/truncating).
 float CalcTextWidth(const char* text);
 /// Start a new row (call before the row's TableNextColumn cells).

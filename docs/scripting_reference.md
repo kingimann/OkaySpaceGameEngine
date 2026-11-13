@@ -111,6 +111,8 @@ function update(dt) {
 | `add_impulse(...)` / `add_impulse3(...)` | Instant velocity change |
 | `jump(v)` | Set upward velocity (2D or 3D body) |
 | `set_gravity(x, y)` / `set_gravity3(x, y, z)` | Change world gravity |
+| `physics_steps()` / `set_physics_steps(n)` | Read or set how many times a second physics runs |
+| `physics_smooth()` / `set_physics_smooth(on)` | Draw bodies between physics steps |
 
 ### Input
 | Function | Description |

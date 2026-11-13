@@ -984,6 +984,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_glyph` | `Fn.set_glyph` |
 | `set_gravity` | `Fn.set_gravity` |
 | `set_gravity3` | `Fn.set_gravity3` |
+| `physics_steps` | `Fn.physics_steps` |
+| `set_physics_steps` | `Fn.set_physics_steps` |
+| `physics_smooth` | `Fn.physics_smooth` |
+| `set_physics_smooth` | `Fn.set_physics_smooth` |
 | `set_group_volume` | `Fn.set_group_volume` |
 | `set_image` | `Fn.set_image` |
 | `set_input_limit` | `Fn.set_input_limit` |

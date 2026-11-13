@@ -2101,6 +2101,14 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     // The step of a FixedUpdate and the real frame time were both answered with this frame's SCALED delta
     // (so Time.unscaledDeltaTime read 0 in a pause and half of itself at timeScale 0.5).
     if (name == "Time.fixedDeltaTime")      return Value{Time::FixedDeltaTime()};
+    if (name == "Time.physicsSteps") {
+        Scene* sc = g ? g->scene() : nullptr;
+        return Value{sc ? sc->PhysicsStepsPerSecond() : 0.0f};
+    }
+    if (name == "Time.smoothPhysics") {
+        Scene* sc = g ? g->scene() : nullptr;
+        return Value{sc ? sc->SmoothPhysics() : false};
+    }
     if (name == "Time.unscaledDeltaTime")   return Value{Time::UnscaledDeltaTime()};
     if (name == "Time.unscaledTime")        return Value{(float)Time::UnscaledTime()};
     // Since this Play began (the game's clocks that Time.time and Time.frameCount are the process's own).
@@ -2229,6 +2237,14 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
         if (Has(base) && IsClassInstance(Get(base))) { SetMember(Get(base), field, v, true); return true; }
     }
     if (name == "Time.timeScale") { Time::SetTimeScale(v.AsFloat()); return true; }
+    if (name == "Time.physicsSteps") {
+        if (Scene* sc = g ? g->scene() : nullptr) sc->SetPhysicsStepsPerSecond(v.AsFloat());
+        return true;
+    }
+    if (name == "Time.smoothPhysics") {
+        if (Scene* sc = g ? g->scene() : nullptr) sc->SetSmoothPhysics(v.AsBool());
+        return true;
+    }
     // rb.velocity = ... on a GetComponent<T>() reference held in a variable.
     if (auto dot = name.find('.'); dot != std::string::npos && name.find('.', dot + 1) == std::string::npos) {
         const std::string base = name.substr(0, dot);
@@ -9030,6 +9046,24 @@ struct OkayScriptVM::Impl {
         b["ray3_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.ny}; };
         b["ray3_nz"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nz}; };
         b["ray3_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.dist}; };
+        b["physics_steps"] = [this](std::vector<Value>&) {
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            return Value{sc ? sc->PhysicsStepsPerSecond() : 0.0f};
+        };
+        b["set_physics_steps"] = [this](std::vector<Value>& a) {
+            if (Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr)
+                sc->SetPhysicsStepsPerSecond(a.empty() ? 50.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["physics_smooth"] = [this](std::vector<Value>&) {
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            return Value{sc ? sc->SmoothPhysics() : false};
+        };
+        b["set_physics_smooth"] = [this](std::vector<Value>& a) {
+            if (Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr)
+                sc->SetSmoothPhysics(a.empty() ? true : a[0].AsBool());
+            return Value{};
+        };
         b["set_gravity3"] = [this](std::vector<Value>& a) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->physics3D().gravity =

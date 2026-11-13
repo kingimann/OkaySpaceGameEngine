@@ -69,13 +69,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Parts:**
   - 6.4.1 Fixed physics step - `Scene/Scene` - `fixedTimeStep`, `UseFixedStepPhysics`, `maxPhysicsCatchUp` (the step loop is `Scene::StepPhysics`, owned by area 1.3)
   - 6.4.2 Pose history and interpolation - `Physics/PoseHistory` - last two physics poses plus the shown pose per body; `interpolatePhysics` and `PhysicsAlpha()`
-- **Code:** `Physics/PoseHistory`, `Scene/Scene` (StepPhysics)
-- **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`
-- **Editor:** none (the editor Play mode and the player turn it on)
-- **Docs:** -
-- **Tests:** `fixed_step`
-- **Status:** Works - header comments read (player, editor Play and dedicated server use the fixed step; a bare Scene keeps one step per frame); covered by `fixed_step`
-- **Open:** a body moved by game code jumps with no blending (by design, per the header); no setting in the editor to change the step rate
+- **Code:** `Physics/PoseHistory`, `Physics/BodyPose`, `Scene/Scene` (StepPhysics)
+- **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::SetPhysicsStepsPerSecond`, `Scene::SetSmoothPhysics`, `Scene::SetProjectPhysicsRate`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`; script `physics_steps`, `set_physics_steps`, `physics_smooth`, `set_physics_smooth`; `Time.physicsSteps`, `Time.smoothPhysics`
+- **Editor:** Project Settings > Physics: Steps per second, Smooth the motion. The Rigidbody 3D inspector says when a body is parented. Play and a build use the project rate (50 and smooth on when the project never set one)
+- **Docs:** `docs/physics.md`
+- **Tests:** `fixed_step`, `rigidbody_step_parent`
+- **Status:** Works - the step rate is a project setting (default 50, the old rate) that scripts can read and set; interpolation draws between steps at any frame rate; covered by `fixed_step` and `rigidbody_step_parent`
+- **Open:** a body moved by game code jumps with no blending (by design, per the header)
 - **Related:** 1.1, 6.1, 6.2, 16.2
 - **Words:** fixed timestep, FixedUpdate, interpolation, physics rate, PoseHistory, PhysicsAlpha, catch-up, 50 Hz
 - **Seen as:** movement stutters or jitters when frame rate differs from the physics rate; the game plays faster or slower at 30 and 240 FPS; a teleported body smears

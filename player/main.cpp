@@ -1326,6 +1326,9 @@ int main(int argc, char** argv) {
         float bootAccent[3] = {0.235f, 0.475f, 0.800f};
         bool  bootBar = true;
         std::string antiCheat;     // "" / off, report, enforce (docs/anticheat.md)
+        float physicsHz = 50.0f;     // project setting; 50 matches the old fixed step
+        bool smoothPhysics = true;
+        bool sawPhysics = false;
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1394,6 +1397,14 @@ int main(int argc, char** argv) {
             else if (k == "boot_accent")  { std::sscanf(v.c_str(), "%f %f %f", &cfg.bootAccent[0], &cfg.bootAccent[1], &cfg.bootAccent[2]); cfg.bootAccentOn = true; }
             else if (k == "boot_bar")       cfg.bootBar = std::atoi(v.c_str()) != 0;
             else if (k == "anticheat")      cfg.antiCheat = v;
+            else if (k == "physics_hz") {
+                cfg.physicsHz = (float)std::atof(v.c_str());
+                cfg.sawPhysics = true;
+            }
+            else if (k == "physics_smooth") {
+                cfg.smoothPhysics = std::atoi(v.c_str()) != 0;
+                cfg.sawPhysics = true;
+            }
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -1494,6 +1505,7 @@ int main(int argc, char** argv) {
     const bool acHaveManifest = !acManifest.files.empty();
 
     Scene scene("Game");
+    if (cfg.sawPhysics) okay::Scene::SetProjectPhysicsRate(cfg.physicsHz, cfg.smoothPhysics);
     scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
     // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.

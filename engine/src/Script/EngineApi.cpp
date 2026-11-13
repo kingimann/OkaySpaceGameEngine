@@ -890,6 +890,24 @@ EngineApi Build() {
             "Seconds since the last frame (inside FixedUpdate: the fixed step)."));
         t.staticProps.push_back(ro("fixedDeltaTime", tFloat, [](const Value&, CallContext& c) { return Value{c.fixedDeltaTime}; },
             "The FixedUpdate step in seconds."));
+        t.staticProps.push_back(prop("physicsSteps", tFloat,
+            [](const Value&, CallContext& c) {
+                Scene* s = c.self ? c.self->scene() : nullptr;
+                return Value{s ? s->PhysicsStepsPerSecond() : 0.0f};
+            },
+            [](const Value&, const Value& v, CallContext& c) {
+                if (Scene* s = c.self ? c.self->scene() : nullptr) s->SetPhysicsStepsPerSecond(F(v));
+            },
+            "How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame."));
+        t.staticProps.push_back(prop("smoothPhysics", tBool,
+            [](const Value&, CallContext& c) {
+                Scene* s = c.self ? c.self->scene() : nullptr;
+                return Value{s ? s->SmoothPhysics() : false};
+            },
+            [](const Value&, const Value& v, CallContext& c) {
+                if (Scene* s = c.self ? c.self->scene() : nullptr) s->SetSmoothPhysics(std::get<bool>(v));
+            },
+            "Draw bodies between physics steps so motion stays smooth at any frame rate."));
         t.staticProps.push_back(ro("time", tFloat, [](const Value&, CallContext&) { return Value{Time::ElapsedTime()}; },
             "Seconds since the game started."));
         t.staticProps.push_back(ro("frameCount", tInt, [](const Value&, CallContext&) { return Value{(std::int32_t)Time::FrameCount()}; },

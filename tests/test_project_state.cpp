@@ -117,6 +117,8 @@ int main() {
         a.defaultWidth = 1920; a.defaultHeight = 1080;
         a.gravity2D[0] = 1.5f; a.gravity2D[1] = -20.25f;
         a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 123456.789f;
+        a.physicsHz = 30.0f;
+        a.smoothPhysics = false;
         a.ambient = 0.123456789f;
         a.skybox = false;
         Put(a.splashLogo, "Assets/Textures/logo with spaces.png");
@@ -142,6 +144,8 @@ int main() {
         COVER(a, b, d, defaultHeight);
         COVER(a, b, d, gravity2D);
         COVER(a, b, d, gravity3D);
+        COVER(a, b, d, physicsHz);
+        COVER(a, b, d, smoothPhysics);
         COVER(a, b, d, ambient);
         COVER(a, b, d, skybox);
         COVER(a, b, d, splashLogo);
@@ -155,7 +159,7 @@ int main() {
         if (g_covered != DeclaredFields(header, "ProjectSettings")) {
             for (const auto& f : DeclaredFields(header, "ProjectSettings")) if (!g_covered.count(f)) std::cerr << "    ProjectSettings." << f << " has no line in this test\n";
         }
-        CHECK(sizeof(ProjectSettings) == 500);   // a new field changes this: add it to the writer, the reader and this test
+        CHECK(sizeof(ProjectSettings) == 508);   // a new field changes this: add it to the writer, the reader and this test
 
         // The lists came back too.
         CHECK(Tags::Custom().size() == tagsBefore && Tags::Contains("Boss") && Tags::Contains("Pickup Spot"));
@@ -184,6 +188,7 @@ int main() {
         ParseProjectSettings(p, old);
         CHECK(std::string(p.company) == "Old Co" && std::string(p.version) == "1.2.3" && p.defaultWidth == 800 && p.defaultHeight == 600);
         CHECK(p.gravity2D[1] == -9.81f && p.gravity3D[1] == -9.81f && p.ambient == 0.3f && p.skybox && p.splashShowBar);
+        CHECK(p.physicsHz == 50.0f && p.smoothPhysics);   // a file from before the step-rate lines keeps 50 Hz, drawn smoothly
         CHECK(p.splashBgTop[2] == 0.106f && p.splashAccent[1] == 0.475f);
         CHECK(Tags::Custom().empty() && Layers::Name(8) == "Layer 8");   // no list lines: the defaults
 

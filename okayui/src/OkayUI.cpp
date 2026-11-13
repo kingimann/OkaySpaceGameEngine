@@ -2758,19 +2758,29 @@ bool Knob(const char* label, float* value, float minV, float maxV, float size) {
     return changed;
 }
 
-void ProgressBar(float fraction, const char* overlay) {
+void ProgressBar(float fraction, Vec2 size, const char* overlay) {
     if (!g_lay.active) return;
-    const float h = rowH(), w = availW();
+    const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : rowH();
+    float w = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : availW();
     float x, y; place(w, h, x, y);
-    ProgressBar(x, y, w, h, fraction);
+    if (fraction == fraction && fraction < 0.0f) {   // indeterminate: a block sweeping back and forth
+        ProgressBar(x, y, w, h, 0.0f);
+        const double t = GetTime() * 0.8;
+        const float tri = (float)(t - std::floor(t));                     // 0..1 sawtooth
+        const float pos = tri < 0.5f ? tri * 2.0f : (1.0f - tri) * 2.0f;  // 0..1..0
+        const float b = g_theme.borderPx, bw = std::max(8.0f, (w - 2.0f * b) * 0.25f);
+        const float bx = x + b + pos * std::max(0.0f, w - 2.0f * b - bw);
+        PushClipRect(x + b, y + b, std::max(1.0f, w - 2.0f * b), std::max(1.0f, h - 2.0f * b));
+        rrect(bx, y + b, bw, std::max(1.0f, h - 2.0f * b), rnd(), g_theme.accent);
+        PopClipRect();
+    } else ProgressBar(x, y, w, h, fraction);
     if (overlay && *overlay) {
         const float tw = labelW(overlay);
         drawText(x + (w - tw) * 0.5f, y + (h - textH()) * 0.5f, overlay, g_theme.textScale, g_theme.text);
     }
 }
+void ProgressBar(float fraction, const char* overlay) { ProgressBar(fraction, Vec2{}, overlay); }
 
-// Shared framing + scaling for the two plot widgets. Returns the plot rect and the
-// resolved min/max; reserves layout space (leaving room for a label to the right).
 static bool plotFrame(const char* label, const float* values, int count,
                       float& scaleMin, float& scaleMax, float height,
                       float& px, float& py, float& pw, float& ph) {
@@ -3300,8 +3310,18 @@ bool ArrowButton(const char* id, int dir) {
     if (!g_lay.active || !id) return false;
     const float h = rowH();
     float x, y; place(h, h, x, y);
-    static const char* const glyph[4] = {"<", ">", "^", "v"};   // left, right, up, down
-    return Button(hashLabel(id), x, y, h, h, glyph[(unsigned)dir < 4u ? dir : 0]);
+    const bool clicked = Button(hashLabel(id), x, y, h, h, "");
+    // a filled triangle, its bounding box centred on the button (0 left, 1 right, 2 up, 3 down; anything else is left)
+    const float cx = x + h * 0.5f, cy = y + h * 0.5f, r = h * 0.22f;
+    const bool hot = hit(x, y, h, h);
+    const unsigned char* col = hot ? g_theme.text : g_theme.textDim;
+    switch ((unsigned)dir < 4u ? dir : 0) {
+        case 0: tri(cx - r, cy, cx + r, cy - r * 1.2f, cx + r, cy + r * 1.2f, col); break;
+        case 1: tri(cx + r, cy, cx - r, cy - r * 1.2f, cx - r, cy + r * 1.2f, col); break;
+        case 2: tri(cx, cy - r, cx - r * 1.2f, cy + r, cx + r * 1.2f, cy + r, col); break;
+        default: tri(cx, cy + r, cx - r * 1.2f, cy - r, cx + r * 1.2f, cy - r, col); break;
+    }
+    return clicked;
 }
 
 // A checkerboard behind a translucent colour (the pattern tells "see-through" from "dark").
@@ -3407,31 +3427,52 @@ bool TreeNodeEx(const char* label, unsigned flags) {
     const bool leaf = (flags & TreeNode_Leaf) != 0;
     bool* open = openState(id, (flags & TreeNode_DefaultOpen) != 0);
     if (g_nextOpen >= 0) { *open = g_nextOpen != 0; g_nextOpen = -1; }
-    const float h = rowH(), w = fullW(), s = g_theme.textScale;
-    float x, y; place(w, h, x, y);
+    const float h = rowH(), s = g_theme.textScale;
+    const float ax = leftEdge();                                  // where the arrow sits: at the indent
+    float x, y; place(fullW(), h, x, y);
+    float w = fullW();
+    if (flags & TreeNode_SpanFullWidth) { x = g_lay.ox; w = g_lay.contentW; g_lay.prevX = x; g_lay.prevW = w; }
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
-    if (g_active == id) { if (g_released) { if (inside && !leaf) { *open = !*open; g_toggledId = id; } g_active = 0; } }
-    else if (inside && g_pressed) g_active = id;
+    const float arrowW = std::max(24.0f, h);
+    const bool onArrowOnly = (flags & TreeNode_OpenOnArrow) != 0, onDbl = (flags & TreeNode_OpenOnDoubleClick) != 0;
+    bool doToggle = false;
+    if (g_active == id) {
+        if (g_released) {
+            if (inside && !leaf) {
+                const bool arrow = g_pressX < ax + arrowW;          // where the press went down
+                if (onDbl) { if (onArrowOnly && arrow) doToggle = true; }   // double click opens it elsewhere; with OpenOnArrow the arrow also takes one click
+                else if (!onArrowOnly || arrow) doToggle = true;
+            }
+            g_active = 0;
+        }
+    } else if (inside && g_pressed) {
+        g_active = id;
+        if (!leaf && onDbl && g_dblClick) doToggle = true;
+    }
+    if (doToggle) { *open = !*open; g_toggledId = id; }
     const bool shown = leaf || *open;
+    if ((flags & TreeNode_Framed) != 0) quad(x, y, w, h, pick((g_active == id && inside) ? Col_HeaderActive : (inside ? Col_HeaderHovered : Col_Header), g_theme.track));
     if ((flags & TreeNode_Selected) != 0) {
         unsigned char sel[4] = { g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 90 };
         quad(x, y, w, h, sel);
     }
+    const bool bullet = (flags & TreeNode_Bullet) != 0;
     if (g_look) {
         unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        if (!leaf) chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
-        drawText(x + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        if (inside && !(flags & TreeNode_Framed)) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
+        if (bullet) fillCircle(ax + 11.0f, y + h * 0.5f, 3.0f, g_theme.text);
+        else if (!leaf) chevron(ax + 11.0f, y + h * 0.5f, 8.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
+        drawText(ax + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     } else {
-        if (inside) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-        if (!leaf) drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-        drawText(x + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        if (inside && !(flags & TreeNode_Framed)) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
+        if (bullet) fillCircle(ax + 4.0f + fCharW() * s * 0.5f, y + h * 0.5f, 3.0f, g_theme.text);
+        else if (!leaf) drawText(ax + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
+        drawText(ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     }
-    if (shown) g_lay.indent += 16.0f;   // children indent until TreePop()
+    if (shown && !(flags & TreeNode_NoTreePushOnOpen)) g_lay.indent += 16.0f;   // children indent until TreePop()
     return shown;
 }
-
 bool TreeNode(const char* label) { return TreeNodeEx(label, 0); }
 
 void SetNextItemOpen(bool open) { g_nextOpen = open ? 1 : 0; }
@@ -3611,29 +3652,48 @@ void EndMenu() {
     g_curMenu.active = false;
 }
 
-bool Selectable(const char* label, bool selected) {
+static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec2 size, bool* p_sel) {
     if (!g_lay.active) return false;
+    if (p_sel) selected = *p_sel;
     const int id = hashLabel(label);
-    const float h = rowH(), w = fullW(), s = g_theme.textScale;
+    const bool disabled = (flags & Selectable_Disabled) != 0;
+    const float s = g_theme.textScale;
+    const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : rowH();
+    float w = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : fullW();
     float x, y; place(w, h, x, y);
-    const bool inside = hit(x, y, w, h);
+    const float textX = x;                        // the label starts at the cell, even when the highlight spans the table
+    if ((flags & Selectable_SpanAllColumns) && g_tbl.active) {
+        x = g_tbl.x0; w = g_tbl.fullW;
+        g_lay.prevX = x; g_lay.prevW = w;
+    }
+    const bool inside = !disabled && hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
     bool clicked = false;
-    if (g_active == id) { if (g_released) { if (inside) clicked = true; g_active = 0; } }
-    else if (inside && g_pressed) g_active = id;
+    const bool dblOnly = (flags & Selectable_DoubleClickOnly) != 0;
+    if (g_active == id) { if (g_released) { if (inside && !dblOnly) clicked = true; g_active = 0; } }
+    else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
+    const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
+    const float ty = y + (h - textH()) * 0.5f;
     if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
         unsigned char tmp[4];
         const unsigned char white[4] = {255, 255, 255, 255};
         if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
         else if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-        return clicked;
+        drawText(textX + 10.0f, ty, label, s, tcol);
+    } else {
+        if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
+        else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
+        drawText(textX + 6.0f, ty, label, s, tcol);
     }
-    if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
-    else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (clicked) {
+        if (p_sel) *p_sel = !*p_sel;
+        if (flags & Selectable_ClosePopup) CloseCurrentPopup();
+    }
     return clicked;
 }
+bool Selectable(const char* label, bool selected) { return selectableImpl(label, selected, 0, Vec2{}, nullptr); }
+bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size) { return selectableImpl(label, selected, flags, size, nullptr); }
+bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) { return selectableImpl(label, false, flags, size, p_selected); }
 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
@@ -4339,6 +4399,8 @@ Rect GetItemRect() {
     if (g_lay.active) { r.x = g_lay.prevX; r.y = g_lay.prevY; r.w = g_lay.prevW; r.h = g_lay.prevH; }
     return r;
 }
+
+unsigned GetID(const char* label) { return (unsigned)hashLabel(label ? label : ""); }
 
 bool IsItemHovered() {
     return g_lay.active && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);

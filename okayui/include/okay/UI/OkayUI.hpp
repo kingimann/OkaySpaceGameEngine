@@ -22,6 +22,9 @@ namespace okay { class TtfFont; }
 
 namespace OkayUI {
 
+/// A 2D point or size.
+struct Vec2 { float x = 0.0f, y = 0.0f; };
+
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
 /// Named keys for IsKeyDown / IsKeyPressed / IsKeyReleased. The host fills Input::keyDown[id] with whether each key is held this frame.
 enum KeyId : int {
@@ -372,6 +375,9 @@ bool VSliderFloat(const char* label, float w, float h, float* value, float minV,
 /// over [minV, maxV]; an indicator points to the current value. True on change.
 bool Knob(const char* label, float* value, float minV, float maxV, float size = 0.0f);
 void ProgressBar(float fraction, const char* overlay = nullptr);
+/// ProgressBar with a size (`size.x` <= 0: the width left, `size.y` <= 0: one row). A negative fraction is an indeterminate bar: a block
+/// that sweeps back and forth with the time (GetTime).
+void ProgressBar(float fraction, Vec2 size, const char* overlay = nullptr);
 /// A line graph of `values[0..count)`. If scaleMin >= scaleMax the range is taken
 /// from the data. `height` <= 0 uses a default. Great for FPS/telemetry HUDs.
 void PlotLines(const char* label, const float* values, int count,
@@ -379,6 +385,20 @@ void PlotLines(const char* label, const float* values, int count,
 /// A bar chart of `values[0..count)` (same scaling rules as PlotLines).
 void PlotHistogram(const char* label, const float* values, int count,
                    float scaleMin = 0.0f, float scaleMax = 0.0f, float height = 0.0f);
+/// The full plots (okayui/src/OkayUIPlots.cpp): a ring buffer start, an overlay text, a size, values from a getter, and a hover: the point
+/// or bar under the pointer is drawn in the Col_PlotLinesHovered / Col_PlotHistogramHovered colour and a tooltip names it. Non-finite
+/// values leave a gap (lines) or an empty slot (bars); values outside the scale are clamped to its edge. Both return the index of
+/// the hovered value (the index into the data, not the ring), or -1. `count` <= 0 or no data: nothing is drawn.
+struct PlotOptions {
+    int         valuesOffset = 0;        // the first value shown is data[valuesOffset], then on round the ring
+    const char* overlay = nullptr;       // text centred at the top of the plot
+    float       scaleMin = 0.0f, scaleMax = 0.0f;   // scaleMin >= scaleMax: the range of the data
+    Vec2        size;                    // size.x <= 0: the width left; size.y <= 0: 2.4 rows
+};
+int PlotLines(const char* label, const float* values, int count, const PlotOptions& options);
+int PlotLines(const char* label, float (*getter)(void* data, int index), void* data, int count, const PlotOptions& options);
+int PlotHistogram(const char* label, const float* values, int count, const PlotOptions& options);
+int PlotHistogram(const char* label, float (*getter)(void* data, int index), void* data, int count, const PlotOptions& options);
 /// A read-only "label: value" row (ImGui's LabelText) — value on the left, label right.
 void LabelText(const char* label, const char* value);
 
@@ -394,6 +414,13 @@ void Image(SDL_Texture* tex, float w, float h,
 /// A clickable image button (`id` for identity). Returns true the frame it's clicked.
 bool ImageButton(const char* id, SDL_Texture* tex, float w, float h);
 bool InputText(const char* label, char* buf, int cap, unsigned flags = 0);
+/// A multi-line text box editing the caller's buffer (capacity `cap`, always NUL-terminated), built on OkayUI::CodeEdit without the gutter,
+/// highlighting or auto-indent (okayui/src/OkayUIText.cpp). `size.x` <= 0 fills the width left (less the label), `size.y` <= 0 is five rows.
+/// Enter breaks the line, Tab inserts a tab, the mouse and keys select, copy, cut, paste, undo (Ctrl+Z) and scroll. Returns true on any
+/// frame the text changed. An edit that would not fit in `cap` is cut at a whole character and the editor's undo history restarts.
+/// Flags: InputText_ReadOnly. Text with CRLF, control characters or bad UTF-8 is cleaned the way CodeEdit cleans it (the buffer is
+/// rewritten only when the user edits). The state of up to 16 boxes is kept (by label); the least recently drawn is forgotten.
+bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size = Vec2{}, unsigned flags = 0);
 /// InputText that shows `hint` in a dim colour while the field is empty (a placeholder such as "Search...").
 bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags = 0);
 /// The next text field drawn takes the keyboard focus (and puts the caret at the end of its text).
@@ -498,6 +525,12 @@ enum TreeNodeFlags {
     TreeNode_DefaultOpen = 1,   // starts open the first time it is seen
     TreeNode_Leaf        = 2,   // no arrow and no toggling; still returns true (and indents until TreePop) so its children can be drawn
     TreeNode_Selected    = 4,   // drawn highlighted
+    TreeNode_OpenOnArrow = 8,        // only a click on the arrow toggles it; a click on the label leaves it (IsItemClicked still sees the click)
+    TreeNode_OpenOnDoubleClick = 16, // a double click on the row toggles it (alone: a single click does not; with OpenOnArrow: either does)
+    TreeNode_Bullet      = 32,       // a bullet instead of the arrow (the node still opens and closes)
+    TreeNode_SpanFullWidth = 64,     // the row, its highlight and its click area start at the window's content edge, under the indent
+    TreeNode_NoTreePushOnOpen = 128, // an open node does not indent: no TreePop() for it
+    TreeNode_Framed      = 256,      // drawn with a header-style background (the Col_Header colours)
 };
 /// TreeNode with flags (TreeNodeFlags).
 bool TreeNodeEx(const char* label, unsigned flags);
@@ -537,6 +570,13 @@ void MenuSeparator();
 /// A full-width selectable row (list entries). Drawn highlighted when `selected`;
 /// returns true the frame it is clicked.
 bool Selectable(const char* label, bool selected);
+/// Selectable with flags and a size. `size.x` <= 0 fills the width to the right edge, `size.y` <= 0 is one row. With the pointer
+/// the row toggles *p_selected when clicked. Flags: Disabled (dim, no hover or click), ClosePopup (choosing it closes the innermost
+/// popup), SpanAllColumns (in a table: the row covers every column; the cell widgets after it stay in place), DoubleClickOnly (only a
+/// double click chooses it).
+enum SelectableFlags : unsigned { Selectable_None = 0, Selectable_Disabled = 1, Selectable_ClosePopup = 2, Selectable_SpanAllColumns = 4, Selectable_DoubleClickOnly = 8 };
+bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size = Vec2{});
+bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 size = Vec2{});
 
 // ---- Popups / context menus ----------------------------------------------------
 // A floating menu that opens on demand. Fill it with Selectable/Button/Text/Separator.
@@ -745,8 +785,6 @@ void ResetState();
 // a point, and the cursor and size queries that let it sit inside the auto-layout. All coordinates are screen pixels.
 // Every call ignores non-finite or absurd (beyond 1e7) numbers instead of drawing them.
 
-/// A 2D point or size.
-struct Vec2 { float x = 0.0f, y = 0.0f; };
 /// A packed colour, 0xAABBGGRR: the bytes in memory are R, G, B, A (this is the byte order of the draw-list vertices).
 typedef unsigned Color32;
 constexpr Color32 RGBA(unsigned r, unsigned g, unsigned b, unsigned a = 255u) {
@@ -832,6 +870,8 @@ bool InvisibleButton(const char* id, float w, float h);
 /// answer false.
 /// True while the last item has the keyboard (a text field that was clicked into).
 bool IsItemFocused();
+/// The id a widget of this label would get in the current ID scope (what PushID changes).
+unsigned GetID(const char* label);
 /// An id for the last item (0 if it has none); two different widgets in the same ID scope get different ids.
 unsigned GetItemID();
 /// True while any widget is held (pressed or being dragged).

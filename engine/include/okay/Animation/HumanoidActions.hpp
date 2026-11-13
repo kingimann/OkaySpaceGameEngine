@@ -122,6 +122,14 @@ bool RequestDodge(GameObject* go, int dir);
 void SetDodgeIFrames(GameObject* go, bool on);
 bool DodgeIFrames(const GameObject* go);
 
+/// The traverse clips. A proxy plays the one the owner reports (no probe, no movement).
+enum class TraverseClip { Vault = 0, MantleLow = 1, MantleHigh = 2, LedgeGrab = 3, ClimbUp = 4, LetGo = 5 };
+/// Play a traverse clip as is: no probe, no movement. Ledge grab sets `hanging`;
+/// climb up and let go clear it. Used for other players' copies; also tells this
+/// body's own replication (a one-shot event), so the same call on the owner is
+/// replayed on every other peer.
+bool PlayTraverse(GameObject* go, TraverseClip clip);
+
 /// Probe in front of the body. The controller flags default off; these still run.
 bool RequestVault(GameObject* go);
 bool RequestMantle(GameObject* go);

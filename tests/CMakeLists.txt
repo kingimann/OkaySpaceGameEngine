@@ -1819,6 +1819,16 @@ add_executable(test_relay_security test_relay_security.cpp)
 target_link_libraries(test_relay_security PRIVATE okay::engine)
 add_test(NAME relay_security COMMAND test_relay_security)
 
+# The relay client trusts nothing on its socket: welcome timeout, nonce echo, refusal codes
+add_executable(test_net_relay_hardening test_net_relay_hardening.cpp)
+target_link_libraries(test_net_relay_hardening PRIVATE okay::engine)
+add_test(NAME net_relay_hardening COMMAND test_net_relay_hardening)
+
+# The packet wire format is little-endian on every host: pinned byte for byte
+add_executable(test_net_packet_layout test_net_packet_layout.cpp)
+target_link_libraries(test_net_packet_layout PRIVATE okay::engine)
+add_test(NAME net_packet_layout COMMAND test_net_packet_layout)
+
 # Script file APIs stay inside the game's folders (no absolute paths, no "..")
 add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)
@@ -1856,6 +1866,10 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
+target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
+add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
+
 # The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
 if(SDL2_FOUND)
     add_executable(test_voice_races test_voice_races.cpp)
@@ -2610,6 +2624,27 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+add_executable(test_net_reconnect test_net_reconnect.cpp)
+target_link_libraries(test_net_reconnect PRIVATE okay::engine)
+add_test(NAME net_reconnect COMMAND test_net_reconnect)
+
+add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
+target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
+add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
+
+add_executable(test_net_lossy test_net_lossy.cpp)
+target_link_libraries(test_net_lossy PRIVATE okay::engine)
+add_test(NAME net_lossy COMMAND test_net_lossy)
+
+add_executable(test_net_fuzz test_net_fuzz.cpp)
+target_link_libraries(test_net_fuzz PRIVATE okay::engine)
+add_test(NAME net_fuzz COMMAND test_net_fuzz)
+
+add_executable(test_net_rejoin test_net_rejoin.cpp)
+target_link_libraries(test_net_rejoin PRIVATE okay::engine)
+add_test(NAME net_rejoin COMMAND test_net_rejoin)
+
 
 add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
 target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)

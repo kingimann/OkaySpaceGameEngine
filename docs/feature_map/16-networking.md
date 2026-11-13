@@ -13,7 +13,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **What:** The UDP layer under all multiplayer: sockets, byte packets that are split when large, authenticated encryption with libsodium (or, opt-in and unreviewed, our own okay::crypto), and two per-channel delivery modes on top of plain UDP (reliable ordered, and unreliable where only the newest counts).
 - **Parts:**
   - 16.1.1 UDP socket and endpoints - `Net/UdpSocket` - non-blocking UDP, an `Endpoint` (IPv4 address and port) that can key a table, wait-until-readable for the relay loop
-  - 16.1.2 Packet buffer and fragmentation - `Net/Packet` - little-endian byte buffer; sends over 1200 bytes are split and reassembled; receive buffer is 64 KB
+  - 16.1.2 Packet buffer and fragmentation - `Net/Packet` - little-endian byte buffer (byte layout pinned by `net_packet_layout`); sends over 1200 bytes are split and reassembled; receive buffer is 64 KB
   - 16.1.3 Sealed channel - `Net/SecureChannel` - X25519 key pair per peer, one key per direction, XChaCha20-Poly1305 sealing, opt-in sequence numbers (replay window of 64); a harmless stub when built without a crypto backend
   - 16.1.4 Reliable ordered and sequenced channels - `Net/NetChannels` - one ordered stream per named channel (resent until a cumulative ack) and unreliable-sequenced (newer replaces older); wire types 30 to 32
   - 16.1.5 Transport interface - `Net/NetTransport` - `INetTransport` seam with a Native provider that wraps NetworkManager (Photon provider: 16.10)
@@ -22,7 +22,9 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **API:** `NetworkManager::StartServer`, `StartClient`, `Stop`, `encryption`, `SendOrdered`, `SendSequenced`, `SecureChannel::Available`, `INetTransport`, `NetTransport::Get`, `okay::crypto::XChaCha20Poly1305Seal`, `Ed25519Sign`, `X25519`, `RandomBytes`
 - **Editor:** Inspector: Network Manager has no encryption field (set `encryption` in code or script; Anti-Cheat Config has Require encryption); View > Panels > Services has Host Game, Join and Disconnect for a quick test
 - **Docs:** `docs/relay.md`, `docs/anticheat.md` (Network hardening), `docs/launcher-multiplayer.md`, `docs/crypto.md` (own crypto: status, tests, what is not done)
-- **Tests:** `net`, `net_crypto`, `net_crypto_own`, `net_crypto_sodium`, `crypto`, `crypto_sodium_xcheck`, `crypto_python_xcheck`, `crypto_fuzz_smoke`, `net_auth`, `net_hardening`, `net_races`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_backend`; sources `tests/test_net.cpp`, `tests/test_net_crypto.cpp`, `tests/test_crypto.cpp`, `tests/crypto_rfc_vectors.hpp`, `tests/test_crypto_sodium_xcheck.cpp`, `tests/scripts/crypto_xcheck.py`, `tests/fuzz_crypto.cpp`
+- **Tests:** `net`, `net_crypto`, `net_crypto_own`, `net_crypto_sodium`, `crypto`, `crypto_sodium_xcheck`, `crypto_python_xcheck`, `crypto_fuzz_smoke`, `net_auth`, `net_hardening`, `net_races`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_backend`, `net_reconnect`, `net_rejoin`, `net_lossy`, `net_fuzz`; sources `tests/test_net.cpp`, `tests/test_net_crypto.cpp`, `tests/test_crypto.cpp`, `tests/crypto_rfc_vectors.hpp`, `tests/test_crypto_sodium_xcheck.cpp`, `tests/scripts/crypto_xcheck.py`, `tests/fuzz_crypto.cpp`
+- **Connection loss:** a joined client leaves the session when the host sends nothing for `serverTimeoutSeconds` (10; `ConnectionLost()` says why), and a direct join the host never answers gives up after `joinTimeoutSeconds` (15; `JoinRejected()`); 0 turns either off. `SendOrdered` keeps messages past its 32-message window in a per-channel backlog (4096 messages / 8 MiB) instead of dropping them. Tests: `net_multiplayer_fixes`; see `docs/multiplayer_audit.md`
+- **Reconnect and resume:** `autoReconnect` (off by default) makes a client that lost its host rejoin by itself: `reconnectMaxAttempts` tries (5), waiting `reconnectDelaySeconds` (1) then doubling up to `reconnectMaxDelaySeconds` (15); a refusal that cannot change ("wrong password", "authentication failed", a kick) ends it at once. `Reconnecting()`, `ReconnectAttempt()`, `ReconnectGaveUp()`, `Reconnects()`, `Resumed()` and `SetReconnectHandler` report it; direct, relay and join-link sessions are remembered. The host keeps a dropped client's state for `resumeGraceSeconds` (30; at most 64) under a secret token its Welcome gave it, and a rejoin with that token gets the same peer id, score, ready flag and last position back (`SetPeerResumedHandler` on the host); objects the player made with `SpawnOwned` are announced again. Tests: `net_reconnect`
 - **Status:** Works - client and server talk over loopback in `net`; sealing, replay and malformed-packet cases have tests. NetChannels (#423) is wired into NetworkManager but no test names it. Our own crypto (16.1.6) passes every RFC vector and agrees with libsodium and Python on random inputs, but it is unreviewed and off by default
 - **Open:** possible gap: the Ubuntu CI job installs no libsodium-dev, so `net_crypto` and `net_anticheat_p2` may only run their "no libsodium" branch there (unverified: depends on the runner image); `net_races` says it is meant for ThreadSanitizer but CI runs it only under ASan/UBSan; no test names `NetChannels` or `UdpSocket` directly; own crypto (16.1.6): no outside review, no timing measurement of the built code, no Windows or macOS run yet, no libFuzzer run in CI, X25519/Ed25519 are slower than libsodium's
 - **Related:** 16.2, 16.3, 16.10, 39.2
@@ -162,13 +164,14 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
   - 16.8.2 Avatar motion - `Components/NetworkAvatarMotion` - turns a remote avatar to face its travel direction and drives idle, walk, run from its speed so feet do not skate
   - 16.8.3 Proxy gait and action sync - `Components/NetworkSync` - the animation message carries gait, the owner's death and where they look (older peers still read the first four fields)
   - 16.8.4 Spawn and despawn - `Net/NetworkManager` - `Spawn`, `SpawnOwned`, `Despawn` give each spawned prefab a follower NetworkSync (ids "sp/<peer>/<n>")
+  - 16.8.5 Respawn and one-shot animation replication - `Net/NetworkManager`, `Components/NetworkSync`, `Components/SurvivalComponents`, `Animation/HumanoidActions` - a Health Stat respawn or `Revive()` on the host sends `__respawn` (health, position) so other peers' copies come back; dive, hit, traverse (vault, mantle, ledge) and emotes ride the animation message as a one-shot event
 - **Code:** `Components/NetworkPlayerSpawner`, `Components/NetworkAvatarMotion`
 - **API:** `NetworkPlayerSpawner`, `NetworkAvatarMotion`, `NetworkManager::SpawnOwned`, `Despawn`, scripts `net_spawn`, `net_spawn_owned`, `net_despawn`
 - **Editor:** Inspector: Network Player Spawner (Add Component menu)
 - **Docs:** `docs/launcher-multiplayer.md` ("For game makers")
-- **Tests:** `net_player_spawn`, `net_proxy_gait`, `net_anim_actions`, `net_spawn`, `mp_controllers`
+- **Tests:** `net_player_spawn`, `net_proxy_gait`, `net_anim_actions`, `net_spawn`, `mp_controllers`, `net_respawn_anim`
 - **Status:** Works - five tests cover local versus proxy setup, gait, death and look sync, and replicated spawns
-- **Open:** object holding in multiplayer was PR 4 of the holding plan (branch claude/holding-net, an older branch; not checked against main); respawns are not replicated (see 16.6)
+- **Open:** object holding in multiplayer was PR 4 of the holding plan (branch claude/holding-net, an older branch; not checked against main); a death that no replicated hit caused (a kill volume, a script) is not sent to other players, only the respawn is; two one-shot animations inside one sync interval play only the newest
 - **Related:** 16.2, 16.3, 4.1, 5.3, 5.9
 - **Words:** remote player, proxy, avatar, NetworkPlayerSpawner, NetworkAvatarMotion, local player, template, SpawnOwned, despawn, gait, skating feet
 - **Seen as:** other players slide without walking animation; remote players are sprites instead of characters; two copies of my player; a remote player can be driven by my keys
@@ -270,16 +273,16 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 ### 16.14 Relay server (NAT traversal)
 - **What:** A small program players behind home routers meet at: both connect out to it, share a code, and it forwards datagrams by slot without reading them. It is exposed to the internet, so it caps and trusts nothing. Also carries voice (16.7).
 - **Parts:**
-  - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 3; the relay strips its header so inner messages are untouched
+  - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 4 (4 adds the welcome nonce); little-endian throughout; the relay strips its header so inner messages are untouched
   - 16.14.2 Relay server core - `Net/RelayServer` - sessions by code, slot ids, host-secret key for version-2 hosts, cookie round trip for version-3, per-address and global caps, rate limits, idle expiry
   - 16.14.3 Standalone program - `relay/main.cpp` - `okayspace-relay [port] [--legacy-hello=on|off]`, default port 45100; target `okayspace-relay` (always built except for Emscripten)
-  - 16.14.4 Using it from a game - `Net/NetworkManager` - `HostViaRelay`, `JoinViaRelay`, `RelayReady`, `RelayError`; scripts `net_host_relay`, `net_join_relay`
+  - 16.14.4 Using it from a game - `Net/NetworkManager` - `HostViaRelay`, `JoinViaRelay`, `RelayReady`, `RelayError`; welcome timeout (`relayTimeoutSeconds`) and nonce check (`allowUnverifiedRelay`); scripts `net_host_relay`, `net_join_relay`
   - 16.14.5 Hosting kits - `deploy/voice-server/Dockerfile` - Dockerfile, docker-compose, systemd unit and `install.sh` for a VPS (built without libsodium, port 45100/udp)
 - **Code:** `Net/RelayProtocol`, `Net/RelayServer`, `relay/main.cpp`, `relay/CMakeLists.txt`, `deploy/voice-server/Dockerfile`, `deploy/voice-server/docker-compose.yml`, `deploy/voice-server/install.sh`, `deploy/voice-server/okayspace-voice.service`
 - **API:** `RelayServer`, `okayspace-relay`, `NetworkManager::HostViaRelay`, `JoinViaRelay`, `RelayAddress`, `RelayCode`
 - **Editor:** none (launcher uses it for calls; the Windows dist ships `Tools/okayspace-relay.exe`)
 - **Docs:** `docs/relay.md`, `docs/voice-server.md`
-- **Tests:** `net_relay`, `relay_security`, `net_anticheat_ph2`
+- **Tests:** `net_relay`, `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`
 - **Status:** Works - `net_relay` joins through an in-process relay, `relay_security` covers isolation, unguessable slots, floods and random datagrams
 - **Open:** whether the live relay was redeployed with the cookie hardening can't be told from the repo (ROADMAP item 7); `--legacy-hello` still defaults to on, to be turned off once the log's legacy count stays zero; no deploy automation (manual `install.sh` or Docker)
 - **Related:** 16.5, 16.7, 39.8, 41.5

@@ -672,6 +672,7 @@ int main(int argc, char** argv) {
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -14262,12 +14263,12 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
     return d;
 }
 
-// One TextEditor widget per open script, lazily created and configured.
-static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<TextEditor>> g_codeEditors;
-static TextEditor& CodeEditorFor(okay::ScriptComponent* sc) {
+// One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
+static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWidget>> g_codeEditors;
+static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
-        auto te = std::make_unique<TextEditor>();
+        auto te = std::make_unique<ScriptEditorWidget>();
         te->SetLanguageDefinition(OkayScriptLangDef());
         te->SetPalette(OkayScriptPalette());
         te->SetShowWhitespaces(false);
@@ -14715,7 +14716,7 @@ void DrawScriptEditor(EditorState& ed) {
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
         static std::vector<ScriptLint> s_warns;         // semantic warnings (unknown fn, arity)
-        static TextEditor::Keywords s_userTypes;        // classes / enums declared in the open script
+        static ScriptEditorWidget::Keywords s_userTypes;        // classes / enums declared in the open script
         static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F opens the bar + highlights matches)
@@ -15596,7 +15597,7 @@ void DrawScriptEditor(EditorState& ed) {
             ? (std::min(nprobLive, 6) * (ImGui::GetTextLineHeight() + 14.0f) + 28.0f) : 0.0f;
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 16.0f + probH; if (av.y < 80) av.y = 80;
 
-        TextEditor& te = CodeEditorFor(sc);
+        ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
@@ -15612,12 +15613,12 @@ void DrawScriptEditor(EditorState& ed) {
         // undoable edit in the widget, so Ctrl+Z takes it back and the view stays put
         // (pushing it through SetText would clear the undo history and scroll to the top).
         if (!caret.replaceAll.empty()) {
-            const TextEditor::Coordinates cur = te.GetCursorPosition();
+            const ScriptEditorWidget::Coordinates cur = te.GetCursorPosition();
             te.SelectAll();
             te.InsertTextUndoable(caret.replaceAll);
             const int lines = te.GetTotalLines();
             const int line = std::min(cur.mLine, lines - 1);
-            te.SetCursorPosition(TextEditor::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
             caret.replaceAll.clear();
             std::string t = te.GetText(); if (!t.empty() && t.back() == '\n') t.pop_back();
             SetCodeBuffer(sc, t); g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
@@ -15730,31 +15731,31 @@ void DrawScriptEditor(EditorState& ed) {
         // Diagnostics -> error markers (red line + hover message); bookmarks -> the
         // widget's breakpoint markers (repurposed).
         {
-            TextEditor::ErrorMarkers em;
+            ScriptEditorWidget::ErrorMarkers em;
             for (const auto& w : s_warns) if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg;
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
             te.SetUserTypes(s_userTypes);
-            te.SetBreakpoints(TextEditor::Breakpoints(bookmarks.begin(), bookmarks.end()));
+            te.SetBreakpoints(ScriptEditorWidget::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
 
         // Apply a pending jump (go-to-line box / Outline / F12 / find / nav / Marks).
         if (caret.gotoLine > 0) {
             int ln = caret.gotoLine - 1; if (ln < 0) ln = 0;
             int col = caret.gotoCol > 0 ? caret.gotoCol - 1 : 0;
-            te.SetCursorPosition(TextEditor::Coordinates(ln, col));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col));
             caret.gotoLine = 0;
             caret.gotoCol = 0;
         }
         if (caret.gotoPos >= 0) {
             const char* t = buf.data(); int ln = 0, col = 0;
             for (int i = 0; i < caret.gotoPos && t[i]; ++i) { if (t[i] == '\n') { ++ln; col = 0; } else ++col; }
-            te.SetCursorPosition(TextEditor::Coordinates(ln, col));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col));
             // Find-next selects the match it landed on (matches are single-line).
             if (caret.gotoSelLen > 0) {
-                te.SetSelection(TextEditor::Coordinates(ln, col),
-                                TextEditor::Coordinates(ln, col + caret.gotoSelLen));
-                te.SetCursorPosition(TextEditor::Coordinates(ln, col + caret.gotoSelLen));
+                te.SetSelection(ScriptEditorWidget::Coordinates(ln, col),
+                                ScriptEditorWidget::Coordinates(ln, col + caret.gotoSelLen));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col + caret.gotoSelLen));
             }
             caret.gotoPos = -1; caret.gotoSelLen = 0;
         }
@@ -16026,25 +16027,26 @@ void DrawScriptEditor(EditorState& ed) {
             const int col = te.GetCursorPosition().mColumn;
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
-        s_codeFocus = GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr;
+        s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
+                                       : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
         if (stepOver) {
-            TextEditor::Coordinates c = te.GetCursorPosition();
-            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 1));
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
         }
         if (pairOpen) {
             const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
-            TextEditor::Coordinates c = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.InsertTextUndoable(std::string(1, close));
             te.SetCursorPosition(c);
         }
         if (braceEnter) {
             // The widget already broke the line and indented it like the `{` line;
             // add one level for the body and push the `}` to its own line.
-            TextEditor::Coordinates c = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             const std::string ln = te.GetCurrentLineText();
             std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
             te.InsertTextUndoable("    \n" + ind);
-            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 4));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 4));
         }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
@@ -16105,7 +16107,7 @@ void DrawScriptEditor(EditorState& ed) {
                 float fy = (ImGui::GetIO().MousePos.y - (mp.y + 4.0f)) / (usedH > 1 ? usedH : 1);
                 int target = (int)(fy * lines);
                 if (target < 0) target = 0; if (target >= lines) target = lines - 1;
-                te.SetCursorPosition(TextEditor::Coordinates(target, 0));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(target, 0));
             }
             ImGui::EndChild();
             ImGui::PopStyleColor();
@@ -16231,7 +16233,7 @@ void DrawScriptEditor(EditorState& ed) {
             // Ctrl+hover over a symbol defined in this file: underline + hand cursor;
             // click jumps to the definition (Rider's Ctrl+Click; F12 works too).
             if (ImGui::GetIO().KeyCtrl && ImGui::IsMouseHoveringRect(teMin, teMax)) {
-                TextEditor::Coordinates mc = te.ScreenToCoords(ImGui::GetIO().MousePos);
+                ScriptEditorWidget::Coordinates mc = te.ScreenToCoords(ImGui::GetIO().MousePos);
                 const char* t = buf.data(); int len = (int)std::strlen(t);
                 int off = 0, ln = 0;
                 for (; t[off] && ln < mc.mLine; ++off) if (t[off] == '\n') ++ln;
@@ -16398,7 +16400,7 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Report caret line/col/pos/selLen for the status bar, find-anchor and nav.
         {
-            TextEditor::Coordinates cp = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates cp = te.GetCursorPosition();
             caret.line = cp.mLine + 1; caret.col = cp.mColumn + 1;
             const char* t = buf.data(); int off = 0, ln = 0;
             for (; t[off] && ln < cp.mLine; ++off) if (t[off] == '\n') ++ln;
@@ -16573,9 +16575,9 @@ void DrawScriptEditor(EditorState& ed) {
                         if (cStart < 0) cStart = 0;
                         // Select the typed prefix so the insert replaces it as ONE undo step.
                         if (cEnd > cStart) {
-                            te.SetCursorPosition(TextEditor::Coordinates(l0, cEnd));
-                            te.SetSelection(TextEditor::Coordinates(l0, cStart), TextEditor::Coordinates(l0, cEnd));
-                        } else te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
+                            te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cEnd));
+                            te.SetSelection(ScriptEditorWidget::Coordinates(l0, cStart), ScriptEditorWidget::Coordinates(l0, cEnd));
+                        } else te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart));
                         const std::string* sg = memberMode ? nullptr : ScriptSignature(word);
                         bool zeroArg = sg && sg->find("()") != std::string::npos;
                         if (memberMode && !word.empty() && (word.back() == '(' || word.back() == '<')) {
@@ -16583,11 +16585,11 @@ void DrawScriptEditor(EditorState& ed) {
                             const std::string nm = word.substr(0, word.size() - 1);
                             if (word.back() == '(') te.InsertTextUndoable(nm + "()");
                             else te.InsertTextUndoable(nm + "<>()");
-                            te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)nm.size() + 1));
+                            te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart + (int)nm.size() + 1));
                         } else {
                             te.InsertTextUndoable(sg ? word + "()" : word);
                             if (sg && !zeroArg)
-                                te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
+                                te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart + (int)word.size() + 1));
                         }
                         syncFromWidget();
                         g_acDismiss = true; g_acCount = 0;
@@ -16799,12 +16801,12 @@ void DrawScriptEditor(EditorState& ed) {
             // Replace whole lines [l0..l1] with `repl` (no trailing newline), as an
             // undoable select+delete+insert; returns caret to (curL, curC).
             auto replaceLines = [&](int l0, int l1, const std::string& repl, int curL, int curC) {
-                te.SetSelection(TextEditor::Coordinates(l0, 0),
-                                TextEditor::Coordinates(l1, te.LineLength(l1)));
+                te.SetSelection(ScriptEditorWidget::Coordinates(l0, 0),
+                                ScriptEditorWidget::Coordinates(l1, te.LineLength(l1)));
                 if (l0 != l1 || te.LineLength(l1) > 0) te.Delete();
-                te.SetCursorPosition(TextEditor::Coordinates(l0, 0));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, 0));
                 te.InsertTextUndoable(repl);
-                te.SetCursorPosition(TextEditor::Coordinates(curL, curC));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(curL, curC));
                 syncFromWidget();
             };
             auto linesText = [&](int l0, int l1) {
@@ -16849,9 +16851,9 @@ void DrawScriptEditor(EditorState& ed) {
             if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
-                te.SetSelection(TextEditor::Coordinates(selL0, 0),
-                                selL1 + 1 < total ? TextEditor::Coordinates(selL1 + 1, 0)
-                                                  : TextEditor::Coordinates(selL1, te.LineLength(selL1)));
+                te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
+                                selL1 + 1 < total ? ScriptEditorWidget::Coordinates(selL1 + 1, 0)
+                                                  : ScriptEditorWidget::Coordinates(selL1, te.LineLength(selL1)));
                 te.Delete();
                 syncFromWidget();
             }
@@ -16914,12 +16916,12 @@ void DrawScriptEditor(EditorState& ed) {
             // Ctrl+W — expand selection: word -> whole line(s) -> whole file.
             if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-                TextEditor::Coordinates a = te.SelStart(), b = te.SelEnd();
+                ScriptEditorWidget::Coordinates a = te.SelStart(), b = te.SelEnd();
                 bool none = a == b;
                 bool fullLines = !none && a.mColumn == 0 && b.mColumn >= te.LineLength(b.mLine);
                 if (none)           te.SelectWordUnderCursor();
-                else if (!fullLines) te.SetSelection(TextEditor::Coordinates(a.mLine, 0),
-                                                     TextEditor::Coordinates(b.mLine, te.LineLength(b.mLine)));
+                else if (!fullLines) te.SetSelection(ScriptEditorWidget::Coordinates(a.mLine, 0),
+                                                     ScriptEditorWidget::Coordinates(b.mLine, te.LineLength(b.mLine)));
                 else                 te.SelectAll();
             }
         }

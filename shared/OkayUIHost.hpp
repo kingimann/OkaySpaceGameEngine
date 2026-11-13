@@ -51,8 +51,16 @@ public:
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
             m_shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-            if (e.type != SDL_KEYDOWN) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
             const bool ctrl = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
+            m_ctrl = ctrl;
+            {   // held state of the named keys (Input::keyDown); a press and release between two frames still shows for one frame
+                const int id = KeyIdOf(e.key.keysym.sym);
+                if (id != OkayUI::KeyId_None) {
+                    m_keyHeld[id] = (e.type == SDL_KEYDOWN);
+                    if (e.type == SDL_KEYDOWN) m_keyTap[id] = true;
+                }
+            }
+            if (e.type != SDL_KEYDOWN) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
             switch (e.key.keysym.sym) {
             case SDLK_BACKSPACE: m_back = true; break;
             case SDLK_DELETE:    m_del = true; break;
@@ -63,7 +71,12 @@ public:
             case SDLK_RETURN:
             case SDLK_KP_ENTER:  m_enter = true; break;
             case SDLK_ESCAPE:    m_escape = true; break;
+            case SDLK_UP:        m_up = true; break;
+            case SDLK_DOWN:      m_down = true; break;
             case SDLK_a:         if (ctrl) m_selectAll = true; break;
+            case SDLK_c:         if (ctrl) m_copy = true; break;
+            case SDLK_x:         if (ctrl) m_cut = true; break;
+            case SDLK_v:         if (ctrl) m_paste = true; break;
             default: break;
             }
             break;
@@ -86,8 +99,12 @@ public:
             in.text = m_out[0] ? m_out : nullptr;
             in.backspace = m_back; in.del = m_del; in.left = m_left; in.right = m_right;
             in.home = m_home; in.end = m_end; in.enter = m_enter; in.escape = m_escape; in.selectAll = m_selectAll;
-            in.shift = m_shift;
+            in.shift = m_shift; in.ctrl = m_ctrl;
+            in.up = m_up; in.down = m_down; in.copy = m_copy; in.cut = m_cut; in.paste = m_paste;
+            for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) in.keyDown[k] = m_keyHeld[k] || m_keyTap[k];
         }
+        for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) m_keyTap[k] = false;
+        m_up = m_down = m_copy = m_cut = m_paste = false;
         m_text[0] = 0;
         m_wheel = 0.0f;
         m_leftTap = m_rightTap = false;
@@ -95,7 +112,29 @@ public:
         return in;
     }
 
+    /// The OkayUI key a SDL keycode stands for (KeyId_None for the keys OkayUI does not name).
+    static int KeyIdOf(SDL_Keycode k) {
+        using namespace OkayUI;
+        if (k >= SDLK_a && k <= SDLK_z) return KeyId_A + (int)(k - SDLK_a);
+        if (k >= SDLK_0 && k <= SDLK_9) return KeyId_0 + (int)(k - SDLK_0);
+        if (k >= SDLK_F1 && k <= SDLK_F12) return KeyId_F1 + (int)(k - SDLK_F1);
+        switch (k) {
+        case SDLK_TAB: return KeyId_Tab;       case SDLK_LEFT: return KeyId_Left;     case SDLK_RIGHT: return KeyId_Right;
+        case SDLK_UP: return KeyId_Up;         case SDLK_DOWN: return KeyId_Down;     case SDLK_PAGEUP: return KeyId_PageUp;
+        case SDLK_PAGEDOWN: return KeyId_PageDown; case SDLK_HOME: return KeyId_Home; case SDLK_END: return KeyId_End;
+        case SDLK_INSERT: return KeyId_Insert; case SDLK_DELETE: return KeyId_Delete; case SDLK_BACKSPACE: return KeyId_Backspace;
+        case SDLK_SPACE: return KeyId_Space;   case SDLK_RETURN: case SDLK_KP_ENTER: return KeyId_Enter;
+        case SDLK_ESCAPE: return KeyId_Escape;
+        case SDLK_LCTRL: case SDLK_RCTRL: return KeyId_Ctrl;
+        case SDLK_LSHIFT: case SDLK_RSHIFT: return KeyId_Shift;
+        case SDLK_LALT: case SDLK_RALT: return KeyId_Alt;
+        default: return KeyId_None;
+        }
+    }
+
 private:
+    bool  m_up = false, m_down = false, m_copy = false, m_cut = false, m_paste = false, m_ctrl = false;
+    bool  m_keyHeld[OkayUI::KeyId_COUNT] = {}, m_keyTap[OkayUI::KeyId_COUNT] = {};
     char  m_text[64] = {0};
     char  m_out[64] = {0};
     float m_wheel = 0.0f;

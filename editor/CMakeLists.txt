@@ -60,6 +60,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel

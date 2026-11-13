@@ -2,6 +2,7 @@
 // the mouse. No window: the events are plain SDL_Event structs.
 #include "test_framework.hpp"
 #include "OkayUIHost.hpp"
+#include "okay/UI/OkayUICodeEdit.hpp"
 #include "OkayUITestKit.hpp"
 
 #include <cstring>
@@ -82,6 +83,77 @@ int main() {
         for (int i = 0; i < 100; ++i) c.Feed(Text("abcdefgh"));
         const UI::Input in = c.Build(0, 0, false, false, false, true);
         CHECK(in.text && std::strlen(in.text) < 64 && std::strlen(in.text) > 0);
+    }
+    {   // the keys a code editor needs: Up/Down, the clipboard shortcuts, the ctrl state and the held named keys
+        InputCollector c;
+        c.Feed(Key(SDLK_UP)); c.Feed(Key(SDLK_DOWN));
+        c.Feed(Key(SDLK_c, KMOD_CTRL)); c.Feed(Key(SDLK_x, KMOD_LCTRL)); c.Feed(Key(SDLK_v, KMOD_GUI));
+        UI::Input in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.up && in.down && in.copy && in.cut && in.paste && in.ctrl);
+        CHECK(in.keyDown[UI::KeyId_C] && in.keyDown[UI::KeyId_X] && in.keyDown[UI::KeyId_V]);   // pressed and released in one frame still shows once
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(!in.up && !in.down && !in.copy && !in.cut && !in.paste);   // edges are one-shot
+        CHECK(in.ctrl);                                                  // ...ctrl is a state: it stays until a key event says otherwise
+        c.Feed(Key(SDLK_c)); c.Feed(Key(SDLK_x)); c.Feed(Key(SDLK_v));   // without ctrl they are plain letters
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(!in.copy && !in.cut && !in.paste && !in.ctrl);
+    }
+    {   // named keys are held states: down until the key-up, so IsKeyPressed can see the edge and its own repeat
+        InputCollector c;
+        c.Feed(Key(SDLK_PAGEUP)); c.Feed(Key(SDLK_TAB)); c.Feed(Key(SDLK_z, KMOD_CTRL)); c.Feed(Key(SDLK_y, KMOD_CTRL));
+        UI::Input in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.keyDown[UI::KeyId_PageUp] && in.keyDown[UI::KeyId_Tab] && in.keyDown[UI::KeyId_Z] && in.keyDown[UI::KeyId_Y] && !in.keyDown[UI::KeyId_PageDown]);
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(in.keyDown[UI::KeyId_PageUp] && in.keyDown[UI::KeyId_Tab]);   // still held
+        c.Feed(Key(SDLK_PAGEUP, 0, false)); c.Feed(Key(SDLK_TAB, 0, false));
+        in = c.Build(0, 0, false, false, false, true);
+        CHECK(!in.keyDown[UI::KeyId_PageUp] && !in.keyDown[UI::KeyId_Tab] && in.keyDown[UI::KeyId_Z]);
+        c.Feed(Key(SDLK_PAGEDOWN)); c.Feed(Key(SDLK_F5));
+        in = c.Build(0, 0, false, false, false, false);                       // not delivered while OkayUI may not have the keyboard...
+        CHECK(!in.keyDown[UI::KeyId_PageDown] && !in.up);
+        in = c.Build(0, 0, false, false, false, true);                        // ...and the held state is still known afterwards
+        CHECK(in.keyDown[UI::KeyId_PageDown] && in.keyDown[UI::KeyId_F5]);
+        CHECK(InputCollector::KeyIdOf(SDLK_F13) == UI::KeyId_None && InputCollector::KeyIdOf(SDLK_a) == UI::KeyId_A &&
+              InputCollector::KeyIdOf(SDLK_9) == UI::KeyId_9 && InputCollector::KeyIdOf(SDLK_RCTRL) == UI::KeyId_Ctrl);
+    }
+    {   // end to end: a CodeEdit driven only by SDL events (arrows, Tab, Ctrl+Z/Y, Ctrl+C then Ctrl+V, Ctrl+Left word move)
+        okayuitest::Reset();
+        okayuitest::Sim sim(400, 200);
+        UI::CodeEdit ed;
+        ed.SetText("one two\nthree");
+        InputCollector c;
+        auto frame = [&]() {
+            UI::BeginFrame(c.Build(0, 0, false, false, false, true));
+            UI::BareNextWindow();
+            if (UI::Begin("ce", 0, 0, 400, 200)) ed.Draw("##ce", 400, 200);
+            UI::End();
+            UI::EndFrameData();
+        };
+        frame(); ed.Focus(); frame();
+        // One key per frame, then its release (what a person's keyboard does): the keys of a frame are applied in a fixed order.
+        auto tap = [&](SDL_Keycode k, Uint16 mod = 0) { c.Feed(Key(k, mod)); frame(); c.Feed(Key(k, 0, false)); frame(); };
+        tap(SDLK_DOWN);
+        CHECK(ed.Caret().line == 1);
+        tap(SDLK_UP);
+        CHECK(ed.Caret().line == 0);
+        tap(SDLK_END);
+        tap(SDLK_LEFT, KMOD_LCTRL);                                  // word-left from the end of "one two"
+        CHECK(ed.Caret().line == 0 && ed.Caret().col == 4);
+        tap(SDLK_RIGHT, KMOD_LSHIFT | KMOD_LCTRL);
+        CHECK(ed.SelectedText() == "two");
+        tap(SDLK_c, KMOD_LCTRL);
+        CHECK(std::string(UI::GetClipboardText()) == "two");
+        tap(SDLK_END);
+        tap(SDLK_v, KMOD_LCTRL);
+        CHECK(ed.Line(0) == "one twotwo");
+        tap(SDLK_z, KMOD_LCTRL);
+        CHECK(ed.Line(0) == "one two");
+        tap(SDLK_y, KMOD_LCTRL);
+        CHECK(ed.Line(0) == "one twotwo");
+        tap(SDLK_HOME, KMOD_LCTRL);
+        CHECK(ed.Caret().line == 0 && ed.Caret().col == 0);
+        tap(SDLK_TAB);
+        CHECK(ed.Line(0) == "    one twotwo");
     }
     {   // the hosted region: owns the mouse only inside the rectangle, only while ImGui said it is hovered, and only for one more frame
         Region r;

@@ -522,7 +522,7 @@ Built, in new files so `OkayUI.cpp` is untouched apart from three small hooks: `
 
 Tested: `test_okayui_codeedit.cpp` (407 checks: every editing operation, movement, UTF-8 selection edge cases, undo grouping, find, highlighting, brackets, the widget driven by synthetic mouse and keys, pixels, a golden image, a 100k-line performance check) and `test_okayui_codeedit_fuzz.cpp` (flat-string model fuzz and random mouse, wheel, keys and API calls; clean under ASan and UBSan).
 
-Not done: IME, ligatures, multiple cursors, folding, word wrap, a code font (the cell width assumes a monospaced font; family 23), wide-character cells, autocomplete popup (the editor draws its own on the widget's geometry), a real window or GPU check, the script editor itself still on ImGuiColorTextEdit. The multi-line paste named as not done in 4.28 is now possible in this widget (the single-line text field is unchanged).
+Not done: IME, ligatures, multiple cursors, folding, word wrap, a code font (the cell width assumes a monospaced font; family 23), wide-character cells, autocomplete popup (the editor draws its own on the widget's geometry), a real window or GPU check, the script editor reaches it only through `ScriptEditorWidget` with the developer-only OkayUI backend (step 27 in `docs/own_ui_code_editor.md`; the default is still ImGuiColorTextEdit; the host now sends Up, Down, Ctrl+C, X, V, Ctrl and the named keys). The multi-line paste named as not done in 4.28 is now possible in this widget (the single-line text field is unchanged).
 
 ### 4.30 Gap-closing step 26: docking (family 22)
 

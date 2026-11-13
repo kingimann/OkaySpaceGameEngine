@@ -180,15 +180,53 @@ Nothing is deployed. To go live:
 4. **Point each game server at the public key** in its rules:
    `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
    same `aud` that clients ask for.
-5. **Fetch a ticket before joining** (still to do in the launcher or game):
-   POST to the function with the player's access token, the server id and
-   `cnf` = `NetworkManager::TicketBinding()` (base64url SHA-256 of the session
-   key the next `StartClient` / `JoinViaRelay` will use; it makes that key
-   now), then `SetAuthToken(ticket)` and start the client. A bound ticket is
-   for that one connection: a reconnect fetches a new one.
-   `okayac::backend::SessionTicket` builds the request and `ParseTicket` reads
-   the answer; on `banned`, refresh `ac_my_bans` so the launcher's ban banner
-   shows why.
+5. **Tell the game to ask for tickets** (built into the player and the launcher; see
+   [Joining a server that needs a ticket](#joining-a-server-that-needs-a-ticket)):
+   put an `okay_tickets.cfg` next to the game with `mode required` and the
+   server's id.
+
+#### Joining a server that needs a ticket
+
+The player installs a join gate (`NetworkManager::SetJoinGate`, `shared/TicketJoin.hpp`) when
+`okay_tickets.cfg` is next to the game (one `key value` per line, `#` comments):
+
+```
+mode required              # off (the default: nothing changes) | optional | required
+audience arena-1           # the server id to ask for (the server's ticketAudience)
+server 203.0.113.7:45000 arena-2   # a server of its own id; "off" = this one needs no ticket
+```
+
+Every client join (a launcher `--join`, a reconnect, a script's `net_join` or a relay join) then
+goes through the gate **before any socket is opened**:
+
+1. The gate asks `NetworkManager::TicketBinding()` for the connection's key binding (`cnf`) and
+   POSTs `{"aud", "cnf", "hw_hash"}` to the ticket service with the player's access token
+   (`okayac::backend::SessionTicket` builds it, `ParseTicket` reads the answer; each request has an
+   8 s limit).
+2. A ticket is presented as the auth token instead of the account's own token, so a game server
+   never sees the Supabase token. A reconnect asks again: a bound ticket works for one connection.
+3. Answers (`shared/TicketClient.hpp`, `tests/test_ticket_client.cpp`):
+
+   | Answer | What happens |
+   |---|---|
+   | ticket | joins with it; the service's clock (`iat`) is compared with the player's, so a wrong player clock doesn't make a good ticket "expired" (the player is told to fix the clock past 2 minutes); a ticket with under 10 s left is not used |
+   | `403 banned` | final, never retried or cached. No join is sent. The launcher refreshes `ac_my_bans` so the ban banner shows the reason and the appeal button |
+   | `401` | the saved session is re-read once (the launcher renews it) and the request repeated; still 401 = "sign in again" |
+   | 5xx, 429, timeout, no answer | up to 3 tries with growing waits inside 12 s |
+   | `404` (function not deployed), `400` | no retry; the reason is shown |
+
+4. **`mode required`: no ticket, no join.** Any answer but a ticket, including "service down",
+   returns `false` from `StartClient` with the reason in `NetworkManager::LastJoinRefusal()` and
+   sends nothing. `optional` tries, and joins with the account token when the service is down
+   (the server still refuses it if it requires tickets); a ban is never optional. A typo in the
+   `mode` line is treated as `required`, not `off`.
+5. The **launcher** also checks before it starts a game to join (off the UI thread): a ban already
+   known, or a banned answer, stops the start, refreshes `ac_my_bans` and shows the toast and the
+   banner. The launcher reads `okay_tickets.cfg` beside the launcher or beside the game's scene.
+
+Without an `okay_tickets.cfg` nothing changes. What is **not** done: the join waits for the ticket
+request (up to about 12 s if the service is slow; the window doesn't repaint meanwhile), and a
+server doesn't tell the client that it needs tickets, so the client goes by its own config.
 
 To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
@@ -578,6 +616,29 @@ any other signed-in player is refused, and players see their own bans with
 `ac_my_bans`. A ban takes effect at the player's next ticket, so within
 `OKAY_TICKET_TTL` (10 minutes by default).
 
+**Abuse limits** (all in the database, `docs/sql/anticheat.sql`): 20 reports an hour and 60 a day per
+player; the same player can't be reported again within 10 minutes, or more than 3 times a day, by one
+reporter; a reporter whose last 10 reports in 30 days were all dismissed (none actioned) is paused;
+one appeal an hour and 5 a day per player (3 per ban, one open per ban); `ac_my_bans` 120 lookups an hour.
+
+**Ban evasion.** A ban belongs to an account and, optionally, a machine hash. The ticket service
+records which machine hashes an account used (`ac_note_device`, `ac_devices`, admins read it only,
+newest 20 per account, 90 days). Admins get `ac_linked_accounts(user)` (other accounts that used the same
+machines) and `ac_ban_with_devices(user, reason, until)` (the account and every machine it used, in one
+step, through the ordinary ban rules). A new account on a banned machine gets no ticket, and the attempt
+is written to the audit log. Shared machines exist, so a link is a lead for an admin, never an automatic
+ban. This only works for players who send the hash (anyone can hide it by modifying their client), and a
+fresh install on new hardware is a new machine.
+
+**Audit.** `ac_audit` is an append-only record of every change to bans, appeals, report reviews and the
+list of server accounts, with who (or "no signed-in user": the SQL editor, the service key, a cascade),
+and the old and new row. `admin_log` only sees signed-in admins; this sees everything. The API cannot
+edit or delete its rows, a trigger stops the table owner too, and only `ac_purge_audit()` trims entries
+over a year old (and logs that it did). A database superuser can still drop the trigger: it records
+what happened through the product, it is not protection from whoever runs the database. It holds account
+ids (never names or emails), and because it is append-only it keeps the ids of deleted accounts until
+the year is up; the device links (`ac_devices`) are deleted with the account.
+
 Deleting an account deletes its account-only bans. A ban that also names a
 machine is kept, with `user_id` set to null, so deleting the account and
 signing up again doesn't clear a machine ban: the new account still sees it
@@ -760,6 +821,12 @@ Be clear-eyed about what this is.
   clock too, won't show up. The server-verified version is the one worth wiring in.
 - **No kernel driver, no memory scanning, no obfuscation.** This won't stop a
   dedicated cheat developer.
+- **Updates are signed only once you create keys.** The launcher and editor verify `versions.json`
+  against `OKAY_UPDATE_TRUSTED_KEYS` ([updater.md](updater.md#signed-releases)); a build without it still
+  accepts an unsigned feed, and so does anyone who runs an older build.
+- **The ticket flow is only as good as its config.** A game without `okay_tickets.cfg`, or with
+  `mode optional`, joins a ticket-requiring server without a ticket (the server then refuses it); the
+  server does not announce that it needs tickets.
 - **Integrity costs a hash of every file at each launch**, done by the launcher
   and again by the player. That's fine for small games and noticeable for very
   large ones.

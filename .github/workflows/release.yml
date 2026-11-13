@@ -43,6 +43,8 @@ jobs:
       # The launcher's trusted anti-cheat keys: public keys, so a repository
       # variable (Settings > Secrets and variables > Actions > Variables).
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
+      # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
+      OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
     steps:
       - uses: actions/checkout@v6
 

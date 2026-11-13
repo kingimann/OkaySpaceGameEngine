@@ -63,6 +63,11 @@ add_executable(test_audio_mixer test_audio_mixer.cpp)
 target_link_libraries(test_audio_mixer PRIVATE okay::engine)
 add_test(NAME audio_mixer COMMAND test_audio_mixer)
 
+add_executable(test_spatial_audio test_spatial_audio.cpp)
+target_link_libraries(test_spatial_audio PRIVATE okay::engine)
+target_compile_definitions(test_spatial_audio PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME spatial_audio COMMAND test_spatial_audio)
+
 add_executable(test_audio_formats test_audio_formats.cpp)
 target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -844,6 +849,12 @@ add_executable(test_save_coverage test_save_coverage.cpp)
 target_link_libraries(test_save_coverage PRIVATE okay::engine)
 add_test(NAME save_coverage COMMAND test_save_coverage)
 
+# Two of every serializable component, plus prefab apply, undo deltas, diff/merge, copy and export.
+add_executable(test_duplicate_components test_duplicate_components.cpp)
+target_link_libraries(test_duplicate_components PRIVATE okay::engine)
+target_compile_definitions(test_duplicate_components PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME duplicate_components COMMAND test_duplicate_components)
+
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)
@@ -998,6 +1009,11 @@ add_executable(test_physics_explode test_physics_explode.cpp)
 target_link_libraries(test_physics_explode PRIVATE okay::engine)
 add_test(NAME physics_explode COMMAND test_physics_explode)
 
+add_executable(test_physics2d_casts test_physics2d_casts.cpp)
+target_link_libraries(test_physics2d_casts PRIVATE okay::engine)
+target_compile_definitions(test_physics2d_casts PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME physics2d_casts COMMAND test_physics2d_casts)
+
 add_executable(test_subtree test_subtree.cpp)
 target_link_libraries(test_subtree PRIVATE okay::engine)
 add_test(NAME subtree COMMAND test_subtree)
@@ -1124,6 +1140,7 @@ add_test(NAME ik_state_weight COMMAND test_ik_state_weight)
 # Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
 add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
+target_compile_definitions(test_sequence PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME sequence COMMAND test_sequence)
 
 # Localization: .okayloc / CSV round trips, fallback, plurals, settings, localized widgets, scripts, fonts
@@ -1135,6 +1152,13 @@ add_test(NAME localization COMMAND test_localization)
 add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# The Localization window's path onto those tools (editor/LocalizationTools, ImGui-free): a missing
+# key, a placeholder mismatch and a pseudo-locale preview, the same functions DrawLocalizationWindow calls.
+add_executable(test_loc_window test_loc_window.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp)
+target_include_directories(test_loc_window PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_loc_window PRIVATE okay::engine)
+add_test(NAME loc_window COMMAND test_loc_window)
 
 # Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
 add_executable(test_loc_runtime test_loc_runtime.cpp)
@@ -1860,6 +1884,10 @@ if(SDL2_FOUND)
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
 
+    add_executable(test_display_screen test_display_screen.cpp)
+    target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME display_screen COMMAND test_display_screen)
     add_executable(test_ui_focus_render test_ui_focus_render.cpp)
     target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -1898,6 +1926,12 @@ add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
 
+# Touch: gesture recogniser (synthetic finger streams) and on-screen controls driving the action map.
+add_executable(test_touch_controls test_touch_controls.cpp)
+target_link_libraries(test_touch_controls PRIVATE okay::engine)
+target_compile_definitions(test_touch_controls PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME touch_controls COMMAND test_touch_controls)
+
 # Input: F-keys / nav keys / left-right modifiers, input contexts that swallow keys, gamepad dead zones,
 # response curves, trigger thresholds and several controllers
 add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)
@@ -1922,6 +1956,10 @@ add_test(NAME fixed_step COMMAND test_fixed_step)
 add_executable(test_post_sky test_post_sky.cpp)
 target_link_libraries(test_post_sky PRIVATE okay::engine)
 add_test(NAME post_sky COMMAND test_post_sky)
+# Which lighting / post / fog / sky switches each renderer actually draws
+add_executable(test_renderer_features test_renderer_features.cpp)
+target_link_libraries(test_renderer_features PRIVATE okay::engine)
+add_test(NAME renderer_features COMMAND test_renderer_features)
 # Navigation mesh: bake (walls, doorways, slopes, steps, bridges), queries, agents, files, records
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
@@ -2456,6 +2494,9 @@ add_test(NAME file_dialog COMMAND test_file_dialog)
 add_executable(test_accessibility_wired test_accessibility_wired.cpp)
 target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
 add_test(NAME accessibility_wired COMMAND test_accessibility_wired)
+add_executable(test_accessibility_remaining test_accessibility_remaining.cpp)
+target_link_libraries(test_accessibility_remaining PRIVATE okay::engine)
+add_test(NAME accessibility_remaining COMMAND test_accessibility_remaining)
 add_executable(test_ui_focus test_ui_focus.cpp)
 target_link_libraries(test_ui_focus PRIVATE okay::engine)
 add_test(NAME ui_focus COMMAND test_ui_focus)
@@ -2661,3 +2702,10 @@ add_test(NAME net_rejoin COMMAND test_net_rejoin)
 add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
 target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
 add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
+
+# Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
+add_executable(test_clipboard test_clipboard.cpp)
+target_link_libraries(test_clipboard PRIVATE okay::engine)
+target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME clipboard COMMAND test_clipboard)

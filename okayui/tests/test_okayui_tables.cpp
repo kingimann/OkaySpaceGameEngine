@@ -516,6 +516,123 @@ void TestFuzz() {
     }
 }
 
+
+// ---- the row clipper ----------------------------------------------------------------------------------------------------
+// Rows wholly outside the visible band are laid out but emit nothing, so a table of thousands of rows fits the vertex batch, and what
+// is on screen is exactly what it was without the clipper.
+
+struct ClipRig {
+    Rig r;
+    int rows = 60;
+    UI::TableFlags flags = UI::Table_ScrollY | UI::Table_RowBg | UI::Table_BordersInnerH;
+    UI::Vec2 outer{360, 200};
+    float setScrollTo = -1.0f;
+    int visibleRows = 0, firstVisible = -1;
+    ClipRig() {
+        r.body = [&] {
+            visibleRows = 0; firstVisible = -1;
+            if (UI::BeginTable("clip", 3, flags, outer, 0.0f)) {
+                UI::TableSetupColumn("A", 0, 1.0f); UI::TableSetupColumn("B", 0, 1.0f); UI::TableSetupColumn("C", 0, 1.0f);
+                UI::TableSetupScrollFreeze(0, 1);
+                UI::TableHeadersRow();
+                if (setScrollTo >= 0.0f) UI::TableSetScroll(0.0f, setScrollTo);
+                for (int i = 0; i < rows; ++i) {
+                    UI::TableNextRow();
+                    if (UI::TableRowIsVisible()) { ++visibleRows; if (firstVisible < 0) firstVisible = i; }
+                    char t[32];
+                    UI::TableNextColumn(); std::snprintf(t, sizeof t, "row %d", i); UI::Text(t);
+                    UI::TableNextColumn(); std::snprintf(t, sizeof t, "name %d", i * 7); UI::Text(t);
+                    UI::TableNextColumn(); std::snprintf(t, sizeof t, "value %d", i * 13); UI::Text(t);
+                }
+                UI::EndTable();
+            }
+            UI::Text("after");
+        };
+    }
+};
+
+void TestRowClipper() {
+    RUN_SUITE("tables: row clipper");
+    // 1. the picture does not change: the same table with the clipper on and off, at the top, in the middle and at the bottom, both looks
+    for (int look = 0; look < 2; ++look) {
+        UI::UseLauncherLook(look == 1);
+        for (float scroll : {0.0f, 400.0f, 100000.0f}) {
+            ClipRig c; c.setScrollTo = scroll;
+            UI::SetTableRowClipping(true);  c.r.Frames(5); const Bitmap a = c.r.sim.Draw(12, 14, 20); const int vOn = UI::GetDrawData().vertexCount; const int visOn = c.visibleRows;
+            UI::SetTableRowClipping(false); c.r.Frames(2); const Bitmap b = c.r.sim.Draw(12, 14, 20); const int vOff = UI::GetDrawData().vertexCount; const int visOff = c.visibleRows;
+            UI::SetTableRowClipping(true);
+            CHECK(a.w == b.w && a.h == b.h);
+            bool same = a.w == b.w && a.h == b.h;
+            for (int y = 0; same && y < a.h; ++y) for (int x = 0; x < a.w; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) { same = false; std::fprintf(stderr, "  differs at %d,%d (look %d, scroll %g)\n", x, y, look, scroll); break; }
+            if (!same && std::getenv("CLIPDBG")) { int n = 0, x0 = 9999, y0 = 9999, x1 = -1, y1 = -1; for (int y = 0; y < a.h; ++y) for (int x = 0; x < a.w; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) { ++n; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
+                std::fprintf(stderr, "  %d px differ in [%d,%d]-[%d,%d]\n", n, x0, y0, x1, y1); }
+            CHECK(same);
+            CHECK(vOn < vOff);                       // and it really emitted less
+            CHECK(visOn > 0 && visOn < c.rows);
+            CHECK(visOff == c.rows);                 // with the clipper off every row reports visible
+        }
+        UI::UseLauncherLook(false);
+    }
+    // 2. thousands of rows: nothing is dropped, in the classic and the launcher look, at the top, the middle and the end
+    for (int look = 0; look < 2; ++look) {
+        UI::UseLauncherLook(look == 1);
+        ClipRig big; big.rows = 5000; big.r.Frames(3);
+        for (float scroll : {0.0f, 40000.0f, 1.0e7f}) {
+            big.setScrollTo = scroll; big.r.Frames(3);
+            const UI::DrawData d = UI::GetDrawData();
+            CHECK(d.dropped == 0);
+            CHECK(UI::DroppedGeometry() == 0);
+            CHECK(d.vertexCount > 0 && d.vertexCount < 20000);
+            CHECK(big.visibleRows > 0 && big.visibleRows < 40);
+        }
+        UI::UseLauncherLook(false);
+    }
+    {   // the same table without the clipper overflows: this is what the clipper fixes (kept as the regression's reason)
+        UI::SetTableRowClipping(false);
+        ClipRig big; big.rows = 5000; big.r.Frames(3);
+        const int dropped = UI::GetDrawData().dropped;
+        UI::SetTableRowClipping(true);
+        CHECK(dropped > 0);
+        std::fprintf(stderr, "  5000 rows, clipper off: %d shapes dropped\n", dropped);
+    }
+    // 3. the scrolled-to row is the right one: after scrolling the first visible row is near the scroll offset / row height
+    {
+        ClipRig c; c.rows = 5000; c.r.Frames(3);
+        c.setScrollTo = 20000.0f; c.r.Frames(3);
+        CHECK(c.firstVisible > 100);
+        CHECK(c.firstVisible < 4990);
+    }
+    // 4. a table that does not scroll, inside a window: rows past the bottom of the screen are not emitted either
+    {
+        Rig r(640, 480); int vis = 0, n = 5000;
+        r.body = [&] {
+            vis = 0;
+            if (UI::BeginTable("plain", 3, UI::Table_RowBg)) {
+                UI::TableSetupColumn("A", 0, 1.0f); UI::TableSetupColumn("B", 0, 1.0f); UI::TableSetupColumn("C", 0, 1.0f);
+                UI::TableHeadersRow();
+                for (int i = 0; i < n; ++i) {
+                    UI::TableNextRow();
+                    if (UI::TableRowIsVisible()) ++vis;
+                    char t[32];
+                    UI::TableNextColumn(); std::snprintf(t, sizeof t, "r%d", i); UI::Text(t);
+                    UI::TableNextColumn(); UI::Text("two"); UI::TableNextColumn(); UI::Text("three");
+                }
+                UI::EndTable();
+            }
+        };
+        r.Frames(3);
+        CHECK(UI::GetDrawData().dropped == 0);
+        CHECK(vis > 0 && vis < 100);
+    }
+    // 5. a row with a button in it stays clickable in the middle of a long table, and a short table is never clipped
+    {
+        ClipRig c; c.rows = 5000; c.r.Frames(3); c.setScrollTo = 4000.0f; c.r.Frames(3);
+        CHECK(c.visibleRows > 0);
+        ClipRig small; small.rows = 3; small.outer = V(360, 300); small.r.Frames(3);
+        CHECK(small.visibleRows == 3);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -526,5 +643,6 @@ int main() {
     TestSpans();
     TestRowBg();
     TestFuzz();
+    TestRowClipper();
     TEST_MAIN_RESULT();
 }

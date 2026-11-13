@@ -13,6 +13,17 @@ number moves. A **patch never changes a file format** and never adds a feature, 
 other's projects without asking (the editor's project upgrade question only appears between different lines; see
 `docs/project_upgrade.md` when that page exists).
 
+## A release becomes "latest" only after its checksums are published
+
+The in-app updater refuses any file that has no SHA-256 in `versions.json` (on the Supabase release server). If a release
+became GitHub's "latest" before that list had it, launchers saw the new version and then failed with a "no checksum" error
+(this happened with 2.866.0: the CI step that publishes to Supabase is skipped when the repository has no
+`SUPABASE_SERVICE_KEY` secret). So the release workflow now creates the GitHub release as **not latest**, publishes to
+Supabase, checks that `versions.json` really lists the version with a checksum for each program, and only then marks it
+latest (job "Make the release visible (latest)"). Without the secret that job fails with a message instead of letting the
+release out unchecked: publish with `scripts/publish-supabase.sh` (or `scripts/release-local.sh`), then run
+`gh release edit v<version> --latest`. `scripts/release-local.sh` follows the same order.
+
 ## Where the files live
 
 | Place | What | Kept |

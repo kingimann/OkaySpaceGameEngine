@@ -4,12 +4,14 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-12 01:30 UTC_
+_Last updated: 2026-11-13 17:55 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.867.0 | Windows programs and installer are signed when a certificate is configured (#798); a release becomes "latest" only after its checksums are published, fixing the "no checksum" update error (#796); own crypto tests: Wycheproof vectors, differential tests, faster Ed25519 verify (#799, own crypto stays OFF and NOT READY); own 3DS and BVH readers and real-file checks of the own FBX and COLLADA readers (#795, all OFF); feature-map conflict markers removed (#797) |
+| 2.866.0 | Joint3D hinge limits (#763); convex mesh colliders for moving bodies and landing callbacks (#766); 2D box and capsule casts and 2D explosion force (#771); behaviour-tree sub-trees and breakpoints (#775); every duplicate component saved (#774); sequence letterbox, camera shake, screen fade and nested sequences (#776); spatial audio reverb zones, doppler, occlusion and distance muffling (#778); Settings screen monitor, display mode, resolution and refresh (#777); subtitles, hold-to-toggle and aim assist (#767); themed and high-visibility focus ring (#781); on-screen touch controls and gestures (#779); UI frame rotation and scale (#780); game clipboard (#770); items, loot and recipes editor (#782); Localization window tools (#765); renderer feature notes (#772); visual-script Timer and Actions export (#773); duplicate PLY vertex block refused (#768) |
 | 2.865.0 | Visual-script export: Wait and Delay emit after(seconds, fn) (#764). Confirmed bug fixes now on main (#756): file dialogs cancelled on scene rebuild and shortcuts blocked while one is open; prefab variant undo reads the file back; prefab override counts keyed by instance id; negative numbers no longer drop the following save fields; build-profile names cannot forge keys; object-header guids used in scene diff; launcher Content-Length parsing, 2 GiB download cap, link previews skip non-public hosts, bounded Tenor dims, voice-clip WAV ownership; script repeat and pad caps; MTL paths cannot climb out of the model directory; FBX axis selectors clamped; ufbx shifts masked; OkayUI child, popup and id stacks stay balanced |
 | 2.864.0 | Batch of hostile-input, hang and data-race fixes (FBX/GLB/PLY readers, physics sweeps, NavMesh, voice chat); navigation obstacle carving; build pipeline (Data folder layout, build report); visual-script declared variables, lists and maps, clearer pin and node tips; multiplayer dead-host detection and relay re-hello hardening; relay protocol v4 (upgrade the live relay with this release, or set allowUnverifiedRelay); CI runs the Ubuntu builds in parallel |
 | 2.863.0 | Updater hardening (checksums required, all-or-nothing swap, verified restart with rollback, no retry loop); ordered-queue overflow fix; hostile-input fixes; editor unsaved-check throttle; proprietary license |

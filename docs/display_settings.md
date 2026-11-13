@@ -122,10 +122,60 @@ switch (okay::DisplaySettings::Mode()) {
 }
 ```
 
-and fills the list once the window exists (`SDL_GetDesktopDisplayMode`, `SDL_GetNumDisplayModes`
-into `SetDesktopResolution` and `SetSupportedResolutions`). The Settings screen component
-shows the three older controls (fullscreen toggle, vsync toggle, quality dropdown); dropdowns
-for resolution and window mode bound to `Resolutions()` and `Modes()` are the next step.
+The player and the editor do this with `shared/SdlDisplays.hpp` (`okay::sdldisplay::ListMonitors`
+and `Apply`). That helper talks to SDL directly. It is not the `okay::platform` seam, and it
+does not turn the own-code window backend on. SDL stays the default. A host that is not on
+SDL (the own backend, chosen only with `OKAY_PLATFORM_BACKEND=own`) still toggles borderless
+fullscreen and does not get a monitor list.
+
+## Monitors and refresh rate
+
+`DisplaySettings::SetMonitors` takes the list from the helper. Each monitor has a name, a
+place on the desktop, the desktop size, and its modes (`width`, `height`, `refreshHz`).
+Modes outside 640x360 .. 16384x16384, or with a refresh rate below 0 or above 1000, are
+dropped. The rest are sorted small to large, then by rate, with exact repeats removed.
+
+`SetMonitorIndex` / `SetMonitorName` choose one (the name matches any case). `RefreshHz` /
+`SetRefreshHz` is the rate in hertz; 0 means the monitor may choose. `Resolutions()` for the
+Settings screen is that monitor's sizes. `RefreshRates()` is the rates listed for the chosen size.
+
+`ResolveSaved()` runs after the list is known. A saved monitor name that is not connected
+falls back to the first monitor. A saved size that monitor does not list falls back to the
+nearest listed size (the smaller one when two are equally close). A saved rate that is not
+listed falls back to the nearest listed rate (the lower one on a tie). Nothing saved stays
+nothing: the host keeps the size it opened with.
+
+## Keep these settings?
+
+Apply on the Settings screen remembers the current choice and starts a 10-second clock
+(`BeginTrial`). The screen asks "Keep these settings?" and counts down. Keep
+(`KeepTrial`, or Done) stores the new choice. Revert, or the clock running out
+(`TickTrial`), puts the previous monitor, mode, size and rate back and the host applies
+that because `Generation()` moved.
+
+The choice is saved with `video.pending=1` and `video.prev.*` while the question is open.
+If the game quits before Keep or Revert, the next launch (`Restore`) throws the unconfirmed
+choice away and uses the previous one.
+
+## The Settings screen
+
+The shipped screen (`UITemplates::AddSettings`, driven by `SettingsScreen`) has Monitor,
+Display mode (Windowed, Borderless, Fullscreen), Resolution, Refresh rate, VSync, Quality
+and Apply, plus the audio and accessibility rows and Done. The four display rows wait for
+Apply. VSync, quality, volume and the accessibility rows still change as you move them.
+An older scene that still has a Fullscreen switch keeps working: on means borderless.
+
+## Scripts
+
+Text scripts, the visual-script nodes `Fn.*` (titles such as Get Monitor, Set Display Mode,
+Set Refresh Rate, Begin Display Confirm) and the action-list steps read and set the same
+choice. `begin_display_confirm` starts the 10-second question; `keep_display_settings` and
+`revert_display_settings` answer it. `set_display_mode` takes `windowed`, `borderless` or
+`fullscreen`.
+
+The pure rules (filtering, the nearest mode, the fallback, the saved text, the clock) live
+in `okay/Core/DisplayModes.hpp` and do not need a window. Tests: `display_settings`,
+`display_screen`.
 
 ## What changed
 
@@ -142,4 +192,5 @@ for resolution and window mode bound to `Resolutions()` and `Modes()` are the ne
 - **Saved settings reach the window.** The player never read `DisplaySettings` at start-up, so a
   saved fullscreen choice only applied after the Settings screen was opened; `Restore()` fixes
   that.
-- Tests: `display_settings` (there was none).
+- **Monitor, resolution, refresh and a 10-second revert.** The Settings screen lists the connected monitors and their modes. Apply asks "Keep these settings?" and reverts if nobody answers. A quit during that question restores the previous choice next launch.
+- Tests: `display_settings`, `display_screen`.

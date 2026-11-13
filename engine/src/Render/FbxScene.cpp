@@ -877,8 +877,8 @@ struct Builder {
             }
             Clip clip; clip.name = st.name;
             const double dur = t1 - t0;
-            std::size_t samples = (std::size_t)std::max(1.0, std::ceil(dur * opt.bakeRate));
-            if (samples + 1 > opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;
+            std::size_t samples = SafeSize(std::max(1.0, std::ceil(dur * opt.bakeRate)));   // a hostile LocalStop makes dur huge: saturate, then the limits below apply
+            if (samples >= opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;   // (not samples + 1 > max: that wraps for a saturated count)
             {   // whole-file budget: this clip costs (sample count) x (curve nodes it evaluates)
                 std::size_t entries = blendCns.size();
                 for (const auto& kv : perNode) entries += kv.second.size();

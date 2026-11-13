@@ -1,3 +1,8 @@
+# The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
+add_executable(test_sandbox test_sandbox.cpp)
+target_link_libraries(test_sandbox PRIVATE okay::engine)
+add_test(NAME sandbox COMMAND test_sandbox)
+
 add_executable(test_math test_math.cpp)
 target_link_libraries(test_math PRIVATE okay::engine)
 add_test(NAME math COMMAND test_math)
@@ -797,6 +802,12 @@ target_link_libraries(test_project_save PRIVATE okay::engine)
 add_test(NAME project_save COMMAND test_project_save)
 
 # The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+# The build pipeline's pure logic (okay/Core/BuildPipeline.hpp): layout planner, data-folder lookup, dependency walk,
+# build manifest, report, zip, and the Build Settings text. The end-to-end export check is tests/export/verify_layout.sh.
+add_executable(test_build_pipeline test_build_pipeline.cpp)
+target_link_libraries(test_build_pipeline PRIVATE okay::engine)
+add_test(NAME build_pipeline COMMAND test_build_pipeline)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
@@ -1029,6 +1040,10 @@ add_executable(test_gltf_import test_gltf_import.cpp)
 target_link_libraries(test_gltf_import PRIVATE okay::engine)
 add_test(NAME gltf_import COMMAND test_gltf_import)
 
+add_executable(test_glb_container test_glb_container.cpp)
+target_link_libraries(test_glb_container PRIVATE okay::engine)
+add_test(NAME glb_container COMMAND test_glb_container)
+
 add_executable(test_skinning test_skinning.cpp)
 target_link_libraries(test_skinning PRIVATE okay::engine)
 add_test(NAME skinning COMMAND test_skinning)
@@ -1167,6 +1182,7 @@ target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
 add_executable(test_vs_inventory test_vs_inventory.cpp)
 target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
@@ -1185,6 +1201,7 @@ endif()
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
 add_executable(test_vs_names test_vs_names.cpp)
@@ -1219,6 +1236,11 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_vs_clarity test_vs_clarity.cpp)
+target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_clarity PRIVATE okay::engine)
+add_test(NAME vs_clarity COMMAND test_vs_clarity)
 
 add_executable(test_doc_recovery test_doc_recovery.cpp)
 target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1271,6 +1293,11 @@ add_test(NAME frustum_culling COMMAND test_frustum_culling)
 add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+add_executable(test_vs_variables test_vs_variables.cpp)
+target_link_libraries(test_vs_variables PRIVATE okay::engine)
+target_compile_definitions(test_vs_variables PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_variables COMMAND test_vs_variables)
 
 add_executable(test_vs_refs test_vs_refs.cpp)
 target_link_libraries(test_vs_refs PRIVATE okay::engine)
@@ -1385,6 +1412,7 @@ add_test(NAME vs_runtime COMMAND test_vs_runtime)
 
 add_executable(test_vs_gameplay test_vs_gameplay.cpp)
 target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
 
 add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
@@ -1412,6 +1440,7 @@ add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
 target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+target_compile_definitions(test_vs_registry_effect PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
 
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)
@@ -1841,6 +1870,14 @@ add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
 target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
 add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
 
+# The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
+if(SDL2_FOUND)
+    add_executable(test_voice_races test_voice_races.cpp)
+    target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME voice_races COMMAND test_voice_races)
+endif()
+
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)
 target_link_libraries(test_object_holding PRIVATE okay::engine)
@@ -1884,6 +1921,10 @@ add_test(NAME navmesh COMMAND test_navmesh)
 add_executable(test_navmesh_areas test_navmesh_areas.cpp)
 target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
 add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
+# Navigation obstacle carving: footprint strips, polygon subtraction, portals, stationary timing, agents replanning, scene file, validator
+add_executable(test_navmesh_carving test_navmesh_carving.cpp)
+target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
+add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -2564,6 +2605,11 @@ add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
+
+# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
+target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
+add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
 
 # Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
 #   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.

@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <limits>
 
 using namespace okay;
 
@@ -87,6 +88,38 @@ int main() {
         tm->SetTile(2, 0, 0);   // clear it
         auto open = Pathfinding::OnTilemap(*tm, 0, 0, 4, 0);
         CHECK(open.size() == 5);
+    }
+
+    // --- Dimensions whose product overflows int: refused, not an out-of-bounds write ---
+    // (65536 * 65537 wraps to 65536, so the work arrays were one row short while the
+    //  cell index still reached 65536 and beyond)
+    {
+        std::vector<bool> some(200000, true);
+        auto wrapped = Pathfinding::AStar(some, 65536, 65537, 0, 0, 0, 1);
+        CHECK(wrapped.empty());
+        bool threw = false;
+        std::vector<Pathfinding::Cell> negative;
+        try { negative = Pathfinding::AStar(some, 2, 1 << 30, 0, 0, 1, 1); } catch (...) { threw = true; }
+        CHECK(!threw);                      // a negative wrapped size used to throw from the vector
+        CHECK(negative.empty());
+        // Just past the cell limit is refused too; a normal grid is untouched.
+        std::vector<bool> tiny(16, true);
+        CHECK(Pathfinding::AStar(tiny, 4096, 4097, 0, 0, 1, 0).empty());
+        CHECK(Pathfinding::AStar(tiny, 4, 4, 0, 0, 3, 3).size() == 7);
+    }
+
+    // --- A world position far outside any grid saturates to a cell instead of being undefined ---
+    {
+        Scene sc("far");
+        auto* tm = sc.CreateGameObject("Map")->AddComponent<Tilemap>();
+        tm->Resize(4, 4);
+        int cx = 0, cy = 0;
+        tm->WorldToCell({1e30f, -1e30f, 0}, cx, cy);
+        CHECK(cx == std::numeric_limits<int>::max());
+        CHECK(cy == std::numeric_limits<int>::min());
+        CHECK(!tm->InBounds(cx, cy));
+        tm->WorldToCell({std::numeric_limits<float>::quiet_NaN(), 0, 0}, cx, cy);
+        CHECK(cx == 0);
     }
 
     TEST_MAIN_RESULT();

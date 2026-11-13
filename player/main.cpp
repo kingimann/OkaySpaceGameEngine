@@ -12,6 +12,12 @@
 #include <Okay.hpp>
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
+#include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/Paths.hpp"
+#include <filesystem>
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
@@ -1098,6 +1104,26 @@ static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
     }
 }
 
+// The game's own name as the file system knows it: the exe's name without ".exe". The _Data folder beside it
+// is called after it (<Name>.exe + <Name>_Data/).
+static std::string PlayerExeStem(const char* argv0) {
+    std::string self = argv0 ? argv0 : "";
+#if defined(__linux__)
+    char buf[4096];
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = 0; self = buf; }
+#endif
+    return std::filesystem::path(self).stem().string();
+}
+
+// Where the game's files are: <Name>_Data/ beside the exe (the Folder layout), else Data/ (the compact layout),
+// else the exe's own folder (the oldest flat layout). Ends in '/'.
+static std::string ResolveGameBaseDir(const char* argv0) {
+    std::string baseDir;
+    if (okay::platform::Backend* b = okay::platform::Default()) baseDir = b->BasePath();
+    return okay::buildpipe::FindDataDir(baseDir, PlayerExeStem(argv0));
+}
+
 int main(int argc, char** argv) {
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
     // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
@@ -1120,7 +1146,25 @@ int main(int argc, char** argv) {
                         "  --find-match [MODE]  matchmaking: get put in a match (--match-players N, --match-min N, --region R)\n\n"
                         "Account (for headless servers):\n"
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
-                        "  --logout             sign out\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+                        "  --logout             sign out\n\n"
+                        "Build:\n"
+                        "  --build-info         print which build this is (version, build number, engine, date) and exit\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+            return 0;
+        }
+    // `--build-info`: what build this is (the build.json the editor wrote beside the game's data), then exit.
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--build-info") {
+            const std::string dataDir = ResolveGameBaseDir(argv[0]);
+            std::ifstream bf(dataDir + "build.json", std::ios::binary);
+            std::stringstream bs; bs << bf.rdbuf();
+            okay::buildpipe::BuildManifest bm;
+            std::string berr;
+            if (!bf || !okay::buildpipe::ParseManifestJson(bs.str(), bm, &berr)) {
+                std::fprintf(stderr, "no build info found in %s (%s)\n", dataDir.c_str(), berr.empty() ? "build.json is missing" : berr.c_str());
+                return 1;
+            }
+            std::printf("%s\nidentifier: %s\ndata: %s\nsettings: %s, layout %s, assets %s, %d asset file(s), %llu bytes\n", okay::buildpipe::ManifestSummary(bm).c_str(), bm.bundleId.c_str(),
+                        dataDir.c_str(), bm.settingsHash.c_str(), bm.layout.c_str(), bm.stripped ? "stripped" : "all", bm.assetCount, (unsigned long long)bm.totalBytes);
             return 0;
         }
     // Which arguments take a value, so a positional scene path is found wherever it is
@@ -1134,7 +1178,7 @@ int main(int argc, char** argv) {
         pcl.Value(v, "VALUE");
     pcl.OptionalValue("find-match", "MODE");
     for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
-                          "advertise", "logout", "help"})
+                          "advertise", "logout", "help", "build-info"})
         pcl.Flag(f);
     pcl.AllowUnknown();
     pcl.Parse(argc, argv);   // a flag missing its value is reported by the code that reads it
@@ -1231,21 +1275,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve where the game files live. New builds use a clean layout
-    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
-    // that when present, else fall back to the flat layout (everything beside exe).
-    std::string baseDir;
-    baseDir = pb->BasePath();
-    {
-        std::ifstream probe(baseDir + "Data/game.okayconfig");
-        if (probe.good()) baseDir += "Data/";
-    }
+    // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
+    // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
+    const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
+    okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so
     // load_scene_index works) and which scene starts. Sensible defaults if absent.
     struct GameConfig {
         std::string title = "OkaySpace Game";
+        std::string version;       // the public version (1.2.0) and the build counter, from the build
+        int buildNumber = 0;
         int  width = 960, height = 600;
         bool fullscreen = false, borderless = false, resizable = true, vsync = true;
         bool smoothDt = true;   // even frame steps (Time::SmoothDelta) for movement and cameras
@@ -1341,6 +1382,8 @@ int main(int argc, char** argv) {
             else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
             else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
             else if (k == "company")        cfg.company = v;
+            else if (k == "version")        cfg.version = v;
+            else if (k == "build_number")   cfg.buildNumber = std::atoi(v.c_str());
             else if (k == "save_userdir")   cfg.saveToUserDir = std::atoi(v.c_str()) != 0;
             else if (k == "splash")         cfg.splash = v;
             else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
@@ -1456,7 +1499,7 @@ int main(int argc, char** argv) {
     // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.
     const bool devPanels = cfg.development || (std::getenv("OKAY_DEV") && std::getenv("OKAY_DEV")[0] && std::getenv("OKAY_DEV")[0] != '0');
     okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
-                        cfg.title, "", scenePath);
+                        cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
     okay::devlog::HitchWatch hitchWatch;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         pb->Log("Could not load " + scenePath + ": " + err);
@@ -1507,9 +1550,17 @@ int main(int argc, char** argv) {
     if (!cfg.showCursor) pb->ShowCursor(false);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
     wd.title = title;
+    // A zero or negative size in the config would make every backend refuse the window.
+    cfg.width  = okay::platform::ValidWindowExtent(cfg.width, 960);
+    cfg.height = okay::platform::ValidWindowExtent(cfg.height, 600);
     wd.width = cfg.width; wd.height = cfg.height;
     std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
     okay::platform::Window* window = windowOwner.get();
+    if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
+        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Shutdown();
+        return 1;
+    }
     if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
         window->SetMinimumSize(cfg.minWidth, cfg.minHeight);
     // Window/taskbar icon: load the PNG and apply it.
@@ -2616,6 +2667,15 @@ int main(int argc, char** argv) {
             renderer->SetDrawColor(0, 0, 0, 160);
             renderer->FillRect((const ui2d::Rect*)&bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
+        }
+        if (devPanels) {   // a development build says so on screen, with which build it is (release builds draw nothing)
+            const std::string badge = "DEV  " + cfg.title + (cfg.version.empty() ? std::string() : "  v" + cfg.version + " build " + std::to_string(cfg.buildNumber));
+            const float px = 2.0f;
+            const float tw = UITextW(badge.c_str(), px);
+            SDL_Rect bg{4, h - (int)(Font8x8::Height * px + 8) - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            renderer->SetDrawColor(0, 0, 0, 160);
+            renderer->FillRect((const ui2d::Rect*)&bg);
+            DrawText(renderer, badge.c_str(), 8, bg.y + 4, px, SDL_Color{255, 200, 80, 255});
         }
         if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
             const char* hint = cursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";

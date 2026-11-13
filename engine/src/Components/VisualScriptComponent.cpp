@@ -55,7 +55,18 @@ void VisualScriptComponent::AdoptGraph(std::unique_ptr<vs::NodeGraph> graph) {
     if (m_graph) m_graph->CaptureFlow(flows, parked);
     m_graph = std::move(graph);
     if (m_graph) m_graph->RestoreFlow(flows, parked);
+    if (m_graph && m_started) ApplyDeclDefaults();   // a variable declared while playing starts at its default
     m_pendingGraph.reset();
+}
+
+void VisualScriptComponent::ApplyDeclDefaults() {
+    if (!m_graph) return;
+    for (const auto& d : m_graph->Decls()) {
+        vs::VarMap* store = &m_ctx.variables;
+        if (d.scope == vs::VarScope::Scene) store = &vs::SceneVariables(gameObject ? gameObject->scene() : nullptr);
+        else if (d.scope == vs::VarScope::Global) store = &vs::GlobalVariables();
+        if (!store->count(d.name)) (*store)[d.name] = vs::VsDeepCopy(d.value);   // each owner gets its own list / map
+    }
 }
 
 void VisualScriptComponent::ApplyPendingGraph() {
@@ -175,9 +186,7 @@ void VisualScriptComponent::Start() {
     ScanPolledEvents();
     m_started = true;
     ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
-    // Starting values from `var` lines, unless something already set them.
-    for (const auto& v : m_graph->ExposedVars())
-        if (!m_ctx.variables.count(v.name)) m_ctx.variables[v.name] = v.value;
+    ApplyDeclDefaults();   // declared variables' starting values, unless something already set them
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
     CheckWatches();

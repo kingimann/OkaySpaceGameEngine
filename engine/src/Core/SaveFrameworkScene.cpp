@@ -161,6 +161,7 @@ bool PutValue(SaveWriter w, const vs::VsValue& v) {
     if (v.IsBool())        { w.String("k", "b"); w.Bool("v", v.AsBool()); return true; }
     if (v.IsString())      { w.String("k", "s"); w.String("v", v.AsString()); return true; }
     if (v.IsVec3())        { w.String("k", "v"); w.Vector3("v", v.AsVec3()); return true; }
+    if (v.IsColor() || v.IsArray() || v.IsMap()) { w.String("k", "j"); w.String("v", vs::VsToLiteral(v)); return true; }
     return false;
 }
 
@@ -170,6 +171,7 @@ bool GetValue(SaveReader r, vs::VsValue& out) {
     if (k == "b") { out = vs::VsValue{r.Bool("v", false)}; return true; }
     if (k == "s") { out = vs::VsValue{r.String("v")}; return true; }
     if (k == "v") { out = vs::VsValue{r.Vector3("v", Vec3::Zero)}; return true; }
+    if (k == "j") return vs::VsParseLiteral(r.String("v"), out);   // a bad one is skipped
     return false;
 }
 

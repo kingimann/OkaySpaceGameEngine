@@ -84,8 +84,9 @@ no-code route uses the store behind `GameSaves::Manager()` (`SaveManager::Defaul
 those on it at startup. Older saves are upgraded when they are read.
 
 **Limits.** Only a save remembers destroyed objects: leave a level without saving and come back, and
-the level file's objects are all there again. Variables of other kinds (lists, maps, object
-references) are not stored. A visual script's variables are matched to the object's first, second ...
+the level file's objects are all there again. Numbers, booleans, text, vectors, colours, lists and maps are stored (lists and maps nested, as
+value text); a variable holding an object reference is not, and an object inside a list comes back
+as its name. A visual script's variables are matched to the object's first, second ...
 visual script by order. A Saveable on an object that is inactive when the level loads is noted when it
 first becomes active.
 

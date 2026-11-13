@@ -134,10 +134,18 @@ inline void VsDrawDocBody(const VsNodeDoc& doc, bool withAdd, GameObject* owner,
     }
 }
 
-inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc) {
+inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc, const VsDef* def = nullptr) {
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
     ImGui::TextUnformatted(title ? title : (doc ? doc->title.c_str() : ""));
+    if (def) {   // the three questions first: what it does, what it needs, what it gives
+        const VsNodeBrief b = VsNodeBriefFor(*def);
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.62f, 0.85f, 0.65f, 1), "Does");   ImGui::SameLine(); ImGui::TextWrapped("%s", b.does.c_str());
+        ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.45f, 1), "Needs");  ImGui::SameLine(); ImGui::TextWrapped("%s", b.needs.c_str());
+        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.00f, 1), "Gives");  ImGui::SameLine(); ImGui::TextWrapped("%s", b.gives.c_str());
+        ImGui::Separator();
+    }
     if (doc) {
         ImGui::Spacing();
         ImGui::TextWrapped("%s", doc->description.c_str());
@@ -149,7 +157,9 @@ inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc) {
     ImGui::EndTooltip();
 }
 
-inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* typeName) {
+inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* typeName,
+                         okay::vs::PinType pinType = okay::vs::PinType::Any, bool isOutput = false, bool exec = false,
+                         const char* required = nullptr) {
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
     ImGui::Text("%s   %s", (name && *name) ? name : "flow", typeName ? typeName : (pin ? pin->type.c_str() : ""));
@@ -157,6 +167,10 @@ inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* type
         ImGui::TextWrapped("%s", pin->meaning.c_str());
         if (!pin->fallback.empty()) ImGui::TextDisabled("Default: %s", pin->fallback.c_str());
     }
+    if (required) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1), "Required: %s", required);
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.62f, 0.85f, 0.65f, 1), "%s", VsPinConnectText(pinType, isOutput, exec).c_str());
+    ImGui::Spacing();
     ImGui::TextDisabled("Drag to wire. A flow output can have many wires (they run in the order made).");
     ImGui::TextDisabled("Alt+click a pin breaks its wires; Alt+click a wire breaks just that one.");
     ImGui::PopTextWrapPos();

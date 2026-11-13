@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
@@ -40,8 +41,8 @@ public:
     void WorldToCell(const Vec3& world, int& x, int& y) const {
         if (tileSize == 0.0f) { x = y = 0; return; }   // avoid divide-by-zero
         Vec3 o = transform ? transform->Position() : Vec3::Zero;
-        x = static_cast<int>(Mathf::Floor((world.x - o.x) / tileSize));
-        y = static_cast<int>(Mathf::Floor((world.y - o.y) / tileSize));
+        x = SafeInt(Mathf::Floor((world.x - o.x) / tileSize));
+        y = SafeInt(Mathf::Floor((world.y - o.y) / tileSize));
     }
 
     /// Number of cells holding the given id.

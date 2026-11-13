@@ -5,6 +5,7 @@
 // Nodes that cannot run headless (hosting, Steam, PlayFab) must still build; events are
 // built and registered. A node that is none of these and not on the known list fails.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
 #include "VisualScriptPalette.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -639,6 +640,7 @@ static void CheckStaleTraversal() {
 
 int main() {
     RUN_SUITE("vs_registry_effect");
+    okaytest::Sandbox sandbox("vs_registry_effect", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     g_wav = MakeWav("registry_effect_silence.wav");
     auto oldSink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) { ++g_logLines; };
@@ -855,5 +857,6 @@ int main() {
     CheckEvents();
     CheckStaleTraversal();
     Game::CancelQuit();
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

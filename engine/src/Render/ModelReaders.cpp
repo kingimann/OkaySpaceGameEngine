@@ -565,6 +565,9 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
         const bool isVertex = el.name == "vertex", isFace = el.name == "face";
         int ix = -1, iy = -1, iz = -1, inx = -1, iny = -1, inz = -1, iu = -1, iv = -1, ifaceList = -1;
         if (isVertex) {
+            // A second vertex element would leave the normals / UVs of the two blocks
+            // out of step with the vertex list (hasN true, fewer normals than vertices).
+            if (sawVertex) return Fail(err, "PLY declares more than one vertex element");
             for (std::size_t k = 0; k < el.props.size(); ++k) {
                 const std::string& n = el.props[k].name; int ki = (int)k;
                 if (el.props[k].list) continue;

@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIFrameTransform.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
@@ -553,7 +554,191 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
 }
 } // namespace
 
-static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt);
+// Draws a turned or scaled frame by mapping the layout-space calls the rest of
+// this pass already makes. With no turn and a scale of 1, 1 every call is handed
+// on unchanged, so an old scene's pixels stay the same.
+class FrameXformPainter final : public Painter {
+public:
+    explicit FrameXformPainter(Painter& in) : m_in(in) {}
+
+    void Begin(GameObject* go, float sw, float sh) {
+        m_on = false;
+        m_clip = false;
+        if (!go || !UIFrameTransformed(go)) return;
+        UIFrameAffine xf;
+        if (!UIFrameLayoutToScreen(go, sw, sh, xf)) return;
+        m_xf = xf;
+        m_on = true;
+        m_in.SetClipRect(nullptr);
+    }
+
+    void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override {
+        m_r = r; m_g = g; m_b = b; m_a = a;
+        m_in.SetDrawColor(r, g, b, a);
+    }
+    void FillRect(const Rect* r) override {
+        if (!m_on || !r) { m_in.FillRect(r); return; }
+        float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;
+        if (!ClipRect(x, y, w, h)) return;
+        Quad(nullptr, x, y, w, h, 0, 0, 1, 1, false);
+    }
+    void DrawRect(const Rect* r) override {
+        if (!m_on || !r) { m_in.DrawRect(r); return; }
+        const float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;
+        DrawLine((int)x, (int)y, (int)(x + w), (int)y);
+        DrawLine((int)(x + w), (int)y, (int)(x + w), (int)(y + h));
+        DrawLine((int)(x + w), (int)(y + h), (int)x, (int)(y + h));
+        DrawLine((int)x, (int)(y + h), (int)x, (int)y);
+    }
+    void DrawLine(int x0, int y0, int x1, int y1) override {
+        if (!m_on) { m_in.DrawLine(x0, y0, x1, y1); return; }
+        float ax = (float)x0, ay = (float)y0, bx = (float)x1, by = (float)y1;
+        if (m_clip && !ClipSeg(ax, ay, bx, by)) return;
+        const Vec2 p0 = m_xf.Apply({ax, ay}), p1 = m_xf.Apply({bx, by});
+        m_in.DrawLine((int)std::lround(p0.x), (int)std::lround(p0.y), (int)std::lround(p1.x), (int)std::lround(p1.y));
+    }
+    void DrawPoint(int x, int y) override {
+        if (!m_on) { m_in.DrawPoint(x, y); return; }
+        if (m_clip && ((float)x < m_cx || (float)y < m_cy || (float)x >= m_cx + m_cw || (float)y >= m_cy + m_ch)) return;
+        const Vec2 p = m_xf.Apply({(float)x, (float)y});
+        m_in.DrawPoint((int)std::lround(p.x), (int)std::lround(p.y));
+    }
+    void SetClipRect(const Rect* r) override {
+        if (!m_on) { m_in.SetClipRect(r); return; }
+        if (!r) { m_clip = false; m_in.SetClipRect(nullptr); return; }
+        m_clip = true;
+        m_cx = (float)r->x; m_cy = (float)r->y; m_cw = (float)r->w; m_ch = (float)r->h;
+        m_in.SetClipRect(nullptr);
+    }
+    void GetClipRect(Rect* r) override {
+        if (!m_on) { m_in.GetClipRect(r); return; }
+        if (r) *r = m_clip ? Rect{(int)m_cx, (int)m_cy, (int)m_cw, (int)m_ch} : Rect{0, 0, 0, 0};
+    }
+    bool IsClipEnabled() override { return m_on ? m_clip : m_in.IsClipEnabled(); }
+    void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
+    Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
+    void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
+    void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override { m_in.SetTextureColorMod(t, r, g, b); }
+    void SetTextureAlphaMod(Tex t, std::uint8_t a) override { m_in.SetTextureAlphaMod(t, a); }
+    void Copy(Tex t, const Rect* s, const Rect* d) override {
+        if (!m_on || !d) { m_in.Copy(t, s, d); return; }
+        Blit(t, s, (float)d->x, (float)d->y, (float)d->w, (float)d->h, 0.0, d->w * 0.5f, d->h * 0.5f, 0);
+    }
+    void CopyF(Tex t, const Rect* s, const FRect* d) override {
+        if (!m_on || !d) { m_in.CopyF(t, s, d); return; }
+        Blit(t, s, d->x, d->y, d->w, d->h, 0.0, d->w * 0.5f, d->h * 0.5f, 0);
+    }
+    void CopyEx(Tex t, const Rect* s, const Rect* d, double ang, const Point* c, int flip) override {
+        if (!m_on || !d) { m_in.CopyEx(t, s, d, ang, c, flip); return; }
+        const float cx = c ? (float)c->x : d->w * 0.5f, cy = c ? (float)c->y : d->h * 0.5f;
+        Blit(t, s, (float)d->x, (float)d->y, (float)d->w, (float)d->h, ang, cx, cy, flip);
+    }
+    void CopyExF(Tex t, const Rect* s, const FRect* d, double ang, const FPoint* c, int flip) override {
+        if (!m_on || !d) { m_in.CopyExF(t, s, d, ang, c, flip); return; }
+        const float cx = c ? c->x : d->w * 0.5f, cy = c ? c->y : d->h * 0.5f;
+        Blit(t, s, d->x, d->y, d->w, d->h, ang, cx, cy, flip);
+    }
+    void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override {
+        if (!m_on || !v) { m_in.Geometry(t, v, nv, idx, ni); return; }
+        m_verts.assign(v, v + nv);
+        for (Vertex& q : m_verts) {
+            const Vec2 p = m_xf.Apply({q.position.x, q.position.y});
+            q.position = {p.x, p.y};
+        }
+        m_in.Geometry(t, m_verts.data(), nv, idx, ni);
+    }
+    void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
+
+private:
+    bool ClipRect(float& x, float& y, float& w, float& h) const {
+        if (w == 0.0f || h == 0.0f) return false;
+        if (!m_clip) return w > 0.0f && h > 0.0f;
+        if (m_cw <= 0.0f || m_ch <= 0.0f) return false;
+        const float x1 = std::max(x, m_cx), y1 = std::max(y, m_cy);
+        const float x2 = std::min(x + w, m_cx + m_cw), y2 = std::min(y + h, m_cy + m_ch);
+        x = x1; y = y1; w = x2 - x1; h = y2 - y1;
+        return w > 0.0f && h > 0.0f;
+    }
+    bool ClipSeg(float& x0, float& y0, float& x1, float& y1) const {
+        auto code = [&](float x, float y) {
+            int bits = 0;
+            if (x < m_cx) bits |= 1;
+            if (x > m_cx + m_cw) bits |= 2;
+            if (y < m_cy) bits |= 4;
+            if (y > m_cy + m_ch) bits |= 8;
+            return bits;
+        };
+        for (int i = 0; i < 8; ++i) {
+            const int c0 = code(x0, y0), c1 = code(x1, y1);
+            if ((c0 | c1) == 0) return true;
+            if (c0 & c1) return false;
+            const int out = c0 ? c0 : c1;
+            float x = x0, y = y0;
+            const float dx = x1 - x0, dy = y1 - y0;
+            if (out & 8) { if (dy == 0.0f) return false; x = x0 + dx * ((m_cy + m_ch) - y0) / dy; y = m_cy + m_ch; }
+            else if (out & 4) { if (dy == 0.0f) return false; x = x0 + dx * (m_cy - y0) / dy; y = m_cy; }
+            else if (out & 2) { if (dx == 0.0f) return false; y = y0 + dy * ((m_cx + m_cw) - x0) / dx; x = m_cx + m_cw; }
+            else { if (dx == 0.0f) return false; y = y0 + dy * (m_cx - x0) / dx; x = m_cx; }
+            if (c0) { x0 = x; y0 = y; } else { x1 = x; y1 = y; }
+        }
+        return false;
+    }
+    void Quad(Tex tex, float x, float y, float w, float h, float u0, float v0, float u1, float v1, bool white) {
+        Vec2 p[4] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+        Vertex v[4];
+        const RGBA col = white ? RGBA{255, 255, 255, 255} : RGBA{m_r, m_g, m_b, m_a};
+        const float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
+        for (int i = 0; i < 4; ++i) {
+            const Vec2 s = m_xf.Apply(p[i]);
+            v[i] = Vertex{FPoint{s.x, s.y}, col, FPoint{us[i], vs[i]}};
+        }
+        const int idx[6] = {0, 1, 2, 0, 2, 3};
+        m_in.Geometry(tex, v, 4, idx, 6);
+    }
+    void Blit(Tex t, const Rect* src, float x, float y, float w, float h, double ang, float cx, float cy, int flip) {
+        if (!t || w == 0.0f || h == 0.0f) return;
+        if (ang == 0.0 && !ClipRect(x, y, w, h)) return;
+        int tw = 0, th = 0;
+        m_in.QueryTexture(t, &tw, &th);
+        if (tw <= 0 || th <= 0) return;
+        float u0 = src ? (float)src->x / (float)tw : 0.0f;
+        float v0 = src ? (float)src->y / (float)th : 0.0f;
+        float u1 = src ? (float)(src->x + src->w) / (float)tw : 1.0f;
+        float v1 = src ? (float)(src->y + src->h) / (float)th : 1.0f;
+        if (flip & FlipH) std::swap(u0, u1);
+        if (flip & FlipV) std::swap(v0, v1);
+        Vec2 p[4] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+        if (ang != 0.0) {
+            constexpr float kDeg = 0.017453292519943295f;
+            const float rad = (float)ang * kDeg, co = std::cos(rad), si = std::sin(rad);
+            const float ox = x + cx, oy = y + cy;
+            for (Vec2& q : p) {
+                const float dx = q.x - ox, dy = q.y - oy;
+                q = {ox + co * dx - si * dy, oy + si * dx + co * dy};
+            }
+        }
+        Vertex v[4];
+        const float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
+        for (int i = 0; i < 4; ++i) {
+            const Vec2 s = m_xf.Apply(p[i]);
+            v[i] = Vertex{FPoint{s.x, s.y}, RGBA{255, 255, 255, 255}, FPoint{us[i], vs[i]}};
+        }
+        const int idx[6] = {0, 1, 2, 0, 2, 3};
+        m_in.Geometry(t, v, 4, idx, 6);
+    }
+
+    Painter& m_in;
+    UIFrameAffine m_xf{};
+    bool m_on = false;
+    bool m_clip = false;
+    float m_cx = 0, m_cy = 0, m_cw = 0, m_ch = 0;
+    std::uint8_t m_r = 255, m_g = 255, m_b = 255, m_a = 255;
+    std::vector<Vertex> m_verts;
+};
+
+static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt);
 
 void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
     const AccessibilitySettings& a = Accessibility::Get();
@@ -563,7 +748,9 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
     RenderSceneUIImpl(scene, filtered, w, h, opt);
 }
 
-static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
+static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) {
+    FrameXformPainter xp(target);
+    Painter& p = xp;
     // Scroll / mask membership: offset a widget's origin by the scroll views it
     // sits in and clip drawing to every enclosing viewport and mask, so
     // scrollable and masked content shows and hides correctly in the built game.
@@ -618,6 +805,7 @@ static void RenderSceneUIImpl(Scene& scene, Painter& p, int w, int h, const UIRe
                 want = ucv->ScaleFactor((float)uiFullW, (float)uiFullH);
             uiUseScale(want > 0.05f ? want : 1.0f);
         }
+        xp.Begin(up.get(), (float)w, (float)h);
         if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
         auto* dt = up->GetComponent<UIDropTarget>();
         if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;

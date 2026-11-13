@@ -3149,7 +3149,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     if (auto* fr = go->GetComponent<UIFrame>()) {
         out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
             << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
-            << " " << fr->size.x << " " << fr->size.y << "\n";
+            << " " << fr->size.x << " " << fr->size.y
+            << " " << fr->rotation << " " << fr->scale.x << " " << fr->scale.y << "\n";
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
@@ -7811,9 +7812,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "uiframe") {
                     // Read after or before the widget's own line: the end of the parse
                     // makes the frame the source of truth and mirrors it back.
+                    // Rotation and scale are optional so a scene saved before them loads unchanged.
                     auto* fr = go->AddComponent<UIFrame>();
-                    in >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
+                    std::string rest;
+                    std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    rs >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
                        >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
+                    float rot = 0.0f, sx = 1.0f, sy = 1.0f;
+                    if (rs >> rot >> sx >> sy) { fr->rotation = rot; fr->scale = {sx, sy}; }
                 } else if (field == "uimodal") {
                     auto* md = go->AddComponent<UIModal>();
                     int dim = 1, cc = 1, co = 0;

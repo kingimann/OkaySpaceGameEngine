@@ -302,7 +302,7 @@ has `enabled`.
 | NetworkObject, NetworkSync, NetworkTransform, SyncVar, NetworkPlayerSpawner | 4, 6, 1, 3, 7 | `NetworkObject.netId` refuses a `/` |
 | UIButton, TextRenderer, UIImage, UISlider, UIToggle, UIProgressBar, UIInputField, UIStepper, UIDropdown | 41, 32, 22, 24, 14, 22, 14, 16, 16 | position, size, anchor, colours, shape, shadow, border, behaviour switches |
 | LoadingScreen | 46 | look (layout, bar and spinner styles, colours), title and tips line, bar, spinner, and `asyncLoad` / `objectsPerFrame` for a background load; the `tips` list is not a property |
-| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
+| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 8, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties). UIFrame's extra two are rotation and scale |
 | UITheme, UIStyleVariant, UIDamageNumbers, UIDialogueBox | 37, 3, 15, 5 | the UI looks (12 built in), a widget's role in the theme, floating combat text and the dialogue box. See [ui_runtime.md](ui_runtime.md). `UIPanel.blocksPointer`, `UIToggle.radioGroup` and `UIDraggable.dragParent` / `keepOnScreen` were added with them |
 | Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |

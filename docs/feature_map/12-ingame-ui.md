@@ -12,7 +12,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.1.1 Canvas and scaling - `Components/Canvas` - Constant Pixel Size or Scale With Screen Size, Screen Match (Match Width/Height blend, Expand, Shrink), sort order, master opacity, world-space switch
   - 12.1.2 Anchor presets - `Components/UIAnchor` - nine fixed points plus three stretch presets, position is an offset (or margins for stretch)
-  - 12.1.3 UI Frame - `Components/UIFrame` - anchorMin/anchorMax/pivot rect that replaces the preset; widget fields stay in step with it; "Use UI Frame" and "Convert all UI" convert scenes without moving anything
+  - 12.1.3 UI Frame - `Components/UIFrame` - anchorMin/anchorMax/pivot rect that replaces the preset, plus rotation (degrees clockwise around the pivot) and scale (width and height); children inherit both; widget fields stay in step with it; "Use UI Frame" and "Convert all UI" convert scenes without moving anything
   - 12.1.4 Uniform widget rect and draw order - `Components/UIElement` - UIRect and GetUIRect for any widget, the one shared UI layer table, SortUIDrawItems and the draw-order rule
   - 12.1.5 Layout Group - `Components/UILayoutGroup` - column, row, grid, and Flex Row / Flex Column with wrap, justify and align
   - 12.1.6 Flex Item - `Components/UIFlexItem` - per-child grow, shrink and basis inside a flex layout
@@ -21,12 +21,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.1.9 Per-frame layout pass - `UI/UILayoutUpdate` - settles frames, fits scroll extents, re-arranges flex, rebinds list rows; shared by player and editor
   - 12.1.10 Layout tools - `Scene/UILayoutTools` - wrap in panel, fit to children, match size, stack, avoid overlap (used by the editor)
 - **Code:** `Components/Canvas`, `Components/UIAnchor`, `Components/UIFrame`, `Components/UIElement`, `Components/UILayoutGroup`, `Components/UIFlexItem`, `Components/UIMask`, `Components/UISafeArea`, `Components/UIWorldContext`, `UI/UILayoutUpdate`, `Scene/UILayoutTools`, `editor/UIInspectorLayout.*`
-- **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`; script: `ui_set_*` by widget name (see 12.13)
+- **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`, `UIFrameCorners`; script: `ui_set_*` by widget name, plus `ui_get_rotation` / `ui_set_rotation` / `ui_get_scale` / `ui_set_scale` (see 12.13)
 - **Editor:** Inspector cards for Canvas, Layout Group, Scroll View, UI Frame, UI Flex Item, UI Mask; UI view toolbar (Align, Match size, Stack, Wrap in Panel, Fit to Children)
 - **Docs:** `docs/game_ui.md` (Styling and layout tools, Phones and tablets), `docs/engine_api.md`
 - **Tests:** `ui_frame`, `ui_layout_containers`, `ui_system`, `ui_layer_table`, `ui_layering`
 - **Status:** Works - the components are implemented and the tests above cover anchor math, frame conversion, flex, mask clipping and the layer table
-- **Open:** possible gap: UIFrame has anchors and pivot but no rotation or scale (the UI plan asked for both); aspect-ratio and responsive containers from the component-library request are not present as components
+- **Open:** aspect-ratio and responsive containers from the component-library request are not present as components. UI Frame rotation and scale are in (children inherit them; old scenes load with no turn and a scale of 1)
 - **Related:** 12.9, 12.10, 12.11, 12.6
 - **Words:** canvas, CanvasScaler, anchors, anchors (UI), anchor preset, stretch, margins, UI Frame, UIFrame, pivot, flex, flexbox, layout group, grid layout, mask, safe area, notch, reference resolution, Screen Match, Expand, Shrink, sort order
 - **Seen as:** a HUD is the wrong size on another resolution; a menu is cut off on a phone; a button drifts when the window resizes; children overlap in a row or column; a scroll list shows items outside its box; text sits under the notch

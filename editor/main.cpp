@@ -12571,6 +12571,8 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("ui_get_rotation(\"n\") / ui_set_rotation(\"n\", degrees)", "read / turn a UI frame, clockwise degrees around its pivot");
+        fapi("ui_get_scale(\"n\") / ui_set_scale(\"n\", x, y)", "read / set a UI frame's width and height scale (one number sets both)");
         fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
         fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
         fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
@@ -13011,7 +13013,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
-        "ui_toggle_value","ui_set_progress",
+        "ui_toggle_value","ui_set_progress","ui_get_rotation","ui_set_rotation","ui_get_scale","ui_set_scale",
         "set_swatch","swatch_value", // grok/ui-color
         "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
 
@@ -13128,6 +13130,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        {"ui_get_rotation","ui_get_rotation(\"n\")"}, {"ui_set_rotation","ui_set_rotation(\"n\", degrees)"},
+        {"ui_get_scale","ui_get_scale(\"n\")"}, {"ui_set_scale","ui_set_scale(\"n\", x, y)"},
         {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
         {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
         // grok/ui-controls
@@ -41558,8 +41562,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 if (!r.valid) continue;
                 Vec2 o, sz;
                 if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
-                if (mouseCanvas.x < o.x || mouseCanvas.y < o.y ||
-                    mouseCanvas.x > o.x + sz.x || mouseCanvas.y > o.y + sz.y) continue;
+                if (!UIScreenContains(g, mouseCanvas, canvasSize.x, canvasSize.y)) continue;
                 float area = (sz.x < 1 ? 1 : sz.x) * (sz.y < 1 ? 1 : sz.y);
                 if (area < bestArea) { bestArea = area; hit = g; }
             }

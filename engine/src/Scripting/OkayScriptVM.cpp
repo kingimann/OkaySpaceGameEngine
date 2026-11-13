@@ -4822,6 +4822,36 @@ struct OkayScriptVM::Impl {
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
+        // Rotation (degrees, clockwise on screen) and scale (width, height) of a UI frame.
+        // One scale number sets both axes. A widget with no frame gets one when you set these.
+        auto uiFrame = [sceneOf](const std::string& name, bool create) -> UIFrame* {
+            Scene* s = sceneOf();
+            GameObject* g = s ? s->Find(name) : nullptr;
+            if (!g) return nullptr;
+            if (auto* f = g->GetComponent<UIFrame>()) return f;
+            return create ? ConvertToUIFrame(g) : nullptr;
+        };
+        b["ui_get_rotation"] = [uiFrame](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            UIFrame* f = uiFrame(a[0].AsString(), false);
+            return Value{f ? f->rotation : 0.0f};
+        };
+        b["ui_set_rotation"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) f->rotation = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_get_scale"] = [uiFrame](std::vector<Value>& a) -> Value {
+            Vec2 s{1.0f, 1.0f};
+            if (!a.empty()) if (UIFrame* f = uiFrame(a[0].AsString(), false)) s = f->scale;
+            return Value{Vec3{s.x, s.y, 0.0f}};
+        };
+        b["ui_set_scale"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) {
+                if (a.size() >= 3) f->scale = {a[1].AsFloat(), a[2].AsFloat()};
+                else { const float u = a[1].AsFloat(); f->scale = {u, u}; }
+            }
+            return Value{};
+        };
         // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
         // ui_set_variant("Quit", "danger"): give a widget a role (primary, secondary, danger, ghost,
         // outline, pill, default) and style it from the scene's theme now.

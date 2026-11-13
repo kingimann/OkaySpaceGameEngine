@@ -123,6 +123,7 @@ Nothing user-visible, nothing default.
 | Editor Play keys and pads, Direct3D 11 SSAO, Direct3D 12 label | Claude | `claude/engine-top-items` |
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
+| Localization tools in the Localization window | John | `john/localization-window` |
 
 ## Free (unclaimed, safe small tasks)
 

@@ -42,11 +42,15 @@ Each line links to its guide. The full, grouped list is in
   [visual scripting](docs/visual_scripting.md)
 - **Gameplay systems:** navigation meshes, behavior trees, dialogue and quests,
   cutscenes, splines, save games, inventory, survival stats, crafting, build
-  mode, vehicles. [docs index](docs/README.md#gameplay-systems)
-- **UI:** a canvas with buttons, sliders, inputs and more, HTML/CSS-style
-  documents, in-world UI, localization. [game UI](docs/game_ui.md),
-  [localization](docs/localization.md)
-- **Audio:** a stereo mixer, WAV/OGG/MP3, music player. [audio](docs/audio.md)
+  mode, vehicles, hinge limits, and an editor for items, loot and recipes.
+  [docs index](docs/README.md#gameplay-systems)
+- **UI:** a canvas with buttons, sliders, inputs and more, frames that turn
+  and scale, a keyboard and gamepad focus ring, on-screen touch controls,
+  HTML/CSS-style documents, in-world UI, localization.
+  [game UI](docs/game_ui.md), [localization](docs/localization.md)
+- **Audio:** a stereo mixer, WAV/OGG/MP3, music player, and optional 3D echo,
+  pitch that follows speed, and muffling with walls and distance.
+  [audio](docs/audio.md)
 - **Multiplayer and accounts:** host or join with UDP and optional libsodium
   encryption, a relay for players behind routers, dedicated servers, voice,
   accounts and cloud saves, anti-cheat.

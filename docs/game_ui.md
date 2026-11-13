@@ -75,6 +75,23 @@ they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
 
+## Turning and scaling a frame
+
+A **UI Frame** has **Rotation** and **Scale** in the Inspector, on top of its anchors.
+
+**Rotation** is degrees clockwise around the pivot. **Scale** is a width multiplier and a height multiplier: 1 and 1 leaves the size alone, and two different numbers stretch the frame. Children turn and scale with the frame. Clicks follow the turned, scaled shape, including picking the widget in the editor.
+
+A scene saved before these fields loads with no turn and a scale of 1.
+
+```
+ui_set_rotation("Badge", 28)
+ui_set_scale("Badge", 1.45, 0.65)
+ui_get_rotation("Badge")
+ui_get_scale("Badge")
+```
+
+The same calls are the visual-script nodes `Fn.ui_set_rotation`, `Fn.ui_get_rotation`, `Fn.ui_set_scale` and `Fn.ui_get_scale`.
+
 ## Text fields
 
 An **Input Field** takes typed text. Click it to focus. Backspace deletes the last character, Enter submits (a sibling script's `on_submit`) unless the field is multiline, and Escape leaves the field.

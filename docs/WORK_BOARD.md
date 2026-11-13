@@ -112,6 +112,10 @@ Nothing user-visible, nothing default.
 | Editor | Add Node menu: built once (2.861.1), then only visible rows drawn and results cached (2.861.2) | #740 #746 |
 | Engine | Accessibility settings, save games without code | #657 #664 |
 | Engine | Subtitles and sound captions, hold-to-toggle, aim assist | #767 |
+| Physics | A 3D hinge can stop at a minimum and maximum angle | #763 |
+| Model import | A PLY that declares `element vertex` twice is refused, so normals stay lined up | #768 |
+| Scripting | Copy and paste text in fields, scripts and visual script | #770 |
+| Visual script | Wait and Delay export as `after(seconds, fn)` | #764 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
 
 ## Claimed (in progress)
@@ -124,9 +128,30 @@ Nothing user-visible, nothing default.
 | Editor Play keys and pads, Direct3D 11 SSAO, Direct3D 12 label | Claude | `claude/engine-top-items` |
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
-| Joint3D hinge angle limits (doors and levers stop at min/max; reuse `Math/JointLimit.hpp`) | John | `john/joint3d-hinge-limits` |
-| Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
-| Game clipboard: copy and paste text in fields, scripts and visual script | John | `john/game-clipboard` |
+| 2D grid paths: cell costs, smoothing, and moving obstacles | John | draft #783 `john/pathfinding2d-weights` |
+| Safety-net tests, plus the pause-menu input context and the death lock | John | draft #784 `john/untested-features-tests` |
+| Eight more UI widgets (search, date, file, accordion, breadcrumbs, pages, skeleton, sheet) | John | draft #785 `john/ui-widgets-more` |
+
+## In review (merged, not on main yet)
+
+These are merged into `john/release-2866-integration`. They are not on main, so they are not in the Done table. Do not start a second version.
+
+| Task | Who | PR |
+|---|---|---|
+| Localization window calls the localization tools | John | #765 |
+| A dynamic mesh collider uses the convex hull; landing raises collision callbacks | John | #766 |
+| 2D box and capsule casts, and a 2D explosion force | John | #771 |
+| The editor names lighting switches a renderer ignores | John | #772 |
+| Visual script export: Timer, and every Actions step | John | #773 |
+| Every component instance is saved | John | #774 |
+| Behavior trees: Run Sub-Tree, and breakpoints that pause Play | John | #775 |
+| Letterbox bars, camera shake, a coloured screen fade, nested sequences | John | #776 |
+| Settings screen: monitor, display mode, resolution, refresh, 10-second revert | John | #777 |
+| Spatial audio: reverb, pitch with speed, quieter behind walls, dull with distance | John | #778 |
+| On-screen touch controls and gestures | John | #779 |
+| UI frames can turn and scale | John | #780 |
+| A focus ring for keyboard and gamepad menus | John | #781 |
+| Editor for items, loot tables and recipes | John | #782 |
 
 ## Free (unclaimed, safe small tasks)
 

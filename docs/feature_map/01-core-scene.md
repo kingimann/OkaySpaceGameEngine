@@ -127,12 +127,12 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** File menu Save/Open (15.9); the same serializer feeds undo snapshots, copy/paste and prefab files; no window uses the text tools (1.5.7-1.5.10) yet
 - **Docs:** `docs/scene_serializer.md`, `docs/prefabs.md`, `docs/scene_diff_merge.md`
 - **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
-- **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the 8.6k-line `SceneSerializer.cpp` was only skimmed, most components still go through one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names)
-- **Open:** file splitting (19.4); duplicate components of one type save only the first, except scripts, visual scripts, action lists, tweens, sync vars and state machines; #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
+- **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the long `SceneSerializer.cpp` still carries most components in one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names). Every component instance on an object is saved and loaded, in stored order (two colliders, two lights, two sprites, and the rest); a file with one of each is unchanged, and an older file still loads
+- **Open:** file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
 - **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
 - **Seen as:** a scene file will not open or opens half-empty; a component's settings are lost after save and load; two scenes will not merge cleanly
-- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Why did loading drop my second collider?"
+- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.
@@ -322,17 +322,18 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Store enemy stats in a data asset"; "Pack the scene so players can't edit it"
 
 ### 1.15 Display settings
-- **What:** Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives.
+- **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
-  - 1.15.1 Settings values - `Core/DisplaySettings` - Fullscreen, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
+  - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
   - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips shadows, per-pixel lighting, bloom, SSAO and FXAA, and sets shadow resolution, cascade count and shadow distance
-- **Code:** `Core/DisplaySettings`
-- **API:** `DisplaySettings::SetQuality`, `DisplaySettings::SetFullscreen`, `DisplaySettings::Generation`, `DisplaySettings::ApplyQuality`
+  - 1.15.3 Mode list and fallback - `Core/DisplayModes` - filter and sort modes, pick a connected monitor and a listed size and rate when the saved one is gone, the 10-second confirm clock, and the saved text
+- **Code:** `Core/DisplaySettings`, `Core/DisplayModes`
+- **API:** `DisplaySettings::SetMode`, `SetResolution`, `SetRefreshHz`, `SetMonitorName`, `ResolveSaved`, `BeginTrial`, `FilterDisplayModes`, `ResolveDisplay`
 - **Editor:** none (the player reads it; Settings screen component, 12.8)
-- **Docs:** -
-- **Tests:** `visibility_lod`
-- **Status:** Basic - Low/Medium/High now also set shadow map size, cascade count and distance (High matches the old 2048 / 80 m / 3 defaults); `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
-- **Open:** resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
+- **Docs:** `docs/display_settings.md`
+- **Tests:** `display_settings`, `visibility_lod`
+- **Status:** Works - the choice, the fallback and the confirm clock are plain data with tests; a host applies them when Generation() moves. `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
+- **Open:** the editor calls `ApplyQuality()` when the generation moves (editor/main.cpp)
 - **Related:** 12.8, 38.1, 2.3, 2.5
 - **Words:** DisplaySettings, fullscreen, vsync, quality, graphics settings, Low Medium High, video settings
 - **Seen as:** the quality setting changes nothing on a GPU machine; fullscreen is not remembered
@@ -345,15 +346,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.16.2 CSV and build copy - `editor/LocalizationWindow.*` - Import/Export CSV for translators; Build Game copies the table and the fonts the languages name
   - 1.16.3 Preview language - `editor/LocalizationWindow.*` - toolbar language menu and pseudo-localize switch; the scene follows in Scene and Game views
   - 1.16.4 Inspector helpers - `editor/LocalizationWindow.*` - `LocalizedTextField`, `LocKeyInput`, `LocalizedSwitch` for Pause Menu, Hold Prompt and Loading Screen
-  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; not wired to the window (31.1, 31.3)
+  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `editor/LocalizationTools` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; the Localization window calls them (31.1, 31.3)
   - 1.16.6 Captions and accessibility settings - `Core/Subtitles`, `Core/AccessibilitySettings` - (#574) caption queue and settings; see 32.2 and 32.3
 - **Code:** `editor/LocalizationWindow.*`, `Scene/SceneLocalization`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `Core/Subtitles`, `Core/AccessibilitySettings`
 - **API:** `DrawLocalizationWindow`, `LocalizedTextField`, `LocKeyInput`, `CollectLocKeys`
 - **Editor:** View > Editors & Tools > Localization; toolbar language menu next to Build
 - **Docs:** `docs/localization.md`, `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_tools`
-- **Status:** Partial - the window, CSV and pseudo-localization exist (per docs/localization.md; read the header); the grid model, checker, scanner and previews are on main (#574) as engine code but `docs/localization_tools.md` says the window is not wired to them yet
-- **Open:** wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3), accessibility text scaling (area 32); tests for the window itself
+- **Tests:** `localization`, `loc_tools`, `loc_window`
+- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text). JSON in the window, a confirm step before CSV import, and the font coverage report are still out.
+- **Open:** JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
 - **Related:** 1.8, 31, 32, 15.6
 - **Words:** Localization window, translation table, CSV import, pseudo-localize, language preview, Find in Scene, missing key, translators, LocTable, LocCheck, LocScan, LocPreview, placeholder check, caption manager
 - **Seen as:** a translated text is cut off; unused keys pile up; a language shows empty cells

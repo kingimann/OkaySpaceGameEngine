@@ -71,15 +71,17 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
   - 9.4.2 Runner - `Components/BehaviorTreeRunner`, `engine/src/AI/BehaviorTreeRunner.cpp` - ticking, abort, services, composites, decorators and all tasks (move, patrol, wander, chase, flee, look, animate, attack, events, script call, sound, start dialogue)
   - 9.4.3 Body control - `Components/BehaviorTreeRunner` - moves through a NavMeshAgent, else an NPCController in external-brain mode, else navigation directly
   - 9.4.4 Behavior Tree window - `editor/BehaviorTreeWindow.*` - canvas, palette, node and blackboard tabs, issues tab, runner tab with live node status, copy and paste of subtrees, own undo
+  - 9.4.5 Run Sub-Tree - `AI/BehaviorTree` (`RunSubtree`), `Components/BehaviorTreeRunner` - runs another `.okaybt` with its own blackboard, optional key mapping, a recursion guard, and the nested files shipped with the scene
+  - 9.4.6 Breakpoints - `BtNode.breakpoint`, `BehaviorTreeRunner` pause - a saved breakpoint pauses Play on that node and the window highlights it
 - **Code:** `AI/BehaviorTree`, `engine/src/AI/BehaviorTreeRunner.cpp`, `Components/BehaviorTreeRunner`, `editor/BehaviorTreeWindow.*`
 - **API:** `BehaviorTree`, `BehaviorTreeRunner`, `Blackboard`, `BtValue`, `BtStatus`, `BtNodeType`, script `bt_set`, `bt_get`, `bt_run`, `bt_stop`, `on_bt_event`, C# `BehaviorTree.Set`, visual-script Set Blackboard, Get Blackboard, Run Tree
 - **Editor:** View > Editors & Tools > Behavior Tree; Add Component > Gameplay > Behavior Tree Runner; double-click a `.okaybt` in the Project panel
 - **Docs:** `docs/behavior_trees.md`
 - **Tests:** `behavior_tree`
 - **Status:** Works - BehaviorTreeRunner.hpp and the tick structure in BehaviorTreeRunner.cpp read; node behaviour covered by the 826-line `behavior_tree` test
-- **Open:** the window has a live view but no breakpoints or stepping; the node catalogue has no node that runs another tree asset (copy and paste of subtrees only); Start Dialogue is the only task that links to story (10.2)
+- **Open:** no step-over or step-into (a breakpoint pauses Play, and the toolbar step runs one frame); Start Dialogue is the only task that links to story (10.2); perception is still a separate copy of the NPC controller's sight (9.5)
 - **Related:** 9.2, 9.5, 10.2, 11.7, 7.3
-- **Words:** AI, behavior tree, BT, blackboard, .okaybt, selector, sequence, decorator, service, patrol, chase, flee, Guard sample, BehaviorTreeRunner, AI brain, bt_set
+- **Words:** AI, behavior tree, BT, blackboard, .okaybt, selector, sequence, decorator, service, patrol, chase, flee, Guard sample, BehaviorTreeRunner, AI brain, bt_set, Run Sub-Tree, sub-tree, breakpoint
 - **Seen as:** an NPC stands still with a tree assigned; the tree restarts every frame; nodes do not light up in Play; the guard patrols but never notices the player; the Issues tab shows missing waypoints
 - **Ask me like:** "make a guard that patrols and chases the player"; "add a node that plays a sound then waits"
 

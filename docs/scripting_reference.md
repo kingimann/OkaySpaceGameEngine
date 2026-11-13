@@ -108,6 +108,7 @@ function update(dt) {
 | `set_vx/set_vy/set_vz(v)` | Set one velocity axis |
 | `velocity_x()` / `velocity_y()` / `velocity_z()` | Read velocity |
 | `add_force(x, y)` / `add_force3(x, y, z)` | Accumulate a force |
+| `add_explosion_force(x, y, force, radius [, up])` | Shove this 2D body away from a point; fades to nothing at the radius |
 | `add_impulse(...)` / `add_impulse3(...)` | Instant velocity change |
 | `jump(v)` | Set upward velocity (2D or 3D body) |
 | `set_gravity(x, y)` / `set_gravity3(x, y, z)` | Change world gravity |
@@ -168,6 +169,9 @@ function update(dt) {
 | `ui_set_tab_badge("n", i, count)` | Badge a tab: 0 = none, -1 = a dot, N = a number |
 | `ui_set_tab_enabled("n", i, on)` | Enable / disable (dim) a tab |
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
+| `ui_get_rotation("n")` / `ui_set_rotation("n", degrees)` | Read or turn a UI frame, in degrees clockwise around its pivot. Children turn with it |
+| `ui_get_scale("n")` / `ui_set_scale("n", x, y)` | Read or set a UI frame's width and height scale. One number sets both. 1, 1 is unchanged. Children scale with it |
+| `ui_set_focus("n")` | Move keyboard and gamepad focus to that widget, draw the focus ring, and scroll it into view. A mouse click hides the ring until the next keyboard, gamepad or script focus |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
 ### OkayUI (build a HUD from script — no Canvas objects)
@@ -234,6 +238,11 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `game_save(slot [, label])` / `game_load(slot)` / `game_continue()` | Save slots for objects marked with a Saveable component (see docs/save_framework.md, "Saving without code"). `game_load` and `game_continue` take effect at the start of the next frame and reload the saved level. Return 1 when accepted, 0 (with a `[save]` Console error) when the slot is missing, damaged or from a newer version |
 | `game_delete_slot(slot)` / `game_slot_exists(slot)` / `game_can_continue()` / `game_autosave()` | Delete a slot, ask whether it exists, ask whether any valid save exists, save into the autosave ring |
+| `get_monitor()` / `get_monitors()` / `set_monitor(name or index)` | The monitor in use, every connected monitor's name, and choosing one |
+| `get_display_mode()` / `set_display_mode("windowed" \| "borderless" \| "fullscreen")` | How the window is shown |
+| `get_display_width()` / `get_display_height()` / `set_display_resolution(width, height)` | The size in pixels |
+| `get_refresh_rate()` / `set_refresh_rate(hertz)` / `get_display_resolutions()` / `get_refresh_rates(width, height)` | The rate, the sizes on offer, and the rates for a size |
+| `begin_display_confirm()` / `keep_display_settings()` / `revert_display_settings()` / `get_display_confirm_seconds()` | Start the 10-second "keep these settings?" question, answer it, or read the seconds left |
 | `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
@@ -498,6 +507,7 @@ Intuitive names for common builtins so code reads naturally:
 | Function | Description |
 |---|---|
 | `after(seconds, "fn")` | Call `fn` once after a delay |
+| `actions_load("text")` | Add an Actions list from its saved text and run it on this object. An exported Actions component is this call; every step in the text runs as it does on the component |
 | `every(seconds, "fn")` | Call `fn` repeatedly on an interval |
 | `cancel_timers()` | Clear all scheduled callbacks |
 | `spawn("prefab", x, y)` / `spawn3("prefab", x, y, z)` | Instantiate prefabs |
@@ -514,6 +524,8 @@ Intuitive names for common builtins so code reads naturally:
 | `raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `raycast_all3(...)` / `raycast_all(ox,oy,dx,dy ...)` | Every object hit, nearest first (`ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3` / `box_cast3` / `capsule_cast3` | Thick shape casts (skip triggers); details via `ray3_*` |
+| `box_cast` / `capsule_cast` | Flat box and capsule casts (skip triggers); details via `ray_*`. A leading `"hit"` / `"point"` / `"normal"` / `"distance"` returns that detail |
+| `overlap_box` / `overlap_capsule` | Names of the objects inside a flat box or capsule |
 | `overlap_sphere3` / `overlap_box3` / `overlap_capsule3` | Names of the objects inside a 3D shape |
 | `layer_mask("Default", "Enemy")` | A layers value (or pass `"0,3"` / `"Default,Enemy"` directly) |
 | `overlap(x, y)` | A 2D collider contains this point? |

@@ -14,6 +14,8 @@ The engine side of accessibility. What a player can change today, and what reall
 | Sound captions | While on, an Audio Source with a caption shows it, for example `[door slams]`. Off by default |
 | Hold to toggle | Sprint, aim and crouch stay on after the key is released, until the next press. Aim and sprint on the action list do the same. Off, they are holds |
 | Aim assist (Off, Low, Medium, High) | While the right stick is moving, the view is pulled a short way toward a nearby living target. Medium is the default. Off, the stick is not pulled. Mouse look is never pulled |
+| High-visibility focus | The keyboard and gamepad focus ring becomes a thick yellow stroke with a dark halo, instead of the theme's ring |
+| Focus thickness (0.5 to 3) | Multiplies the theme's focus-ring thickness. High-visibility focus multiplies again, and never goes under 6 pixels |
 
 Everything else below is plain engine API. Settings that have no reader yet are not offered on
 the Settings screen: see "Not done" at the end.
@@ -22,7 +24,8 @@ The rest of this page: subtitles and captions, colour vision support,
 controller and keyboard navigation of UI, a controls-screen model with conflict
 detection, and one settings object a player sets once and the whole game honours.
 Everything is plain C++ (`#include <Okay.hpp>`). `CaptionOverlay` draws the shared
-caption lines. The navigation helpers still draw nothing, so a game's UI decides how those look.
+caption lines. The focus ring is drawn by the UI renderer (see Focus ring below). The
+navigation helpers only choose which widget is focused.
 
 | Header | What it has |
 |---|---|
@@ -58,11 +61,13 @@ okay::Accessibility::Save();               // into Prefs (Prefs::Save writes the
 | `toggleAllHolds`, `toggleActions` | `a11y.toggleAll`, `a11y.toggle` | hold-to-toggle for every action, or for named ones (`Sprint;Aim`) |
 | `aimAssist` | `a11y.aimAssist` | `off`, `low`, `medium` (default), `high` |
 | `screenReaderHints` | `a11y.screenReader` | announce menus and events to a screen reader |
+| `focusHighVisibility` | `a11y.focusHighVis` | thick yellow focus ring with a dark halo |
+| `focusThicknessScale` | `a11y.focusThickness` | 0.5 to 3, multiplies the theme's focus-ring thickness |
 
 `Accessibility::Set` clamps the values, does nothing when nothing changed, and
 tells each listener which parts changed (`kA11yTextScale`, `kA11yHighContrast`,
 `kA11yReduceMotion`, `kA11yReduceFlashing`, `kA11yColorblind`, `kA11ySubtitles`,
-`kA11yHoldToggle`, `kA11yAimAssist`, `kA11yScreenReader`, combined with `|`). Each
+`kA11yHoldToggle`, `kA11yAimAssist`, `kA11yScreenReader`, `kA11yFocusVisual`, combined with `|`). Each
 setting also has its own setter. It also hands the subtitle settings to the shared
 `CaptionManager::Main()`. Use it from the main thread.
 
@@ -247,6 +252,29 @@ g.Navigate(okay::FocusDir::Down);                // -> play (wraps)
 `BuildFocusGraph(scene, graph)` in `UINavigation.hpp` fills a graph from the scene's
 focusable widgets (visible, not behind an open modal, the same set `NavigateUI` uses,
 at their screen rectangles) and returns the objects, indexed by node id minus 1.
+
+### Focus ring
+
+The UI renderer draws one ring around the focused widget. It appears after a keyboard or
+gamepad move, or after a script sets focus, and a mouse click hides it until the next
+one of those. The focused widget is scrolled into view, including when a script sets focus.
+
+```cpp
+okay::SetUIFocus(scene.Find("Play"));          // ring on, scrolled into view
+// from a text script or a visual-script node Fn.ui_set_focus:
+//   ui_set_focus("Play")
+```
+
+The ring's colour, thickness, padding and optional pulse come from the UI theme on the
+widget (or an ancestor, or a global theme, or the first theme in the scene). Each built-in
+look has its own ring. Reduce motion and reduce flashing hold a pulse still.
+
+High-visibility focus (`Accessibility::SetFocusHighVisibility`) replaces that ring with a
+thick yellow stroke and a dark halo. Focus thickness (`SetFocusThicknessScale`, 0.5 to 3)
+multiplies the theme thickness first; high-visibility then doubles it and keeps it at
+least 6 pixels. Both are on the Settings screen (High-vis focus, Thickness) and saved
+under `a11y.focusHighVis` and `a11y.focusThickness`. A Settings screen saved before those
+rows gains them the next time it opens.
 
 ## Remapping
 

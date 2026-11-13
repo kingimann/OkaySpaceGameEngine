@@ -40,6 +40,16 @@ at most `maxAlive` of its own spawns alive and stopping after `totalToSpawn`
 (0 = endless). Spawns land within `spawnRadius`. `SpawnOne()` and `AliveCount()` are
 exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
 
+## Items, loot tables and recipes
+
+**Window > Items, Loot & Recipes** (also **View > Editors & Tools > Items, Loot & Recipes**) is one window with three tabs. You can list, search, add, duplicate, delete and edit:
+
+- **Items**, saved as the project's `items.okayitems`.
+- **Loot tables** (`.okayloot`): each entry has a weight and a quantity range. **Roll** previews a drop with the same roll the game uses.
+- **Recipes** (`.okayrecipes`): ingredients, outputs, extra outputs and crafting time, plus the bench tag and the unlock flag the file already stores.
+
+An item name is a dropdown of items you have defined. A name that is not one of them is called out in plain English. Ctrl+Z and Ctrl+Y undo these edits while the window has focus. Double-click a `.okayitems`, `.okayloot` or `.okayrecipes` file in the Project panel to open it here. A Loot Source or a Crafting component can jump to its file.
+
 ## Crafting menu (auto UI)
 
 *Add Component ▸ Gameplay ▸ Crafting Menu.* Builds one button per recipe of a sibling

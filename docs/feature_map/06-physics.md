@@ -2,7 +2,7 @@
 
 Rigid bodies, colliders, joints, scene queries and the debug view in 2D and 3D, plus destructibles and projectiles. Code is
 `engine/include/okay/Physics/*` (11 headers, about 2.7k lines in `engine/src/Physics`) and two joint headers in `Components/`.
-No dedicated physics doc exists (only the layer matrix in `docs/layers_tags_cameras.md`). Ragdolls are 5.8, controllers are area 4.
+The how-to is `docs/physics.md` (hinge limits, moving mesh colliders, 2D casts and blasts). The layer matrix is in `docs/layers_tags_cameras.md`. Ragdolls are 5.8, controllers are area 4.
 Since #575 (scene hierarchy) both step functions skip bodies under an inactive parent (`ActiveInHierarchy`, 1.17).
 
 ## 6. Physics
@@ -17,10 +17,10 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Physics/Physics2D`, `Physics/Rigidbody2D`, `Physics/Collider2D`, `Components/TilemapCollider2D`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D`, `EdgeCollider2D`, `PolygonCollider2D`, `TilemapCollider2D`, `OnCollisionEnter2D`, `OnTriggerEnter2D`, `scene.physics()`, `Collision2D`
 - **Editor:** Add Component > Physics 2D rows; Inspector sections for each component; Scene view collider gizmos (View > Scene Overlays > Colliders)
-- **Docs:** -
+- **Docs:** `docs/physics.md`
 - **Tests:** `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics2D::Step and Rigidbody2D read; covered by the tests above (friction, spin, tilemap strips, NaN and freed-pointer safety)
-- **Open:** no dedicated physics doc; no AddExplosionForce on Rigidbody2D (3D only); 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
+- **Open:** 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
 - **Related:** 6.3, 6.4, 6.5, 6.7, 2.6, 4.3
 - **Words:** physics, gravity, 2D physics, Rigidbody2D, BoxCollider2D, CircleCollider2D, CapsuleCollider2D, PolygonCollider2D, EdgeCollider2D, one-way platform, trigger, TilemapCollider2D, sleeping, friction, bounce, restitution, Box2D-style
 - **Seen as:** a sprite falls through the floor; a box jitters or never comes to rest; a ball does not bounce; a platform cannot be jumped up through; tilemap tiles do not block the player; a body spins when it should stay upright
@@ -32,17 +32,17 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch, triggers
   - 6.2.2 Rigidbody3D - `Physics/Rigidbody3D` - body type, mass, drag, gravity scale, friction, terminal fall speed, axis freeze, spin, sleeping, continuous collision, ground signals (`groundedOnTerrain`, `groundNormal`)
   - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, cylinder and mesh colliders; the mesh collider is exact per-triangle static geometry (see 6.2.5)
-  - 6.2.5 Mesh collider - `Physics/MeshCollider3D`, `Physics/TriMesh` - `MeshCollider3D` collides against the MeshRenderer's triangles through a BVH, placed by the world matrix (rotation and non-uniform scale); rays, sphere / capsule / box overlaps and casts, `ResolveSphere`, trigger overlaps and Rigidbody3D contact (sphere, capsule, box bodies; restitution, friction, spin); rebuilt when the mesh changes; static only, a dynamic Rigidbody3D on the same object is refused with a message
+  - 6.2.5 Mesh collider - `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact` - `MeshCollider3D` collides against the MeshRenderer's triangles through a BVH, placed by the world matrix (rotation and non-uniform scale); rays, sphere / capsule / box overlaps and casts, `ResolveSphere`, trigger overlaps and Rigidbody3D contact (sphere, capsule, box bodies; restitution, friction, spin); rebuilt when the mesh changes; a dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (GJK/EPA), and bodies landing on a solid mesh raise OnCollisionEnter3D / Stay / Exit
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
-- **Code:** `Physics/Physics3D`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
+- **Code:** `Physics/Physics3D`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
-- **Editor:** Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, static-only warning, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges)
-- **Docs:** -
+- **Editor:** Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
+- **Docs:** `docs/physics.md`
 - **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
-- **Open:** the header says bodies must be top-level (un-parented) Transforms; a MeshCollider3D is static only (no convex hull, so it cannot be a dynamic body) and does not raise OnCollisionEnter3D / Stay / Exit for bodies landing on it (trigger meshes do raise trigger events); the navmesh bake still treats it as its bounds box; no dedicated physics doc
+- **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box
 - **Related:** 6.1, 6.3, 6.4, 6.5, 6.8, 2.6, 4.1
-- **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic, triangle mesh, BVH, concave collider, static mesh
+- **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic, triangle mesh, BVH, concave collider, static mesh, convex hull, ConvexContact
 - **Seen as:** objects fall through a thin floor; a box stands on its corner or never settles; a collider is bigger or smaller than the mesh; a character sinks into terrain; a parented object does not collide
 - **Ask me like:** "the collider does not match my model"; "make this crate stop sliding on the ramp"
 
@@ -55,7 +55,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
 - **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
-- **Docs:** -
+- **Docs:** `docs/physics.md`
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
 - **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
@@ -86,15 +86,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Parts:**
   - 6.5.1 3D rays and casts - `Physics/Physics3D` - Raycast, RaycastAll, Linecast, SphereCast, BoxCast, CapsuleCast; layer mask, trigger switch, ignore object, `IgnoreHierarchy`
   - 6.5.2 3D overlaps - `Physics/Physics3D` - OverlapSphere, OverlapBox, OverlapCapsule
-  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, CircleCast
+  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, OverlapCapsule, CircleCast, BoxCast, CapsuleCast
   - 6.5.4 Debug view - `Physics/PhysicsDebug` - per-frame record of contacts and query rays, off by default; editor menu View > Scene Overlays > Physics Debug
 - **Code:** `Physics/PhysicsDebug`, `Physics/Physics2D`, `Physics/Physics3D`, `editor/main.cpp` (Physics Debug menu and overlay)
-- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit` and `overlap` (registered in area 13)
+- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `Physics2D::BoxCast`, `Physics2D::CapsuleCast`, `Physics2D::OverlapCapsule`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit`, `box_cast`, `capsule_cast` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
-- **Docs:** -
-- **Tests:** `queries`, `physics_queries_ext`, `script_physics`, `phys_math`, `physics_nan`
-- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
-- **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header); no 2D box or capsule casts
+- **Docs:** `docs/physics.md`, `docs/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
+- **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`
+- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; 2D box and capsule casts, overlaps and their script and visual-script nodes covered by `physics2d_casts`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
+- **Open:** 3D shape casts skip triggers by default while rays include them (by design, per the header)
 - **Related:** 6.7, 13.6, 14.4, 9.5
 - **Words:** raycast, linecast, spherecast, boxcast, capsulecast, overlap, RaycastHit, hit.point, hit.normal, ignore, layerMask, queryTriggers, physics debug, contact points
 - **Seen as:** a ray hits the shooter's own body; a camera ray passes through a wall; a trigger blocks a ray; contact points and rays are hard to see while debugging
@@ -140,15 +140,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **What:** The four force modes, explosion shoves, and a lightweight push-out that keeps a transform-moved player (no Rigidbody) from clipping into walls and floors.
 - **Parts:**
   - 6.8.1 Force modes - `Physics/ForceMode` - Force, Acceleration, Impulse, VelocityChange used by `AddForce(force, mode)` on both bodies
-  - 6.8.2 Explosion force - `Physics/Rigidbody3D` - `AddExplosionForce` with linear falloff and an upward bias
+  - 6.8.2 Explosion force - `Physics/Rigidbody3D`, `Physics/Rigidbody2D` - `AddExplosionForce` with linear falloff and an upward bias, in 3D and in the flat plane
   - 6.8.3 Sphere push-out - `Physics/PlayerCollision` - `ResolvePlayerBody` calls `Physics3D::ResolveSphere` after the Transform moved
 - **Code:** `Physics/ForceMode`, `Physics/PlayerCollision`
 - **API:** `ForceMode`, `AddForce`, `AddImpulse`, `AddTorque`, `AddForceAtPosition`, `AddExplosionForce`, `ResolvePlayerBody`, `Physics3D::ResolveSphere`
 - **Editor:** none
-- **Docs:** -
-- **Tests:** `physics_explode`, `phys_math`
-- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above
-- **Open:** AddExplosionForce exists on Rigidbody3D only (no 2D explosion); ResolvePlayerBody approximates the body as one sphere
+- **Docs:** `docs/physics.md`
+- **Tests:** `physics_explode`, `physics2d_casts`, `phys_math`
+- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above, including the flat-plane blast
+- **Open:** ResolvePlayerBody approximates the body as one sphere
 - **Related:** 6.2, 4.1, 4.2, 6.6
 - **Words:** AddForce, AddImpulse, ForceMode, VelocityChange, explosion, blast, knockback, AddExplosionForce, push out, depenetration, ResolvePlayerBody
 - **Seen as:** a grenade does not push crates; knockback is too weak or too strong; the player clips into a wall corner

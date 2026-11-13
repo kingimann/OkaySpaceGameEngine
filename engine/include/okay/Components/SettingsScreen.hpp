@@ -8,21 +8,27 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/DisplaySettings.hpp"
+#include "okay/Core/DisplayModes.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Components/TextRenderer.hpp"
 #include "okay/Input/Cursor.hpp"
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace okay {
 
-/// Binds the prebuilt Settings screen (Music / Effects sliders, Fullscreen,
-/// VSync, Quality, the Accessibility rows, Done) to the audio mixer, the window and the render quality
-/// preset and to Accessibility (text size, colour filter, high contrast, reduced motion and
-/// flashing, subtitles, sound captions, hold-to-toggle and aim assist: applied live, saved to
-/// Prefs when Done is pressed). A scene saved before a row existed simply has no control for it,
-/// and that row is skipped, so an older Settings object still loads. Done hides the screen and, when a Pause Menu object is in the scene,
-/// shows that again. While the screen is active the cursor is free and
-/// GameInputBlocked reports a modal.
+/// Binds the prebuilt Settings screen (Music / Effects, Monitor, Display mode,
+/// Resolution, Refresh rate, VSync, Quality, the Accessibility rows, Apply and Done)
+/// to the audio mixer, the window and the render quality preset and to Accessibility.
+/// Monitor, display mode, resolution and refresh wait for Apply, then ask
+/// "Keep these settings?" for 10 seconds and revert on their own if nobody keeps them.
+/// VSync, quality, volume and the accessibility rows apply as they change.
+/// Done hides the screen (and keeps a pending display change) and, when a Pause Menu
+/// is in the scene, shows that again. While the screen is active the cursor is free
+/// and GameInputBlocked reports a modal.
 class SettingsScreen : public Behaviour {
 public:
     static bool AnyOpen(const Scene* scene) {
@@ -57,16 +63,6 @@ public:
         for (int i = 0; i < kColorFilters; ++i) if (ColorFilterMode(i) == m) return i;
         return 0;   // Achromatopsia has no correction to apply: shown as Off
     }
-    /// Aim assist dropdown: Off, Low, Medium, High. Medium is the saved default.
-    static constexpr int kAimLevels = 4;
-    static AimAssist AimLevel(int i) {
-        static const AimAssist v[kAimLevels] = {AimAssist::Off, AimAssist::Low, AimAssist::Medium, AimAssist::High};
-        return v[i < 0 ? 0 : i >= kAimLevels ? kAimLevels - 1 : i];
-    }
-    static int AimIndex(AimAssist level) {
-        for (int i = 0; i < kAimLevels; ++i) if (AimLevel(i) == level) return i;
-        return 2;
-    }
 
     static void Ensure(Scene& scene) {
         GameObject* root = scene.Find("Settings");
@@ -95,29 +91,48 @@ public:
             m_open = true;
         }
         Cursor::Capture(false);
+        const bool picking = (m_monitor && m_monitor->open) || (m_mode && m_mode->open) ||
+                             (m_resolution && m_resolution->open) || (m_refresh && m_refresh->open);
+        if (!picking && DisplaySettings::Generation() != m_seenGen) PullDisplay();
+        else FillDisplayChoices();
         Push();
+        RefreshConfirm();
     }
 
     void LateUpdate(float) override {
-        if (!m_open || !m_done || !m_done->WasClicked()) return;
-        Close();
+        if (!m_open) return;
+        if (m_apply && m_apply->WasClicked()) ApplyDraft();
+        if (m_keep && m_keep->WasClicked()) { DisplaySettings::KeepTrial(); RefreshConfirm(); }
+        if (m_revert && m_revert->WasClicked()) { DisplaySettings::RevertTrial(); PullDisplay(); RefreshConfirm(); }
+        if (m_done && m_done->WasClicked()) {
+            if (DisplaySettings::TrialActive()) DisplaySettings::KeepTrial();
+            Close();
+        }
     }
 
 private:
     UISlider*   m_music = nullptr;
     UISlider*   m_effects = nullptr;
     UIToggle*   m_full = nullptr;
+    UIDropdown* m_monitor = nullptr;
+    UIDropdown* m_mode = nullptr;
+    UIDropdown* m_resolution = nullptr;
+    UIDropdown* m_refresh = nullptr;
+    UIButton*   m_apply = nullptr;
+    UIButton*   m_keep = nullptr;
+    UIButton*   m_revert = nullptr;
+    GameObject* m_confirm = nullptr;
+    GameObject* m_keepGo = nullptr;
+    GameObject* m_revertGo = nullptr;
+    TextRenderer* m_confirmText = nullptr;
     UIToggle*   m_vsync = nullptr;
     UIDropdown* m_quality = nullptr;
+    int         m_seenGen = -1;
     UIDropdown* m_textSize = nullptr;
     UIDropdown* m_colorFilter = nullptr;
     UIToggle*   m_contrast = nullptr;
     UIToggle*   m_motion = nullptr;
     UIToggle*   m_flashing = nullptr;
-    UIToggle*   m_subtitles = nullptr;
-    UIToggle*   m_soundCaptions = nullptr;
-    UIToggle*   m_holdToggle = nullptr;
-    UIDropdown* m_aim = nullptr;
     UIButton*   m_done = nullptr;
     GameObject* m_returnTo = nullptr;
     bool        m_open = false;
@@ -143,6 +158,14 @@ private:
         m_music = slider("MusicSlider");
         m_effects = slider("SfxSlider");
         m_full = toggle("FullscreenToggle");
+        if (GameObject* g = Child("MonitorDropdown")) m_monitor = g->GetComponent<UIDropdown>();
+        if (GameObject* g = Child("DisplayModeDropdown")) m_mode = g->GetComponent<UIDropdown>();
+        if (GameObject* g = Child("ResolutionDropdown")) m_resolution = g->GetComponent<UIDropdown>();
+        if (GameObject* g = Child("RefreshDropdown")) m_refresh = g->GetComponent<UIDropdown>();
+        if (GameObject* g = Child("ApplyButton")) m_apply = g->GetComponent<UIButton>();
+        if (GameObject* g = Child("KeepButton")) { m_keepGo = g; m_keep = g->GetComponent<UIButton>(); }
+        if (GameObject* g = Child("RevertButton")) { m_revertGo = g; m_revert = g->GetComponent<UIButton>(); }
+        if (GameObject* g = Child("ConfirmLabel")) { m_confirm = g; m_confirmText = g->GetComponent<TextRenderer>(); }
         m_vsync = toggle("VsyncToggle");
         if (GameObject* g = Child("QualityDropdown")) m_quality = g->GetComponent<UIDropdown>();
         if (GameObject* g = Child("TextSizeDropdown")) m_textSize = g->GetComponent<UIDropdown>();
@@ -150,14 +173,123 @@ private:
         m_contrast = toggle("HighContrastToggle");
         m_motion = toggle("ReduceMotionToggle");
         m_flashing = toggle("ReduceFlashingToggle");
-        m_subtitles = toggle("SubtitlesToggle");
-        m_soundCaptions = toggle("SoundCaptionsToggle");
-        m_holdToggle = toggle("HoldToggleToggle");
-        if (GameObject* g = Child("AimAssistDropdown")) m_aim = g->GetComponent<UIDropdown>();
         if (GameObject* g = Child("BackButton")) m_done = g->GetComponent<UIButton>();
-        m_bound = m_music || m_effects || m_full || m_vsync || m_quality || m_done ||
-                  m_textSize || m_colorFilter || m_contrast || m_motion || m_flashing ||
-                  m_subtitles || m_soundCaptions || m_holdToggle || m_aim;
+        m_bound = m_music || m_effects || m_full || m_vsync || m_quality || m_done || m_monitor || m_mode ||
+                  m_resolution || m_refresh || m_apply ||
+                  m_textSize || m_colorFilter || m_contrast || m_motion || m_flashing;
+    }
+
+    void FillDisplayChoices() {
+        if (m_monitor) {
+            std::vector<std::string> names;
+            const auto& mons = DisplaySettings::Monitors();
+            if (mons.empty()) names.push_back("This display");
+            else for (const DisplayMonitor& m : mons)
+                names.push_back(m.name.empty() ? "Display " + std::to_string(m.index + 1) : m.name);
+            if (m_monitor->options != names) m_monitor->options = std::move(names);
+            if (m_monitor->value >= (int)m_monitor->options.size()) m_monitor->value = (int)m_monitor->options.size() - 1;
+            if (m_monitor->value < 0) m_monitor->value = 0;
+        }
+        if (m_mode) {
+            const std::vector<std::string> modes = {"Windowed", "Borderless", "Fullscreen"};
+            if (m_mode->options != modes) m_mode->options = modes;
+            if (m_mode->value < 0) m_mode->value = 0;
+            if (m_mode->value > 2) m_mode->value = 2;
+        }
+        const int mon = m_monitor ? m_monitor->value : 0;
+        const bool haveMons = !DisplaySettings::Monitors().empty();
+        const std::vector<DisplayMode> modeList = haveMons ? DisplaySettings::MonitorModes(mon) : std::vector<DisplayMode>{};
+        const std::vector<DisplayResolution> sizes = modeList.empty() ? DisplaySettings::Resolutions() : ResolutionsFromModes(modeList);
+        if (m_resolution) {
+            std::vector<std::string> labels;
+            for (const DisplayResolution& r : sizes) labels.push_back(r.Label());
+            if (labels.empty()) labels.push_back("Default");
+            if (m_resolution->options != labels) m_resolution->options = std::move(labels);
+            if (m_resolution->value >= (int)m_resolution->options.size()) m_resolution->value = (int)m_resolution->options.size() - 1;
+            if (m_resolution->value < 0) m_resolution->value = 0;
+        }
+        int rw = 0, rh = 0;
+        if (m_resolution && !sizes.empty()) {
+            int i = m_resolution->value;
+            if (i < 0) i = 0;
+            if (i >= (int)sizes.size()) i = (int)sizes.size() - 1;
+            rw = sizes[(std::size_t)i].width;
+            rh = sizes[(std::size_t)i].height;
+        }
+        if (m_refresh) {
+            const std::vector<int> rates = modeList.empty() ? std::vector<int>{} : RefreshRatesFor(modeList, rw, rh);
+            std::vector<std::string> labels;
+            if (rates.empty()) labels.push_back("Default");
+            else for (int hz : rates) labels.push_back(std::to_string(hz) + " Hz");
+            if (m_refresh->options != labels) m_refresh->options = std::move(labels);
+            if (m_refresh->value >= (int)m_refresh->options.size()) m_refresh->value = (int)m_refresh->options.size() - 1;
+            if (m_refresh->value < 0) m_refresh->value = 0;
+        }
+    }
+
+    void PullDisplay() {
+        FillDisplayChoices();
+        if (m_mode) m_mode->value = (int)DisplaySettings::Mode();
+        if (m_monitor) {
+            int idx = DisplaySettings::MonitorIndex();
+            if (idx < 0 || idx >= (int)m_monitor->options.size()) idx = 0;
+            m_monitor->value = idx;
+        }
+        FillDisplayChoices();
+        if (m_resolution && DisplaySettings::HasResolution()) {
+            const std::string label = DisplaySettings::Resolution().Label();
+            for (int i = 0; i < (int)m_resolution->options.size(); ++i)
+                if (m_resolution->options[(std::size_t)i] == label) m_resolution->value = i;
+        }
+        if (m_refresh) {
+            m_refresh->value = 0;
+            if (DisplaySettings::RefreshHz() > 0) {
+                const std::string label = std::to_string(DisplaySettings::RefreshHz()) + " Hz";
+                for (int i = 0; i < (int)m_refresh->options.size(); ++i)
+                    if (m_refresh->options[(std::size_t)i] == label) m_refresh->value = i;
+            }
+        }
+        m_seenGen = DisplaySettings::Generation();
+    }
+
+    void RefreshConfirm() {
+        const bool on = DisplaySettings::TrialActive();
+        if (m_confirm) m_confirm->active = on;
+        if (on && m_confirmText) {
+            int secs = (int)(DisplaySettings::TrialSecondsLeft() + 0.999f);
+            if (secs < 1) secs = 1;
+            m_confirmText->text = "Keep these settings? " + std::to_string(secs);
+        }
+        if (m_keepGo) m_keepGo->active = on;
+        if (m_revertGo) m_revertGo->active = on;
+    }
+
+    void ApplyDraft() {
+        WindowMode mode = m_mode ? (WindowMode)std::clamp(m_mode->value, 0, 2) : DisplaySettings::Mode();
+        int w = 0, h = 0;
+        if (m_resolution && m_resolution->value >= 0 && m_resolution->value < (int)m_resolution->options.size()) {
+            const std::string& label = m_resolution->options[(std::size_t)m_resolution->value];
+            if (std::sscanf(label.c_str(), "%d x %d", &w, &h) != 2) { w = 0; h = 0; }
+        }
+        int hz = 0;
+        if (m_refresh && m_refresh->value >= 0 && m_refresh->value < (int)m_refresh->options.size()) {
+            const std::string& label = m_refresh->options[(std::size_t)m_refresh->value];
+            if (label != "Default") hz = std::atoi(label.c_str());
+        }
+        const int mon = m_monitor ? m_monitor->value : -1;
+        const bool monitorChange = !DisplaySettings::Monitors().empty() && mon >= 0 &&
+            mon != DisplaySettings::MonitorIndex() && !(DisplaySettings::MonitorIndex() < 0 && mon == 0);
+        const bool modeChange = mode != DisplaySettings::Mode();
+        const bool sizeChange = w > 0 && (w != DisplaySettings::Width() || h != DisplaySettings::Height());
+        const bool rateChange = hz != DisplaySettings::RefreshHz();
+        if (!monitorChange && !modeChange && !sizeChange && !rateChange) return;
+        if (!DisplaySettings::TrialActive()) DisplaySettings::BeginTrial(10.f);
+        if (monitorChange) DisplaySettings::SetMonitorIndex(mon);
+        if (modeChange) DisplaySettings::SetMode(mode);
+        if (sizeChange) DisplaySettings::SetResolution(w, h);
+        if (rateChange) DisplaySettings::SetRefreshHz(hz);
+        m_seenGen = DisplaySettings::Generation();
+        RefreshConfirm();
     }
 
     void Pull() {
@@ -166,6 +298,7 @@ private:
         if (m_music) m_music->value = AudioMixer::groupVolume[(int)AudioGroup::Music];
         if (m_effects) m_effects->value = AudioMixer::groupVolume[(int)AudioGroup::SFX];
         if (m_full) m_full->on = DisplaySettings::Fullscreen();
+        PullDisplay();
         if (m_vsync) m_vsync->on = DisplaySettings::VSync();
         if (m_quality) m_quality->value = DisplaySettings::Quality();
         const AccessibilitySettings& a = Accessibility::Get();
@@ -174,10 +307,6 @@ private:
         if (m_contrast) m_contrast->on = a.highContrast;
         if (m_motion) m_motion->on = a.reduceMotion;
         if (m_flashing) m_flashing->on = a.reduceFlashing;
-        if (m_subtitles) m_subtitles->on = a.subtitles.enabled;
-        if (m_soundCaptions) m_soundCaptions->on = a.subtitles.soundCaptions;
-        if (m_holdToggle) m_holdToggle->on = a.toggleAllHolds;
-        if (m_aim) m_aim->value = AimIndex(a.aimAssist);
     }
 
     void Push() {
@@ -203,18 +332,6 @@ private:
         if (m_contrast && m_contrast->on != a.highContrast) Accessibility::SetHighContrast(m_contrast->on);
         if (m_motion && m_motion->on != a.reduceMotion) Accessibility::SetReduceMotion(m_motion->on);
         if (m_flashing && m_flashing->on != a.reduceFlashing) Accessibility::SetReduceFlashing(m_flashing->on);
-        if (m_subtitles && m_subtitles->on != a.subtitles.enabled) {
-            SubtitleSettings sub = a.subtitles;
-            sub.enabled = m_subtitles->on;
-            Accessibility::SetSubtitles(sub);
-        }
-        if (m_soundCaptions && m_soundCaptions->on != a.subtitles.soundCaptions) {
-            SubtitleSettings sub = Accessibility::Get().subtitles;
-            sub.soundCaptions = m_soundCaptions->on;
-            Accessibility::SetSubtitles(sub);
-        }
-        if (m_holdToggle && m_holdToggle->on != a.toggleAllHolds) Accessibility::SetToggleAllHolds(m_holdToggle->on);
-        if (m_aim && m_aim->value != AimIndex(a.aimAssist)) Accessibility::SetAimAssist(AimLevel(m_aim->value));
     }
 
     void Close() {

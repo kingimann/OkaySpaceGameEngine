@@ -48,11 +48,14 @@ public:
     /// Held on a wait-for-input event until the confirm key.
     bool  IsWaiting() const { return m_playing && m_waiting; }
     float Time() const { return m_time; }
-    float Length() const { return m_seq.Duration(); }
+    float Length() const { return m_seq.Duration(&m_lib); }
     /// True while playing with `lockPlayer`: the runtimes treat it like a modal UI.
     bool  LocksInput() const { return m_playing && lockPlayer; }
-    /// The fade and subtitle to draw now.
+    /// The fade, letterbox, coloured screen and subtitle to draw now.
     SeqOverlay Overlay() const;
+    /// Nested sequences loaded for the current sequence (tests add children here).
+    SeqLibrary& library() { return m_lib; }
+    const SeqLibrary& library() const { return m_lib; }
 
     // ---- The sequence ----
     Sequence& sequence() { return m_seq; }
@@ -90,13 +93,12 @@ public:
     static bool AnyLocksInput(const Scene& scene);
     /// The name of the event being delivered to scripts ("" outside one).
     static const std::string& LastEvent();
-    /// The overlay as draw commands for a W x H screen: the fade, then the
-    /// subtitle card in the launcher look (slate panel, hairline border, accent
-    /// speaker). The player and the editor's Game view both draw this list.
-    /// `drawSubtitle` false skips the old subtitle card (the caption widget draws
-    /// the same line). The fade and the wait hint are unchanged. Default true so
-    /// a caller that has no widget still shows the card.
-    static std::vector<LoadingDrawCmd> BuildOverlay(const SeqOverlay& overlay, float W, float H, bool drawSubtitle = true);
+    /// The overlay as draw commands for a W x H screen: the coloured fade, the
+    /// fade to black, the letterbox bars, then the subtitle card in the launcher
+    /// look (slate panel, hairline border, accent speaker). The player and the
+    /// editor's Game view both draw this list, on top of whichever renderer
+    /// drew the scene.
+    static std::vector<LoadingDrawCmd> BuildOverlay(const SeqOverlay& overlay, float W, float H);
 
 private:
     void FireBetween(float a, float b, bool includeA);
@@ -106,6 +108,7 @@ private:
     bool ConfirmPressed() const;
 
     Sequence m_seq;
+    SeqLibrary m_lib;
     bool m_loaded = false;
     std::string m_loadedPath;
     SequenceBinding m_binding;
@@ -117,9 +120,6 @@ private:
     bool  m_audioWarned = false, m_clipWarned = false;
     bool  m_skipping = false;      ///< Skip() is firing the rest: waits are ignored
     bool  m_startDeferred = false; ///< playOnStart arrived while scripts were off
-    int   m_capId = 0;             ///< the CaptionManager line for the subtitle now showing
-    std::string m_capKey;
-    void FeedSubtitle();
 };
 
 } // namespace okay

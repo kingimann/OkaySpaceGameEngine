@@ -12,7 +12,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.1.1 Canvas and scaling - `Components/Canvas` - Constant Pixel Size or Scale With Screen Size, Screen Match (Match Width/Height blend, Expand, Shrink), sort order, master opacity, world-space switch
   - 12.1.2 Anchor presets - `Components/UIAnchor` - nine fixed points plus three stretch presets, position is an offset (or margins for stretch)
-  - 12.1.3 UI Frame - `Components/UIFrame` - anchorMin/anchorMax/pivot rect that replaces the preset, plus rotation (degrees clockwise around the pivot) and scale (width and height); children inherit both; widget fields stay in step with it; "Use UI Frame" and "Convert all UI" convert scenes without moving anything
+  - 12.1.3 UI Frame - `Components/UIFrame` - anchorMin/anchorMax/pivot rect that replaces the preset; widget fields stay in step with it; "Use UI Frame" and "Convert all UI" convert scenes without moving anything
   - 12.1.4 Uniform widget rect and draw order - `Components/UIElement` - UIRect and GetUIRect for any widget, the one shared UI layer table, SortUIDrawItems and the draw-order rule
   - 12.1.5 Layout Group - `Components/UILayoutGroup` - column, row, grid, and Flex Row / Flex Column with wrap, justify and align
   - 12.1.6 Flex Item - `Components/UIFlexItem` - per-child grow, shrink and basis inside a flex layout
@@ -21,12 +21,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.1.9 Per-frame layout pass - `UI/UILayoutUpdate` - settles frames, fits scroll extents, re-arranges flex, rebinds list rows; shared by player and editor
   - 12.1.10 Layout tools - `Scene/UILayoutTools` - wrap in panel, fit to children, match size, stack, avoid overlap (used by the editor)
 - **Code:** `Components/Canvas`, `Components/UIAnchor`, `Components/UIFrame`, `Components/UIElement`, `Components/UILayoutGroup`, `Components/UIFlexItem`, `Components/UIMask`, `Components/UISafeArea`, `Components/UIWorldContext`, `UI/UILayoutUpdate`, `Scene/UILayoutTools`, `editor/UIInspectorLayout.*`
-- **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`, `UIFrameCorners`; script: `ui_set_*` by widget name, plus `ui_get_rotation` / `ui_set_rotation` / `ui_get_scale` / `ui_set_scale` (see 12.13)
+- **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`; script: `ui_set_*` by widget name (see 12.13)
 - **Editor:** Inspector cards for Canvas, Layout Group, Scroll View, UI Frame, UI Flex Item, UI Mask; UI view toolbar (Align, Match size, Stack, Wrap in Panel, Fit to Children)
 - **Docs:** `docs/game_ui.md` (Styling and layout tools, Phones and tablets), `docs/engine_api.md`
 - **Tests:** `ui_frame`, `ui_layout_containers`, `ui_system`, `ui_layer_table`, `ui_layering`
 - **Status:** Works - the components are implemented and the tests above cover anchor math, frame conversion, flex, mask clipping and the layer table
-- **Open:** aspect-ratio and responsive containers from the component-library request are not present as components. UI Frame rotation and scale are in (children inherit them; old scenes load with no turn and a scale of 1)
+- **Open:** possible gap: UIFrame has anchors and pivot but no rotation or scale (the UI plan asked for both); aspect-ratio and responsive containers from the component-library request are not present as components
 - **Related:** 12.9, 12.10, 12.11, 12.6
 - **Words:** canvas, CanvasScaler, anchors, anchors (UI), anchor preset, stretch, margins, UI Frame, UIFrame, pivot, flex, flexbox, layout group, grid layout, mask, safe area, notch, reference resolution, Screen Match, Expand, Shrink, sort order
 - **Seen as:** a HUD is the wrong size on another resolution; a menu is cut off on a phone; a button drifts when the window resizes; children overlap in a row or column; a scroll list shows items outside its box; text sits under the notch
@@ -74,7 +74,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker. Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`)
+- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker, virtual joystick or D-pad; double-click, long-press and swipe gestures are not in the UI components
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -168,7 +168,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.8.1 Loading screen - `Components/LoadingScreen` - show-on-start or scene transition, progress, fade, rotating tips, bar and spinner styles, logo, slow zoom
   - 12.8.2 Loading layouts - `Components/LoadingScreenLayout` - one draw-command list (rect, gradient, image, text, arc) drawn identically by the player and the editor preview
   - 12.8.3 Pause menu - `Components/PauseMenu` - Escape toggle, freezes time, free cursor, builds editable UI objects in the scene, keyboard and gamepad
-  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Monitor, Display mode, Resolution, Refresh rate, VSync, Quality; Apply then "Keep these settings?" for 10 seconds; Text size, Colour filter, High contrast, Reduce motion, Reduce flashing, Subtitles, Sound captions, Hold to toggle and Aim assist bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
+  - 12.8.4 Settings screen - `Components/SettingsScreen` - Music, Effects, Fullscreen, VSync, Quality bound to mixer, window and render preset; Text size, Colour filter, High contrast, Reduce motion, Reduce flashing, High-vis focus and Focus thickness bound to `Accessibility` (applied live, saved to Prefs on Done); Done returns to the pause menu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
@@ -194,7 +194,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Phones and tablets), `docs/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
-- **Open:** `UITouchScroll` still has no test by name. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/input.md`)
+- **Open:** no on-screen controls (virtual joystick, D-pad, touch buttons) found; no test for `UITouchScroll` by name
 - **Related:** 12.1, 8.4, 18.2
 - **Words:** mobile, phone, tablet, safe area, notch, portrait, landscape, touch, emulator, device frame, resolution
 - **Seen as:** UI is tiny or cropped on a phone; buttons sit under the notch; finger scrolling does not work; the device preview shows the wrong insets
@@ -248,7 +248,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **What:** How the pointer, keyboard, gamepad and fingers reach widgets: top-most hit testing, hover and selection, 2-D focus movement, modal input blocking and the "game input blocked" guard.
 - **Parts:**
   - 12.12.1 Event System - `Components/EventSystem` - UIRaycast, Hovered, Pressed, Selected, IsPointerOverUI
-  - 12.12.2 Navigation - `Components/UINavigation` - nearest widget in the pressed direction, wrap, value widgets keep Left/Right, focus scrolls into view
+  - 12.12.2 Navigation - `Components/UINavigation` - nearest widget in the pressed direction, wrap, value widgets keep Left/Right, focus scrolls into view; the ring shows for keyboard, gamepad and script focus and hides on a mouse click
   - 12.12.3 Touch input - `Components/UITouchScroll` - finger drag, fling, tap fires on lift
   - 12.12.4 Input guards - `Components/UIModal`, `Components/SettingsScreen` - modals and open screens block game input (Input::UICaptured, GameInputBlocked)
   - 12.12.5 Hit testing contract - `Components/UIWorldContext`, `Components/UIElement` - one widget rect used for draw, click and drag in screen and world space
@@ -257,9 +257,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `NavigateUI`, `UIRaycast`, `SceneEventSystem`, `EventSystem::IsPointerOverUI`, `Input::UICaptured`
 - **Editor:** Event System inspector header; the UI view uses the same rects for click-to-select
 - **Docs:** -
-- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`
+- **Tests:** `ui_nav_touch`, `ui_overlays`, `ui_input_guard`, `uicapture_look`, `ui_system`, `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Works - navigation, touch and focus rules are implemented and tested; a focus graph with tab order, links and traps (`UI/FocusGraph`, `BuildFocusGraph` in `UINavigation.hpp`) merged in #574 but `NavigateUI` does not use it
-- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); remapping all UI actions and screen-reader hints belong to area 32. Touch gestures (tap, double tap, long press, swipe, pinch, rotate) are in `docs/input.md`. A mouse double-click is still not its own UI event.
+- **Open:** FocusGraph (#574, 32.1) is not used by `NavigateUI` or the widgets yet (the accessibility text size, colour filter and high contrast are applied by the UI renderer, 32.3); the focus ring is themed and tied to high-visibility focus and a thickness scale (`UI/UIFocus`, tests `ui_focus`, `ui_focus_render`); remapping all UI actions and screen-reader hints belong to area 32; no gesture recognisers (double-click, long press, swipe)
 - **Related:** 8.3, 8.4, 32.1, 12.4
 - **Words:** event system, hover, pressed, selected, gamepad navigation, focus, D-pad, keyboard menu navigation, touch, tap, pointer over UI, input capture, UICaptured
 - **Seen as:** gamepad cannot move through a menu; focus ring stays on a hidden widget; clicks on the HUD also fire in the world; the camera keeps turning while a menu is open; the wrong widget gets the click

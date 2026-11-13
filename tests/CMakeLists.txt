@@ -6,6 +6,10 @@ add_executable(test_scene test_scene.cpp)
 target_link_libraries(test_scene PRIVATE okay::engine)
 add_test(NAME scene COMMAND test_scene)
 
+add_executable(test_console_renderer_robust test_console_renderer_robust.cpp)
+target_link_libraries(test_console_renderer_robust PRIVATE okay::engine)
+add_test(NAME console_renderer_robust COMMAND test_console_renderer_robust)
+
 # Scene::StructureVersion changes only when the hierarchy does (animation caches key on it)
 add_executable(test_structure_version test_structure_version.cpp)
 target_link_libraries(test_structure_version PRIVATE okay::engine)

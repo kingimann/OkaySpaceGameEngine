@@ -6,6 +6,8 @@
 // The TLS part is skipped (exit 0, "SKIP") when the openssl program or libssl is missing,
 // unless OKAY_REQUIRE_TLS_TESTS=1.
 //   test_own_http_net <path to gen_http_test_certs.sh>
+#define OKAY_OWN_HTTP 1   // the NativeHttp wiring test below
+#include "okay/Platform/NativeHttp.hpp"
 #include "okay/Platform/OwnHttpNet.hpp"
 
 #include <atomic>
@@ -20,6 +22,10 @@ using namespace okay::ownhttp;
 static int g_fail = 0, g_checks = 0, g_skips = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { ++g_fail; std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 #define CHECK_ERR(r, want) do { ++g_checks; if ((r).ok || (r).err != (want)) { ++g_fail; std::printf("FAIL %s:%d: expected %s, got ok=%d %s (%s)\n", __FILE__, __LINE__, ErrName(want), (r).ok, ErrName((r).err), (r).message.c_str()); } } while (0)
+
+static void WriteFile(const std::string& p, const std::string& d) { std::ofstream(p, std::ios::binary) << d; }
+
+static void Sh(const std::string& c) { if (std::system(c.c_str()) != 0) { /* best effort cleanup */ } }
 
 static void SendAll(int fd, const std::string& s) {
     size_t off = 0;
@@ -337,6 +343,50 @@ static void TestProxy(const std::string& tlsBase, const std::string& caFile) {
     px.srv.Stop(); origin.Stop();
 }
 
+// NativeHttp (the callers' entry point) with the own client: opt-in by environment, same Result semantics.
+static void TestNativeHttp() {
+    Server s;
+    s.handler = [&](int c, const std::string& head, const std::string& body) {
+        std::string path = PathOf(head);
+        if (path == "/ok") SendAll(c, Ok("hello"));
+        else if (path == "/echo") SendAll(c, Ok(body));
+        else if (path == "/404") SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\nnope");
+        else if (path == "/garbage") SendAll(c, "nonsense\r\n\r\n");
+        else SendAll(c, Ok(""));
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
+    CHECK(!okay::http::NativeAvailable());                      // off unless asked for
+    ::setenv("OKAY_OWN_HTTP", "1", 1);
+    CHECK(okay::http::NativeAvailable());
+    okay::http::Result r = okay::http::Request("GET", base + "/ok", {});
+    CHECK(r.reached && r.status == 200 && r.body == "hello");
+    r = okay::http::Request("POST", base + "/echo", {"Content-Type: text/plain"}, "payload");
+    CHECK(r.reached && r.body == "payload");
+    char tmpl[] = "/tmp/okay_nh_XXXXXX"; int tfd = ::mkstemp(tmpl); ::close(tfd);
+    WriteFile(tmpl, "file body");
+    r = okay::http::Request("POST", base + "/echo", {}, "", tmpl);   // body from a file
+    CHECK(r.reached && r.body == "file body");
+    r = okay::http::Request("GET", base + "/404", {});
+    CHECK(r.reached && r.status == 404 && r.body == "nope");
+    r = okay::http::Request("GET", base + "/ok", {}, "", "", tmpl);   // download to a file
+    CHECK(r.reached && r.status == 200 && r.body.empty());
+    { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "hello"); }
+    r = okay::http::Request("GET", base + "/garbage", {});
+    CHECK(!r.reached && !r.error.empty());                       // callers fall back to curl
+    r = okay::http::Request("GET", base + "/ok", {"Bad: x\r\nInjected: 1"});
+    CHECK(!r.reached);
+    r = okay::http::Request("GET", "https://127.0.0.1:" + std::to_string(s.port) + "/ok", {});
+    CHECK(!r.reached);                                          // no CA trusts it / not TLS: never "reached"
+    ::setenv("OKAY_HTTP_CURL", "1", 1);
+    CHECK(!okay::http::NativeAvailable());                      // the existing kill switch still wins
+    ::unsetenv("OKAY_HTTP_CURL"); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    ::unlink(tmpl);
+    s.Stop();
+}
+
 static void TestNoProxyList() {
     CHECK(HostBypassesProxy("localhost", "localhost,127.0.0.1"));
     CHECK(HostBypassesProxy("127.0.0.1", "localhost,127.0.0.1"));
@@ -404,7 +454,6 @@ struct SServer {
     std::string Url(const std::string& host, const std::string& file) const { return "https://" + host + ":" + std::to_string(port) + "/" + file; }
 };
 
-static void WriteFile(const std::string& p, const std::string& d) { std::ofstream(p, std::ios::binary) << d; }
 
 static void TestTls(const std::string& scriptPath) {
     std::string why;
@@ -417,7 +466,7 @@ static void TestTls(const std::string& scriptPath) {
     if (!::mkdtemp(tmpl)) { skip("no temp directory"); return; }
     const std::string dir = tmpl, certs = dir + "/certs", docs = dir + "/docs";
     if (std::system(("sh '" + scriptPath + "' '" + certs + "' >/dev/null").c_str()) != 0) { skip("certificate script failed"); return; }
-    std::system(("mkdir -p '" + docs + "'").c_str());
+    Sh("mkdir -p '" + docs + "'");
 
     const std::string ca = certs + "/ca.pem";
     WriteFile(docs + "/ok.http", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
@@ -543,7 +592,7 @@ static void TestTls(const std::string& scriptPath) {
         SServer s; CHECK(s.Start(docs, certs + "/good.crt", certs + "/good.key"));
         TestProxy(s.Url("localhost", "ok.http"), ca);
     }
-    std::system(("rm -rf '" + dir + "'").c_str());
+    Sh("rm -rf '" + dir + "'");
 }
 
 int main(int argc, char** argv) {
@@ -551,6 +600,7 @@ int main(int argc, char** argv) {
     std::string script = argc > 1 ? argv[1] : "tests/scripts/gen_http_test_certs.sh";
     TestNoProxyList();
     TestPlain();
+    TestNativeHttp();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

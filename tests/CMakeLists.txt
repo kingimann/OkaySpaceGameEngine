@@ -2812,3 +2812,18 @@ target_link_libraries(test_clipboard PRIVATE okay::engine)
 target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clipboard COMMAND test_clipboard)
+
+# Our own HTTP/1.1 client (docs/own_http_client.md). The pure layer (parser, builder, redirects) is tested and
+# fuzzed over in-memory streams; the transports (TCP, CONNECT proxy, OpenSSL loaded with dlopen) are tested against
+# local servers, `openssl s_server` and throw-away certificates from tests/scripts/gen_http_test_certs.sh.
+# Header-only: neither links the engine. The TLS cases skip (and say so) when libssl or the openssl program is missing.
+add_executable(test_own_http test_own_http.cpp)
+target_include_directories(test_own_http PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME own_http COMMAND test_own_http)
+if(UNIX AND NOT APPLE)
+    add_executable(test_own_http_net test_own_http_net.cpp)
+    target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_own_http_net PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+    add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh)
+    set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+endif()

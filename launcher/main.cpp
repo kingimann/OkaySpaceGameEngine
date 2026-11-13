@@ -52,11 +52,13 @@
 
 // The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
 #include "OkayUIBackend.hpp"
+#include "LauncherTips.hpp"
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
+#include "OkayUIPanels.hpp"
 #endif
 
 #include <algorithm>
@@ -20085,34 +20087,33 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
+        } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
+            // differences are listed in docs/own_ui_toolkit.md section 6.
+            static okayuiscreens::TipsModel tm;
+            static okayuiscreens::TipsState ts;
+            if (tm.tips.empty()) {
+                for (int i = 0; i < launchertips::kCatCount; ++i) tm.cats.push_back(launchertips::kCats[i]);
+                for (int i = 0; i < launchertips::kTipCount; ++i) tm.tips.push_back({launchertips::kTips[i].cat, launchertips::kTips[i].title, launchertips::kTips[i].body});
+            }
+            tm.dayNumber = (long long)(std::time(nullptr) / 86400);
+            if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ImGui::InvisibleButton("##okayui_tips", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+#endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
-            struct Tip { int cat; const char* title; const char* body; };
-            static const char* kCats[] = {"All", "Editor", "Scripting", "Building", "Launcher"};
-            static const Tip kTips[] = {
-                {1, "Test instantly", "Press Play in the editor toolbar to try the scene right away."},
-                {1, "Save everything", "Ctrl+S saves the scene, Ctrl+Shift+S saves it under a new name and Ctrl+Alt+S saves the whole project."},
-                {1, "Test on phone screens", "In the Game view, pick a Device to preview phone and tablet sizes. Flip to landscape and show the safe area around notches."},
-                {1, "Drag assets onto objects", "Drag textures, models and scripts from the Project panel onto objects in the Scene or Hierarchy."},
-                {1, "Add UI", "GameObject > UI adds buttons, sliders, text and radial loaders."},
-                {1, "Camera feel", "The Camera inspector has Zoom, Dutch Angle, Lens Shift and Camera Shake. Use Test Shake to preview it."},
-                {2, "Autocomplete with examples", "Ctrl+Space opens suggestions. The panel beside the list shows what the selected item does, with an example."},
-                {2, "Jump between problems", "Errors and warnings appear while you type. Press F2 to jump to the next one."},
-                {2, "More room to code", "Alt+1 folds the scripts sidebar in the Script Editor."},
-                {2, "One-line timers", "if (timer(\"spawn\", 2)) runs every 2 seconds, cooldown(\"shoot\", 0.3) limits how often something happens and once(\"intro\") runs a single time."},
-                {2, "Shake the camera from code", "camera_shake(0.6) for hits and explosions; camera_zoom_to(2, 0.5) zooms in over half a second."},
-                {2, "Movement in one line", "on_key_move(5) moves with WASD or the arrow keys; platformer(6, 8) is a whole 2D side-scroller controller."},
-                {3, "Choose the scenes you ship", "File > Build Settings > Scenes In Build: tick the scenes to include. The top one loads first."},
-                {3, "Fullscreen toggle", "Turn on the fullscreen toggle in Build Settings so players can press Alt+Enter or F11."},
-                {3, "Share on GitHub", "Right-click a project on the Create page to publish it to GitHub, then use Commit & Push for later changes."},
-                {3, "Play web games", "Drop an .html game (or a folder with index.html) into your games folder and it shows up under Play."},
-                {4, "Jump between pages", "When you're not typing, the number keys switch pages (1 Create, 2 Play, 3 Community). Ctrl+F searches the current page."},
-                {4, "Chat your way", "Chat can open in its own window or dock inside the launcher. Use the dock / pop-out button in the chat window."},
-                {4, "Collapse the sidebar", "The panel button next to the logo shrinks the sidebar to icons."},
-                {4, "Check for updates", "Click the version number under the logo to check for an update right now."},
-                {4, "Notifications", "The bell keeps friend requests, mentions and release news. Read and cleared items stay that way after a restart."},
-            };
-            const int nTips = (int)(sizeof(kTips) / sizeof(kTips[0]));
+            using launchertips::Tip;   // the words live in shared/LauncherTips.hpp, so the OkayUI page shows the same ones
+            const char* const* kCats = launchertips::kCats;
+            const Tip* kTips = launchertips::kTips;
+            const int nTips = launchertips::kTipCount;
             static int s_cat = 0;
             static char s_q[96] = "";
             static int s_daily = -1;

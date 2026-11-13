@@ -286,10 +286,10 @@ NodeGraph::RunStatus NodeGraph::Run(int entryNode, VsContext& ctx, bool resume, 
             m_abort = true;
             break;
         }
-        if (Tracing() && !(resume && first)) ++n->execCount;
+        if (Tracing() && !(resume && first) && !n->internal) ++n->execCount;
         // The debugger may stop here, before the node runs (not when a node parked
         // by a Delay is only being picked up again).
-        if (!(resume && first) && VsDebugger::Get().Active()) {
+        if (!(resume && first) && !n->internal && VsDebugger::Get().Active()) {
             VsDebugger::Get().Check(*this, *n, ctx);
             if (m_abort) break;
         }
@@ -1096,10 +1096,25 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         return it->second;
     };
     bool ok = true;
+    std::vector<std::pair<std::pair<int, int>, std::vector<int>>> fan;   // (from, pin) -> targets, in file order
     for (auto& e : execs) {
         int f = resolve(e.from, ok); int t = resolve(e.to, ok);
         if (!ok) return fail("exec references unknown node");
-        graph->ConnectExec(f, e.pin, t);
+        auto key = std::make_pair(f, e.pin);
+        auto slot = std::find_if(fan.begin(), fan.end(), [&](const auto& kv) { return kv.first == key; });
+        if (slot == fan.end()) { fan.push_back({key, {t}}); continue; }
+        if (std::find(slot->second.begin(), slot->second.end(), t) == slot->second.end()) slot->second.push_back(t);
+    }
+    // An exec pin with several wires runs them in the order the file lists them:
+    // an internal Sequence (not in the file) sits behind the pin, so every node
+    // that follows a pin (loops, Branch, Sequence, events) fans out the same way.
+    for (auto& kv : fan) {
+        if (kv.second.size() == 1) { graph->ConnectExec(kv.first.first, kv.first.second, kv.second[0]); continue; }
+        auto* seq = graph->Add<SequenceNode>((int)kv.second.size());
+        seq->internal = true;
+        seq->type = "Sequence";
+        for (std::size_t i = 0; i < kv.second.size(); ++i) graph->ConnectExec(seq->id, (int)i, kv.second[i]);
+        graph->ConnectExec(kv.first.first, kv.first.second, seq->id);
     }
     for (auto& d : datas) {
         int c = resolve(d.consumer, ok); int p = resolve(d.producer, ok);

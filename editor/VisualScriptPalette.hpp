@@ -12,8 +12,10 @@
 #include <cfloat>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -155,7 +157,8 @@ inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* type
         ImGui::TextWrapped("%s", pin->meaning.c_str());
         if (!pin->fallback.empty()) ImGui::TextDisabled("Default: %s", pin->fallback.c_str());
     }
-    ImGui::TextDisabled("Drag to wire. Alt+click breaks wires.");
+    ImGui::TextDisabled("Drag to wire. A flow output can have many wires (they run in the order made).");
+    ImGui::TextDisabled("Alt+click a pin breaks its wires; Alt+click a wire breaks just that one.");
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
@@ -198,30 +201,99 @@ inline bool VsPaletteHiddenUntilTested(const char* type) {
 /// True when a Registry row is the same job as a hand-written node of the same title
 /// (an engine-API binding such as Animator.Roll next to Roll). It is not listed twice.
 inline bool VsPaletteHidesAsDuplicate(const VsDef& d) {
+    // Indexes over the registry, built once per registry size: the checks below used to walk the whole registry
+    // for every row, which made the first opening of the Add Node menu take most of a tenth of a second.
+    struct Index {
+        std::size_t n = (std::size_t)-1;
+        std::unordered_map<std::string, const VsDef*> firstByTitle;      // first row with this title
+        std::unordered_map<std::string, const VsDef*> firstApiByTitle;   // first engine-API row with this title
+        std::unordered_map<std::string, bool> handTitle;                 // a hand-written (no '.', not Fn.) row has this title
+        std::unordered_map<std::string, bool> handLower;                 // lower-cased type of each hand-written row (no '.')
+        std::unordered_map<std::string, bool> handTitleNoDot;            // title of each hand-written row
+    };
+    static Index ix;
+    if (ix.n != Registry().size()) {
+        ix = Index();
+        ix.n = Registry().size();
+        for (const auto& h : Registry()) {
+            const bool fn = std::strncmp(h.type, "Fn.", 3) == 0, dotted = std::strchr(h.type, '.') != nullptr;
+            if (h.title) {
+                ix.firstByTitle.emplace(h.title, &h);
+                if (!fn) ix.handTitle[h.title] = true;
+                if (okay::vs::VsApiFind(h.type)) ix.firstApiByTitle.emplace(h.title, &h);
+            }
+            if (!dotted) {
+                std::string lo; for (const char* c = h.type; *c; ++c) lo += (char)std::tolower((unsigned char)*c);
+                ix.handLower[lo] = true;
+                if (h.title) ix.handTitleNoDot[h.title] = true;
+            }
+        }
+    }
     // A text-script alias (play_sfx next to play_sound, vec2 next to vec3): one row per title.
     if (std::strncmp(d.type, "Fn.", 3) == 0) {
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        }
-        for (const auto& h : Registry())
-            if (std::strncmp(h.type, "Fn.", 3) != 0 && h.title && d.title && std::strcmp(h.title, d.title) == 0) return true;
-        return false;
+        if (!d.title) return false;
+        const auto it = ix.firstByTitle.find(d.title);
+        if (it != ix.firstByTitle.end() && it->second != &d) return true;   // an earlier row has this title
+        return ix.handTitle.count(d.title) > 0;                              // or a hand-written one does
     }
     const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
     if (api) {
-        for (const auto& h : Registry()) {
-            if (std::strchr(h.type, '.') || &h == &d) continue;
-            if (VsApiDuplicatesHandNode(api->member.c_str(), h.type)) return true;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && !std::strchr(h.type, '.')) return true;
-        }
+        // Same job as a hand-written node: its name, or Get/Set + its name (see VsApiDuplicatesHandNode), or its title.
+        std::string m; for (const char* c = api->member.c_str(); *c; ++c) m += (char)std::tolower((unsigned char)*c);
+        if (!m.empty() && (ix.handLower.count(m) || ix.handLower.count("get" + m) || ix.handLower.count("set" + m))) return true;
+        if (d.title && ix.handTitleNoDot.count(d.title)) return true;
         // Two overloads of one binding with the same title: the first one is the row.
-        for (const auto& h : Registry()) {
-            if (&h == &d) break;
-            if (h.title && d.title && std::strcmp(h.title, d.title) == 0 && okay::vs::VsApiFind(h.type)) return true;
+        if (d.title) {
+            const auto it = ix.firstApiByTitle.find(d.title);
+            if (it != ix.firstApiByTitle.end() && it->second != &d) {
+                // only an EARLIER row counts
+                for (const auto& h : Registry()) { if (&h == &d) break; if (&h == it->second) return true; }
+            }
         }
     }
     return false;
+}
+
+/// Hidden from the palette (a duplicate of another row, or waiting to be tested). Worked out once per row: the
+/// duplicate check walks the whole registry, which is slow to repeat.
+inline bool VsPaletteHidden(const VsDef& d) {
+    static std::unordered_map<const VsDef*, bool> memo;
+    static std::size_t memoN = (std::size_t)-1;
+    if (Registry().size() != memoN) { memo.clear(); memoN = Registry().size(); }
+    const auto it = memo.find(&d);
+    if (it != memo.end()) return it->second;
+    const bool hidden = VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type);
+    memo.emplace(&d, hidden);
+    return hidden;
+}
+
+/// The listed nodes that can take (fromOutput) or give (!fromOutput) a wire at one pin of a node, easiest first.
+/// This is the same rule as the list shown when a wire is dropped in empty space (VsCompatible), so the node
+/// right-click "Connect to..." menu and the wire-drop palette always agree.
+inline const std::vector<const VsDef*>& VsNodesFittingPin(bool exec, bool fromOutput, okay::vs::PinType pin) {
+    static std::map<std::tuple<bool, bool, int>, std::vector<const VsDef*>> cache;
+    static std::size_t cacheN = (std::size_t)-1;
+    if (Registry().size() != cacheN) { cache.clear(); cacheN = Registry().size(); }
+    const auto key = std::make_tuple(exec, fromOutput, exec ? 0 : (int)pin);
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    std::vector<const VsDef*> out;
+    for (const auto& d : Registry()) {
+        if (!VsCompatible(d, exec, fromOutput, pin) || VsPaletteHidden(d)) continue;
+        out.push_back(&d);
+    }
+    // A pin of exactly the same type is a better suggestion than one that merely accepts it (Any, or a conversion).
+    auto exactMatch = [&](const VsDef* d) {
+        if (exec || pin == okay::vs::PinType::Any) return false;
+        if (fromOutput) { for (int i = 0; i < (int)d->dataIn.size(); ++i) if (okay::vs::InputType(d->type, i) == pin) return true; }
+        else            { for (int i = 0; i < (int)d->dataOut.size(); ++i) if (okay::vs::OutputType(d->type, i, "") == pin) return true; }
+        return false;
+    };
+    std::vector<std::pair<const VsDef*, int>> ranked;   // (node, rank): lower is listed first
+    for (const VsDef* d : out) ranked.push_back({d, (int)d->level * 4 + (exactMatch(d) ? 0 : 2) + (std::strchr(d->type, '.') ? 1 : 0)});
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.second < b.second; });   // easy first, exact type first, hand-written before engine-API
+    for (std::size_t i = 0; i < ranked.size(); ++i) out[i] = ranked[i].first;
+    return cache.emplace(key, std::move(out)).first->second;
 }
 
 /// An Actions step with the same label as a hand-written node: the node is the one row.
@@ -291,7 +363,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     if (rebuild) for (const auto& d : Registry()) {
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
-        if (VsPaletteHidesAsDuplicate(d) || VsPaletteHiddenUntilTested(d.type)) continue;   // one row per job; untested nodes wait
+        if (VsPaletteHidden(d)) continue;   // one row per job; untested nodes wait
         const bool dup = false;
         Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
         e.cat = place.category ? place.category : "";

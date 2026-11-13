@@ -516,17 +516,18 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "Print";
         d.title = "Print";
-        d.description = "Writes Value to the Console. Great for checking what your script is doing.";
+        d.description = "Writes a message to the Console. Type your own Text, wire in a Value (a key being held, a number, a position...) or both: with both it prints Text: Value.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
-        d.example = "Put Print after an event such as On Start or On Update, and wire a value into Value.";
+        d.example = "Put Print after an event such as On Start or On Update, and wire a value into Text.";
         d.related = "Log Warning, Log Error, To Text";
         d.keywords = "print, log, debug, console";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Print runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Print finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({true, false, "Value", "Text", "The value being stored, sent or tested. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Text", "Text", "The text to read or change. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Value", "Any", "The value being stored, sent or tested. It is an Any. Unwired, this is nothing.", "nothing"});
         add(std::move(d));
     }
     {

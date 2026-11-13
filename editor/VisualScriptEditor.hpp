@@ -216,7 +216,7 @@ inline const std::vector<VsDef>& Registry() {
         {"SetPosition", "Set Position", CAT_XFORM, true, {""}, {"X","Y","Z"}, {}, 0, nullptr},
         {"Rotate",      "Rotate",      CAT_XFORM, true, {""}, {"Deg"}, {}, 0, nullptr},
         // Actions
-        {"Print",     "Print",     CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
+        {"Print",     "Print",     CAT_ACTION, true, {""}, {"Text", "Value"}, {}, 0, nullptr},
         {"PlaySound", "Play Sound",CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y","Z"}, {"Object"}, 1, "prefab"},
         {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
@@ -1017,10 +1017,19 @@ struct VsEditGraph {
         if (n) dirty = true;
         return n;
     }
+    /// Add a flow wire. An exec output may have any number of wires: they run in the
+    /// order they were added (the order of the `exec` lines in the file). The same wire
+    /// twice is one wire.
     void linkExec(int from, int pin, int to) {
-        execLinks.erase(std::remove_if(execLinks.begin(), execLinks.end(),
-                    [&](const VsExecLink& l){ return l.from == from && l.pin == pin; }), execLinks.end());
+        for (const auto& l : execLinks) if (l.from == from && l.pin == pin && l.to == to) return;
         execLinks.push_back({from, pin, to}); dirty = true;
+    }
+    /// Remove one flow wire, leaving the other wires on the same pin. False if there was none.
+    bool unlinkExec(int from, int pin, int to) {
+        const auto it = std::find_if(execLinks.begin(), execLinks.end(),
+                    [&](const VsExecLink& l){ return l.from == from && l.pin == pin && l.to == to; });
+        if (it == execLinks.end()) return false;
+        execLinks.erase(it); dirty = true; return true;
     }
     void linkData(int consumer, int inPin, int producer, int outPin) {
         dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
@@ -1278,6 +1287,12 @@ inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) 
 inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
     return -1;
+}
+/// Every node an exec output leads to, in the order they run.
+inline std::vector<int> VsExecTargets(const VsEditGraph& g, int fromNode, int pin) {
+    std::vector<int> out;
+    for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) out.push_back(l.to);
+    return out;
 }
 inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin = 0);
 inline const VsEditNode* VsFind(const VsEditGraph& g, int id);
@@ -1612,7 +1627,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
 
     if      (t=="SetVar")      out += ind + VsIdent(arg("x")) + " = " + in(0) + "\n";
     else if (t=="AddVar")      out += ind + VsIdent(arg("x")) + " += " + in(0) + "\n";
-    else if (t=="Print")       out += ind + "Debug.Log(" + in(0,"\"\"") + ")\n";
+    else if (t=="Print")       out += ind + "Debug.Log(" + (VsInputLinkedOrSet(g,nodeId,0) && VsInputLinkedOrSet(g,nodeId,1)
+                       ? "(" + in(0,"\"\"") + " + \": \" + " + in(1,"\"\"") + ")"
+                       : VsInputLinkedOrSet(g,nodeId,1) ? in(1,"\"\"") : in(0,"\"\"")) + ")\n";
     else if (t=="LogWarn")     out += ind + "Debug.LogWarning(" + in(0,"\"\"") + ")\n";
     else if (t=="LogError")    out += ind + "Debug.LogError(" + in(0,"\"\"") + ")\n";
     else if (t=="Translate")   out += ind + "move3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
@@ -1884,7 +1901,9 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
             "ChanceBranch", "EveryN", "Condition", "While"};
         if (kSelfContinued.count(n->type)) break;
-        cur = VsExecTarget(g, cur, 0);
+        const std::vector<int> next = VsExecTargets(g, cur, 0);
+        if (next.size() > 1) { for (int t : next) VsEmitChain(g, t, out, ind, visited); break; }
+        cur = next.empty() ? -1 : next[0];
     }
 }
 inline std::string CompileToOkayScript(const VsEditGraph& g) {
@@ -1953,7 +1972,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
     if (!fields.empty()) out += fields + "\n";
     bool first = true, anyEvent = false;
     auto chain = [&](int entry, const std::string& ind) {
-        std::set<int> v; int s = VsExecTarget(g, entry, 0); if (s >= 0) VsEmitChain(g, s, out, ind, v);
+        std::set<int> v; for (int s : VsExecTargets(g, entry, 0)) VsEmitChain(g, s, out, ind, v);
     };
     auto open = [&](const std::string& sig) {
         out += std::string(first ? "" : "\n") + "    " + sig + "\n    {\n";
@@ -3958,6 +3977,8 @@ inline void Draw(EditorState& ed, bool* open) {
     dl->ChannelsSetCurrent(2);
     int pendingDelete = -1, pendingDup = -1;
     bool startNodeDrag = false;
+    // "Connect to..." from a node's right-click menu: add this node (def) wired to one pin, or open the full list for it.
+    struct PendingConnect { bool on = false, openAll = false, exec = false, fromOutput = false; int node = -1, pin = -1; const VsDef* def = nullptr; ImVec2 at{0, 0}; } pconn;
     for (auto& n : g.nodes) {
         const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
@@ -4109,6 +4130,53 @@ inline void Draw(EditorState& ed, bool* open) {
             if (ImGui::MenuItem(hasBp ? "Remove Breakpoint" : "Add Breakpoint", "F9")) toggleBreakpoint(n.id);
             if (ImGui::MenuItem("Break All Wires")) {
                 for (int k = 0; k < 2; ++k) for (int sd = 0; sd < 2; ++sd) for (int pi = 0; pi < 8; ++pi) g.unlinkPin(n.id, k, sd, pi);
+            }
+            // What can plug into this node: one entry per pin, listing the nodes that fit it (the same rule as a wire
+            // dropped in empty space). Pick one to add it already wired, or open the full list for that pin.
+            if (ImGui::BeginMenu("Connect to...")) {
+                const ImVec2 outAt = S2W(ImVec2(p0.x + NODE_W + 50.0f * z, p0.y));
+                ImVec2 inAt = S2W(ImVec2(p0.x - NODE_W_BASE - 50.0f * z, p0.y));
+                inAt.x += 170.0f;   // a new node feeding an input is shifted left by the same amount when it is added
+                auto pinMenu = [&](const std::string& label, bool exec, bool fromOutput, int pin, okay::vs::PinType pt) {
+                    if (!ImGui::BeginMenu(label.c_str())) return;
+                    const std::vector<const VsDef*>& fit = VsNodesFittingPin(exec, fromOutput, pt);
+                    if (fit.empty()) ImGui::TextDisabled("Nothing fits this pin.");
+                    const int shown = std::min((int)fit.size(), 16);
+                    for (int i = 0; i < shown; ++i) {
+                        if (ImGui::MenuItem(fit[(std::size_t)i]->title && fit[(std::size_t)i]->title[0] ? fit[(std::size_t)i]->title : fit[(std::size_t)i]->type)) {
+                            pconn.on = true; pconn.def = fit[(std::size_t)i];
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    if (!fit.empty()) {
+                        ImGui::Separator();
+                        const std::string all = "Search all " + std::to_string(fit.size()) + " that fit...";
+                        if (ImGui::MenuItem(all.c_str())) {
+                            pconn.on = true; pconn.openAll = true; pconn.def = nullptr;
+                            pconn.exec = exec; pconn.fromOutput = fromOutput; pconn.node = n.id; pconn.pin = pin;
+                            pconn.at = fromOutput ? outAt : inAt;
+                        }
+                    }
+                    ImGui::EndMenu();
+                };
+                ImGui::TextDisabled("Pick a pin to see what fits it");
+                bool any = false;
+                if (d->execIn) { pinMenu("Flow in  <-  what runs this node", true, false, 0, okay::vs::PinType::Any); any = true; }
+                for (int j = 0; j < (int)d->execOut.size(); ++j) {
+                    const char* lbl = d->execOut[(std::size_t)j];
+                    pinMenu(std::string("Flow out  ->  ") + (lbl && *lbl ? lbl : "Next"), true, true, j, okay::vs::PinType::Any); any = true;
+                }
+                for (int i = 0; i < (int)d->dataIn.size(); ++i) {
+                    const okay::vs::PinType pt = VsInPinType(g, n.id, i);
+                    pinMenu(std::string("Value in  <-  ") + d->dataIn[(std::size_t)i] + " (" + okay::vs::PinTypeName(pt) + ")", false, false, i, pt); any = true;
+                }
+                for (int o = 0; o < (int)d->dataOut.size(); ++o) {
+                    const okay::vs::PinType pt = VsOutPinType(g, n.id, o);
+                    pinMenu(std::string("Value out  ->  ") + d->dataOut[(std::size_t)o] + " (" + okay::vs::PinTypeName(pt) + ")", false, true, o, pt); any = true;
+                }
+                if (!any) ImGui::TextDisabled("This node has no pins.");
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete", "Del")) pendingDelete = n.id;
@@ -4529,17 +4597,60 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y), ImVec2(b.x - dx, b.y), b, col, w);
     };
     auto hotNode = [&](int id) { return st.sel.count(id) > 0 || st.selected == id; };
+    // Alt held over a wire: it lights up, and a click breaks that wire only (the
+    // other wires on the same pin stay). Nearest wire within a few pixels wins.
+    auto bezierDist = [&](ImVec2 a, ImVec2 b) {
+        const float dx = std::max(50.0f * z, std::fabs(b.x - a.x) * 0.5f);
+        const ImVec2 c1(a.x + dx, a.y), c2(b.x - dx, b.y);
+        float best = 1.0e9f;
+        for (int i = 0; i <= 24; ++i) {
+            const float t = i / 24.0f, u = 1.0f - t;
+            const float x = u*u*u*a.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*b.x;
+            const float y = u*u*u*a.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*b.y;
+            best = std::min(best, (x - io.MousePos.x) * (x - io.MousePos.x) + (y - io.MousePos.y) * (y - io.MousePos.y));
+        }
+        return std::sqrt(best);
+    };
+    int altExec = -1, altData = -1;   // index of the wire under the mouse (Alt held)
+    if (io.KeyAlt && !st.dragging && ImGui::IsWindowHovered()) {
+        float best = 9.0f;
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const auto& l = g.execLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+            if (a == pinPos.end() || b == pinPos.end()) continue;
+            const float dd = bezierDist(a->second, b->second);
+            if (dd < best) { best = dd; altExec = i; altData = -1; }
+        }
+        for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+            const auto& l = g.dataLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
+            if (a == pinPos.end() || b == pinPos.end()) continue;
+            const float dd = bezierDist(a->second, b->second);
+            if (dd < best) { best = dd; altData = i; altExec = -1; }
+        }
+        if ((altExec >= 0 || altData >= 0) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (altExec >= 0) g.execLinks.erase(g.execLinks.begin() + altExec);
+            else g.dataLinks.erase(g.dataLinks.begin() + altData);
+            g.dirty = true; altExec = altData = -1;
+        }
+    }
+    int execIdx = -1;
     for (const auto& l : g.execLinks) {
+        ++execIdx;
         auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
         if (a == pinPos.end() || b == pinPos.end()) continue;
+        if (execIdx == altExec) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.from) || hotNode(l.to);
         const bool ran = live && st.flash.count(l.to) && st.flash[l.to] > 0.0f;
         ImU32 col = ran ? IM_COL32(255, 205, 90, 255) : hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(215, 216, 222, 200);
         bezier(a->second, b->second, col, (hot || ran ? 3.6f : 2.8f) * std::max(0.7f, z));
     }
+    int dataIdx = -1;
     for (const auto& l : g.dataLinks) {
+        ++dataIdx;
         auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
         if (a == pinPos.end() || b == pinPos.end()) continue;
+        if (dataIdx == altData) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.producer) || hotNode(l.consumer);
         // A wire whose value can't mean what the input needs (from an older graph
         // or hand-written file) is drawn red; the checker lists it too.
@@ -4709,6 +4820,13 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Minimap: click or drag to move the view");
     }
 
+    // "Connect to... > Search all": the wire-drop list, started from that pin of the node.
+    bool pconnPlace = false;
+    if (pconn.on && pconn.openAll) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        openPaletteNow = true; pconnPlace = true;
+    }
     // Right-click empty canvas (or Space): node palette.
     if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
         (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
@@ -4717,6 +4835,7 @@ inline void Draw(EditorState& ed, bool* open) {
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
         st.addAtCenter = false;
+        if (pconnPlace) st.paletteWorld = pconn.at;
         ImGui::OpenPopup("##vspalette");
     }
     // A template picked in the toolbar: drop its nodes in the middle of the view.
@@ -4752,6 +4871,14 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    // "Connect to... > a node": add it already wired to the pin it was chosen for.
+    if (pconn.on && !pconn.openAll && pconn.def) {
+        st.linkPending = true; st.linkExec = pconn.exec; st.linkFromOutput = pconn.fromOutput;
+        st.linkNode = pconn.node; st.linkPin = pconn.pin;
+        st.paletteWorld = pconn.at;
+        addFromPalette(*pconn.def);
+        st.linkPending = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });

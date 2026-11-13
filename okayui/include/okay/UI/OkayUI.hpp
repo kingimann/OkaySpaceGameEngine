@@ -252,7 +252,21 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open =
 /// `cond` says when the call takes effect: always (and then the window cannot be dragged / resized), only the first time the
 /// window is ever seen, or each time it appears again after not being drawn for a frame.
 enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Appearing = 8 };
-enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4 };   // the only flags OkayUI honours (no title bar: no collapse, close button or drag handle either; docked windows use it)
+/// Window flags (OkayUI's own values; they are not the Dear ImGui numbers).
+///  NoTitleBar: no title bar, so no collapse, close button or drag handle either (docked windows use it).
+///  NoScrollbar: a window whose content is taller than it scrolls with the wheel; this hides the bar (the wheel still works).
+///  NoBackground: the body is not drawn (the title bar is, unless NoTitleBar), so only the widgets show.
+///  NoCollapse: no collapse caret, the title bar cannot fold the window.
+///  AlwaysAutoResize: the window is as big as its content (one frame behind; the first frame is not shown, it only measures).
+///  NoFocusOnAppearing: a window that appears (is drawn after a frame without it) does not take focus or come to the front.
+///  NoBringToFront: clicking never raises the window and it sits below every other window (docked content uses it).
+/// Windows overlap in z-order: a click on a window raises it (and focuses it) and is not seen by widgets of windows behind
+/// it, nor by docked content under it. See docs/own_ui_toolkit.md section 4.32.
+enum WindowFlags : int {
+    Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4,
+    Window_NoScrollbar = 8, Window_NoBackground = 16, Window_NoCollapse = 32, Window_AlwaysAutoResize = 64,
+    Window_NoFocusOnAppearing = 128, Window_NoBringToFront = 256,
+};
 
 void End();
 /// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
@@ -838,9 +852,9 @@ void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);
 void PopStyleVar(int count = 1);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
-/// About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it (it does not check
-/// whether another window covers it). IsWindowFocused: it was the last window clicked. IsWindowAppearing: it was not drawn on the
-/// frame before. SetWindowFocus(title) makes a window the focused one.
+/// About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it and no window above it
+/// covers the pointer. IsWindowFocused: it was the last window clicked (or the last that appeared). IsWindowAppearing: it was not
+/// drawn on the frame before. SetWindowFocus(title) makes a window the focused one and raises it.
 Vec2 GetWindowPos();
 Vec2 GetWindowSize();
 float GetWindowWidth();

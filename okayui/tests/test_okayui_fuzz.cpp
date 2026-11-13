@@ -146,7 +146,21 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 23: UI::ProgressBar(r.Nasty(), r.Chance(50) ? lbl.c_str() : nullptr); break;
             case 24: { int t = r.Int(4); UI::TabBar(hdr, r.Int(5) - 1, &t); break; }
             case 25: UI::Tooltip(lbl.c_str()); break;
-            case 26: if (r.Chance(50)) {   // the flag-style table: random flags, columns (including too many and too few), setup calls, jumps
+            case 26: if (r.Chance(25)) {   // tab bars: random items, close boxes, trailing buttons, nested bars, calls out of order
+                if (UI::BeginTabBar(r.Chance(10) ? nullptr : "tb")) {
+                    bool tmpOpen = r.Chance(70);
+                    const int nt = r.Int(8);
+                    for (int ti = 0; ti < nt; ++ti) {
+                        const char* tl = r.Chance(8) ? nullptr : (ti % 2 ? "t1" : "t2");
+                        if (UI::BeginTabItem(tl, r.Chance(30) ? &tmpOpen : nullptr, r.Int(8))) { UI::Text("body"); if (r.Chance(10)) UI::BeginTabBar("inner"); UI::EndTabItem(); }
+                        if (r.Chance(20)) UI::TabItemButton("+", r.Int(8));
+                    }
+                    UI::EndTabBar();
+                }
+                UI::EndTabItem(); UI::EndTabBar();
+                break;
+            }
+            if (r.Chance(50)) {   // the flag-style table: random flags, columns (including too many and too few), setup calls, jumps
                 const int cols = r.Int(20) - 2;
                 if (UI::BeginTable(lbl.c_str(), cols, (UI::TableFlags)r.Int(8))) {
                     const int nsetup = r.Int(20);

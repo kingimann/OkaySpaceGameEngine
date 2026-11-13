@@ -446,6 +446,46 @@ void TypedInputTests() {
     CHECK_NEAR(f, 2.0f, 1e-4);
 }
 
+void TabBarTests() {
+    Rig r; UI::Rect rA, rB, rC, rPlus, rCx; bool bodyA = false, bodyB = false, bodyC = false, plus = false, openC = true, barOpen = false; int force = 0;
+    // GetItemRect right after a header call is that header's rectangle.
+    r.body = [&] {
+        barOpen = UI::BeginTabBar("bar");
+        if (barOpen) {
+            bodyA = bodyB = bodyC = false;
+            if (UI::BeginTabItem("Alpha", nullptr, force == 1 ? UI::Tab_SetSelected : 0)) { bodyA = true; UI::EndTabItem(); }
+            rA = UI::GetItemRect();
+            if (UI::BeginTabItem("Beta"))  { bodyB = true; UI::EndTabItem(); }
+            rB = UI::GetItemRect();
+            if (UI::BeginTabItem("Gamma", &openC)) { bodyC = true; UI::EndTabItem(); }
+            rC = UI::GetItemRect();
+            if (UI::TabItemButton("+", UI::Tab_Trailing)) plus = true;
+            rPlus = UI::GetItemRect();
+            UI::EndTabBar();
+        }
+        CHECK(!UI::BeginTabItem("orphan"));                      // outside a bar: harmless
+        CHECK(!UI::TabItemButton("orphan"));
+        UI::EndTabItem(); UI::EndTabBar();
+    };
+    r.Frames(3);
+    CHECK(barOpen && bodyA && !bodyB && !bodyC);                  // the first tab is chosen at the start, only its body runs
+    CHECK(rA.x < rB.x && rB.x < rC.x && rPlus.x > rC.x);          // left to right, the trailing button at the right end
+    CHECK(rPlus.x + rPlus.w > rC.x + rC.w + 20.0f);
+    r.Click(CenterX(rB), CenterY(rB)); r.Frames(2);
+    CHECK(bodyB && !bodyA && !bodyC);                             // clicking Beta switches the body
+    r.Click(CenterX(rA), CenterY(rA)); r.Frames(2);
+    CHECK(bodyA && !bodyB);
+    force = 1; r.Click(CenterX(rB), CenterY(rB)); r.Frames(2);    // Tab_SetSelected on Alpha wins every frame it is passed
+    CHECK(bodyA && !bodyB);
+    force = 0; r.Frames(2); CHECK(bodyA);                         // without the flag it simply stays
+    r.Click(CenterX(rC) - 6.0f, CenterY(rC)); r.Frames(2); CHECK(bodyC && openC);   // Gamma chosen
+    // the x on a closable tab closes it, and the first tab takes over
+    r.Click(rC.x + rC.w - 8.0f, CenterY(rC)); r.Frames(3);
+    CHECK(!openC && !bodyC && bodyA);
+    r.Click(CenterX(rPlus), CenterY(rPlus)); r.Frames(2);         // the trailing button reports its click
+    CHECK(plus);
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -698,6 +738,7 @@ int main() {
     TypedNumberTests();
     TypedSingleTests();
     TypedInputTests();
+    TabBarTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

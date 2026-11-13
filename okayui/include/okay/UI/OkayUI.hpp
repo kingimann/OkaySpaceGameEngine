@@ -290,6 +290,21 @@ bool SmallButton(const char* label);
 /// A row of tabs: clicking a tab sets *current to its index. Draw the selected
 /// tab's contents below based on *current. `labels` and `current` required.
 void TabBar(const char* const* labels, int count, int* current);
+/// Tabs with their own bodies, the usual way to build a tabbed panel:
+///     if (BeginTabBar("main")) {
+///         if (BeginTabItem("Scene")) { ...widgets for this tab...; EndTabItem(); }
+///         if (BeginTabItem("Game", &gameOpen)) { ...; EndTabItem(); }     // with a bool*: a small x closes the tab
+///         if (TabItemButton("+", Tab_Trailing)) addTab();                  // a button in the bar, not a tab
+///         EndTabBar();
+///     }
+/// The chosen tab is remembered per bar (the first one at the start; Tab_SetSelected on a tab chooses it). Only the chosen tab's
+/// BeginTabItem returns true. If the chosen tab disappears the first one is chosen. A bar does not nest inside another bar.
+enum TabItemFlags : int { Tab_None = 0, Tab_SetSelected = 1, Tab_Trailing = 2, Tab_NoTooltip = 4 /* accepted, there are no tab tooltips */ };
+bool BeginTabBar(const char* id);
+bool BeginTabItem(const char* label, bool* open = nullptr, int flags = 0);
+void EndTabItem();
+bool TabItemButton(const char* label, int flags = 0);
+void EndTabBar();
 bool Checkbox(const char* label, bool* value);
 /// Auto-placed sliding on/off switch (pill + knob) with `label` to its right.
 bool ToggleSwitch(const char* label, bool* value);

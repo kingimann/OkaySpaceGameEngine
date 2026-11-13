@@ -159,7 +159,12 @@ struct CurMenu {
     bool  activate = false;                      // Enter pressed for the highlighted item this frame
 };
 CurMenu g_curMenu;
-CurMenu g_menuStack[4];                          // the menus a nested BeginMenu came from (outermost first)
+CurMenu g_menuStack[4];
+struct TabSel { int bar = 0; int sel = 0; };
+TabSel g_tabSel[16];
+struct TabBarCtx { bool active = false; int id = 0; float x = 0, y = 0, w = 0, h = 0, cx = 0, tr = 0; int* sel = nullptr; bool seenSel = false; int firstId = 0; };
+TabBarCtx g_tabBar;
+                          // the menus a nested BeginMenu came from (outermost first)
 int g_menuDepth = 0;
 Theme g_theme;
 
@@ -806,7 +811,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; g_curMenu.active = false; g_menuDepth = 0;
+    g_inMenuBar = false; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -1953,6 +1958,79 @@ void TabBar(const char* const* labels, int count, int* current) {
     }
     // A baseline under the whole tab row (classic look).
     if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);
+}
+
+
+// ---- Tab bar with per-tab bodies (BeginTabBar / BeginTabItem) ---------------------------------------
+namespace {
+int* tabSelSlot(int bar) {
+    for (auto& s : g_tabSel) if (s.bar == bar) return &s.sel;
+    for (auto& s : g_tabSel) if (s.bar == 0) { s.bar = bar; s.sel = 0; return &s.sel; }
+    g_tabSel[0].bar = bar; g_tabSel[0].sel = 0; return &g_tabSel[0].sel;
+}
+} // namespace
+
+bool BeginTabBar(const char* id) {
+    if (!g_lay.active || !id || g_tabBar.active) return false;
+    const float h = rowH();
+    float x, y; place(fullW(), h, x, y);
+    g_tabBar = TabBarCtx();
+    g_tabBar.active = true; g_tabBar.id = hashLabel(id) | 1;
+    g_tabBar.x = x; g_tabBar.y = y; g_tabBar.w = fullW(); g_tabBar.h = h;
+    g_tabBar.cx = x; g_tabBar.tr = x + fullW();
+    g_tabBar.sel = tabSelSlot(g_tabBar.id);
+    if (!g_look) quad(x, y + h - 2.0f, fullW(), 2.0f, g_theme.border);   // a baseline under the whole row (classic look)
+    return true;
+}
+
+bool BeginTabItem(const char* label, bool* open, int flags) {
+    if (!g_lay.active || !g_tabBar.active || !label) return false;
+    TabBarCtx& tb = g_tabBar;
+    const int id = (hashLabel(label) ^ tb.id) | 1;
+    const float closeW = open ? 16.0f : 0.0f;
+    const float w = labelW(label) + (g_look ? 28.0f : 20.0f) + closeW, gap = g_look ? 6.0f : 2.0f;
+    float x;
+    if (flags & Tab_Trailing) { tb.tr -= w; x = tb.tr; tb.tr -= gap; }
+    else { x = tb.cx; tb.cx += w + gap; }
+    if (tb.firstId == 0) tb.firstId = id;
+    if (*tb.sel == 0) *tb.sel = id;                  // nothing chosen yet: the first tab
+    if (flags & Tab_SetSelected) *tb.sel = id;
+    Tab(id, x, tb.y, w, tb.h, label, tb.sel, id);
+    g_lay.prevX = x; g_lay.prevY = tb.y; g_lay.prevW = w; g_lay.prevH = tb.h;   // the item rect / hover queries that follow are about this tab's header
+    bool visible = (*tb.sel == id);
+    if (open) {                                       // a small x on the right closes the tab
+        const float cx = x + w - closeW, cy = tb.y + (tb.h - textH()) * 0.5f;
+        const int cid = id ^ 0x7ab;
+        const bool inside = hit(cx, tb.y, closeW - 2.0f, tb.h);
+        if (inside) g_hot = cid;
+        if (g_active == cid) { if (g_released) { if (inside) { *open = false; } g_active = 0; } }
+        else if (inside && g_pressed) g_active = cid;
+        drawText(cx + 3.0f, cy, "x", g_theme.textScale, inside ? g_theme.text : g_theme.textDim);
+        if (!*open) visible = false;
+    }
+    if (visible) tb.seenSel = true;
+    return visible;
+}
+
+void EndTabItem() {}
+
+bool TabItemButton(const char* label, int flags) {
+    if (!g_lay.active || !g_tabBar.active || !label) return false;
+    TabBarCtx& tb = g_tabBar;
+    const int id = (hashLabel(label) ^ tb.id ^ 0x7bb) | 1;
+    const float w = labelW(label) + 20.0f, gap = g_look ? 6.0f : 2.0f;
+    float x;
+    if (flags & Tab_Trailing) { tb.tr -= w; x = tb.tr; tb.tr -= gap; } else { x = tb.cx; tb.cx += w + gap; }
+    const bool clicked = Button(id, x, tb.y, w, tb.h, label);
+    g_lay.prevX = x; g_lay.prevY = tb.y; g_lay.prevW = w; g_lay.prevH = tb.h;
+    return clicked;
+}
+
+void EndTabBar() {
+    if (!g_tabBar.active) return;
+    // The chosen tab vanished (closed or removed): fall back to the first.
+    if (!g_tabBar.seenSel && g_tabBar.firstId != 0) *g_tabBar.sel = g_tabBar.firstId;
+    g_tabBar.active = false;
 }
 
 bool Checkbox(const char* label, bool* value) {

@@ -451,3 +451,11 @@ Built: a plain click on the value box of `InputInt` or `InputFloat` starts typin
 Tested (164 checks in `test_okayui_values.cpp`): typed `42`, a rounded `-7.6`, `x` unchanged, `99999999999` clamped to 2147483647, floats `3.25` and `-0.5`, `nan` and `1e50` unchanged, a stepper still moves the value, Escape cancels a half-typed edit.
 
 Not done: auto-repeat when a stepper is held down, a thousands separator, undo inside the edit, the host setting `ctrl` for the drag and slider boxes (shared/OkayUIHost.hpp is not on this branch).
+
+### 4.21 Gap-closing step 17: tab bars with tab bodies (family 15)
+
+Built: `BeginTabBar(id)` / `EndTabBar()`, `BeginTabItem(label, bool* open = nullptr, flags)` / `EndTabItem()` and `TabItemButton(label, flags)`; flags `Tab_SetSelected`, `Tab_Trailing` (right-aligned) and `Tab_NoTooltip` (accepted; there are no tab tooltips). The first tab is chosen at the start, a click chooses another, only the chosen tab's `BeginTabItem` returns true so its body is the only one that runs, `Tab_SetSelected` chooses a tab, a small x appears when a `bool*` is given (clicking it clears the bool and the first tab takes over), and `GetItemRect()` right after a tab call is that header. The choice is remembered per bar id. The existing array-style `TabBar(labels, count, &current)` is unchanged. The editor uses `BeginTabBar` / `BeginTabItem` about 20 times.
+
+Tested (`test_okayui_values.cpp`): the first tab is chosen at the start with only its body running, headers sit left to right with the trailing button at the right end, a click switches the body, `Tab_SetSelected` wins while it is passed and the choice sticks without it, the x closes a tab and the first takes over, the trailing button reports its click, calls outside a bar are harmless. Fuzz now throws random tab bars at it (null ids and labels, nested bars, random flags, closing boxes).
+
+Not done: reordering by dragging, scrolling or shrinking tabs that do not fit (they run past the right edge), a drop-down list of all tabs, keyboard switching with Ctrl+Tab.

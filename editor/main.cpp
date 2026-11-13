@@ -69,6 +69,7 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
+#include "OkayPanels.hpp"                // Crash Log and Audio Mixer drawn by OkayUI (opt-in backend)
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -7589,6 +7590,7 @@ static std::string OkayExeDir() {
 // Audio Mixer: the same levels a game's settings menu drives (master, each group,
 // mutes), live output meters during Play, and music ducking under voice.
 void DrawAudioMixer() {
+    if (UseOkayUIBackend() && DrawAudioMixerOkayUI(&g_showAudioMixer)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
     if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
     auto meter = [](const char* id, float v) {
         const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
@@ -7644,9 +7646,9 @@ void DrawAudioMixer() {
 // user can read them and copy/paste them to send to support — no file hunting.
 void DrawCrashLog() {
     namespace fs = std::filesystem;
-    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
     static std::string text;
     static bool loaded = false;
+    static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
@@ -7659,8 +7661,17 @@ void DrawCrashLog() {
         text.clear();
         if (!readAll(histPath, text) || text.empty()) readAll(lastPath, text);
         loaded = true;
+        ++revision;
     };
     if (!loaded) load();
+    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): same reports, same four actions
+        CrashLogActions act;
+        act.refresh = load;
+        act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
+        act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
+        if (DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act)) return;
+    }
+    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
 
     if (ImGui::Button("Refresh")) load();
     ImGui::SameLine();
@@ -7683,7 +7694,7 @@ void DrawCrashLog() {
         bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
         ImGui::PopStyleColor(2);
         if (doClear) {
-            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear();
+            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();

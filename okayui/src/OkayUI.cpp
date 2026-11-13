@@ -2332,6 +2332,8 @@ void SetScrollY(float y) {
     g_childStack[g_childTop - 1].setScroll = y;   // applied by EndChild, after it measured the content, and clamped to it
 }
 
+float GetChildViewHeight() { return g_childTop > 0 ? g_childStack[g_childTop - 1].rh - 2.0f * g_childStack[g_childTop - 1].pad : 0.0f; }   // hook for OkayUICompat's SetScrollHereY
+
 void EndChild() {
     if (g_childTop <= 0) return;
     ChildSave& c = g_childStack[--g_childTop];

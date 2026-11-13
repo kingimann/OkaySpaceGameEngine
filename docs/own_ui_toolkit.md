@@ -693,6 +693,60 @@ Both apps were built (Release, GCC, Linux, software renderer) and run under Xvfb
 
 Both apps, Xvfb with openbox, software renderer. Without `OKAY_DEV`, with `ui_backend=okayui` and `uibackend 1` left in the saved files: the launcher's Settings > Appearance has no UI backend row, the editor's View > Rendering & Performance has no UI backend entry, and What's New and the Console are the Dear ImGui ones. With `OKAY_DEV=1`: both entries are there and the saved value is honoured. Screenshots: `scratchpad/shots116/devonly_*.png` of the session that made this step.
 
+## 6. Porting panels: the usage report, the gap, and the first ports
+
+Goal of this step: measure what the editor and the launcher need from Dear ImGui against what OkayUI offers, close the gap for the smallest screens, and port real ones behind the opt-in backend (section 5). Dear ImGui is still the default everywhere; nothing was removed.
+
+### 6.1 The usage report
+
+`python3 scripts/imgui_usage_report.py` writes `docs/imgui_port_report.md` (regenerate it after changing screens or the OkayUI headers; there is no staleness check). It reads `editor/` (without the vendored code editor), `launcher/` and `shared/`, ignores comments and string literals, counts every `ImGui::Call(`, every ImGui type, flag and enum name (`ImVec4`, `ImGuiCol_*`, `ImGuiChildFlags_*`, ...) and every draw-list method (`AddRectFilled`, ...), and checks each against the names declared in `okayui/include/okay/UI/*.hpp`. A "screen" is a top-level function; the calls between its first line and the next top-level function belong to it.
+
+How to read the numbers: coverage is by name. A call counts as available when OkayUI declares a function of that name. That is generous: OkayUI takes `float` or `OkayUI::Vec2` where ImGui takes `ImVec2`, takes colours as bytes where ImGui takes `ImVec4`, has eight theme colours where ImGui has about fifty, and has its own flag enums. The report therefore lists types, flags and enums separately, and they are the honest measure of the work left in a mechanical port.
+
+Result on this branch (numbers are in the report and change as the code does):
+
+| What | Call sites | Available by name |
+|---|---:|---:|
+| `ImGui::` calls (261 distinct) | about 26,000 | 98.8% (it was 97.9% before the helper calls of 6.2) |
+| ImGui types, flags and enums (320 distinct) | about 11,800 | 75.7% |
+| Draw-list methods (26 distinct) | about 2,300 | 98.7% |
+
+The missing calls, ranked by use (full table in the report): `GetStyle` 85 (OkayUI's `Style()` is a different struct, so ported code has to be edited), `IsItemDeactivatedAfterEdit` 18, `CalcItemWidth` 12, `FindWindowByName` 11 and `GetCurrentContext` 11 (internals; host code), `EndTooltip` 10 (OkayUI has `SetTooltip`, not a tooltip scope), `BeginPopupContextWindow` 6, then the docking calls (`SetNextWindowDockID`, `DockBuilder*`) and the context calls. The missing types are led by `ImVec4` (1,022 uses, colours), `ImGuiMouseButton_*`, `ImGuiCol_*` (theming through `PushStyleColor` with ImGui's many colour slots), `ImGuiChildFlags_*`, `ImGuiHoveredFlags_*` and `ImGuiTableColumnFlags_*`.
+
+Per screen: of 223 screens with at least 15 calls, 99 are fully covered by call name, but only 33 are also at least 90% covered by type and flag. Weighted by call count (a few giant functions dominate: the inspector alone is more than a fifth of all call sites) 26% of the call sites sit in screens whose calls are fully covered, and 40% in screens with at least 90% of calls and 75% of types and flags covered. These are measured counts, not a promise that those screens port without edits.
+
+The ten smallest screens (30 calls or more, to leave out helper widgets) that are fully or almost fully coverable are listed in the report. They are mostly in the launcher's chat and versions pages and the editor's dialogue, timeline and plugin menus.
+
+### 6.2 What was added to OkayUI (new files)
+
+`okayui/include/okay/UI/OkayUICompat.hpp` and `okayui/src/OkayUICompat.cpp`, chosen from the ranked list and built only on OkayUI's public API: `GetMainViewport` (position 0, the display size the host gave; one viewport), `ColorConvertU32ToFloat4` and `ColorConvertFloat4ToU32` (clamped, NaN is 0), `ColorConvertRGBtoHSV` and `ColorConvertHSVtoRGB`, `GetStyleColorVec4` (the theme's colour as floats), `GetContentRegionMax` and `GetWindowContentRegionMax` (the far corner relative to the window, measured from the cursor), `SetScrollHereY` (keeps a line in view: ratio 1 after the last line is the end), `GetScrollX` and `SetScrollX` (always 0: there is no horizontal scrolling), `SetNextWindowSizeConstraints` (the minimum becomes the resize grip's minimum; the maximum is not enforced), `GetID` (an FNV hash that does not look at the ID stack), and the accepted-and-ignored `SetItemDefaultFocus`, `SetNextItemAllowOverlap` and `TableSetupScrollFreeze`. Test: `okayui/tests/test_okayui_compat.cpp` (674 checks: conversions round-trip over a colour grid, hostile floats, the viewport, scroll to the end and to a row, constraints with a drag on the grip).
+
+One hook in a file another change is editing: `okayui/src/OkayUI.cpp` got a single function, `float GetChildViewHeight()` next to `SetScrollY`, because `SetScrollHereY` needs the height of the current child and the child stack is private there. Two lines in `okayui/CMakeLists.txt` add the new source files and the two new tests.
+
+Not filled because they need more than a thin wrapper: `GetStyle`, `IsItemDeactivatedAfterEdit` (needs edit tracking inside the widgets), `CalcItemWidth` (the width stack is private), the tooltip scope (`BeginTooltip` and `EndTooltip`), `BeginPopupContextWindow`, the docking builder, and the ImGui context calls.
+
+### 6.3 Screens ported
+
+All three follow section 5: a plain function in `okayui/screens/OkayUIPanels.*` over the data and a rectangle, drawn into a bare OkayUI window; the host keeps its Dear ImGui window (tab, title, close box) and hands the free area over as one rectangle. They run only with the opt-in backend (`OKAY_UI_BACKEND=okayui`, developer flag) and switch live like What's New and the Console. If an ImGui popup covers the window, the Dear ImGui version is drawn that frame.
+
+- **Tips** (launcher page). Tip of the day with Next tip, category pills, search (Ctrl+F focuses it), the tips in one or two columns. The tips and categories moved into `shared/LauncherTips.hpp`, which both versions read, so the words cannot drift. Host code: a branch before the Dear ImGui one in `launcher/main.cpp`.
+- **Crash Log** (editor window, View menu). Refresh, Copy All, Open Folder, Clear with a confirmation dialog, the path, the empty message, and the reports in a scrolling body that opens on the newest line. The reports can be megabytes, so only the visible rows are laid out; the row spacing is measured from the rows. Host code: `editor/OkayPanels.cpp` (new), and `DrawCrashLog` in `editor/main.cpp` now keeps a revision number and calls it first.
+- **Audio Mixer** (editor window). Output meters with a dB tooltip, master and group volume and mute, ducking options shown only when ducking is on, Reset. It edits `okay::AudioMixer` in place through pointers, as the ImGui window does. Host code: `DrawAudioMixerOkayUI` in `editor/OkayPanels.cpp`.
+
+Tests: `okayui/tests/test_okayui_panels.cpp`, 74 checks, headless, every button, field and toggle found by its rectangle in the screen's result and used with synthetic input: the filter logic; pills, search (typing, no match, clearing), Next tip wrapping, the Ctrl+F request; empty model and bad state; Crash Log buttons calling the host, the virtualised body (about 20 of 401 rows laid out, the last line on screen, a reload goes back to the end), the confirmation (cancel keeps, delete clears), odd text (blank lines, no final newline, a 5,000 character line, invalid bytes); mixer sliders and mutes changing only their own value, ducking rows appearing and disappearing, Reset, a short window that scrolls to reach Reset, missing pointers. Six golden images in `okayui/tests/golden/` (`tips_all`, `tips_nomatch`, `crashlog_empty`, `crashlog_reports`, `crashlog_confirm`, `audiomixer_default`). The earlier OkayUI suites (screens, host, behaviour, golden, dock, codeedit, values, compose) still pass.
+
+### 6.4 Differences from the Dear ImGui versions, and what was not verified (blunt)
+
+- **Tips.** No bulb icon; the tip-of-the-day card is the same size as the others. Cards are OkayUI cards, not ImGui child windows.
+- **Crash Log.** The report text is not selectable with the mouse (OkayUI has no read-only multi-line selection); Copy All is the way to copy. A line longer than the window is cut at the edge (no horizontal scroll). The path is shown after the buttons as before.
+- **Audio Mixer.** The meters are drawn rectangles (same colours: green, red at or above full scale), not progress bars; sliders show no number text; the "Duck level" labels sit to the right of their sliders.
+- **Not verified:** none of this was run in a real window or on a real GPU. The editor and launcher were not built or run: the changed `editor/main.cpp`, `editor/OkayPanels.cpp` and `launcher/main.cpp` were checked with the compiler's syntax-only pass against the same headers (with `OKAY_HAVE_OKAYUI`), and every OkayUI piece was built and tested headless. Without OkayUI compiled in, the launcher already failed to compile the What's New branch's condition (`okayuihost` is only declared when OkayUI is); the Tips branch has the same condition. Windows and macOS were not built.
+- **Dear ImGui is still the default.** The ported function bodies are 173 of about 26,000 `ImGui::` call sites (0.7%), plus the two launcher pages. This step proves the pattern and measures the road; it does not move the editor.
+
+### 6.5 Estimate: how much could move with today's API
+
+By name, 98.8% of the call sites have an OkayUI function of that name. The measured, more honest figures: 26% of the call sites are in screens that are fully covered by call name, and 40% are in screens with at least 90% of calls and 75% of types and flags covered. My estimate (not measured): about half of the editor and launcher code by call sites could move with today's API plus a thin layer that maps ImGui's flag and colour enums and `ImVec4` onto OkayUI's, which would raise the second figure towards the first. The rest is blocked by the real gaps: editor docking layout built with `DockBuilder*` (the OkayUI dock is its own system and the layout code would be rewritten, not ported), `GetStyle` (85 uses of a struct OkayUI does not mirror), edit tracking and tooltip scopes, per-draw fonts (`AddText` with an `ImFont`), multi-viewports, and, below all of it, the SDL2 window and platform backend, which the editor and launcher still use directly.
+
 ## 7. The render interface: OkayUI on screen without a Dear ImGui backend
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)

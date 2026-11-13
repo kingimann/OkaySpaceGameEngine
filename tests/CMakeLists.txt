@@ -1132,6 +1132,13 @@ add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
 
+# The Localization window's path onto those tools (editor/LocalizationTools, ImGui-free): a missing
+# key, a placeholder mismatch and a pseudo-locale preview, the same functions DrawLocalizationWindow calls.
+add_executable(test_loc_window test_loc_window.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp)
+target_include_directories(test_loc_window PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_loc_window PRIVATE okay::engine)
+add_test(NAME loc_window COMMAND test_loc_window)
+
 # Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
 add_executable(test_loc_runtime test_loc_runtime.cpp)
 target_link_libraries(test_loc_runtime PRIVATE okay::engine)

@@ -133,7 +133,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/navigation.md`, `docs/behavior_trees.md`, `docs/dialogue_quests.md`, `docs/localization.md`, `docs/modeling.md`, `docs/editor.md`
 - **Tests:** `editor` (selftest only); engine side: `navmesh`, `behavior_tree`, `dialogue`, `quests`, `localization`, `meshedit`
 - **Status:** Works - each window has its own file or function; none has a unit test
-- **Open:** #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs the Localization window is not wired to them yet; Modeling and UV Editor still live in `main.cpp`
+- **Open:** Modeling and UV Editor still live in `main.cpp`. The Localization window calls the translation grid, the missing-key and placeholder report, the project scan and the pseudo-locale preview (31.1, 31.3).
 - **Related:** 9.1, 9.4, 10.2, 10.3, 1.8, 3.1, 31
 - **Words:** Navigation window, bake navmesh, Behavior Tree window, Dialogue window, Quests tab, Localization window, string table, Modeling window, UV Editor
 - **Seen as:** the navmesh does not bake or shows wrong polygons; a tree node cannot be wired; the dialogue Test panel does not match Play; a language preview shows keys; CJK text shows boxes

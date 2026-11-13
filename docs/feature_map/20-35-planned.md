@@ -1169,17 +1169,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `Localization::Get`, `Localize`, `PluralText`, `FormatNumber`, `FormatDate`; script `loc`, `set_language`; `LocTable`, `LocGrid`, `LocCheck`, `LocScanProject`
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/localization.md`, `docs/localization_prefs_time.md`; `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`
-- **Status:** Partial - the window with grid, CSV, missing and unused filters works; the stricter checker, JSON and key scanner (#574, test `loc_tools`) are on main but not wired to the window.
-- **Exists today:** The window and file format (docs say it all in `docs/localization.md`). The old map listed "translation table editor window, missing-key report, import and export (CSV)" as missing: those are done. `docs/localization_tools.md` says the window still draws its own grid and "wiring it to LocTable ... is the next step".
+- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
+- **Exists today:** The window and file format (`docs/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
 - **Work packages:**
-  1. M - Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter. Depends on: #574 (on main).
-  2. S - Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key. Depends on: package 1.
-  3. S - Import preview: show what an import will change before applying it. Depends on: package 1.
+  1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
+  2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
+  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
   4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
-  5. M - Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys. Depends on: package 1.
+  5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** the window and the new `LocTable` duplicate the grid logic until package 1 lands; right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet
@@ -1220,15 +1220,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `OKAY_UI_LANG` dev hook; `LocPreview`, `LocPseudoText`, `LocMirrorText`
 - **Editor:** toolbar language menu, Localization window "Pseudo-localize"
 - **Docs:** `docs/localization.md`; `docs/localization_tools.md`
-- **Tests:** `localization`; `loc_tools`
-- **Status:** Partial - language switch and pseudo-localization work in the editor; the `LocPreview` model with mirrored text is on main (#574) but not wired to a window.
-- **Exists today:** Both preview features in the editor. The new `LocPreview` can preview without switching the running language or logging missing keys.
+- **Tests:** `localization`; `loc_tools`, `loc_window`
+- **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers, and mirrored text for a right-to-left language) and does not change the table.
+- **Exists today:** The Scene view follows the toolbar language, including pseudo-localization. The window's preview line is `LocPreview`. Layout does not mirror.
 - **Work packages:**
   1. S - Pseudo-localize options (expansion percent, markers) in the window, using `LocPseudoOptions`. Depends on: #574 (on main).
   2. M - Mirrored preview for right-to-left languages in the Game view. Depends on: package 1, 31.2 package 3.
   3. M - "Show all strings" screenshot sheet: render every UI screen in each language to image files for review. Depends on: 33.3.
   4. S - Overflow warning when a localized text no longer fits its UI box. Depends on: package 1.
-- **Open:** layout does not mirror for right-to-left languages yet.
+- **Open:** the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key.
 - **Related:** 1.8, 12.1, 31.1, 31.2, 33.3
 - **Words:** language preview, pseudo-localization, pseudo loc, switch language, ploc, overflow, text expansion
 - **Seen as:** German text overflows buttons; I cannot see what my game looks like in Japanese

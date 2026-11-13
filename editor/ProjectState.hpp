@@ -90,6 +90,13 @@ struct BuildSettings {
     // ---- Post-build actions (handled by the editor, not the builder) ----
     bool  openFolderAfter = true;          // reveal the output folder when done
     bool  zipAfter = false;                // also produce <Name>.zip of the build
+    // ---- Output layout, stripping, versioning (docs/build_pipeline.md) ----
+    int   layout = 0;                      // 0 Folder (<Name>.exe + <Name>_Data/), 1 Compact (exe + Data/), 2 Zip archive
+    bool  stripAssets = true;              // ship only the assets the built scenes use (off: every project asset)
+    bool  compress = true;                 // zip: deflate files that shrink (off: store)
+    int   buildNumber = 1;                 // written to build.json and the game; the editor adds 1 after each build
+    bool  autoBuildNumber = true;          // count the build number up after every successful build
+    char  archiveName[96] = "{name}-{version}-{platform}";   // zip file name; {name} {version} {build} {platform} {date}
     // ---- Added later ----
     bool  fullscreenToggle = true;         // Alt+Enter / F11 switches fullscreen in the game
     std::vector<BuildScene> scenes;        // Scenes In Build (empty = just the open scene)
@@ -152,6 +159,8 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "ssao=" << b.ssao << "\n" << "fxaa=" << b.fxaa << "\n" << "antialias=" << b.antialias << "\n";
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
+    o << "layout=" << b.layout << "\n" << "strip=" << b.stripAssets << "\n" << "compress=" << b.compress << "\n";
+    o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << b.archiveName << "\n";
     o << "fsToggle=" << b.fullscreenToggle << "\n";
     o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << b.srvName << "\n" << "srvPort=" << b.srvPort << "\n";
     o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << b.srvPassword << "\n";
@@ -222,6 +231,12 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "d3d12")     b.preferD3D12 = B();
     else if (k == "openFolder") b.openFolderAfter = B();
     else if (k == "zip")       b.zipAfter = B();
+    else if (k == "layout")    b.layout = std::max(0, std::min(2, I()));
+    else if (k == "strip")     b.stripAssets = B();
+    else if (k == "compress")  b.compress = B();
+    else if (k == "buildNumber") b.buildNumber = std::max(1, I());
+    else if (k == "autoBuild") b.autoBuildNumber = B();
+    else if (k == "archiveName") S(b.archiveName, sizeof(b.archiveName));
     else if (k == "srvTarget") b.srvTarget = I();
     else if (k == "srvName")   S(b.srvName, sizeof(b.srvName));
     else if (k == "srvPort")   b.srvPort = I();

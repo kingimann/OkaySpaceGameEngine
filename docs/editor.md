@@ -361,17 +361,27 @@ sprites, UI images).
 
 ### Building a standalone game
 
-**File → Build Settings…** (Ctrl+B) exports the current scene as a self-contained
-game you can ship. Give it a name and an output folder and it will:
+**File → Build Settings…** (Ctrl+B) exports your game as a folder you can ship. Give it a
+name and an output folder and the **Folder** layout (the default) produces:
 
-1. Serialize the open scene to `game.okayscene` in that folder, and
-2. Copy the **player runtime** (`OkaySpacePlayer.exe`, which ships next to the
-   editor) into the folder, renamed to `<GameName>.exe`.
+```
+<GameName>.exe          the player runtime, renamed
+SDL2.dll                runtime libraries the player needs (Linux: libSDL2-2.0.so.0), nothing else
+<GameName>_Data/
+    game.okayscene      the first scene in the build (the other scenes sit beside it)
+    game.okayconfig     window, graphics and scene list settings
+    build.json          which build this is: version, build number, engine version, date, scenes, settings hash
+    <assets>            only the assets the built scenes use, and what those files use in turn
+    StreamingAssets/    your project's StreamingAssets folder, copied as it is
+```
 
-3. Copy every **asset the scene references** (sprite textures, audio WAVs,
-   sprite-animator frames) into the folder, preserving relative paths.
+The **Output** page picks the layout (Folder, Compact = the older exe + `Data/`, or Zip archive),
+the build number and its count-up, asset stripping, compression and what happens afterwards.
+**Dry Run** works out the whole build without writing it and shows the report; the result window
+lists every file by kind, type and size, what was left out and why, warnings and the build time.
+Everything is described in [build_pipeline.md](build_pipeline.md), including the headless
+`OkayEngine --build-game` form.
 
-The result is a folder containing `<GameName>.exe` + `game.okayscene` + assets.
 Double-clicking the exe runs the scene through the same engine lifecycle the
 editor's **Play** uses — sprites in 2D (orthographic camera), wireframe meshes
 in 3D (perspective camera), keyboard input fed into `Input`, and audio mixed
@@ -399,7 +409,7 @@ The player (`player/`) is a tiny SDL2-only program (no editor/ImGui). Build it
 on its own with `-DOKAY_BUILD_PLAYER=ON`; it is also built automatically with
 the editor so Build Game always has a runtime to copy. Pass a scene path as the
 first argument (`OkaySpacePlayer.exe my.okayscene`) or it loads `game.okayscene`
-from beside the executable.
+from its data folder (`<GameName>_Data/`, `Data/`, or beside the executable for builds made by older versions).
 
 ## Projects, saving and loading
 

@@ -1247,16 +1247,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `NavigateUI(scene)`, widget `IsFocused()`; `FocusGraph`, `BuildFocusGraph`
 - **Editor:** none (the editor itself is not controller-navigable)
 - **Docs:** `docs/input.md`, `docs/game_ui.md`; `docs/accessibility.md`
-- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`
+- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Partial - directional navigation works (per code and `ui_nav_touch`); `FocusGraph` and `BuildFocusGraph` (tab order, links, traps, #574, test `focus_remap`) are on main but `NavigateUI` does not use the graph; keys are fixed.
 - **Exists today:** `NavigateUI` as described, called by the player every frame. The navigation keys are fixed in code (`docs/accessibility.md`: "WASD, Enter, Space, the D-pad and A").
 - **Work packages:**
   1. M - `NavigateUI` builds a `FocusGraph` so a designer can set neighbours, tab order and focus traps. Depends on: #574 (on main).
   2. S - Navigation keys and buttons come from `InputActions` (remappable, 32.4). Depends on: package 1.
-  3. S - Focus ring style and focus sound in the UI theme. Depends on: 12.7.
+  3. S - Focus ring style is done (theme colour, thickness, padding, pulse; high-visibility and thickness scale in Accessibility). A focus sound is not. Depends on: 12.7.
   4. S - Scene check that every interactive widget can be reached by navigation (reports in 33.2). Depends on: package 1.
   5. M - Same navigation for world-space and HTML UI. Depends on: package 1.
-- **Open:** the focus visuals depend on each widget's own `IsFocused` drawing; the graph is built from screen rectangles each time it is asked.
+- **Open:** one shared ring is drawn from the theme and the accessibility settings (tests `ui_focus`, `ui_focus_render`); there is no focus sound; the graph is built from screen rectangles each time it is asked and `NavigateUI` does not use its links.
 - **Related:** 8.2, 8.3, 12.2, 12.4, 12.7, 32.4
 - **Words:** controller navigation, gamepad menus, focus, D-pad, tab order, NavigateUI, FocusGraph, keyboard navigation, menu focus
 - **Seen as:** cannot reach a button with the gamepad; focus jumps to a surprising widget; focus lost after a popup closes

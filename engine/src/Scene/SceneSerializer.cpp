@@ -2569,7 +2569,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .col("button", th->button).col("hover", th->buttonHover).col("press", th->buttonPressed)
          .col("btext", th->buttonText)
          .col("off", th->disabled).col("danger", th->danger).col("ok", th->success)
-         .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor);
+         .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor)
+         .col("fcol", th->focusColor)("fthick", th->focusThickness)("fpad", th->focusPadding).b("fpulse", th->focusPulse);
         if (!th->fontPath.empty()) k.str("fontPath", th->fontPath);   // added later: absent = no font
         if (th->global) k.b("global", true);
         out << "\n";
@@ -6444,6 +6445,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.col("edge", th->border);
                     k.col("sh", th->shadowCol);
                     k.col("glowc", th->glowColor);
+                    k.col("fcol", th->focusColor);
+                    k.f("fthick", th->focusThickness);
+                    k.f("fpad", th->focusPadding);
+                    k.b("fpulse", th->focusPulse);
                     k.str("fontPath", th->fontPath);
                     k.b("global", th->global);
                 } else if (field == "uix") {

@@ -280,6 +280,7 @@ A clickable button. The object needs a UI Button. on_click fires when it is pres
 | `GetComponent<UIButton>().SetEase(ease, seconds)` | `UIButton.SetEase/2` | step | ease (Number), seconds (Number), Target (Object) | - | Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes. |
 | `GetComponent<UIButton>().SetInteractable(on)` | `UIButton.SetInteractable/1` | step | on (Bool), Target (Object) | - | False greys the button out and ignores clicks. |
 | `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
+| `GetComponent<UIButton>().Focus()` | `UIButton.Focus/0` | step | Target (Object) | - | Move keyboard and gamepad focus here, show the focus ring, and scroll it into view. |
 
 ## Input
 

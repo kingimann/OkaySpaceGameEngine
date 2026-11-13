@@ -35,7 +35,8 @@ enum AccessibilityField : std::uint32_t {
     kA11yHoldToggle      = 1u << 6,
     kA11yAimAssist       = 1u << 7,
     kA11yScreenReader    = 1u << 8,
-    kA11yAll             = (1u << 9) - 1,
+    kA11yFocusVisual     = 1u << 9,   ///< high-visibility focus ring and its thickness scale
+    kA11yAll             = (1u << 10) - 1,
 };
 
 struct AccessibilitySettings {
@@ -50,6 +51,8 @@ struct AccessibilitySettings {
     std::set<std::string> toggleActions;  ///< actions that toggle ("Sprint", "Aim", "Crouch") while others hold
     AimAssist aimAssist = AimAssist::Medium;
     bool screenReaderHints = false;       ///< announce menus, focus and events to a screen reader
+    bool focusHighVisibility = false;     ///< thick bright focus ring, easier to see than the theme's
+    float focusThicknessScale = 1.0f;     ///< multiplies the theme's focus-ring thickness, 0.5 .. 3
 
     /// Bring every value into range.
     void Clamp();
@@ -96,6 +99,8 @@ public:
     static void SetToggleAction(const std::string& action, bool toggle);
     static void SetAimAssist(AimAssist level);
     static void SetScreenReaderHints(bool on);
+    static void SetFocusHighVisibility(bool on);
+    static void SetFocusThicknessScale(float scale);
 
     // ---- What games ask ----
     /// A text size in pixels scaled by the player's text size.

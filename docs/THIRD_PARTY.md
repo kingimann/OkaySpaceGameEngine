@@ -26,7 +26,7 @@ Services run by other companies (Steamworks, Photon, our hosting) are not librar
 | Rendering | `engine/src/Render`, `engine/include/okay/Render` | Our own software renderer plus OpenGL, Direct3D 11 and Direct3D 12 backends, camera stack, lighting, post-processing |
 | Physics | `engine/` | 2D and 3D physics, joints, ragdolls, queries, fixed-step simulation |
 | Animation and IK | `engine/src/Animation` | Animators, state machines, humanoid rig mapping, root motion, foot, hand and full-body IK |
-| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots, and our own MP3 and Ogg Vorbis decoders |
+| Audio | `engine/src/Audio` | Mixer, groups, music player, one-shots, and our own MP3, Ogg Vorbis and FLAC decoders |
 | In-game UI | `engine/` UI, `okayui/` | Canvas, widgets, themes, layout, scrolling, rich text, UI Gallery |
 | Scripting | `engine/src/Scripting`, `engine/src/VisualScript` | OkayScript language and VM, the visual-script graph engine and every node |
 | Networking | `engine/src/Net`, `relay/` | UDP transport, server authority, rooms, matchmaking, anti-cheat, dedicated server, relay |

@@ -44,9 +44,9 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | No reverb, doppler, occlusion or distance filtering | `Audio/AudioMixer.hpp` (only low-pass and a stereo pan or balance, `kSpatialPan`); no matches for reverb or doppler in `engine/` | Caves, rooms and fast fly-bys sound flat. Spatial audio is pan plus fade only | Medium | Medium |
-| Audio import settings stored but never read | `Core/ImportSidecar.hpp` is read only from `engine/src/Render/ModelImport.cpp`; nothing in `engine/src/Audio` | Import options for audio (and texture compress) have no effect. Already hidden in the UI, but the data path is dead | Low | Small |
+| ~~Audio import settings stored but never read~~ Resolved: Loading (whole file, or read it while it plays) and Mix down to one channel are in the Inspector and applied when the file loads. Quality is not offered: audio is not re-encoded, so that stored number cannot change the sound. Texture compress and sRGB are still unread. | `Core/ImportSidecar.hpp` `ReadAudioImportOptions`; `Audio/AudioLoad.hpp` | Done for audio load mode and mono. Not done: texture compress and sRGB. | Low | Small |
 | Only four fixed buses, no effect chain or snapshots | `AudioMixer.hpp:40` (`SFX, Music, UI, Voice`) | Games cannot add an Ambience or Dialogue bus | Low | Medium |
-| Formats: WAV, OGG, MP3 only (no FLAC) | `AudioDecode.cpp:106` | Common asset format rejected with an error | Low | Small |
+| ~~Formats: WAV, OGG, MP3 only (no FLAC)~~ Resolved: native FLAC loads and streams through our own decoder (`FlacDecoder`), checked against the samples that were encoded. | `Audio/FlacDecoder` | Done. Not done: FLAC packed inside Ogg; the MD5 in the stream header is not checked. | Low | Small |
 | One listener only (main camera) | feature map 7.3 | No split-screen audio | Low | Medium |
 
 ## 5. Input

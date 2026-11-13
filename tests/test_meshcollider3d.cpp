@@ -104,6 +104,39 @@ public:
     int trigEnter = 0;
     void OnTriggerEnter3D(Collider3D*) override { ++trigEnter; }
 };
+
+class CollisionCounter : public Behaviour {
+public:
+    int enter = 0, stay = 0, exit = 0;
+    GameObject* other = nullptr;
+    float enterPen = 0.0f;
+    void OnCollisionEnter3D(const Collision3D& c) override { ++enter; other = c.gameObject; enterPen = c.penetration; }
+    void OnCollisionStay3D(const Collision3D&) override { ++stay; }
+    void OnCollisionExit3D(const Collision3D&) override { ++exit; }
+};
+
+// Every source vertex is on the inner side of every hull face (the shape is the convex hull,
+// not the original concave triangles and not the fallback box).
+bool SourceInsideHull(const Mesh& hull, const Mesh& src) {
+    if (hull.vertices.size() < 4 || hull.triangles.size() < 4) return false;
+    Vec3 c{0, 0, 0};
+    for (const Vec3& v : hull.vertices) c = c + v;
+    c = c * (1.0f / (float)hull.vertices.size());
+    const int nv = (int)hull.vertices.size();
+    for (size_t t = 0; t + 2 < hull.triangles.size(); t += 3) {
+        int i0 = hull.triangles[t], i1 = hull.triangles[t + 1], i2 = hull.triangles[t + 2];
+        if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= nv || i1 >= nv || i2 >= nv) return false;
+        Vec3 a = hull.vertices[i0], b = hull.vertices[i1], d = hull.vertices[i2];
+        Vec3 n = Vec3::Cross(b - a, d - a);
+        float sideC = Vec3::Dot(n, c - a);
+        if (std::fabs(sideC) < 1e-8f) continue;
+        for (const Vec3& p : src.vertices) {
+            float side = Vec3::Dot(n, p - a);
+            if (side * sideC < -1e-3f * (std::fabs(sideC) + 1.0f)) return false;
+        }
+    }
+    return true;
+}
 } // namespace
 
 int main() {
@@ -404,32 +437,91 @@ int main() {
         CHECK(fall->transform->Position().y < -1.0f);
     }
 
-    // ---- Static-only: a dynamic Rigidbody3D on the same object is refused with a clear message ----
+    // ---- dynamic_mesh_convex_hull: a dynamic mesh body collides as the convex hull ----
     {
+        std::cout << "[test] dynamic_mesh_convex_hull\n";
+        Mesh cube = Box({-1, -1, -1}, {1, 1, 1});
         Scene s("dyn");
-        GameObject* g = AddMesh(s, "Both", Box({-1, -1, -1}, {1, 1, 1}), {0, 0, 0});
+        GameObject* g = AddMesh(s, "Both", cube, {0, 0, 0});
         auto* mc = g->GetComponent<MeshCollider3D>();
         CHECK(mc->StatusMessage().empty());
+        CHECK(!mc->UsesConvexHull());                         // no rigidbody yet: exact triangles
         auto* rb = g->AddComponent<Rigidbody3D>();
-        CHECK(mc->IsDynamicConflict());
-        CHECK(mc->StatusMessage().find("Static only") != std::string::npos);
-        rb->bodyType = Rigidbody3D::BodyType::Kinematic;
+        CHECK(mc->IsDynamicBody());
+        CHECK(mc->UsesConvexHull());
         CHECK(!mc->IsDynamicConflict());
-        CHECK(mc->StatusMessage().empty());
+        CHECK(mc->StatusMessage().find("ignored") == std::string::npos);
+        const Mesh& hull = mc->Hull();
+        CHECK(hull.vertices.size() >= 4);
+        CHECK(hull.triangles.size() >= 12);                   // a cube hull is 12 triangles
+        CHECK(SourceInsideHull(hull, cube));
+        int unmatched = 0;
+        for (const Vec3& hv : hull.vertices) {
+            bool found = false;
+            for (const Vec3& sv : cube.vertices)
+                if ((hv - sv).SqrMagnitude() < 1e-8f) { found = true; break; }
+            if (!found) ++unmatched;
+        }
+        CHECK(unmatched == 0);                                // volume mesh: hull vertices are mesh vertices
+        // Kinematic keeps the exact triangles (a moving platform), not the hull.
+        rb->bodyType = Rigidbody3D::BodyType::Kinematic;
+        CHECK(!mc->UsesConvexHull());
+        CHECK(!mc->IsDynamicConflict());
         rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+        CHECK(mc->UsesConvexHull());
+        // A heavy dynamic cube (hull half-extent 1, not the size-1 fallback box) holds a ball.
+        // Fallback box half-extent is 0.5, so a ball of radius 0.5 would rest near y = 1.
+        // The hull's top is y = 1, so the ball rests near y = 1.5. No hull at all: it falls through.
+        rb->gravityScale = 0.0f;
+        rb->mass = 1.0e6f;
         GameObject* ball = s.CreateGameObject("Ball");
         ball->transform->localPosition = {0, 5, 0};
         ball->AddComponent<Rigidbody3D>();
-        ball->AddComponent<SphereCollider3D>();
-        rb->gravityScale = 0.0f;
+        ball->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        auto* landed = ball->AddComponent<CollisionCounter>();
         s.Start();
-        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
-        CHECK(ball->transform->Position().y < 0.0f);                       // refused: the ball fell through
-        CHECK(s.physics3D().Raycast(s, {0, 9, 0}, {0, -1, 0}, 20.0f, ball).hit);   // queries still work
+        for (int i = 0; i < 180; ++i) s.Update(1.0f / 60.0f);
+        CHECK(ball->transform->Position().y > 1.25f);
+        CHECK(ball->transform->Position().y < 1.9f);
+        CHECK(g->transform->Position().y > -0.2f);
+        CHECK(landed->enter >= 1);                            // callback on the convex collider
+        CHECK(landed->other == g);
+        CHECK(s.physics3D().Raycast(s, {0, 9, 0}, {0, -1, 0}, 20.0f, ball).hit);
+
+        // The hull fills a concave notch. Exact triangles do not.
+        Scene notch("notch");
+        GameObject* stat = AddMesh(notch, "StaticL", LShape());
+        GameObject* dyn = AddMesh(notch, "DynamicL", LShape(), {10, 0, 0});
+        auto* drb = dyn->AddComponent<Rigidbody3D>();
+        drb->gravityScale = 0.0f; drb->mass = 1.0e6f;
+        notch.Start(); notch.Update(0.0f);
+        CHECK(!notch.physics3D().Raycast(notch, {2, 5, 2}, {0, -1, 0}).hit);          // notch is empty
+        RaycastHit3D nh = notch.physics3D().Raycast(notch, {12, 5, 2}, {0, -1, 0});   // same point on the hull
+        CHECK(nh.hit);
+        CHECK(nh.collider == dyn->GetComponent<MeshCollider3D>());
+        CHECK_NEAR(nh.point.y, 1.0f, 1e-2f);
+        // Deep in the notch, away from every face: a shell query misses both. A sphere that
+        // reaches the hull's diagonal face (and not the exact L's walls) hits only the hull.
+        CHECK(notch.physics3D().OverlapSphere(notch, {2.2f, 0.5f, 2.2f}, 0.5f).empty());
+        CHECK(!notch.physics3D().OverlapSphere(notch, {12.2f, 0.5f, 2.2f}, 0.5f).empty());
+        CHECK(SourceInsideHull(dyn->GetComponent<MeshCollider3D>()->Hull(), LShape()));
+
+        // A dynamic cube rests on a kinematic mesh cube by the hull's extent (top at y = 1),
+        // not by the fallback box (half-extent 0.5 would stop the centre near y = 1.5).
+        Scene rest("hullrest");
+        GameObject* plat = AddMesh(rest, "Plat", cube);
+        plat->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Kinematic;
+        GameObject* crate = AddMesh(rest, "Crate", cube, {0, 4, 0});
+        crate->AddComponent<Rigidbody3D>();
+        rest.Start();
+        for (int i = 0; i < 240; ++i) rest.Update(1.0f / 60.0f);
+        CHECK(crate->transform->Position().y > 1.7f);
+        CHECK(crate->transform->Position().y < 2.4f);
+
         // A kinematic platform carrying a mesh collider does support a body on it.
         Scene k("kin");
-        GameObject* plat = AddMesh(k, "Plat", Mesh::Plane(10.0f));
-        plat->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Kinematic;
+        GameObject* plat2 = AddMesh(k, "Plat", Mesh::Plane(10.0f));
+        plat2->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Kinematic;
         GameObject* b2 = k.CreateGameObject("B2");
         b2->transform->localPosition = {0, 3, 0};
         b2->AddComponent<Rigidbody3D>();
@@ -437,6 +529,39 @@ int main() {
         k.Start();
         for (int i = 0; i < 180; ++i) k.Update(1.0f / 60.0f);
         CHECK(b2->transform->Position().y > 0.2f);
+        (void)stat;
+    }
+
+    // ---- mesh_landing_collision_callbacks: a body landing on a solid mesh fires Enter/Stay/Exit ----
+    {
+        std::cout << "[test] mesh_landing_collision_callbacks\n";
+        Scene s("landcb");
+        GameObject* floor = AddMesh(s, "Floor", Mesh::Plane(20.0f));
+        GameObject* ball = s.CreateGameObject("Ball");
+        ball->transform->localPosition = {0, 3, 0};
+        auto* rb = ball->AddComponent<Rigidbody3D>();
+        rb->allowSleep = false;
+        ball->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        auto* hits = ball->AddComponent<CollisionCounter>();
+        auto* floorHits = floor->AddComponent<CollisionCounter>();
+        s.Start();
+        for (int i = 0; i < 180; ++i) s.Update(1.0f / 60.0f);
+        CHECK(ball->transform->Position().y > 0.2f);
+        CHECK(hits->enter >= 1);
+        CHECK(hits->stay >= 1);
+        CHECK(hits->exit == 0);
+        CHECK(hits->other == floor);
+        CHECK(hits->enterPen > 0.0f);
+        CHECK(floorHits->enter >= 1);
+        CHECK(floorHits->other == ball);
+        int exits = hits->exit;
+        ball->transform->localPosition = {0, 30, 0};
+        rb->velocity = Vec3::Zero;
+        rb->WakeUp();
+        s.Update(1.0f / 60.0f);
+        s.Update(1.0f / 60.0f);
+        CHECK(hits->exit > exits);
+        CHECK(floorHits->exit >= 1);
     }
 
     // ---- Degenerate / empty meshes ----

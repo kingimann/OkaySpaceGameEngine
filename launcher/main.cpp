@@ -60,6 +60,9 @@
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
+#else
+// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
+namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
 #endif
 
 #include <algorithm>

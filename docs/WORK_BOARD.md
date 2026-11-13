@@ -124,6 +124,7 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
+| Sequence tracks: letterbox, camera shake, screen fade, nested sequence | John | `john/sequence-tracks` |
 
 ## Free (unclaimed, safe small tasks)
 

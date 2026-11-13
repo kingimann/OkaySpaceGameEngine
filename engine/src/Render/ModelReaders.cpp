@@ -1,6 +1,7 @@
 // Our own model readers: OBJ (+MTL), STL (ascii + binary), PLY (ascii + binary).
 // Every reader works on an in-memory buffer, bounds-checks every read, and fails
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
+#include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "PolygonTriangulate.hpp"
 #include <algorithm>
@@ -94,7 +95,7 @@ std::string MtlTextureName(const std::string& rest) {
     auto word = [&]() { std::size_t a = i; while (i < rest.size() && !IsSpace(rest[i])) ++i; return rest.substr(a, i - a); };
     auto isNumber = [](const std::string& w) {
         if (w.empty()) return false;
-        char* e = nullptr; std::strtod(w.c_str(), &e); return e && *e == '\0';
+        char* e = nullptr; detail::StrToD(w.c_str(), &e); return e && *e == '\0';
     };
     for (;;) {
         skipWs();
@@ -132,16 +133,16 @@ void ParseMtl(const std::string& text, const std::string& baseDir, std::vector<I
         if (!cur) continue;
         auto num3 = [&](float& a, float& b, float& c) {
             const char* s = rest.c_str(); char* q = nullptr;
-            a = std::strtof(s, &q); if (q == s) return false; s = q;
-            b = std::strtof(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
-            s = q; c = std::strtof(s, &q); if (q == s) return false;
+            a = detail::StrToF(s, &q); if (q == s) return false; s = q;
+            b = detail::StrToF(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
+            s = q; c = detail::StrToF(s, &q); if (q == s) return false;
             return Finite(a) && Finite(b) && Finite(c);
         };
         if (key == "kd")      { float r, g, b; if (num3(r, g, b)) { cur->hasDiffuse = true; cur->diffuse = Color(r, g, b, 1.0f); } }
         else if (key == "ke") { float r, g, b; if (num3(r, g, b)) { cur->hasEmissive = true; cur->emissive = Color(r, g, b, 1.0f); } }
-        else if (key == "ns") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
-        else if (key == "pm") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
-        else if (key == "pr") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
+        else if (key == "ns") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
+        else if (key == "pm") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
+        else if (key == "pr") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
         else if (key == "map_kd") { std::string t = MtlTextureName(rest); if (!t.empty()) cur->texture = ResolveTexturePath(t, baseDir); }
         else if (key == "map_bump" || key == "bump" || key == "norm") {
             std::string t = MtlTextureName(rest);
@@ -173,7 +174,7 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     auto readF = [&](const char*& c, bool& bad) -> float {
         while (c < end && (*c == ' ' || *c == '\t' || *c == '\r')) ++c;
         if (c >= end || *c == '\n') return 0.0f;
-        char* q = nullptr; float v = std::strtof(c, &q);
+        char* q = nullptr; float v = detail::StrToF(c, &q);
         if (q == c) { bad = true; ++c; return 0.0f; }   // junk: always advance
         c = q; if (!Finite(v)) bad = true; return v;
     };
@@ -407,7 +408,7 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
     auto num = [&](float& v) -> bool {
         while (p < end && IsSpace(*p)) ++p;
         if (p >= end) return false;
-        char* q = nullptr; v = std::strtof(p, &q);
+        char* q = nullptr; v = detail::StrToF(p, &q);
         if (q == p || !Finite(v)) return false;
         p = q; return true;
     };
@@ -489,7 +490,7 @@ struct PlyStream {
         if (fmt == PlyFormat::Ascii) {
             while (p < end && IsSpace(*p)) ++p;
             if (p >= end) return false;
-            char* q = nullptr; v = std::strtod(p, &q);
+            char* q = nullptr; v = detail::StrToD(p, &q);
             if (q == p) return false;
             p = q; return true;
         }

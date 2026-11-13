@@ -3,6 +3,7 @@
 // polygons), materials and textures, the node hierarchy, skins and matrix animations.
 // Anything it does not read is listed in ImportedModel::notes. See
 // okay/Render/ModelData.hpp and docs/model_import.md.
+#include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "PolygonTriangulate.hpp"
 #include <algorithm>
@@ -247,11 +248,11 @@ bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nu
             char buf[72];
             for (const char* c = p; c < q; ++c) buf[c - p] = *c == ',' ? '.' : *c;
             buf[q - p] = 0;
-            v = std::strtof(buf, &e);
+            v = detail::StrToF(buf, &e);
             if (e != buf + (q - p)) return false;
             if (commas) ++*commas;
         } else {
-            v = std::strtof(p, &e);
+            v = detail::StrToF(p, &e);
             if (e != q) return false;   // not a whole token (or no number at all)
         }
         if (!std::isfinite(v)) return false;

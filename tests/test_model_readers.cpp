@@ -6,6 +6,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelData.hpp"
+#include "okay/Render/FbxReader.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <clocale>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -438,6 +440,55 @@ int main() {
             int tris = -1; const bool ok = gltfTris(mode, ix, useIdx || ix.empty() ? useIdx : false, nPos, &tris);
             CHECK(!ok || (tris >= 0 && tris <= std::max(nPos, nIdx)));
         }
+    }
+
+    // ---------------- Locale: a decimal comma must not change what a file reads as ----------------
+    {
+        // setlocale(LC_NUMERIC) in a German / French locale makes strtod stop at the '.' of "1.5". The readers use their own
+        // point-safe parse, so every file reads the same. Needs such a locale on the machine (LOCPATH on Linux, or Windows'
+        // own names); otherwise this part says so and passes.
+        auto fingerprint = [](const ImportedModel& m) {
+            std::string f; char b[96];
+            for (const ImportedNode& n : m.nodes) { std::snprintf(b, sizeof b, "n %.6g %.6g %.6g|%.6g %.6g %.6g %.6g|%.6g;", n.position.x, n.position.y, n.position.z, n.rotation.x, n.rotation.y, n.rotation.z, n.rotation.w, n.scale.x); f += b; }
+            for (const ImportedPart& p : m.parts) { for (const Vec3& v : p.mesh.vertices) { std::snprintf(b, sizeof b, "v %.6g %.6g %.6g;", v.x, v.y, v.z); f += b; } for (const Vec3& v : p.mesh.normals) { std::snprintf(b, sizeof b, "w %.5g %.5g %.5g;", v.x, v.y, v.z); f += b; } }
+            for (const ImportedMaterial& mt : m.materials) { std::snprintf(b, sizeof b, "m %.6g %.6g %.6g %.6g;", mt.diffuse.r, mt.diffuse.g, mt.diffuse.b, mt.shininess); f += b; }
+            for (const ImportedClip& c : m.clips) for (const ImportedChannel& ch : c.channels) { for (const auto& k : ch.position) { std::snprintf(b, sizeof b, "p %.6g %.6g;", k.time, k.value.x); f += b; } for (const auto& k : ch.rotation) { std::snprintf(b, sizeof b, "r %.6g %.6g;", k.time, k.value.w); f += b; } }
+            return f;
+        };
+        struct Case { const char* file; const char* ext; };
+        const Case cases[] = {{"cube.obj", ".obj"}, {"cube_ascii.stl", ".stl"}, {"cube_ascii.ply", ".ply"}, {"walk.bvh", ".bvh"}, {"zup_cm.dae", ".dae"}, {"two_materials.dae", ".dae"}};
+        std::string ref[6]; bool refOk[6];
+        SetImportBackend(".dae", ImportBackend::Own); SetImportBackend(".bvh", ImportBackend::Own);
+        for (int i = 0; i < 6; ++i) { ImportedModel m; std::string e; refOk[i] = ImportModelData(kDir + cases[i].file, m, ImportBackend::Own, false, &e); ref[i] = fingerprint(m); CHECK(refOk[i]); }
+        const std::string fbxPath = std::string(OKAY_SOURCE_DIR) + "/tests/assets/fbx/rig_ascii.fbx";
+        fbx::Scene fRef; std::string fe; CHECK(fbx::LoadFile(fbxPath, fRef, &fe));
+        const std::string savedLocale = std::setlocale(LC_NUMERIC, nullptr) ? std::setlocale(LC_NUMERIC, nullptr) : "C";
+        const char* names[] = {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR", "German_Germany.1252", "German_Germany", "German", "French_France.1252"};
+        std::string commaLocale;
+        for (const char* n : names) if (std::setlocale(LC_NUMERIC, n) && std::localeconv()->decimal_point[0] == ',') { commaLocale = n; std::printf("  locale '%s' (decimal point '%s')\n", n, std::localeconv()->decimal_point); break; }
+        std::setlocale(LC_NUMERIC, savedLocale.c_str());
+        if (commaLocale.empty()) std::printf("  no decimal-comma locale on this machine: locale check skipped\n");
+        else {
+            for (int i = 0; i < 6; ++i) {
+                ImportedModel m; std::string e;
+                std::setlocale(LC_NUMERIC, commaLocale.c_str());   // read under the comma locale, print (fingerprint) under the saved one
+                const bool ok = ImportModelData(kDir + cases[i].file, m, ImportBackend::Own, false, &e);
+                std::setlocale(LC_NUMERIC, savedLocale.c_str());
+                CHECK(ok == refOk[i]);
+                if (!(fingerprint(m) == ref[i])) std::printf("  %s reads differently under a decimal-comma locale\n", cases[i].file);
+                CHECK(fingerprint(m) == ref[i]);
+            }
+            std::setlocale(LC_NUMERIC, commaLocale.c_str());
+            fbx::Scene fLoc; CHECK(fbx::LoadFile(fbxPath, fLoc, &fe));
+            CHECK(fLoc.nodes.size() == fRef.nodes.size());
+            for (std::size_t i = 0; i < std::min(fLoc.nodes.size(), fRef.nodes.size()); ++i) for (int k = 0; k < 3; ++k) CHECK_NEAR(fLoc.nodes[i].translation[k], fRef.nodes[i].translation[k], 1e-9);
+            CHECK(fLoc.clips.size() == fRef.clips.size());
+            // text with a '.' next to the end of a number: "1.5" and "1.5e1" read as 1.5 and 15
+            ImportedModel q; std::string e;
+            CHECK(ReadObjBuffer("v 1.5 2.5e1 -3.25\nv 0 0 0\nv 1 0 0\nf 1 2 3\n", "", q, &e) && !q.parts.empty());
+            if (!q.parts.empty() && q.parts[0].mesh.vertices.size() >= 1) { CHECK_NEAR(q.parts[0].mesh.vertices[0].x, 1.5, 1e-6); CHECK_NEAR(q.parts[0].mesh.vertices[0].y, 25.0, 1e-5); CHECK_NEAR(q.parts[0].mesh.vertices[0].z, -3.25, 1e-6); }
+        }
+        std::setlocale(LC_NUMERIC, savedLocale.c_str());
     }
 
     // ---------------- Same files through both backends (needs Assimp) ----------------

@@ -442,6 +442,7 @@ int main() {
         CHECK(gltfTris(5, {0, 1, 1, 2, 3}, true, 5, &n) && n == 1);                 // strip: the two triangles with a repeated index are dropped, (1,2,3) stays
         // a file whose meshes cannot be read fails the import; it does not give an empty model
         CHECK(sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "")));
+        { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); j.replace(j.find("\"2.0\""), 5, "\"1.0\""); CHECK(!sceneOk(j)); }   // glTF 1.0: refused with a message, not read as garbage
         CHECK(!sceneOk(gltfJson(1, {0, 1, 2}, true, 3, "")));                                         // lines only
         CHECK(!sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],")));   // compressed geometry we cannot decode
         { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); const std::size_t u = j.find("data:application/octet-stream;base64,"); j.replace(u, j.find('"', u) - u, "nothere.bin"); CHECK(!sceneOk(j)); }   // missing .bin

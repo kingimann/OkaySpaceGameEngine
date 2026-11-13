@@ -1576,6 +1576,14 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
+    if (const JVal* asset = doc.root.Find("asset"))
+        if (const JVal* ver = asset->Find("version"))
+            if (ver->type == JVal::Str && !ver->str.empty() && ver->str[0] == '1') {
+                Log::Error("model import '", path, "': glTF ", ver->str, " is not supported (only glTF 2.0); re-export the model as glTF 2.0");
+                if (ok) *ok = false;
+                return nullptr;
+            }
     // A file that cannot be read without an extension we do not have would import as an empty scene: say so instead.
     if (const JVal* req = doc.root.Find("extensionsRequired"))
         for (const JVal& e : req->arr)

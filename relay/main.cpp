@@ -24,7 +24,15 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--legacy-hello") || !std::strcmp(argv[i], "--legacy-hello=on")) legacyHello = true;
         else if (!std::strcmp(argv[i], "--legacy-hello=off") || !std::strcmp(argv[i], "--no-legacy-hello")) legacyHello = false;
         else if (argv[i][0] == '-') { std::cerr << "relay: unknown option " << argv[i] << "\n"; return 2; }
-        else port = static_cast<std::uint16_t>(std::atoi(argv[i]));
+        else {
+            char* end = nullptr;
+            const long v = std::strtol(argv[i], &end, 10);
+            if (end == argv[i] || *end != '\0' || v < 1 || v > 65535) {
+                std::cerr << "relay: invalid port '" << argv[i] << "' (want 1-65535)\n";
+                return 2;
+            }
+            port = static_cast<std::uint16_t>(v);
+        }
     }
 
     okay::net::RelayServer relay;

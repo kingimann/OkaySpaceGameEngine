@@ -43,6 +43,22 @@ int main() {
         CHECK(!JoinLink::Parse("https://example.com", bad));
         CHECK(!JoinLink::Parse("okay://join?game=x", bad));   // nowhere to go
 
+        // Percent-decoding is strict: a '%' that isn't followed by two hex digits stays
+        // a literal '%' (never a made-up NUL byte), and a '+' in a value survives a
+        // round trip because Enc writes it as %2B.
+        CHECK(JoinLink::Dec("a%zzb") == "a%zzb");
+        CHECK(JoinLink::Dec("a%4") == "a%4");
+        CHECK(JoinLink::Dec("a%") == "a%");
+        CHECK(JoinLink::Dec("%41%2b%2B") == "A++");
+        CHECK(JoinLink::Dec("a%00b").size() == 3);          // a real %00 is still one byte
+        CHECK(JoinLink::Dec("a%G1b").find('\0') == std::string::npos);
+        CHECK(JoinLink::Enc("a+b") == "a%2Bb");
+        for (const char* v : {"K+7Q", "100%", "%zz", "a b+c%41", "50%+"}) {
+            JoinLink rt; rt.game = "G"; rt.relay = "r:1"; rt.code = v;
+            JoinLink back;
+            CHECK(JoinLink::Parse(rt.Format(), back) && back.code == v);
+        }
+
         std::string h; std::uint16_t p = 0;
         CHECK(SplitHostPort(" 10.0.0.5:47001 ", h, p) && h == "10.0.0.5" && p == 47001);
         CHECK(SplitHostPort("play.example.com", h, p) && h == "play.example.com" && p == 45000);

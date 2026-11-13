@@ -939,6 +939,7 @@ private:
     std::uint64_t m_relayNonce = 0;   // random per attempt; a welcome must echo it (version 4)
     float m_relayWait = 0.0f;         // seconds spent without a welcome
     int   m_relayBadWelcomes = 0;     // welcomes dropped for a missing or wrong nonce
+    std::uint32_t m_relaySlot = 0;    // client: the slot the relay gave us (it changes when our address does)
     static constexpr int kMaxRelayFramesPerCall = 64;   // relay datagrams consumed per ReceiveFrom
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
     std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)

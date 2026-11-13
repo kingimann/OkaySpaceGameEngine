@@ -167,6 +167,13 @@ forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
 
+**A peer's address changes.** The relay knows a peer by its source address. If a host's
+NAT rebinds, its next hello comes from a new address with the host key, and the relay moves
+the host there and keeps its slot: clients notice nothing. If a client's address changes it
+is a new peer with a new slot; the client sees the new slot in the next welcome and reports
+the connection lost ("this connection's address changed on the relay"), and with
+`autoReconnect` rejoins and resumes its state through the new address within a couple of seconds.
+
 **Hub sessions.** Version 3 keeps that hand-over for sessions that want it with
 the `RelayHub` role (the launcher's voice calls): every member says hub, the
 first one in hosts, and the session never gets a host key, so when the hub

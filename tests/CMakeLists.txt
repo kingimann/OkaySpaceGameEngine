@@ -2595,6 +2595,10 @@ add_executable(test_net_resume_token test_net_resume_token.cpp)
 target_link_libraries(test_net_resume_token PRIVATE okay::engine)
 add_test(NAME net_resume_token COMMAND test_net_resume_token)
 
+add_executable(test_net_relay_nat test_net_relay_nat.cpp)
+target_link_libraries(test_net_relay_nat PRIVATE okay::engine)
+add_test(NAME net_relay_nat COMMAND test_net_relay_nat)
+
 add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
 target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
 add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)

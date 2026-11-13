@@ -291,6 +291,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayHelloTimer = 0.0f;
     m_relayWait = 0.0f;
     m_relayBadWelcomes = 0;
+    m_relaySlot = 0;
     {   // The welcome must echo this back (see RelayProtocol.hpp, version 4).
         std::random_device rd;
         do { m_relayNonce = (static_cast<std::uint64_t>(rd()) << 32) | rd(); } while (m_relayNonce == 0);
@@ -1560,6 +1561,19 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             if (m_mode == Mode::Server && (keyLo | keyHi))
                 m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
             if (m_mode == Mode::Client) {
+                // The relay knows us by our source address, and a new address (a NAT rebinding, a
+                // phone changing network) is a new peer with a new slot: the host still lists the old
+                // slot, which now leads nowhere. Say so now rather than after the silence timeout; the
+                // automatic reconnect then resumes the player through the new address.
+                if (m_relayWelcomed && m_joined && m_relaySlot != 0 && w.slot != m_relaySlot) {
+                    m_relayError = "this connection's address changed on the relay";
+                    OKAY_WARN("net: relay slot ", m_relaySlot, " -> ", w.slot, ": ", m_relayError);
+                    m_connectionLost = true;
+                    m_connectionLostReason = m_relayError;
+                    m_relayLost = true;
+                    return 0;
+                }
+                m_relaySlot = w.slot;
                 // The host we were paired with is the only server we talk to.
                 // Any change (it left: slot 0, or another host took the code)
                 // ends this session instead of re-pointing us at someone else.

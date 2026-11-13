@@ -151,6 +151,18 @@ Ranked by player-visible impact. Each has a regression test in
     Tests: `tests/test_net_respawn_anim.cpp` (script kill, kill volume with direction, forged and
     malformed messages, a hit-caused death sends none).
 
+17. **A client whose address changed mid-session on a relay hung for 10 s.** The relay knows a peer by its
+    source address, so a NAT rebinding (or a phone changing network) makes a new peer with a new slot,
+    and the host still lists the old slot, which now leads nowhere. The client only noticed after the
+    silence timeout. It now reads its own slot from every welcome and, when it changes, reports the
+    connection lost at once ("this connection's address changed on the relay"); with `autoReconnect` it
+    resumes through the new address (same peer id and score) in about two seconds instead of eleven. A host
+    whose address changes needed no fix: the relay keeps its slot (its host key proves it) and clients
+    notice nothing. Tests: `tests/test_net_relay_nat.cpp` (a NAT middlebox that swaps the socket it
+    sends from, clean and under NetSim's 20% loss, delay and duplication: host move, client move with and
+    without autoReconnect, and a direct session, where nothing can tell the client and the 10 s silence
+    timeout applies).
+
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
 join, convergence of a synced object and a resume on a bad link), a deterministic fuzz of every
@@ -201,6 +213,8 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
   The reconnect delays are tested with a hung host (the client's clock advanced faster than
   the wall clock), not with a real network outage or a changing NAT address.
 - Reconnect over a relay was tested against the in-process relay only; a real relay that
-  changes a client's slot between sessions was not seen.
+  changes a client's slot between sessions was not seen. Address changes were simulated with a
+  middlebox that swaps its sending socket (a new source port); a real NAT, a change of IP address
+  (Wi-Fi to mobile data), carrier-grade NAT behaviour and a relay behind a load balancer were not.
 - Animation replication was checked by the state the proxy's animator reaches, not by looking
   at the pose on screen.

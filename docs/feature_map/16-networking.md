@@ -282,8 +282,8 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **API:** `RelayServer`, `okayspace-relay`, `NetworkManager::HostViaRelay`, `JoinViaRelay`, `RelayAddress`, `RelayCode`
 - **Editor:** none (launcher uses it for calls; the Windows dist ships `Tools/okayspace-relay.exe`)
 - **Docs:** `docs/relay.md`, `docs/voice-server.md`
-- **Tests:** `net_relay`, `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`, `net_relay_clients`
-- **Status:** Works - `net_relay` joins through an in-process relay, `relay_security` covers isolation, unguessable slots, floods and random datagrams
+- **Tests:** `net_relay`, `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`, `net_relay_clients`, `net_relay_nat`
+- **Status:** Works - a peer whose address changes mid-session recovers (host: unnoticed; client: reconnect and resume, `net_relay_nat`); `net_relay` joins through an in-process relay, `relay_security` covers isolation, unguessable slots, floods and random datagrams
 - **Open:** whether the live relay was redeployed with the cookie hardening can't be told from the repo (ROADMAP item 7); `--legacy-hello` still defaults to on, to be turned off once `LegacyPeers()` (in the per-minute log line) stays zero; every client built here sends version-4 hellos; no deploy automation (manual `install.sh` or Docker)
 - **Related:** 16.5, 16.7, 39.8, 41.5
 - **Words:** relay, NAT, TURN, port forwarding, okayspace-relay, session code, slot, hello, cookie, legacy hello, HostViaRelay, JoinViaRelay, RelayServer

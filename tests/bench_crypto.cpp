@@ -63,6 +63,8 @@ int main(int argc, char** argv) {
         THEIRS(unsigned char s2[64]; unsigned char p2[32]; crypto_sign_seed_keypair(p2, s2, seed)));
     row("Ed25519 sign (64-byte message)", [&] { Ed25519Sign(sig, msg, 64, esk); },
         THEIRS(crypto_sign_detached(sig, nullptr, msg, 64, esk)));
+    row("Ed25519 sign, stored public key", [&] { Ed25519SignTrustedPk(sig, msg, 64, esk); },
+        THEIRS(crypto_sign_detached(sig, nullptr, msg, 64, esk)));
     row("Ed25519 verify", [&] { volatile bool b = Ed25519Verify(sig, msg, 64, epk); (void)b; },
         THEIRS(volatile int b = crypto_sign_verify_detached(sig, msg, 64, epk); (void)b));
     row("Kx client session keys", [&] { std::uint8_t rx[32], tx[32]; KxClientSessionKeys(rx, tx, pk, sk, pk); },

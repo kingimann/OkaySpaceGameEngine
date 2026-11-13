@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.867.0
+  Updates and releases
+  - A new version is only offered to players after its files and checksums
+    are published, so the "no checksum" update error should not come back.
+  - Windows programs and the installer are signed with a code-signing
+    certificate when one is configured. Until then they stay unsigned, as
+    before.
+
+  Behind the scenes (all off by default, nothing changes for players)
+  - Our own readers for 3DS and BVH files, and checks of the own FBX and
+    COLLADA readers against real files from other tools.
+  - More tests of our own encryption code (published test vectors and
+    comparisons with libsodium). It is not used and is not ready for use.
+  - OkayUI (our own interface toolkit) gained more widgets and a code
+    editor widget. The editor and launcher still use Dear ImGui.
+
 v2.866.0
   Gameplay and physics
   - A 3D hinge can stop at a minimum and maximum angle, so doors and levers

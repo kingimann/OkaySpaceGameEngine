@@ -583,6 +583,8 @@ Every data pin has a type, shown by its colour (hover a pin to see it):
 | yellow | Vector3 |
 | blue | Object |
 | cyan | List |
+| purple | Map (a struct is a map with declared fields) |
+| orange | Color |
 | grey | Any (variables, events, Select, Equals, Format...) |
 
 A wire is allowed when its value means something in the input:
@@ -590,7 +592,9 @@ A wire is allowed when its value means something in the input:
 - Number ↔ Bool;
 - anything → Text;
 - Text → Object (a name);
-- Object → Bool (does it still exist?).
+- Object → Bool (does it still exist?);
+- Vector3 ↔ Color (the red, green and blue channels; a Vector3 gets alpha 1);
+- Text → Color (`"#ff8800"`).
 
 Anything else is **refused when you drop the wire**, with a tip, for example
 "A Vector3 can't go into a Number input - use Vec X / Vec Y / Vec Z or Vec3
@@ -616,9 +620,14 @@ with a "!" you can hover for the details. It finds:
 errors, the build stops and Build Settings lists them, with **Build anyway** and
 **Dismiss**. Warnings never stop a build.
 
-Not covered yet: integer, Vector2, colour, quaternion and enum values. Pins use
-the types above; colours stay R / G / B / A numbers and rotations stay Euler
-Vector3s.
+Not covered yet: integer, Vector2, quaternion and enum values. Rotations stay Euler
+Vector3s, and the engine nodes that take a colour as R / G / B / A numbers still do
+(Split Color gives you those four numbers).
+
+Declared variables add more pin types: a Get Var of a variable declared `Vector3` has a
+Vector3 output, a Set Var of one declared `Number` takes a Number, and a list declared
+`List<Number>` makes List Get's Item a Number, and the checker refuses a Vector3 wired
+into List Add on it. See "Declared variables" below.
 
 ## Functions
 
@@ -753,6 +762,7 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 - **List Length**
 - **List Contains**
 - **List Remove At**
+- and Insert, Set, Find, Remove Item, Sort, Reverse, Clear and Copy (see "Declared variables, lists, maps and structs")
 
 **All With Tag** gives every active object with a tag as a list, and so do the 3D Overlap queries. Walk one with For Each.
 
@@ -806,6 +816,159 @@ They give the new **Value** and the **Old** one.
 - **What counts as a change:** setting the same value again isn't a change. Neither is a value that was already there when the object started.
 - **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
 - **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.
+
+## Declared variables, lists, maps and structs
+
+Until now a variable was a name you typed on a Get Var / Set Var node, holding whatever was put in it.
+A graph can now **declare** a variable: give it a type, a scope and a starting value, edit that value in
+the editor and the Inspector, and have the checker and the runtime hold it to the type.
+
+### What was already there, and what was added
+
+This table is the audit this work started from (HAVE = it worked before, GAP = it did not) and what is true now.
+
+| Area | Before | Now |
+|---|---|---|
+| Variable scopes | HAVE: Object (`Get / Set / Add Var`), Scene, Global (each with Get / Set / Add), function Locals (`Set / Get Local`), Get / Set Object Var on another object | Same nodes. Declarations choose the scope: `object` (this graph's own), `scene`, `global`. |
+| Declaring a variable | GAP: only an old `var name value` line (number or text, no editor to add one) | `decl name Type scope default` lines; the Variables panel adds, renames, retypes, rescopes and removes them |
+| Number / Bool / Text | HAVE as untyped values; `var` rows edited as number or text | Typed: Set Var / Add Var / Set Scene Var / Set Global Var convert a fit (`"3"` to 3) and report a misfit without storing it |
+| Vector3 | HAVE as a value (Make Vec3, Vec X); GAP as a declared or editable default | Declarable; default edited with a three-field drag; Add Var adds vectors |
+| Color | GAP: no colour value or pin | New Color type and pin, Make Color, Split Color, `#rrggbb` / `#rrggbbaa` literals, a colour picker for defaults, a swatch in the watch panel |
+| Object | HAVE as a reference value (Self, Find Object...) | Declarable (default is a name or `@guid:`), type-checked at Set Var |
+| List | HAVE: New List, Add, Remove At, Get, Length, Contains, For Each, Shuffle, Min / Max. GAP: Insert, Set, Find, Remove by value, Sort, Reverse, Clear, Copy; element types; editable default; save / load | All of those added; `List<T>` element types; item-by-item default editor; saved and loaded with the game |
+| Map | HAVE: New Map, Set, Get, Has, Remove, Keys, Values, For Each Map. GAP: Clear, Count, Copy; value types; editable default; save / load | Added; `Map<T>`; entry-by-entry default editor; saved and loaded |
+| Struct | GAP | `struct` lines, a Structs section in the Variables panel, New Struct / Get Field / Set Field with typed fields |
+| Copy versus reference | HAVE (lists and maps are shared) but undocumented | Documented below; Copy List / Copy Map (shallow or deep); every object, scene and run gets its own deep copy of a declared default |
+| Bounds / key errors | HAVE for List Get / Remove At (reported with the node). A NaN or huge index could hit an unchecked cast | Every index is checked first (NaN, infinity and huge values included), reported with the node, nothing changes |
+| Inspector defaults | HAVE for number and text `var` rows only | Every declared type, any scope; live while playing |
+| Debugger watch | HAVE for numbers, text, objects and lists | Every type, readable on one line: vectors, colours (with a swatch), lists and maps with their size and first items, structs |
+| Checker | HAVE: pin types, unset variables. GAP: variable and element types | Typed Get / Set pins, element types for lists and maps, struct field types, a declaration that doesn't load |
+| Serialization | HAVE: the graph text is the scene / prefab data. GAP: lists, maps, colours dropped from play-time saves | Declarations are part of the graph text, so they round-trip with the scene and prefab. Save slots keep lists, maps and colours |
+
+### Declaring a variable
+
+In the Visual Script window's left sidebar, **Declared variables**: type a name, pick a scope and a type, press **Add variable**.
+Each declared variable then has a row with its name (Enter renames it, and the nodes that use it follow), scope, type, and a
+default edited with the widget for its type: a number drag, a checkbox, a text field, three drags for a Vector3, a colour
+picker for a Color, an object name, and for a list or map one row per item with **x** to remove it and **+ Add item** /
+**+ Add entry**. Lists, maps, structs and objects also have the default as one line of text you can edit and press Enter on.
+The **x** next to the name removes the declaration; nodes that use the name keep working, untyped.
+
+| Scope | Meaning | Where the default lands |
+|---|---|---|
+| `object` | this graph's own variables (the same ones Get Var / Set Var use). Each object that uses the graph gets its own | the object's variables when it starts |
+| `scene` | shared by every graph in the scene (Get / Set Scene Var) | the scene's variables, the first time a graph that declares it starts |
+| `global` | whole game run (Get / Set Global Var) | the global variables, the first time |
+
+A default never overwrites something already set. Declaring a variable while playing gives it its default straight away.
+Function locals (`Set Local`) stay untyped: they live for one call.
+
+**Types:** Number, Bool, Text, Vector3, Color, Object, List, Map, `List<T>` and `Map<T>` (T is Number, Bool, Text, Vector3, Color, Object
+or Any), or the name of a struct. Lists inside lists are allowed; their items aren't typed beyond "list".
+
+### Typing at run time
+
+A declared variable keeps its type. Set Var, Add Var, Set Scene Var and Set Global Var fit the new value to it first:
+
+- a value that converts is converted (`"3"` to 3, a Vector3 to a Color, a number to Text);
+- a value that doesn't is **reported with the node's id and the variable keeps its old value**: `Set Var 'hp': expected Number, got Vector3; the variable keeps its value`;
+- for `List<Number>` and `Map<Vector3>` every item is checked (and converted in place, so the list stays the same list); the report names the item (`item 2: expected Number, got Vector3`);
+- an undeclared name (and an old `var` line) behaves as before: anything goes.
+
+### Copy and reference
+
+| Kind | Behaviour |
+|---|---|
+| Number, Bool, Text, Vector3, Color | values: copied on every read and write |
+| Object | a reference to the object (by id; a destroyed object reads as nothing) |
+| List, Map, Struct | **references**: `Set Var b = Get Var a` makes both names the same list, so a change through one shows in the other. This is what lets List Add work on a list held in a variable. |
+
+To get an independent list use **List Copy** (new list, same items) or **Copy** with **Deep** true (nested lists and maps are copied too);
+**Map Copy** does the same for maps. A struct is a map, so Map Copy copies it. A declared default is deep-copied for every object,
+so two objects that use the same graph never share their lists.
+
+### Lists
+
+All of these report a bad index or a non-list input through the graph's error hook with the node's id, and change nothing.
+Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
+
+| Node | What it does |
+|---|---|
+| New List | an empty list. The text field may name the item type (`Number`, `Vector3`...) so the checker knows it |
+| List Add / List Insert (List, Index, Item) | add at the end / put at an index from 0 to the length; later items move up |
+| List Set | replace the item at an index |
+| List Get / List Length / List Contains | read; Get reports an index outside the list |
+| List Find | Index of the first match (-1 when there is none) and Found |
+| List Remove At / List Remove Item | remove by index / remove the first equal item (Removed says whether there was one) |
+| List Sort | in place, smallest first; Descending true for largest first. Numbers sort as numbers, text alphabetically; a mixed list sorts by kind (numbers, bools, text, vectors, colours, objects, lists, maps) and is stable |
+| List Reverse / List Clear | in place |
+| List Copy | a new list; Deep copies nested lists and maps |
+| For Each | walk a list (existing; the loop walks a snapshot) |
+
+### Maps
+
+| Node | What it does |
+|---|---|
+| New Map, Map Set, Map Get (Value, Found), Map Has, Map Remove, Map Keys, Map Values, For Each Map | as before; keys sort, so a run is repeatable |
+| Map Clear / Map Count | empty it / how many entries |
+| Map Copy | a new map; Deep copies nested lists and maps |
+
+A missing key is not an error: Map Get gives Found false.
+
+### Structs
+
+A struct is a record type declared in the **Structs** section of the Variables panel (or a `struct` line): a name and typed fields, each
+with a default. A struct can use structs declared above it, never itself. A variable declared with a struct's name starts as a struct
+with every field at its default.
+
+- **New Struct** (text: the struct name) makes one; **Get Field** / **Set Field** (text: the field) read and write a field. A field the struct doesn't have, or a value that doesn't fit the field's type, is reported and nothing changes. The checker knows the field's type when the struct comes from a declared variable or New Struct.
+- A struct is a map under the hood: Map Keys, For Each Map and Map Copy work on it. Adding a key with Map Set that the struct doesn't declare is allowed (it is just a map); the next typed Set Var will report it.
+
+### Colors
+
+**Make Color** (R, G, B, A each 0 to 1, clamped; A defaults to 1), **Split Color** (R, G, B, A). A colour prints as `#rrggbbaa`.
+
+### In the file
+
+```
+struct Enemy hp:Number=100 "pos:Vector3=(1, 2, 3)" "tint:Color=#ff0000"
+decl health Number object 100
+decl route List<Vector3> object "[(0, 0, 0), (4, 0, 2)]"
+decl best Number global 0
+decl boss Enemy object
+```
+
+`decl <name> <Type> <object|scene|global> [default]`. The default is one field: quote it when it holds spaces or `#`.
+Literals: `1.5`, `true`, `"text"`, `(1, 2, 3)`, `#ff8800` or `#ff880080`, `[a, b]`, `{key: value}`, `@Name` (an object by name). Literals nest
+up to 16 levels and 100000 items; anything bigger, malformed or of the wrong type makes the line (and so the graph) refuse to load, and the
+checker says which line. `var name value` lines from older graphs still load and mean an untyped object-scope default.
+
+A complete example, `examples/visual_script/declared_variables.okayvs`, declares an array of vectors, a map and a struct, inserts into
+the array, loops over it adding up the vectors' X, stores the total in the map, sets a struct field, sorts the array largest first and
+prints the lot. `vs_variables` runs it and checks every value and both printed lines.
+
+### In the Inspector
+
+An object's Visual Script shows every declared variable with the widget for its type: change a starting value, then press Play. While playing
+the object-scope rows show the live values and edits apply at once (a value that doesn't fit the type is refused in the Console). Starting
+values are written back to the graph file.
+
+### The checker, the watch panel and saving
+
+- The checker (toolbar problems list, Play, Build) refuses a wire of the wrong type into a typed variable, a wrong item into a typed list or
+  map, a wrong value into a struct field, and says when a declaration doesn't load. A declared variable counts as set (it has a default).
+- At a breakpoint the watch panel shows every variable in one line each, whatever its type: `route = list(2) [(0, 0, 0), (4, 0, 2)]`,
+  `boss = map(3) {hp: 100, pos: (1, 2, 3), tint: #ff0000ff}`, a colour with a swatch.
+- A save slot (see `docs/save_framework.md`) keeps lists, maps and colours in variables (nested, as literals). Objects held in a list come
+  back as their names (text), because an object's id doesn't outlive the run.
+
+### Known limits
+
+- List and map element types are checked by the checker and when a declared variable is set, not on every List Add at run time: a list you
+  made with New List and never stored in a typed variable accepts anything.
+- Typed lists of structs (`List<Enemy>`) aren't supported; use a plain List and Get Field, or a Map of structs.
+- The editor refuses a wrong wire only for the pin's own type; a wrong element or struct field type shows in the Problems list instead.
+- Renaming a variable renames the nodes that use it in the open graph; other graphs that reach it by Get Object Var are not touched.
 
 ## Tweens, springs and eases
 
@@ -1290,8 +1453,8 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **Contact Point** (`ContactPoint`) — out Point
 - **Contact Normal** (`ContactNormal`) — out Normal
 - **Impact Speed** (`ImpactSpeed`) — out Speed
-- **New List** (`NewList`) — out List
-- **New Map** (`NewMap`) — out Map
+- **New List** (`NewList`) — out List; setting: item type (optional)
+- **New Map** (`NewMap`) — out Map; setting: item type (optional)
 - **Map Set** (`MapSet`) — in Map, Key, Value
 - **Map Get** (`MapGet`) — in Map, Key; out Value, Found
 - **Map Has** (`MapHas`) — in Map, Key; out Yes
@@ -1303,6 +1466,22 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **List Get** (`ListGet`) — in List, Index; out Item
 - **List Length** (`ListLength`) — in List; out Count
 - **List Contains** (`ListContains`) — in List, Item; out Bool
+- **List Insert** (`ListInsert`) — in List, Index, Item
+- **List Set** (`ListSet`) — in List, Index, Item
+- **List Find** (`ListFind`) — in List, Item; out Index, Found
+- **List Remove Item** (`ListRemoveItem`) — in List, Item; out Removed
+- **List Sort** (`ListSort`) — in List, Descending
+- **List Reverse** (`ListReverse`) — in List
+- **List Clear** (`ListClear`) — in List
+- **List Copy** (`ListCopy`) — in List, Deep; out Copy
+- **Map Clear** (`MapClear`) — in Map
+- **Map Count** (`MapCount`) — in Map; out Count
+- **Map Copy** (`MapCopy`) — in Map, Deep; out Copy
+- **New Struct** (`StructNew`) — out Struct; setting: struct name
+- **Get Field** (`StructGet`) — in Struct; out Value; setting: field
+- **Set Field** (`StructSet`) — in Struct, Value; setting: field
+- **Make Color** (`MakeColor`) — in R, G, B, A; out Color
+- **Split Color** (`SplitColor`) — in Color; out R, G, B, A
 
 ### Multiplayer & Steam
 

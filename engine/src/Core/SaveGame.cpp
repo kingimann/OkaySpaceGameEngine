@@ -83,12 +83,14 @@ void ParseFloats(const std::string& text, float* out, int n) {
     for (int i = 0; i < n && (is >> word); ++i) out[i] = savefmt::ParseFloat(word, out[i]);
 }
 
-// A script value as "f:1.5", "b:1", "s:text", "v:1,2,3"; "" for kinds a save can't hold.
+// A script value as "f:1.5", "b:1", "s:text", "v:1,2,3", "j:[...]"; "" for kinds a save can't hold.
 std::string Encode(const vs::VsValue& v) {
     if (v.IsNumber()) return "f:" + Num(v.AsFloat());
     if (v.IsBool())   return std::string("b:") + (v.AsBool() ? "1" : "0");
     if (v.IsString()) return "s:" + Escape(v.AsString());
     if (v.IsVec3()) { const Vec3 p = v.AsVec3(); return "v:" + Num(p.x) + "," + Num(p.y) + "," + Num(p.z); }
+    // Colours, lists and maps (any nesting) as their literal text, "j:[(1, 2, 3), 4]".
+    if (v.IsColor() || v.IsArray() || v.IsMap()) return "j:" + Escape(vs::VsToLiteral(v));
     return "";
 }
 bool Decode(const std::string& t, vs::VsValue& out) {
@@ -98,6 +100,7 @@ bool Decode(const std::string& t, vs::VsValue& out) {
         case 'f': out = vs::VsValue{savefmt::ParseFloat(p)}; return true;
         case 'b': out = vs::VsValue{p == "1"}; return true;
         case 's': out = vs::VsValue{Unescape(p)}; return true;
+        case 'j': return vs::VsParseLiteral(Unescape(p), out);   // a bad one is skipped, not fatal
         case 'v': {
             Vec3 v; float c[3] = {0, 0, 0};
             ParseFloats(p, c, 3);

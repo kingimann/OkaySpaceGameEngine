@@ -22,8 +22,14 @@ class Navigation {
 public:
     /// The scene's active NavMeshSurface with a baked mesh (nullptr = none).
     static NavMeshSurface* Surface(Scene& scene);
-    /// The baked mesh, or nullptr when the scene paths over the grid.
+    /// The mesh queries use, or nullptr when the scene paths over the grid: the baked mesh with the holes
+    /// of every carving NavMeshObstacle cut out (see NavMeshObstacle), rebuilt when they change.
     static const NavMesh* Mesh(Scene& scene);
+    /// The mesh as baked, without any obstacle holes (what the .okaynav file holds).
+    static const NavMesh* BakedMesh(Scene& scene);
+    /// Goes up whenever the carved mesh changes (an obstacle came to rest, moved or went away). Agents
+    /// compare it with the value they planned under and replan. 0 without a mesh.
+    static std::uint32_t CarveGeneration(Scene& scene);
 
     /// Waypoints from `from` to `to` (start first, destination last), empty when no
     /// route exists (callers steer straight at the goal, as they always did).

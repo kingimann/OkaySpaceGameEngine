@@ -180,5 +180,34 @@ int main() {
         CHECK(ma->CurrentName() == "idle");
     }
 
+    // SanitizeJoints: indices outside the joint list are set to joint 0 with their weight
+    // zeroed and the rest renormalized, so every backend sees the same valid data; a skin
+    // that is already valid is left alone.
+    {
+        Scene s2("sanitize");
+        GameObject* g = s2.CreateGameObject("Mesh");
+        g->AddComponent<MeshRenderer>();
+        auto* k = g->AddComponent<SkinnedMesh>();
+        GameObject* j0 = s2.CreateGameObject("J0"); GameObject* j1 = s2.CreateGameObject("J1");
+        k->bind.vertices = { Vec3{1, 0, 0}, Vec3{2, 0, 0}, Vec3{3, 0, 0} };
+        k->bind.triangles = { 0, 1, 2 };
+        k->jointIdx = { {0, 1, 0, 0}, {1, 9, 0, 0}, {-3, 70000, 0, 0} };
+        k->jointWt  = { {0.5f, 0.5f, 0, 0}, {0.25f, 0.75f, 0, 0}, {0.6f, 0.4f, 0, 0} };
+        k->joints = { j0->transform, j1->transform };
+        k->inverseBind = { Mat4::Identity(), Mat4::Identity() };
+        CHECK(k->SanitizeJoints(k->joints.size()) == 3);     // v1: index 9; v2: -3 and 70000
+        CHECK(k->jointIdx[0] == (std::array<int, 4>{0, 1, 0, 0}) && std::fabs(k->jointWt[0][0] - 0.5f) < 1e-6f);   // untouched
+        CHECK(k->jointIdx[1][0] == 1 && k->jointIdx[1][1] == 0);
+        CHECK(std::fabs(k->jointWt[1][0] - 1.0f) < 1e-6f && k->jointWt[1][1] == 0.0f);   // renormalized onto the valid one
+        for (int q = 0; q < 4; ++q) CHECK(k->jointWt[2][q] == 0.0f && k->jointIdx[2][q] == 0);  // nothing valid left: unweighted
+        CHECK(k->SanitizeJoints(k->joints.size()) == 0);     // idempotent
+        // Skin() sees the same thing: vertex 1 follows joint 1, vertex 2 stays in the bind pose.
+        j1->transform->localPosition = {0, 4, 0};
+        k->Skin();
+        auto* r = g->GetComponent<MeshRenderer>();
+        CHECK(std::fabs(r->mesh.vertices[1].y - 4.0f) < 1e-3f);
+        CHECK(std::fabs(r->mesh.vertices[2].x - 3.0f) < 1e-3f && std::fabs(r->mesh.vertices[2].y) < 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

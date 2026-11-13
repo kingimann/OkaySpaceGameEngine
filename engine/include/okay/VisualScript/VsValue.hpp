@@ -30,6 +30,9 @@ inline bool VsParseFinite(const std::string& s, float& out) {
 /// a raycast hit...). Holds the object's instance id, never a pointer, so it is
 /// safe after the object is destroyed (it then resolves to nothing).
 struct VsObject { std::uint64_t id = 0; };
+/// An RGBA colour, each channel 0..1 (not clamped on store; Make Color and the
+/// literal parser clamp). Prints as #rrggbbaa.
+struct VsColor { float r = 0, g = 0, b = 0, a = 1; };
 /// The name of a referenced object ("" when it no longer exists). NodeGraph.cpp.
 std::string VsObjectName(std::uint64_t id);
 /// True while the referenced object exists. NodeGraph.cpp.
@@ -56,6 +59,17 @@ public:
     VsValue(ArrayRef a) : m_data(std::move(a)) {}
     VsValue(MapRef m) : m_data(std::move(m)) {}
     VsValue(VsObject o) : m_data(o) {}
+    VsValue(VsColor c) : m_data(c) {}
+
+    /// A colour value.
+    static VsValue Color(float r, float g, float b, float a = 1.0f) { return VsValue(VsColor{r, g, b, a}); }
+    bool IsColor() const { return std::holds_alternative<VsColor>(m_data); }
+    /// The colour (opaque black when this isn't one).
+    VsColor AsColor() const {
+        if (auto* c = std::get_if<VsColor>(&m_data)) return *c;
+        if (auto* v = std::get_if<Vec3>(&m_data)) return VsColor{v->x, v->y, v->z, 1.0f};
+        return VsColor{};
+    }
 
     /// An object reference value (0 = no object).
     static VsValue Object(std::uint64_t instanceId) { return VsValue(VsObject{instanceId}); }
@@ -87,6 +101,7 @@ public:
         if (auto* f = std::get_if<float>(&m_data)) return *f;
         if (auto* b = std::get_if<bool>(&m_data)) return *b ? 1.0f : 0.0f;
         if (auto* v = std::get_if<Vec3>(&m_data)) return v->Magnitude();
+        if (auto* c = std::get_if<VsColor>(&m_data)) return c->a;
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a ? (float)(*a)->size() : 0.0f;
         if (auto* m = std::get_if<MapRef>(&m_data)) return *m ? (float)(*m)->size() : 0.0f;
         if (auto* s = std::get_if<std::string>(&m_data)) {
@@ -111,6 +126,7 @@ public:
             if (VsParseFinite(*s, n)) return n != 0.0f;
             return true;   // any other text is on
         }
+        if (auto* c = std::get_if<VsColor>(&m_data)) return c->a > 0.0f;
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a && !(*a)->empty();
         if (auto* m = std::get_if<MapRef>(&m_data)) return *m && !(*m)->empty();
         if (auto* o = std::get_if<VsObject>(&m_data)) return o->id != 0 && VsObjectAlive(o->id);
@@ -119,6 +135,7 @@ public:
     Vec3 AsVec3() const {
         if (auto* v = std::get_if<Vec3>(&m_data)) return *v;
         if (auto* f = std::get_if<float>(&m_data)) return Vec3{*f};
+        if (auto* c = std::get_if<VsColor>(&m_data)) return Vec3{c->r, c->g, c->b};
         return Vec3::Zero;
     }
     bool IsString() const { return std::holds_alternative<std::string>(m_data); }
@@ -132,6 +149,7 @@ public:
         if (auto* v = std::get_if<Vec3>(&m_data))
             return "(" + FormatNumber(v->x) + ", " + FormatNumber(v->y) +
                    ", " + FormatNumber(v->z) + ")";
+        if (auto* c = std::get_if<VsColor>(&m_data)) return HexColor(*c);
         if (auto* a = std::get_if<ArrayRef>(&m_data)) {
             if (!*a) return "[]";
             std::string s = "[";
@@ -156,6 +174,15 @@ public:
         return {};
     }
 
+    /// "#rrggbbaa" for a colour (channels clamped to 0..1, rounded to 8 bits).
+    static std::string HexColor(const VsColor& c) {
+        auto byte = [](float f) { return (unsigned)(std::lround(std::fmin(std::fmax(std::isnan(f) ? 0.0f : f, 0.0f), 1.0f) * 255.0f)); };
+        static const char* hex = "0123456789abcdef";
+        std::string s = "#";
+        for (unsigned b : {byte(c.r), byte(c.g), byte(c.b), byte(c.a)}) { s += hex[b >> 4]; s += hex[b & 15]; }
+        return s;
+    }
+
     /// Format a float without trailing-zero noise: whole numbers print as
     /// integers ("3"), fractions trim trailing zeros ("1.5"). Keeps script
     /// string concatenation (e.g. score counters) clean.
@@ -176,7 +203,7 @@ public:
     }
 
 private:
-    std::variant<float, bool, Vec3, std::string, ArrayRef, MapRef, VsObject> m_data;
+    std::variant<float, bool, Vec3, std::string, ArrayRef, MapRef, VsObject, VsColor> m_data;
 };
 
 } // namespace okay::vs

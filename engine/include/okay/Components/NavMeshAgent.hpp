@@ -28,6 +28,9 @@ class NavMeshLink;
 /// then crosses to the end point over the link's duration (`IsTraversingLink`), and
 /// carries on. `onLinkStart` / `onLinkEnd` fire at the two ends of the crossing (hook an
 /// animation on them); Action Lists get `nav_link_start` / `nav_link_end`.
+///
+/// Carving: a NavMeshObstacle with Carve on cuts a hole in the mesh; the agent replans at once when the
+/// hole appears, moves or goes (and gives up, like for any unreachable goal, if no route is left).
 class NavMeshAgent : public Behaviour {
 public:
     /// Before the animation components, so they pose this frame's movement.
@@ -110,6 +113,7 @@ private:
     float m_stuckT = 0.0f;
     int   m_stuckCount = 0;
     bool  m_drivenHadDest = false;
+    std::uint32_t m_carveGen = 0;   // Navigation::CarveGeneration the path was planned under
 };
 
 } // namespace okay

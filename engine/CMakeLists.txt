@@ -100,6 +100,7 @@ add_library(okay_engine
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp
     src/VisualScript/VsVariables.cpp
+    src/VisualScript/VsDecl.cpp
     src/VisualScript/VsDebug.cpp
     src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp
@@ -180,12 +181,14 @@ add_library(okay_engine
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
+    src/AI/NavMeshCarve.cpp
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
     src/Core/ImageWrite.cpp
+    src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp
     src/Core/ImageDecodeJpeg.cpp
     src/Graphics/Image.cpp

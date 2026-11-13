@@ -1,5 +1,6 @@
 // High-level gameplay nodes: one check per family, on a real graph.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include <Okay.hpp>
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -32,6 +33,7 @@ static void Updates(Scene& s, int n, float dt) {
 
 int main() {
     RUN_SUITE("vs_gameplay");
+    okaytest::Sandbox sandbox("vs_gameplay", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     Time::SetTimeScale(1.0f);
 
     // Movement: spin, bob, follow path, smooth follow, knockback, orbit.
@@ -292,5 +294,6 @@ int main() {
         (void)v;
     }
 
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

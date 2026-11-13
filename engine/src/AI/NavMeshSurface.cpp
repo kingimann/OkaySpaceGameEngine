@@ -47,9 +47,32 @@ const NavMesh* NavMeshSurface::Mesh() {
     return (m_mesh && !m_mesh->Empty()) ? m_mesh.get() : nullptr;
 }
 
-void NavMeshSurface::SetMesh(std::unique_ptr<NavMesh> mesh) { m_mesh = std::move(mesh); }
+void NavMeshSurface::SetMesh(std::unique_ptr<NavMesh> mesh) { m_mesh = std::move(mesh); DropCarve(); }
 
-void NavMeshSurface::Clear() { m_mesh.reset(); m_triedPath.clear(); m_stats = NavBakeStats{}; }
+void NavMeshSurface::Clear() { m_mesh.reset(); DropCarve(); m_triedPath.clear(); m_stats = NavBakeStats{}; }
+
+void NavMeshSurface::DropCarve() {
+    if (m_carved || !m_carveVolumes.empty()) ++m_carveGen;
+    m_carved.reset(); m_carveVolumes.clear(); m_carvedPolys = 0;
+}
+
+const NavMesh* NavMeshSurface::ApplyCarving(const std::vector<NavCarveVolume>& volumes) {
+    const NavMesh* base = Mesh();
+    if (!base) return nullptr;
+    if (volumes.empty()) {
+        if (m_carved) { m_carved.reset(); m_carveVolumes.clear(); m_carvedPolys = 0; ++m_carveGen; }
+        return base;
+    }
+    bool same = m_carved && m_carveVolumes.size() == volumes.size();
+    for (std::size_t i = 0; same && i < volumes.size(); ++i) same = volumes[i].Delta(m_carveVolumes[i]) < 1e-5f;
+    if (same) return m_carved.get();
+    auto carved = std::make_unique<NavMesh>();
+    m_carvedPolys = base->Carve(volumes, *carved);
+    m_carved = std::move(carved);
+    m_carveVolumes = volumes;
+    ++m_carveGen;
+    return m_carved.get();
+}
 
 void NavMeshSurface::GatherInput(Scene& scene, NavBakeInput& out) const {
     NavMeshBaker::Gather(scene, out, includeDynamic, layerMask);
@@ -71,6 +94,7 @@ bool NavMeshSurface::Bake(Scene& scene, NavBakeStats* stats, std::string* error)
         return false;
     }
     m_mesh = std::move(mesh);
+    DropCarve();
     m_stats = st;
     m_triedPath = navPath;
     if (stats) *stats = st;
@@ -99,7 +123,7 @@ bool NavMeshSurface::PollBake(bool* ok) {
     if (!m_job || !m_job->done.load()) return false;
     if (m_job->thread.joinable()) m_job->thread.join();
     const bool good = m_job->ok.load() && !m_job->cancel.load();
-    if (good) { m_mesh = std::move(m_job->result); m_stats = m_job->stats; m_triedPath = navPath; }
+    if (good) { m_mesh = std::move(m_job->result); DropCarve(); m_stats = m_job->stats; m_triedPath = navPath; }
     m_job.reset();
     if (ok) *ok = good;
     return true;
@@ -127,6 +151,7 @@ bool NavMeshSurface::Load(const std::string& path, std::string* error) {
     auto mesh = std::make_unique<NavMesh>();
     if (!mesh->LoadFromFile(p, error)) return false;
     m_mesh = std::move(mesh);
+    DropCarve();
     m_stats = NavBakeStats{};
     m_stats.polys = (int)m_mesh->polys.size(); m_stats.links = (int)m_mesh->links.size();
     m_stats.vertices = (int)m_mesh->vertices.size();

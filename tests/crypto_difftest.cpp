@@ -57,7 +57,8 @@ struct Cat {
     long long runs = 0, bad = 0;
 };
 static std::vector<Cat*> g_cats;
-static Cat* NewCat(const char* n) { g_cats.push_back(new Cat{n}); return g_cats.back(); }
+static Cat g_catStore[16];
+static Cat* NewCat(const char* n) { Cat* c = &g_catStore[g_cats.size()]; c->name = n; g_cats.push_back(c); return c; }
 static void Mismatch(Cat* c, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 static void Mismatch(Cat* c, const char* fmt, ...) {
     ++c->bad;
@@ -220,6 +221,11 @@ static void DiffEd25519(long long n) {
         oc::Ed25519Sign(osig.data(), m.data(), m.size(), osk);
         crypto_sign_detached(ssig.data(), nullptr, m.data(), m.size(), ssk);
         if (osig != ssig) { Mismatch(cs, "signature differs: seed %s msg len %zu", Hx(seed.data(), 32).c_str(), m.size()); continue; }
+        {
+            Bytes fast = Buf(64);
+            oc::Ed25519SignTrustedPk(fast.data(), m.data(), m.size(), osk);
+            if (fast != ssig) Mismatch(cs, "SignTrustedPk signature differs: seed %s", Hx(seed.data(), 32).c_str());
+        }
         const Bytes pk(opk, opk + 32);
         if (!OurVerify(osig, m, pk) || !SodiumVerify(osig, m, pk)) Mismatch(cs, "valid signature rejected by one side (seed %s)", Hx(seed.data(), 32).c_str());
         // one wrong message must fail on both
@@ -326,7 +332,10 @@ static void DiffAead(long long msgs) {
             }
             ++c->runs;
             if (a != b) { Mismatch(c, "%s seal differs (msg len %zu)", x ? "xchacha" : "chacha", m.size()); continue; }
-            auto openBoth = [&](const Bytes& ct, const Bytes& ad, const Bytes& nn, const Bytes& kk, const char* what) {
+            auto openBoth = [&](const Bytes& ctIn, const Bytes& adIn, const Bytes& nn, const Bytes& kk, const char* what) {
+                Bytes ct = Buf(ctIn.size()), ad = Buf(adIn.size());   // (non-null data() even when empty: libsodium declares the pointers non-null)
+                std::copy(ctIn.begin(), ctIn.end(), ct.begin());
+                std::copy(adIn.begin(), adIn.end(), ad.begin());
                 Bytes o1 = Buf(ct.size() + 1), o2 = Buf(ct.size() + 1);
                 unsigned long long ol = 0;
                 bool r1, r2;
@@ -450,5 +459,6 @@ int main(int argc, char** argv) {
         bad += c->bad; runs += c->runs;
     }
     std::printf("total %lld comparisons, %lld mismatches\n", runs, bad);
+    std::fflush(stdout);
     return bad ? 1 : 0;
 }

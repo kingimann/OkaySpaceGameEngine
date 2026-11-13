@@ -32,6 +32,9 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
+    src/Input/GestureRecognizer.cpp
+    src/Input/Gestures.cpp
+    src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
     src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp

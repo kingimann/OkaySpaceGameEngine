@@ -1922,6 +1922,12 @@ add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
 
+# Touch: gesture recogniser (synthetic finger streams) and on-screen controls driving the action map.
+add_executable(test_touch_controls test_touch_controls.cpp)
+target_link_libraries(test_touch_controls PRIVATE okay::engine)
+target_compile_definitions(test_touch_controls PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME touch_controls COMMAND test_touch_controls)
+
 # Input: F-keys / nav keys / left-right modifiers, input contexts that swallow keys, gamepad dead zones,
 # response curves, trigger thresholds and several controllers
 add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)

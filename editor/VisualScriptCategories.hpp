@@ -120,7 +120,8 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");
     if (has("ui") || has("button") || has("slider") || has("toast") || has("tooltip") || has("font"))
         return VsAt("UI");
-    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input"))
+    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input") ||
+        has("gesture") || has("swipe") || has("pinch") || has("twist") || has("touch"))
         return VsAt("Input");
     if (has("raycast") || has("overlap") || has("cast") || has("explosion") || has("rigid") ||
         has("force") || has("impulse") || has("velocity") || has("physics") || has("gravity"))
@@ -174,6 +175,10 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
         return VsAt("Events");
     if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
         return VsAt("Input", "Controls");
+    if (VsIs(type, "OnTap") || VsIs(type, "OnDoubleTap") || VsIs(type, "OnLongPress") ||
+        VsIs(type, "OnSwipe") || VsIs(type, "OnPinch") || VsIs(type, "OnRotate") ||
+        VsIs(type, "GestureSwipeDirection") || VsIs(type, "GesturePinchScale") || VsIs(type, "GestureTwist"))
+        return VsAt("Input");
     if (VsIs(type, "GetMoveAxis")) return VsAt("Input", "Axes");
     if (VsIs(type, "ScoreAdd") || VsIs(type, "ScoreSet") || VsIs(type, "ScoreGet")) return VsAt("Variables");
     if (VsIs(type, "CheckpointSave") || VsIs(type, "CheckpointLoad")) return VsAt("Variables", "Saved");

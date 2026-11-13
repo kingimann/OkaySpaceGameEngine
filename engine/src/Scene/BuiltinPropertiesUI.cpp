@@ -8,6 +8,7 @@
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Components/UIDraggable.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIFlexItem.hpp"
@@ -577,8 +578,53 @@ void RegisterUIInventoryBind() {
 
 } // namespace
 
+void RegisterVirtualJoystick() {
+    PropertyBuilder<VirtualJoystick> b("VirtualJoystick", "virtualjoystick", "UI");
+    b.AddVec2("position", &VirtualJoystick::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &VirtualJoystick::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the stick, in pixels")
+     .AddEnum("anchor", &VirtualJoystick::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddString("action", &VirtualJoystick::action).Tooltip("Direction action this stick drives (Move, by default). A game that already reads that action also hears the stick")
+     .AddBool("floating", &VirtualJoystick::floating).Tooltip("Off: the stick stays where you placed it. On: it appears under the finger, inside this rectangle")
+     .AddFloat("deadZone", &VirtualJoystick::deadZone).Range(0, 0.9, 0.01).Tooltip("Tilt that still counts as centred")
+     .AddBool("onlyOnTouch", &VirtualJoystick::onlyOnTouch).Tooltip("Hide this stick until a touch screen is in use")
+     .AddBool("fadeWhenIdle", &VirtualJoystick::fadeWhenIdle).Tooltip("Draw the stick fainter until a finger is on it")
+     .AddFloat("knobScale", &VirtualJoystick::knobScale).Range(0.15, 0.9, 0.01).Tooltip("Knob size as a fraction of the stick")
+     .AddColor("baseColor", &VirtualJoystick::baseColor).Tooltip("Colour of the base")
+     .AddColor("knobColor", &VirtualJoystick::knobColor).Tooltip("Colour of the knob");
+    b.Commit();
+}
+void RegisterTouchDPad() {
+    PropertyBuilder<TouchDPad> b("TouchDPad", "touchdpad", "UI");
+    b.AddVec2("position", &TouchDPad::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &TouchDPad::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the pad, in pixels")
+     .AddEnum("anchor", &TouchDPad::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddString("action", &TouchDPad::action).Tooltip("Direction action this pad drives (Move, by default)")
+     .AddFloat("deadZone", &TouchDPad::deadZone).Range(0, 0.9, 0.01).Tooltip("How far from the centre a press must be before it counts")
+     .AddBool("diagonals", &TouchDPad::diagonals).Tooltip("Allow two directions at once (up and right, and so on)")
+     .AddBool("onlyOnTouch", &TouchDPad::onlyOnTouch).Tooltip("Hide this pad until a touch screen is in use")
+     .AddColor("color", &TouchDPad::color).Tooltip("Colour of the pad")
+     .AddColor("pressedColor", &TouchDPad::pressedColor).Tooltip("Colour of a direction while it is held");
+    b.Commit();
+}
+void RegisterTouchButton() {
+    PropertyBuilder<TouchButton> b("TouchButton", "touchbutton", "UI");
+    b.AddVec2("position", &TouchButton::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &TouchButton::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the button, in pixels")
+     .AddEnum("anchor", &TouchButton::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddString("action", &TouchButton::action).Tooltip("Button action this press drives (Jump, by default). A game bound to that action also hears the button")
+     .AddString("label", &TouchButton::label).Tooltip("Words drawn on the button")
+     .AddBool("onlyOnTouch", &TouchButton::onlyOnTouch).Tooltip("Hide this button until a touch screen is in use")
+     .AddColor("color", &TouchButton::color).Tooltip("Colour of the button")
+     .AddColor("pressedColor", &TouchButton::pressedColor).Tooltip("Colour while the finger is down")
+     .AddColor("textColor", &TouchButton::textColor).Tooltip("Colour of the label");
+    b.Commit();
+}
+
 void RegisterUIProperties() {
     RegisterUIButton();
+    RegisterVirtualJoystick();
+    RegisterTouchDPad();
+    RegisterTouchButton();
     RegisterTextRenderer();
     RegisterUIImage();
     RegisterUISlider();

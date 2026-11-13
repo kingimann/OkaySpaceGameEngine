@@ -9535,6 +9535,75 @@ void RegisterBuiltinComponentSerializers() {
         k.f("angle", d->maxAngle); k.f("lift", d->lift);
     };
     ComponentSerializerRegistry::Register(std::move(dec));
+
+    ComponentSerializerRegistry::Entry stick;
+    stick.name = "virtualjoystick";
+    stick.write = [](const GameObject& go, std::ostream& out) {
+        auto* j = go.GetComponent<VirtualJoystick>();
+        if (!j) return;
+        out << "  virtualjoystick";
+        KvOut{out}("x", j->position.x)("y", j->position.y)("w", j->size.x)("h", j->size.y)
+            ("anchor", (int)j->anchor).str("action", j->action).b("floating", j->floating)
+            ("dead", j->deadZone).b("touchOnly", j->onlyOnTouch).b("fade", j->fadeWhenIdle)
+            ("knob", j->knobScale).col("base", j->baseColor).col("cap", j->knobColor);
+        out << "\n";
+    };
+    stick.read = [](GameObject& go, std::istream& in) {
+        auto* j = go.AddComponent<VirtualJoystick>();
+        KvIn k(in);
+        int anchor = (int)j->anchor;
+        k.f("x", j->position.x); k.f("y", j->position.y); k.f("w", j->size.x); k.f("h", j->size.y);
+        k.i("anchor", anchor); j->anchor = (UIAnchor)anchor;
+        k.str("action", j->action); k.b("floating", j->floating); k.f("dead", j->deadZone);
+        k.b("touchOnly", j->onlyOnTouch); k.b("fade", j->fadeWhenIdle); k.f("knob", j->knobScale);
+        k.col("base", j->baseColor); k.col("cap", j->knobColor);
+    };
+    ComponentSerializerRegistry::Register(std::move(stick));
+
+    ComponentSerializerRegistry::Entry pad;
+    pad.name = "touchdpad";
+    pad.write = [](const GameObject& go, std::ostream& out) {
+        auto* d = go.GetComponent<TouchDPad>();
+        if (!d) return;
+        out << "  touchdpad";
+        KvOut{out}("x", d->position.x)("y", d->position.y)("w", d->size.x)("h", d->size.y)
+            ("anchor", (int)d->anchor).str("action", d->action)("dead", d->deadZone)
+            .b("diag", d->diagonals).b("touchOnly", d->onlyOnTouch)
+            .col("c", d->color).col("p", d->pressedColor);
+        out << "\n";
+    };
+    pad.read = [](GameObject& go, std::istream& in) {
+        auto* d = go.AddComponent<TouchDPad>();
+        KvIn k(in);
+        int anchor = (int)d->anchor;
+        k.f("x", d->position.x); k.f("y", d->position.y); k.f("w", d->size.x); k.f("h", d->size.y);
+        k.i("anchor", anchor); d->anchor = (UIAnchor)anchor;
+        k.str("action", d->action); k.f("dead", d->deadZone); k.b("diag", d->diagonals);
+        k.b("touchOnly", d->onlyOnTouch); k.col("c", d->color); k.col("p", d->pressedColor);
+    };
+    ComponentSerializerRegistry::Register(std::move(pad));
+
+    ComponentSerializerRegistry::Entry tbtn;
+    tbtn.name = "touchbutton";
+    tbtn.write = [](const GameObject& go, std::ostream& out) {
+        auto* b = go.GetComponent<TouchButton>();
+        if (!b) return;
+        out << "  touchbutton";
+        KvOut{out}("x", b->position.x)("y", b->position.y)("w", b->size.x)("h", b->size.y)
+            ("anchor", (int)b->anchor).str("action", b->action).str("label", b->label)
+            .b("touchOnly", b->onlyOnTouch).col("c", b->color).col("p", b->pressedColor).col("t", b->textColor);
+        out << "\n";
+    };
+    tbtn.read = [](GameObject& go, std::istream& in) {
+        auto* b = go.AddComponent<TouchButton>();
+        KvIn k(in);
+        int anchor = (int)b->anchor;
+        k.f("x", b->position.x); k.f("y", b->position.y); k.f("w", b->size.x); k.f("h", b->size.y);
+        k.i("anchor", anchor); b->anchor = (UIAnchor)anchor;
+        k.str("action", b->action); k.str("label", b->label); k.b("touchOnly", b->onlyOnTouch);
+        k.col("c", b->color); k.col("p", b->pressedColor); k.col("t", b->textColor);
+    };
+    ComponentSerializerRegistry::Register(std::move(tbtn));
 }
 } // namespace detail
 

@@ -21,6 +21,7 @@
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -83,6 +84,18 @@ static std::string Str(const vs::VsValue& v) {
 
 // Process-wide state a node can change (the quit flag, pauses, the mixer): put back before every run so
 // one run cannot leak into the next.
+static void ClearFingers() {
+    std::vector<long long> ids;
+    std::vector<Vec2> at;
+    for (int i = 0; i < Input::TouchCount(); ++i) {
+        ids.push_back(Input::GetTouch(i).id);
+        at.push_back(Input::GetTouch(i).position);
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) Input::FeedTouch(ids[i], 2, at[i]);
+    Input::ClearTypedText();
+    Gestures::Reset();
+}
+
 static void ResetStatics() {
     Game::CancelQuit();
     for (const std::string& r : Game::PauseReasons()) Game::ClearPause(r);
@@ -568,6 +581,67 @@ static std::vector<Ev> BuildEvents() {
     }});
     for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
         e.push_back({t, "", "bus", "Me", raise(t, "")});
+    // A finger stream the recogniser turns into one gesture, then one scene update so the
+    // graph's event runs. The clock starts far from any earlier sample.
+    auto gesture = [](auto feed) {
+        return [feed](Scene& s, GameObject*, VC*) {
+            ClearFingers();
+            Input::SetTouchScreen(true);
+            feed();
+            s.Update(1.0f / 60.0f);
+            ClearFingers();
+        };
+    };
+    e.push_back({"OnTap", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {12, 12});
+        Gestures::Tick(20.0);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {12, 12});
+        Gestures::Tick(20.10);
+        Gestures::Tick(20.60);
+    })});
+    e.push_back({"OnDoubleTap", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {20, 20});
+        Gestures::Tick(30.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {20, 20});
+        Gestures::Tick(30.10);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 0, {22, 22});
+        Gestures::Tick(30.20);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {22, 22});
+        Gestures::Tick(30.28);
+    })});
+    e.push_back({"OnLongPress", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {30, 30});
+        Gestures::Tick(40.00);
+        Input::ClearTypedText();
+        Gestures::Tick(40.60);
+    })});
+    e.push_back({"OnSwipe", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 80});
+        Gestures::Tick(50.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {160, 80});
+        Gestures::Tick(50.12);
+    })});
+    e.push_back({"OnPinch", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 0});
+        Input::FeedTouch(2, 0, {100, 0});
+        Gestures::Tick(60.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(2, 1, {260, 0});
+        Gestures::Tick(60.20);
+    })});
+    e.push_back({"OnRotate", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 0});
+        Input::FeedTouch(2, 0, {100, 0});
+        Gestures::Tick(70.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(2, 1, {0, 100});
+        Gestures::Tick(70.20);
+    })});
     e.push_back({"OnNetRpc", "ping", "bus", "Me", raise("OnNetRpc", "ping")});
     return e;
 }

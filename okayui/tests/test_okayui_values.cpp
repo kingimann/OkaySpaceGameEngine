@@ -486,6 +486,68 @@ void TabBarTests() {
     CHECK(plus);
 }
 
+void TooltipAndHelperTests() {
+    Rig r; UI::Rect rb; bool showTip = false, showTwo = false; const char* tipText = "tip"; int clicks = 0;
+    UI::Vec2 mn, mx, sz;
+    r.body = [&] {
+        UI::Button("Hover me"); rb = UI::GetItemRect();
+        mn = UI::GetItemRectMin(); mx = UI::GetItemRectMax(); sz = UI::GetItemRectSize();
+        if (showTip) UI::SetTooltip("%s %d", tipText, 7);
+        if (showTwo) UI::SetTooltip("first\nsecond");
+        UI::TextUnformatted("abcdef", "abcdef" + 3);      // only the first three characters
+        UI::TextUnformatted("100% sure %s %d");           // no formatting
+        if (UI::IsMouseDoubleClicked()) ++clicks;
+    };
+    r.Frames(2);
+    CHECK_NEAR(mn.x, rb.x, 1e-3); CHECK_NEAR(mn.y, rb.y, 1e-3);
+    CHECK_NEAR(mx.x, rb.x + rb.w, 1e-3); CHECK_NEAR(mx.y, rb.y + rb.h, 1e-3);
+    CHECK_NEAR(sz.x, rb.w, 1e-3); CHECK_NEAR(sz.y, rb.h, 1e-3);
+    const unsigned panel = ThemeRgba(UI::Style().panel);
+    // SetTooltip draws a box next to the cursor, whatever is hovered
+    r.sim.Move(100, 300); r.Frames(2);
+    const auto before = r.sim.Draw();
+    const int n0 = CountNot(before, 110, 310, 200, 340, PixelAt(before, 300, 300));
+    showTip = true; r.Frames(2);
+    const auto& with = r.sim.Draw();
+    CHECK(CountNot(with, 110, 310, 200, 340, PixelAt(with, 300, 300)) > n0);
+    // a second line makes the box taller: scan down the column through the box for its last non-background row
+    auto boxBottom = [&]() { const auto& bm = r.sim.Draw(); const unsigned bg = PixelAt(bm, 400, 380); int last = 0;
+        for (int y = 306; y < 400; ++y) if (PixelAt(bm, 120, y) != bg) last = y; return last; };
+    showTip = false; showTwo = true; r.Frames(2); const int two = boxBottom();
+    showTwo = false; showTip = true; r.Frames(2); const int one = boxBottom();
+    CHECK(one > 314 && two >= one + (int)(UI::GetTextLineHeight() * 0.6f));
+    const unsigned winBg = PixelAt(r.sim.Draw(), 400, 380);
+    // near the right edge the box flips to the left of the cursor instead of running off the display
+    showTip = true; r.sim.Move(630, 300); r.Frames(2);
+    CHECK(PixelAt(r.sim.Draw(), 619, 320) != winBg);                          // its right border, left of the cursor
+    r.sim.Move(100, 300); showTip = false; r.Frames(2);
+    // double click: two presses close together; a slow second press or a far one is not
+    clicks = 0; r.sim.Move(200, 200); r.Frame();
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(clicks == 1);
+    clicks = 0;
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();                           // a third click is a new first click
+    CHECK(clicks == 0);
+    clicks = 0; r.Frames(40);                                                 // wait (frames count as 1/60 s)
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); CHECK(clicks == 0);
+    r.Frames(30); r.sim.Move(260, 200); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Move(300, 200); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(clicks == 0);                                                       // the second press is far from the first
+    // dragging: held and moved more than the threshold
+    r.sim.Move(100, 100); r.Frame(); r.sim.Down(); r.Frame();
+    CHECK(!UI::IsMouseDragging());
+    r.sim.Move(103, 100); r.Frame(); CHECK(!UI::IsMouseDragging());
+    r.sim.Move(120, 100); r.Frame(); CHECK(UI::IsMouseDragging());
+    CHECK(!UI::IsMouseDragging(0, 50.0f));                                     // a larger threshold
+    CHECK(!UI::IsMouseDragging(1));                                            // only the left button
+    r.sim.Up(); r.Frame(); CHECK(!UI::IsMouseDragging());
+    // time and frame count move forward
+    const double t0 = UI::GetTime(); const int f0 = UI::GetFrameCount();
+    r.Frames(30);
+    CHECK(UI::GetFrameCount() == f0 + 30 && UI::GetTime() > t0 + 0.4);
+    UI::AlignTextToFramePadding();                                             // accepted, does nothing
+    UI::SetTooltip(nullptr); UI::TextUnformatted(nullptr);                     // null arguments are harmless
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -739,6 +801,7 @@ int main() {
     TypedSingleTests();
     TypedInputTests();
     TabBarTests();
+    TooltipAndHelperTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

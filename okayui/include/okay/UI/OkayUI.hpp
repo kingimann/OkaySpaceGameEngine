@@ -51,6 +51,7 @@ struct Input {
     bool        ctrl      = false;     // Ctrl held (Ctrl+click on a drag or slider box types a number into it)
     float       displayW  = 0.0f;      // size of the area OkayUI draws into (BeginPopupModal centres in it); 0 = unknown
     float       displayH  = 0.0f;
+    double      time      = 0.0;       // seconds since start (for double clicks and GetTime); 0 = derive from the frame count at 60 fps
 };
 
 /// Visual style (colors are RGBA, 0..255). Mutable via Style().
@@ -367,6 +368,14 @@ void EndCombo();
 /// If the most recently issued widget is hovered, show a tooltip box at the cursor.
 /// Call right after the widget you want to annotate.
 void Tooltip(const char* text);
+/// A tooltip at the cursor, always (the caller decides when: `if (IsItemHovered()) SetTooltip("%d items", n);`). printf-style;
+/// lines are split at "\n", and the box stays inside the display (Input::displayW/H) by flipping to the left / above.
+void SetTooltip(const char* fmt, ...);
+/// Draw text as is (no formatting). With `textEnd` only the characters before it.
+void TextUnformatted(const char* text, const char* textEnd = nullptr);
+/// Accepted for compatibility: text in a row is already vertically centred with framed widgets, so this does nothing.
+void AlignTextToFramePadding();
+
 
 /// Drag-to-scrub a float: hold and move the cursor left/right to change *v by
 /// `speed` per pixel. If minV < maxV the value is clamped. Returns true on change.
@@ -734,6 +743,17 @@ bool IsMouseClicked(int button = 0);
 bool IsMouseReleased(int button = 0);
 Vec2 GetMousePos();
 Vec2 GetMouseDelta();
+/// The last item's rectangle as corners / size (the same rectangle as GetItemRect()).
+Vec2 GetItemRectMin();
+Vec2 GetItemRectMax();
+Vec2 GetItemRectSize();
+/// Seconds since the start (Input::time when the host sets it, otherwise frames / 60) and the number of frames begun.
+double GetTime();
+int GetFrameCount();
+/// The left button went down for the second time within 0.3 s and 6 px of the first press (this frame only).
+bool IsMouseDoubleClicked(int button = 0);
+/// The left button is held and has moved more than `threshold` pixels (default 4) since it went down.
+bool IsMouseDragging(int button = 0, float threshold = -1.0f);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
 
 /// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with

@@ -8,6 +8,8 @@
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <cstddef>  // offsetof
+#include <cstdarg>
+#include <cstring>
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
 // All rendering goes through SDL_RenderGeometry (SDL >= 2.0.18), which is exactly
@@ -297,6 +299,11 @@ float* floatState(int id, float dflt) {
     static float sink = 0.0f; return &sink;
 }
 float g_prevMouseX = 0.0f, g_prevMouseY = 0.0f;   // last frame's cursor
+unsigned long long g_frameCount = 0;              // frames begun so far
+double g_clock = 0.0;                             // seconds: Input::time when the host gives it, else frames / 60
+double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
+bool   g_dblClick = false;                        // this frame's press was the second of a double click
+float  g_pressX = 0, g_pressY = 0;                // where the left button went down (for dragging)
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 
 // ID stack: an extra seed mixed into label hashing so same-labelled widgets in a
@@ -796,6 +803,16 @@ void BeginFrame(const Input& in) {
     g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
     g_popupTop = 0;
+    ++g_frameCount;
+    g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
+    g_dblClick = false;
+    if (g_pressed) {
+        const float dx = in.mouseX - g_lastPressX, dy = in.mouseY - g_lastPressY;
+        g_dblClick = g_lastPressTime >= 0.0 && g_clock - g_lastPressTime < 0.30 && dx * dx + dy * dy < 36.0f;
+        g_lastPressTime = g_dblClick ? -1.0 : g_clock;     // a third click is a new first click
+        g_lastPressX = in.mouseX; g_lastPressY = in.mouseY;
+        g_pressX = in.mouseX; g_pressY = in.mouseY;
+    }
     g_mouseDX = in.mouseX - g_prevMouseX;
     g_mouseDY = in.mouseY - g_prevMouseY;
     g_prevMouseX = in.mouseX;
@@ -2347,27 +2364,86 @@ bool CollapsingHeader(const char* label) {
     return *open;
 }
 
+namespace {
+// A tooltip box next to the cursor: several lines ("\n"), kept inside the display (flipped to the left / above when it would run off).
+void drawTooltipBox(const char* text) {
+    if (!text || !*text) return;
+    const float s = g_theme.textScale, th = textH(), lineGap = 2.0f;
+    int lines = 1; float tw = 0.0f;
+    {   // measure: the widest line and the line count
+        char line[256]; int n = 0;
+        for (const char* c = text;; ++c) {
+            if (*c == '\n' || *c == 0) {
+                line[n] = 0; tw = std::max(tw, labelW(line));
+                if (*c == 0) break;
+                ++lines; n = 0;
+            } else if (n < 255) line[n++] = *c;
+        }
+    }
+    const float pad = g_look ? 8.0f : 6.0f;
+    const float bw = tw + pad * 2.0f, bh = th * (float)lines + lineGap * (float)(lines - 1) + pad * 2.0f;
+    float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
+    if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
+    if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
+    g_toOverlay = true;
+    if (g_look) {
+        const unsigned char tip[4] = {38, 42, 51, 250};
+        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
+        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
+    } else {
+        quad(bx, by, bw, bh, g_theme.border);
+        quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
+    }
+    char line[256]; int n = 0; float ly = by + pad;
+    for (const char* c = text;; ++c) {
+        if (*c == '\n' || *c == 0) {
+            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.text);
+            ly += th + lineGap; n = 0;
+            if (*c == 0) break;
+        } else if (n < 255) line[n++] = *c;
+    }
+    g_toOverlay = false;
+}
+} // namespace
+
 void Tooltip(const char* text) {
     if (!g_lay.active || !text || !*text || g_in.blocked) return;
     // Only when the most recent item is hovered.
     if (!pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) return;
-    const float s = g_theme.textScale, pad = 6.0f;
-    const float tw = labelW(text), th = textH();
-    const float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
-    g_toOverlay = true;
-    if (g_look) {
-        const float p2 = 8.0f;
-        const unsigned char tip[4] = {38, 42, 51, 250};
-        rrect(bx, by, tw + p2 * 2.0f, th + p2 * 2.0f, 7.0f, g_theme.border);
-        rrect(bx + 1.0f, by + 1.0f, tw + p2 * 2.0f - 2.0f, th + p2 * 2.0f - 2.0f, 6.0f, tip);
-        drawText(bx + p2, by + p2, text, s, g_theme.text);
-        g_toOverlay = false;
-        return;
-    }
-    quad(bx, by, tw + pad * 2.0f, th + pad * 2.0f, g_theme.border);
-    quad(bx + 1.0f, by + 1.0f, tw + pad * 2.0f - 2.0f, th + pad * 2.0f - 2.0f, g_theme.panel);
-    drawText(bx + pad, by + pad, text, s, g_theme.text);
-    g_toOverlay = false;
+    drawTooltipBox(text);
+}
+
+void SetTooltip(const char* fmt, ...) {
+    if (!g_lay.active || !fmt || g_in.blocked) return;
+    char buf[1024];
+    va_list ap; va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    drawTooltipBox(buf);   // unconditional: the caller decides when (usually `if (IsItemHovered()) SetTooltip(...)`)
+}
+
+void TextUnformatted(const char* text, const char* textEnd) {
+    if (!g_lay.active || !text) return;
+    if (!textEnd) { textBlock(text, g_theme.text); return; }
+    const std::size_t n = textEnd > text ? (std::size_t)(textEnd - text) : 0;
+    char buf[1024]; const std::size_t m = n < sizeof buf - 1 ? n : sizeof buf - 1;
+    std::memcpy(buf, text, m); buf[m] = 0;
+    textBlock(buf, g_theme.text);
+}
+
+void AlignTextToFramePadding() {}   // text in a row is already vertically centred with framed widgets
+
+Vec2 GetItemRectMin() { const Rect r = GetItemRect(); return Vec2{ r.x, r.y }; }
+Vec2 GetItemRectMax() { const Rect r = GetItemRect(); return Vec2{ r.x + r.w, r.y + r.h }; }
+Vec2 GetItemRectSize() { const Rect r = GetItemRect(); return Vec2{ r.w, r.h }; }
+double GetTime() { return g_clock; }
+int GetFrameCount() { return (int)g_frameCount; }
+bool IsMouseDoubleClicked(int button) { return button == 0 && !g_in.blocked && g_dblClick; }
+bool IsMouseDragging(int button, float threshold) {
+    if (g_in.blocked) return false;
+    if (button != 0 || !g_in.mouseDown) return false;
+    const float dx = g_in.mouseX - g_pressX, dy = g_in.mouseY - g_pressY, t = threshold >= 0.0f ? threshold : 4.0f;
+    return dx * dx + dy * dy > t * t;
 }
 
 bool Combo(const char* label, const char* const* items, int count, int* current) {
@@ -4057,6 +4133,7 @@ void ResetState() {
     g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
+    g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;

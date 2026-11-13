@@ -23,6 +23,19 @@ namespace okay { class TtfFont; }
 namespace OkayUI {
 
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
+/// Named keys for IsKeyDown / IsKeyPressed / IsKeyReleased. The host fills Input::keyDown[id] with whether each key is held this frame.
+enum KeyId : int {
+    KeyId_None = 0,
+    KeyId_Tab, KeyId_Left, KeyId_Right, KeyId_Up, KeyId_Down, KeyId_PageUp, KeyId_PageDown, KeyId_Home, KeyId_End,
+    KeyId_Insert, KeyId_Delete, KeyId_Backspace, KeyId_Space, KeyId_Enter, KeyId_Escape,
+    KeyId_A, KeyId_B, KeyId_C, KeyId_D, KeyId_E, KeyId_F, KeyId_G, KeyId_H, KeyId_I, KeyId_J, KeyId_K, KeyId_L, KeyId_M,
+    KeyId_N, KeyId_O, KeyId_P, KeyId_Q, KeyId_R, KeyId_S, KeyId_T, KeyId_U, KeyId_V, KeyId_W, KeyId_X, KeyId_Y, KeyId_Z,
+    KeyId_0, KeyId_1, KeyId_2, KeyId_3, KeyId_4, KeyId_5, KeyId_6, KeyId_7, KeyId_8, KeyId_9,
+    KeyId_F1, KeyId_F2, KeyId_F3, KeyId_F4, KeyId_F5, KeyId_F6, KeyId_F7, KeyId_F8, KeyId_F9, KeyId_F10, KeyId_F11, KeyId_F12,
+    KeyId_Ctrl, KeyId_Shift, KeyId_Alt,
+    KeyId_COUNT
+};
+
 struct Input {
     float       mouseX    = 0.0f;
     float       mouseY    = 0.0f;
@@ -51,6 +64,7 @@ struct Input {
     bool        ctrl      = false;     // Ctrl held (Ctrl+click on a drag or slider box types a number into it)
     float       displayW  = 0.0f;      // size of the area OkayUI draws into (BeginPopupModal centres in it); 0 = unknown
     float       displayH  = 0.0f;
+    bool        keyDown[KeyId_COUNT] = {};   // which named keys are held this frame (see KeyId); Ctrl/Shift also follow `ctrl` / `shift`
     double      time      = 0.0;       // seconds since start (for double clicks and GetTime); 0 = derive from the frame count at 60 fps
 };
 
@@ -754,6 +768,12 @@ int GetFrameCount();
 bool IsMouseDoubleClicked(int button = 0);
 /// The left button is held and has moved more than `threshold` pixels (default 4) since it went down.
 bool IsMouseDragging(int button = 0, float threshold = -1.0f);
+/// Named key state from Input::keyDown. IsKeyPressed is true on the frame a key goes down and, with `repeat`, again every 0.05 s
+/// once it has been held for 0.5 s (so holding an arrow key keeps moving); IsKeyReleased on the frame it goes up.
+/// An id out of range is simply "not down". KeyId_Ctrl and KeyId_Shift are also down while Input::ctrl / Input::shift are.
+bool IsKeyDown(KeyId key);
+bool IsKeyPressed(KeyId key, bool repeat = true);
+bool IsKeyReleased(KeyId key);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
 
 /// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with

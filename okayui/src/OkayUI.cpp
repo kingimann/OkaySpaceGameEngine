@@ -304,6 +304,9 @@ double g_clock = 0.0;                             // seconds: Input::time when t
 double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
 bool   g_dblClick = false;                        // this frame's press was the second of a double click
 float  g_pressX = 0, g_pressY = 0;                // where the left button went down (for dragging)
+bool   g_keyNow[KeyId_COUNT] = {}, g_keyPrev[KeyId_COUNT] = {};   // named keys: this frame and last
+double g_keySince[KeyId_COUNT] = {};              // when each held key went down
+double g_keyNextRepeat[KeyId_COUNT] = {};
 float g_mouseDX = 0.0f, g_mouseDY = 0.0f;         // cursor delta this frame
 
 // ID stack: an extra seed mixed into label hashing so same-labelled widgets in a
@@ -805,6 +808,11 @@ void BeginFrame(const Input& in) {
     g_popupTop = 0;
     ++g_frameCount;
     g_clock = in.time > 0.0 ? in.time : (double)g_frameCount / 60.0;
+    for (int k = 0; k < KeyId_COUNT; ++k) {   // named keys: keep last frame's state, take this frame's
+        g_keyPrev[k] = g_keyNow[k];
+        g_keyNow[k] = in.keyDown[k] || (k == KeyId_Ctrl && in.ctrl) || (k == KeyId_Shift && in.shift);
+        if (g_keyNow[k] && !g_keyPrev[k]) { g_keySince[k] = g_clock; g_keyNextRepeat[k] = g_clock + 0.5; }
+    }
     g_dblClick = false;
     if (g_pressed) {
         const float dx = in.mouseX - g_lastPressX, dy = in.mouseY - g_lastPressY;
@@ -2438,6 +2446,14 @@ Vec2 GetItemRectMax() { const Rect r = GetItemRect(); return Vec2{ r.x + r.w, r.
 Vec2 GetItemRectSize() { const Rect r = GetItemRect(); return Vec2{ r.w, r.h }; }
 double GetTime() { return g_clock; }
 int GetFrameCount() { return (int)g_frameCount; }
+bool IsKeyDown(KeyId key) { return key > 0 && key < KeyId_COUNT && g_keyNow[key]; }
+bool IsKeyPressed(KeyId key, bool repeat) {
+    if (!(key > 0 && key < KeyId_COUNT) || !g_keyNow[key]) return false;
+    if (!g_keyPrev[key]) return true;
+    if (repeat && g_clock >= g_keyNextRepeat[key]) { g_keyNextRepeat[key] = g_clock + 0.05; return true; }
+    return false;
+}
+bool IsKeyReleased(KeyId key) { return key > 0 && key < KeyId_COUNT && !g_keyNow[key] && g_keyPrev[key]; }
 bool IsMouseDoubleClicked(int button) { return button == 0 && !g_in.blocked && g_dblClick; }
 bool IsMouseDragging(int button, float threshold) {
     if (g_in.blocked) return false;
@@ -4134,6 +4150,7 @@ void ResetState() {
     g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
+    for (int k = 0; k < KeyId_COUNT; ++k) { g_keyNow[k] = g_keyPrev[k] = false; g_keySince[k] = g_keyNextRepeat[k] = 0.0; }
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;

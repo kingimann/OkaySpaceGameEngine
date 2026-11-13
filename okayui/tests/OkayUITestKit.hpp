@@ -43,6 +43,8 @@ struct Sim {
     float wheel = 0;
     std::string text;
     bool edge[Key_COUNT] = {};
+    bool named[OkayUI::KeyId_COUNT] = {};   // named keys held (see OkayUI::KeyId)
+    void Hold(OkayUI::KeyId k, bool held) { named[k] = held; }
     Bitmap bmp;
     int frames = 0;
     Sim(float w = 640, float h = 480) : W(w), H(h) {}
@@ -54,6 +56,7 @@ struct Sim {
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
         in.selectAll = edge[Key_SelectAll]; in.up = edge[Key_Up]; in.down = edge[Key_Down]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
+        for (int i = 0; i < OkayUI::KeyId_COUNT; ++i) in.keyDown[i] = named[i];
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();

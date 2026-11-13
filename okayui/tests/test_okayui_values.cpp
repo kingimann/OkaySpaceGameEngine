@@ -548,6 +548,36 @@ void TooltipAndHelperTests() {
     UI::SetTooltip(nullptr); UI::TextUnformatted(nullptr);                     // null arguments are harmless
 }
 
+void KeyStateTests() {
+    Rig r; bool down = false, pressed = false, pressedNoRep = false, released = false; int presses = 0, pressesNoRep = 0;
+    r.body = [&] {
+        down = UI::IsKeyDown(UI::KeyId_F5); pressed = UI::IsKeyPressed(UI::KeyId_F5); pressedNoRep = UI::IsKeyPressed(UI::KeyId_F5, false);
+        released = UI::IsKeyReleased(UI::KeyId_F5);
+        // IsKeyPressed consumes a repeat tick, so count presses from one call per frame
+    };
+    r.Frames(2);
+    CHECK(!down && !pressed && !released);
+    r.sim.Hold(UI::KeyId_F5, true); r.Frame();
+    CHECK(down && pressed && pressedNoRep && !released);                      // the frame it goes down
+    r.Frame(); CHECK(down && !pressed && !pressedNoRep);                      // held: not "pressed" again right away
+    // holding for half a second starts repeating; without repeat it never fires again
+    r.body = [&] { if (UI::IsKeyPressed(UI::KeyId_F5)) ++presses; if (UI::IsKeyPressed(UI::KeyId_F5, false)) ++pressesNoRep; };
+    presses = pressesNoRep = 0;
+    r.Frames(20); CHECK(presses == 0);                                        // 20 frames = 0.33 s: still waiting
+    r.Frames(40); CHECK(presses >= 3);                                        // by 1.0 s it has repeated several times
+    CHECK(pressesNoRep == 0);
+    r.body = [&] { down = UI::IsKeyDown(UI::KeyId_F5); released = UI::IsKeyReleased(UI::KeyId_F5); pressed = UI::IsKeyPressed(UI::KeyId_F5); };
+    r.sim.Hold(UI::KeyId_F5, false); r.Frame();
+    CHECK(!down && released && !pressed);                                     // the frame it goes up
+    r.Frame(); CHECK(!released);
+    // an id out of range or "none" is not down; Ctrl and Shift follow the older flags
+    CHECK(!UI::IsKeyDown(UI::KeyId_None) && !UI::IsKeyDown((UI::KeyId)-3) && !UI::IsKeyDown((UI::KeyId)99999));
+    CHECK(!UI::IsKeyPressed((UI::KeyId)99999) && !UI::IsKeyReleased((UI::KeyId)-1));
+    r.sim.ctrl = true; r.sim.shift = true; r.body = [&] { down = UI::IsKeyDown(UI::KeyId_Ctrl) && UI::IsKeyDown(UI::KeyId_Shift) && !UI::IsKeyDown(UI::KeyId_Alt); };
+    r.Frame(); CHECK(down);
+    r.sim.ctrl = false; r.sim.shift = false;
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -802,6 +832,7 @@ int main() {
     TypedInputTests();
     TabBarTests();
     TooltipAndHelperTests();
+    KeyStateTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

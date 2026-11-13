@@ -251,7 +251,7 @@ int main() {
             const std::string typed = r.Chance(30) ? r.Junk(12) : "";
             in.text = r.Chance(80) ? typed.c_str() : nullptr;
             in.backspace = r.Chance(10); in.del = r.Chance(8); in.left = r.Chance(8); in.right = r.Chance(8);
-            in.home = r.Chance(4); in.end = r.Chance(4); in.enter = r.Chance(4); in.escape = r.Chance(3); in.selectAll = r.Chance(3); in.shift = r.Chance(20); in.up = r.Chance(8); in.down = r.Chance(8);
+            in.home = r.Chance(4); in.end = r.Chance(4); in.enter = r.Chance(4); in.escape = r.Chance(3); in.selectAll = r.Chance(3); in.shift = r.Chance(20); in.up = r.Chance(8); in.down = r.Chance(8); for (int ki = 0; ki < UI::KeyId_COUNT; ++ki) in.keyDown[ki] = r.Chance(10);
             UI::BeginFrame(in);
             const int windows = 1 + r.Int(4);
             for (int w = 0; w < windows; ++w) {

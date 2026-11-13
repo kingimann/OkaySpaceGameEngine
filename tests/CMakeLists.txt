@@ -1563,6 +1563,17 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The self-update decisions (shared/SelfUpdate.hpp, launcher/UpdaterCore.hpp): state file, start-up verdict, retry rule, self-check, rollback,
+# all-or-nothing swap, hostile versions.json. Temp folders only; no window, no network.
+add_executable(test_self_update test_self_update.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_self_update PRIVATE cxx_std_17)
+target_include_directories(test_self_update PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_self_update PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_self_update PRIVATE shell32)
+endif()
+add_test(NAME self_update COMMAND test_self_update)
+
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)

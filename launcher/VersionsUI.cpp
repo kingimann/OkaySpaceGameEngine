@@ -48,14 +48,12 @@ struct InstallJob {
     fs::path launcherDir;
     InstallPlan plan;
     InstallOptions options;
-    std::function<std::uint64_t(const std::string&)> headSize;
     Result result;
     ~InstallJob() { if (mu) SDL_DestroyMutex(mu); }
 };
 int InstallWorker(void* p) {
     InstallJob* j = static_cast<InstallJob*>(p);
     InstallPlan plan = j->plan;
-    if (plan.needsConfirmation && j->headSize) FillUnknownSizes(plan, j->headSize);   // the only check there is: the size the server reports
     j->totalBytes = plan.totalBytes();
     IO io;
     io.download = &net::DownloadFile;
@@ -94,8 +92,6 @@ struct State {
     std::unique_ptr<InstallJob> job;
     std::map<std::string, std::pair<std::string, int>> notes;   // per version: the last message and its kind (2 = error)
     std::string removeAsk;                              // a Remove confirmation is open for this version
-    InstallPlan confirmPlan;                            // an install without a checksum waits for a yes
-    bool confirmOpen = false;
     bool showAllAvailable = false;
     bool staleCleaned = false;
 };
@@ -209,7 +205,7 @@ void StartIndex(const Host& h) {
     if (!st.indexJob->th) st.indexJob.reset();
 }
 
-void StartJob(const Host& h, const InstallPlan& plan, bool confirmed) {
+void StartJob(const Host& h, const InstallPlan& plan) {
     State& st = S();
     if (st.job) return;
     auto j = std::make_unique<InstallJob>();
@@ -217,8 +213,6 @@ void StartJob(const Host& h, const InstallPlan& plan, bool confirmed) {
     j->version = plan.version;
     j->launcherDir = h.launcherDir;
     j->plan = plan;
-    j->options.confirmedUnverified = confirmed;
-    j->headSize = h.headSize;
     j->totalBytes = plan.totalBytes();
     j->th = SDL_CreateThread(InstallWorker, "okay-versions-install", j.get());
     if (!j->th) { Toast(h, "Couldn't start the download.", 2); return; }
@@ -235,8 +229,7 @@ void BeginInstall(const Host& h, const std::string& version) {
         Toast(h, plan.error, 2);
         return;
     }
-    if (plan.needsConfirmation) { st.confirmPlan = plan; st.confirmOpen = true; return; }
-    StartJob(h, plan, false);
+    StartJob(h, plan);   // (a version without checksums never gets a plan: PlanInstall refuses it with the reason)
 }
 
 RemoveGuards MakeGuards(const Host& h) {
@@ -599,7 +592,7 @@ void DrawAvailable(const Host& h) {
             if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
             const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
             sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "from GitHub");
-            if (!checkable) sub += "  \xC2\xB7  can't be checked automatically";
+            if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
             if (lts) sub += "  \xC2\xB7  only gets fixes";
             if (mine) {
                 std::string file;
@@ -676,26 +669,6 @@ void DrawModals(const Host& h) {
         if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     } else if (!ImGui::IsPopupOpen("Remove this version?")) st.removeAsk.clear();
-
-    if (st.confirmOpen && !ImGui::IsPopupOpen("Install without a checksum?")) ImGui::OpenPopup("Install without a checksum?");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Install without a checksum?", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::PushTextWrapPos(480.0f);
-        ImGui::Text("%s has no checksum to check it against.", V(st.confirmPlan.version).c_str());
-        ImGui::Dummy(ImVec2(0, 2));
-        ImGui::TextUnformatted("The list that holds the checksums could not be read, so these files can't be checked the usual way. The launcher will only keep "
-                               "them if their size is exactly what the server says, and never runs a file that fails that check.");
-        ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0, 6));
-        if (AccentButton(h, "Install anyway", ImVec2(150, 0))) {
-            st.confirmOpen = false;
-            StartJob(h, st.confirmPlan, true);
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.confirmOpen = false; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
-    } else if (!ImGui::IsPopupOpen("Install without a checksum?")) st.confirmOpen = false;
 }
 
 }  // namespace

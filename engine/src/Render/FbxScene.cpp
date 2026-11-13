@@ -1,6 +1,7 @@
 // okay::fbx layer 2: element tree -> Scene (nodes, meshes, skins, blend shapes,
 // materials, baked animation). See FbxReader.hpp and docs/own_fbx_reader.md.
 // Written from the public description of the FBX object model; no third-party code.
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Render/FbxReader.hpp"
 
 #include <algorithm>
@@ -395,9 +396,9 @@ struct Builder {
     void Settings() {
         Props gp;
         if (const Elem* g = doc.root.Find("GlobalSettings")) LoadProps(*g, gp);
-        sc.settings.upAxis = (int)gp.Get("UpAxis", 1);       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.frontAxis = (int)gp.Get("FrontAxis", 2); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
-        sc.settings.coordAxis = (int)gp.Get("CoordAxis", 0); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.upAxis = SafeInt(gp.Get("UpAxis", 1));       sc.settings.upSign = gp.Get("UpAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.frontAxis = SafeInt(gp.Get("FrontAxis", 2)); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
+        sc.settings.coordAxis = SafeInt(gp.Get("CoordAxis", 0)); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.unitScaleFactor = gp.Get("UnitScaleFactor", 1.0);
         if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = cr->props[0].s;
         if (!opt.convertToYUpMeters) { sc.settings.appliedScale = 1.0; return; }
@@ -544,7 +545,7 @@ struct Builder {
             p.Vec3("RotationOffset", x.roff, 0); p.Vec3("RotationPivot", x.rp, 0);
             p.Vec3("ScalingOffset", x.soff, 0); p.Vec3("ScalingPivot", x.sp, 0);
             p.Vec3("GeometricTranslation", x.gt, 0); p.Vec3("GeometricRotation", x.gr, 0); p.Vec3("GeometricScaling", x.gs, 1);
-            x.order = (int)p.Get("RotationOrder", 0);
+            x.order = SafeInt(p.Get("RotationOrder", 0));
         }
         // a first pass for world matrices happens in Finish()
         return true;
@@ -839,7 +840,7 @@ struct Builder {
             for (const Conn* c : childrenOf[sid]) {
                 const Obj* l = Get(c->child);
                 if (!l || l->cls != "AnimationLayer" || c->propLink) continue;
-                Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = (int)l->props.Get("BlendMode", 0.0);
+                Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
                 layers.push_back(ly);
             }
             struct NodeCN { int layer; int which; const CurveNode* cn; };      // which: 0 T, 1 R, 2 S

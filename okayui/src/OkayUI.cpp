@@ -19,6 +19,7 @@
 
 namespace OkayUI {
 void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock layout too
+void ColorPickerReset();   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
 namespace {
 
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
@@ -174,7 +175,7 @@ Theme g_theme;
 
 // Scoped color-override stack: each entry remembers a theme color slot and its prior
 // value, so PopStyleColor can restore it. Reset every BeginFrame to survive imbalance.
-struct ColorSave { unsigned char* field; unsigned char prev[4]; };
+struct ColorSave { unsigned char* field; unsigned char prev[4]; int ext = -1; bool prevSet = false; };   // ext >= 0: a colour of Theme::colors
 ColorSave g_colStack[64];
 int       g_colTop = 0;
 // Map a Col enum to the theme's 4-byte color field.
@@ -186,6 +187,64 @@ inline unsigned char* themeColor(int which) {
         case 6: return g_theme.track;   case 7: return g_theme.accent;
         default: return g_theme.text;
     }
+}
+// The colours beyond the original eight: set (Theme::colorSet) or following the base theme.
+inline bool colorIsSet(int id) { return id >= 8 && id < 64 && ((g_theme.colorSet >> id) & 1ull) != 0; }
+// `dflt` unless the colour was set: how a widget honours an override while keeping its own default look.
+inline const unsigned char* pick(int id, const unsigned char* dflt) { return colorIsSet(id) ? g_theme.colors[id] : dflt; }
+// The base-theme value of a colour that was never set (what GetStyleColorVec4 answers; the classic look's default).
+void deriveColor(int id, unsigned char out[4]) {
+    auto cp = [&](const unsigned char* c) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3]; };
+    auto rgba = [&](int r, int g, int b, int a) { out[0] = (unsigned char)r; out[1] = (unsigned char)g; out[2] = (unsigned char)b; out[3] = (unsigned char)a; };
+    auto tint = [&](const unsigned char* c, int a) { out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = (unsigned char)a; };
+    switch (id) {
+        case Col_TextDisabled: cp(g_theme.textDim); break;
+        case Col_WindowBg: case Col_ChildBg: case Col_PopupBg: cp(g_theme.panel); break;
+        case Col_BorderShadow: rgba(0, 0, 0, 0); break;
+        case Col_FrameBg: case Col_FrameBgHovered: case Col_FrameBgActive: cp(g_theme.field); break;
+        case Col_TitleBg: case Col_TitleBgActive: case Col_TitleBgCollapsed: cp(g_theme.titleBg); break;
+        case Col_MenuBarBg: cp(g_theme.bgDown); break;
+        case Col_ScrollbarBg: cp(g_theme.track); break;
+        case Col_ScrollbarGrab: cp(g_theme.accent); break;
+        case Col_ScrollbarGrabHovered: case Col_ScrollbarGrabActive: cp(g_theme.text); break;
+        case Col_CheckMark: cp(g_theme.accent); break;
+        case Col_SliderGrab: cp(g_theme.accent); break;
+        case Col_SliderGrabActive: cp(g_theme.text); break;
+        case Col_Header: cp(g_theme.track); break;
+        case Col_HeaderHovered: cp(g_theme.bgHover); break;
+        case Col_HeaderActive: cp(g_theme.bgDown); break;
+        case Col_Separator: case Col_SeparatorHovered: case Col_SeparatorActive: cp(g_theme.border); break;
+        case Col_ResizeGrip: cp(g_theme.textDim); break;
+        case Col_ResizeGripHovered: case Col_ResizeGripActive: cp(g_theme.accent); break;
+        case Col_Tab: case Col_TabUnfocused: cp(g_theme.track); break;
+        case Col_TabHovered: cp(g_theme.bgHover); break;
+        case Col_TabActive: case Col_TabUnfocusedActive: cp(g_theme.bg); break;
+        case Col_DockingPreview: tint(g_theme.accent, 77); break;
+        case Col_DockingEmptyBg: cp(g_theme.panel); break;
+        case Col_PlotLines: cp(g_theme.accent); break;
+        case Col_PlotLinesHovered: cp(g_theme.text); break;
+        case Col_PlotHistogram: cp(g_theme.accent); break;
+        case Col_PlotHistogramHovered: cp(g_theme.text); break;
+        case Col_TableHeaderBg: cp(g_theme.bgDown); break;
+        case Col_TableBorderStrong: case Col_TableBorderLight: cp(g_theme.border); break;
+        case Col_TableRowBg: rgba(0, 0, 0, 0); break;
+        case Col_TableRowBgAlt: rgba(255, 255, 255, 11); break;
+        case Col_TextSelectedBg: tint(g_theme.accent, 110); break;
+        case Col_DragDropTarget: cp(g_theme.accent); break;
+        case Col_NavHighlight: cp(g_theme.accent); break;
+        case Col_NavWindowingHighlight: rgba(255, 255, 255, 178); break;
+        case Col_NavWindowingDimBg: rgba(204, 204, 204, 51); break;
+        case Col_ModalWindowDimBg: rgba(0, 0, 0, 140); break;
+        default: rgba(0, 0, 0, 0); break;
+    }
+}
+// Any colour as bytes: the original eight, a set one, or the derived default (valid until the next call with `tmp`).
+inline const unsigned char* styleColor(int id, unsigned char tmp[4]) {
+    if (id >= 0 && id < 8) return themeColor(id);
+    if (id < 8 || id >= Col_COUNT) { tmp[0] = tmp[1] = tmp[2] = tmp[3] = 0; return tmp; }
+    if (colorIsSet(id)) return g_theme.colors[id];
+    deriveColor(id, tmp);
+    return tmp;
 }
 
 // Length of a C string without pulling in <cstring> (keeps the toolkit STL/libc-light).
@@ -535,41 +594,6 @@ void gradQuad(float x, float y, float w, float h,
     I[ni++] = base + 0; I[ni++] = base + 2; I[ni++] = base + 3;
 }
 
-// HSV (h in [0,1), s,v in [0,1]) -> RGB bytes.
-void hsvToRgb(float h, float s, float v, unsigned char out[3]) {
-    h -= SDL_floorf(h); if (h < 0) h += 1.0f;
-    float r = v, g = v, b = v;
-    float hh = h * 6.0f;
-    int   i = (int)hh;
-    float f = hh - i;
-    float p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
-    switch (i % 6) {
-        case 0: r = v; g = t; b = p; break;
-        case 1: r = q; g = v; b = p; break;
-        case 2: r = p; g = v; b = t; break;
-        case 3: r = p; g = q; b = v; break;
-        case 4: r = t; g = p; b = v; break;
-        default:r = v; g = p; b = q; break;
-    }
-    out[0] = (unsigned char)(r * 255.0f + 0.5f);
-    out[1] = (unsigned char)(g * 255.0f + 0.5f);
-    out[2] = (unsigned char)(b * 255.0f + 0.5f);
-}
-
-// RGB bytes -> HSV (h,s,v in [0,1]).
-void rgbToHsv(unsigned char R, unsigned char G, unsigned char B, float& h, float& s, float& v) {
-    float r = R / 255.0f, g = G / 255.0f, b = B / 255.0f;
-    float mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-    float mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    v = mx; float d = mx - mn;
-    s = mx <= 0.0f ? 0.0f : d / mx;
-    if (d <= 0.0f) { h = 0.0f; return; }
-    if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
-    else if (mx == g) h = (b - r) / d + 2.0f;
-    else              h = (r - g) / d + 4.0f;
-    h /= 6.0f;
-}
-
 // A straight line of thickness `th` between two points, as a thin rotated quad.
 void line(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
     float dx = x1 - x0, dy = y1 - y0;
@@ -900,6 +924,8 @@ inline int clampPx(float v, int nan) {
 
 inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }   // NaN -> 0
 
+constexpr int kMaxHexSlots = 16;
+
 } // namespace
 
 void BeginFrame(const Input& in) {
@@ -1013,12 +1039,13 @@ void Label(float x, float y, const char* text) {
     if (text && *text) drawText(x, y, text, g_theme.textScale, g_theme.text);
 }
 
-void Panel(float x, float y, float w, float h) {
+static void panelColored(float x, float y, float w, float h, const unsigned char* fill) {
     const float rd = rnd();
     rrect(x, y, w, h, rd, g_theme.border);
     const float b = g_theme.borderPx;
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.panel);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, fill);
 }
+void Panel(float x, float y, float w, float h) { panelColored(x, y, w, h, pick(Col_WindowBg, g_theme.panel)); }
 
 bool Checkbox(int id, float x, float y, float size, const char* label, bool* value) {
     if (!value) return false;
@@ -1044,12 +1071,12 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     if (size > 2.0f * b) rrect(x + b, y + b, size - 2.0f * b, size - 2.0f * b, rd > b ? rd - b : 0.0f, bg);
     // Check mark: a centered accent square when ticked (launcher look: an accent box with a tick).
     if (*value && g_look) {
-        rrect(x, y, size, size, rd, g_theme.accent);
+        rrect(x, y, size, size, rd, pick(Col_CheckMark, g_theme.accent));
         const unsigned char white[4] = {255, 255, 255, 255};
         tickMark(x, y, size, white);
     } else if (*value) {
         const float pad = size * 0.28f;
-        rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, g_theme.accent);
+        rrect(x + pad, y + pad, size - 2.0f * pad, size - 2.0f * pad, rd * 0.5f, pick(Col_CheckMark, g_theme.accent));
     }
     // Label to the right, vertically centered against the box.
     if (label && *label) {
@@ -1123,7 +1150,7 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
         const unsigned char ring[4] = {0, 0, 0, 60};
         fillCircle(kcx, y + h * 0.5f + 1.0f, kr + 1.0f, ring);
         const unsigned char knob[4] = {245, 247, 252, 255};
-        fillCircle(kcx, y + h * 0.5f, kr, (g_active == id || inside) ? g_theme.text : knob);
+        fillCircle(kcx, y + h * 0.5f, kr, (g_active == id || inside) ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, knob));
         return changed;
     }
     const float gy = y + h * 0.5f - 3.0f;     // 6px groove, vertically centered
@@ -1133,7 +1160,7 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
     float hcx = x + w * t;
     if (hcx < x + hr) hcx = x + hr;
     if (hcx > x + w - hr) hcx = x + w - hr;
-    const unsigned char* hc = (g_active == id || inside) ? g_theme.text : g_theme.accent;
+    const unsigned char* hc = (g_active == id || inside) ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent);
     fillCircle(hcx, y + h * 0.5f, hr, g_theme.border);
     fillCircle(hcx, y + h * 0.5f, hr - 1.5f, hc);
     return changed;
@@ -1179,7 +1206,7 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     fillCircle(cx, cy, rr, g_theme.border);
     fillCircle(cx, cy, rr - g_theme.borderPx, bg);
     // Selected indicator: a smaller centered accent dot.
-    if (*value == option) fillCircle(cx, cy, size * 0.22f, g_theme.accent);
+    if (*value == option) fillCircle(cx, cy, size * 0.22f, pick(Col_CheckMark, g_theme.accent));
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
@@ -1211,8 +1238,8 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
         }
         return *current == index;
     }
-    const unsigned char* bg = selected ? g_theme.bg : g_theme.track;
-    if (!selected && inside) bg = g_theme.bgHover;
+    const unsigned char* bg = selected ? pick(Col_TabActive, g_theme.bg) : pick(Col_Tab, g_theme.track);
+    if (!selected && inside) bg = pick(Col_TabHovered, g_theme.bgHover);
 
     quad(x, y, w, h, g_theme.border);
     const float b = g_theme.borderPx;
@@ -1444,7 +1471,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     // Rounded box (focused gets an accent border hint).
     const float rd = rnd();
     rrect(x, y, w, h, rd, focused ? g_theme.accent : g_theme.border);
-    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f, g_theme.field);
+    if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f,
+                                            pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
 
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
@@ -1469,7 +1497,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         if (hi > a) {
             unsigned char sel[4] = { g_theme.accent[0], g_theme.accent[1], g_theme.accent[2], 110 };
             const float x0 = tx + textWidth(buf, ts->first, a), x1 = tx + textWidth(buf, ts->first, hi);
-            quad(x0, ty, x1 - x0, th, sel);
+            quad(x0, ty, x1 - x0, th, pick(Col_TextSelectedBg, sel));
         }
     }
     float caretX = tx + textWidth(buf, ts->first, ts->caret);
@@ -1484,7 +1512,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         caretX = px + preCaretW;
     } else {
         drawText(tx, ty, buf + ts->first, s, g_theme.text);
-        if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, g_theme.textDim);   // the placeholder, while the field is empty
+        if (len == 0 && g_hintText && g_hintText[0]) drawText(tx, ty, g_hintText, s, pick(Col_TextDisabled, g_theme.textDim));   // the placeholder, while the field is empty
     }
     // Blinking caret (steady when Theme::caretBlink is off, which tests use).
     if (focused && (!g_theme.caretBlink || (g_frame / 30u) % 2u == 0u)) quad(caretX, ty, 2.0f, th, g_theme.text);
@@ -1745,18 +1773,93 @@ bool LauncherLook() { return g_look; }
 
 void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     if (g_colTop >= 64) return;
-    unsigned char* f = themeColor((int)which);
-    ColorSave& s = g_colStack[g_colTop++];
-    s.field = f;
-    s.prev[0] = f[0]; s.prev[1] = f[1]; s.prev[2] = f[2]; s.prev[3] = f[3];
-    f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+    const int id = (int)which;
+    ColorSave& s = g_colStack[g_colTop];
+    if (id >= 8 && id < Col_COUNT) {
+        unsigned char* f = g_theme.colors[id];
+        s.field = f; s.ext = id; s.prevSet = colorIsSet(id);
+        s.prev[0] = f[0]; s.prev[1] = f[1]; s.prev[2] = f[2]; s.prev[3] = f[3];
+        f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+        g_theme.colorSet |= 1ull << id;
+    } else {
+        unsigned char* f = themeColor(id >= 0 && id < 8 ? id : 4);
+        s.field = f; s.ext = -1; s.prevSet = false;
+        s.prev[0] = f[0]; s.prev[1] = f[1]; s.prev[2] = f[2]; s.prev[3] = f[3];
+        f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+    }
+    ++g_colTop;
+}
+void PushStyleColor(Col which, Color32 c) { PushStyleColor(which, (unsigned char)(c & 255u), (unsigned char)((c >> 8) & 255u), (unsigned char)((c >> 16) & 255u), (unsigned char)((c >> 24) & 255u)); }
+void PushStyleColor(Col which, Vec4 v) {
+    auto b = [](float f) { return (unsigned char)(clamp01(f) * 255.0f + 0.5f); };
+    PushStyleColor(which, b(v.x), b(v.y), b(v.z), b(v.w));
 }
 
 void PopStyleColor(int count) {
     while (count-- > 0 && g_colTop > 0) {
         ColorSave& s = g_colStack[--g_colTop];
         s.field[0] = s.prev[0]; s.field[1] = s.prev[1]; s.field[2] = s.prev[2]; s.field[3] = s.prev[3];
+        if (s.ext >= 0) { if (s.prevSet) g_theme.colorSet |= 1ull << s.ext; else g_theme.colorSet &= ~(1ull << s.ext); }
     }
+}
+void SetStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    const int id = (int)which;
+    unsigned char* f = (id >= 8 && id < Col_COUNT) ? g_theme.colors[id] : (id >= 0 && id < 8 ? themeColor(id) : nullptr);
+    if (!f) return;
+    f[0] = r; f[1] = g; f[2] = b; f[3] = a;
+    if (id >= 8) g_theme.colorSet |= 1ull << id;
+}
+void ResetStyleColor(Col which) { const int id = (int)which; if (id >= 8 && id < Col_COUNT) g_theme.colorSet &= ~(1ull << id); }
+Vec4 GetStyleColorVec4(Col which) {
+    unsigned char tmp[4];
+    const unsigned char* c = styleColor((int)which, tmp);
+    return Vec4{c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, c[3] / 255.0f};
+}
+const char* GetStyleColorName(Col which) {
+    static const char* const names[] = {
+        "Col_Bg", "Col_BgHover", "Col_BgDown", "Col_Border", "Col_Text", "Col_Panel", "Col_Track", "Col_Accent",
+        "Col_TextDisabled", "Col_WindowBg", "Col_ChildBg", "Col_PopupBg", "Col_BorderShadow", "Col_FrameBg", "Col_FrameBgHovered", "Col_FrameBgActive",
+        "Col_TitleBg", "Col_TitleBgActive", "Col_TitleBgCollapsed", "Col_MenuBarBg", "Col_ScrollbarBg", "Col_ScrollbarGrab", "Col_ScrollbarGrabHovered",
+        "Col_ScrollbarGrabActive", "Col_CheckMark", "Col_SliderGrab", "Col_SliderGrabActive", "Col_Header", "Col_HeaderHovered", "Col_HeaderActive",
+        "Col_Separator", "Col_SeparatorHovered", "Col_SeparatorActive", "Col_ResizeGrip", "Col_ResizeGripHovered", "Col_ResizeGripActive",
+        "Col_Tab", "Col_TabHovered", "Col_TabActive", "Col_TabUnfocused", "Col_TabUnfocusedActive", "Col_DockingPreview", "Col_DockingEmptyBg",
+        "Col_PlotLines", "Col_PlotLinesHovered", "Col_PlotHistogram", "Col_PlotHistogramHovered", "Col_TableHeaderBg", "Col_TableBorderStrong",
+        "Col_TableBorderLight", "Col_TableRowBg", "Col_TableRowBgAlt", "Col_TextSelectedBg", "Col_DragDropTarget", "Col_NavHighlight",
+        "Col_NavWindowingHighlight", "Col_NavWindowingDimBg", "Col_ModalWindowDimBg"};
+    static_assert(sizeof names / sizeof names[0] == Col_COUNT, "one name per colour");
+    return (int)which >= 0 && (int)which < Col_COUNT ? names[(int)which] : "";
+}
+Vec4 ColorConvertU32ToFloat4(Color32 c) { return Vec4{(c & 255u) / 255.0f, ((c >> 8) & 255u) / 255.0f, ((c >> 16) & 255u) / 255.0f, ((c >> 24) & 255u) / 255.0f}; }
+Color32 ColorConvertFloat4ToU32(Vec4 v) {
+    auto b = [](float f) { return (unsigned)(clamp01(f) * 255.0f + 0.5f); };
+    return RGBA(b(v.x), b(v.y), b(v.z), b(v.w));
+}
+void ColorConvertRGBtoHSV(float r, float g, float b, float* h, float* s, float* v) {
+    r = clamp01(r); g = clamp01(g); b = clamp01(b);
+    const float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b)), d = mx - mn;
+    float hh = 0.0f;
+    if (d > 1e-9f) {
+        if (mx == r) hh = (g - b) / d + (g < b ? 6.0f : 0.0f);
+        else if (mx == g) hh = (b - r) / d + 2.0f;
+        else hh = (r - g) / d + 4.0f;
+        hh /= 6.0f;
+    }
+    if (h) *h = hh;
+    if (s) *s = mx > 1e-9f ? d / mx : 0.0f;
+    if (v) *v = mx;
+}
+void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b) {
+    if (!std::isfinite(h)) h = 0.0f;
+    h = h - std::floor(h); s = clamp01(s); v = clamp01(v);
+    const float hh = h * 6.0f;
+    const int i = (int)hh % 6;
+    const float f = hh - std::floor(hh), p = v * (1.0f - s), q = v * (1.0f - s * f), t = v * (1.0f - s * (1.0f - f));
+    float R = v, G = t, B = p;
+    switch (i) { case 0: R = v; G = t; B = p; break; case 1: R = q; G = v; B = p; break; case 2: R = p; G = v; B = t; break;
+                 case 3: R = p; G = q; B = v; break; case 4: R = t; G = p; B = v; break; default: R = v; G = p; B = q; break; }
+    if (r) *r = R;
+    if (g) *g = G;
+    if (b) *b = B;
 }
 
 void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
@@ -1892,6 +1995,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
+    const unsigned char* titleCol = pick(*collapsed ? Col_TitleBgCollapsed : (g_focusWin == id ? Col_TitleBgActive : Col_TitleBg), g_theme.titleBg);
     g_winBaseScale = g_theme.textScale;
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
@@ -1906,21 +2010,21 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         if (!noBg) {
             if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
             rrect(wx, wy, w, bodyH, wr, g_theme.border);
-            rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.panel);
+            rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, pick(Col_WindowBg, g_theme.panel));
         }
-        if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.titleBg);
-        if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, g_theme.titleBg);
+        if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, titleCol);
+        if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, titleCol);
         if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
         const float s0 = g_theme.textScale;
         if (!noTitle) {
-        if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : g_theme.textDim);
+        if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
         }
         if (p_open && !noTitle) {
             unsigned char tmp[4];
             const unsigned char white[4] = {255, 255, 255, 255};
             if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
-            xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : g_theme.textDim);
+            xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         }
     } else if (!noBg)
     Panel(wx, wy, w, bodyH);
@@ -1928,8 +2032,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
     // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
     const float rd = rnd();
-    rrect(wx, wy, w, titleH, rd, g_theme.titleBg);
-    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.titleBg);
+    rrect(wx, wy, w, titleH, rd, titleCol);
+    if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, titleCol);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
     const float s = g_theme.textScale;
     if (!noCollapse) drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
@@ -1943,7 +2047,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (*collapsed) { g_lay.active = false; return false; }   // folded: skip content
 
     if (resizable) {   // grip marks: two diagonal strokes in the corner
-        const unsigned char* gc = g_active == (id ^ 0x6f1d) ? g_theme.accent : g_theme.textDim;
+        const bool gripAct = g_active == (id ^ 0x6f1d), gripHot = g_hot == (id ^ 0x6f1d);
+        const unsigned char* gc = gripAct ? pick(Col_ResizeGripActive, g_theme.accent) : (gripHot ? pick(Col_ResizeGripHovered, g_theme.accent) : pick(Col_ResizeGrip, g_theme.textDim));
         line(wx + w - 4.0f, wy + h - 12.0f, wx + w - 12.0f, wy + h - 4.0f, 1.5f, gc);
         line(wx + w - 4.0f, wy + h - 7.0f, wx + w - 7.0f, wy + h - 4.0f, 1.5f, gc);
     }
@@ -1976,6 +2081,20 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
     return true;
+}
+
+// A scroll bar's track (classic look, or when ScrollbarBg is set) and thumb in the Col_Scrollbar* colours.
+static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, float thumbH, bool active, bool over, bool track = true) {
+    if (track && (!g_look || colorIsSet(Col_ScrollbarBg))) quad(sbx, top, kScrollbarW, trackH, pick(Col_ScrollbarBg, g_theme.track));
+    if (g_look) {   // thin rounded thumb, faint until hovered
+        unsigned char tmp[4];
+        const unsigned char white[4] = {255, 255, 255, 255};
+        const unsigned char* tc2 = active ? pick(Col_ScrollbarGrabActive, g_theme.accent) : (over ? pick(Col_ScrollbarGrabHovered, withAlpha(white, 0.26f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(white, 0.14f, tmp)));
+        rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f, tc2);
+    } else {
+        const unsigned char* tc = active ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent));
+        quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
+    }
 }
 
 void End() {
@@ -2012,15 +2131,7 @@ void End() {
                             if (!g_in.mouseDown) g_active = 0;
                             else if (trackH - thumbH > 0.0f) slot->scroll += g_mouseDY * (slot->maxScroll / (trackH - thumbH));
                         } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
-                        if (g_look) {
-                            unsigned char tmp[4];
-                            const unsigned char white[4] = {255, 255, 255, 255};
-                            rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f,
-                                  g_active == sbId ? g_theme.accent : withAlpha(white, overThumb ? 0.26f : 0.14f, tmp));
-                        } else {
-                            quad(sbx, sby, kScrollbarW, trackH, g_theme.track);
-                            quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent);
-                        }
+                        scrollbarThumb(sbx, sby, trackH, thumbY, thumbH, g_active == sbId, overThumb);
                     }
                     if (slot->scroll < 0.0f) slot->scroll = 0.0f;
                     if (slot->scroll > slot->maxScroll) slot->scroll = slot->maxScroll;
@@ -2127,7 +2238,7 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     if (*scroll > *maxSlot) *scroll = *maxSlot;
 
     // Frame + clip to the region.
-    if (border) { quad(rx, ry, rw, rh, g_theme.panel); }
+    if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
     PushClipRect(rx, ry, rw, rh);
 
     // Save the parent layout, then set up the child's inner layout (scrolled).
@@ -2164,7 +2275,7 @@ void EndChild() {
     // Scrollbar (only when content overflows).
     if (maxScroll > 0.0f) {
         const float sbx = c.rx + c.rw - kScrollbarW;
-        if (!g_look) quad(sbx, c.ry, kScrollbarW, c.rh, g_theme.track);
+        if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, c.ry, kScrollbarW, c.rh, pick(Col_ScrollbarBg, g_theme.track));
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
         float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
@@ -2179,15 +2290,7 @@ void EndChild() {
         } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
         if (*c.scroll < 0.0f) *c.scroll = 0.0f;
         if (*c.scroll > maxScroll) *c.scroll = maxScroll;
-        if (g_look) {   // thin rounded thumb, faint until hovered
-            unsigned char tmp[4];
-            const unsigned char white[4] = {255, 255, 255, 255};
-            const unsigned char* tc2 = g_active == sbId ? g_theme.accent : withAlpha(white, overThumb ? 0.26f : 0.14f, tmp);
-            rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f, tc2);
-        } else {
-            const unsigned char* tc = (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent;
-            quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, tc);
-        }
+        scrollbarThumb(sbx, c.ry, c.rh, thumbY, thumbH, g_active == sbId, overThumb, false);
     }
 
     g_lay = c.lay;   // restore the parent layout (cursor already past the region)
@@ -2233,7 +2336,7 @@ void Separator() {
     if (!g_lay.active) return;
     const float gap = g_lay.spacingY;
     float x, y; place(fullW(), gap, x, y);
-    quad(leftEdge(), y + gap * 0.5f, fullW(), 1.0f, g_theme.border);
+    quad(leftEdge(), y + gap * 0.5f, fullW(), 1.0f, pick(Col_Separator, g_theme.border));
 }
 
 namespace {
@@ -2310,7 +2413,7 @@ void TextColored(unsigned char r, unsigned char g, unsigned char b, const char* 
 }
 
 void TextDisabled(const char* s) {
-    if (g_look) { TextColored(g_theme.textDim[0], g_theme.textDim[1], g_theme.textDim[2], s); return; }
+    if (g_look || colorIsSet(Col_TextDisabled)) { const unsigned char* d = pick(Col_TextDisabled, g_theme.textDim); TextColored(d[0], d[1], d[2], s); return; }
     // Blend the theme text toward the panel color for a muted look.
     const unsigned char* t = g_theme.text; const unsigned char* p = g_theme.panel;
     TextColored((unsigned char)((t[0] + p[0]) / 2), (unsigned char)((t[1] + p[1]) / 2),
@@ -2446,7 +2549,7 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
         if (inside) g_hot = cid;
         if (g_active == cid) { if (g_released) { if (inside) { *open = false; } g_active = 0; } }
         else if (inside && g_pressed) g_active = cid;
-        drawText(cx + 3.0f, cy, "x", g_theme.textScale, inside ? g_theme.text : g_theme.textDim);
+        drawText(cx + 3.0f, cy, "x", g_theme.textScale, inside ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         if (!*open) visible = false;
     }
     if (visible) tb.seenSel = true;
@@ -2699,7 +2802,7 @@ void PlotLines(const char* label, const float* values, int count,
     for (int i = 0; i + 1 < count; ++i) {
         float x0 = px + 2.0f + step * i,     y0 = sy(values[i]);
         float x1 = px + 2.0f + step * (i + 1), y1 = sy(values[i + 1]);
-        line(x0, y0, x1, y1, 1.5f, g_theme.accent);
+        line(x0, y0, x1, y1, 1.5f, pick(Col_PlotLines, g_theme.accent));
     }
 }
 
@@ -2712,7 +2815,7 @@ void PlotHistogram(const char* label, const float* values, int count,
     for (int i = 0; i < count; ++i) {
         float t = (values[i] - scaleMin) / span; if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
         float bh = t * (ph - 4.0f);
-        quad(px + 2.0f + bw * i + 1.0f, py + ph - 2.0f - bh, bw - 2.0f, bh, g_theme.accent);
+        quad(px + 2.0f + bw * i + 1.0f, py + ph - 2.0f - bh, bw - 2.0f, bh, pick(Col_PlotHistogram, g_theme.accent));
     }
 }
 
@@ -2810,11 +2913,11 @@ bool CollapsingHeader(const char* label) {
     g_lastId = id; if (inside) g_hot = id;
     if (g_active == id) { if (g_released) { if (inside) { *open = !*open; g_toggledId = id; } g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
-    const unsigned char* bg = (g_active == id && inside) ? g_theme.bgDown : (inside ? g_theme.bgHover : g_theme.track);
+    const unsigned char* bg = (g_active == id && inside) ? pick(Col_HeaderActive, g_theme.bgDown) : (inside ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_Header, g_theme.track));
     const float s = g_theme.textScale;
     if (g_look) {
-        rrect(x, y, w, h, rnd(), inside ? g_theme.bgHover : g_theme.bg);
-        chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, g_theme.textDim);
+        rrect(x, y, w, h, rnd(), inside ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_Header, g_theme.bg));
+        chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
         drawText(x + 28.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
         return *open;
     }
@@ -2933,7 +3036,7 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, g_theme.textDim);
+    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
 
@@ -3201,145 +3304,102 @@ bool ArrowButton(const char* id, int dir) {
     return Button(hashLabel(id), x, y, h, h, glyph[(unsigned)dir < 4u ? dir : 0]);
 }
 
-bool ColorButton(const char* id, const float rgba[4], float size) {
-    if (!g_lay.active || !id || !rgba) return false;
-    const float h = size > 0.0f && std::isfinite(size) ? size : rowH(), b = g_theme.borderPx;
-    float x, y; place(h, h, x, y);
-    const bool clicked = Button(hashLabel(id), x, y, h, h, "");
-    unsigned char col[4] = {(unsigned char)(clamp01(rgba[0]) * 255.0f), (unsigned char)(clamp01(rgba[1]) * 255.0f),
-                            (unsigned char)(clamp01(rgba[2]) * 255.0f), (unsigned char)(clamp01(rgba[3]) * 255.0f)};
-    if (h > 2 * b + 2.0f) quad(x + b + 1.0f, y + b + 1.0f, h - 2 * b - 2.0f, h - 2 * b - 2.0f, col);
-    return clicked;
+// A checkerboard behind a translucent colour (the pattern tells "see-through" from "dark").
+static void checkerboard(float x, float y, float w, float h) {
+    if (w <= 0.0f || h <= 0.0f) return;
+    const unsigned char light[4] = {204, 204, 204, 255}, dark[4] = {153, 153, 153, 255};
+    quad(x, y, w, h, light);
+    const float cell = std::max(4.0f, std::floor(h / 4.0f));
+    for (float cy = 0.0f; cy < h; cy += cell) {
+        const int row = (int)(cy / cell);
+        for (float cx = (row & 1) ? 0.0f : cell; cx < w; cx += 2.0f * cell)
+            quad(x + cx, y + cy, std::min(cell, w - cx), std::min(cell, h - cy), dark);
+    }
+}
+// The swatch picture: border, then the colour over a checkerboard (whole swatch, or alpha on the left half and opaque on the right).
+static void drawSwatch(float x, float y, float w, float h, const float rgba[4], int flags) {
+    const float b = g_theme.borderPx;
+    quad(x, y, w, h, g_theme.border);
+    if (w <= 2.0f * b || h <= 2.0f * b) return;
+    const float ix = x + b, iy = y + b, iw = w - 2.0f * b, ih = h - 2.0f * b;
+    const bool alpha = (flags & ColorEdit_NoAlpha) == 0;
+    auto bt = [](float f) { return (unsigned char)(clamp01(f) * 255.0f + 0.5f); };
+    const unsigned char opaque[4] = {bt(rgba[0]), bt(rgba[1]), bt(rgba[2]), 255};
+    const unsigned char withA[4] = {opaque[0], opaque[1], opaque[2], alpha ? bt(rgba[3]) : (unsigned char)255};
+    if (withA[3] < 255) checkerboard(ix, iy, iw, ih);
+    if (alpha && (flags & ColorEdit_AlphaPreviewHalf)) {
+        quad(ix, iy, iw * 0.5f, ih, withA);
+        quad(ix + iw * 0.5f, iy, iw * 0.5f, ih, opaque);
+    } else quad(ix, iy, iw, ih, withA);
 }
 
-bool ColorEdit4(const char* label, float rgba[4]) {
-    if (!g_lay.active || !rgba) return false;
+bool ColorButton(const char* id, const float rgba[4], int flags, float size) {
+    if (!g_lay.active || !id || !rgba) return false;
+    const float h = size > 0.0f && std::isfinite(size) ? size : rowH();
+    float x, y; place(h, h, x, y);
+    const bool clicked = Button(hashLabel(id), x, y, h, h, "");
+    drawSwatch(x, y, h, h, rgba, flags);
+    return clicked;
+}
+bool ColorButton(const char* id, const float rgba[4], float size) { return ColorButton(id, rgba, 0, size); }
+
+static bool beginPopupBody(int id);
+// ColorEdit3 / ColorEdit4: one row of swatch, channel sliders (or a hex field) and label; a click on the swatch opens a picker popup.
+static bool colorEditRow(const char* label, float* c, int n, int flags) {
+    if (!g_lay.active || !c) return false;
+    if (n == 3 || (flags & ColorEdit_NoAlpha)) { n = 3; flags |= ColorEdit_NoAlpha; }
     const int id = hashLabel(label);
-    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float h = rowH(), s = g_theme.textScale;
+    const bool showLabel = !(flags & ColorEdit_NoLabel) && labelW(label) > 0.0f;
+    const float lw = showLabel ? labelW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float row = w - lw, swatch = h;
-    unsigned char col[4] = {(unsigned char)(clamp01(rgba[0]) * 255.0f), (unsigned char)(clamp01(rgba[1]) * 255.0f),
-                            (unsigned char)(clamp01(rgba[2]) * 255.0f), 255};
-    unsigned char colA[4] = {col[0], col[1], col[2], (unsigned char)(clamp01(rgba[3]) * 255.0f)};
-    quad(x, y, swatch, h, g_theme.border);
-    if (swatch > 2 * b && h > 2 * b) { quad(x + b, y + b, swatch - 2 * b, h - 2 * b, col); quad(x + b, y + b, (swatch - 2 * b) * 0.5f, h - 2 * b, colA); }   // left half: with alpha, right half: opaque
-    float slidersW = row - swatch - 6.0f; if (slidersW < 40.0f) slidersW = 40.0f;
-    const float each = (slidersW - 12.0f) / 4.0f;
+    float rgba[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+    const bool swatchClicked = Button(id ^ 0x5a5a, x, y, swatch, h, "");
+    drawSwatch(x, y, swatch, h, rgba, flags);
     bool changed = false;
-    for (int ch = 0; ch < 4; ++ch) {
-        const int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
-        if (Slider(cid, x + swatch + 6.0f + (float)ch * (each + 4.0f), y, each, h, &rgba[ch], 0.0f, 1.0f)) changed = true;
-    }
-    if (lw > 0.0f) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-    return changed;
-}
-
-void NewLine() { if (g_lay.active) g_lay.pendingSameLine = false; }
-
-bool ColorEdit3(const char* label, float rgb[3]) {
-    if (!g_lay.active || !rgb) return false;
-    const int id = hashLabel(label);
-    const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
-    const float w = availW();
-    float x, y; place(w, h, x, y);
-    const float row = w - lw;
-    const float swatch = h;
-    // Swatch preview.
-    unsigned char col[4] = {
-        (unsigned char)(clamp01(rgb[0]) * 255.0f), (unsigned char)(clamp01(rgb[1]) * 255.0f),
-        (unsigned char)(clamp01(rgb[2]) * 255.0f), 255};
-    quad(x, y, swatch, h, g_theme.border);
-    if (swatch > 2*b && h > 2*b) quad(x + b, y + b, swatch - 2*b, h - 2*b, col);
-    // Three channel sliders.
-    float slidersW = row - swatch - 6.0f; if (slidersW < 30.0f) slidersW = 30.0f;
-    float each = (slidersW - 8.0f) / 3.0f;
-    bool changed = false;
-    for (int ch = 0; ch < 3; ++ch) {
-        int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
-        float cxp = x + swatch + 6.0f + (float)ch * (each + 4.0f);
-        if (Slider(cid, cxp, y, each, h, &rgb[ch], 0.0f, 1.0f)) changed = true;
-    }
-    if (lw > 0.0f) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-    return changed;
-}
-
-bool ColorPicker3(const char* label, float rgb[3]) {
-    if (!g_lay.active || !rgb) return false;
-    const int id = hashLabel(label);
-    const float w = availW();
-    const float barW = 18.0f, gap = 8.0f;
-    float sq = w - barW - gap;                 // SV square is square-ish
-    const float maxSq = rowH() * 6.0f;
-    if (sq > maxSq) sq = maxSq;
-    if (sq < 40.0f) sq = 40.0f;
-    const float total = sq;
-    float x, y; place(w, total, x, y);
-
-    // Persist HSV across frames so hue survives S=0/V=0. Re-sync from rgb if it was
-    // changed externally (differs from what we last wrote).
-    float* H = floatState(id ^ 0x101, -1.0f);
-    float* S = floatState(id ^ 0x102, 0.0f);
-    float* V = floatState(id ^ 0x103, 0.0f);
-    float* lr = floatState(id ^ 0x104, -1.0f);
-    float* lg = floatState(id ^ 0x105, -1.0f);
-    float* lb = floatState(id ^ 0x106, -1.0f);
-    auto approxEq = [](float a, float b) { float d = a - b; return (d < 0 ? -d : d) < 0.004f; };
-    if (*H < 0.0f || !approxEq(*lr, rgb[0]) || !approxEq(*lg, rgb[1]) || !approxEq(*lb, rgb[2])) {
-        rgbToHsv((unsigned char)(clamp01(rgb[0]) * 255.0f), (unsigned char)(clamp01(rgb[1]) * 255.0f),
-                 (unsigned char)(clamp01(rgb[2]) * 255.0f), *H, *S, *V);
-    }
-
-    bool changed = false;
-    // --- Saturation/Value square (x = saturation, y = value inverted) ---
-    unsigned char hueCol[3]; hsvToRgb(*H, 1.0f, 1.0f, hueCol);
-    const unsigned char white[4] = {255,255,255,255}, black[4] = {0,0,0,255};
-    const unsigned char hue4[4] = {hueCol[0], hueCol[1], hueCol[2], 255};
-    gradQuad(x, y, sq, sq, white, hue4, black, black);   // white->hue across, ->black down
-    const bool inSq = hit(x, y, sq, sq);
-    if (inSq && g_pressed) g_active = id;
-    if (g_active == id) {
-        if (!g_in.mouseDown) g_active = 0;
-        else {
-            *S = clamp01((g_in.mouseX - x) / sq);
-            *V = 1.0f - clamp01((g_in.mouseY - y) / sq);
-            changed = true;
+    if (!(flags & ColorEdit_NoInputs)) {
+        const float ix = x + swatch + 6.0f;
+        float slidersW = row - swatch - 6.0f; if (slidersW < 40.0f) slidersW = 40.0f;
+        if (flags & ColorEdit_Hex) {
+            static char hexBuf[kMaxHexSlots][16]; static int hexId[kMaxHexSlots]; static int hexNext = 0;
+            int slot = -1;
+            for (int i = 0; i < kMaxHexSlots; ++i) if (hexId[i] == id) slot = i;
+            if (slot < 0) { slot = hexNext; hexNext = (hexNext + 1) % kMaxHexSlots; hexId[slot] = id; hexBuf[slot][0] = 0; }
+            char* buf = hexBuf[slot];
+            const int fid = id ^ 0x7e5;
+            const bool editing = g_focus == fid;
+            if (!editing) ColorToHex(rgba, (flags & ColorEdit_NoAlpha) == 0, buf, 16);
+            if (TextField(fid, ix, y, slidersW, h, buf, 16) && ColorFromHex(buf, rgba)) { for (int i = 0; i < n; ++i) c[i] = rgba[i]; changed = true; }
+        } else {
+            const float each = (slidersW - (n == 4 ? 12.0f : 8.0f)) / (float)n;
+            for (int ch = 0; ch < n; ++ch) {
+                const int cid = id ^ (int)(0x9e3779b9u * (unsigned)(ch + 1));
+                if (Slider(cid, ix + (float)ch * (each + 4.0f), y, each, h, &c[ch], 0.0f, 1.0f)) changed = true;
+            }
         }
     }
-    // SV cursor ring.
-    float cxp = x + (*S) * sq, cyp = y + (1.0f - *V) * sq;
-    fillCircle(cxp, cyp, 4.0f, (*V > 0.5f && *S < 0.5f) ? black : white);
-
-    // --- Hue bar (vertical rainbow) ---
-    const float hx = x + sq + gap;
-    const int   segs = 6;
-    for (int i = 0; i < segs; ++i) {
-        unsigned char c0[3], c1[3];
-        hsvToRgb((float)i / segs, 1.0f, 1.0f, c0);
-        hsvToRgb((float)(i + 1) / segs, 1.0f, 1.0f, c1);
-        const unsigned char t0[4] = {c0[0],c0[1],c0[2],255}, t1[4] = {c1[0],c1[1],c1[2],255};
-        gradQuad(hx, y + sq * i / segs, barW, sq / segs, t0, t0, t1, t1);
+    if (showLabel) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    // the picker popup, anchored under the swatch
+    if (!(flags & ColorEdit_NoPicker)) {
+        const int pkey = id ^ 0x7c1c;
+        if (swatchClicked) {
+            PopupSlot* p = popupSlot(pkey, true);
+            if (p) { p->open = true; p->x = x; p->y = y + h + 2.0f; p->w = std::max(240.0f, std::min(300.0f, w)); p->modal = false; g_openPopupThisFrame = pkey; }
+        }
+        if (beginPopupBody(pkey)) {
+            float tmp[4] = {c[0], c[1], c[2], n == 4 ? c[3] : 1.0f};
+            if (ColorPicker4("##picker", tmp, flags | ColorEdit_NoLabel)) { for (int i = 0; i < n; ++i) c[i] = tmp[i]; changed = true; }
+            EndPopup();
+        }
     }
-    const int hueId = id ^ 0x2a2a;
-    const bool inBar = hit(hx, y, barW, sq);
-    if (inBar && g_pressed) g_active = hueId;
-    if (g_active == hueId) {
-        if (!g_in.mouseDown) g_active = 0;
-        else { *H = clamp01((g_in.mouseY - y) / sq); changed = true; }
-    }
-    // Hue marker.
-    float hy = y + (*H) * sq;
-    quad(hx - 2.0f, hy - 1.5f, barW + 4.0f, 3.0f, g_theme.text);
-
-    // Write the resolved color back and remember it for external-change detection.
-    unsigned char outc[3]; hsvToRgb(*H, *S, *V, outc);
-    rgb[0] = outc[0] / 255.0f; rgb[1] = outc[1] / 255.0f; rgb[2] = outc[2] / 255.0f;
-    *lr = rgb[0]; *lg = rgb[1]; *lb = rgb[2];
-    (void)label;
     return changed;
 }
+bool ColorEdit4(const char* label, float rgba[4], int flags) { return colorEditRow(label, rgba, 4, flags); }
+bool ColorEdit3(const char* label, float rgb[3], int flags) { return colorEditRow(label, rgb, 3, flags); }
+
+void NewLine() { if (g_lay.active) g_lay.pendingSameLine = false; }
 
 bool TreeNodeEx(const char* label, unsigned flags) {
     if (!g_lay.active) return false;
@@ -3360,11 +3420,11 @@ bool TreeNodeEx(const char* label, unsigned flags) {
     }
     if (g_look) {
         unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        if (inside) rrect(x, y, w, h, 6.0f, withAlpha(white, 0.06f, tmp));
-        if (!leaf) chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, g_theme.textDim);
+        if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
+        if (!leaf) chevron(x + 11.0f, y + h * 0.5f, 8.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
         drawText(x + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     } else {
-        if (inside) quad(x, y, w, h, g_theme.bgHover);
+        if (inside) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
         if (!leaf) drawText(x + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
         drawText(x + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     }
@@ -3387,8 +3447,8 @@ void BeginMenuBar() {
     if (!g_lay.active) return;
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
-    if (!g_look) quad(x, y, fullW(), h, g_theme.bgDown);
-    else quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
+    if (!g_look || colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.bgDown));
+    if (g_look) quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
     g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
 }
 
@@ -3432,9 +3492,9 @@ bool BeginMenu(const char* label) {
         const bool ksel = pk && pk->idx == ord && !pk->childOpen;
         if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
         g_toOverlay = true;
-        quad(x, y, w, h, (ih || *open || ksel) ? g_theme.bgHover : g_theme.panel);
+        quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
         drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-        drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, g_theme.textDim);
+        drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, pick(Col_TextDisabled, g_theme.textDim));
         g_toOverlay = false;
         if (!*open) { kbSlot(id)->idx = -1; return false; }
         if (pk) pk->childOpenNext = true;
@@ -3495,14 +3555,14 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     if (g_active == iid) {
         if (g_released) { if (ih) { clicked = true; *openState(g_curMenu.menuId, false) = false; for (int i = 0; i < g_menuDepth; ++i) *openState(g_menuStack[i].menuId, false) = false; } g_active = 0; }
     } else if (ih && g_pressed) g_active = iid;
-    const unsigned char* col = enabled ? g_theme.text : g_theme.textDim;
+    const unsigned char* col = enabled ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim);
     g_toOverlay = true;
-    quad(x, y, w, h, (ih || ksel) ? g_theme.bgHover : g_theme.panel);
+    quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
     if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
     drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, col);
     if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
         const float sw = labelW(shortcut), sx = x + w - sw - 10.0f;
-        if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, g_theme.textDim);
+        if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
     }
     g_toOverlay = false;
     return clicked;
@@ -3517,8 +3577,8 @@ void MenuSeparator() {
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY, h = 8.0f;
     g_curMenu.itemY += h;
     g_toOverlay = true;
-    quad(x, y, w, h, g_theme.panel);
-    quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, g_theme.border);
+    quad(x, y, w, h, pick(Col_PopupBg, g_theme.panel));
+    quad(x + 6.0f, y + h * 0.5f, w - 12.0f, 1.0f, pick(Col_Separator, g_theme.border));
     g_toOverlay = false;
 }
 
@@ -3565,12 +3625,12 @@ bool Selectable(const char* label, bool selected) {
         unsigned char tmp[4];
         const unsigned char white[4] = {255, 255, 255, 255};
         if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
-        else if (inside) rrect(x, y, w, h, 6.0f, withAlpha(white, 0.06f, tmp));
+        else if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
         drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
         return clicked;
     }
-    if (selected)      quad(x, y, w, h, g_theme.accent);
-    else if (inside)   quad(x, y, w, h, g_theme.bgHover);
+    if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
+    else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return clicked;
 }
@@ -3599,7 +3659,7 @@ static bool beginPopupBody(int id) {
     // Frame (overlay so it sits above everything). Height is last frame's content.
     registerOverlay(px, py, w, *hSlot + pad * 2.0f, true);
     g_toOverlay = true;
-    Panel(px, py, w, *hSlot + pad * 2.0f);
+    panelColored(px, py, w, *hSlot + pad * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
@@ -3656,7 +3716,7 @@ bool BeginPopupModal(const char* name, bool* open) {
         registerOverlay(0.0f, 0.0f, g_dispW, g_dispH, true);
         g_toOverlay = true;
         const unsigned char dim[4] = {0, 0, 0, 140};
-        quad(0.0f, 0.0f, g_dispW, g_dispH, dim);
+        quad(0.0f, 0.0f, g_dispW, g_dispH, pick(Col_ModalWindowDimBg, dim));
         g_toOverlay = false;
     }
     if (!beginPopupBody(id)) return false;
@@ -3699,7 +3759,7 @@ bool BeginCombo(const char* label, const char* preview) {
     if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
     const bool open = ps && ps->open;
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, g_theme.textDim);
+    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     if (!ps) return false;
@@ -3906,13 +3966,13 @@ void tblFinishSetup() {
 // The header bar with bold column labels; moves the row cursor below it.
 void tblDrawHeader(const char* const* labels) {
     const float hh = rowH();
-    if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, g_theme.border);   // hairline under dim headers
-    else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+    if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
+    else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
     const Font* prevF = g_font; g_font = &kFontBold;
     for (int i = 0; i < g_tbl.count; ++i) {
         const float cx = tblColX(i);
         if (labels[i] && labels[i][0])
-            drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? g_theme.textDim : g_theme.text);
+            drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, labels[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
     }
     g_font = prevF;
     g_tbl.rowTop += hh;
@@ -3952,13 +4012,13 @@ bool BeginTable(const char* id, int columns, const char* const* headers, const f
     // Optional header row: a bar with bold column labels.
     if (headers) {
         const float hh = rowH();
-        if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, g_theme.border);   // hairline under dim headers
-        else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, g_theme.bgDown);
+        if (g_look) quad(g_tbl.x0, g_tbl.rowTop + hh - 1.0f, g_tbl.fullW, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
+        else quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
         const Font* prevF = g_font; g_font = &kFontBold;
         for (int i = 0; i < columns; ++i) {
             float cx = tblColX(i);
             if (headers[i] && headers[i][0])
-                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_look ? g_theme.textDim : g_theme.text);
+                drawText(cx + 4.0f, g_tbl.rowTop + (hh - textH()) * 0.5f, headers[i], g_theme.textScale, g_look ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
         }
         g_font = prevF;
         g_tbl.rowTop += hh;
@@ -4012,9 +4072,11 @@ void TableNextRow() {
     ++g_tbl.rowIndex;
     if ((g_tbl.flags & Table_RowBg) && (g_tbl.rowIndex & 1)) {   // banded rows: drawn first so the cells go on top (one text row tall)
         unsigned char tmp[4]; const unsigned char white[4] = {255, 255, 255, 255};
-        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, rowH(), withAlpha(white, 0.045f, tmp));
+        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, rowH(), pick(Col_TableRowBgAlt, withAlpha(white, 0.045f, tmp)));
+    } else if ((g_tbl.flags & Table_RowBg) && colorIsSet(Col_TableRowBg)) {
+        quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, rowH(), g_theme.colors[Col_TableRowBg]);
     }
-    if ((g_tbl.flags & Table_BordersInnerH) && g_tbl.rowTop > g_tbl.rowStart + 0.5f) quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, 1.0f, g_theme.border);
+    if ((g_tbl.flags & Table_BordersInnerH) && g_tbl.rowTop > g_tbl.rowStart + 0.5f) quad(g_tbl.x0, g_tbl.rowTop, g_tbl.fullW, 1.0f, pick(Col_TableBorderLight, g_theme.border));
 }
 
 bool TableNextColumn() {
@@ -4038,7 +4100,7 @@ void EndTable() {
     // Column borders + draggable resize handles (applied next frame).
     for (int i = 1; i < g_tbl.count; ++i) {
         float bx = tblColX(i);
-        quad(bx - 0.5f, top, 1.0f, bottom - top, g_theme.border);
+        quad(bx - 0.5f, top, 1.0f, bottom - top, pick(Col_TableBorderStrong, g_theme.border));
         const int hid = g_tbl.id ^ (0x7b00 + i);
         const float grab = 4.0f;
         const bool over = !(g_tbl.flags & Table_NoResize) && hit(bx - grab, top, grab * 2.0f, bottom - top);
@@ -4227,11 +4289,11 @@ bool ListItem(const char* title, const char* subtitle, const char* right, bool s
     drawAvatar(x + 6.0f, y + 6.0f, d, title);
     const float tx = x + d + 18.0f, s = g_theme.textScale;
     float rw = 0.0f;
-    if (right && *right) { rw = labelW(right); drawText(x + w - rw - 10.0f, y + (h - textH()) * 0.5f, right, s, g_theme.textDim); }
+    if (right && *right) { rw = labelW(right); drawText(x + w - rw - 10.0f, y + (h - textH()) * 0.5f, right, s, pick(Col_TextDisabled, g_theme.textDim)); }
     if (two) {
         drawText(tx, y + 6.0f, title ? title : "", s, g_theme.text);
         PushTextScale(0.8125f);
-        drawText(tx, y + h - 6.0f - textH() - 1.0f, subtitle, g_theme.textScale, g_theme.textDim);
+        drawText(tx, y + h - 6.0f - textH() - 1.0f, subtitle, g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
         PopTextScale();
     } else drawText(tx, y + (h - textH()) * 0.5f, title ? title : "", s, g_theme.text);
     return clicked;
@@ -4242,7 +4304,7 @@ void KeyValue(const char* label, const char* value) {
     const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const float ty = y + (h - textH()) * 0.5f;
-    if (label) drawText(x, ty, label, g_theme.textScale, g_theme.textDim);
+    if (label) drawText(x, ty, label, g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
     if (value) drawText(x + w - labelW(value), ty, value, g_theme.textScale, g_theme.text);
 }
 
@@ -4327,7 +4389,7 @@ void unpack(Color32 c, unsigned char out[4]) {
 // A drawing call of the public draw list: dimming off for its duration, overlay batch for the foreground list.
 struct ListScope {
     bool prevRaw, prevOv;
-    explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay; }
+    explicit ListScope(bool overlay) : prevRaw(g_rawDraw), prevOv(g_toOverlay) { g_rawDraw = true; g_toOverlay = overlay || prevOv; }   // the window list draws where the widgets around it do: in a popup, that is the overlay
     ~ListScope() { g_rawDraw = prevRaw; g_toOverlay = prevOv; }
 };
 
@@ -4408,7 +4470,8 @@ int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad
 } // namespace
 
 Color32 GetColorU32(Col which, float alphaMul) {
-    const unsigned char* c = themeColor((int)which);
+    unsigned char tmp[4];
+    const unsigned char* c = styleColor((int)which, tmp);
     float a = (float)c[3] * (alphaMul != alphaMul ? 0.0f : (alphaMul < 0.0f ? 0.0f : (alphaMul > 1.0f ? 1.0f : alphaMul)));
     return RGBA(c[0], c[1], c[2], (unsigned char)(a + 0.5f));
 }
@@ -4687,6 +4750,7 @@ void ResetState() {
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
+    ColorPickerReset();
     g_ovCurN = g_ovPrevN = 0;
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();

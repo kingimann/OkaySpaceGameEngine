@@ -82,6 +82,12 @@ inline std::function<void(GameObject*)>& HealthDeathHook() { static std::functio
 /// library; does nothing when no server runs in this object's scene.
 void NetNoteRespawn(GameObject* go);
 
+/// Multiplayer: tells a hosting NetworkManager that this object just died, so the other players'
+/// copies die too ("__death", reliable). Covers deaths no replicated hit caused (a kill volume, a
+/// script's die(), starvation); a death from a replicated hit travels with that hit instead.
+/// `hasFrom`/`from` is where the killing blow came from (the body falls away from it).
+void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
+
 /// HP with flat armor, optional delayed regen, low/death flags. On death it
 /// broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
 class HealthStat : public StatComponent {
@@ -211,11 +217,22 @@ public:
         health = Mathf::Max(1.0f, Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h));
         Publish();
     }
+    /// Multiplayer: the server's word that this object died by something other than a replicated hit
+    /// (a kill volume, a script). Does what the death does here; ignored if it is already dead. Like a
+    /// death by the server's health, only the server's respawn brings it back.
+    void DieFromServer(bool hasFrom, const Vec3& from) {
+        if (dead) return;
+        if (hasFrom) { lastHitFrom = from; hasLastHit = true; } else hasLastHit = false;
+        OnDeath();
+        m_awaitServerRespawn = true;
+        Publish();
+    }
     void SetGodMode(bool on) { godMode = on; }
 
 private:
     void OnDeath() {
         health = 0.0f; dead = true;
+        NetNoteDeath(gameObject, hasLastHit, lastHitFrom);
         m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
         if (auto& hook = HealthDeathHook()) hook(gameObject);

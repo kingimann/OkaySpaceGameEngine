@@ -85,8 +85,7 @@ Ranked by player-visible impact. Each has a regression test in
    ids and non-finite values dropped and out-of-range ones clamped. Hit direction and heavy,
    the traverse clip (vault, mantle low/high, ledge grab, climb up, let go) and the emote
    index travel with it. `HumanoidActions::PlayTraverse` plays a traverse clip without a probe.
-   Test: `tests/test_net_respawn_anim.cpp`. If two events start between two sync sends only the
-   newest plays.
+   Test: `tests/test_net_respawn_anim.cpp`. (Two events inside one sync interval: see 15.)
 9. **Launcher voice clips leaked their sound buffer (#718).** The buffer `SDL_LoadWAV` returns
    was never freed, and a clip converted to 16-bit dropped its only pointer to it. The clip
    now copies the samples into its own storage and frees SDL's buffer at once, so no path can
@@ -134,6 +133,24 @@ Ranked by player-visible impact. Each has a regression test in
     (both directions, ordering, both bounds, no-resume and give-up cases; run against a NetSim
     blackhole so every arrival is the re-send).
 
+15. **Two one-shot animation events inside one sync interval dropped the older.** The owner's
+    Character kept one event (`netEventSeq` / `Id` / `Param`), so two that started between two sync
+    sends played only the newest on other peers. `Character::RecordNetEvent` now keeps the last four,
+    the animation message carries the three before the newest (an older peer stops reading before
+    them; garbage or a count over three drops the group), and a proxy queues what it has not played
+    (at most four, the oldest dropped past that) and plays them in order, 0.35 s apart, each after
+    the animator is back in locomotion (or 1.5 s). A single event still plays at once, and the
+    repeated reports of the same state do not replay. A game that bumps `netEventSeq` by hand still
+    sends the newest only. Tests: `tests/test_net_respawn_anim.cpp` (both play in order; six in one
+    frame play the last four; parsing).
+16. **Deaths no replicated hit caused were not replicated.** Only the respawn was. Every death on the
+    host now goes through `NetNoteDeath`: the host sends a reliable `__death` (where the blow came
+    from, the object's id) and the copy dies the same way a death by the server's health does and
+    waits for the server's respawn. A death a replicated hit caused is not sent twice (the hit's
+    `__dmg` carries it); a client cannot send one, and bad numbers or unknown objects are ignored.
+    Tests: `tests/test_net_respawn_anim.cpp` (script kill, kill volume with direction, forged and
+    malformed messages, a hit-caused death sends none).
+
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
 join, convergence of a synced object and a resume on a bad link), a deterministic fuzz of every
@@ -154,10 +171,9 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
    when older games and launchers already out there have updated (`LegacyPeers()` zero),
    and needs a release note, not a silent change. `--legacy-hello=off` already refuses them.
 2. **Build-mode placements and quest state are not synced**
-   (`docs/unfinished_engine.md`, section 11 and neighbours), and a death that was not caused
-   by a replicated hit (a kill volume, a script) is not sent to other players; only the respawn
-   is. A one-shot animation event is not queued: two inside one sync interval play only the
-   newest. Players still diverge in games that rely on these.
+   (`docs/unfinished_engine.md`, section 11 and neighbours). Players still diverge in games that
+   rely on these. A player who joins while an object is dead sees it alive until its next respawn
+   (`__death` and `__respawn` go to the peers connected at the time).
 3. **Reconnect limits.** Messages in flight when the session dropped are re-sent after a resume
    (bounded, may arrive twice; see 14 above), not after a rejoin that is no resume. A rejoin that gets no resume (grace over, host restarted) is a
    new peer: objects made with `SpawnOwned` are not re-announced under the new id, the game

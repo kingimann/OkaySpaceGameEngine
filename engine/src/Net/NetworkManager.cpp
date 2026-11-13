@@ -979,6 +979,27 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
             hs->SetHealthFromServer(std::strtof(data.c_str() + a + 1, nullptr));
         return;
     }
+    if (channel == "__death") {   // "<hasFrom 0|1>|<x>|<y>|<z>|<netId>": the server killed an object (not by a hit)
+        if (m_mode != Mode::Client || from != 0) return;
+        float v[4] = {0, 0, 0, 0};
+        std::size_t at = 0;
+        for (int i = 0; i < 4; ++i) {
+            const std::size_t bar = data.find('|', at);
+            if (bar == std::string::npos) return;
+            const std::string num = data.substr(at, bar - at);
+            char* end = nullptr;
+            v[i] = std::strtof(num.c_str(), &end);
+            if (num.empty() || end != num.c_str() + num.size() || !std::isfinite(v[i])) return;
+            at = bar + 1;
+        }
+        if (v[0] != 0.0f && v[0] != 1.0f) return;
+        for (int i = 1; i < 4; ++i) if (std::fabs(v[i]) > 1.0e7f) return;
+        auto obj = m_syncObjs.find(data.substr(at));
+        if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+        if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>())
+            hs->DieFromServer(v[0] == 1.0f, Vec3(v[1], v[2], v[3]));
+        return;
+    }
     if (channel == "__respawn") {   // "<health>|<x>|<y>|<z>|<netId>": the server respawned an object
         if (m_mode != Mode::Client || from != 0) return;
         float v[4] = {0, 0, 0, 0};
@@ -1882,7 +1903,9 @@ void NetworkManager::ApplyHit(HitClaim& claim) {
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
     auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>();
     if (!hs || claim.damage <= 0.0f || !std::isfinite(claim.damage)) return;
+    m_applyingHit = true;   // a death it causes goes out in the __dmg below, not as a __death
     hs->Damage(claim.damage);
+    m_applyingHit = false;
     ++m_hitsApplied;
     char buf[96];
     std::snprintf(buf, sizeof buf, "|%.9g|%.9g|%u", hs->health, claim.damage, (unsigned)claim.shooter);
@@ -1916,6 +1939,29 @@ void NetworkManager::NoteRespawn(GameObject* go) {
     char buf[160];
     std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
     SendReliable("__respawn", std::string(buf) + id);
+}
+
+void NetworkManager::NoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
+    if (m_mode != Mode::Server || m_applyingHit || !go || !go->transform || go->scene() != GetScene()) return;
+    NetworkSync* ns = go->GetComponent<NetworkSync>();
+    if (!ns) return;
+    const std::string id = ns->netId.empty() ? go->name : ns->netId;
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.t != go->transform) return;
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%d|%.9g|%.9g|%.9g|", hasFrom ? 1 : 0, hasFrom ? from.x : 0.0f,
+                  hasFrom ? from.y : 0.0f, hasFrom ? from.z : 0.0f);
+    SendReliable("__death", std::string(buf) + id);
+    ++m_deathsSent;
+}
+
+void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
+    std::vector<NetworkManager*> live;
+    {
+        std::lock_guard<std::mutex> l(g_liveMutex);
+        for (const NetworkManager* nm : LiveManagers()) live.push_back(const_cast<NetworkManager*>(nm));
+    }
+    for (NetworkManager* nm : live) nm->NoteDeath(go, hasFrom, from);
 }
 
 void NetNoteRespawn(GameObject* go) {

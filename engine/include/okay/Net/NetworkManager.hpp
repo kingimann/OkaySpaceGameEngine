@@ -672,6 +672,13 @@ public:
     /// movement check lets the owner's next position jump, and lag-compensation history
     /// before the jump is dropped. Health Stat calls this itself on a respawn or Revive().
     void NoteRespawn(GameObject* go);
+    /// Server: `go` (a networked object with a Health Stat) just died. Every other peer is told
+    /// ("__death": where the blow came from and the object's id, reliable) so its copy dies too and
+    /// waits for the server's respawn. Health Stat calls this itself on every death; one that a
+    /// replicated hit caused is skipped (the hit's "__dmg" carries it), so each death is sent once.
+    void NoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
+    /// Server: deaths sent by NoteDeath since it started (not the ones a hit carried).
+    int DeathsSent() const { return m_deathsSent; }
     /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
     /// verified account ("" if anonymous) and its last refusals, oldest first.
     struct AntiCheatKick {
@@ -906,6 +913,8 @@ private:
     void HandleHitClaim(Client& c, const std::string& data);
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
+    bool m_applyingHit = false;   // server: inside ApplyHit (its __dmg carries the death)
+    int m_deathsSent = 0;
     int m_hitsApplied = 0, m_hitsRefused = 0;
     std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;

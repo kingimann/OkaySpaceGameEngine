@@ -341,11 +341,17 @@ static void TestOneInstanceFilesStillLoad() {
     CHECK(SceneSerializer::Deserialize(b, Doc("  spawner \"\" 3 5 0 6 1 1 1 0 0 1 \"a.okayprefab\"\n  spawner \"\" 4 5 0 6 1 1 1 0 0 1 \"b.okayprefab\"\n"), nullptr, &warn));
     CHECK(Find(b, "O") && Find(b, "O")->GetComponents<Spawner>().size() == 2);
     CHECK(!Has(warn, "only the first is saved"));
-    // A type that is still saved once keeps its warning.
+    // Two sprite records load as two sprites, and saving them keeps both.
     std::vector<std::string> w2;
     Scene c("c");
     CHECK(SceneSerializer::Deserialize(c, Doc("  sprite 65 1 1 1 1 1 1\n  sprite 66 1 1 1 1 1 1\n"), nullptr, &w2));
-    CHECK(Has(w2, "two 'SpriteRenderer' components"));
+    CHECK(!Has(w2, "only the first is saved"));
+    CHECK(Find(c, "O") && Find(c, "O")->GetComponents<SpriteRenderer>().size() == 2);
+    CHECK(Find(c, "O")->GetComponents<SpriteRenderer>()[0]->glyph == 'A');
+    CHECK(Find(c, "O")->GetComponents<SpriteRenderer>()[1]->glyph == 'B');
+    Scene c2("c2");
+    CHECK(SceneSerializer::Deserialize(c2, SceneSerializer::Serialize(c)));
+    CHECK(Find(c2, "O") && Find(c2, "O")->GetComponents<SpriteRenderer>().size() == 2);
     // Particle follow-up records belong to the system the record before them made.
     Scene d("d");
     GameObject* p = d.CreateGameObject("P");

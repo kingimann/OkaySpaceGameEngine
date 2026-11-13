@@ -280,6 +280,7 @@ A clickable button. The object needs a UI Button. on_click fires when it is pres
 | `GetComponent<UIButton>().SetEase(ease, seconds)` | `UIButton.SetEase/2` | step | ease (Number), seconds (Number), Target (Object) | - | Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes. |
 | `GetComponent<UIButton>().SetInteractable(on)` | `UIButton.SetInteractable/1` | step | on (Bool), Target (Object) | - | False greys the button out and ignores clicks. |
 | `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
+| `GetComponent<UIButton>().Focus()` | `UIButton.Focus/0` | step | Target (Object) | - | Move keyboard and gamepad focus here, show the focus ring, and scroll it into view. |
 
 ## Input
 
@@ -289,6 +290,10 @@ Keyboard, mouse and gamepad.
 |---|---|---|---|---|---|
 | `Input.mousePosition` | `Input.mousePosition` | value | - | mousePosition (Vector3) | The cursor in screen pixels (x, y; z is 0). |
 | `Input.gamepadConnected` | `Input.gamepadConnected` | value | - | gamepadConnected (Bool) | True while a controller is plugged in. |
+| `Input.swipeDirection` | `Input.swipeDirection` | value | - | swipeDirection (Text) | "up", "down", "left" or "right" when a swipe happened this frame, otherwise empty. |
+| `Input.pinchScale` | `Input.pinchScale` | value | - | pinchScale (Number) | How far apart two fingers are compared with where the pinch began. 1 means unchanged. Greater than 1 means they moved apart. |
+| `Input.twistDegrees` | `Input.twistDegrees` | value | - | twistDegrees (Number) | How far two fingers have twisted, in degrees. Positive is counter-clockwise. |
+| `Input.touchScreen` | `Input.touchScreen` | value | - | touchScreen (Bool) | True once a touch screen has been used or reported. |
 | `Input.GetKey(key)` | `Input.GetKey/1` | value | key (Text) | Result (Bool) | True while the key is held. |
 | `Input.GetKeyDown(key)` | `Input.GetKeyDown/1` | value | key (Text) | Result (Bool) | True on the frame the key is pressed. |
 | `Input.GetKeyUp(key)` | `Input.GetKeyUp/1` | value | key (Text) | Result (Bool) | True on the frame the key is released. |
@@ -305,6 +310,7 @@ Keyboard, mouse and gamepad.
 | `Input.RebindAction(action, binding)` | `Input.RebindAction/2` | step | action (Text), binding (Text) | Result (Bool) | Bind an action to "key:e", "mouse:right", "pad:rt"... for this player (saved). False if the binding isn't understood. |
 | `Input.DefineAction(action, binding, binding2)` | `Input.DefineAction/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a game action (or change its defaults), e.g. ("Dash", "key:q", "pad:rs"). Use "" for an unused binding. |
 | `Input.DefineDirection(action, binding, binding2)` | `Input.DefineDirection/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a direction action, e.g. ("Steer", "keys:i,k,j,l", "stick:right"). |
+| `Input.Gesture(name)` | `Input.Gesture/1` | value | name (Text) | Result (Bool) | True on the frame a touch gesture happens. name is "tap", "double tap", "long press", "swipe", "swipe up", "swipe down", "swipe left", "swipe right", "pinch" or "rotate". |
 
 ## Time
 

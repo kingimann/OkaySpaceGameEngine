@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+namespace okay { class ItemDatabase; }
+
 namespace okay {
 
 class Scene;
@@ -51,9 +53,15 @@ struct RecipeBook {
     std::vector<Recipe> recipes;
     bool LoadText(const std::string& text, std::string* err = nullptr);
     std::string Serialize() const;
+    /// Write Serialize() to `path`.
+    bool Save(const std::string& path) const;
     bool Load(const std::string& path, std::string* err = nullptr);
     /// Loaded once per path and reused.
     static const RecipeBook& Cached(const std::string& path);
+    /// Drop a cached book so the next Cached() reads the file again.
+    static void Forget(const std::string& path);
+    /// Plain-English problems, including ingredients and outputs that are not defined items.
+    std::vector<std::string> Issues(const ItemDatabase& items) const;
 };
 
 /// Crafts with craft time: inputs are taken when a job is queued (so they can't be

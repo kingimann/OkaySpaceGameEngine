@@ -1,7 +1,7 @@
 # Volumes and zones
 
 A **Volume** is a region of the level (a box, a sphere or a cylinder) that does one thing to what is inside it.
-One component, one shape, five kinds. The editor draws every volume as a translucent shape in the Scene view,
+One component, one shape, six kinds. The editor draws every volume as a translucent shape in the Scene view,
 in a colour per kind, and you draw and resize them there.
 
 Header: `engine/include/okay/Components/Volume.hpp`. Sources: `engine/src/Components/Volume.cpp`,
@@ -25,7 +25,7 @@ holds nothing and is reported by the scene validator (`volume.zero_size`).
 A volume needs **no collider**. It tests the shape itself each frame, so it works on any object, and an object with
 a Volume does not have to be solid or visible.
 
-## The five kinds
+## The six kinds
 
 A *body* is an object with a Rigidbody 3D, or any object whose tag matches `activatorTag` (a body with a Rigidbody 3D
 also matches by name text). `activatorTag` defaults to `Player`. When both a parent and its child match, only the
@@ -38,6 +38,7 @@ parent is the body.
 | Force | Every physics step, pushes each dynamic Rigidbody 3D inside it: a steady direction (`forceDirection`, turning with the object when `forceLocal`) or Radial (away from the centre; negative `forceStrength` pulls in). `forceStrength` is an acceleration in m/s squared, so heavy and light bodies move alike. Leave `activatorTag` blank to push every body. |
 | Atmosphere | While the **camera** is inside, the scene's fog and vignette fade to this volume's (`fogColor`, `fogStart`, `fogEnd`, `vignette`), reaching full strength `blend` of the way in from the edge, and fade back to the scene's own settings when it leaves. Several overlapping volumes blend in order. |
 | Ambience | Plays the Audio Source on the same object while the camera is inside, fading in and out over `fadeTime`. Give the Audio Source a clip and tick Loop. |
+| Reverb | While the listener is inside, 3D sounds gain this zone's echo: Room, Hall, Cave or Outdoor (`reverbPreset`), scaled by Strength (`reverbAmount`, 0 is dry). Edge blend (`blend`) is how far in from the surface it takes to reach full strength. 2D sounds stay dry. Overlapping zones blend. See `docs/audio.md`. |
 
 Checkpoint and Kill can also send an `eventName` to scripts as an On Logic Signal (`on_logic_signal(name)`, the visual
 script On Logic Signal node), so a checkpoint can show a message or a kill can play a sound.
@@ -55,7 +56,7 @@ with the same tooling (translucent shape, resize handles, visibility switch).
 
 ## In the editor
 
-* **Draw one:** GameObject > Volume > Draw Checkpoint / Kill / Force / Atmosphere / Ambience, then drag on the
+* **Draw one:** GameObject > Volume > Draw Checkpoint / Kill / Force / Atmosphere / Ambience / Reverb, then drag on the
   ground in the Scene view. The drag is the footprint; the height comes from the Height field in that menu. A click
   without a drag makes a 4 m one. Esc stops drawing. Pick the shape (Box, Sphere, Cylinder) in the same menu.
 * **Create one:** GameObject > Volume > New ... Volume puts one where the Scene view looks. Add Component > Gameplay
@@ -85,7 +86,6 @@ prefab overrides reach each field.
 
 ## Not done
 
-These were considered and left out because the engine has nothing underneath them to drive: a **reverb** zone (the
-audio mixer has a low-pass filter only, no reverb), a **post-process** zone beyond fog and vignette (no other
+These were considered and left out because the engine has nothing underneath them to drive: a **post-process** zone beyond fog and vignette (no other
 post settings are per scene), a **navigation area** volume (the navmesh has no area costs), **convex region**
 volumes, a **swim** zone (Water covers it) and a plain **damage** zone (Damage On Touch and the Survival Zone cover it).

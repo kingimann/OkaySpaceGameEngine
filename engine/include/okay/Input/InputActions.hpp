@@ -93,7 +93,16 @@ public:
     static Action* Find(const std::string& name);
 
     /// Sample every action once per frame, after the runtime has fed Input.
+    /// A contribution posted by an on-screen control is folded in here, then cleared.
     static void Tick();
+
+    /// Add to the action this frame, on top of its keys and pads (a touch button,
+    /// a virtual stick). Call before Tick. A direction action's vector is summed
+    /// and then kept to length 1; a button action keeps the stronger press.
+    /// Cleared at the end of Tick, and by ClearContributions.
+    static void Contribute(const std::string& action, float value);
+    static void ContributeVector(const std::string& action, const Vec2& vector);
+    static void ClearContributions();
 
     /// Held now (pressed past half way).
     static bool Get(const std::string& name);

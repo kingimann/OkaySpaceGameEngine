@@ -581,7 +581,7 @@ void RegisterUIInventoryBind() {
 void RegisterVirtualJoystick() {
     PropertyBuilder<VirtualJoystick> b("VirtualJoystick", "virtualjoystick", "UI");
     b.AddVec2("position", &VirtualJoystick::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
-     .AddVec2("size", &VirtualJoystick::size).Range(8, kBig, 0.1).Tooltip("Width and height of the stick, in pixels")
+     .AddVec2("size", &VirtualJoystick::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the stick, in pixels")
      .AddEnum("anchor", &VirtualJoystick::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddString("action", &VirtualJoystick::action).Tooltip("Direction action this stick drives (Move, by default). A game that already reads that action also hears the stick")
      .AddBool("floating", &VirtualJoystick::floating).Tooltip("Off: the stick stays where you placed it. On: it appears under the finger, inside this rectangle")
@@ -596,7 +596,7 @@ void RegisterVirtualJoystick() {
 void RegisterTouchDPad() {
     PropertyBuilder<TouchDPad> b("TouchDPad", "touchdpad", "UI");
     b.AddVec2("position", &TouchDPad::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
-     .AddVec2("size", &TouchDPad::size).Range(8, kBig, 0.1).Tooltip("Width and height of the pad, in pixels")
+     .AddVec2("size", &TouchDPad::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the pad, in pixels")
      .AddEnum("anchor", &TouchDPad::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddString("action", &TouchDPad::action).Tooltip("Direction action this pad drives (Move, by default)")
      .AddFloat("deadZone", &TouchDPad::deadZone).Range(0, 0.9, 0.01).Tooltip("How far from the centre a press must be before it counts")
@@ -609,7 +609,7 @@ void RegisterTouchDPad() {
 void RegisterTouchButton() {
     PropertyBuilder<TouchButton> b("TouchButton", "touchbutton", "UI");
     b.AddVec2("position", &TouchButton::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
-     .AddVec2("size", &TouchButton::size).Range(8, kBig, 0.1).Tooltip("Width and height of the button, in pixels")
+     .AddVec2("size", &TouchButton::size).Range(-kBig, kBig, 0.1).Tooltip("Width and height of the button, in pixels")
      .AddEnum("anchor", &TouchButton::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
      .AddString("action", &TouchButton::action).Tooltip("Button action this press drives (Jump, by default). A game bound to that action also hears the button")
      .AddString("label", &TouchButton::label).Tooltip("Words drawn on the button")

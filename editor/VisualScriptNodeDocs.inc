@@ -3669,6 +3669,141 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "OnTap";
+        d.title = "On Tap";
+        d.description = "Runs once when a finger taps the screen.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Tap into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on tap";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Tap finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnDoubleTap";
+        d.title = "On Double Tap";
+        d.description = "Runs once when a finger taps twice, close together.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Double Tap into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on double tap";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Double Tap finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnLongPress";
+        d.title = "On Long Press";
+        d.description = "Runs once when a finger is held still for half a second.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Long Press into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on long press";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Long Press finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnSwipe";
+        d.title = "On Swipe";
+        d.description = "Runs once when a finger flicks across the screen. Leave the box empty for any direction, or type up, down, left or right.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Swipe into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on swipe";
+        d.setting = "up, down, left, right, or blank for any. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Swipe finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnPinch";
+        d.title = "On Pinch";
+        d.description = "Runs while two fingers move apart or together.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Pinch into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on pinch";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Pinch finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnRotate";
+        d.title = "On Two Finger Rotate";
+        d.description = "Runs while two fingers twist. The angle is in degrees, positive counter-clockwise.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Two Finger Rotate into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on two finger rotate";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Two Finger Rotate finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GestureSwipeDirection";
+        d.title = "Get Swipe Direction";
+        d.description = "The direction of this frame's swipe: up, down, left or right. Empty when there was no swipe.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Swipe Direction's Direction output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get swipe direction";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Direction", "Text", "What Get Swipe Direction produces on Direction. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GesturePinchScale";
+        d.title = "Get Pinch Scale";
+        d.description = "How far apart two fingers are compared with where the pinch began. 1 means unchanged.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Pinch Scale's Scale output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get pinch scale";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Scale", "Number", "The scale. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GestureTwist";
+        d.title = "Get Twist Angle";
+        d.description = "How far two fingers have twisted, in degrees. Positive is counter-clockwise.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Twist Angle's Degrees output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get twist angle";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Degrees", "Number", "What Get Twist Angle produces on Degrees. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "GetMoveAxis";
         d.title = "Get Move Direction";
         d.description = "The movement stick as a vector: X is left/right, Y is up/down, from the same keys as Axis X and Axis Y.";

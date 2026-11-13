@@ -20,6 +20,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Core/Game.hpp"
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
+#include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
 #include "okay/Core/BuildInfo.hpp"
@@ -2183,7 +2184,6 @@ bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt 
 bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
-bool g_showItemDatabase = false; // Item Database window (the project's item definitions)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
@@ -5035,7 +5035,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
-        {"Item Database", "Item Database",             &g_showItemDatabase,  "Editors & Tools", PI_Package},
+        {"Items, Loot & Recipes", "Items, Loot & Recipes", &g_showItemDatabase, "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
@@ -6520,7 +6520,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Redo is off while the game runs.");
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ed.isPlaying())
-                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table and the code editors have their own Undo while they have focus.");
+                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table, items / loot / recipes and the code editors have their own Undo while they have focus.");
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
@@ -6580,8 +6580,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
             ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
-            ImGui::MenuItem("Item Database", nullptr, &g_showItemDatabase);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define every item once (name, icon, stack size, weight, grid size, rarity, what using it does). Inventories, chests, recipes and builders all use these.");
+            ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes.");
             ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
             ImGui::EndMenu();
@@ -6718,6 +6718,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Window")) {
+        ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author items, loot tables (weighted drops, with a live roll preview) and crafting recipes.");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -10160,16 +10165,7 @@ void DrawProject(EditorState& ed) {
             if (!fs::exists(dir / f, ce) && fs::create_directory(dir / f, ce)) ++made;
         ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + dir.filename().string());
     };
-    auto mkItem = [&]{   // a new definition in the project's Item Database, opened for editing
-        okay::ItemDefinition d;
-        int n = 1;
-        do { d.id = "item" + std::to_string(n++); } while (okay::ItemDatabase::Get().Find(d.id));
-        d.name = "New Item";
-        okay::ItemDatabase::Get().Put(d);
-        const std::string path = ed.ItemDatabasePath();
-        if (!path.empty() && okay::ItemDatabase::Get().Save(path)) ConsoleLog("Added item \"" + d.id + "\" to " + path);
-        g_showItemDatabase = true;
-    };
+    auto mkItem = [&]{ ContentAddItem(ed); };
     auto mkData = [&]{
         askCreate("New data asset", "Fields as key = value.", "NewData", ".okaydata", "data asset", [](const std::string& d, const std::string& n) {
             return g_pb->MakeFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
@@ -10191,6 +10187,8 @@ void DrawProject(EditorState& ed) {
         if (ImGui::MenuItem("Material"))   mkMaterial();
         if (ImGui::MenuItem("Data Asset")) mkData();
         if (ImGui::MenuItem("Item"))       mkItem();
+        if (ImGui::MenuItem("Loot Table")) ContentCreateLoot(ed);
+        if (ImGui::MenuItem("Recipe Book")) ContentCreateRecipe(ed);
         ImGui::Separator();
         if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
@@ -10484,6 +10482,8 @@ void DrawProject(EditorState& ed) {
         } else if (ext == ".okaydialog" || ext == ".okayquest") {
             OpenStoryAsset(full);                 // the Dialogue window (the graph, or the Quests tab)
             g_showDialogue = true;
+        } else if (ext == ".okayitems" || ext == ".okayloot" || ext == ".okayrecipes") {
+            OpenContentFile(full);
         } else if (ext == ".okaybt") {
             OpenBehaviorTreeFile(ed, full);   // open in the Behavior Tree window
         } else if (ext == ".okayclip") {
@@ -17202,6 +17202,7 @@ void HandleShortcuts(EditorState& ed) {
         if (projectKeys && g_pb && g_pb->CanUndo()) {}   // the Project panel undoes its own file operation
         else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
+        else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -17209,6 +17210,7 @@ void HandleShortcuts(EditorState& ed) {
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
+        else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, true)) ConsoleLog("Redo (items, loot and recipes)"); }
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
@@ -34098,6 +34100,10 @@ void DrawInspector(EditorState& ed) {
             char rbs[256]; std::snprintf(rbs, sizeof(rbs), "%s", cs->recipeBook.c_str());
             if (ImGui::InputText("Recipe Book##cs", rbs, sizeof(rbs))) { cs->recipeBook = rbs; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes for this bench's tag show here too.");
+            if (ImGui::Button("Edit Recipe Book...##cs")) {
+                if (cs->recipeBook.empty()) OpenContentTab(2);
+                else OpenContentFile(cs->recipeBook);
+            }
             char tg[48]; std::snprintf(tg, sizeof(tg), "%s", cs->stationTag.c_str());
             if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
@@ -34220,6 +34226,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Once emptied, fill again after this many seconds (0 = only once).");
             if (ImGui::DragInt("Seed##ls", &ls->seed, 1.0f, 0, 1 << 30)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same seed = same rolls every time (0 = random).");
+            if (ImGui::Button("Edit Loot Table...")) {
+                if (ls->table.empty()) OpenContentTab(1);
+                else OpenContentFile(ls->table);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open this table in Items, Loot & Recipes.");
         }
     }
     if (auto* ch = dynamic_cast<ChestInventory*>(curComp)) {
@@ -35035,6 +35046,10 @@ void DrawInspector(EditorState& ed) {
             char rb[256]; std::snprintf(rb, sizeof(rb), "%s", c->recipeBook.c_str());
             if (ImGui::InputText("Recipe Book##cr", rb, sizeof(rb))) { c->recipeBook = rb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes are added to the ones below.");
+            if (ImGui::Button("Edit Recipe Book...##cr")) {
+                if (c->recipeBook.empty()) OpenContentTab(2);
+                else OpenContentFile(c->recipeBook);
+            }
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
@@ -45787,114 +45802,6 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// Item Database: the project's item definitions (<project>/items.okayitems) — a
-// searchable list, the selected definition's fields, duplicate-id warnings, Save.
-static void DrawItemDatabase(EditorState& ed) {
-    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Item Database", &g_showItemDatabase)) { ImGui::End(); return; }
-    okay::ItemDatabase& db = okay::ItemDatabase::Get();
-    static std::string sel;
-    static char filter[64] = "";
-    static bool dirty = false;
-    const std::string path = !db.Path().empty() ? db.Path() : ed.ItemDatabasePath();
-    if (path.empty()) ImGui::TextDisabled("Open a project to keep item definitions with it.");
-    else ImGui::TextDisabled("%s%s", path.c_str(), dirty ? "  (unsaved)" : "");
-    if (ImGui::Button("+ New Item")) {
-        okay::ItemDefinition d;
-        int n = 1;
-        do { d.id = "item" + std::to_string(n++); } while (db.Find(d.id));
-        d.name = "New Item";
-        sel = db.Put(d).id; dirty = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save") && !path.empty()) {
-        if (db.Save(path)) { db.Load(path); dirty = false; ConsoleLog("Saved item definitions to " + path); }
-        else ConsoleLog("Couldn't save " + path, 2);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reload") && !path.empty()) { db.Load(path); dirty = false; }
-    for (const std::string& dup : db.DuplicateIds())
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "Duplicate id \"%s\": every item needs its own id.", dup.c_str());
-
-    ImGui::BeginChild("##items", ImVec2(230, 0), true);
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##itemsflt", "Search", filter, sizeof(filter));
-    std::string f = filter; for (auto& c : f) c = (char)std::tolower((unsigned char)c);
-    for (const auto& d : db.Items()) {
-        std::string hay = d.id + " " + d.name + " " + d.category; for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-        if (!f.empty() && hay.find(f) == std::string::npos) continue;
-        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
-        std::string label = d.DisplayName() + (d.loose ? "  (not defined)" : "") + "##" + d.id;
-        if (ImGui::Selectable(label.c_str(), sel == d.id)) sel = d.id;
-    }
-    ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("##itemdef", ImVec2(0, 0), true);
-    okay::ItemDefinition* d = db.FindMutable(sel);
-    if (!d) ImGui::TextDisabled("Select an item, or add one.");
-    else {
-        bool ch = false;
-        auto text = [&](const char* label, std::string& v, const char* tip) {
-            char b[256]; std::snprintf(b, sizeof(b), "%s", v.c_str());
-            if (ImGui::InputText(label, b, sizeof(b))) { v = b; ch = true; }
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        std::string id = d->id;
-        text("Id", id, "The stable key inventories store. Renaming it breaks saved scenes; change the Name instead.");
-        if (id != d->id && !id.empty() && !db.Find(id)) { d->id = id; sel = id; }
-        text("Name", d->name, "What players see. Rename freely.");
-        text("Description", d->description, nullptr);
-        text("Icon", d->icon, "Image path. Blank = <icon folder><id>.png.");
-        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d->id))) ImGui::Image((ImTextureID)t, ImVec2(48, 48));
-        if (ImGui::DragInt("Stack Size", &d->maxStack, 0.2f, 0, 100000)) ch = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most per stack (0 = only the container's limit).");
-        if (ImGui::DragFloat("Weight", &d->weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ch = true;
-        int sz[2] = {d->gridW, d->gridH};
-        if (ImGui::DragInt2("Grid Size", sz, 0.1f, 1, 12)) { d->gridW = sz[0]; d->gridH = sz[1]; ch = true; }
-        if (ImGui::DragInt("Rarity Tier", &d->rarity, 0.1f, 0, 10)) ch = true;
-        if (ImGui::Checkbox("Rarity Colour", &d->hasRarityColor)) ch = true;
-        if (d->hasRarityColor) { ImGui::SameLine(); if (ImGui::ColorEdit4("##rc", &d->rarityColor.r, ImGuiColorEditFlags_NoInputs)) ch = true; }
-        text("Category", d->category, "e.g. Food, Weapon, Material (used for sorting and filters).");
-        std::string tags;
-        for (const auto& t : d->tags) tags += (tags.empty() ? "" : ", ") + t;
-        std::string tagsEdit = tags;
-        text("Tags", tagsEdit, "Comma-separated.");
-        if (tagsEdit != tags) {
-            d->tags.clear();
-            std::stringstream ts(tagsEdit); std::string t;
-            while (std::getline(ts, t, ',')) { t.erase(0, t.find_first_not_of(' ')); t.erase(t.find_last_not_of(' ') + 1); if (!t.empty()) d->tags.push_back(t); }
-        }
-        int eq = (int)d->equip;
-        const char* slots[] = {"None", "Head", "Chest", "Legs", "Feet", "Hands", "Back", "Main Hand", "Off Hand"};
-        if (ImGui::Combo("Equip Slot", &eq, slots, IM_ARRAYSIZE(slots))) { d->equip = (okay::EquipSlot)eq; ch = true; }
-        text("Use Action", d->useAction, "What using it does: Eat, Drink, Heal, ... (blank = not usable).");
-        if (!d->useAction.empty() && ImGui::DragFloat("Use Amount", &d->useAmount, 0.5f, 0.0f, 10000.0f)) ch = true;
-        text("Drop Prefab", d->worldPrefab, ".okayprefab spawned when it's dropped in the world.");
-        if (ImGui::TreeNode("Custom Fields")) {
-            for (std::size_t i = 0; i < d->custom.size(); ++i) {
-                ImGui::PushID((int)i);
-                ImGui::SetNextItemWidth(120); text("##k", d->custom[i].first, nullptr);
-                ImGui::SameLine(); ImGui::SetNextItemWidth(160); text("##v", d->custom[i].second, nullptr);
-                ImGui::SameLine();
-                if (oked::TipSmallButton("Remove", "x")) { d->custom.erase(d->custom.begin() + i); ch = true; ImGui::PopID(); break; }
-                ImGui::PopID();
-            }
-            if (ImGui::SmallButton("+ Field")) { d->custom.push_back({"key", "value"}); ch = true; }
-            ImGui::TreePop();
-        }
-        if (d->loose) {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Found in a scene but not defined yet.");
-            if (ImGui::Button("Define it")) { d->loose = false; ch = true; }
-        }
-        ImGui::Separator();
-        if (ImGui::Button("Delete Item")) { db.Remove(d->id); sel.clear(); d = nullptr; ch = true; }
-        if (ch && d) d->loose = false;   // editing a found-in-scene item defines it
-        if (ch) dirty = true;
-    }
-    ImGui::EndChild();
-    ImGui::End();
-}
-
 void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
     oked::DrawUIThemeWindowBody(ed);   // editor/UIRuntimeTools.cpp: 12 looks, roles, apply, save / load
@@ -48784,6 +48691,7 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
@@ -49309,7 +49217,7 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
-        { OKAY_PROFILE("UI.ItemDatabase"); if (g_showItemDatabase) DrawItemDatabase(ed); }
+        { OKAY_PROFILE("UI.ContentEditors"); DrawContentEditors(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
         // Make Playable Character is queued from the Project panel, which draws
         // after the Inspector. A drop onto a player is queued from the Hierarchy,

@@ -271,17 +271,17 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.13.1 Sprite Editor - `editor/main.cpp` (`DrawSpriteEditor` ~42208-42417) - pixel paint, shapes, flood fill
   - 15.13.2 Material editor - `editor/main.cpp` (`DrawMaterialEditor` ~10174) - `.okaymat` albedo, emissive, specular, texture, tiling, Apply to Selection
   - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor` ~10009) - data assets for scripts
-  - 15.13.4 Item Database - `editor/main.cpp` (`DrawItemDatabase` ~42480) - item definitions for inventory (11.2)
+  - 15.13.4 Items, Loot & Recipes - `editor/ContentEditors.cpp` - items, loot tables and crafting recipes (11.2, 11.3); Window menu and View > Editors & Tools
   - 15.13.5 Save Manager - `editor/main.cpp` (`DrawSaveManager` ~10046) - browse and edit `.okaysave` files
   - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer` ~6588) - mixer buses and volumes (7.1)
   - 15.13.7 UI Theme window - `editor/main.cpp` (`DrawUIThemer` ~42586) - see 12.7
   - 15.13.8 Custom Actions window - `editor/main.cpp` (`DrawCustomActions` ~2219) - see 14.6
-- **Code:** `editor/main.cpp`
-- **API:** View > Editors & Tools and View > Panels menus
+- **Code:** `editor/main.cpp`, `editor/ContentEditors.cpp`
+- **API:** View > Editors & Tools, View > Panels, and Window > Items, Loot & Recipes
 - **Editor:** each window
 - **Docs:** `docs/editor.md`, `docs/save_games.md`, `docs/audio.md`
-- **Tests:** `dataasset`, `savedata`, `item_database`, `audio_mixer` (engine side)
-- **Status:** Works - implemented as functions in `main.cpp`
+- **Tests:** `dataasset`, `savedata`, `item_database`, `item_loot_recipes`, `audio_mixer` (engine side)
+- **Status:** Works - most of these windows are functions in `main.cpp`; items, loot and recipes are `ContentEditors.cpp`
 - **Open:** none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs
 - **Related:** 2.2, 7.1, 11.2, 1.7, 26, 12.7
 - **Words:** Sprite Editor, Material editor, Data Asset, Item Database, Save Manager, Audio Mixer, UI Theme window

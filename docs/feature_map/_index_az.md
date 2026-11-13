@@ -2074,8 +2074,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - isTrigger (44.4)
 - itch.io (56.3)
 - Item and inventory drawing (42.6.7)
-- item database (11.2, 11.2.1, 15.13, 15.13.4)
-- Item Database window (11.2.5)
+- item database (11.2, 11.2.1, 15.13)
 - item definition (11.2)
 - Item pickups (11.2.3)
 - Item state and mouse queries (40.7.3)
@@ -2083,6 +2082,8 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - ItemPickup (11.2)
 - items (17.6)
 - Items and loot (11.2)
+- Items, Loot & Recipes (15.13.4)
+- Items, Loot & Recipes window (11.2.5)
 
 **J**
 

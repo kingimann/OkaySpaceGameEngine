@@ -73,7 +73,8 @@ SDL_Texture* fallbackTex(okay::TtfFont* f) {
 // texture. A span records the index where a state begins; EndFrame draws each range
 // with the matching clip rect + texture. The overlay batch is never clipped.
 struct DrawSpan { int startIdx; bool on; SDL_Rect rect; SDL_Texture* tex; };
-DrawSpan g_spans[128];
+constexpr int kMaxSpans = 256;   // 128 before window z-order: reordering adds a span per window segment
+DrawSpan g_spans[kMaxSpans];
 int      g_nspans = 0;
 SDL_Rect g_clipStack[16];
 int      g_clipTop = 0;
@@ -88,7 +89,7 @@ void pushSpan() {
         g_spans[g_nspans - 1].on = g_curClipOn; g_spans[g_nspans - 1].rect = g_curClipRect;
         g_spans[g_nspans - 1].tex = g_curTex; return;
     }
-    if (g_nspans < 128) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
+    if (g_nspans < kMaxSpans) g_spans[g_nspans++] = DrawSpan{ g_ni, g_curClipOn, g_curClipRect, g_curTex };
 }
 // Backwards-compatible helper used by the clip API.
 void pushClipSpan(bool on, SDL_Rect rect) { g_curClipOn = on; g_curClipRect = rect; pushSpan(); }
@@ -203,6 +204,7 @@ struct LayoutState {
     float sameLineSpacing = -1.0f;
     float indent = 0.0f;            // TreeNode indentation of the content's left edge
     float bottom = 0.0f;            // bottom of the visible content area (GetContentRegionAvail)
+    float maxRight = 0.0f;          // right edge of the furthest item placed (window auto-resize measures it)
     int   seed = 0;                 // window id, mixed into label->id hashing
 };
 LayoutState g_lay;
@@ -283,7 +285,11 @@ DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
-                 bool posInit = false, sizeInit = false; unsigned long long lastFrame = 0; };
+                 bool posInit = false, sizeInit = false; unsigned long long lastFrame = 0;
+                 unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
+                 float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
+                 float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
+               };
 WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
@@ -428,6 +434,7 @@ void place(float w, float h, float& x, float& y) {
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
     groupAdd(x, y, w, h);
     g_lastId = 0;   // the widget that follows registers its own id
     g_lay.cx = leftEdge();
@@ -781,6 +788,84 @@ OvRect g_ovPrev[16]; int g_ovPrevN = 0;
 inline void registerOverlay(float x, float y, float w, float h, bool modal) {
     if (g_ovCurN < 16) g_ovCur[g_ovCurN++] = OvRect{ x, y, w, h, modal };
 }
+// ---- Window stacking (z-order) -------------------------------------------------------------------
+// Every window has a stamp (WinSlot::z): higher draws in front, a click raises it, 0 is the bottom (docked content). The windows
+// begun this frame register their rectangles (g_wCur); last frame's rectangles (g_wPrev) cover the windows not begun yet. A
+// widget of a window ignores the pointer where a window with a higher stamp covers it, so a click never reaches what is behind.
+// The geometry follows the stamps: the windows' index ranges are put in stamp order when the frame ends (reorderWindows).
+struct WinRect { int id; unsigned long long z; float x, y, w, h; };
+WinRect g_wCur[64], g_wPrev[64]; int g_wCurN = 0, g_wPrevN = 0;
+unsigned long long g_zCounter = 0;
+bool g_wheelUsed = false;   // a scrolling child took this frame's wheel (the window does not scroll as well)
+bool g_hitWinOn = false; int g_hitWinId = 0; unsigned long long g_hitWinZ = 0;   // the window being built, for hit()
+inline bool coveredByHigher(float px, float py, unsigned long long z, int selfId) {
+    for (int i = 0; i < g_wCurN; ++i) {
+        const WinRect& e = g_wCur[i];
+        if (e.id != selfId && e.z > z && pointIn(px, py, e.x, e.y, e.w, e.h)) return true;
+    }
+    for (int i = 0; i < g_wPrevN; ++i) {
+        const WinRect& e = g_wPrev[i];
+        if (e.id == selfId || e.z <= z || !pointIn(px, py, e.x, e.y, e.w, e.h)) continue;
+        bool replaced = false;
+        for (int j = 0; j < g_wCurN; ++j) if (g_wCur[j].id == e.id) { replaced = true; break; }
+        if (!replaced) return true;
+    }
+    return false;
+}
+inline void registerWindowRect(int id, unsigned long long z, float x, float y, float w, float h) {
+    for (int i = 0; i < g_wCurN; ++i) if (g_wCur[i].id == id) { g_wCur[i] = WinRect{id, z, x, y, w, h}; return; }
+    if (g_wCurN < 64) g_wCur[g_wCurN++] = WinRect{id, z, x, y, w, h};
+}
+// Geometry of each window of the frame: its index range, and what is needed to drop it again (a hidden measuring frame).
+struct WinRec { int id; unsigned long long z; int i0, i1, v0, ns0; bool clipOn; SDL_Rect clip; SDL_Texture* tex; };
+WinRec g_wrec[64]; int g_nwrec = 0; int g_wrecOpen = -1;
+inline void wrecEnd() { if (g_wrecOpen >= 0) { g_wrec[g_wrecOpen].i1 = g_ni; g_wrecOpen = -1; } }
+inline void wrecBegin(int id, unsigned long long z) {
+    wrecEnd();
+    if (g_nwrec >= 64) return;
+    g_wrecOpen = g_nwrec++;
+    g_wrec[g_wrecOpen] = WinRec{id, z, g_ni, g_ni, g_nv, g_nspans, g_curClipOn, g_curClipRect, g_curTex};
+}
+// The windows' geometry in stamp order. Free geometry between windows keeps its place in the call order; only the windows
+// trade places, so a frame whose stamps agree with the call order is left exactly as it was.
+void reorderWindows() {
+    wrecEnd();
+    const int n = g_nwrec;
+    if (n < 2) return;
+    int ord[64];
+    for (int i = 0; i < n; ++i) ord[i] = i;
+    for (int i = 1; i < n; ++i) { const int v = ord[i]; int j = i - 1; while (j >= 0 && g_wrec[ord[j]].z > g_wrec[v].z) { ord[j + 1] = ord[j]; --j; } ord[j + 1] = v; }
+    bool same = true;
+    for (int i = 0; i < n; ++i) if (ord[i] != i) { same = false; break; }
+    if (same) return;
+    static int tmp[kMaxIdx];
+    static DrawSpan nsp[kMaxSpans];
+    int nn = 0, nns = 0;
+    bool fail = false;
+    auto stateAt = [&](int idx) { DrawSpan st{0, false, SDL_Rect{0, 0, 0, 0}, g_defTex}; for (int k = 0; k < g_nspans && g_spans[k].startIdx <= idx; ++k) st = g_spans[k]; return st; };
+    auto emit = [&](int a, int b) {
+        if (b <= a || fail) return;
+        if (nns + 1 + g_nspans > kMaxSpans) { fail = true; return; }
+        DrawSpan st = stateAt(a); st.startIdx = nn;
+        if (nns > 0 && nsp[nns - 1].startIdx == nn) nsp[nns - 1] = st; else nsp[nns++] = st;
+        for (int k = 0; k < g_nspans; ++k) {
+            const int si = g_spans[k].startIdx;
+            if (si > a && si < b) { DrawSpan t = g_spans[k]; t.startIdx = nn + (si - a); if (nns > 0 && nsp[nns - 1].startIdx == t.startIdx) nsp[nns - 1] = t; else nsp[nns++] = t; }
+        }
+        for (int k = a; k < b; ++k) tmp[nn++] = g_idx[k];
+    };
+    int prevEnd = 0;
+    for (int p = 0; p < n; ++p) {
+        emit(prevEnd, g_wrec[p].i0);
+        emit(g_wrec[ord[p]].i0, g_wrec[ord[p]].i1);
+        prevEnd = g_wrec[p].i1;
+    }
+    emit(prevEnd, g_ni);
+    if (fail || nn != g_ni) return;
+    for (int k = 0; k < nn; ++k) g_idx[k] = tmp[k];
+    for (int k = 0; k < nns; ++k) g_spans[k] = nsp[k];
+    g_nspans = nns;
+}
 inline bool hitOverlay(float x, float y, float w, float h) {
     return !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, x, y, w, h);
 }
@@ -796,6 +881,7 @@ inline bool hit(float x, float y, float w, float h) {
     if (!hitOverlay(x, y, w, h)) return false;
     if (g_popupTop > 0) return true;   // a widget inside a popup body
     if (!inClip()) return false;
+    if (g_hitWinOn && coveredByHigher(g_in.mouseX, g_in.mouseY, g_hitWinZ, g_hitWinId)) return false;   // a window above covers the pointer
     for (int i = 0; i < g_ovPrevN; ++i) {
         const OvRect& o = g_ovPrev[i];
         if (o.modal || pointIn(g_in.mouseX, g_in.mouseY, o.x, o.y, o.w, o.h)) return false;
@@ -868,6 +954,8 @@ void BeginFrame(const Input& in) {
     g_focusClaimed = false;
     for (int i = 0; i < g_ovCurN; ++i) g_ovPrev[i] = g_ovCur[i];
     g_ovPrevN = g_ovCurN; g_ovCurN = 0;
+    for (int i = 0; i < g_wCurN; ++i) g_wPrev[i] = g_wCur[i];   // last frame's window rectangles, for stacking
+    g_wPrevN = g_wCurN; g_wCurN = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_wheelUsed = false;
     g_lay.active = false;            // widgets called outside Begin/End no-op
     g_lay.pendingSameLine = false;
     ++g_frame;
@@ -1455,6 +1543,7 @@ void finalizeFrame() {
         g_toOverlay = false;
     }
     if (!g_in.mouseDown) { g_dd.active = false; g_dd.armed = false; g_tdd.active = false; g_tdd.armed = false; g_tdd.hasPayload = false; g_tdd.preview[0] = 0; }
+    reorderWindows();                                // windows in stacking order, then the overlay on top
     mergeOverlay();
     // Fail loudly: a full batch means shapes are missing from the picture. Say so on stderr (the first few
     // frames only, so a permanently too-big UI does not flood the log) and in DrawData::dropped.
@@ -1476,11 +1565,11 @@ namespace {
 // The span list as backend-neutral commands: the same index ranges, clip rectangles
 // and textures EndFrame(SDL_Renderer*) walks, including the unclipped range before the
 // first span (window frames drawn before any clip was pushed).
-DrawCmd g_cmds[130];
+DrawCmd g_cmds[kMaxSpans + 2];
 int buildCmds() {
     int n = 0;
     auto add = [&](int from, int to, bool on, const SDL_Rect& r, SDL_Texture* tex) {
-        if (to <= from || n >= 130) return;
+        if (to <= from || n >= kMaxSpans + 2) return;
         DrawCmd& c = g_cmds[n++];
         c.idxOffset = from; c.idxCount = to - from;
         c.clipOn = on; c.clipX = r.x; c.clipY = r.y; c.clipW = r.w; c.clipH = r.h;
@@ -1679,8 +1768,15 @@ const Font* FontBold()      { return &kFontBold; }
 
 static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
 // The window being built (for GetWindowPos / IsWindowHovered ...) and the one that was clicked last (IsWindowFocused).
-struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; };
+struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; };
 static CurWin g_curWin;
+// What End() needs to finish the window Begin() started: scrolling, the scroll bar, auto-resize, a hidden measuring frame.
+struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = false, autoSize = false, hidden = false;
+                int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0; };
+static WinEnd g_we;
+static int  g_wflagsNext = 0;      // WindowFlags for the next core Begin
+constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
+
 
 static int g_focusWin = 0;
 // SetNextWindowPos / SetNextWindowSize, consumed by the next Begin(title, p_open, flags).
@@ -1699,15 +1795,24 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     WinSlot* slot = nullptr;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
+    const int wf = g_wflagsNext;
+    g_wflagsNext = 0;
+    if (g_we.open) End();               // a Begin without its End: close it so the next window starts clean
     const bool pinned = g_pinNext;
     g_pinNext = false;
     // Opt-in resize grip (ResizableNextWindow): the remembered size replaces the w and h passed in.
-    const bool resizable = g_resizeNext && slot != nullptr;
+    const bool autoSize = (wf & Window_AlwaysAutoResize) != 0 && slot != nullptr;
+    const bool resizable = g_resizeNext && slot != nullptr && !autoSize;
     const float minW = g_resizeMinW, minH = g_resizeMinH;
     g_resizeNext = false;
     if (resizable) {
         if (!slot->sized) { slot->w = w; slot->h = h; slot->sized = true; }
         w = slot->w; h = slot->h;
+    }
+    bool hidden = false;
+    if (autoSize) {   // as big as the content was last frame; the first frame only measures and is not shown
+        if (slot->measured) { w = slot->autoW; h = slot->autoH; slot->w = w; slot->h = h; slot->sized = true; }
+        else hidden = true;
     }
     if (pinned && slot) { slot->x = x; slot->y = y; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
@@ -1716,7 +1821,25 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_noTitleNext = false;
     const float titleH = noTitle ? 0.0f : rowH();
     bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
-    if (noTitle) *collapsed = false;
+    const bool noCollapse = (wf & Window_NoCollapse) != 0, noBg = (wf & Window_NoBackground) != 0, noFront = (wf & Window_NoBringToFront) != 0;
+    if (noTitle || noCollapse) *collapsed = false;
+    // Stacking: a window that is new (or has not been drawn for a frame) comes to the front and takes focus unless told not to;
+    // a click on the topmost window under the pointer raises it. NoBringToFront windows stay at the bottom.
+    {
+        const float bh = *collapsed ? titleH : h;
+        const bool fresh = slot && (slot->lastFrame == 0 || slot->lastFrame + 1 < g_frameCount);
+        if (slot) {
+            if (noFront) slot->z = 0;
+            else if (slot->z == 0) slot->z = ++g_zCounter;
+            if (fresh && !noFront && !(wf & Window_NoFocusOnAppearing)) { slot->z = ++g_zCounter; g_focusWin = id; }
+        }
+        if (g_pressed && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bh)
+            && !(slot && coveredByHigher(g_in.mouseX, g_in.mouseY, slot->z, id))) {
+            g_focusWin = id;                                    // the topmost window under the pointer
+            if (slot && !noFront) slot->z = ++g_zCounter;
+        }
+        g_hitWinOn = slot != nullptr; g_hitWinId = id; g_hitWinZ = slot ? slot->z : 0;
+    }
 
     // Title-bar sub-rects: a collapse caret on the left, an optional close [x] on the
     // right, and the draggable strip in between.
@@ -1725,7 +1848,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     const float closeX = wx + w - btn, closeW = p_open ? btn : 0.0f;
 
     // Collapse toggle: click the caret to fold/unfold the window.
-    const bool overCaret = hit(caretX, wy, caretW, titleH);
+    const bool overCaret = !noCollapse && hit(caretX, wy, caretW, titleH);
     if (overCaret) g_hot = id ^ 0x5c01;
     if (g_active == (id ^ 0x5c01)) { if (g_released) { if (overCaret) *collapsed = !*collapsed; g_active = 0; } }
     else if (overCaret && g_pressed) { g_active = id ^ 0x5c01; g_focusClaimed = true; }
@@ -1740,7 +1863,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     }
 
     // Drag the window by the title bar (the strip between caret and close button).
-    const float dragX = wx + caretW, dragW = w - caretW - closeW;
+    const float dragX = noCollapse ? wx : wx + caretW, dragW = w - (noCollapse ? 0.0f : caretW) - closeW;
     const bool overDrag = hit(dragX, wy, dragW, titleH);
     if (overDrag) g_hot = id;
     if (g_active == id) {
@@ -1770,22 +1893,28 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
     g_winBaseScale = g_theme.textScale;
-    if (!g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
+    if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
+    g_curWin.z = slot ? slot->z : 0;
     if (slot) slot->lastFrame = g_frameCount;
-    if (g_pressed && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_focusWin = id;   // the last window drawn under the pointer is on top
+    if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
+    wrecBegin(id, g_curWin.z);
+    g_we = WinEnd(); g_we.open = true; g_we.hidden = hidden; g_we.id = id; g_we.slot = slot ? (int)(slot - g_wins) : -1;
+    g_we.autoSize = autoSize; g_we.x = wx; g_we.y = wy; g_we.w = w; g_we.h = h; g_we.titleH = titleH;
     if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
         const float wr = g_theme.windowRounding;
-        if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
-        rrect(wx, wy, w, bodyH, wr, g_theme.border);
-        rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.panel);
+        if (!noBg) {
+            if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
+            rrect(wx, wy, w, bodyH, wr, g_theme.border);
+            rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.panel);
+        }
         if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, g_theme.titleBg);
         if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, g_theme.titleBg);
         if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
         const float s0 = g_theme.textScale;
         if (!noTitle) {
-        chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : g_theme.textDim);
-        if (title && *title) drawText(wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
+        if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : g_theme.textDim);
+        if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
         }
         if (p_open && !noTitle) {
             unsigned char tmp[4];
@@ -1793,7 +1922,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
             if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
             xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : g_theme.textDim);
         }
-    } else
+    } else if (!noBg)
     Panel(wx, wy, w, bodyH);
     if (!g_look && !noTitle) {
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
@@ -1803,8 +1932,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (titleH > rd) quad(wx, wy + rd, w, titleH - rd, g_theme.titleBg);
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
     const float s = g_theme.textScale;
-    drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
-    if (title && *title) drawText(wx + 8.0f + fCharW() * s * 2.0f, wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
+    if (!noCollapse) drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
+    if (title && *title) drawText(wx + 8.0f + (noCollapse ? 0.0f : fCharW() * s * 2.0f), wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
     if (p_open) {
         const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
         drawText(closeX + (btn - fCharW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
@@ -1821,14 +1950,26 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Establish the content layout region.
     const float pad = g_theme.windowPadding;
-    if (g_look) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
+    // A window whose content did not fit last frame scrolls (wheel, and a bar unless NoScrollbar); the content is clipped to it.
+    float scrollY = 0.0f;
+    bool scrollable = false;
+    const bool flagStyle = (wf & kWinFlagStyle) != 0;   // only windows begun with Begin(title, p_open, flags) scroll; the old Begin(title, x, y, w, h) never did
+    if (slot && flagStyle && !autoSize && slot->maxScroll > 0.0f) {
+        if (slot->scroll > slot->maxScroll) slot->scroll = slot->maxScroll;
+        if (slot->scroll < 0.0f) slot->scroll = 0.0f;
+        scrollY = slot->scroll; scrollable = true;
+    } else if (slot) slot->scroll = 0.0f;
+    const bool showBar = scrollable && !(wf & Window_NoScrollbar);
+    if (g_look || scrollable) { PushClipRect(wx + 1.0f, wy + titleH, w - 2.0f, h - titleH - 1.0f); g_lay.winClip = true; }
     g_lay.active = true;
     g_lay.seed = id;
     g_lay.ox = wx + pad;
-    g_lay.oy = wy + titleH + pad;
+    g_lay.oy = wy + titleH + pad - scrollY;
     g_lay.cx = g_lay.ox;
     g_lay.cy = g_lay.oy;
-    g_lay.contentW = w - 2.0f * pad;
+    g_lay.maxRight = g_lay.ox;
+    g_we.laid = true; g_we.scrolls = flagStyle; g_we.showBar = showBar; g_we.pad = pad; g_we.ox = g_lay.ox; g_we.oy = g_lay.oy;
+    g_lay.contentW = w - 2.0f * pad - (showBar ? kScrollbarW : 0.0f);
     g_lay.bottom = wy + h - pad;
     g_lay.spacingX = g_look ? 9.0f : 8.0f; g_lay.spacingY = g_look ? 8.0f : 6.0f;
     g_lay.indent = 0.0f;
@@ -1842,6 +1983,58 @@ void End() {
     g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
+    if (g_we.open) {
+        WinSlot* slot = g_we.slot >= 0 ? &g_wins[g_we.slot] : nullptr;
+        if (slot && g_we.laid) {
+            const float contentH = std::max(0.0f, (g_lay.cy - g_lay.spacingY) - g_we.oy);
+            const float view = g_we.h - g_we.titleH - 2.0f * g_we.pad;
+            if (g_we.autoSize) {
+                slot->autoW = std::max(g_lay.maxRight - g_we.ox, 1.0f) + 2.0f * g_we.pad;
+                slot->autoH = g_we.titleH + contentH + 2.0f * g_we.pad;
+                slot->measured = std::isfinite(slot->autoW) && std::isfinite(slot->autoH);
+                slot->maxScroll = 0.0f;
+            } else if (g_we.scrolls) {
+                slot->maxScroll = contentH > view + g_we.pad ? contentH - view : 0.0f;   // a window scrolls once content passes its bottom edge (the padding may be eaten)
+                if (slot->maxScroll > 0.0f && g_we.laid) {
+                    const bool over = !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_we.x, g_we.y, g_we.w, g_we.h)
+                                      && !coveredByHigher(g_in.mouseX, g_in.mouseY, slot->z, g_we.id);
+                    if (over && g_in.wheel != 0.0f && !g_wheelUsed && g_disCount == 0) slot->scroll -= g_in.wheel * rowH();
+                    if (g_we.showBar) {   // the scroll bar along the right edge, below the title bar
+                        const float sbx = g_we.x + g_we.w - kScrollbarW - 1.0f, sby = g_we.y + g_we.titleH, trackH = g_we.h - g_we.titleH - 1.0f;
+                        float frac = view / (view + slot->maxScroll); if (frac > 1.0f) frac = 1.0f;
+                        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f; if (thumbH > trackH) thumbH = trackH;
+                        const float t = slot->scroll / slot->maxScroll;
+                        const float thumbY = sby + std::max(0.0f, std::min(1.0f, t)) * (trackH - thumbH);
+                        const int sbId = g_we.id ^ 0x5c0b;
+                        const bool overThumb = hit(sbx, thumbY, kScrollbarW, thumbH);
+                        if (overThumb) g_hot = sbId;
+                        if (g_active == sbId) {
+                            if (!g_in.mouseDown) g_active = 0;
+                            else if (trackH - thumbH > 0.0f) slot->scroll += g_mouseDY * (slot->maxScroll / (trackH - thumbH));
+                        } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
+                        if (g_look) {
+                            unsigned char tmp[4];
+                            const unsigned char white[4] = {255, 255, 255, 255};
+                            rrect(sbx + 3.0f, thumbY + 2.0f, kScrollbarW - 5.0f, thumbH - 4.0f, (kScrollbarW - 5.0f) * 0.5f,
+                                  g_active == sbId ? g_theme.accent : withAlpha(white, overThumb ? 0.26f : 0.14f, tmp));
+                        } else {
+                            quad(sbx, sby, kScrollbarW, trackH, g_theme.track);
+                            quad(sbx + 1.0f, thumbY, kScrollbarW - 2.0f, thumbH, (g_active == sbId || overThumb) ? g_theme.text : g_theme.accent);
+                        }
+                    }
+                    if (slot->scroll < 0.0f) slot->scroll = 0.0f;
+                    if (slot->scroll > slot->maxScroll) slot->scroll = slot->maxScroll;
+                }
+            }
+        }
+        wrecEnd();
+        if (g_we.hidden && g_nwrec > 0 && g_wrec[g_nwrec - 1].id == g_we.id) {   // the measuring frame leaves no trace
+            const WinRec& r = g_wrec[--g_nwrec];
+            g_nv = r.v0; g_ni = r.i0; g_nspans = r.ns0; g_curClipOn = r.clipOn; g_curClipRect = r.clip; g_curTex = r.tex;
+        }
+        g_we = WinEnd();
+    }
+    g_hitWinOn = false;
     g_lay.active = false;
 }
 
@@ -1890,8 +2083,9 @@ bool Begin(const char* title, bool* p_open, int flags) {
     const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
     const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
     if (pin) PinNextWindow();
-    if (!(flags & Window_NoResize)) ResizableNextWindow(96.0f, 64.0f);
+    if (!(flags & (Window_NoResize | Window_AlwaysAutoResize))) ResizableNextWindow(96.0f, 64.0f);
     g_noTitleNext = (flags & Window_NoTitleBar) != 0;
+    g_wflagsNext = flags | kWinFlagStyle;
     return Begin(title, x, y, w, h, (flags & Window_NoTitleBar) ? nullptr : p_open);
 }
 
@@ -1899,10 +2093,17 @@ Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec
 Vec2 GetWindowSize() { return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
 float GetWindowWidth() { return g_curWin.valid ? g_curWin.w : 0.0f; }
 float GetWindowHeight() { return g_curWin.valid ? g_curWin.h : 0.0f; }
-bool IsWindowHovered() { return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h); }
+bool IsWindowHovered() {
+    return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h)
+           && !coveredByHigher(g_in.mouseX, g_in.mouseY, g_curWin.z, g_curWin.id);
+}
 bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
 bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }
-void SetWindowFocus(const char* title) { if (title) g_focusWin = windowId(title); }
+void SetWindowFocus(const char* title) {
+    if (!title) return;
+    g_focusWin = windowId(title);
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
+}
 
 bool BeginChild(const char* id, float w, float h, bool border) {
     // Depth guard first: past the child-stack capacity the parent layout cannot
@@ -1920,7 +2121,7 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     float* scroll  = floatState(cid, 0.0f);
     float* maxSlot = floatState(cid ^ 0x4d61, 0.0f);   // last frame's max scroll
     const bool hovered = hit(rx, ry, rw, rh);
-    if (hovered && g_in.wheel != 0.0f) *scroll -= g_in.wheel * rowH();   // wheel scrolls
+    if (hovered && g_in.wheel != 0.0f) { *scroll -= g_in.wheel * rowH(); if (*maxSlot > 0.0f) g_wheelUsed = true; }   // wheel scrolls
     // Clamp with the previous frame's content extent so layout uses a sane offset.
     if (*scroll < 0.0f) *scroll = 0.0f;
     if (*scroll > *maxSlot) *scroll = *maxSlot;
@@ -4487,6 +4688,7 @@ void ResetState() {
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
     g_ovCurN = g_ovPrevN = 0;
+    g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }

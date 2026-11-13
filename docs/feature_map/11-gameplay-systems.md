@@ -39,14 +39,14 @@ No open PR touches this area.
   - 11.2.2 Loot tables - `Inventory/LootTable` - weighted entries with min, max and chance, several rolls, cached per path
   - 11.2.3 Item pickups - `Components/ItemPickup` - walk into, auto radius or interact key, magnet, takes what fits, drops spawn a pickup so nothing is lost, "hold in hands" items
   - 11.2.4 Loot source - `Components/LootSource` - rolls a table at start, on first chest open or on death; refill timer; repeatable seed
-  - 11.2.5 Item Database window - `editor/main.cpp` - View > Editors & Tools > Item Database edits `items.okayitems`
-- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/main.cpp` (Item Database window)
-- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
-- **Editor:** View > Editors & Tools > Item Database; Add Component > RPG / Turn-Based > Item Pickup, Loot Source
-- **Docs:** `docs/asset_database.md` (lists the extensions only); no item or loot doc
-- **Tests:** `item_database`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
-- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops and loot rolls covered by `item_database` and `inventory_gameplay`
-- **Open:** no doc for `.okayitems` or `.okayloot` formats; no editor for loot tables (text files only); unknown item names become "loose" definitions that are never saved
+  - 11.2.5 Items, Loot & Recipes window - `editor/ContentEditors.cpp` - Window menu and View > Editors & Tools; items, loot tables (weights, quantity, roll preview) and the same window's recipe tab
+- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/ContentEditors.cpp`
+- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `LootTable::Shares`, `LootTable::Issues`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
+- **Editor:** Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
+- **Docs:** `docs/asset_database.md` (lists the extensions only); `docs/editor.md`
+- **Tests:** `item_database`, `item_loot_recipes`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
+- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops, loot rolls, file round trip and roll distribution covered by `item_database`, `item_loot_recipes` and `inventory_gameplay`
+- **Open:** no separate doc page that spells the `.okayitems` or `.okayloot` text format out line by line; unknown item names become "loose" definitions that are never saved until Define it is used
 - **Related:** 11.1, 11.3, 20, 9.5, 5.9
 - **Words:** item database, .okayitems, item definition, rarity, stack size, loot table, .okayloot, drop, pickup, ItemPickup, LootSource, loot chest, durability, item uid, legacy item names
 - **Seen as:** an item shows as plain text with no icon; a renamed item disappears from old saves; enemies drop nothing; a pickup cannot be picked up; loot rolls the same every time or differs between runs
@@ -61,11 +61,11 @@ No open PR touches this area.
   - 11.3.4 Crafting station - `Components/CraftingStation` - bench with its own panel, station tag, shift-click to craft many, nearest-in-range only
 - **Code:** `Inventory/Recipe`, `Components/Crafting`, `Components/CraftingMenu`, `Components/CraftingStation`, `editor/main.cpp` (crafting inspectors)
 - **API:** `Recipe`, `Ingredient`, `RecipeBook`, `CraftQueue`, `Crafting::Craft`, `CraftingStation`, script `craft`, visual-script Craft, `on_craft`, `on_craft_failed`
-- **Editor:** Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station; recipe editor in the inspector; optional `.okayrecipes` picker
-- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only)
-- **Tests:** `inventory_persist_craft`, `npc_crafting`, `vs_inventory`
-- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks and craft counts covered by `inventory_persist_craft`
-- **Open:** no recipe book editor window (text file only); `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
+- **Editor:** Window > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
+- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor.md`
+- **Tests:** `inventory_persist_craft`, `item_loot_recipes`, `npc_crafting`, `vs_inventory`
+- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks, craft counts and the recipe file round trip covered by `inventory_persist_craft` and `item_loot_recipes`
+- **Open:** `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
 - **Related:** 11.1, 11.2, 11.5, 9.5
 - **Words:** crafting, recipe, .okayrecipes, workbench, crafting station, craft time, byproduct, craft queue, ingredients, CraftingMenu, unlock recipe
 - **Seen as:** crafting takes items but gives nothing; the same button appears twice after loading; a bench opens for the wrong player; craft time never finishes

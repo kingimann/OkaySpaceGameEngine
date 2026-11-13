@@ -193,6 +193,11 @@ add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
 add_test(NAME item_database COMMAND test_item_database)
 
+# Item, loot and recipe files: round trip, plain-English missing-item checks, loot roll distribution
+add_executable(test_item_loot_recipes test_item_loot_recipes.cpp)
+target_link_libraries(test_item_loot_recipes PRIVATE okay::engine)
+add_test(NAME item_loot_recipes COMMAND test_item_loot_recipes)
+
 # Inventory gameplay: pickups/drops, using the held item, encumbrance, loot tables
 add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
 target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)

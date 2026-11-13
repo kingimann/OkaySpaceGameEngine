@@ -83,7 +83,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | Four separate health models | `HealthStat`, `SurvivalStats`, RPG `Stats`, `NPCController.health` (feature map 11.4, 11.9, 9.5) | Damage from one system does not reach the others; scripts must know which one to hit | Medium | Large |
 | Melee only hits NPCs; no weapon definitions tied to items; no ranged weapon component except projectiles | feature map 11.x (`Open:` on combat row) | Weapons are hand-built every time | Medium | Large |
-| No loot-table, recipe-book or item editor windows | `.okayitems`, `.okayloot`, recipe book are text files (feature map 11.2, 11.3) | Designers edit text by hand | Medium | Medium |
+| ~~No loot-table, recipe-book or item editor windows~~ Resolved: **Window > Items, Loot & Recipes** (also **View > Editors & Tools**) lists, searches, adds, duplicates, deletes and edits items, loot tables and recipes. Loot entries have weight, a quantity range and a live roll preview. Recipes have inputs, outputs and crafting time. Item references are dropdowns of defined items; a missing one is a plain-English warning. Saves the existing `.okayitems`, `.okayloot` and `.okayrecipes` files, with undo while the window is focused. | `editor/ContentEditors.cpp`, `Inventory/ItemDatabase`, `Inventory/LootTable`, `Inventory/Recipe` | Done. | Medium | Medium |
 | Build mode placements are not synced between players | `docs/build_mode.md` "Not covered yet" | Multiplayer building diverges | Medium | Medium |
 | Minimap is 2D top-down only; Turn Manager and Minimap have no docs | feature map 11.x | No 3D or tilted minimap and no doc pages | Low | Medium |
 

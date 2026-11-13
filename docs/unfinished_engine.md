@@ -103,7 +103,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | Typed script language: `static`, `const` only in the Behaviour class; `new` only for Vector3; `int.Parse` style calls not parsed | `engine/src/Script/Checker.cpp:248, 249, 262, 1688`; `Parser.cpp:901` | Users porting normal C# patterns hit errors saying "for now" | Medium | Large |
-| (Resolved) Visual script export of Timer, unknown nodes, and Actions steps | Timer in `editor/VisualScriptEditor.hpp`; unknown nodes beside it; Actions export in `editor/ActionExport.hpp` | Timer emits the same accumulator the node runs (leftover kept, clamped to four intervals; zero, negative, and NaN pass every time). A node with no script fails the export: Problems and the node name it, and View as OkayScript does not offer a script that skips it. An Actions list exports as `actions_load` of its own text, so every step and trigger runs on an Actions component. Tests run the export and the graph (or the list) for the same inputs | — | — |
+| Visual script export still turns Timer into a comment, unknown nodes into `// unsupported node`, and Actions steps into `// TODO` | Timer in `editor/VisualScriptEditor.hpp`; unknown nodes beside it; Actions `// TODO` in `editor/main.cpp` | Wait and Delay emit `after(seconds, "fn")` and the following nodes run in that function (one export-vs-runtime test). Timer, unknown nodes, and the Actions list still skip the real work | Medium | Medium |
 | Typed language engine API duplicated from the old VM | `engine/src/Script/EngineApi.cpp` vs `Scripting/OkayScriptVM.cpp` | The two builtin tables can drift | Low | Large |
 | Text scripts have no breakpoints or stepping | feature map 13.5/14.5 | Only the visual-script debugger can step | Medium | Large |
 | Node definitions must be added in two places | `editor` registry and `VsTypes` pin table (feature map 14.1) | Easy to ship a node that appears but does not run | Low | Medium |
@@ -150,7 +150,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 |---|---|---|---|---|
 | Accessibility: five settings are wired, five are not (partly done) | Wired and tested (`accessibility_wired`, `accessibility_render`): text size (screen-space text, button, toggle, keybind, tooltip, context-menu labels), colour filter (3D frame in the player plus UI flat colours and text), high contrast (UI text), reduce motion (camera shake, UI slide, pop and loop animations), reduce flashing (`flash` action, UI blink loop). All five rows sit on the Settings screen (`SettingsScreen`, saved to Prefs). NOT DONE and not in the UI: subtitles and sound captions (no widget draws `CaptionManager` lines), hold-to-toggle, aim assist, screen-reader hints, head bob and landing dip under reduce motion, Achromatopsia (no correction exists) | A player can use the five wired rows; the others still have no reader, so no control for them is offered. Wired limits: slider, dropdown, input and progress text keep their size; images drawn by UI widgets are not colour filtered; the editor and launcher (okayui) do not read the settings; Settings screens saved before this change lack the new rows until the Settings prefab is added again | Medium | Medium |
 | Localization tools (`LocTable`, `LocCheck`, `LocPreview`, `LocScan`) not reachable from the editor | zero references in `editor/` or `player/` | Missing-key reports, placeholder mismatches and pseudo-locale preview cannot be used by a normal user (this sharpens 1.16 and 31.1 with the exact consumer count) | Medium | Medium |
-| Duplicate components of one type save only the first (except a few listed types) | `SceneSerializer.cpp` (feature map 1.7) | Two colliders or two lights on one object lose one on save | Medium | Medium |
+| Duplicate components of one type save only the first (resolved: every instance is saved) | `SceneSerializer.cpp` (feature map 1.5) | Two colliders or two lights on one object used to lose one on save | Medium | Medium |
 | Right-to-left languages unsupported (see section 9) | see above | | Medium | Large |
 | Lightmap baking has no test | `Render/Lightmap.hpp` (`BakeFaceLighting`); no test names it; editor calls it | Bake regressions invisible | Low | Small |
 | Other code with no test naming it | `UITouchScroll`, `ItemPresentation` (`DescribeItem`, `InventoryKeyWarning`), `LoadingScreenLayout`, `DeathLock` | Small features without any safety net | Low | Small |
@@ -158,7 +158,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 7. Medium: 57. Low: 29. Total rows: 94.
+High: 7. Medium: 58. Low: 29. Total rows: 94.
 
 ## Top 15 to tackle first
 
@@ -173,7 +173,7 @@ High: 7. Medium: 57. Low: 29. Total rows: 94.
 9. **(Resolved) Undo uses full snapshots** (sec 13). The editor now records scene deltas on `UndoStack` (named steps, merged drags, GUID-exact delete restore, history kept across Play, no recording during Play). What is left is a narrower Medium row in sec 13: per-object commands, and the unrun GUI paths.
 10. ~~**Navigation: off-mesh links and area costs** (sec 6).~~ Done: Nav Mesh Modifier areas with per-area costs and agent masks, and Nav Mesh Links (jump, drop, ladder) that agents plan through and cross, see `docs/navigation.md`. Obstacle carving is done too (resolved row in sec 6), see `docs/navigation.md`.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1) or a visible warning in the Light Inspector (small).
-12. **(Resolved) Visual script export turns Wait, Delay, or Timer into comments, and Actions steps into comments** (sec 10). Wait and Delay emit `after(seconds, "fn")`. Timer emits the same once-per-interval gate the node runs. A node with no script fails the export by name. Every Actions step is in an `actions_load` call that runs the list. Tests compare the export with the graph or the list.
+12. **(Resolved) Visual script export turns Wait or Delay into comments** (sec 10). Wait and Delay emit `after(seconds, "fn")`; the nodes that follow run in that function after the delay. One test runs the export and the graph for the same delay. Timer is still a comment.
 13. **Joint3D hinge limits** (sec 2). Small change with big effect on doors and levers; reuse `Math/JointLimit.hpp`.
 14. **Sound captions and respawn replication** (sec 7, 11). Small, user-visible multiplayer and accessibility fixes.
 15. **Localization tools into the Localization window** (sec 14). The checks and previews are built and tested; the window just needs to call them, which also removes duplicated grid logic.

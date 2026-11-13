@@ -146,7 +146,17 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 23: UI::ProgressBar(r.Nasty(), r.Chance(50) ? lbl.c_str() : nullptr); break;
             case 24: { int t = r.Int(4); UI::TabBar(hdr, r.Int(5) - 1, &t); break; }
             case 25: UI::Tooltip(lbl.c_str()); break;
-            case 26: if (r.Chance(15)) { UI::PushStyleVar((UI::StyleVar)r.Int(UI::StyleVar_COUNT + 3), UI::Vec2{r.Nasty(), r.Nasty()}); if (r.Chance(60)) UI::PopStyleVar(r.Int(4)); break; }
+            case 26: if (r.Chance(10)) {   // ImGui-style windows: random SetNext*, conditions, flags, nested Begin calls, queries
+                if (r.Chance(70)) UI::SetNextWindowPos(UI::Vec2{r.Nasty(), r.Nasty()}, (UI::Cond)r.Int(17));
+                if (r.Chance(70)) UI::SetNextWindowSize(UI::Vec2{r.Nasty(), r.Nasty()}, (UI::Cond)r.Int(17));
+                const bool wo = UI::Begin(r.Chance(10) ? nullptr : "fz win", r.Chance(30) ? &bools[1] : nullptr, r.Int(8));
+                UI::GetWindowPos(); UI::GetWindowSize(); UI::IsWindowHovered(); UI::IsWindowFocused(); UI::IsWindowAppearing();
+                if (wo) UI::Text("in");
+                UI::End();
+                if (r.Chance(10)) UI::SetWindowFocus("fz win");
+                break;
+            }
+            if (r.Chance(15)) { UI::PushStyleVar((UI::StyleVar)r.Int(UI::StyleVar_COUNT + 3), UI::Vec2{r.Nasty(), r.Nasty()}); if (r.Chance(60)) UI::PopStyleVar(r.Int(4)); break; }
             if (r.Chance(25)) {   // tab bars: random items, close boxes, trailing buttons, nested bars, calls out of order
                 if (UI::BeginTabBar(r.Chance(10) ? nullptr : "tb")) {
                     bool tmpOpen = r.Chance(70);

@@ -279,7 +279,8 @@ struct DragDrop {
 DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
-struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false; };
+struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
+                 bool posInit = false, sizeInit = false; unsigned long long lastFrame = 0; };
 WinSlot g_wins[16];
 
 // Per-widget open/closed state (CollapsingHeader, Combo), persisted by id.
@@ -1547,6 +1548,13 @@ const Font* FontBold()      { return &kFontBold; }
 // ---- Auto-layout window + ImGui-style overloads --------------------------------
 
 static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
+// The window being built (for GetWindowPos / IsWindowHovered ...) and the one that was clicked last (IsWindowFocused).
+struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; };
+static CurWin g_curWin;
+static int g_focusWin = 0;
+// SetNextWindowPos / SetNextWindowSize, consumed by the next Begin(title, p_open, flags).
+struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; };
+static NextWin g_nextWinPos, g_nextWinSize;
 void PinNextWindow() { g_pinNext = true; }
 static bool  g_resizeNext = false;   // ResizableNextWindow: the next Begin gets a resize grip
 static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
@@ -1626,6 +1634,9 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 
     // Frame: panel body (only the title bar when collapsed) + accent underline + title.
     const float bodyH = *collapsed ? titleH : h;
+    g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
+    if (slot) slot->lastFrame = g_frameCount;
+    if (g_pressed && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_focusWin = id;   // the last window drawn under the pointer is on top
     if (g_look) {   // launcher window: shadow, rounded body with a hairline, slim title bar
         const float wr = g_theme.windowRounding;
         if (g_theme.windowShadow) softShadow(wx, wy, w, bodyH, wr);
@@ -1688,10 +1699,56 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
 }
 
 void End() {
+    g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
     g_lay.active = false;
 }
+
+void SetNextWindowPos(Vec2 pos, Cond cond) { g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond}; }
+void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, size.x, size.y, (int)cond}; }
+
+// A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
+static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
+
+bool Begin(const char* title, bool* p_open, int flags) {
+    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; return false; }
+    const int id = windowId(title);
+    WinSlot* slot = nullptr; bool created = false;
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
+    if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { created = true; ws.used = true; ws.id = id; ws.x = 60.0f; ws.y = 60.0f; ws.w = 320.0f; ws.h = 240.0f; ws.sized = true; slot = &ws; break; }
+    NextWin np = g_nextWinPos, ns = g_nextWinSize;
+    g_nextWinPos.set = g_nextWinSize.set = false;
+    bool pin = false;
+    if (slot) {
+        const bool appearing = slot->lastFrame + 1 < g_frameCount;      // not drawn on the frame before
+        auto apply = [&](const NextWin& n, bool& init) {
+            if (!n.set) return false;
+            const bool take = n.cond == Cond_Always || ((n.cond == Cond_Once || n.cond == Cond_FirstUseEver) && !init) || (n.cond == Cond_Appearing && appearing);
+            if (take) init = true;
+            return take;
+        };
+        if (apply(np, slot->posInit)) { slot->x = np.x; slot->y = np.y; pin = (np.cond == Cond_Always); }
+        if (apply(ns, slot->sizeInit)) { slot->w = ns.x; slot->h = ns.y; slot->sized = true; }
+        if (created) slot->posInit = slot->sizeInit = true;            // a window that exists has had its first use (FirstUseEver / Once are spent)
+        if (flags & Window_NoMove) pin = true;
+        if (!slot->sized) { slot->w = 320.0f; slot->h = 240.0f; slot->sized = true; }
+    }
+    const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
+    const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
+    if (pin) PinNextWindow();
+    if (!(flags & Window_NoResize)) ResizableNextWindow(96.0f, 64.0f);
+    return Begin(title, x, y, w, h, p_open);
+}
+
+Vec2 GetWindowPos() { return g_curWin.valid ? Vec2{g_curWin.x, g_curWin.y} : Vec2{0, 0}; }
+Vec2 GetWindowSize() { return g_curWin.valid ? Vec2{g_curWin.w, g_curWin.h} : Vec2{0, 0}; }
+float GetWindowWidth() { return g_curWin.valid ? g_curWin.w : 0.0f; }
+float GetWindowHeight() { return g_curWin.valid ? g_curWin.h : 0.0f; }
+bool IsWindowHovered() { return g_curWin.valid && !g_in.blocked && pointIn(g_in.mouseX, g_in.mouseY, g_curWin.x, g_curWin.y, g_curWin.w, g_curWin.h); }
+bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
+bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }
+void SetWindowFocus(const char* title) { if (title) g_focusWin = windowId(title); }
 
 bool BeginChild(const char* id, float w, float h, bool border) {
     if (!g_lay.active) return false;

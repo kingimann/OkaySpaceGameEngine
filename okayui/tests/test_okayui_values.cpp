@@ -613,6 +613,66 @@ void StyleVarTests() {
     CHECK(std::fabs((a2.y - (a1.y + a1.h)) - normalGap) < 0.01f);
 }
 
+void WindowApiTests() {
+    Sim sim;   // the shared test kit, driven directly: these windows are not wrapped in the Rig's own window
+    UI::Vec2 pos{-1, -1}, size{-1, -1}; float ww = -1, wh = -1; bool shown = false, hovered = false, focused = false, appearing = false;
+    bool drawB = true; UI::Vec2 posB{-1, -1}, sizeB{-1, -1}; bool focusedB = false;
+    int mode = 0; bool open = true;
+    auto frame = [&] {
+        sim.Frame([&] {
+            if (mode == 1) { UI::SetNextWindowPos(UI::Vec2{200, 120}, UI::Cond_FirstUseEver); UI::SetNextWindowSize(UI::Vec2{300, 200}, UI::Cond_FirstUseEver); }
+            if (mode == 2) { UI::SetNextWindowPos(UI::Vec2{50, 60}, UI::Cond_Always); UI::SetNextWindowSize(UI::Vec2{150, 100}, UI::Cond_Always); }
+            if (mode == 3) { UI::SetNextWindowPos(UI::Vec2{400, 300}, UI::Cond_Appearing); }
+            shown = UI::Begin("Win A", &open, mode == 4 ? UI::Window_NoMove : 0);
+            pos = UI::GetWindowPos(); size = UI::GetWindowSize(); ww = UI::GetWindowWidth(); wh = UI::GetWindowHeight();
+            hovered = UI::IsWindowHovered(); focused = UI::IsWindowFocused(); appearing = UI::IsWindowAppearing();
+            if (shown) UI::Text("content");
+            UI::End();
+            if (drawB) {
+                UI::SetNextWindowPos(UI::Vec2{450, 20}, UI::Cond_FirstUseEver); UI::SetNextWindowSize(UI::Vec2{100, 80}, UI::Cond_FirstUseEver);
+                UI::Begin("Win B"); posB = UI::GetWindowPos(); sizeB = UI::GetWindowSize(); focusedB = UI::IsWindowFocused(); UI::End();
+            }
+        });
+    };
+    // outside a window the queries answer zeros / false
+    CHECK(UI::GetWindowPos().x == 0 && UI::GetWindowSize().y == 0 && !UI::IsWindowHovered() && !UI::IsWindowFocused() && !UI::IsWindowAppearing());
+    // no SetNext* call: the first-use defaults (60, 60) and 320 x 240
+    mode = 0; frame(); frame();
+    CHECK(shown && pos.x == 60 && pos.y == 60 && size.x == 320 && size.y == 240 && ww == 320 && wh == 240);
+    CHECK(appearing == false);                                                // only the first frame it is drawn
+    // FirstUseEver is used once: a later call with other values does not move an already-seen window
+    mode = 1; frame(); frame();
+    CHECK(pos.x == 60 && size.x == 320);
+    // Always wins every frame
+    mode = 2; frame();
+    CHECK(pos.x == 50 && pos.y == 60 && size.x == 150 && size.y == 100);
+    // a window never seen before takes the FirstUseEver values
+    CHECK(posB.x == 450 && posB.y == 20 && sizeB.x == 100 && sizeB.y == 80);
+    // hover follows the pointer, and clicking a window focuses it (the last one clicked)
+    mode = 0; sim.Move(70, 70); frame(); CHECK(hovered);
+    sim.Move(600, 400); frame(); CHECK(!hovered);
+    sim.Move(pos.x + 40, pos.y + 40); frame(); sim.Down(); frame(); sim.Up(); frame();
+    CHECK(focused && !focusedB);
+    sim.Move(500, 40); frame(); sim.Down(); frame(); sim.Up(); frame();
+    CHECK(focusedB && !focused);
+    UI::SetWindowFocus("Win A"); frame(); CHECK(focused);
+    // appearing: not drawn for a frame, then drawn again: IsWindowAppearing is true that frame and Cond_Appearing takes effect
+    mode = 0; drawB = false; open = true; frame(); frame();
+    CHECK(!appearing);
+    sim.Frame([&] {});                                                    // a frame without the window
+    mode = 3; frame();
+    CHECK(appearing && pos.x == 400 && pos.y == 300);                    // it appeared again, at the Cond_Appearing position
+    frame(); CHECK(!appearing);                                           // only that first frame
+    mode = 3; frame(); CHECK(pos.x == 400);                               // Cond_Appearing is not applied again while it stays up
+    // NoMove pins the window where its slot is
+    mode = 4; UI::SetNextWindowPos(UI::Vec2{0, 0}, UI::Cond_Once); frame();
+    const UI::Vec2 before = pos;
+    sim.Move(pos.x + 60, pos.y + 8); frame(); sim.Down(); frame(); sim.Move(pos.x + 160, pos.y + 90); frame(); frame(); sim.Up(); frame();
+    CHECK(std::fabs(pos.x - before.x) < 0.5f && std::fabs(pos.y - before.y) < 0.5f);
+    // a null title is harmless
+    UI::SetNextWindowPos(UI::Vec2{1, 1}); sim.Frame([&] { CHECK(!UI::Begin(nullptr)); UI::End(); });
+}
+
 void MenuTests() {
     Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
     r.body = [&] {
@@ -869,6 +929,7 @@ int main() {
     TooltipAndHelperTests();
     KeyStateTests();
     StyleVarTests();
+    WindowApiTests();
     MenuTests();
     SubMenuTests();
     MenuKeyTests();

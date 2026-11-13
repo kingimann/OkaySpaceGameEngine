@@ -234,6 +234,13 @@ void EndFrameData(int outputWidth, int outputHeight);
 /// Returns false when collapsed — skip the widget calls but ALWAYS pair with End().
 /// Pass `p_open` to add a close [x] button that sets *p_open = false when clicked.
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open = nullptr);
+/// The ImGui-style window: position and size come from SetNextWindowPos / SetNextWindowSize (else a first-use default of
+/// (60, 60) and 320 x 240), and afterwards the user can drag it by the title bar and resize it by the grip in the corner.
+/// `cond` says when the call takes effect: always (and then the window cannot be dragged / resized), only the first time the
+/// window is ever seen, or each time it appears again after not being drawn for a frame.
+enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Appearing = 8 };
+enum WindowFlags : int { Window_None = 0, Window_NoResize = 1, Window_NoMove = 2 };   // the only two flags OkayUI honours
+
 void End();
 /// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
 /// overlays anchored to the screen, such as a dialogue box or a quest tracker.
@@ -787,6 +794,21 @@ void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);
 void PopStyleVar(int count = 1);
 bool IsMouseHoveringRect(Vec2 min, Vec2 max);
+/// About the window between Begin and End (zeros / false outside one). IsWindowHovered: the pointer is over it (it does not check
+/// whether another window covers it). IsWindowFocused: it was the last window clicked. IsWindowAppearing: it was not drawn on the
+/// frame before. SetWindowFocus(title) makes a window the focused one.
+Vec2 GetWindowPos();
+Vec2 GetWindowSize();
+float GetWindowWidth();
+float GetWindowHeight();
+bool IsWindowHovered();
+bool IsWindowFocused();
+bool IsWindowAppearing();
+void SetWindowFocus(const char* title);
+/// Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
+void SetNextWindowPos(Vec2 pos, Cond cond = Cond_Always);
+void SetNextWindowSize(Vec2 size, Cond cond = Cond_Always);
+bool Begin(const char* title, bool* p_open = nullptr, int flags = 0);
 
 /// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
 /// `disabled` false the pair does nothing (so `BeginDisabled(!ok)` is always safe). Unbalanced calls are reset each

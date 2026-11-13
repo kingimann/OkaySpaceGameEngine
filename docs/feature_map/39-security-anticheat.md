@@ -1,11 +1,11 @@
 # 39. Security & anti-cheat
 
 A cross-cutting area: every place where the engine, launcher or backend defends itself against cheaters, forged data, unsafe
-paths or tampered files. It pulls together the anti-cheat in the network layer (details in 16.6), the five `shared/AntiCheat*`
+paths or tampered files. It pulls together the anti-cheat in the network layer (details in 16.6), the `shared/AntiCheat*`
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
 safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
-hardening items are merged; nobody is touching it now.
+hardening items are merged. An opt-in client hardening layer (39.12) was added afterwards on its own branch.
 
 ## 39. Security & anti-cheat
 
@@ -109,7 +109,7 @@ hardening items are merged; nobody is touching it now.
 - **Docs:** `docs/anticheat.md` (The runtime checks, Limits)
 - **Tests:** `anticheat_checks`, `net_anticheat_ph3`
 - **Status:** Partial - logic tested on every platform; the Windows probes themselves can't run in CI; local checks are bypassable, the server-verified version is the strong one
-- **Open:** no kernel driver, memory scanning or obfuscation (by design); older clients never answer the heartbeat, so turn `maxClockDrift` on only when every player has the update
+- **Open:** no kernel driver, memory scanning or obfuscation (by design; the opt-in extras are in 39.12); older clients never answer the heartbeat, so turn `maxClockDrift` on only when every player has the update
 - **Related:** 16.6.6, 39.4, 39.6
 - **Words:** debugger, loaded module, DLL injection, speedhack, clock drift, heartbeat, RuntimeGuard, allowlist, ClockHeartbeat, challenge response
 - **Seen as:** the game closes in Enforce mode with "debugger detected"; an overlay is reported as an unknown module; "clock drift +50%" for a player
@@ -235,3 +235,26 @@ hardening items are merged; nobody is touching it now.
 - **Words:** RLS, row level security, service_role, password hash, PBKDF2, SHA-256, constant time, updater signing, SECURITY DEFINER, secrets, curl
 - **Seen as:** a token or key in a log; a download from a hostile server being trusted; weak local passwords
 - **Ask me like:** "list the weak spots in the account code", "sign the updater with the anti-cheat key"
+
+### 39.12 Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in)
+- **What:** User-mode, opt-in extras on top of 39.4 and 39.5, all client side and all producing weighted signals (weight 1 to 6, never a ban or a forced exit). A value type that hides health or ammo from naive memory editors, a signed hash of the player's own code sections checked at run time, inline-hook and import-table checks on a short list of system functions, a signed module blocklist/allowlist file that changes without a rebuild, extra debugger and hypervisor hints, a QPC / tick / server-time clock cross-check, a server-challenged heartbeat attestation, and pure-logic input analysis (turbo, macros, impossible mouse moves, camera not explained by input) a server can call.
+- **Parts:**
+  - 39.12.1 Protected values - `shared/AntiCheatProtected.hpp` - `okay::Protected<T>`: keyed XOR, a new key on every write, a keyed canary, a plain decoy copy that detects an edited address; thread safe; tamper handler
+  - 39.12.2 Code baseline and scanner - `shared/AntiCheatPe.hpp` - PE parsing from byte buffers, relocation-aware section hash, `CodeBaseline` JSON (`okayspace-code/1`, ed25519 signed like the manifest), `CodeScanner` hashing 64 KiB per 100 ms
+  - 39.12.3 Build tool - `tools/okay_ac_tool.cpp` - `baseline`, `sign-rules`, `verify`; built with `-DOKAY_BUILD_TOOLS=ON`
+  - 39.12.4 Hook, import, rules, hints, clocks - `shared/AntiCheatHardening.hpp` - `CheckApiEntries` (decode the entry bytes, judge where a jump lands), `CheckImports` (IAT), `ModuleRules` (`okayspace-modules/1`, name and signer rules, higher version wins), `CheckHints`, `ClockCrossCheck`, the `Hardening` scheduler, Windows probes (`winprobe`, `SetupHardening`)
+  - 39.12.5 Guard hook-up - `shared/AntiCheatChecks.hpp`, `player/main.cpp` - `Finding::weight`, `GuardProbes::hardening` / `moduleOk`, `RuntimeGuard::Score()`; signals are logged and filed in the one `client_check` report; enforce mode never exits for them
+  - 39.12.6 Heartbeat attestation - `shared/AntiCheatAttest.hpp` - nonce challenge, HMAC tag under a key derived from the session key, a hash of eight integrity facts, replay and expiry rules, wire format (messages `0xA1` / `0xA2`)
+  - 39.12.7 Input analysis - `shared/AntiCheatInput.hpp` - `AnalyzeIntervals`, `AnalyzeMouse`, `AnalyzeInputVsCamera`, `InputAnalyzer`; standard library only
+  - 39.12.8 Windows self-test - `tests/win/ac_selftest.cpp`, `scripts/ac_wine_selftest.sh` - cross-compiled with MinGW, run under wine at the preferred and at a relocated base
+- **Code:** `shared/AntiCheatProtected.hpp`, `shared/AntiCheatPe.hpp`, `shared/AntiCheatHardening.hpp`, `shared/AntiCheatAttest.hpp`, `shared/AntiCheatInput.hpp`, `shared/AntiCheatChecks.hpp`, `tools/okay_ac_tool.cpp`, `player/main.cpp`
+- **API:** `okay::Protected<T>`, `okay::SetProtectedTamperHandler`, `okayac::pe::CodeBaseline`, `okayac::pe::CodeScanner`, `okayac::ModuleRules`, `okayac::Hardening`, `okayac::SetupHardening`, `okayac::attest::Verifier` / `Client`, `okayac::input::InputAnalyzer`, env `OKAY_AC_HARDENING`, files `Data/codebaseline.json`, `.anticheat/modules.json`
+- **Editor:** none (no Build Settings switch yet; the tool runs by hand after Build Game)
+- **Docs:** `docs/anticheat.md` (Client hardening), `docs/anticheat_comparison.md`
+- **Tests:** `anticheat_protected`, `anticheat_hardening`, `anticheat_attest`, `anticheat_input`; `scripts/ac_wine_selftest.sh` (by hand)
+- **Status:** Partial - the logic and its tests run everywhere; the Windows probes ran under wine on a MinGW build, not on real Windows; the attestation is not wired into the network layer; the whole layer is user mode and can be patched out
+- **Open:** run it on real Windows in Report mode and look at the false positives (overlays, recorders, antivirus); wire the attestation messages into `NetworkManager` and feed `NoteServerTime`; an unbacked-executable-memory check, hash rules and a delivery channel for the module rules were not built; no Build Settings option runs the baseline tool; no TPM or Secure Boot attestation (self-reported values would be weak, real attestation is large)
+- **Related:** 39.4, 39.5, 39.6, 16.6
+- **Words:** protected value, Protected<T>, memory editor, code baseline, .text hash, relocation, inline hook, IAT hook, module blocklist, okayspace-modules, signer, hypervisor, debugger hint, clock cross-check, attestation, heartbeat, replay, turbo, macro, input analysis, camera mismatch, okay_ac_tool
+- **Seen as:** `code(w6)`, `hook(w5)`, `iat(w4)`, `module-blocked`, `clock-cross` lines in `anticheat.log`; "the code baseline is signed, but this build has no trusted keys: it is telemetry, not proof"
+- **Ask me like:** "make health harder to edit with Cheat Engine", "block this cheat DLL without a new build", "how does the server know the client is the real build?"

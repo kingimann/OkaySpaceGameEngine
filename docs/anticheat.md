@@ -30,6 +30,11 @@ nothing is checked and nothing is sent differently from before.
   checked by the launcher and player before a game starts, plus Windows
   debugger / loaded-module / clock-drift checks. See
   [P3: client integrity](#p3-client-integrity-opt-in) below.
+- **Client hardening (opt-in, user mode):** a hash of the player's own code, hook and import
+  checks, a signed module blocklist, weighted signals, protected values, a server-challenged
+  heartbeat attestation and input-analysis helpers. See
+  [Client hardening](#client-hardening-opt-in-user-mode). How all this compares with the
+  commercial anti-cheats, honestly: [anticheat_comparison.md](anticheat_comparison.md).
 
 ## Turning it on
 
@@ -758,8 +763,9 @@ Be clear-eyed about what this is.
 - **The clock check is local.** In the player it compares two clocks of the same
   machine. A tool that slows or speeds up both, or that hooks the reference
   clock too, won't show up. The server-verified version is the one worth wiring in.
-- **No kernel driver, no memory scanning, no obfuscation.** This won't stop a
-  dedicated cheat developer.
+- **No kernel driver, no memory scanning of other processes, no obfuscation.** This won't stop a
+  dedicated cheat developer. The opt-in hardening layer below adds checks of the player's own
+  code and imports; it is still user mode and still only raises the cost.
 - **Integrity costs a hash of every file at each launch**, done by the launcher
   and again by the player. That's fine for small games and noticeable for very
   large ones.
@@ -767,3 +773,220 @@ Be clear-eyed about what this is.
 The real defence for multiplayer is server authority: the server owns positions,
 hits and inventory, and rejects what isn't possible. Anti-cheat reports are a
 signal to review, not a verdict.
+
+## Client hardening (opt-in, user mode)
+
+Everything in this section is **opt-in**: a game that doesn't enable it behaves exactly as before.
+It is also **client side**: whoever controls the player can patch it out, hook the functions it
+calls, or run below it. It raises the cost for off-the-shelf tools and gives the backend more to
+weigh. It never proves a player innocent, and **it must never be the only layer**: the server
+verifies what a player does.
+
+Nothing here is a verdict. Every check reports a **weighted finding** (`Finding::weight`, 1 to 6,
+0 = context only). The player logs them, files them in the one `client_check` report it sends per
+run, and **never ends the game or bans because of one, even in Enforce mode**. (The older debugger,
+module and clock checks keep their behaviour: in Enforce they still end the game.) What a pile of
+weights means is the backend's call.
+
+How it is turned on. It runs only when the game's anti-cheat mode is Report or Enforce **and** one of
+these is true:
+
+- the game ships `Data/codebaseline.json` (the code baseline below);
+- the game ships `.anticheat/modules.json`, or a downloaded one sits in the save folder at
+  `anticheat/modules.json` (the module rules below);
+- the environment has `OKAY_AC_HARDENING=1` (to try it).
+
+The checks are Windows probes behind plain, unit-tested decision logic
+([shared/AntiCheatPe.hpp](../shared/AntiCheatPe.hpp), [shared/AntiCheatHardening.hpp](../shared/AntiCheatHardening.hpp)).
+On other platforms the probes are empty and only the data-file logic loads.
+
+### Protected values
+
+`okay::Protected<T>` ([shared/AntiCheatProtected.hpp](../shared/AntiCheatProtected.hpp), header only)
+holds a client-side number such as health, ammo or a currency counter so a memory editor's "search
+for 100, then change it" doesn't work:
+
+```cpp
+okay::Protected<int> health = 100;
+health -= 10;                  // Modify / += / -= / Set / Get are all thread safe
+if (health.Get() <= 0) Die();
+okay::SetProtectedTamperHandler([](okay::ProtectedTamper t, void*) { /* count it, report it */ });
+```
+
+- The value is stored XOR-ed with a keyed pad, and the **key is replaced on every write**, so the
+  bytes for "100" differ from write to write and an old copy of them decodes to nothing useful.
+- A keyed **canary** covers the plain value. Editing the stored words or the key fails it on the next read.
+- A plain **decoy** copy sits beside it, the thing a scanner finds. When it is edited it no longer
+  matches the real value: the handler is told, the real value is still returned, the decoy is repaired.
+- A canary failure returns `T{}` (zero) until the next `Set`, and tells the handler.
+- Cost, measured by the test on the build machine: tens of nanoseconds per `Set` or `Get`
+  (`tests/test_anticheat_protected.cpp` prints the numbers).
+
+**What this is and isn't.** It defeats naive memory editors and one-shot "set this address" tools. It
+does not stop anyone who finds the class in the binary: the key is next to the data, so a tool that
+understands it can decode or re-encode a value, and restoring a whole earlier snapshot of the object
+(key, words, canary and decoy together) isn't detectable. It does nothing against a cheat that reads
+memory from outside the machine. Health, ammo and money still belong to the server in multiplayer;
+this only makes casual single-player and client-side tampering a little more work.
+
+### Code and import integrity
+
+A **code baseline** is the signed list of SHA-256 hashes of the executable sections of the game's
+own exe and DLLs, made after the link by the build tool. At run time the player hashes the same
+sections as they sit in memory, a slice at a time (64 KiB every 100 ms, then 30 s of rest between
+passes), and compares.
+
+```
+okay_ac_tool baseline --build 1.2.0 --out MyGame/Data/codebaseline.json MyGame/MyGame.exe [MyGame/plugin.dll ...]
+okay_ac_tool verify   MyGame/Data/codebaseline.json --trusted <your public key hex>
+```
+
+(`okay_ac_tool` is built with `-DOKAY_BUILD_TOOLS=ON`.) It signs with the same key as the build
+manifest (`OKAY_AC_SIGNING_KEY_FILE` / `OKAY_AC_SIGNING_KEY`, see [Keys](#keys-setup-for-the-owner)) and says so
+when it writes an unsigned file. Run it on the built game's exe after File > Build Game. The manifest
+lists program files and data, not this file, so the baseline carries its own signature: a player built
+with trusted keys refuses a baseline that isn't validly signed by one of them, exactly as it does for the
+manifest. Without trusted keys it is telemetry, and the log says so.
+
+- **Relocation aware.** Windows rewrites some bytes of the code when it loads an image at a different
+  address (ASLR). Those fields are zeroed before hashing, on disk and in memory, so the hash is the same at
+  any load address. The consequence is stated honestly: **a patch that lands exactly on a relocated field
+  is not seen.**
+- **What it catches:** a trainer or patch that NOPs a check, changes a constant or writes a detour into
+  the game's own code. A mismatch is reported as `code` with weight 6.
+- **What it doesn't:** a cheater who patches this check too, restores the bytes before each scan, hooks the
+  hash function, or patches the loader. Dynamically generated code and anything the game legitimately
+  patches in its own `.text` would also mismatch; the engine doesn't.
+
+**Inline hooks.** Every 10 s the first bytes of a short list of system functions are decoded: the clocks a
+speed hack bends (`QueryPerformanceCounter`, `GetTickCount`, `GetTickCount64`, `timeGetTime`), the debugger
+probes (`IsDebuggerPresent`, `CheckRemoteDebuggerPresent`, `NtQueryInformationProcess`), loader and
+protection calls an injector uses (`LoadLibraryW`, `LoadLibraryExW`, `LdrLoadDll`, `VirtualProtect`,
+`NtProtectVirtualMemory`) and `GetAsyncKeyState`. A jump, a `mov`/`jmp` pair or a `push`/`ret` over the entry
+that lands **outside Windows' own modules, the game's own and the allowlisted ones** is reported as `hook`
+(weight 5); a breakpoint byte at the entry is weight 3. A jump that lands in another system module is
+normal (forwarding stubs) and is not reported. A hook placed deeper than the entry, or one that restores
+the original bytes when asked, isn't seen.
+
+**Imports.** Every 15 s the game's own import table, as the loader filled it in, is checked: each entry
+should point into a trusted module. One that points anywhere else was redirected after load and is
+reported as `iat` (weight 4).
+
+Where it runs and doesn't. The logic is tested on Linux (synthetic images, including relocated ones).
+The Windows probes were run under wine on a MinGW build, `scripts/ac_wine_selftest.sh`, which patches a
+byte, redirects an IAT entry and writes a hook over a real API and checks each is reported, and that a
+clean process reports nothing. Wine is not Windows: results on real Windows, with real overlays and
+antivirus, are the thing to watch in Report mode first.
+
+### Module rules (a signed blocklist and allowlist)
+
+`.anticheat/modules.json` (or `anticheat/modules.json` in the save folder) is a data file you can change
+without rebuilding the game:
+
+```json
+{
+  "format": "okayspace-modules/1",
+  "version": 3,
+  "block": [
+    {"name": "*cheat*.dll", "reason": "memory tool", "weight": 4},
+    {"signer": "Some Cheat Vendor", "weight": 5}
+  ],
+  "allow": [
+    {"name": "my-overlay64.dll"},
+    {"signer": "Example Graphics Vendor Inc."}
+  ],
+  "signature": {"alg": "ed25519", "key": "<public key hex>", "sig": "<hex>"}
+}
+```
+
+- A rule names a file (`*` and `?`, case-insensitive), a code-signing subject (a substring), or both
+  (both must match). Block beats allow. A blocked module is reported as `module-blocked` with the rule's
+  weight (up to 6); an allowed one stops being reported as an unexpected module.
+- A **signer** allow rule counts only when Windows says the signature is valid (`WinVerifyTrust`), so a
+  self-made certificate with a famous name allows nothing. Revocation checks are off (a game's frame loop
+  never goes to the network). Under wine the signer answers are not meaningful.
+- Sign it with `okay_ac_tool sign-rules rules.json out.json` (same key as above). A player with trusted
+  keys ignores a file that isn't signed by one. When several files exist the highest `version` wins.
+- It sits outside the manifest on purpose, so it can change without a rebuild. The same fact means anyone
+  can delete it: **removing the file removes the blocklist.** It is a convenience for an owner reacting to
+  a cheat they have seen, not protection.
+- No hashes and no automatic distribution of the file yet. Names are evaded by renaming; signers by a new certificate.
+
+### Debugger, hypervisor and clock hints
+
+- **Debugger hints** beyond `IsDebuggerPresent`: the same flag read straight from the process block (a
+  mismatch with the API is reported as probably hooked, weight 5), the heap-debug flags a debugger-started
+  process carries, the kernel's debug port, debug object and debug flags, and an armed hardware breakpoint on
+  the game's thread. Weights 3 to 5. A developer running their own game under a debugger trips all of them.
+- **Hypervisor:** the CPUID hint and vendor are reported as context, weight 0. A virtual machine is
+  normal on many desktops (Windows itself runs virtualised when some security features are on), so it is
+  never a reason to act alone.
+- **Clock cross-check:** `QueryPerformanceCounter`, `GetTickCount64` and, when the network layer feeds it a
+  server time (`Hardening::NoteServerTime`), the server's clock, are compared in 4 to 6 s windows, three
+  windows in a row off by more than 5% (`clock-cross`). With server time it names the bent clock (weight 5);
+  without it only "these two local clocks disagree" (weight 3). A single step of either clock (sleep and
+  resume, a time sync) is never flagged. A tool that scales every clock consistently, including the server
+  time as the client sees it, isn't caught; the server-verified heartbeat (`maxClockDrift`) remains the strong check.
+
+### Heartbeat attestation
+
+[shared/AntiCheatAttest.hpp](../shared/AntiCheatAttest.hpp). A server asks "what are you running?" and a
+client answers in a way that can't be recorded and replayed:
+
+1. The server sends a **challenge**: a random 64-bit nonce and a sequence number (14 bytes, message `0xA1`).
+2. The client answers (message `0xA2`) with its **build id**, a **hash of its integrity facts** (the nonce
+   is in the hash, so it can't be computed ahead) and an HMAC-SHA256 **tag** under a key derived from the
+   session key the two already share.
+3. The server accepts an answer once, for a challenge it issued, within 15 s, with a good tag, and a build id
+   it lists. It decodes which of eight facts are set (code scanned, code modified, imports hooked, API hooked,
+   blocklisted module, debugger hint, clock suspect, protected value tampered) by trying all 256 combinations.
+
+It reports `ok`, `dirty` (authentic but some fact is set), `unknown`, `replay`, `expired`, `bad-tag`,
+`bad-build` and `bad-facts`, and counts challenges that went unanswered. Tests run a fake server and client
+over serialised bytes and try replay, spliced answers, a wrong key, altered fields, a wrong build, a facts
+hash computed for another challenge, expiry, silence and garbage bytes (`tests/test_anticheat_attest.cpp`).
+
+What it proves: whatever answered holds this session's key, answered **now**, and says it is build X with
+facts F. What it does **not** prove: that F is **true**. The client computes the facts, so a cheater who
+controls the client answers "clean" forever, or implements the protocol in a bot that never runs a check.
+It is one more thing a bot has to implement and a patched client has to keep up, and a client that stops
+answering, answers with an old build or reports dirty facts is a signal. It is not a replacement for
+checking what the player actually does.
+
+Status: the protocol is pure logic with the wire format defined. **It is not yet wired into the network
+layer**: the two messages are for the network owner to carry (they are not part of `NetworkManager` today).
+
+### Input analysis
+
+[shared/AntiCheatInput.hpp](../shared/AntiCheatInput.hpp): standard library only, no clock, so a game
+server (or a replay reviewer) can call it. It returns **signals with weights**, not decisions.
+
+- `AnalyzeIntervals`: **turbo and macros.** Presses too regular to be a hand (spread within a server
+  tick, or under 2% of the mean) or a recorded sequence of delays replayed (the same 2 to 12 press pattern
+  repeating to within a tick). Needs at least 24 presses.
+- `AnalyzeMouse`: **impossible deltas** (faster than a hand can move a mouse of the given dpi, 6 m/s by
+  default) and **robotic runs** (long, perfectly straight, constant-speed cursor moves).
+- `AnalyzeInputVsCamera`: the camera turned **more than the mouse input explains**, or input that didn't
+  move the camera, over windows of at least 250 ms. You pass your game's degrees-per-count and tell it
+  what is normal (a controller, aim assist, recoil, knockback and cutscenes move the camera without the
+  mouse and must be kept out of the trace or covered by the tolerances).
+- `InputAnalyzer`: a bounded per-player buffer that evaluates all three on demand.
+
+Measured by the tests on synthetic traces: 8 of 2,000 random human-like timing traces were flagged (0.4%),
+0 of 300 human-like mouse traces. Real players are less tidy than a generator, and rhythm-game players are
+very steady, so tune against your own game's data before acting on anything.
+
+### Limits of the hardening layer
+
+- Every check can be removed by whoever controls the player. The cheats worth stopping are exactly those
+  whose authors will do that.
+- A cheat in the kernel, a hypervisor or on a second machine (DMA) is invisible to all of it.
+- False positives are expected: overlays, recorders, accessibility tools, input methods, antivirus and
+  debuggers touch the same things. Report mode first; look at what turns up.
+- It adds a little CPU: the code scan is about 64 KiB of hashing per 100 ms until each pass finishes, then
+  rests 30 s; the module and signature checks cost milliseconds and are cached per module.
+- The data files (baseline, module rules) are only as trustworthy as the keys in the build. A player
+  without trusted keys treats them as telemetry.
+- Not done: scanning for executable memory that no module owns, TPM or Secure Boot attestation, hash
+  rules and an update channel for the module rules, recording replays for review, wiring the attestation
+  into the network layer. See [anticheat_comparison.md](anticheat_comparison.md) for where each stands.

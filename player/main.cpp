@@ -50,6 +50,7 @@
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
 #include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
+#include "AntiCheatHardening.hpp"       // opt-in: code/import integrity, signed module rules, weighted signals (docs/anticheat.md)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUI_SoftPainter.hpp"   // the software painter of the own platform backend (own code, not ready)
@@ -1864,7 +1865,22 @@ int main(int argc, char** argv) {
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
-    okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
+    okayac::GuardProbes acProbes = okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr);
+    // Opt-in hardening (a game that ships Data/codebaseline.json or .anticheat/modules.json, or OKAY_AC_HARDENING=1):
+    // weighted signals that are logged and reported, never a reason to end the game. Nothing changes without it.
+    okayac::HardeningSetup acHard;
+    if (!dedicatedServer && acMode != okayac::Mode::Off) {
+        const char* acOptIn = std::getenv("OKAY_AC_HARDENING");
+        acHard = okayac::SetupHardening(std::filesystem::u8path(acRoot), std::filesystem::u8path(saveDir), acMode, okayac::TrustedKeys(),
+                                        acProbes.allowlist, acOptIn ? acOptIn : "");
+        for (const std::string& n : acHard.notes) acLog("[anti-cheat] hardening: " + n);
+        if (acHard.enabled && acHard.hardening) {
+            std::shared_ptr<okayac::Hardening> h = acHard.hardening;
+            acProbes.hardening = [h](std::uint64_t now) { return h->Tick(now); };
+            acProbes.moduleOk = [h](const std::string& path) { return h->ModuleAllowedByRules(path); };
+        }
+    }
+    okayac::RuntimeGuard acGuard(acMode, std::move(acProbes), acLog);
     auto frame = [&]() {
         Uint64 fStart = okay::platform::PerfCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
@@ -2881,7 +2897,7 @@ int main(int argc, char** argv) {
 #endif
     if (!acGuard.Findings().empty()) {   // the runtime checks' findings, sent once at the end
         std::string all;
-        for (const okayac::Finding& f : acGuard.Findings()) all += f.check + ": " + f.detail + "\n";
+        for (const okayac::Finding& f : acGuard.Findings()) all += okayac::FormatFinding(f) + "\n";
         acFileReport(acGuard.Findings().front().check, all);
     }
 

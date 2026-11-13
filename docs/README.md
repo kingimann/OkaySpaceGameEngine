@@ -87,6 +87,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [net_providers.md](net_providers.md): the Photon, PlayFab and Custom provider stubs are C++ extension points only.
 - [accounts.md](accounts.md): player accounts.
 - [anticheat.md](anticheat.md): anti-cheat.
+- [anticheat_comparison.md](anticheat_comparison.md): an honest, approximate comparison with the commercial anti-cheats, and what the client hardening adds.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 
 ## Core and scene

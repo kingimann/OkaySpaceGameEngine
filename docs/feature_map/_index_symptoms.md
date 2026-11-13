@@ -281,7 +281,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
 | a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
-| a TODO comment appears in generated code | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
@@ -450,6 +449,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | clock drift +50%" for a player | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | cloud saves do not sync | [37.7](37-platform-windowing.md#377-steam-backend) Steam backend |
 | CMake configure fails with "isn't an ed25519 public key | [39.7](39-security-anticheat.md#397-trusted-keys-and-signing-keys-at-build-time) Trusted keys and signing keys at build time |
+| code(w6)`, `hook(w5)`, `iat(w4)`, `module-blocked`, `clock-cross` lines in `anticheat.log | [39.12](39-security-anticheat.md#3912-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
 | collider does not match after Extrude | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
 | collider does not wrap the model | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | colours not saved | [4.9](04-characters-cameras.md#49-blocky-character-and-customization) Blocky Character and customization |
@@ -949,6 +949,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
+| the code baseline is signed, but this build has no trusted keys: it is telemetry, not proof | [39.12](39-security-anticheat.md#3912-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | the Console lists Visual Script errors when Play starts | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
@@ -1191,6 +1192,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
+| View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |

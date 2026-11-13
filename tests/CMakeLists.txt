@@ -1714,6 +1714,18 @@ add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_checks COMMAND test_anticheat_checks)
+# Anti-cheat client hardening (opt-in; docs/anticheat.md "Hardening"): protected values, code-section hashing and
+# hook / IAT / module-rule / clock logic, the heartbeat attestation, and the input analysis helpers. Plain logic, so
+# they link nothing from the engine (the headers only need engine/include for the bundled SHA-256).
+find_package(Threads)
+foreach(_ac_t protected hardening attest input)
+    add_executable(test_anticheat_${_ac_t} test_anticheat_${_ac_t}.cpp)
+    target_include_directories(test_anticheat_${_ac_t} PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    if(Threads_FOUND)
+        target_link_libraries(test_anticheat_${_ac_t} PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME anticheat_${_ac_t} COMMAND test_anticheat_${_ac_t})
+endforeach()
 # -DOKAY_AC_TRUSTED_KEYS validation (cmake/OkayAntiCheatKeys.cmake): good lists pass,
 # anything but exactly 64 hex digits per key fails the configure.
 set(_okay_ac_k64 "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")

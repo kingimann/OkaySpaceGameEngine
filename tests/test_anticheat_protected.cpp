@@ -141,13 +141,13 @@ void TestPerformance() {
     const int N = 2000000;
     volatile int plain = 0;
     Protected<int> p = 0;
-    int sink = 0;
+    unsigned sink = 0;
     const double plainSet = NsPerOp([&](int i) { plain = i; }, N);
     const double plainGet = NsPerOp([&](int) { sink += plain; }, N);
     const double protSet = NsPerOp([&](int i) { p = i; }, N);
     const double protGet = NsPerOp([&](int) { sink += p.Get(); }, N);
     std::printf("  plain int  set %.2f ns  get %.2f ns\n", plainSet, plainGet);
-    std::printf("  Protected  set %.2f ns  get %.2f ns   (sink %d)\n", protSet, protGet, sink);
+    std::printf("  Protected  set %.2f ns  get %.2f ns   (sink %u)\n", protSet, protGet, sink);
     CHECK(protSet < 2000 && protGet < 2000);   // generous: catches an accidental O(n), not a slow CI box
 }
 } // namespace

@@ -111,7 +111,7 @@ Nothing user-visible, nothing default.
 | Editor | Project panel on the asset database, undo stack, UX pass | #673 #662 #682 |
 | Editor | Add Node menu: built once (2.861.1), then only visible rows drawn and results cached (2.861.2) | #740 #746 |
 | Engine | Accessibility settings, save games without code | #657 #664 |
-| Engine | Subtitles and sound captions, hold-to-toggle, aim assist | `john/accessibility-remaining` |
+| Engine | Subtitles and sound captions, hold-to-toggle, aim assist | #767 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
 
 ## Claimed (in progress)

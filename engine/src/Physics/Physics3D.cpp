@@ -4,6 +4,7 @@
 #include "okay/Physics/TriMesh.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Math/JointLimit.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -997,6 +998,24 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float Cdot = cur - j->motorSpeed * Mathf::Deg2Rad;
                 float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt, j->maxMotorTorque * dt);
                 ra->angularVelocity = ra->angularVelocity + axis * (imp * iiA);
+            }
+            // 3b) Angle limits (JointLimit.hpp). Off until useLimits, so an existing
+            // hinge still spins freely. The stop is degrees from the pose at init;
+            // outward spin is removed so a motor cannot grind past a door or lever.
+            // Recompute the lever afterwards so this step's position correction
+            // pins the stopped pose, not the one that had already gone past.
+            if (j->useLimits && axis.SqrMagnitude() > 1e-8f) {
+                const float rel = HingeAngleDegrees(ta->localRotation, j->refRot, axis);
+                if (rel < j->minAngle || rel > j->maxAngle) {
+                    ta->localRotation = ClampHingeRotation(ta->localRotation, j->refRot, axis,
+                                                           j->minAngle, j->maxAngle);
+                    qDelta = ta->localRotation * j->refRot.Inverse();
+                    rA = qDelta * j->hingeLever;
+                    anchorWorld = pa + rA;
+                }
+                const float wAx = Vec3::Dot(ra->angularVelocity, axis);
+                if ((rel >= j->maxAngle && wAx > 0.0f) || (rel <= j->minAngle && wAx < 0.0f))
+                    ra->angularVelocity = ra->angularVelocity - axis * wAx;
             }
             // 4) Positional correction: pull A's anchor point back onto the pivot.
             Vec3 Cpos = anchorWorld - pb;

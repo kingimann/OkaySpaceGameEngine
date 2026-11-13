@@ -31929,6 +31929,14 @@ void DrawInspector(EditorState& ed) {
                     ImGui::DragFloat("Motor Speed (deg/s)##jt", &jt->motorSpeed, 1.0f);
                     ImGui::DragFloat("Max Motor Torque##jt", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
+                if (ImGui::Checkbox("Use Limits##jt", &jt->useLimits)) ed.dirty = true;
+                oked::FieldTip("Use Limits##jt");
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Angle##jt", &jt->minAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                    oked::FieldTip("Min Angle##jt");
+                    if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                    oked::FieldTip("Max Angle##jt");
+                }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
             if (jt->breakable) ImGui::DragFloat("Break at (stretch)##jt", &jt->breakForce, 0.1f, 0.0f, 1000.0f);
@@ -39850,7 +39858,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }

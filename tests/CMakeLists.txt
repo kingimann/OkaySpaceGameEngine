@@ -2497,16 +2497,10 @@ if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
     endif()
 endif()
 
-# Constant-time audit 2 of 2: a dudect-style statistical timing test. NOT run by ctest at full length (it needs
-# a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
-# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
-add_executable(crypto_timing crypto_timing.cpp)
-target_link_libraries(crypto_timing PRIVATE okay::crypto)
-add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
-
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
-# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
-# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binary `fuzz_crypto` instead.
+# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more, or
+# scripts/crypto_fuzz_sanitized.sh).
+# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binaries `fuzz_crypto` and `fuzz_net_crypto` instead.
 option(OKAY_CRYPTO_LIBFUZZER "Build the okay::crypto libFuzzer target (clang -fsanitize=fuzzer)" OFF)
 if(OKAY_CRYPTO_LIBFUZZER)
     add_executable(fuzz_crypto fuzz_crypto.cpp)
@@ -2518,6 +2512,22 @@ else()
     add_executable(fuzz_crypto_smoke fuzz_crypto.cpp)
     target_link_libraries(fuzz_crypto_smoke PRIVATE okay::crypto)
     add_test(NAME crypto_fuzz_smoke COMMAND fuzz_crypto_smoke 300)
+endif()
+# Fuzz target for what parses attacker bytes around the primitives: key exchange, sealed-message open and the replay
+# window, session tickets, mutated valid signatures and AEAD messages (fuzz_net_crypto.cpp). Compiled against okay::crypto
+# alone (SessionTicket.cpp and the header-only SecureChannel are built in), so it needs neither libsodium nor the engine.
+set(_okay_fuzznet_defs OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+if(OKAY_CRYPTO_LIBFUZZER)
+    add_executable(fuzz_net_crypto fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER ${_okay_fuzznet_defs})
+    target_compile_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+    target_link_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
+else()
+    add_executable(fuzz_net_crypto_smoke fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto_smoke PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto_smoke PRIVATE ${_okay_fuzznet_defs})
+    add_test(NAME crypto_fuzz_net_smoke COMMAND fuzz_net_crypto_smoke 300)
 endif()
 
 # Cross-checks against other implementations (both directions, thousands of random cases).
@@ -2565,15 +2575,27 @@ if(_okay_xc_sodium)
     target_compile_definitions(bench_crypto PRIVATE OKAY_BENCH_SODIUM)
 endif()
 
+# Constant-time audit 2 of 2: a dudect-style statistical timing test. NOT run by ctest at full length (it needs
+# a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
+# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
+add_executable(crypto_timing crypto_timing.cpp)
+target_link_libraries(crypto_timing PRIVATE okay::crypto)
+add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
+if(_okay_xc_sodium)   # reference rows: libsodium under the same harness, to tell CPU/measurement effects from ours
+    target_link_libraries(crypto_timing PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_timing SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(crypto_timing PRIVATE OKAY_TIMING_SODIUM)
+endif()
+
 # The existing SecureChannel test, compiled once per backend IN THE SAME BUILD (tests/test_net_crypto_*.cpp
 # rename the class so the two copies never meet at link time). With -DOKAY_OWN_CRYPTO=ON the engine's
 # own net code (net_*, net_auth, dedicated_server, ...) runs on okay::crypto as well.
 add_executable(test_net_crypto_own test_net_crypto_own.cpp)
-target_link_libraries(test_net_crypto_own PRIVATE okay::engine)
+target_link_libraries(test_net_crypto_own PRIVATE okay::crypto)
 add_test(NAME net_crypto_own COMMAND test_net_crypto_own)
 if(_okay_xc_sodium)
     add_executable(test_net_crypto_sodium test_net_crypto_sodium.cpp)
-    target_link_libraries(test_net_crypto_sodium PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_net_crypto_sodium PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_net_crypto_sodium SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME net_crypto_sodium COMMAND test_net_crypto_sodium)
 endif()

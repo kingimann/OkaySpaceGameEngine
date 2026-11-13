@@ -12,6 +12,7 @@
 #endif
 
 using Clock = std::chrono::steady_clock;
+static volatile int g_rc = 0;   // (keeps libsodium's warn_unused_result quiet)
 
 static double Bench(const std::function<void()>& f, double seconds) {
     for (int i = 0; i < 3; ++i) f();   // warm up (also builds the lazily-initialised tables)
@@ -29,7 +30,7 @@ static double Bench(const std::function<void()>& f, double seconds) {
 int main(int argc, char** argv) {
     const double secs = argc > 1 ? std::atof(argv[1]) : 0.5;
 #ifdef OKAY_BENCH_SODIUM
-    sodium_init();
+    g_rc = sodium_init();
 #endif
     using namespace okay::crypto;
     std::uint8_t sk[32], pk[32], out[32], seed[32], esk[64], epk[32], sig[64];
@@ -55,9 +56,9 @@ int main(int argc, char** argv) {
 #define THEIRS(...) none
 #endif
     row("X25519 (variable point)", [&] { X25519(out, sk, pk); },
-        THEIRS(crypto_scalarmult(out, sk, pk)));
+        THEIRS(g_rc = crypto_scalarmult(out, sk, pk)));
     row("X25519 base (public key)", [&] { X25519Base(out, sk); },
-        THEIRS(crypto_scalarmult_base(out, sk)));
+        THEIRS(g_rc = crypto_scalarmult_base(out, sk)));
     row("Ed25519 public key from seed", [&] { Ed25519PublicFromSeed(epk, seed); },
         THEIRS(unsigned char s2[64]; unsigned char p2[32]; crypto_sign_seed_keypair(p2, s2, seed)));
     row("Ed25519 sign (64-byte message)", [&] { Ed25519Sign(sig, msg, 64, esk); },
@@ -65,7 +66,7 @@ int main(int argc, char** argv) {
     row("Ed25519 verify", [&] { volatile bool b = Ed25519Verify(sig, msg, 64, epk); (void)b; },
         THEIRS(volatile int b = crypto_sign_verify_detached(sig, msg, 64, epk); (void)b));
     row("Kx client session keys", [&] { std::uint8_t rx[32], tx[32]; KxClientSessionKeys(rx, tx, pk, sk, pk); },
-        THEIRS(unsigned char rx[32], tx[32]; crypto_kx_client_session_keys(rx, tx, pk, sk, pk)));
+        THEIRS(unsigned char rx[32], tx[32]; g_rc = crypto_kx_client_session_keys(rx, tx, pk, sk, pk)));
     row("XChaCha20-Poly1305 seal 1 KiB", [&] { XChaCha20Poly1305Seal(buf2.data(), buf.data(), 1024, nullptr, 0, nonce, key); },
         THEIRS(unsigned long long l; crypto_aead_xchacha20poly1305_ietf_encrypt(buf2.data(), &l, buf.data(), 1024, nullptr, 0, nullptr, nonce, key)));
     row("Blake2b-512 of 1 KiB", [&] { Blake2bHash(hash, 64, buf.data(), 1024); },

@@ -25,6 +25,9 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <x86intrin.h>
 #endif
+#ifdef OKAY_TIMING_SODIUM
+#include <sodium.h>
+#endif
 
 using namespace okay::crypto;
 using Bytes = std::vector<std::uint8_t>;
@@ -120,6 +123,11 @@ static int RunCase(const Case& c, std::size_t n) {
 
 // ---- shared input slots ---------------------------------------------------------------------------
 static Bytes g_a, g_b, g_c, g_out;
+// b = n bytes: random for class 1, `fixed` for class 0 (the same random draws happen either way).
+static void FillClass(Bytes& b, std::size_t n, int cls, std::uint8_t fixed) {
+    b.resize(n);
+    for (std::size_t i = 0; i < n; ++i) { const std::uint8_t v = static_cast<std::uint8_t>(Rnd64() >> 24); b[i] = cls ? v : fixed; }
+}
 
 int main(int argc, char** argv) {
     const std::size_t n = argc > 1 ? static_cast<std::size_t>(std::strtoull(argv[1], nullptr, 10)) : 20000;
@@ -146,52 +154,68 @@ int main(int argc, char** argv) {
         [] { std::uint64_t acc = 1; for (int i = 0; i < 64; ++i) { if (g_a[i]) { acc *= 0x9e3779b97f4a7c15ull; acc ^= acc >> 7; acc *= 3; } __asm__ __volatile__("" ::: "memory"); } g_sink = g_sink + acc; });
 
     // ---- the real thing
+    // Every prep() does the SAME work and touches the SAME buffers for both classes (FillClass draws the same
+    // number of random bytes whichever class it is; only what lands in the buffer differs). Otherwise the harness would
+    // measure allocation and cache effects of building the inputs, not the operation.
     add("ConstantTimeEqual 256 B (equal vs differ at random byte)", 16, false,
-        [](int cls) { g_a = RndBytes(256); g_b = g_a; if (cls) g_b[Rnd64() % 256] ^= static_cast<std::uint8_t>(1 + Rnd64() % 255); },
+        [](int cls) { FillClass(g_a, 256, 1, 0); g_b = g_a; const std::size_t pos = Rnd64() % 256; const std::uint8_t x = static_cast<std::uint8_t>(1 + Rnd64() % 255); g_b[pos] ^= cls ? x : 0; },
         [] { g_sink = g_sink + ConstantTimeEqual(g_a.data(), g_b.data(), 256); });
     add("ConstantTimeEqual 16 B tag (differ first vs last byte)", 32, false,
-        [](int cls) { g_a = RndBytes(16); g_b = g_a; g_b[cls ? 15 : 0] ^= 0x80; },
+        [](int cls) { FillClass(g_a, 16, 1, 0); g_b = g_a; g_b[cls ? 15 : 0] ^= 0x80; },
         [] { g_sink = g_sink + ConstantTimeEqual(g_a.data(), g_b.data(), 16); });
     add("X25519 (zero scalar vs random scalar; fixed point)", 1, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_b = Bytes(32, 0); g_b[0] = 9; g_out.assign(32, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 32, 0, 0); g_b[0] = 9; g_out.assign(32, 0); },
         [] { g_sink = g_sink + X25519(g_out.data(), g_a.data(), g_b.data()); });
     add("X25519 (all-ones scalar vs random scalar; fixed point)", 1, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0xff); g_b = Bytes(32, 0); g_b[0] = 9; g_out.assign(32, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0xff); FillClass(g_b, 32, 0, 0); g_b[0] = 9; g_out.assign(32, 0); },
         [] { g_sink = g_sink + X25519(g_out.data(), g_a.data(), g_b.data()); });
     add("X25519Base (zero scalar vs random scalar)", 1, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_out.assign(32, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); g_out.assign(32, 0); },
         [] { X25519Base(g_out.data(), g_a.data()); });
     add("Ed25519PublicFromSeed (zero seed vs random seed)", 1, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_out.assign(32, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); g_out.assign(32, 0); },
         [] { Ed25519PublicFromSeed(g_out.data(), g_a.data()); });
     add("Ed25519Sign 64 B (zero key vs random key)", 1, false,
-        [](int cls) { Bytes seed = cls ? RndBytes(32) : Bytes(32, 0), pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), seed.data());
-                      g_b = Bytes(64, 0x42); g_out.assign(64, 0); },
+        [](int cls) { FillClass(g_c, 32, cls, 0); Bytes pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), g_c.data());
+                      FillClass(g_b, 64, 0, 0x42); g_out.assign(64, 0); },
         [] { Ed25519Sign(g_out.data(), g_b.data(), 64, g_a.data()); });
-    add("Ed25519Sign 64 B (key with all-ones scalar vs random)", 1, false,
-        [](int cls) { Bytes seed = cls ? RndBytes(32) : Bytes(32, 0xff), pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), seed.data());
-                      g_b = Bytes(64, 0x42); g_out.assign(64, 0); },
+    add("Ed25519Sign 64 B (key from all-ones seed vs random)", 1, false,
+        [](int cls) { FillClass(g_c, 32, cls, 0xff); Bytes pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), g_c.data());
+                      FillClass(g_b, 64, 0, 0x42); g_out.assign(64, 0); },
         [] { Ed25519Sign(g_out.data(), g_b.data(), 64, g_a.data()); });
     add("XChaCha20-Poly1305 seal 256 B (zero key+data vs random)", 4, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_b = cls ? RndBytes(256) : Bytes(256, 0); g_c = Bytes(24, 7); g_out.assign(272, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 256, cls, 0); FillClass(g_c, 24, 0, 7); g_out.assign(272, 0); },
         [] { XChaCha20Poly1305Seal(g_out.data(), g_b.data(), 256, nullptr, 0, g_c.data(), g_a.data()); });
     add("XChaCha20-Poly1305 open, forged tag (byte 0 vs byte 15)", 4, false,
-        [](int cls) { g_a = RndBytes(32); g_c = Bytes(24, 7); g_b = RndBytes(272); g_b[256 + (cls ? 15 : 0)] ^= 0x01; g_out.assign(256, 0); },
+        [](int cls) { FillClass(g_a, 32, 1, 0); FillClass(g_c, 24, 0, 7); FillClass(g_b, 272, 1, 0); g_b[256 + (cls ? 15 : 0)] ^= 0x01; g_out.assign(256, 0); },
         [] { g_sink = g_sink + XChaCha20Poly1305Open(g_out.data(), g_b.data(), 272, nullptr, 0, g_c.data(), g_a.data()); });
     add("ChaCha20Xor 256 B (zero key+data vs random)", 4, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_b = cls ? RndBytes(256) : Bytes(256, 0); g_c = Bytes(12, 1); g_out.assign(256, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 256, cls, 0); FillClass(g_c, 12, 0, 1); g_out.assign(256, 0); },
         [] { ChaCha20Xor(g_out.data(), g_b.data(), 256, g_a.data(), g_c.data(), 1); });
-    add("Poly1305 256 B (zero key+msg vs random; all-ones key)", 4, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0xff); g_b = cls ? RndBytes(256) : Bytes(256, 0xff); g_out.assign(16, 0); },
+    add("Poly1305 256 B (all-ones key+msg vs random)", 4, false,
+        [](int cls) { FillClass(g_a, 32, cls, 0xff); FillClass(g_b, 256, cls, 0xff); g_out.assign(16, 0); },
+        [] { Poly1305Mac(g_out.data(), g_b.data(), 256, g_a.data()); });
+    add("Poly1305 256 B (zero key+msg vs random)", 4, false,
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 256, cls, 0); g_out.assign(16, 0); },
         [] { Poly1305Mac(g_out.data(), g_b.data(), 256, g_a.data()); });
     add("BLAKE2b keyed 256 B (zero key+msg vs random)", 4, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_b = cls ? RndBytes(256) : Bytes(256, 0); g_out.assign(64, 0); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 256, cls, 0); g_out.assign(64, 0); },
         [] { Blake2bHash(g_out.data(), 64, g_b.data(), 256, g_a.data(), 32); });
     add("SHA-512 256 B (zero vs random message)", 4, false,
-        [](int cls) { g_b = cls ? RndBytes(256) : Bytes(256, 0); g_out.assign(64, 0); },
+        [](int cls) { FillClass(g_b, 256, cls, 0); g_out.assign(64, 0); },
         [] { Sha512Hash(g_out.data(), g_b.data(), 256); });
+#ifdef OKAY_TIMING_SODIUM
+    // Reference rows: libsodium's own SHA-512 and BLAKE2b under the identical harness. A shift that shows up here too is a
+    // property of this CPU or of the measurement, not of our code.
+    add("REFERENCE libsodium SHA-512 256 B (zero vs random)", 4, false,
+        [](int cls) { FillClass(g_b, 256, cls, 0); g_out.assign(64, 0); },
+        [] { crypto_hash_sha512(g_out.data(), g_b.data(), 256); });
+    add("REFERENCE libsodium X25519 (zero vs random scalar)", 1, false,
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 32, 0, 0); g_b[0] = 9; g_out.assign(32, 0); },
+        [] { g_sink = g_sink + crypto_scalarmult(g_out.data(), g_a.data(), g_b.data()); });
+#endif
     add("Kx client session keys (zero vs random secret key)", 1, false,
-        [](int cls) { g_a = cls ? RndBytes(32) : Bytes(32, 0); g_b = Bytes(32, 0); g_b[0] = 9; g_out.assign(64, 0); g_c = Bytes(32, 3); },
+        [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 32, 0, 0); g_b[0] = 9; g_out.assign(64, 0); FillClass(g_c, 32, 0, 3); },
         [] { g_sink = g_sink + KxClientSessionKeys(g_out.data(), g_out.data() + 32, g_c.data(), g_a.data(), g_b.data()); });
 
     int bad = 0;

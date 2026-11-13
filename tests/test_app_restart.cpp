@@ -142,7 +142,7 @@ static std::string ExpandCmdPercent(std::string s) {
 
 static void SetEnv(const char* key, const char* value) {
 #if defined(_WIN32)
-    _putenv_s(key, value ? value : "0");
+    _putenv_s(key, value ? value : "");   // an empty value removes the variable on Windows (a "0" here made every scenario report version 0)
 #else
     if (value) ::setenv(key, value, 1);
     else ::unsetenv(key);

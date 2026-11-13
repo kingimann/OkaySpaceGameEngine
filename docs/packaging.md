@@ -44,5 +44,6 @@ shown and writes `README.txt`. Zip `build-win-dist/` for release.
 
 When you export a game from the editor (**File → Build Settings…**), that output is its
 own self-contained folder — `<YourGame>.exe` (a copy of the player runtime) +
-`SDL2.dll` + your assets. For Steam auto-updates, upload that folder as your depot
+`SDL2.dll` + `<YourGame>_Data/` (your scenes, only the assets they use, StreamingAssets and `build.json`).
+See [build_pipeline.md](build_pipeline.md) for the layouts and options. For Steam auto-updates, upload that folder as your depot
 (see [steam_release.md](steam_release.md)).

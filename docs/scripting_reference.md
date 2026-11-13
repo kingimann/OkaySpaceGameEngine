@@ -419,6 +419,14 @@ function dbl(x) { return x * 2; }
 var doubled = map_fn(array(1, 2, 3), "dbl");   // [2, 4, 6]
 ```
 
+These walk a copy of the array taken when they start, so a callback that pushes to,
+removes from or clears the same array does not disturb the walk (the callback sees the
+array change; the walk still visits the items it started with).
+
+Wherever a built-in wants a whole number (an index, a count, a length, a button), a number
+outside the integer range is clamped to the nearest end of that range and `NaN` counts as 0,
+instead of wrapping around: `substr("hello", 1, 1e30)` is `"ello"`.
+
 ### JSON & type introspection
 
 | Function | Description |

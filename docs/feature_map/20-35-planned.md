@@ -840,7 +840,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** WorldStreamer Inspector section
 - **Docs:** `docs/scene_management.md`, `docs/asset_manager.md`; `docs/optimization_tools.md`
 - **Tests:** `worldstreamer`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
-- **Status:** Partial - cell streaming of prefabs works; `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
+- **Status:** Partial - cell streaming of prefabs works (cells are held by instance id, so a cell root destroyed by a script is skipped, not freed twice); `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
 - **Exists today:** `WorldStreamer` instantiates and destroys cell prefabs on the main thread. Cells must be authored by hand as separate prefab files. Missing cell files are skipped.
 - **Work packages:**
   1. M - Streamer uses `StreamingGrid` decisions and `AssetManager::LoadAsync` so a cell load never blocks a frame. Depends on: #574 (on main).

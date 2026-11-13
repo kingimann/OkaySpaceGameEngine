@@ -160,6 +160,10 @@ textures and URLs are built in and always found.
 | `volume.zero_size` | warning | a `Volume`, or a Logic Source plate or trigger zone, with a size of zero or less on an axis (docs/volumes.md) |
 | `volume.force_zero` | warning | a Force `Volume` with strength 0 |
 | `volume.no_audio` | warning | an Ambience `Volume` with no Audio Source, or an Audio Source with no clip |
+| `navobstacle.zero_size` | warning | a Nav Mesh Obstacle box with a size of zero or less on an axis, or a capsule with no radius or height (docs/navigation.md) |
+| `navobstacle.carve_no_surface` | warning | a Nav Mesh Obstacle with Carve on in a scene that has no Nav Mesh Surface |
+| `navobstacle.carve_no_mesh` | warning | Carve is on but the Nav Mesh Surface has no baked mesh (nothing to cut) |
+| `navobstacle.carve_every_frame` | warning | Carve Only When Stationary off with Move Threshold 0: the mesh is rebuilt every frame it moves |
 | `scene.duplicate_guid` | warning | `ValidateText` / `ValidateFile`: two objects carry the same `guid` (the loader gives one a new guid) |
 | `scene.broken_parent` | error | `ValidateText` / `ValidateFile`: `parent N` names an object that is not in the file (it loads as a root) |
 
@@ -235,6 +239,21 @@ small tolerance (`tests/test_regression.cpp` uses 6 levels on up to 1% of pixels
 **diff image** (red where a pixel is off, brighter = further, a dimmed copy elsewhere);
 `CheckImageGolden` saves it to `diffPath` when the images differ. Goldens are PNG, or binary
 PPM by the `.ppm` extension (`LoadImageFile` also reads ASCII PPM).
+
+## Tests that write files
+
+Code under test often writes files named by what it is given (a preferences save, a creation, a save slot, a
+script's file builtin) relative to the current folder or the save folder. A test that runs such code with a
+dummy name ("x") and is started from the repository would leave that file in the checkout.
+`tests/test_sandbox.hpp` (`okaytest::Sandbox`) is the guard: it makes a private folder under the system temp
+folder, makes it both the current folder and the save folder (`Save::BaseDir`), and deletes it at the end.
+It refuses to run under the source tree, and `Verify()` compares the source tree's top-level files and its
+`saves` / `creations` folders with how they were at the start, so a test that still writes there fails by
+name. The file-writing visual-script tests (`vs_script_coverage`, `vs_registry_effect`, `vs_node_behavior`,
+`vs_playground`, `vs_gameplay`, `vs_inventory`, `vs_editor_model`) use it; `test_sandbox` tests the sandbox
+itself. A new test that writes files without choosing a temp folder of its own should do the same (first line
+of `main()` after `RUN_SUITE`, and `CHECK(sandbox.Verify())` at the end). The two regeneration switches
+(`OKAY_WRITE_COVERAGE`) write into `docs/` and `examples/` on purpose and are off by default.
 
 ## Tests of the testing code
 

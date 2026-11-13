@@ -131,6 +131,14 @@ std::string Paths::Resolve(const std::string& relative) {
     return Join(AssetDirRef(), relative);
 }
 
+static std::string& StreamingDirRef() { static std::string d; return d; }
+void Paths::SetStreamingAssetsDir(const std::string& dir) { StreamingDirRef() = dir; }
+const std::string& Paths::StreamingAssetsDir() { return StreamingDirRef(); }
+std::string Paths::StreamingPath(const std::string& relative) {
+    const std::string& d = StreamingDirRef();
+    return d.empty() ? std::string() : Join(d, relative);
+}
+
 int Paths::AddAssetBaseDirListener(std::function<void(const std::string&)> fn) {
     if (!fn) return 0;
     const int id = g_nextListener++;

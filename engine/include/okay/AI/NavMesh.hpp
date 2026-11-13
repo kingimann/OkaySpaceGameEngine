@@ -39,6 +39,28 @@ struct NavQueryFilter {
     float Cost(int area) const { return area >= 0 && area < kNavAreaCount ? areaCost[area] : 1.0f; }
 };
 
+/// A solid thing standing on the mesh, as a convex footprint (up to 16 points, in XZ) and the
+/// height range it fills. A NavMeshObstacle makes one; NavMesh::Carve cuts it out of the mesh.
+struct NavCarveVolume {
+    static constexpr int kMaxPoints = 16;
+    float x[kMaxPoints] = {}, z[kMaxPoints] = {};
+    int   count = 0;
+    float minY = 0.0f, maxY = 0.0f;
+    /// Footprint = the convex hull of the given points (a hull keeps at most 16 points).
+    void SetHull(const float* xs, const float* zs, int n);
+    /// Footprint = a 16-sided polygon around a circle (just outside it, so the circle is covered).
+    void SetCircle(float cx, float cz, float radius);
+    /// Largest coordinate difference to `o` (a large number when the shapes have different point counts).
+    float Delta(const NavCarveVolume& o) const;
+};
+
+/// An axis-aligned rectangle cut out of the mesh (one strip of a carve volume's footprint).
+struct NavCarveRect { float minX = 0, maxX = 0, minZ = 0, maxZ = 0, minY = 0, maxY = 0; };
+/// Cover `v`'s footprint with axis-aligned strips `strip` wide, each grown by `inflate` on every
+/// side (the agent radius). A footprint that already is an axis-aligned rectangle gives one rect.
+/// Returns how many rects were appended to `out`.
+int NavCarveRects(const NavCarveVolume& v, float inflate, float strip, std::vector<NavCarveRect>& out);
+
 /// How a NavMeshSurface turns the scene's static colliders into walkable polygons.
 struct NavMeshBuildSettings {
     float agentRadius = 0.4f;   ///< walkable area is shrunk by this much from every wall / ledge
@@ -124,6 +146,15 @@ public:
     bool RandomPointNear(const Vec3& center, float radius, std::uint32_t& seed, Vec3& out) const;
     /// Walkable area in square units.
     float Area() const;
+
+    // ---- Carving ------------------------------------------------------------
+    /// Build in `out` a copy of this mesh with the volumes cut out. Each volume's footprint, grown by
+    /// the bake's agent radius, is subtracted from every polygon whose walking surface it stands on
+    /// (the volume must reach above the floor and start below head room); a polygon it only partly covers is
+    /// split into up to four rectangles with heights taken from the original, and the portals are rebuilt, so
+    /// every query on `out` (paths, raycasts, random points) goes around the hole. `out` is cleared first;
+    /// this mesh is not changed. Returns how many polygons were cut or removed (0: `out` is an exact copy).
+    int Carve(const std::vector<NavCarveVolume>& volumes, NavMesh& out) const;
 
     // ---- .okaynav files (text: "okaynav 1", settings, bounds, v / p / l records) ----
     std::string Serialize() const;

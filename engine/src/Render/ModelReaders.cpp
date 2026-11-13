@@ -2,7 +2,9 @@
 // Every reader works on an in-memory buffer, bounds-checks every read, and fails
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
 #include "okay/Render/ModelData.hpp"
+#include "PolygonTriangulate.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -284,6 +286,8 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
         }
         std::unordered_map<CKey, int, CKeyHash> remap;
         std::vector<int> idx;
+        std::vector<Vec3> ring;
+        std::vector<std::array<int, 3>> tris;
         for (std::size_t fi = 0; fi < faceStart.size(); ++fi) {
             if (faceMat[fi] != order[pi]) continue;
             const std::size_t b = faceStart[fi], e = fi + 1 < faceStart.size() ? faceStart[fi + 1] : corners.size();
@@ -301,8 +305,12 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                 }
                 idx.push_back(it->second);
             }
-            for (std::size_t i = 2; i < idx.size(); ++i)
-                part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[i - 1], idx[i]});
+            if (idx.size() == 3) { part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[1], idx[2]}); continue; }
+            // quads and larger: convex polygons fan from the first corner; concave ones are ear clipped (a fan covers the notch)
+            ring.resize(idx.size());
+            for (std::size_t i = 0; i < idx.size(); ++i) ring[i] = part.mesh.vertices[(std::size_t)idx[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[(std::size_t)t[0]], idx[(std::size_t)t[1]], idx[(std::size_t)t[2]]});
         }
     }
     return true;
@@ -574,14 +582,15 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                 if (pr.type == PlyType::None) return Fail(err, "unknown PLY property type");
             } else return Fail(err, "bad PLY property line");
             elems.back().props.push_back(std::move(pr));
-        } else return Fail(err, "unknown PLY header line");
+        }   // any other header line is ignored, as an unknown keyword (some exporters write free text without "comment")
     }
     if (!haveFormat) return Fail(err, "PLY has no format line");
     if (!haveEnd) return Fail(err, "PLY header never ends");
 
     PlyStream st{p, end, fmt};
     Mesh mesh;
-    std::vector<std::uint32_t> faceIdx;   // triangulated, validated at the end
+    std::vector<std::uint32_t> faceIdx;   // every polygon's corners back to back, validated at the end
+    std::vector<std::uint32_t> faceLen;   // corners of each polygon
     bool sawVertex = false, hasN = false, hasUV = false;
     constexpr std::size_t kMaxFaceVerts = 65535;
 
@@ -653,14 +662,26 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                     mesh.uvs.push_back(t);
                 }
             } else if (isFace && poly.size() >= 3) {
-                for (std::size_t i = 2; i < poly.size(); ++i) { faceIdx.push_back(poly[0]); faceIdx.push_back(poly[i - 1]); faceIdx.push_back(poly[i]); }
+                faceLen.push_back((std::uint32_t)poly.size());
+                faceIdx.insert(faceIdx.end(), poly.begin(), poly.end());
             }
         }
     }
     if (!sawVertex) return Fail(err, "PLY has no vertex element");
     if (faceIdx.empty()) return Fail(err, "PLY has no faces");
     for (std::uint32_t i : faceIdx) if (i >= mesh.vertices.size()) return Fail(err, "PLY face index out of range");
-    mesh.triangles.assign(faceIdx.begin(), faceIdx.end());
+    {   // triangles: convex polygons fan from their first corner, concave ones are ear clipped
+        std::vector<Vec3> ring; std::vector<std::array<int, 3>> tris;
+        std::size_t at = 0;
+        for (std::uint32_t len : faceLen) {
+            const std::uint32_t* f = faceIdx.data() + at; at += len;
+            if (len == 3) { mesh.triangles.insert(mesh.triangles.end(), {(int)f[0], (int)f[1], (int)f[2]}); continue; }
+            ring.resize(len);
+            for (std::uint32_t i = 0; i < len; ++i) ring[i] = mesh.vertices[f[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) mesh.triangles.insert(mesh.triangles.end(), {(int)f[t[0]], (int)f[t[1]], (int)f[t[2]]});
+        }
+    }
     if (!hasN) mesh.ComputeSmoothNormals();   // what Assimp's GenSmoothNormals does for the same file
     // Normals cover every position (authored, or the smooth fill above). UVs are
     // all or nothing: a short list would be read as belonging to the wrong vertices.

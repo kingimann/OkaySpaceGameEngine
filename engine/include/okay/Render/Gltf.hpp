@@ -18,6 +18,7 @@
 // and emissive textures are imported too (green = roughness, blue = metallic).
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
+#include <algorithm>
 #include <cmath>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -341,6 +342,8 @@ struct PrimGeom {
     std::vector<float> pos, nor, uv, idx;
     int pn = 0, nn = 0, tn = 0, in = 0;
     bool indexed = false;
+    int mode = 4;                  ///< glTF primitive mode (4 triangles, 5 strip, 6 fan; the others are left out)
+    std::vector<int> tri;          ///< the triangles, 3 vertex indices (0 .. pn-1) each, whatever the mode
 };
 inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
     const JVal* attr = prim.Find("attributes");
@@ -362,8 +365,29 @@ inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
         g.indexed = true;
         g.idx = ReadAccessor(doc, I->Int(-1), ic, g.in);
         if (ic != 1) return false;
-        for (float f : g.idx) if (!(f >= 0.0f && f < (float)g.pn)) return false;   // also rejects NaN
     }
+    if (const JVal* M = prim.Find("mode")) g.mode = M->Int(4);
+    // Points (0) and lines (1 to 3) have no surface: the primitive is left out, as a malformed one is. 7 and up do not exist.
+    if (g.mode < 4 || g.mode > 6) return false;
+    // The index sequence, then the triangles the mode makes of it. A triangle with an index past the vertices is dropped on
+    // its own (the rest of the primitive stays); a strip's degenerate triangles (repeated index) are dropped too.
+    std::vector<int> seq;
+    if (g.indexed) {
+        seq.reserve(g.idx.size());
+        for (float f : g.idx) seq.push_back((f >= 0.0f && f < (float)g.pn) ? (int)(f + 0.5f) : -1);   // -1 also for NaN
+    } else {
+        seq.resize((std::size_t)std::max(g.pn, 0));
+        for (int i = 0; i < g.pn; ++i) seq[(std::size_t)i] = i;
+    }
+    auto emit = [&](int a, int b, int c) {
+        if (a < 0 || b < 0 || c < 0 || a >= g.pn || b >= g.pn || c >= g.pn) return;
+        if (g.mode != 4 && (a == b || b == c || a == c)) return;
+        g.tri.push_back(a); g.tri.push_back(b); g.tri.push_back(c);
+    };
+    const std::size_t n = seq.size();
+    if (g.mode == 4) { for (std::size_t i = 0; i + 2 < n; i += 3) emit(seq[i], seq[i + 1], seq[i + 2]); }
+    else if (g.mode == 5) { for (std::size_t i = 0; i + 2 < n; ++i) { if (i % 2 == 0) emit(seq[i], seq[i + 1], seq[i + 2]); else emit(seq[i + 1], seq[i], seq[i + 2]); } }
+    else { for (std::size_t i = 1; i + 1 < n; ++i) emit(seq[0], seq[i], seq[i + 1]); }
     return true;
 }
 
@@ -377,15 +401,7 @@ inline bool AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
     for (int i = 0; i < g.pn; ++i) mesh.vertices.push_back(Vec3{g.pos[i*3+0], g.pos[i*3+1], g.pos[i*3+2]});
     for (int i = 0; i < g.nn; ++i) mesh.normals.push_back(Vec3{g.nor[i*3+0], g.nor[i*3+1], g.nor[i*3+2]});
     for (int i = 0; i < g.tn; ++i) mesh.uvs.push_back(Vec2{g.uv[i*2+0], g.uv[i*2+1]});
-    if (g.indexed) {
-        for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-    } else {
-        for (int i = 0; i + 2 < g.pn; i += 3) {
-            mesh.triangles.push_back(base + i);
-            mesh.triangles.push_back(base + i + 1);
-            mesh.triangles.push_back(base + i + 2);
-        }
-    }
+    for (int v : g.tri) mesh.triangles.push_back(base + v);
     return true;
 }
 

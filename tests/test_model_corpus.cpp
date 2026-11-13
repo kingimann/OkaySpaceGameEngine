@@ -9,12 +9,13 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh
+// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb)
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/Gltf.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include <algorithm>
@@ -38,6 +39,9 @@ struct CorpusStats {
     bool ok = false;
     std::string err;
     int objects = 0, meshes = 0, skinned = 0, bones = 0, verts = 0, tris = 0, clips = 0, materials = -1, notes = 0;
+    int textures = -1, nodes = -1;      // distinct texture files over all materials; node count (-1 = not measured)
+    bool uv = false, nrm = false;       // some mesh has per-vertex UVs / normals
+    bool measured = false;              // textures / nodes / uv / nrm were measured (obj, stl, ply, gltf)
     std::size_t keys = 0;
     double dur = 0, area = 0;
     Vec3 lo{0, 0, 0}, hi{0, 0, 0};
@@ -45,8 +49,14 @@ struct CorpusStats {
 };
 
 static const char* ExtOf(const std::string& reader) {
-    return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : ".fbx";
+    return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
+           reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" : ".fbx";
 }
+static bool ExtMatches(const std::string& reader, std::string ext) {
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb");
+}
+static bool IsRawReader(const std::string& r) { return r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply"; }
 
 static CorpusStats MeasureFile(const std::string& reader, const std::string& path) {
     CorpusStats s;
@@ -58,14 +68,14 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
         fbx::SetOwnReaderEnabled(true);
     } else if (reader == "fbx-ufbx") {
         fbx::SetOwnReaderEnabled(false);
-    } else {
+    } else if (IsRawReader(reader)) {
         SetImportBackend(ExtOf(reader), ImportBackend::Own);
         ImportedModel im; std::string e;
         if (!ImportModelData(path, im, ImportBackend::Own, false, &e)) { s.err = e; return s; }
         s.materials = (int)im.materials.size();
         s.notes = (int)im.notes.size();
         rawModel = std::make_shared<ImportedModel>(std::move(im));
-    }
+    } else if (reader != "gltf") { s.err = "unknown reader " + reader; return s; }
     Scene scene; scene.physicsEnabled = false;
     bool ok = false;
     GameObject* root = ImportModelScene(scene, path, &ok);
@@ -74,12 +84,17 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
     ModelReport rep = AnalyzeModel(scene, root);
     s.objects = rep.objects; s.skinned = rep.skinnedMeshes; s.bones = rep.bones; s.clips = rep.clips; s.keys = rep.keys;
     bool any = false;
+    std::set<std::string> sceneTex;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->IsSelfOrDescendantOf(root)) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->mesh.vertices.empty()) continue;
         ++s.meshes; s.verts += (int)mr->mesh.vertices.size(); s.tris += mr->mesh.TriangleCount();
+        if (mr->mesh.HasUVs()) s.uv = true;
+        if (mr->mesh.HasNormals()) s.nrm = true;
+        for (const std::string* t : {&mr->texture, &mr->normalMap, &mr->specularMap, &mr->aoMap, &mr->metallicRoughnessMap, &mr->emissiveMap})
+            if (!t->empty()) sceneTex.insert(*t);
         const Mat4 w = go->transform->LocalToWorldMatrix();
         for (std::size_t t = 0; t + 2 < mr->mesh.triangles.size(); t += 3) {
             const Vec3 a = w.MultiplyPoint(mr->mesh.vertices[(std::size_t)mr->mesh.triangles[t]]);
@@ -91,6 +106,19 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
             const Vec3 p = w.MultiplyPoint(v);
             if (!any) { s.lo = s.hi = p; any = true; }
             else { s.lo = Vec3{std::fmin(s.lo.x, p.x), std::fmin(s.lo.y, p.y), std::fmin(s.lo.z, p.z)}; s.hi = Vec3{std::fmax(s.hi.x, p.x), std::fmax(s.hi.y, p.y), std::fmax(s.hi.z, p.z)}; }
+        }
+    }
+    if (reader == "gltf") {
+        s.measured = true; s.nodes = rep.objects; s.textures = (int)sceneTex.size();
+        const gltf_detail::GltfDoc doc = gltf_detail::LoadDoc(path);
+        const gltf_detail::JVal* mats = doc.root.Find("materials");
+        s.materials = mats ? (int)mats->arr.size() : 0;
+    }
+    if (reader == "gltf") {   // the importer scales a very large or tiny model to about two units (AutoNormalizeImportScale): undo it, the file's own size is what other readers report
+        const double k = root->transform ? (double)root->transform->localScale.x : 1.0;
+        if (k > 0 && std::fabs(k - 1.0) > 1e-9) {
+            s.lo = Vec3{(float)(s.lo.x / k), (float)(s.lo.y / k), (float)(s.lo.z / k)}; s.hi = Vec3{(float)(s.hi.x / k), (float)(s.hi.y / k), (float)(s.hi.z / k)};
+            s.area /= k * k;
         }
     }
     if (auto* ma = root->GetComponent<ModelAnimator>())
@@ -122,6 +150,14 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
             }
         }
         s.bones = (int)bones.size();
+        if (reader == "obj" || reader == "stl" || reader == "ply") {
+            s.measured = true; s.nodes = (int)im.nodes.size();
+            std::set<std::string> tex;
+            for (const ImportedMaterial& m : im.materials)
+                for (const std::string* t : {&m.texture, &m.normalMap, &m.specularMap, &m.aoMap}) if (!t->empty()) tex.insert(*t);
+            s.textures = (int)tex.size();
+            for (const ImportedPart& p : im.parts) { if (p.mesh.HasUVs()) s.uv = true; if (p.mesh.HasNormals()) s.nrm = true; }
+        }
         for (const ImportedClip& c : im.clips) for (const ImportedChannel& ch : c.channels) {
             for (const auto& k : ch.position) s.dur = std::max(s.dur, (double)k.time);
             for (const auto& k : ch.rotation) s.dur = std::max(s.dur, (double)k.time);
@@ -140,9 +176,9 @@ static std::string Line(const std::string& reader, const std::string& rel, const
         std::snprintf(b, sizeof b, "%s\t%s\tFAIL\t%s", reader.c_str(), rel.c_str(), e.c_str());
         return b;
     }
-    std::snprintf(b, sizeof b, "%s\t%s\tok\tarea=%.4f\tmeshes=%d\ttris=%d\tbones=%d\tskinned=%d\tclips=%d\tdur=%.3f\tmat=%d\tbbox=%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\tverts=%d\tms=%.0f",
+    std::snprintf(b, sizeof b, "%s\t%s\tok\tarea=%.4f\tmeshes=%d\ttris=%d\tbones=%d\tskinned=%d\tclips=%d\tdur=%.3f\tmat=%d\tbbox=%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\tverts=%d\ttex=%d\tnodes=%d\tuv=%d\tnrm=%d\tms=%.0f",
                   reader.c_str(), rel.c_str(), s.area, s.meshes, s.tris, s.bones, s.skinned, s.clips, s.dur, s.materials,
-                  s.lo.x, s.lo.y, s.lo.z, s.hi.x, s.hi.y, s.hi.z, s.verts, s.ms);
+                  s.lo.x, s.lo.y, s.lo.z, s.hi.x, s.hi.y, s.hi.z, s.verts, s.textures, s.nodes, s.uv ? 1 : 0, s.nrm ? 1 : 0, s.ms);
     return b;
 }
 
@@ -238,9 +274,7 @@ int main(int argc, char** argv) {
         std::vector<std::string> files;
         for (auto& e : fs::recursive_directory_iterator(dir)) {
             if (!e.is_regular_file()) continue;
-            std::string x = e.path().extension().string();
-            for (char& c : x) c = (char)std::tolower((unsigned char)c);
-            if (x == ExtOf(reader)) files.push_back(e.path().string());
+            if (ExtMatches(reader, e.path().extension().string())) files.push_back(e.path().string());
         }
         std::sort(files.begin(), files.end());
         for (const std::string& f : files) std::cout << Line(reader, fs::relative(f, dir).generic_string(), MeasureFile(reader, f)) << std::endl;
@@ -268,7 +302,8 @@ int main(int argc, char** argv) {
             CHECK(s.ok);
             if (!s.ok) { std::cout << "  " << col[1] << ": expected to read, got: " << s.err << "\n"; continue; }
             const std::string got = Line(col[0], col[1], s);
-            for (const char* k : {"meshes", "tris", "bones", "skinned", "clips", "mat"}) {
+            for (const char* k : {"meshes", "tris", "bones", "skinned", "clips", "mat", "tex", "nodes", "uv", "nrm"}) {
+                if (Field(line, k).empty()) continue;   // older rows do not carry every field
                 const bool same = Field(got, k) == Field(line, k);
                 CHECK(same);
                 if (!same) std::cout << "  " << col[1] << " (" << col[0] << "): " << k << " " << Field(line, k) << " -> " << Field(got, k) << "\n";

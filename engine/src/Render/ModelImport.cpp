@@ -204,13 +204,7 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (g.indexed) {
-            for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-        } else {
-            for (int i = 0; i + 2 < pn; i += 3) {
-                mesh.triangles.push_back(base + i); mesh.triangles.push_back(base + i + 1); mesh.triangles.push_back(base + i + 2);
-            }
-        }
+        for (int v : g.tri) mesh.triangles.push_back(base + v);
     }
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();

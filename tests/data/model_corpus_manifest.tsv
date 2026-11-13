@@ -1,9 +1,10 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh; do test_model_corpus --list $r <test dir>; done  (drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# obj / stl / ply / gltf rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
 fbx-own	models-nonbsd/FBX/2013_ASCII/ConcavePolygon.fbx	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64
@@ -92,3 +93,105 @@ dae	models/invalid/box_nested_animation_4286.dae	ok	area=24.0000	meshes=1	tris=1
 bvh	models/BVH/01_01.bvh	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=1	dur=22.925	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 bvh	models/BVH/01_03.bvh	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=1	dur=37.583	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 bvh	models/BVH/Boxing_Toes.bvh	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=1	dur=30.680	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
+obj	models-nonbsd/OBJ/rifle.obj	ok	area=8673.7673	meshes=1	tris=572	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.523,-21.537,-44.979,3.523,20.233,71.303	verts=1716	tex=1	nodes=0	uv=1	nrm=1
+obj	models-nonbsd/OBJ/segment.obj	ok	area=0.0933	meshes=2	tris=1536	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-0.062,-0.116,0.009,0.062,0.061,0.261	verts=936	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/WusonOBJ.obj	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=0	nodes=0	uv=1	nrm=1
+obj	models/OBJ/box.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/box_UTF16BE.obj	FAIL	no faces
+obj	models/OBJ/box_longline.obj	ok	area=239.0000	meshes=1	tris=944	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/box_mat_with_spaces.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=12	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/box_without_lineending.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/concave_polygon.obj	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/cube_mtllib_after_g.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=24	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/cube_usemtl.obj	ok	area=6.0000	meshes=3	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=28	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/cube_with_vertexcolors.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=24	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/cube_with_vertexcolors_uni.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=24	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/empty_mat.obj	ok	area=21.7672	meshes=1	tris=256	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,2.802,1.000	verts=450	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/multiple_spaces.obj	ok	area=2.5981	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=1.000,1.000,1.000,3.000,3.000,3.000	verts=3	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/number_formats.obj	ok	area=0.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-2.000,-3.000,1.000,2.000,3.000	verts=3	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/only_a_part_of_vertexcolors.obj	ok	area=1.7071	meshes=1	tris=3	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=5	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/point_cloud.obj	FAIL	no faces
+obj	models/OBJ/regr01.obj	ok	area=9677888.4513	meshes=12	tris=2710	bones=0	skinned=0	clips=0	dur=0.000	mat=12	bbox=-194.200,-204.512,0.000,1442.086,967.615,337.509	verts=2488	tex=0	nodes=0	uv=1	nrm=0
+obj	models/OBJ/regr_3429812.obj	ok	area=0.0000	meshes=1	tris=4	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.042,0.962,0.094,0.050,0.964,0.098	verts=4	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/space_in_material_name.obj	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64	tex=0	nodes=0	uv=0	nrm=1
+obj	models/OBJ/spider.obj	ok	area=33275.8520	meshes=4	tris=1368	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-92.655,-42.234,-106.691,57.936,37.504,86.691	verts=974	tex=5	nodes=0	uv=1	nrm=1
+obj	models/OBJ/testline.obj	FAIL	no faces
+obj	models/OBJ/testmixed.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+obj	models/OBJ/testpoints.obj	FAIL	no faces
+obj	models/invalid/empty.obj	FAIL	no faces
+obj	models/invalid/malformed.obj	FAIL	face index out of range
+obj	models/invalid/malformed2.obj	ok	area=5.0000	meshes=1	tris=10	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
+stl	models/STL/3DSMaxExport.STL	ok	area=1734.4157	meshes=1	tris=2000	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-27.370,-2.428,9.699,29.664,45.913,62.343	verts=5994	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/Spider_ascii.stl	ok	area=56.9476	meshes=1	tris=1368	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.115,-4.000,-1.649,3.115,4.000,1.649	verts=3954	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/Spider_binary.stl	ok	area=56.9476	meshes=1	tris=1368	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.115,-4.000,-1.649,3.115,4.000,1.649	verts=3956	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/Wuson.stl	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=11188	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/sphereWithHole.stl	ok	area=27.4187	meshes=1	tris=285	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,3.000,3.000,3.000	verts=855	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/triangle.stl	ok	area=2.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-1.000,0.000,1.000,1.000,0.000	verts=3	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/triangle_with_empty_solid.stl	ok	area=2.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-1.000,0.000,1.000,1.000,0.000	verts=3	tex=0	nodes=0	uv=0	nrm=1
+stl	models/STL/triangle_with_two_solids.stl	ok	area=2.5000	meshes=2	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-1.000,0.000,3.000,3.000,0.000	verts=6	tex=0	nodes=0	uv=0	nrm=1
+ply	models-nonbsd/PLY/ant-half.ply	FAIL	PLY data truncated or malformed
+ply	models/PLY/Wuson.ply	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=11184	tex=0	nodes=0	uv=1	nrm=1
+ply	models/PLY/cube.ply	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=8	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/cube_binary.ply	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=8	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/cube_binary_header_with_RN_newline.ply	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=8	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/cube_uv.ply	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=0	uv=1	nrm=1
+ply	models/PLY/float-color.ply	ok	area=10000.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,200.000,200.000,0.000	verts=3	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/issue623.ply	FAIL	PLY list too long
+ply	models/PLY/points.ply	FAIL	PLY has no faces
+ply	models/PLY/pond.0.ply	FAIL	PLY has no faces
+ply	models/invalid/crash-30d6d0f7c529b3b66b4131700b7a4580cd7082df.ply	FAIL	unknown PLY property type
+ply	models/invalid/empty.ply	FAIL	not a PLY (missing 'ply' magic)
+gltf	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	FAIL	scene import failed
+gltf	models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf	FAIL	scene import failed
+gltf	models/glTF/BoxTextured-glTF-MaterialsCommon/BoxTextured.gltf	FAIL	scene import failed
+gltf	models/glTF/BoxTextured-glTF/BoxTextured.gltf	FAIL	scene import failed
+gltf	models/glTF/CesiumMilkTruck/CesiumMilkTruck.gltf	FAIL	scene import failed
+gltf	models/glTF/IncorrectVertexArrays/Cube_v1.gltf	FAIL	scene import failed
+gltf	models/glTF/TwoBoxes/TwoBoxes.gltf	FAIL	scene import failed
+gltf	models/glTF2/2CylinderEngine-glTF-Binary/2CylinderEngine.glb	ok	area=2663488.8208	meshes=115	tris=121496	bones=0	skinned=0	clips=0	dur=0.000	mat=34	bbox=-371.692,-180.972,-140.000,371.692,92.042,128.000	verts=84657	tex=0	nodes=159	uv=0	nrm=1
+gltf	models/glTF2/BoxBadNormals-glTF-Binary/BoxBadNormals.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
+gltf	models/glTF2/BoxTexcoords-glTF/boxTexcoords.gltf	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=1	nodes=4	uv=1	nrm=1
+gltf	models/glTF2/BoxTextured-glTF-Binary/BoxTextured.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/BoxTextured-glTF-Embedded/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/BoxTextured-glTF-pbrSpecularGlossiness/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/BoxTextured-glTF-techniqueWebGL/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/BoxWithInfinites-glTF-Binary/BoxWithInfinites.glb	ok	area=-nan	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-inf,-nan,-nan,inf,-nan,-nan	verts=24	tex=0	nodes=3	uv=0	nrm=1
+gltf	models/glTF2/ClearCoat-glTF/ClearCoatTest.gltf	ok	area=261.0980	meshes=27	tris=37116	bones=0	skinned=0	clips=0	dur=0.000	mat=19	bbox=-7.358,-6.250,-0.060,3.100,6.855,1.050	verts=20106	tex=5	nodes=34	uv=1	nrm=1
+gltf	models/glTF2/IncorrectVertexArrays/Cube.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=9	uv=0	nrm=0
+gltf	models/glTF2/IndexOutOfRange/AllIndicesOutOfRange.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
+gltf	models/glTF2/IndexOutOfRange/IndexOutOfRange.gltf	ok	area=5.5000	meshes=1	tris=11	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
+gltf	models/glTF2/MissingBin/BoxTextured.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/RecursiveNodes/RecursiveNodes.gltf	FAIL	scene import failed
+gltf	models/glTF2/SchemaFailures/sceneWrongType.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/TestNoRootNode/NoScene.gltf	FAIL	scene import failed
+gltf	models/glTF2/TestNoRootNode/SceneWithoutNodes.gltf	FAIL	scene import failed
+gltf	models/glTF2/cameras/Cameras.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,-0.708,1.000,0.707,0.000	verts=4	tex=0	nodes=4	uv=0	nrm=0
+gltf	models/glTF2/draco/2CylinderEngine.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=34	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=83	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_00.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_01.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_02.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_03.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_04.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_05.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_06.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=6	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_07.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_08.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_09.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_10.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_11.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_12.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_13.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_14.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_15.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Sample-Models/AnimatedMorphCube-glTF/AnimatedMorphCube.gltf	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=4.200	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=0	nrm=1
+gltf	models/glTF2/issue_3269/texcoord_crash.gltf	ok	area=8.0000	meshes=5	tris=10	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-1.200,-1.200,-0.053,1.200,1.200,0.000	verts=20	tex=1	nodes=6	uv=1	nrm=1
+gltf	models/glTF2/simple_skin/quad_skin.glb	ok	area=40000.0009	meshes=1	tris=2	bones=10	skinned=1	clips=0	dur=0.000	mat=2	bbox=-100.000,-0.000,-100.000,100.000,0.000,100.000	verts=4	tex=0	nodes=24	uv=1	nrm=1
+gltf	models/glTF2/simple_skin/simple_skin.gltf	ok	area=2.0000	meshes=1	tris=8	bones=2	skinned=1	clips=1	dur=5.500	mat=0	bbox=0.000,0.000,0.000,1.000,2.000,0.000	verts=10	tex=0	nodes=4	uv=0	nrm=0
+gltf	models/glTF2/textureTransform/TextureTransformTest.gltf	ok	area=6.1100	meshes=12	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=9	bbox=-1.600,-1.141,0.000,1.600,1.050,0.010	verts=48	tex=5	nodes=13	uv=1	nrm=0
+gltf	models/glTF2/wrongTypes/badArray.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=3	uv=0	nrm=0
+gltf	models/glTF2/wrongTypes/badExtension.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/wrongTypes/badNumber.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/wrongTypes/badObject.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/wrongTypes/badString.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
+gltf	models/glTF2/wrongTypes/badUint.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1

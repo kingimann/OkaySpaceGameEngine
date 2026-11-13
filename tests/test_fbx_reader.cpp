@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Render/FbxReader.hpp"
@@ -429,6 +430,25 @@ static void CompareClips(Scene& su, GameObject* ru, Scene& so, GameObject* ro, c
     }
 }
 
+// What the importer gave each mesh object as material: both FBX readers must agree (texture files by file name).
+struct MatSnap { std::string name, tex, nrm; float col[4], emi[3], metallic, shininess, specular, reflectivity; };
+static std::vector<MatSnap> CollectMaterials(Scene& sc, GameObject* root) {
+    std::vector<MatSnap> out;
+    for (const auto& up : sc.Objects()) {
+        if (!up->IsSelfOrDescendantOf(root)) continue;
+        auto* mr = up->GetComponent<MeshRenderer>();
+        if (!mr) continue;
+        MatSnap m;
+        m.name = up->name; m.tex = fs::path(mr->texture).filename().string(); m.nrm = fs::path(mr->normalMap).filename().string();
+        m.col[0] = mr->color.r; m.col[1] = mr->color.g; m.col[2] = mr->color.b; m.col[3] = mr->color.a;
+        m.emi[0] = mr->emissive.r; m.emi[1] = mr->emissive.g; m.emi[2] = mr->emissive.b;
+        m.metallic = mr->metallic; m.shininess = mr->shininess; m.specular = mr->specular; m.reflectivity = mr->reflectivity;
+        out.push_back(m);
+    }
+    std::stable_sort(out.begin(), out.end(), [](const MatSnap& x, const MatSnap& y) { return x.name < y.name; });
+    return out;
+}
+
 static void CompareWithUfbx() {
     RUN_SUITE("fbx: every fixture through ufbx and through our reader");
     int files = 0;
@@ -488,6 +508,28 @@ static void CompareWithUfbx() {
         same("surface area", a.area, b.area, (isReal ? 2e-3 : 1e-4) * (1 + a.area));   // real files: quads split along the other diagonal differ slightly
         auto na = a.names, nb = b.names; std::sort(na.begin(), na.end()); std::sort(nb.begin(), nb.end());
         CHECK(na == nb);
+        {   // materials: colour, emission, metalness, glossiness, texture and normal-map files
+            const std::vector<MatSnap> ma_ = CollectMaterials(su, ru), mb_ = CollectMaterials(so, ro);
+            CHECK(ma_.size() == mb_.size());
+            for (std::size_t i = 0; i < std::min(ma_.size(), mb_.size()); ++i) {
+                const MatSnap &x = ma_[i], &y = mb_[i];
+                // 3ds Max's PBR materials bind textures to the colour and glossiness slots. For a textured slot ufbx reports no
+                // value, so the importer keeps its default (white, no gloss); ours reads the value the file stores next to the
+                // texture (colour, glossiness) and uses it while the picture file is missing. Not compared on those files.
+                const bool texturedSlots = what == "maxPbrMaterial_metalRough.fbx" || what == "maxPbrMaterial_specGloss.fbx" || what == "pbr_bin.fbx";
+                const bool ufbxNoGloss = texturedSlots && x.shininess == 16.0f && x.specular == 0.0f;
+                double worst = 0;
+                if (!texturedSlots) for (int k = 0; k < 4; ++k) worst = std::max(worst, (double)std::fabs(x.col[k] - y.col[k]));
+                for (int k = 0; k < 3; ++k) worst = std::max(worst, (double)std::fabs(x.emi[k] - y.emi[k]));
+                worst = std::max(worst, (double)std::fabs(x.metallic - y.metallic));
+                if (!ufbxNoGloss) worst = std::max({worst, (double)std::fabs(x.shininess - y.shininess) * 0.01, (double)std::fabs(x.specular - y.specular), (double)std::fabs(x.reflectivity - y.reflectivity)});
+                if (worst > 1e-4 || x.tex != y.tex || x.nrm != y.nrm)
+                    std::cerr << "  (" << what << ") material of " << x.name << ": ufbx tex '" << x.tex << "' nrm '" << x.nrm << "' col " << x.col[0] << "," << x.col[1] << "," << x.col[2] << " emi " << x.emi[0] << " met " << x.metallic << " shin " << x.shininess << " spec " << x.specular
+                              << " | ours tex '" << y.tex << "' nrm '" << y.nrm << "' col " << y.col[0] << "," << y.col[1] << "," << y.col[2] << " emi " << y.emi[0] << " met " << y.metallic << " shin " << y.shininess << " spec " << y.specular << "\n";
+                CHECK(worst <= 1e-4);
+                CHECK(x.tex == y.tex && x.nrm == y.nrm);
+            }
+        }
         if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/own_fbx_reader.md)
 
         // skinned vertex data: weights and inverse binds
@@ -548,10 +590,50 @@ static void CompareWithUfbx() {
     CHECK(files >= 6);
 }
 
+static void OrphanVideoTest() {
+    RUN_SUITE("fbx scene: embedded picture in a Video that is not connected to its texture");
+    fbx::Scene s; std::string err;
+    CHECK(fbx::LoadFile(Fx("orphan_video_bin.fbx"), s, &err));
+    CHECK(s.textures.size() == 1);
+    if (s.textures.size() == 1) CHECK(s.textures[0].content.size() > 8 && s.textures[0].content[1] == 'P' && s.textures[0].content[2] == 'N');   // the PNG written by the generator
+    CHECK(s.materials.size() == 1 && s.materials[0].diffuseTexture == 0);
+}
+
+static void PbrTests() {
+    RUN_SUITE("fbx scene: PBR property sets (3ds Max, glTF) and the classic reading");
+    fbx::Scene s; std::string err;
+    CHECK(fbx::LoadFile(Fx("pbr_bin.fbx"), s, &err));
+    CHECK(s.materials.size() == 5 && s.textures.size() == 8);
+    auto mat = [&](const char* n) -> const fbx::Material* { for (const auto& m : s.materials) if (m.name == n) return &m; return nullptr; };
+    const fbx::Material* ph = mat("PhysicalMat");
+    CHECK(ph && ph->shaderSet == "3dsmax-physical");
+    if (ph) {
+        CHECK(ph->hasDiffuse && Near(ph->diffuse[0], 0.2) && Near(ph->diffuse[1], 0.4) && Near(ph->diffuse[2], 0.6));   // not the classic 0.9 grey
+        CHECK(ph->hasRoughness && Near(ph->roughness, 0.3) && ph->hasMetalness && Near(ph->metalness, 0.9));
+        CHECK(ph->hasEmissive && Near(ph->emissive[0], 0.5) && ph->hasEmissiveFactor && Near(ph->emissiveFactor, 2.0));
+        CHECK(ph->diffuseTexture >= 0 && s.textures[(std::size_t)ph->diffuseTexture].name == "PhysicalAlbedo");
+        CHECK(ph->normalTexture >= 0 && s.textures[(std::size_t)ph->normalTexture].name == "PhysicalNormal");
+    }
+    const fbx::Material* mr = mat("MetalRoughMat");
+    CHECK(mr && mr->shaderSet == "3dsmax-pbr-metal-rough");
+    if (mr) CHECK(mr->hasRoughness && Near(mr->roughness, 0.25) && Near(mr->metalness, 1.0) && mr->normalTexture >= 0 && s.textures[(std::size_t)mr->diffuseTexture].name == "MetalRoughAlbedo");
+    const fbx::Material* sg = mat("SpecGlossMat");
+    CHECK(sg && sg->shaderSet == "3dsmax-pbr-spec-gloss");
+    if (sg) CHECK(sg->hasRoughness && Near(sg->roughness, 0.2) && !sg->hasMetalness);   // glossiness 0.8 -> roughness 0.2
+    const fbx::Material* gl = mat("GltfMat");
+    CHECK(gl && gl->shaderSet == "gltf");
+    if (gl) CHECK(Near(gl->roughness, 0.6) && Near(gl->metalness, 0.5) && gl->hasEmissive && Near(gl->emissive[1], 0.25) && gl->diffuseTexture >= 0 && gl->normalTexture >= 0);
+    const fbx::Material* ph2 = mat("PhongMat");   // same class id, but the material says phong: the classic properties win (ufbx's rule)
+    CHECK(ph2 && ph2->shaderSet == "phong");
+    if (ph2) CHECK(Near(ph2->diffuse[0], 0.9) && Near(ph2->diffuse[1], 0.8) && ph2->hasRoughness && Near(ph2->roughness, 1.0 - std::sqrt(25.0) * 0.1));
+}
+
 int main() {
     InflateTests();
     DirectTests();
     HermiteTests();
+    PbrTests();
+    OrphanVideoTest();
     CompareWithUfbx();
     TEST_MAIN_RESULT();
 }

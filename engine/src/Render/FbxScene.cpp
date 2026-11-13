@@ -177,6 +177,45 @@ std::string CleanName(const std::string& raw, const std::string& /*cls*/) {
     return raw;
 }
 
+// PBR property sets of modelling tools, named as ufbx names them (ufbx.c: ufbxi_3ds_max_physical_material_pbr_mapping and
+// its siblings). The property name in the file is `prefix + name`. A set is recognised by the class id the tool writes into
+// the material (3dsMax|ClassIDa / 3dsMax|ClassIDb). Only what this engine can show is read: base colour, roughness,
+// metalness, emission colour and factor, normal map, ambient occlusion map. Each list ends with nullptr.
+struct PbrSet {
+    const char* id; std::uint32_t classA, classB; const char* prefix;
+    const char* const* baseColor; const char* const* roughness; const char* const* metalness;
+    const char* const* emitColor; const char* const* emitFactor; const char* const* normal; const char* const* ao;
+    const char* useGlossinessProp;   ///< property that says the roughness slot holds glossiness (about 1 = it does; nullptr = never)
+};
+const char* const kNone[] = {nullptr};
+const char* const kBase[] = {"base_color", "baseColor", "basecolor", nullptr};   // "basecolor" is what 3ds Max really writes for its PBR material
+const char* const kRough[] = {"roughness", "Roughness_Map", nullptr};
+const char* const kMetal[] = {"metalness", nullptr};
+const char* const kEmitC[] = {"emit_color", nullptr};
+const char* const kPhysEmitF[] = {"emission", nullptr};
+const char* const kBump[] = {"bump", "bump_map_amt", nullptr};
+const char* const kNorm[] = {"norm", nullptr};
+const char* const kAo[] = {"ao", nullptr};
+const char* const kGloss[] = {"glossiness", nullptr};
+const char* const kGltfBase[] = {"main|baseColor", nullptr};
+const char* const kGltfRough[] = {"main|roughness", nullptr};
+const char* const kGltfMetal[] = {"main|metalness", nullptr};
+const char* const kGltfEmit[] = {"main|emission", "main|emissionColor", nullptr};
+const char* const kGltfNormal[] = {"main|normal", nullptr};
+const char* const kGltfAo[] = {"main|ambientOcclusion", nullptr};
+const char* const kOpenRough[] = {"specular_roughness", nullptr};
+const char* const kOpenMetal[] = {"base_metalness", nullptr};
+const char* const kOpenBase[] = {"base_color", nullptr};
+const char* const kOpenEmitC[] = {"emission_color", nullptr};
+const char* const kOpenEmitF[] = {"emission_weight", nullptr};
+const PbrSet kPbrSets[] = {
+    {"3dsmax-physical",       0x3d6b1cecu, 0xdeadc001u, "3dsMax|Parameters|", kBase, kRough, kMetal, kEmitC, kPhysEmitF, kBump, kNone, nullptr},
+    {"openpbr",               0xf1551e33u, 0x37fb1337u, "3dsMax|Parameters|", kOpenBase, kOpenRough, kOpenMetal, kOpenEmitC, kOpenEmitF, kBump, kNone, nullptr},
+    {"gltf",                  0x38420192u, 0x45fe4e1bu, "3dsMax|",            kGltfBase, kGltfRough, kGltfMetal, kGltfEmit, kNone, kGltfNormal, kGltfAo, nullptr},
+    {"3dsmax-pbr-metal-rough", 0xd00f1e00u, 0xbe77e500u, "3dsMax|main|",      kBase, kRough, kMetal, kEmitC, kNone, kNorm, kAo, "useGlossiness"},
+    {"3dsmax-pbr-spec-gloss", 0xd00f1e00u, 0x01dbad33u, "3dsMax|main|",       kBase, kGloss, kNone, kEmitC, kNone, kNorm, kAo, "useGlossiness"},
+};
+
 struct Obj {
     const Elem* e = nullptr;
     std::string cls, name, sub;
@@ -441,6 +480,23 @@ struct Builder {
                 }
             }
             (void)pit;
+            // A Video that carries the picture while the one connected to the texture does not (some exporters write the pair
+            // apart): found by file name, as ufbx does. Only when the texture got no content from its own Video.
+            if (t.content.empty() && (!t.fileName.empty() || !t.relativeFileName.empty())) {
+                for (const Obj& vo : objs) {
+                    if (vo.cls != "Video") continue;
+                    const Elem* ct = vo.e->Find("Content");
+                    if (!ct || ct->props.empty() || ct->props[0].s.empty()) continue;
+                    const Elem* vf = vo.e->Find("FileName"); const Elem* vr = vo.e->Find("RelativeFilename");
+                    const bool same = (vf && !vf->props.empty() && !t.fileName.empty() && vf->props[0].s == t.fileName) ||
+                                      (vr && !vr->props.empty() && !t.relativeFileName.empty() && vr->props[0].s == t.relativeFileName);
+                    if (!same) continue;
+                    const Prop& p = ct->props[0];
+                    if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
+                    else if (p.type == 'S') { const std::string b = Base64Decode(p.s); t.content.assign(b.begin(), b.end()); }
+                    if (!t.content.empty()) break;
+                }
+            }
             texOfObj[id] = (int)sc.textures.size();
             sc.textures.push_back(std::move(t));
         }
@@ -460,12 +516,56 @@ struct Builder {
                 const double sh = std::max(0.0, p.Get(sn, 0.0));
                 m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, 1.0 - std::sqrt(sh) * 0.1));
             }
+            std::string shadingModel;
+            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = sm->props[0].s;
+            for (char& ch : shadingModel) ch = (char)std::tolower((unsigned char)ch);
+            if (shadingModel == "lambert" || shadingModel == "phong") m.shaderSet = shadingModel;
+            // PBR property sets written by modelling tools (ufbx's "shader types"): found by the tool's class id, and
+            // only when the material does not say lambert / phong, the same rule ufbx uses.
+            const PbrSet* pbr = nullptr;
+            if (m.shaderSet.empty()) {
+                const std::uint32_t ca = (std::uint32_t)SafeInt64(p.Get("3dsMax|ClassIDa", 0)), cb = (std::uint32_t)SafeInt64(p.Get("3dsMax|ClassIDb", 0));
+                for (const PbrSet& s : kPbrSets) if (ca == s.classA && cb == s.classB) { pbr = &s; break; }
+            }
+            if (pbr) {
+                m.shaderSet = pbr->id;
+                const std::string pre = pbr->prefix;
+                auto find = [&](const char* const* names) -> const char* {   // first name the file has, as the full property name
+                    for (; *names; ++names) if (p.Has((pre + *names).c_str())) return *names;
+                    return nullptr;
+                };
+                double v3[3];
+                if (const char* n = find(pbr->baseColor)) { m.hasDiffuse = true; p.Vec3((pre + n).c_str(), v3, 1.0); for (int i = 0; i < 3; ++i) m.diffuse[i] = v3[i]; }
+                if (const char* n = find(pbr->emitColor)) { m.hasEmissive = true; p.Vec3((pre + n).c_str(), v3, 0.0); for (int i = 0; i < 3; ++i) m.emissive[i] = v3[i]; }
+                if (const char* n = find(pbr->emitFactor)) { m.hasEmissiveFactor = true; m.emissiveFactor = p.Get((pre + n).c_str(), 1.0); }
+                if (const char* n = find(pbr->metalness)) { m.hasMetalness = true; m.metalness = std::min(1.0, std::max(0.0, p.Get((pre + n).c_str(), 0.0))); }
+                if (const char* n = find(pbr->roughness)) {
+                    double r = p.Get((pre + n).c_str(), 0.5);
+                    const bool gloss = pbr->useGlossinessProp && std::fabs(p.Get((pre + pbr->useGlossinessProp).c_str(), 0.0) - 1.0) < 0.5;
+                    if (gloss) r = 1.0 - r;
+                    m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, r));
+                }
+            }
             const Id id = ToId(o.e->props[0].Num());
+            auto squash = [](const std::string& x) { std::string o; for (char ch : x) if (ch != '_') o += (char)std::tolower((unsigned char)ch); return o; };
+            // the slot's own name, or "<name>_map" (what 3ds Max connects textures to: "base_color_map" for the value "basecolor")
+            auto isOneOf = [&](const std::string& prop, const char* const* names, const std::string& pre) {
+                if (!names) return false;
+                const std::string want = squash(prop);
+                for (; *names; ++names) { const std::string n = squash(pre + *names); if (want == n || want == n + "map") return true; }
+                return false;
+            };
             for (const Conn* c : childrenOf[id]) {   // textures plugged into this material
                 const Obj* t = Get(c->child);
                 if (!t || t->cls != "Texture" || !c->propLink) continue;
                 auto it = texOfObj.find(c->child);
                 if (it == texOfObj.end()) continue;
+                if (pbr) {
+                    const std::string pre = pbr->prefix;
+                    if (isOneOf(c->prop, pbr->baseColor, pre)) { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; continue; }
+                    if (isOneOf(c->prop, pbr->normal, pre)) { if (m.normalTexture < 0) m.normalTexture = it->second; continue; }
+                    if (isOneOf(c->prop, pbr->ao, pre)) { if (m.aoTexture < 0) m.aoTexture = it->second; continue; }
+                }
                 if (c->prop == "DiffuseColor" || c->prop == "Diffuse") { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; }
                 else if (c->prop == "NormalMap") { if (m.normalTexture < 0) m.normalTexture = it->second; }
             }

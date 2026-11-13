@@ -6,6 +6,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelData.hpp"
+#include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ModelAnimator.hpp"
@@ -362,6 +363,81 @@ int main() {
         bool bok = false; Mesh big = ImportModel("mr_big.stl", &bok);
         CHECK(bok); Vec3 blo, bhi; big.Bounds(blo, bhi); CHECK(bhi.x - blo.x < 20.0f);
         std::remove("mr_big.stl");
+    }
+
+    // ---------------- Found by the real-file corpus (docs/model_corpus.md) ----------------
+    {
+        // An L-shaped (concave) hexagon in the XY plane, area 3, wound counter-clockwise: a fan from the first corner covers
+        // the notch (area 3.5 or more) or flips triangles; ear clipping gives area 3 with every triangle facing +Z.
+        const char* lx[6] = {"0 0 0", "2 0 0", "2 1 0", "1 1 0", "1 2 0", "0 2 0"};
+        auto planarArea = [](const Mesh& me, bool& allUp) {
+            double a = 0; allUp = true;
+            for (std::size_t i = 0; i + 2 < me.triangles.size(); i += 3) {
+                const Vec3& p0 = me.vertices[(std::size_t)me.triangles[i]]; const Vec3& p1 = me.vertices[(std::size_t)me.triangles[i + 1]]; const Vec3& p2 = me.vertices[(std::size_t)me.triangles[i + 2]];
+                const double z = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+                if (z <= 0) allUp = false;
+                a += 0.5 * z;
+            }
+            return a;
+        };
+        std::string obj; for (const char* v : lx) obj += std::string("v ") + v + "\n"; obj += "f 1 2 3 4 5 6\n";
+        ImportedModel om; std::string err; bool up = false;
+        CHECK(ReadObjBuffer(obj, "", om, &err) && om.parts.size() == 1);
+        if (!om.parts.empty()) { CHECK(om.parts[0].mesh.TriangleCount() == 4); CHECK_NEAR(planarArea(om.parts[0].mesh, up), 3.0, 1e-5); CHECK(up); }
+        // a convex quad is still fanned from its first corner (same triangles as before)
+        ImportedModel qm; CHECK(ReadObjBuffer("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n", "", qm, &err));
+        if (!qm.parts.empty()) CHECK(qm.parts[0].mesh.triangles == (std::vector<int>{0, 1, 2, 0, 2, 3}));
+        std::string ply = "ply\nformat ascii 1.0\nCreated by an exporter that writes free text here\nelement vertex 6\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n";
+        for (const char* v : lx) ply += std::string(v) + "\n";
+        ply += "6 0 1 2 3 4 5\n";
+        ImportedModel pm2;
+        CHECK(ReadPlyBuffer(ply, pm2, &err));   // the free-text header line is ignored (it used to fail the whole file)
+        if (!pm2.parts.empty()) { CHECK(pm2.parts[0].mesh.TriangleCount() == 4); CHECK_NEAR(planarArea(pm2.parts[0].mesh, up), 3.0, 1e-5); CHECK(up); }
+
+        // glTF primitive modes and bad indices: positions 0..4 on a line of unit steps in X with Y alternating, indices u16
+        auto b64 = [](const std::string& in) {
+            static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string o; std::size_t i = 0;
+            for (; i + 2 < in.size(); i += 3) { unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2]; o += t[v >> 18]; o += t[(v >> 12) & 63]; o += t[(v >> 6) & 63]; o += t[v & 63]; }
+            if (i + 1 == in.size()) { unsigned v = (unsigned char)in[i] << 16; o += t[v >> 18]; o += t[(v >> 12) & 63]; o += "=="; }
+            else if (i + 2 == in.size()) { unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8); o += t[v >> 18]; o += t[(v >> 12) & 63]; o += t[(v >> 6) & 63]; o += '='; }
+            return o;
+        };
+        auto gltfTris = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, int* trisOut) {
+            std::string buf;
+            for (int i = 0; i < nPos; ++i) { float f[3] = {(float)i, (i & 1) ? 1.0f : 0.0f, 0.0f}; buf.append((const char*)f, 12); }
+            const std::size_t posBytes = buf.size();
+            for (std::uint16_t v : idx) buf.append((const char*)&v, 2);
+            while (buf.size() % 4) buf.push_back('\0');
+            std::string j = "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"byteLength\":" + std::to_string(buf.size()) + ",\"uri\":\"data:application/octet-stream;base64," + b64(buf) + "\"}],"
+                "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":" + std::to_string(posBytes) + "},{\"buffer\":0,\"byteOffset\":" + std::to_string(posBytes) + ",\"byteLength\":" + std::to_string(idx.size() * 2) + "}],"
+                "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":" + std::to_string(nPos) + ",\"type\":\"VEC3\"},{\"bufferView\":1,\"componentType\":5123,\"count\":" + std::to_string(idx.size()) + ",\"type\":\"SCALAR\"}],"
+                "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}," + (useIdx ? "\"indices\":1," : "") + "\"mode\":" + std::to_string(mode) + "}]}]}";
+            Spit("mr_mode.gltf", j);
+            bool ok = false; Mesh m = LoadGLTF("mr_mode.gltf", &ok);
+            std::remove("mr_mode.gltf");
+            *trisOut = m.TriangleCount();
+            return ok;
+        };
+        int n = -1;
+        CHECK(gltfTris(4, {0, 1, 2, 3, 4}, true, 5, &n) && n == 1);                 // TRIANGLES: the two trailing indices make no triangle
+        CHECK(gltfTris(5, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_STRIP: 5 indices, 3 triangles
+        CHECK(gltfTris(6, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_FAN
+        CHECK(gltfTris(5, {}, false, 5, &n) && n == 3);                             // strip without indices
+        CHECK(!gltfTris(1, {0, 1, 2, 3}, true, 5, &n) || n == 0);                   // LINES: no surface, nothing drawn
+        CHECK(!gltfTris(0, {}, false, 5, &n) || n == 0);                            // POINTS
+        CHECK(gltfTris(4, {0, 1, 2, 0, 1, 9}, true, 5, &n) && n == 1);              // one triangle with an index past the vertices is dropped, the other stays
+        CHECK(gltfTris(5, {0, 1, 1, 2, 3}, true, 5, &n) && n == 1);                 // strip: the two triangles with a repeated index are dropped, (1,2,3) stays
+        // random modes, index lists (some past the vertices) and vertex counts: never a triangle that reads outside the mesh
+        unsigned seed = 12345u;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+        for (int it = 0; it < 300; ++it) {
+            const int nPos = 1 + (int)(rnd() % 7), nIdx = (int)(rnd() % 12), mode = (int)(rnd() % 9) - 1;
+            std::vector<std::uint16_t> ix; for (int i = 0; i < nIdx; ++i) ix.push_back((std::uint16_t)(rnd() % (unsigned)(nPos + 3)));
+            const bool useIdx = (rnd() & 1) != 0 && !ix.empty();
+            int tris = -1; const bool ok = gltfTris(mode, ix, useIdx || ix.empty() ? useIdx : false, nPos, &tris);
+            CHECK(!ok || (tris >= 0 && tris <= std::max(nPos, nIdx)));
+        }
     }
 
     // ---------------- Same files through both backends (needs Assimp) ----------------

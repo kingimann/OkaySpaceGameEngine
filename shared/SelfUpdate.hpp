@@ -156,6 +156,7 @@ inline int SelfCheck(int argc, char** argv, const std::string& runningVersion) {
 /// Why a self-check result is not good, in plain words ("" when it is).
 inline std::string SelfCheckProblem(int exitCode, const std::string& expected) {
     if (exitCode == kSelfCheckOk) return {};
+    if (exitCode == -2) return "the new file did not answer its start-up check in time (it was stopped)";
     if (exitCode < 0) return "the new file could not be started (it may be damaged, blocked by security software, or not allowed to run)";
     if (exitCode == kSelfCheckWrongVersion) return "the new file is not v" + expected + " (it reports another version)";
     return "the new file failed its start-up check (code " + std::to_string(exitCode) + ")";

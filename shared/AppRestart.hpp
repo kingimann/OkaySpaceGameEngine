@@ -574,7 +574,9 @@ inline bool LaunchOnce(const Request& req, std::string& error) {
 }
 #endif
 
-inline int RunAndWait(const std::vector<std::string>& args);
+// timeoutMs 0 waits forever; otherwise the process is killed when it runs longer and kRunTimedOut is returned.
+inline constexpr int kRunTimedOut = -2;
+inline int RunAndWait(const std::vector<std::string>& args, unsigned timeoutMs = 0);
 
 inline int RunHelper(const Request& req) {
     auto log = [&](const std::string& m) { AppendLog(req.logFile, m); };
@@ -602,7 +604,9 @@ inline int RunHelper(const Request& req) {
     }
     if (!req.expectVersion.empty()) {
         // The new program must start and be the published version BEFORE it is started for real.
-        const int rc = RunAndWait({Utf8(req.executable), okay::selfupdate::kSelfCheckFlag, req.expectVersion});
+        log("running the self-check of the new program");
+        const int rc = RunAndWait({Utf8(req.executable), okay::selfupdate::kSelfCheckFlag, req.expectVersion}, 30000);
+        log("self-check finished with code " + std::to_string(rc));
         const std::string problem = okay::selfupdate::SelfCheckProblem(rc, req.expectVersion);
         if (!problem.empty()) {
             log("self-check of the new program failed: " + problem);
@@ -780,7 +784,7 @@ inline int DispatchHelper(int argc, char** argv) {
 
 // Blocks until the program exits. argv is not passed through a shell.
 // Returns the exit code, or -1 if it could not be started.
-inline int RunAndWait(const std::vector<std::string>& args) {
+inline int RunAndWait(const std::vector<std::string>& args, unsigned timeoutMs) {
     if (args.empty() || args[0].empty()) return -1;
 #if defined(_WIN32)
     std::wstring cmd;
@@ -798,7 +802,13 @@ inline int RunAndWait(const std::vector<std::string>& args) {
     if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
                         nullptr, nullptr, &si, &pi))
         return -1;
-    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (WaitForSingleObject(pi.hProcess, timeoutMs ? timeoutMs : INFINITE) == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 5000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return kRunTimedOut;
+    }
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
@@ -820,7 +830,23 @@ inline int RunAndWait(const std::vector<std::string>& args) {
     posix_spawn_file_actions_destroy(&actions);
     if (!opened || rc != 0) return -1;
     int st = 0;
-    while (::waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    if (timeoutMs) {
+        unsigned waited = 0;
+        for (;;) {
+            const pid_t w = ::waitpid(pid, &st, WNOHANG);
+            if (w == pid) break;
+            if (w < 0 && errno != EINTR) return -1;
+            if (waited >= timeoutMs) {
+                ::kill(pid, SIGKILL);
+                while (::waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+                return kRunTimedOut;
+            }
+            ::usleep(10000);
+            waited += 10;
+        }
+    } else {
+        while (::waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    }
     if (WIFEXITED(st)) return WEXITSTATUS(st);
     return -1;
 #endif

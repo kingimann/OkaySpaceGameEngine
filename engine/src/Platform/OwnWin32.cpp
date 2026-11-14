@@ -13,6 +13,7 @@
 #include "PlatformText.hpp"
 #include "EventQueue.hpp"
 #include "Exchange.hpp"
+#include "Win32Exchange.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -20,6 +21,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <imm.h>
+#include <ole2.h>
 #include <mmsystem.h>
 #include <shellapi.h>
 #include <xinput.h>
@@ -148,6 +151,13 @@ public:
         return GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi) ? RefreshOfDevice(mi.szDevice) : 0;
     }
     unsigned DisplayDpi() const override { return DpiOfWindow(m_hwnd); }
+    bool RequestAttention(bool on) override {
+        FLASHWINFO fi; ZeroMemory(&fi, sizeof(fi));
+        fi.cbSize = sizeof(fi); fi.hwnd = m_hwnd;
+        fi.dwFlags = on ? (FLASHW_TRAY | FLASHW_TIMERNOFG) : FLASHW_STOP;   // taskbar button flashes until the window is foreground
+        FlashWindowEx(&fi);
+        return true;
+    }
     bool PresentPixels(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         RECT rc; GetClientRect(m_hwnd, &rc);
@@ -204,7 +214,71 @@ public:
     LONG m_style = 0;
     RECT m_rect = {0, 0, 0, 0};
     text::Utf16Assembler m_chars;      // WM_CHAR surrogate pairing
+    IDropTarget* m_dropTarget = nullptr;   // OLE drop target (null: WM_DROPFILES is used)
+    bool m_composing = false;          // an IME composition is open (WM_IME_COMPOSITION seen)
     std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
+};
+
+// OLE drop target: files dragged from Explorer onto a window. Gives DropBegin, DropFile x N, DropComplete with the
+// window-local drop point (the WM_DROPFILES path has no point on its own and is the fallback when OLE cannot start).
+// Written from the IDropTarget / CF_HDROP documentation; the pure parts are in Win32Exchange.hpp.
+class DropTarget final : public IDropTarget {
+public:
+    DropTarget(EventQueue* q, HWND h) : m_q(q), m_h(h) {}
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&m_ref); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const LONG n = InterlockedDecrement(&m_ref);
+        if (n == 0) delete this;
+        return (ULONG)n;
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_IDropTarget)) { *ppv = static_cast<IDropTarget*>(this); AddRef(); return S_OK; }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* d, DWORD, POINTL, DWORD* eff) override {
+        m_files = HasFiles(d);
+        if (eff) *eff = m_files ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL, DWORD* eff) override {
+        if (eff) *eff = m_files ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE DragLeave() override { m_files = false; return S_OK; }
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* d, DWORD, POINTL pt, DWORD* eff) override {
+        if (eff) *eff = DROPEFFECT_NONE;
+        m_files = false;
+        if (!d) return S_OK;
+        FORMATETC fe = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM sm; ZeroMemory(&sm, sizeof(sm));
+        if (d->GetData(&fe, &sm) != S_OK) return S_OK;
+        std::vector<std::string> paths;
+        if (sm.tymed == TYMED_HGLOBAL && sm.hGlobal) {
+            if (const uint8_t* p = (const uint8_t*)GlobalLock(sm.hGlobal)) {
+                paths = win32::ParseDropFiles(p, (size_t)GlobalSize(sm.hGlobal));
+                GlobalUnlock(sm.hGlobal);
+            }
+        }
+        ReleaseStgMedium(&sm);
+        POINT p = {pt.x, pt.y};
+        ScreenToClient(m_h, &p);
+        std::vector<Event> ev = MakeDropEvents(paths, (uint32_t)(uintptr_t)m_h, (uint32_t)GetTickCount());
+        for (Event& e : ev) { e.x = p.x; e.y = p.y; m_q->Push(e); }
+        if (!ev.empty() && eff) *eff = DROPEFFECT_COPY;
+        return S_OK;
+    }
+private:
+    static bool HasFiles(IDataObject* d) {
+        if (!d) return false;
+        FORMATETC fe = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return d->QueryGetData(&fe) == S_OK;
+    }
+    LONG m_ref = 1;
+    EventQueue* m_q;
+    HWND m_h;
+    bool m_files = false;
 };
 
 class WinPad final : public Gamepad {
@@ -246,6 +320,10 @@ public:
         else if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS) { m_err = "RegisterClassEx failed"; return false; }
         // Sleep() and waitable timers default to the ~15.6 ms system tick: ask for 1 ms for as long as we run.
         if (!m_periodActive && timeBeginPeriod(1) == TIMERR_NOERROR) m_periodActive = true;
+        // OLE (drag and drop) needs a single-threaded apartment on the thread that makes the windows. S_FALSE = this
+        // thread had it already (still needs the matching uninitialize); RPC_E_CHANGED_MODE = the thread is MTA:
+        // no OLE, WM_DROPFILES is used instead.
+        { const HRESULT hr = OleInitialize(nullptr); m_oleOk = SUCCEEDED(hr); }
         m_inited = true;
         return true;
     }
@@ -253,6 +331,7 @@ public:
         m_pending.Clear();
         m_pads = win32::PadTracker();
         EndTimerPeriod();
+        if (m_oleOk) { OleUninitialize(); m_oleOk = false; }
         m_inited = false;
     }
     std::string LastError() const override { return m_err; }
@@ -280,8 +359,12 @@ public:
         HWND h = CreateWindowExW(0, kClassName, Wide(d.title).c_str(), style, x, y, ww, wh,
                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!h) { m_err = "CreateWindowEx failed"; return nullptr; }
-        DragAcceptFiles(h, TRUE);
         auto* w = new WinWindow(this, h);
+        if (m_oleOk) {   // OLE drop target gives the drop point; if it cannot be registered, WM_DROPFILES still works
+            DropTarget* dt = new DropTarget(&m_pending, h);
+            if (RegisterDragDrop(h, dt) == S_OK) w->m_dropTarget = dt; else dt->Release();
+        }
+        if (!w->m_dropTarget) DragAcceptFiles(h, TRUE);
         m_wins[h] = w;
         if (!d.hidden) ShowWindow(h, d.maximized && d.resizable && !d.fullscreen ? SW_SHOWMAXIMIZED : SW_SHOW);
         if (d.fullscreen) w->SetFullscreen(true);
@@ -426,6 +509,7 @@ public:
     // Clipboard. OpenClipboard needs a real owner window: with a null one EmptyClipboard succeeds but then
     // SetClipboardData fails (documented), so a hidden message-only window owns it.
     bool SetClipboardText(const std::string& t) override {
+        if (!IsValidUtf8(t)) return false;   // the clipboard text is UTF-8 (Exchange.hpp rule)
         if (!OpenClip()) return false;
         EmptyClipboard();
         const std::wstring w = Wide(text::ToCrlf(t));
@@ -450,6 +534,74 @@ public:
                 while (n < cap && w[n]) ++n;
                 out = text::FromCrlf(Utf8(w, (int)n));
                 GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+        return out;
+    }
+
+    // Clipboard by MIME type: text/plain = CF_UNICODETEXT, text/uri-list = CF_HDROP (local files), anything else is a
+    // registered clipboard format named by the MIME string.
+    bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) override {
+        if (mime.empty() || mime.size() > 200 || data.size() > MemoryClipboardProvider::kMaxBytes) return false;
+        if (mime == kMimeText) return SetClipboardText(std::string(data.begin(), data.end()));
+        UINT fmt = 0;
+        std::vector<uint8_t> payload;
+        if (mime == kMimeUriList) {
+            payload = win32::UriListToDropFiles(std::string(data.begin(), data.end()));
+            if (payload.empty()) return false;
+            fmt = CF_HDROP;
+        } else {
+            fmt = RegisterClipboardFormatW(Wide(mime).c_str());
+            payload = data;
+        }
+        if (!fmt || !OpenClip()) return false;
+        EmptyClipboard();
+        HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, payload.empty() ? 1 : payload.size());
+        if (!g) { CloseClipboard(); return false; }
+        void* p = GlobalLock(g);
+        if (!p) { GlobalFree(g); CloseClipboard(); return false; }
+        if (!payload.empty()) std::memcpy(p, payload.data(), payload.size());
+        GlobalUnlock(g);
+        const bool ok = SetClipboardData(fmt, g) != nullptr;
+        if (!ok) GlobalFree(g);
+        CloseClipboard();
+        return ok;
+    }
+    bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) override {
+        if (mime == kMimeText) {
+            if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) return false;
+            const std::string t = GetClipboardText();
+            out.assign(t.begin(), t.end());
+            return true;
+        }
+        const UINT fmt = mime == kMimeUriList ? CF_HDROP : RegisterClipboardFormatW(Wide(mime).c_str());
+        if (!fmt || !IsClipboardFormatAvailable(fmt) || !OpenClip()) return false;
+        bool ok = false;
+        if (HANDLE h = GetClipboardData(fmt)) {
+            const SIZE_T n = GlobalSize(h);
+            if (n <= MemoryClipboardProvider::kMaxBytes) if (const uint8_t* p = (const uint8_t*)GlobalLock(h)) {
+                if (fmt == CF_HDROP) { const std::string u = win32::DropFilesToUriList(p, (size_t)n); out.assign(u.begin(), u.end()); ok = !u.empty(); }
+                else { out.assign(p, p + n); ok = true; }
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+        return ok;
+    }
+    std::vector<std::string> ClipboardFormats() override {
+        std::vector<std::string> out;
+        auto add = [&](const std::string& f) { for (auto& x : out) if (x == f) return; out.push_back(f); };
+        if (!OpenClip()) return out;
+        UINT f = 0;
+        for (int guard = 0; guard < 256 && (f = EnumClipboardFormats(f)) != 0; ++guard) {
+            if (f == CF_UNICODETEXT || f == CF_TEXT || f == CF_OEMTEXT) add(kMimeText);
+            else if (f == CF_HDROP) add(kMimeUriList);
+            else if (f >= 0xC000) {   // registered formats: the MIME ones we or other programs named with a '/'
+                wchar_t nm[256];
+                const int n = GetClipboardFormatNameW(f, nm, 256);
+                const std::string name = Utf8(nm, n);
+                if (name.find('/') != std::string::npos) add(name);
             }
         }
         CloseClipboard();
@@ -652,6 +804,39 @@ public:
             DragFinish(drop);
             return 0;
         }
+        // IME composition (UNVERIFIED on real Windows: needs an IME; Wine has none). We only OBSERVE: the default window
+        // procedure still shows the IME's own composition window and turns the result into WM_CHAR (our TextInput).
+        case WM_IME_COMPOSITION:
+            if (b->m_text) {
+                if (lp == 0 || (lp & GCS_COMPSTR)) {   // lp 0: the composition was cancelled
+                    std::u16string comp;
+                    int cursor = 0;
+                    if (HIMC himc = ImmGetContext(h)) {
+                        const LONG bytes = ImmGetCompositionStringW(himc, GCS_COMPSTR, nullptr, 0);
+                        if (bytes > 0 && bytes <= 4096) {
+                            std::vector<char16_t> buf((size_t)bytes / sizeof(char16_t) + 1, 0);
+                            const LONG got = ImmGetCompositionStringW(himc, GCS_COMPSTR, buf.data(), (DWORD)bytes);
+                            if (got > 0) comp.assign(buf.data(), (size_t)got / sizeof(char16_t));
+                            cursor = (int)ImmGetCompositionStringW(himc, GCS_CURSORPOS, nullptr, 0);
+                        }
+                        ImmReleaseContext(h, himc);
+                    }
+                    if (!comp.empty() || win->m_composing) {
+                        win->m_composing = !comp.empty();
+                        b->m_pending.Push(win32::MakeCompositionEvent(comp, cursor, e.windowId, e.timestampMs));
+                    }
+                }
+                if (lp & GCS_RESULTSTR) {   // committed: the text itself arrives as WM_CHAR; end the composition first
+                    if (win->m_composing) { win->m_composing = false; b->m_pending.Push(win32::MakeCompositionEvent(std::u16string(), 0, e.windowId, e.timestampMs)); }
+                }
+            }
+            break;   // DefWindowProc: IME window and the result characters
+        case WM_IME_ENDCOMPOSITION:
+            if (b->m_text && win->m_composing) {
+                win->m_composing = false;
+                b->m_pending.Push(win32::MakeCompositionEvent(std::u16string(), 0, e.windowId, e.timestampMs));
+            }
+            break;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { ::SetCursor(nullptr); return TRUE; }
             if (LOWORD(lp) == HTCLIENT) { ::SetCursor(LoadCursorA(nullptr, CursorResource(b->m_shape))); return TRUE; }
@@ -703,7 +888,7 @@ public:
     EventQueue m_pending;   // bounded, merges mouse moves, wheel and resize (EventQueue.hpp)
     CursorShape m_shape = CursorShape::Arrow;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false, m_classRegistered = false, m_periodActive = false;
-    bool m_rawRegistered = false, m_padsOn = true;
+    bool m_rawRegistered = false, m_padsOn = true, m_oleOk = false;
     HWND m_focus = nullptr, m_clipHwnd = nullptr;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
@@ -800,6 +985,7 @@ void WinWindow::SetPosition(int x, int y) {
 
 WinWindow::~WinWindow() {
     DestroyGLContext();
+    if (m_dropTarget) { RevokeDragDrop(m_hwnd); m_dropTarget->Release(); m_dropTarget = nullptr; }
     m_b->Unregister(m_hwnd);
     DestroyWindow(m_hwnd);
 }
@@ -866,6 +1052,15 @@ bool WinPad::Rumble(uint16_t lo, uint16_t hi, uint32_t ms) {
 } // namespace
 
 std::unique_ptr<Backend> CreateOwnBackend() { return std::unique_ptr<Backend>(new WinBackend()); }
+
+namespace own {
+/// Test hook: the OLE drop target (an IDropTarget*, not add-ref'd) of a window made by this backend; null for another
+/// kind of window or when OLE could not start.
+void* Win32DropTargetFor(Window& w) {
+    WinWindow* ww = dynamic_cast<WinWindow*>(&w);
+    return ww ? static_cast<void*>(ww->m_dropTarget) : nullptr;
+}
+} // namespace own
 
 } // namespace okay::platform
 #else

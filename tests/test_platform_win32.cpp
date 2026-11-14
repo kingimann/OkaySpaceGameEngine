@@ -11,6 +11,7 @@
 #include "okay/Platform/Platform.hpp"
 #include "Platform/Internal.hpp"
 #include "Platform/Win32Logic.hpp"
+#include "Platform/Win32Exchange.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -18,11 +19,14 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <ole2.h>
 #include <chrono>
 #include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
+
+namespace okay::platform::own { void* Win32DropTargetFor(Window& w); }   // test hook in OwnWin32.cpp
 
 using namespace okay::platform;
 
@@ -412,6 +416,175 @@ void TestClipboard() {
     CloseClipboard();
 }
 
+
+// A minimal IDataObject offering one CF_HDROP, standing in for Explorer's drag source.
+class FileDataObject final : public IDataObject {
+public:
+    explicit FileDataObject(std::vector<std::string> paths) : m_paths(std::move(paths)) {}
+    ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_IDataObject)) { *ppv = static_cast<IDataObject*>(this); return S_OK; }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f, STGMEDIUM* m) override {
+        if (!f || f->cfFormat != CF_HDROP || !(f->tymed & TYMED_HGLOBAL)) return DV_E_FORMATETC;
+        const std::vector<uint8_t> blob = win32::BuildDropFiles(m_paths);
+        HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, blob.size());
+        void* p = GlobalLock(g); std::memcpy(p, blob.data(), blob.size()); GlobalUnlock(g);
+        m->tymed = TYMED_HGLOBAL; m->hGlobal = g; m->pUnkForRelease = nullptr;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f) override { return f && f->cfFormat == CF_HDROP && (f->tymed & TYMED_HGLOBAL) ? S_OK : DV_E_FORMATETC; }
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD, IEnumFORMATETC**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
+private:
+    std::vector<std::string> m_paths;
+};
+
+int CountType(const std::vector<Event>& v, EventType t) { int n = 0; for (auto& e : v) if (e.type == t) ++n; return n; }
+
+void TestExchangeAndMore() {
+    RUN_SUITE("clipboard formats, drop, merged events, attention, IME (the gaps round)");
+    // -- clipboard by MIME type
+    CHECK(!g_b->SetClipboardText("bad \xFF utf8"));
+    const std::string uris = "file:///C:/Temp/a%20b.txt\r\nfile:///C:/Temp/c.png\r\nhttp://example.com/x\r\n";
+    CHECK(g_b->ClipboardPut("text/uri-list", std::vector<uint8_t>(uris.begin(), uris.end())));
+    CHECK(IsClipboardFormatAvailable(CF_HDROP));
+    {
+        std::vector<uint8_t> got;
+        CHECK(g_b->ClipboardFetch("text/uri-list", got));
+        CHECK(std::string(got.begin(), got.end()) == "file:///C:/Temp/a%20b.txt\r\nfile:///C:/Temp/c.png\r\n");   // the http line has no local path
+        bool listed = false; for (auto& f : g_b->ClipboardFormats()) if (f == "text/uri-list") listed = true;
+        CHECK(listed);
+        std::vector<uint8_t> none;
+        CHECK(!g_b->ClipboardFetch("image/png", none));
+    }
+    {
+        std::vector<uint8_t> blob(5000); for (size_t i = 0; i < blob.size(); i++) blob[i] = (uint8_t)(i * 13);
+        CHECK(g_b->ClipboardPut("image/png", blob));
+        std::vector<uint8_t> got;
+        CHECK(g_b->ClipboardFetch("image/png", got) && got == blob);
+        bool listed = false; for (auto& f : g_b->ClipboardFormats()) if (f == "image/png") listed = true;
+        CHECK(listed);
+        CHECK(!g_b->ClipboardPut("text/uri-list", std::vector<uint8_t>{'x'}));   // no local file in it
+        CHECK(g_b->SetClipboardText("plain"));
+        CHECK(g_b->GetClipboardText() == "plain");
+        got.clear();
+        CHECK(g_b->ClipboardFetch("text/plain", got) && std::string(got.begin(), got.end()) == "plain");
+        CHECK(!g_b->ClipboardFetch("image/png", got));                            // replaced by the text
+    }
+    WindowDesc d; d.title = "gaps"; d.width = 300; d.height = 200;
+    auto win = g_b->MakeWindow(d);
+    CHECK(win != nullptr);
+    if (!win) return;
+    HWND h = (HWND)win->NativeHandle();
+    win->Show();
+    Pump(); g_events.clear();
+    // -- taskbar flash
+    CHECK(win->RequestAttention(true));
+    CHECK(win->RequestAttention(false));
+    // -- WM_DROPFILES (the fallback path): DropBegin, DropFile x N, DropComplete
+    {
+        const std::vector<uint8_t> blob = win32::BuildDropFiles({"C:\\Temp\\one.txt", "C:\\Temp\\\xC3\xA9 two.txt"});
+        HGLOBAL g = GlobalAlloc(GHND, blob.size());
+        void* p = GlobalLock(g); std::memcpy(p, blob.data(), blob.size()); GlobalUnlock(g);
+        SendMessageW(h, WM_DROPFILES, (WPARAM)g, 0);   // the window procedure frees it (DragFinish)
+        Pump();
+        std::vector<std::string> paths; int begin = -1, complete = -1, i = 0;
+        for (auto& e : g_events) {
+            if (e.type == EventType::DropBegin) begin = i;
+            if (e.type == EventType::DropComplete) complete = i;
+            if (e.type == EventType::DropFile) paths.push_back(e.text);
+            i++;
+        }
+        CHECK(paths.size() == 2 && begin == 0 && complete == 3);
+        if (paths.size() == 2) CHECK(paths[0] == "C:\\Temp\\one.txt" && paths[1] == "C:\\Temp\\\xC3\xA9 two.txt");
+        g_events.clear();
+    }
+    // -- the OLE drop target (what Explorer talks to): drop point and paths
+    {
+        IDropTarget* dt = (IDropTarget*)okay::platform::own::Win32DropTargetFor(*win);
+        CHECK(dt != nullptr);
+        if (dt) {
+            FileDataObject data({"C:\\Temp\\ole one.txt", "C:\\Temp\\ole2.png"});
+            POINT client = {30, 40}; ClientToScreen(h, &client);
+            POINTL pt = {client.x, client.y};
+            DWORD eff = DROPEFFECT_COPY;
+            CHECK(dt->DragEnter(&data, 0, pt, &eff) == S_OK && eff == DROPEFFECT_COPY);
+            eff = DROPEFFECT_COPY;
+            CHECK(dt->DragOver(0, pt, &eff) == S_OK && eff == DROPEFFECT_COPY);
+            eff = DROPEFFECT_COPY;
+            CHECK(dt->Drop(&data, 0, pt, &eff) == S_OK && eff == DROPEFFECT_COPY);
+            Pump();
+            std::vector<std::string> paths; int x = -1, y = -1;
+            for (auto& e : g_events) if (e.type == EventType::DropFile) { paths.push_back(e.text); x = e.x; y = e.y; }
+            CHECK(paths.size() == 2 && CountType(g_events, EventType::DropBegin) == 1 && CountType(g_events, EventType::DropComplete) == 1);
+            if (paths.size() == 2) CHECK(paths[0] == "C:\\Temp\\ole one.txt" && paths[1] == "C:\\Temp\\ole2.png");
+            CHECK(x == 30 && y == 40);
+            g_events.clear();
+            // Data with no files is refused at DragEnter.
+            struct NoFiles final : IDataObject {
+                ULONG STDMETHODCALLTYPE AddRef() override { return 2; } ULONG STDMETHODCALLTYPE Release() override { return 1; }
+                HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** ppv) override { *ppv = nullptr; return E_NOINTERFACE; }
+                HRESULT STDMETHODCALLTYPE GetData(FORMATETC*, STGMEDIUM*) override { return DV_E_FORMATETC; }
+                HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+                HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC*) override { return DV_E_FORMATETC; }
+                HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC*) override { return E_NOTIMPL; }
+                HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+                HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD, IEnumFORMATETC**) override { return E_NOTIMPL; }
+                HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
+                HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+                HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
+            } nofiles;
+            eff = DROPEFFECT_COPY;
+            CHECK(dt->DragEnter(&nofiles, 0, pt, &eff) == S_OK && eff == DROPEFFECT_NONE);
+            dt->DragLeave();
+            eff = DROPEFFECT_COPY;
+            CHECK(dt->Drop(&nofiles, 0, pt, &eff) == S_OK && eff == DROPEFFECT_NONE);
+            Pump();
+            CHECK(CountType(g_events, EventType::DropFile) == 0);
+            g_events.clear();
+        }
+    }
+    // -- a burst of mouse moves and wheel notches comes out merged (EventQueue.hpp)
+    {
+        SendMessageW(h, WM_MOUSEMOVE, 0, MAKELPARAM(10, 10));
+        Pump(); g_events.clear();
+        for (int x = 11; x <= 20; ++x) SendMessageW(h, WM_MOUSEMOVE, 0, MAKELPARAM(x, 10));
+        for (int i = 0; i < 4; ++i) SendMessageW(h, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), MAKELPARAM(50, 50));
+        Pump();
+        int n = 0, sdx = 0, lastx = -1, nw = 0; float wy = 0;
+        for (auto& e : g_events) {
+            if (e.type == EventType::MouseMove) { n++; sdx += e.dx; lastx = e.x; }
+            if (e.type == EventType::MouseWheel) { nw++; wy += e.wheelY; }
+        }
+        std::cout << "  10 moves -> " << n << " event(s); 4 wheel notches -> " << nw << " event(s)\n";
+        CHECK(n >= 1 && n <= 2 && sdx == 10 && lastx == 20);
+        CHECK(nw == 1 && wy > 3.9f && wy < 4.1f);
+        g_events.clear();
+    }
+    // -- IME messages with no IME present: nothing breaks, no composition events (UNVERIFIED with a real IME)
+    {
+        g_b->StartTextInput();
+        SendMessageW(h, WM_IME_STARTCOMPOSITION, 0, 0);
+        SendMessageW(h, WM_IME_COMPOSITION, 0, GCS_COMPSTR);
+        SendMessageW(h, WM_IME_COMPOSITION, 0, GCS_RESULTSTR);
+        SendMessageW(h, WM_IME_ENDCOMPOSITION, 0, 0);
+        Pump();
+        CHECK(CountType(g_events, EventType::TextEditing) == 0);
+        g_b->StopTextInput();
+        g_events.clear();
+        Skip("IME composition events (WM_IME_COMPOSITION with a real IME): no IME on this host; only the 'no IME, nothing breaks' path ran");
+    }
+    win.reset();
+}
+
 typedef void (APIENTRY *PFNCLEARCOLOR)(float, float, float, float);
 typedef void (APIENTRY *PFNCLEAR)(unsigned);
 typedef void (APIENTRY *PFNREADPIXELS)(int, int, int, int, unsigned, unsigned, void*);
@@ -548,6 +721,7 @@ int main() {
     TestDisplays();
     TestWindow();
     TestClipboard();
+    TestExchangeAndMore();
     TestKeyboardMouse();
     TestGL();
     TestPresent();

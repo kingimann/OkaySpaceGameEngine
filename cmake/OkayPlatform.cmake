@@ -44,7 +44,7 @@ function(okay_add_platform_library)
     if(WIN32)
         list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
-        list(APPEND _libs user32 gdi32 opengl32 shell32 winmm)   # winmm: timeBeginPeriod, waveOut / waveIn
+        list(APPEND _libs user32 gdi32 opengl32 shell32 winmm ole32 imm32 uuid)   # winmm: timeBeginPeriod, waveOut / waveIn; ole32 + uuid: drag and drop; imm32: IME composition
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND _srcs src/Platform/OwnLinux.cpp src/Platform/OwnLinuxX11.cpp
                           src/Platform/OwnLinuxAudio.cpp src/Platform/OwnLinuxEvdev.cpp)

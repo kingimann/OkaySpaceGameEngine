@@ -3,6 +3,7 @@
 #include "okay/UI/OkayUIDock.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 
 namespace OkayUI {
@@ -27,6 +28,7 @@ struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; }
 
 struct Ctx {
     DockLayout layout;
+    std::map<std::string, int> seen;   // DockBegin names and the frame they were last called (DockWindowSeen)
     long long spaceFrame = -10;
     Rect area;
     float tabH = 24.0f;
@@ -326,6 +328,7 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     std::string name = title;
     if ((int)name.size() > DockLayout::kMaxNameLen) name.resize((size_t)DockLayout::kMaxNameLen);
     c.curName = name;
+    if (c.seen.size() < 512 || c.seen.count(name)) c.seen[name] = GetFrameCount();   // WindowInfo: a tab that is not shown still counts as drawn this frame
     for (size_t i = 0; i < c.closed.size(); ++i) if (c.closed[i] == name) {
         c.closed.erase(c.closed.begin() + (long)i);
         if (p_open) *p_open = false;
@@ -394,6 +397,13 @@ void DockEnd() {
     }
     c.inBegin = c.began = c.clipped = c.floating = false;
     c.pOpen = nullptr;
+}
+
+bool DockWindowSeen(const std::string& name, bool* thisFrame) {
+    const auto it = C().seen.find(name);
+    if (it == C().seen.end()) return false;
+    if (thisFrame) *thisFrame = it->second == GetFrameCount();
+    return it->second + 1 >= GetFrameCount();
 }
 
 } // namespace OkayUI

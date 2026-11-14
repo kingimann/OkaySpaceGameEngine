@@ -246,6 +246,9 @@ void DockEnd();
 /// Layout text for saving and loading (see DockLayout::Save / Load).
 std::string DockSaveLayout();
 bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);
+/// True when DockBegin was called for `name` this frame or the one before (a docked tab that is not the chosen one never begins a window, but is still drawn
+/// as far as the dock space is concerned); `*thisFrame` says whether it was this frame. Used by FindWindowByName.
+bool DockWindowSeen(const std::string& name, bool* thisFrame = nullptr);
 /// What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
 struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window; };
 DockDropInfo GetDockDrop();

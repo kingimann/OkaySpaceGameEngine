@@ -4,6 +4,9 @@
 #include <vector>
 #include "okay/UI/OkayUIFonts.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUICompat.hpp"
+#include "okay/UI/OkayUIDock.hpp"
+#include <string>
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
@@ -422,6 +425,8 @@ struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0,
                  unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
+                 char name[64] = {0};               // the title it was begun with (FindWindowByName, GetWindowInfos)
+                 float dw = 0, dh = 0;              // the size it was last drawn with
                };
 WinSlot g_wins[64];   // 64: a dock space (OkayUIDock) can hold many windows
 
@@ -486,6 +491,7 @@ inline void popIdSeed() {
 // FNV-1a hash of a label -> stable nonzero widget id (so callers needn't pass ids).
 inline int hashLabel(const char* s) {
     unsigned h = (2166136261u ^ (unsigned)g_lay.seed ^ g_idSeed);
+    if (s) for (const char* p = s; *p; ++p) if (p[0] == '#' && p[1] == '#' && p[2] == '#') { s = p; break; }   // "Label###id": only "###id" makes the id (Dear ImGui's rule), so the label can change
     if (s) for (; *s; ++s) h = (h ^ (unsigned char)*s) * 16777619u;
     int id = (int)(h & 0x7fffffffu);
     return id ? id : 1;
@@ -562,10 +568,11 @@ inline float cursorX() {
 float g_nextItemW = -1.0f;
 float g_itemWStack[16];
 int   g_itemWTop = 0;
+float g_itemWBase = -1.0f;   // SetItemWidthDefault: the width of full-width items in the current window when nothing else says (reset by End)
 // Remaining width from the next item's left edge to the content's right edge.
 inline float availW() {
     float real = g_lay.ox + g_lay.contentW - cursorX();
-    float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : -1.0f);
+    float over = g_nextItemW > 0.0f ? g_nextItemW : (g_itemWTop > 0 ? g_itemWStack[g_itemWTop - 1] : g_itemWBase);
     if (over > 0.0f && over < real) return over;
     return real;
 }
@@ -1157,7 +1164,7 @@ void BeginFrame(const Input& in) {
     g_colTop = 0;
     while (g_textScaleTop > 0) PopTextScale();   // an unbalanced PushTextScale never leaks into the next frame
     g_ncards = 0;                        // reset card stack (BeginCard reserves per frame)
-    g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
+    g_nextItemW = -1.0f; g_itemWTop = 0; g_itemWBase = -1.0f;   // reset item-width overrides
     g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
     g_curClipOn = false; g_curTex = g_defTex;
     g_childTop = 0;                        // reset child-region stack
@@ -2212,6 +2219,7 @@ struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = fals
                 int slot = -1, id = 0; float x = 0, y = 0, w = 0, h = 0, titleH = 0, pad = 0, ox = 0, oy = 0; };
 static WinEnd g_we;
 static int  g_wflagsNext = 0;      // WindowFlags for the next core Begin
+static int  g_nextCollapse = -1, g_nextCollapseCond = 0;   // SetNextWindowCollapsed: the next Begin's collapsed state (-1: none)
 static bool g_focusNextWin = false;   // SetNextWindowFocus: the next Begin takes focus and comes to the front
 static float g_bgAlphaNext = -1.0f;   // SetNextWindowBgAlpha: the next Begin's body alpha is scaled by this (< 0: unchanged)
 constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): the window is an ImGui-style one
@@ -2236,6 +2244,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     WinSlot* slot = nullptr;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
+    if (slot && !slot->name[0] && title) std::snprintf(slot->name, sizeof slot->name, "%s", title);
     const int wf = g_wflagsNext;
     g_wflagsNext = 0;
     const bool takeFocus = g_focusNextWin; g_focusNextWin = false;
@@ -2269,6 +2278,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     bool* collapsed = bare ? &s_bareOpen : openState(id ^ 0x5c01, false);   // per-window collapsed flag
     if (bare) { s_bareOpen = false; p_open = nullptr; }
     const bool noCollapse = (wf & Window_NoCollapse) != 0, noBg = (wf & Window_NoBackground) != 0, noFront = (wf & Window_NoBringToFront) != 0 || bare;   // a bare (host) panel never rises above floating windows
+    if (g_nextCollapse >= 0) {   // SetNextWindowCollapsed: always, or only the first time the window is seen
+        if (!bare && (g_nextCollapseCond == Cond_Always || !slot || slot->lastFrame == 0)) *collapsed = g_nextCollapse == 1;
+        g_nextCollapse = -1;
+    }
     if (noTitle || noCollapse) *collapsed = false;
     // Stacking: a window that is new (or has not been drawn for a frame) comes to the front and takes focus unless told not to;
     // a click on the topmost window under the pointer raises it. NoBringToFront windows stay at the bottom.
@@ -2345,7 +2358,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
     g_curWin.z = slot ? slot->z : 0;
-    if (slot) slot->lastFrame = g_frameCount;
+    if (slot) { slot->lastFrame = g_frameCount; slot->dw = w; slot->dh = bodyH; }
     if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
     wrecBegin(id, g_curWin.z);
     g_we = WinEnd(); g_we.open = true; g_we.hidden = hidden; g_we.id = id; g_we.slot = slot ? (int)(slot - g_wins) : -1;
@@ -2455,6 +2468,7 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 }
 
 void End() {
+    g_itemWBase = -1.0f;
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
     g_curWin.valid = false;
     g_posOverride = false;
@@ -5966,6 +5980,7 @@ bool BeginPopupContextWindow(const char* id, int flags) {
 }
 
 void SetNextWindowFocus() { g_focusNextWin = true; }
+void SetNextWindowCollapsed(bool collapsed, Cond cond) { g_nextCollapse = collapsed ? 1 : 0; g_nextCollapseCond = (int)cond; }
 void SetNextWindowBgAlpha(float a) { g_bgAlphaNext = (a == a && a >= 0.0f) ? (a > 1.0f ? 1.0f : a) : -1.0f; }
 void SetWindowPos(Vec2 pos) {
     if (!(finite1(pos.x) && finite1(pos.y)) || !g_we.open || g_we.slot < 0) return;
@@ -6173,6 +6188,99 @@ void PushMultiItemsWidths(int count, float totalWidth) {
 }
 float GetTreeNodeToLabelSpacing() { return 16.0f; }
 bool BeginTabBar(const char* id, int /*tabBarFlags*/) { return BeginTabBar(id); }
+
+// ---- Window queries (the supported OkayUI form of what the editor read from Dear ImGui's window internals) ---------------------------
+namespace {
+WindowInfo infoOf(const WinSlot& w) {
+    WindowInfo i;
+    i.found = true;
+    std::snprintf(i.name, sizeof i.name, "%s", w.name);
+    i.id = (unsigned)w.id;
+    i.pos = Vec2{w.x, w.y}; i.size = Vec2{w.dw > 0.0f ? w.dw : w.w, w.dh > 0.0f ? w.dh : w.h};
+    i.active = w.lastFrame == g_frameCount && g_frameCount > 0;
+    i.wasActive = w.lastFrame != 0 && w.lastFrame + 1 >= g_frameCount;
+    i.focused = g_focusWin == w.id;
+    i.collapsed = false;
+    for (const OpenSlot& o : g_opens) if (o.used && o.id == (w.id ^ 0x5c01)) { i.collapsed = o.open; break; }
+    i.order = 0;
+    for (const WinSlot& o : g_wins) if (o.used && o.id != w.id && (o.z < w.z || (o.z == w.z && o.id < w.id))) ++i.order;
+    const DockLayout& dl = GetDockLayout();
+    i.dockNode = w.name[0] ? dl.NodeOf(w.name) : 0;
+    i.docked = i.dockNode != 0;
+    i.dockTabVisible = false;
+    if (i.docked) { const DockLayout::Node* n = dl.Find(i.dockNode); i.dockTabVisible = n && n->active >= 0 && n->active < (int)n->tabs.size() && n->tabs[(size_t)n->active] == w.name; }
+    return i;
+}
+const WinSlot* slotByName(const char* name) {
+    if (!name || !*name) return nullptr;
+    const int id = windowId(name);
+    for (const WinSlot& w : g_wins) if (w.used && w.id == id) return &w;
+    return nullptr;
+}
+} // namespace
+
+namespace {
+// A window the dock space holds but that never began (a tab that is not the chosen one): it is found through the layout.
+WindowInfo dockOnlyInfo(const std::string& name) {
+    WindowInfo i;
+    const DockLayout& dl = GetDockLayout();
+    i.found = true;
+    std::snprintf(i.name, sizeof i.name, "%s", name.c_str());
+    i.id = (unsigned)windowId(name.c_str());
+    bool thisFrame = false;
+    const bool seen = DockWindowSeen(name, &thisFrame);
+    i.active = thisFrame; i.wasActive = seen;
+    i.dockNode = dl.NodeOf(name); i.docked = i.dockNode != 0;
+    if (const DockLayout::Node* n = dl.Find(i.dockNode)) { i.pos = Vec2{n->rect.x, n->rect.y}; i.size = Vec2{n->rect.w, n->rect.h}; i.dockTabVisible = n->active >= 0 && n->active < (int)n->tabs.size() && n->tabs[(size_t)n->active] == name; }
+    else if (const DockLayout::Floating* f = dl.FindFloating(name)) { i.pos = Vec2{f->rect.x, f->rect.y}; i.size = Vec2{f->rect.w, f->rect.h}; }
+    return i;
+}
+bool dockWindowNamed(unsigned id, std::string* out) {
+    for (const std::string& n : GetDockLayout().Windows()) if ((unsigned)windowId(n.c_str()) == id) { *out = n; return true; }
+    return false;
+}
+} // namespace
+
+WindowInfo FindWindowByName(const char* name) {
+    if (const WinSlot* w = slotByName(name)) return infoOf(*w);
+    if (name && *name) { std::string n; if (dockWindowNamed((unsigned)windowId(name), &n)) return dockOnlyInfo(n); }
+    return WindowInfo();
+}
+WindowInfo FindWindowByID(unsigned id) {
+    for (const WinSlot& w : g_wins) if (w.used && (unsigned)w.id == id) return infoOf(w);
+    std::string n; if (dockWindowNamed(id, &n)) return dockOnlyInfo(n);
+    return WindowInfo();
+}
+WindowInfo GetCurrentWindowInfo() {
+    if (!g_curWin.valid) return WindowInfo();
+    for (const WinSlot& w : g_wins) if (w.used && w.id == g_curWin.id) return infoOf(w);
+    WindowInfo i; i.found = true; i.id = (unsigned)g_curWin.id; i.pos = Vec2{g_curWin.x, g_curWin.y}; i.size = Vec2{g_curWin.w, g_curWin.h}; i.active = true; i.wasActive = true;
+    i.focused = g_focusWin == g_curWin.id;
+    return i;
+}
+WindowInfo GetFocusedWindowInfo() {
+    for (const WinSlot& w : g_wins) if (w.used && w.id == g_focusWin && g_focusWin != 0) return infoOf(w);
+    return WindowInfo();
+}
+int GetWindowInfos(WindowInfo* out, int cap) {
+    int n = 0, total = 0;
+    for (const WinSlot& w : g_wins) if (w.used && w.name[0]) { ++total; if (out && n < cap) out[n++] = infoOf(w); }
+    if (out) std::sort(out, out + n, [](const WindowInfo& a, const WindowInfo& b) { return a.order < b.order; });
+    return out ? n : total;   // without a buffer: how many windows there are
+}
+unsigned GetWindowID() { return g_curWin.valid ? (unsigned)g_curWin.id : 0u; }
+Rect GetWindowInnerRect() {
+    if (g_childTop > 0) { const ChildSave& c = g_childStack[g_childTop - 1]; return Rect{c.rx, c.ry, c.rw, c.rh}; }
+    if (!g_curWin.valid) return Rect{};
+    const float titleH = rowH();
+    return Rect{g_curWin.x, g_curWin.y + titleH, g_curWin.w, std::max(0.0f, g_curWin.h - titleH)};
+}
+void BringWindowToDisplayFront(const char* name) {
+    const int id = name ? windowId(name) : (g_curWin.valid ? g_curWin.id : 0);
+    if (!id) return;
+    for (WinSlot& w : g_wins) if (w.used && w.id == id && w.z != 0) { w.z = ++g_zCounter; return; }
+}
+void SetItemWidthDefault(float w) { g_itemWBase = (std::isfinite(w) && w > 0.0f) ? w : -1.0f; }
 
 void ResetState() {
     UseLauncherLook(false);

@@ -80,6 +80,11 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 if(TARGET okay_engine)
     target_link_libraries(okayspace-launcher PRIVATE okay_engine)
 endif()
+# shared/AntiCheatCrypto.hpp calls okay::crypto when the build has -DOKAY_OWN_CRYPTO=ON (unreviewed, opt-in); link
+# the crypto library by itself so the launcher does not depend on the engine for that.
+if(TARGET okay_crypto)
+    target_link_libraries(okayspace-launcher PRIVATE okay_crypto)
+endif()
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
     target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS

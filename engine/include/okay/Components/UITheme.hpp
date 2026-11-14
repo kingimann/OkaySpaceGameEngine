@@ -76,6 +76,12 @@ public:
     Color border        = Color::FromBytes(255, 255, 255, 48);
     Color shadowCol     = Color::FromBytes(0, 0, 0, 160);
     Color glowColor     = Color::FromBytes(90, 170, 255, 0);
+    /// Keyboard / gamepad focus ring. The renderer reads these; Apply does not bake them onto widgets.
+    /// High-visibility focus and the thickness scale in Accessibility replace or multiply them.
+    Color focusColor    = Color::FromBytes(120, 182, 255, 230);
+    float focusThickness = 2.0f;
+    float focusPadding = 3.0f;
+    bool  focusPulse = false;
 
     float cornerRadius = 16.0f;
     int   cornerMask = UICornerAll;
@@ -118,6 +124,7 @@ public:
         else if (which == (int)Preset::Glass)      GlassPalette();
         else if (which == (int)Preset::Military)   MilitaryPalette();
         else if (which == (int)Preset::Horror)     HorrorPalette();
+        ApplyFocusForPreset(which);
     }
 
     /// Preset by its name ("Neon", "sci-fi", "Retro Pixel"...; case and spaces do not matter).
@@ -218,6 +225,27 @@ private:
         return go->transform->Parent()->gameObject->name.rfind("Swatch", 0) == 0;
     }
 
+    void SetFocusLook(Color c, float thick, float pad, bool pulse) {
+        focusColor = c; focusThickness = thick; focusPadding = pad; focusPulse = pulse;
+    }
+    /// Each built-in look has its own ring. Custom leaves the fields as they are.
+    void ApplyFocusForPreset(int which) {
+        switch (which) {
+            case (int)Preset::Dark:       SetFocusLook(Color::FromBytes(120, 182, 255, 255), 2.0f, 3.0f, false); break;
+            case (int)Preset::Light:      SetFocusLook(Color::FromBytes(20, 70, 180, 255), 2.0f, 3.0f, false); break;
+            case (int)Preset::SciFi:      SetFocusLook(Color::FromBytes(0, 229, 255, 255), 2.0f, 4.0f, true); break;
+            case (int)Preset::Fantasy:    SetFocusLook(Color::FromBytes(140, 72, 12, 255), 3.0f, 4.0f, false); break;
+            case (int)Preset::ModernFlat: SetFocusLook(Color::FromBytes(79, 140, 255, 255), 2.0f, 2.0f, false); break;
+            case (int)Preset::Cartoon:    SetFocusLook(Color::FromBytes(255, 107, 53, 255), 4.0f, 5.0f, false); break;
+            case (int)Preset::RetroPixel: SetFocusLook(Color::FromBytes(255, 204, 0, 255), 2.0f, 2.0f, false); break;
+            case (int)Preset::Minimal:    SetFocusLook(Color::FromBytes(24, 24, 24, 255), 2.0f, 2.0f, false); break;
+            case (int)Preset::Neon:       SetFocusLook(Color::FromBytes(0, 255, 240, 255), 2.0f, 4.0f, true); break;
+            case (int)Preset::Glass:      SetFocusLook(Color::FromBytes(255, 255, 255, 255), 2.0f, 3.0f, false); break;
+            case (int)Preset::Military:   SetFocusLook(Color::FromBytes(200, 170, 60, 255), 2.0f, 2.0f, false); break;
+            case (int)Preset::Horror:     SetFocusLook(Color::FromBytes(220, 40, 40, 255), 2.0f, 3.0f, true); break;
+            default: break;
+        }
+    }
     void DarkPalette() {
         panel = Color::FromBytes(22, 26, 38, 250);
         panelBottom = Color::FromBytes(8, 10, 18, 250);

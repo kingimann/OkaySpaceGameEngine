@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "ActionExport.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "FpHandsWindow.hpp"
@@ -16,7 +17,10 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Core/Game.hpp"
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
+#include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
 #include "okay/Core/BuildInfo.hpp"
@@ -33,6 +37,7 @@
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
+#include "okay/Render/RendererFeatures.hpp"  // which lighting / post / fog / sky switches each renderer draws
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
@@ -43,10 +48,12 @@
 #include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"   // Saveable: pick registry properties to save
 #include "okay/Core/GameSaves.hpp"
 #include "okay/UI/TooltipPlace.hpp"
 #include "okay/Core/DisplaySettings.hpp"
+#include "SdlDisplays.hpp"             // monitor list and display modes, shared with the player (SDL, not the platform seam)
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -64,6 +71,7 @@
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
+#include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
 
 #include <numeric>
 #include <algorithm>
@@ -631,6 +639,25 @@ static int RunSelfTest() {
         GameObject* back = pm.scene().Find("BoxA");
         check(back && back->Guid() == guid && back->transform->Children().size() == 1, "prefab mode: the instance was rebuilt with the new child");
         fs::remove_all(dir, pec);
+    }
+
+    // The Lighting footer names one shared gap. These six switches are that gap
+    // (ignored on Direct3D 12 and the software renderer, drawn on the other two).
+    {
+        const char* shared = "not drawn on Direct3D 12 or the software renderer.";
+        const RenderFeature group[] = {
+            RenderFeature::FilmicLighting, RenderFeature::Exposure, RenderFeature::TonemapCurve,
+            RenderFeature::SceneBloom, RenderFeature::ColourGrading, RenderFeature::SceneFxaa};
+        for (RenderFeature f : group) {
+            const char* note = FeatureGapNote(f);
+            check(note && std::strstr(note, shared) != nullptr, "post switches share the Direct3D 12 / software gap");
+            check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
+        }
+        check(std::strstr(FeatureGapNote(RenderFeature::SpotPointShadows),
+                          "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer.") != nullptr,
+              "spot and point shadow note");
+        check(FeatureGapNote(RenderFeature::Fog)[0] == 0, "fog is drawn on every renderer");
+        check(FeatureGapNote(RenderFeature::VignetteAmount)[0] == 0, "vignette amount is drawn on every renderer");
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -2158,7 +2185,6 @@ bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt 
 bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
-bool g_showItemDatabase = false; // Item Database window (the project's item definitions)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
@@ -2506,7 +2532,11 @@ void LoadSettings() {
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
         else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
-        else if (k == "volumekinds") oked::g_volumeKinds = (unsigned)v & oked::kVolumeKindsAll;
+        else if (k == "volumekinds") {
+            unsigned m = (unsigned)v;
+            if (m == 0x3Fu) m = oked::kVolumeKindsAll;   // the old "show everything", before the reverb switch
+            oked::g_volumeKinds = m & oked::kVolumeKindsAll;
+        }
         else if (k == "showgrid") g_showGrid = (v != 0);
         else if (k == "sceneskybox") g_sceneSkybox = (v != 0);
         else if (k == "wireframeall") g_wireframeAll = (v != 0);
@@ -5006,7 +5036,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
-        {"Item Database", "Item Database",             &g_showItemDatabase,  "Editors & Tools", PI_Package},
+        {"Items, Loot & Recipes", "Items, Loot & Recipes", &g_showItemDatabase, "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
@@ -6072,6 +6102,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     }
     if (ImGui::BeginMenu("Controls")) {
         if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+        if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
+        if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
+        if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
         if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
         if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
         if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
@@ -6499,7 +6532,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Redo is off while the game runs.");
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ed.isPlaying())
-                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table and the code editors have their own Undo while they have focus.");
+                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table, items / loot / recipes and the code editors have their own Undo while they have focus.");
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
@@ -6559,8 +6592,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
             ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
-            ImGui::MenuItem("Item Database", nullptr, &g_showItemDatabase);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define every item once (name, icon, stack size, weight, grid size, rarity, what using it does). Inventories, chests, recipes and builders all use these.");
+            ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes.");
             ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
             ImGui::EndMenu();
@@ -6697,6 +6730,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
         if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Window")) {
+        ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author items, loot tables (weighted drops, with a live roll preview) and crafting recipes.");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -10139,16 +10177,7 @@ void DrawProject(EditorState& ed) {
             if (!fs::exists(dir / f, ce) && fs::create_directory(dir / f, ce)) ++made;
         ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + dir.filename().string());
     };
-    auto mkItem = [&]{   // a new definition in the project's Item Database, opened for editing
-        okay::ItemDefinition d;
-        int n = 1;
-        do { d.id = "item" + std::to_string(n++); } while (okay::ItemDatabase::Get().Find(d.id));
-        d.name = "New Item";
-        okay::ItemDatabase::Get().Put(d);
-        const std::string path = ed.ItemDatabasePath();
-        if (!path.empty() && okay::ItemDatabase::Get().Save(path)) ConsoleLog("Added item \"" + d.id + "\" to " + path);
-        g_showItemDatabase = true;
-    };
+    auto mkItem = [&]{ ContentAddItem(ed); };
     auto mkData = [&]{
         askCreate("New data asset", "Fields as key = value.", "NewData", ".okaydata", "data asset", [](const std::string& d, const std::string& n) {
             return g_pb->MakeFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
@@ -10170,6 +10199,8 @@ void DrawProject(EditorState& ed) {
         if (ImGui::MenuItem("Material"))   mkMaterial();
         if (ImGui::MenuItem("Data Asset")) mkData();
         if (ImGui::MenuItem("Item"))       mkItem();
+        if (ImGui::MenuItem("Loot Table")) ContentCreateLoot(ed);
+        if (ImGui::MenuItem("Recipe Book")) ContentCreateRecipe(ed);
         ImGui::Separator();
         if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
@@ -10463,6 +10494,8 @@ void DrawProject(EditorState& ed) {
         } else if (ext == ".okaydialog" || ext == ".okayquest") {
             OpenStoryAsset(full);                 // the Dialogue window (the graph, or the Quests tab)
             g_showDialogue = true;
+        } else if (ext == ".okayitems" || ext == ".okayloot" || ext == ".okayrecipes") {
+            OpenContentFile(full);
         } else if (ext == ".okaybt") {
             OpenBehaviorTreeFile(ed, full);   // open in the Behavior Tree window
         } else if (ext == ".okayclip") {
@@ -11712,6 +11745,17 @@ static void ApplyLookPresetToScene(EditorState& ed, const std::string& name) {
 
 // The scene's look, saved with it: sky mode, fog, post-processing and weather.
 // Every edit previews live in the Scene and Game views.
+
+// Grey wrapped line under a switch that some renderers ignore. Quiet when every
+// renderer draws it. The words come from RendererFeatures.hpp.
+static void DrawRendererNote(okay::RenderFeature feature) {
+    const char* note = okay::FeatureGapNote(feature);
+    if (!note || !note[0]) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", note);
+    ImGui::PopTextWrapPos();
+}
+
 static void DrawLookSections(EditorState& ed) {
     auto& rs = ed.scene().renderSettings;
     auto& post = rs.post;
@@ -11763,21 +11807,28 @@ static void DrawLookSections(EditorState& ed) {
         }
         if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
-        if (rs.vignette > 0.0f)
+        if (rs.vignette > 0.0f) {
             if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
+            DrawRendererNote(okay::RenderFeature::VignetteSmoothness);
+        }
         if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
         if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
+        DrawRendererNote(okay::RenderFeature::SceneSsao);
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
+        DrawRendererNote(okay::RenderFeature::DepthOfField);
         if (post.dof) {
             if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
             if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
             tip("How far either side of the focus distance stays sharp.");
         }
-        ImGui::TextDisabled("Applied by the GPU renderers; the software renderer keeps its own output.");
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Linear lighting, exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12 or the software renderer. The vignette amount is drawn on every renderer. The software renderer has its own switches under Rendering below; those are separate from this section.");
+        ImGui::PopTextWrapPos();
     }
 
     if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -11800,7 +11851,7 @@ static void DrawLookSections(EditorState& ed) {
             if (ImGui::SliderFloat("Star Density##proc", &rs.skyStarDensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Star Brightness##proc", &rs.skyStarBright, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
             tip("Stars show once the sun has set.");
-            ImGui::TextDisabled("Drawn by the GPU renderers; the software renderer shows the sun's colours as a gradient.");
+            DrawRendererNote(okay::RenderFeature::ProceduralSkyDetail);
         }
     }
 
@@ -12023,6 +12074,7 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
         SectionHeader("Effects");
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
+        DrawRendererNote(okay::RenderFeature::PerPixelLighting);
 
         ImGui::Checkbox("Shadows", &ShadowsEnabled());
         if (ShadowsEnabled()) {
@@ -12035,6 +12087,7 @@ void DrawSceneSettings(EditorState& ed) {
                 ImGui::SliderInt("Shadow cascades", &ShadowCascades(), 1, ShadowMap::kMaxCascades);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("More cascades = sharper shadows across distance, at the cost of extra depth passes.");
+                DrawRendererNote(okay::RenderFeature::SunShadowCascades);
             }
             int res = ShadowMapResolution();
             const char* resLabels[] = {"512", "1024", "2048", "4096"};
@@ -12045,6 +12098,7 @@ void DrawSceneSettings(EditorState& ed) {
         }
 
         ImGui::Checkbox("Ambient occlusion (SSAO)", &SSAOEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildSsao);
         if (SSAOEnabled()) {
             ImGui::SliderFloat("AO radius", &SSAORadius(), 0.05f, 2.0f, "%.2f");
             ImGui::SliderFloat("AO strength", &SSAOStrength(), 0.0f, 2.0f, "%.2f");
@@ -12057,18 +12111,22 @@ void DrawSceneSettings(EditorState& ed) {
         }
 
         ImGui::Checkbox("Bloom", &BloomEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildBloom);
         if (BloomEnabled()) {
             ImGui::SliderFloat("Bloom threshold", &BloomThreshold(), 0.0f, 1.0f, "%.2f");
             ImGui::SliderFloat("Bloom intensity", &BloomIntensity(), 0.0f, 2.0f, "%.2f");
         }
 
         ImGui::Checkbox("Tone mapping (ACES)", &ToneMapEnabled());
+        DrawRendererNote(okay::RenderFeature::SoftwareToneMap);
         if (ToneMapEnabled())
             ImGui::SliderFloat("Exposure", &Exposure(), 0.1f, 4.0f, "%.2f");
 
         ImGui::Checkbox("Anti-aliasing (FXAA)", &FXAAEnabled());
+        DrawRendererNote(okay::RenderFeature::BuildFxaa);
 
         ImGui::Checkbox("Color grading", &ColorGradeEnabled());
+        DrawRendererNote(okay::RenderFeature::SoftwareColorGrade);
         if (ColorGradeEnabled()) {
             ImGui::SliderFloat("Brightness", &Brightness(), 0.2f, 2.0f, "%.2f");
             ImGui::SliderFloat("Contrast",   &Contrast(),   0.5f, 2.0f, "%.2f");
@@ -12130,6 +12188,9 @@ void DrawSceneSettings(EditorState& ed) {
         if (img.SavePNG(path)) ConsoleLog("Saved Scene view to " + path + " (raw engine pixels)", 0);
         else                   ConsoleLog("Failed to save scene_capture.png", 2);
     }
+    // OKAY_UI_LIGHTSCROLL=0.5: scroll the Lighting window (0 top .. 1 bottom) for a screenshot.
+    if (const char* sc = std::getenv("OKAY_UI_LIGHTSCROLL"))
+        ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)std::atof(sc));
     ImGui::End();
 }
 
@@ -12574,6 +12635,8 @@ void DrawScriptDocs() {
 
     if (sec("UI — drive scene widgets by name")) {
         fapi("ui_set_text(\"n\",\"s\") / ui_get_text(\"n\")", "text/button label/input text");
+        fapi("get_clipboard_text() / set_clipboard_text(\"s\")", "read or set the text a player can copy and paste");
+        fapi("ui_set_focus(\"n\")", "move keyboard/gamepad focus to a widget and show its ring");
         fapi("ui_clicked(\"n\")", "true the frame a named button was clicked");
         fapi("ui_set_interactable(\"n\", on)", "enable / grey-out a button");
         fapi("ui_slider_value(\"n\") / ui_set_slider(\"n\", v)", "read / set a slider (0..1)");
@@ -12591,6 +12654,8 @@ void DrawScriptDocs() {
         fapi("ui_set_page(\"n\", page) / ui_page(\"n\") / ui_page_count(\"n\")", "show a page (pulled back into range); read the page and the page count");
         fapi("ui_set_loading(\"n\", on)", "show or hide a skeleton placeholder");
         fapi("ui_sheet_open(\"n\") / ui_sheet_close(\"n\") / ui_sheet_open_state(\"n\")", "open or close a bottom sheet; is it open");
+        fapi("ui_get_rotation(\"n\") / ui_set_rotation(\"n\", degrees)", "read / turn a UI frame, clockwise degrees around its pivot");
+        fapi("ui_get_scale(\"n\") / ui_set_scale(\"n\", x, y)", "read / set a UI frame's width and height scale (one number sets both)");
         fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
         fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
         fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
@@ -12911,6 +12976,10 @@ void DrawScriptDocs() {
         fapi("raycast_all3(o.., d..) / raycast_all(ox,oy,dx,dy)", "names of EVERYTHING hit, nearest first (+ ray_all_*)");
         fapi("sphere_cast3(o.., d.., r) / box_cast3(c.., half.., d..)", "thick casts (won't slip through gaps)");
         fapi("capsule_cast3(a.., b.., r, d..)", "would a capsule fit along this path?");
+        fapi("box_cast(cx, cy, hx, hy, dx, dy)", "sweep a flat box; name of the first thing hit (ray_* details)");
+        fapi("capsule_cast(ax, ay, bx, by, r, dx, dy)", "sweep a flat capsule along a direction");
+        fapi("overlap_box(cx, cy, hx, hy) / overlap_capsule(ax, ay, bx, by, r)", "names inside a flat box or capsule");
+        fapi("add_explosion_force(cx, cy, force, radius [, up])", "shove this 2D body; fades to nothing at radius");
         fapi("overlap_sphere3 / overlap_box3 / overlap_capsule3", "names of the objects inside a shape");
         fapi("layer_mask(\"Default\", \"Enemy\")", "a layers number for the queries above");
         fapi("overlap(x, y)", "a 2D collider contains this point?");
@@ -13030,8 +13099,8 @@ static const std::vector<std::string>& ScriptCompletions() {
         // networking
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
-        "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
-        "ui_toggle_value","ui_set_progress",
+        "ui_set_text","ui_get_text","ui_set_focus","ui_clicked","ui_slider_value","ui_set_slider",
+        "ui_toggle_value","ui_set_progress","ui_get_rotation","ui_set_rotation","ui_get_scale","ui_set_scale",
         "set_swatch","swatch_value", // grok/ui-color
         "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
 
@@ -13147,7 +13216,10 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_begin","ui_begin(\"Title\", x, y, w, h)"}, {"ui_text","ui_text(\"s\")"}, {"ui_button","ui_button(\"Label\")"},
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
+        {"ui_set_focus","ui_set_focus(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        {"ui_get_rotation","ui_get_rotation(\"n\")"}, {"ui_set_rotation","ui_set_rotation(\"n\", degrees)"},
+        {"ui_get_scale","ui_get_scale(\"n\")"}, {"ui_set_scale","ui_set_scale(\"n\", x, y)"},
         {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
         {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
         // grok/ui-controls
@@ -13167,6 +13239,9 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"overlap_circle","overlap_circle(x, y, r)"},
         {"raycast_all3","raycast_all3(x, y, z, dx, dy, dz, dist)"}, {"sphere_cast3","sphere_cast3(x, y, z, dx, dy, dz, r, dist)"},
         {"box_cast3","box_cast3(x, y, z, hx, hy, hz, dx, dy, dz, dist)"}, {"overlap_box3","overlap_box3(x, y, z, hx, hy, hz)"},
+        {"box_cast","box_cast(x, y, hx, hy, dx, dy, dist)"}, {"capsule_cast","capsule_cast(ax, ay, bx, by, r, dx, dy, dist)"},
+        {"overlap_box","overlap_box(x, y, hx, hy)"}, {"overlap_capsule","overlap_capsule(ax, ay, bx, by, r)"},
+        {"add_explosion_force","add_explosion_force(x, y, force, radius, up)"},
         {"overlap_sphere3","overlap_sphere3(x, y, z, r)"},
         // timers
         {"after","after(seconds, \"func\")"}, {"every","every(seconds, \"func\")"}, {"cancel_timers","cancel_timers()"},
@@ -13824,6 +13899,16 @@ static const ScriptHelp* ScriptHelpFor(const std::string& key) {
             "string hit = sphere_cast3(x, y, z, 0, 0, 1, 0.5, 10);\nif (hit != \"\") print(\"blocked by \" + hit);"}},
         {"box_cast3", {"Sweep a box (centre, half size) along a direction; the first thing it touches.",
             "string hit = box_cast3(x, y, z, 0.5, 1, 0.5, 0, 0, 1, 5);"}},
+        {"box_cast", {"Sweep a flat box and return the name of the first thing it touches. Details are ray_hit, ray_dist, ray_x, ray_y, ray_nx, ray_ny.",
+            "string hit = box_cast(0, 0, 0.5, 0.5, 1, 0, 10);\nif (hit != \"\") print(hit + \" at \" + ray_dist());"}},
+        {"capsule_cast", {"Sweep a flat capsule (a line with round ends) and return the first thing it touches.",
+            "string hit = capsule_cast(0, -0.5, 0, 0.5, 0.3, 1, 0, 10);"}},
+        {"overlap_box", {"Names of the objects inside a flat box. The last number is a turn in degrees.",
+            "var near = overlap_box(x, y, 1, 0.5, \"\", false, 30);"}},
+        {"overlap_capsule", {"Names of the objects inside a flat capsule.",
+            "var near = overlap_capsule(x, y - 1, x, y + 1, 0.4);"}},
+        {"add_explosion_force", {"Shove this 2D body away from a point. The push fades to nothing at the radius. The last number pops it upward.",
+            "add_explosion_force(0, 0, 20, 8, 0.4);"}},
         {"overlap_box3", {"Names of the objects inside a box (centre, half size). Optional layers / ignore triggers.",
             "var inside = overlap_box3(x, y, z, 2, 2, 2);\nprint(count(inside) + \" things nearby\");"}},
         {"overlap_sphere3", {"Names of the objects inside a ball. Great for explosions.",
@@ -17137,6 +17222,7 @@ void HandleShortcuts(EditorState& ed) {
         if (projectKeys && g_pb && g_pb->CanUndo()) {}   // the Project panel undoes its own file operation
         else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
+        else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -17144,6 +17230,7 @@ void HandleShortcuts(EditorState& ed) {
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
+        else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, true)) ConsoleLog("Redo (items, loot and recipes)"); }
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
@@ -17877,8 +17964,10 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::Indent();
                     ImGui::SliderFloat("Shadow distance##b", &g_build.shadowDistance, 0.0f, 400.0f, "%.0f m");
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cascaded shadow reach. 0 = legacy single map fit to the whole scene.");
-                    if (g_build.shadowDistance > 0.0f)
+                    if (g_build.shadowDistance > 0.0f) {
                         ImGui::SliderInt("Cascades##b", &g_build.shadowCascades, 1, 4);
+                        DrawRendererNote(okay::RenderFeature::SunShadowCascades);
+                    }
                     ImGui::SliderFloat("Softness##b", &g_build.shadowSoftness, 0.0f, 6.0f, "%.1f tx");
                     const char* resLabels[] = {"512", "1024", "2048", "4096"};
                     const int   resVals[]   = {512, 1024, 2048, 4096};
@@ -17886,15 +17975,21 @@ void DrawFileDialogs(EditorState& ed) {
                     if (ImGui::Combo("Resolution##b", &resIdx, resLabels, 4)) g_build.shadowResolution = resVals[resIdx];
                     ImGui::Unindent();
                 }
-                ImGui::Checkbox("Bloom", &g_build.bloom); ImGui::SameLine();
-                ImGui::Checkbox("Ambient occlusion", &g_build.ssao); ImGui::SameLine();
+                ImGui::Checkbox("Bloom", &g_build.bloom);
+                DrawRendererNote(okay::RenderFeature::BuildBloom);
+                ImGui::Checkbox("Ambient occlusion", &g_build.ssao);
+                DrawRendererNote(okay::RenderFeature::BuildSsao);
                 ImGui::Checkbox("FXAA", &g_build.fxaa);
+                DrawRendererNote(okay::RenderFeature::BuildFxaa);
+                DrawRendererNote(okay::RenderFeature::PerPixelLighting);
                 const char* aaOpts[] = {"Off", "2x", "4x"};
                 const int   aaVals[] = {1, 2, 4};
                 int aaSel = 0; for (int i = 0; i < 3; ++i) if (aaVals[i] == g_build.antialias) aaSel = i;
                 ImGui::SetNextItemWidth(120);
                 if (ImGui::Combo("Supersampling (AA)", &aaSel, aaOpts, 3)) g_build.antialias = aaVals[aaSel];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render at a higher resolution then downscale for smoother edges.\n2x = 4x the pixels, 4x = 16x — sharper but heavier on the GPU.");
+                if (const char* sc = std::getenv("OKAY_UI_BUILDSCROLL"))
+                    ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)std::atof(sc));
             }
             if (s_buildSec == 4) {
                 ImGui::Spacing();
@@ -20169,6 +20264,9 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Raw Image"))    mkUI("RawImage", [](GameObject* g){ g->AddComponent<UIRawImage>(); });
             if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
             if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
+            if (ImGui::MenuItem("Virtual Joystick")) mkUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
+            if (ImGui::MenuItem("D-Pad"))        mkUI("D-Pad", [](GameObject* g){ g->AddComponent<TouchDPad>(); });
+            if (ImGui::MenuItem("Touch Button")) mkUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
             if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
             if (ImGui::MenuItem("Stepper"))      mkUI("Stepper", [](GameObject* g){ g->AddComponent<UIStepper>(); });
             if (ImGui::MenuItem("Rating"))       mkUI("Rating",  [](GameObject* g){ g->AddComponent<UIRating>(); });
@@ -20791,6 +20889,16 @@ static const ActionOpInfo kInstrOps[] = {
     {"game_can_continue","Can Continue",  "intoVar",              "Sets a variable to 1 if there is a save to continue, else 0.", "Save"},
     {"game_slot_age","Slot Saved Ago",    "slot  intoVar",        "Sets a variable to the seconds since the slot was saved (-1 if empty).", "Save"},
     {"game_slot_text","Slot Saved Time",  "slot  intoTextVar",    "Sets a text variable to when the slot was saved, e.g. 2026-11-08 14:03 (UTC); empty if none.", "Save"},
+    {"set_display_mode","Set Display Mode","windowed|borderless|fullscreen","Windowed, a borderless full screen, or exclusive full screen.", "Scene"},
+    {"set_display_resolution","Set Display Resolution","width height","Set the window size, in pixels. Full screen snaps to a listed mode.", "Scene"},
+    {"set_refresh_rate","Set Refresh Rate","hertz","Set the refresh rate. 0 lets the monitor choose.", "Scene"},
+    {"set_monitor","Set Monitor","name or index","Use a connected monitor by its name, or by its number starting at 0.", "Scene"},
+    {"begin_display_confirm","Ask to Keep Display","", "Remember the current display and start the 10-second keep-or-revert clock.", "Scene"},
+    {"keep_display_settings","Keep Display Settings","", "Accept the display change and stop the countdown.", "Scene"},
+    {"revert_display_settings","Revert Display Settings","", "Put the previous display back.", "Scene"},
+    {"get_display_mode","Get Display Mode","intoTextVar","Store windowed, borderless or fullscreen in a text variable.", "Scene"},
+    {"get_monitor","Get Monitor","intoTextVar","Store the current monitor's name in a text variable.", "Scene"},
+    {"get_refresh_rate","Get Refresh Rate","intoVar","Store the refresh rate in hertz (0 when none was chosen).", "Scene"},
     {"net_host",    "Host Game",          "port",                 "Start hosting a multiplayer session.",                    "Multiplayer"},
     {"net_join",    "Join Game",          "ip port",              "Connect to a host.",                                      "Multiplayer"},
     {"net_host_relay","Host via Relay",   "relayIp port code",    "Host through a relay using a shared code — players behind home routers connect with NO port-forwarding (NAT traversal). Run the okayspace-relay binary, or use a public one.", "Multiplayer"},
@@ -21033,141 +21141,8 @@ static std::string HandlerSentence(ActionList::Trigger t, const std::string& key
     return s;
 }
 
-// ---- Visual script -> OkayScript (best-effort code generation) ----------------
-// Turns an Actions graph into readable OkayScript so a user can graduate from the
-// visual editor to code. Ops that don't map 1:1 become "// TODO" comments (always
-// valid), so the generated file parses and the user fills the gaps in.
-static std::string VsCondExpr(const ActionList::Item& c) {
-    auto a = [&](std::size_t i) { return i < c.args.size() ? c.args[i] : std::string(); };
-    const std::string& op = c.op;
-    if (op == "always" || op.empty()) return "";
-    if (op == "var_gt")  return a(0) + " > " + a(1);
-    if (op == "var_lt")  return a(0) + " < " + a(1);
-    if (op == "var_ge")  return a(0) + " >= " + a(1);
-    if (op == "var_le")  return a(0) + " <= " + a(1);
-    if (op == "var_eq")  return a(0) + " == " + a(1);
-    if (op == "var_neq") return a(0) + " != " + a(1);
-    if (op == "key")       return "key(\"" + a(0) + "\")";
-    if (op == "key_down")  return "key_down(\"" + a(0) + "\")";
-    if (op == "key_up")    return "key_up(\"" + a(0) + "\")";
-    if (op == "mouse")     return "mouse(" + a(0) + ")";
-    if (op == "mouse_down")return "mouse_down(" + a(0) + ")";
-    if (op == "dist_lt")   return "dist_to(\"" + a(0) + "\") < " + a(1);
-    if (op == "dist_gt")   return "dist_to(\"" + a(0) + "\") > " + a(1);
-    if (op == "has_tag")   return "has_tag(\"" + a(0) + "\")";
-    if (op == "exists")    return "exists(\"" + a(0) + "\")";
-    if (op == "is_active") return "self_active()";
-    return "1 /* " + op + " */";
-}
-// A single instruction as one OkayScript statement (or a // comment if not mappable).
-static std::string VsStmt(const ActionList::Item& it) {
-    auto a = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string("0"); };
-    auto q = [&](std::size_t i) { return "\"" + (i < it.args.size() ? it.args[i] : std::string()) + "\""; };
-    auto join = [&](std::size_t i) { std::string s; for (; i < it.args.size(); ++i) { if (!s.empty()) s += ' '; s += it.args[i]; } return s; };
-    const std::string& op = it.op;
-    if (op == "move")        return "move(" + a(0) + ", " + a(1) + ")";
-    if (op == "set_pos")     return "set_pos(" + a(0) + ", " + a(1) + ")";
-    if (op == "rotate")      return "rotate(" + a(2) + ")";
-    if (op == "set_scale")   return "set_scale(" + a(0) + ")";
-    if (op == "velocity")    return "set_velocity(" + a(0) + ", " + a(1) + ")";
-    if (op == "impulse")     return "add_impulse(" + a(0) + ", " + a(1) + ")";
-    if (op == "move_toward") return "follow(" + q(0) + ", " + a(1) + ")";
-    if (op == "look_at")     return "look_at(" + q(0) + ")";
-    if (op == "set_var")     return a(0) + " = " + a(1);
-    if (op == "add_var")     return a(0) + " = " + a(0) + " + " + a(1);
-    if (op == "mul_var")     return a(0) + " = " + a(0) + " * " + a(1);
-    if (op == "toggle_var")  return a(0) + " = 1 - " + a(0);
-    if (op == "copy_var")    return a(0) + " = " + a(1);
-    if (op == "destroy")     return "destroy()";
-    if (op == "destroy_obj") return "destroy_obj(" + q(0) + ")";
-    if (op == "spawn")       return "spawn(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "spawn3")      return "spawn3(" + q(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) + ")";
-    if (op == "activate")    return "activate(" + q(0) + ")";
-    if (op == "deactivate")  return "deactivate(" + q(0) + ")";
-    if (op == "set_active")  return it.args.size() > 1 && !it.args[1].empty()
-                                    ? std::string("// show/hide ") + it.args[1]
-                                    : (a(0) == "1" ? "set_active(1)" : "set_active(0)");
-    if (op == "set_color")   return "set_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", 1)";
-    if (op == "set_text")    return "set_text(\"" + join(0) + "\")";
-    if (op == "play_sound")  return "play_sound(" + q(0) + ")";
-    if (op == "emit")        return "emit(" + a(0) + ")";
-    if (op == "log")         return "print(\"" + join(0) + "\")";
-    if (op == "load_scene")  return "load_scene(" + q(0) + ")";
-    if (op == "load_next_scene") return "load_next_scene()";
-    if (op == "set_cam")     return "set_cam(" + a(0) + ", " + a(1) + ")";
-    if (op == "camera_shake")   return "camera_shake(" + a(0) + ")";
-    if (op == "camera_zoom_to") return "camera_zoom_to(" + a(0) + ", " + a(1) + ")";
-    if (op == "set_bg")      return "set_bg(" + a(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "send")        return "// send message \"" + a(0) + "\"";
-    if (op == "comment")     return "// " + join(0);
-    if (op == "tween_move")  return "tween_move(" + a(0) + ", " + a(1) + ", " + a(2) +
-                                    (it.args.size() > 3 && !it.args[3].empty() ? ", \"" + it.args[3] + "\"" : "") + ")";
-    if (op == "tween_scale") return "tween_scale(" + a(0) + ", " + a(1) +
-                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "shake")       return "shake(" + a(0) + ", " + a(1) + ")";
-    if (op == "punch_scale") return "tween_punch_scale(" + a(0) + ", " + a(1) + ")";
-    if (op == "tween_rotate") return "tween_rotate(" + a(0) + ", " + a(1) +
-                                     (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "tween_color") return "tween_color(" + a(0) + ", " + a(1) + ", " + a(2) + ", " + a(3) +
-                                    (it.args.size() > 4 && !it.args[4].empty() ? ", \"" + it.args[4] + "\"" : "") + ")";
-    if (op == "fade")        return "tween_fade(" + a(0) + ", " + a(1) +
-                                    (it.args.size() > 2 && !it.args[2].empty() ? ", \"" + it.args[2] + "\"" : "") + ")";
-    if (op == "flash")       return it.args.size() > 3
-                                    ? "flash(" + a(1) + ", " + a(2) + ", " + a(3) + ", " + a(0) + ")"
-                                    : "flash(1, 1, 1, " + a(0) + ")";
-    if (op == "orbit")       return "orbit(" + q(0) + ", " + a(1) + ", " + a(2) + ")";
-    if (op == "follow")      return "follow(" + q(0) + ", " + a(1) + ")";
-    // Anything else (survival, waits, loops, flow) -> a comment so the file still parses.
-    std::string j = join(0);
-    return "// " + op + (j.empty() ? "" : (" " + j));
-}
-// Append a handler's gated body (indented one level inside a function) to `out`.
-static void VsEmitBody(std::string& out, const std::vector<ActionList::Item>& conds,
-                       const std::vector<ActionList::Item>& ins, const std::string& lead) {
-    std::string gate;
-    for (const auto& c : conds) { std::string e = VsCondExpr(c); if (!e.empty()) { if (!gate.empty()) gate += " && "; gate += e; } }
-    std::string inner = gate.empty() ? lead : lead + "    ";
-    std::string body;
-    if (ins.empty()) body += inner + "// (no actions)\n";
-    for (const auto& it : ins) body += inner + VsStmt(it) + "\n";
-    if (gate.empty()) out += body;
-    else out += lead + "if (" + gate + ") {\n" + body + lead + "}\n";
-}
-static std::string ActionListToCode(const ActionList& al) {
-    using T = ActionList::Trigger;
-    std::string startB, updateB, collB;
-    auto handle = [&](T trg, const std::string& key,
-                      const std::vector<ActionList::Item>& conds,
-                      const std::vector<ActionList::Item>& ins) {
-        const std::string lead = "    ";
-        if (trg == T::OnStart)  { VsEmitBody(startB, conds, ins, lead); }
-        else if (trg == T::OnUpdate || trg == T::OnLateUpdate) { VsEmitBody(updateB, conds, ins, lead); }
-        else if (trg == T::OnKey || trg == T::OnKeyUp) {
-            const char* fn = trg == T::OnKey ? "key_down" : "key_up";
-            updateB += lead + "if (" + fn + "(\"" + key + "\")) {\n";
-            VsEmitBody(updateB, conds, ins, lead + "    ");
-            updateB += lead + "}\n";
-        }
-        else if (trg == T::OnClick) {
-            updateB += lead + "if (mouse_down(0)) {   // was On Click\n";
-            VsEmitBody(updateB, conds, ins, lead + "    ");
-            updateB += lead + "}\n";
-        }
-        else if (trg == T::OnCollision || trg == T::OnCollisionStay || trg == T::OnCollisionExit
-              || trg == T::OnTriggerEnter || trg == T::OnTriggerExit || trg == T::OnTriggerStay) {
-            VsEmitBody(collB, conds, ins, lead);
-        }
-        else { updateB += lead + "// TODO: " + std::string(TriggerPhrase(trg, key)) + " (add your own trigger check)\n"; VsEmitBody(updateB, conds, ins, lead); }
-    };
-    handle(al.trigger, al.triggerKey, al.conditions, al.instructions);
-    for (const auto& h : al.extraHandlers) handle(h.trigger, h.triggerKey, h.conditions, h.instructions);
-    std::string out = "// Generated from the visual Actions script - a starting point, tweak freely.\n\n";
-    if (!startB.empty())  out += "start() {\n" + startB + "}\n\n";
-    if (!updateB.empty()) out += "update(dt) {\n" + updateB + "}\n\n";
-    if (!collB.empty())   out += "on_collision(other) {\n" + collB + "}\n\n";
-    if (startB.empty() && updateB.empty() && collB.empty()) out += "// (this script has no actions yet)\n";
-    return out;
-}
+// Actions -> OkayScript lives in ActionExport.hpp (ActionListToCode). Every step is
+// passed to actions_load, which runs the same list the Actions component runs.
 
 // ---- OkayScript -> visual script (best-effort import) --------------------------
 // Parse a simple call "func(a, b, \"c d\")" -> name + args (quotes stripped, trimmed).
@@ -27543,7 +27518,7 @@ void DrawModeling(EditorState& ed) {
                 go->AddComponent<MeshCollider3D>();   // collides against the live triangles
                 ed.dirty = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision (BVH) — use this for floors, walls, ramps, bowls and rooms you model or extrude.\nStatic only: bodies collide with it, it cannot be a dynamic body (use Box for moving things).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exact per-triangle collision (BVH) for floors, walls, ramps, bowls and rooms.\nA dynamic Rigidbody on this object collides as the convex hull of the mesh instead, so the body can move. Concave gaps are filled in.");
             ImGui::SameLine();
             if (AccentToggleButton("None##colmode", hasNone)) {
                 for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
@@ -31463,11 +31438,16 @@ void DrawInspector(EditorState& ed) {
             }
 
             SectionHeader("Shadows");
+            if (std::getenv("OKAY_UI_SPOTLIGHT")) ImGui::SetScrollHereY(0.25f);
             if (ImGui::Checkbox("Cast Shadows##light", &li->castShadows)) ed.dirty = true;
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(li->type == Light::Type::Directional
                     ? "Sun shadows (cascaded). One Directional light casts them — the first\nthat has Cast Shadows on. Others still light the scene.\nQuality changes the map size and distance (Low / Medium / High)."
                     : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+            if (li->type == Light::Type::Directional)
+                DrawRendererNote(okay::RenderFeature::SunShadowCascades);
+            else
+                DrawRendererNote(okay::RenderFeature::SpotPointShadows);
             if (li->type == Light::Type::Directional && !okay::DirectionalShadowWarning().empty())
                 ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "%s", okay::DirectionalShadowWarning().c_str());
             if (li->castShadows) {
@@ -31957,6 +31937,14 @@ void DrawInspector(EditorState& ed) {
                 if (jt->useMotor) {
                     ImGui::DragFloat("Motor Speed (deg/s)##jt", &jt->motorSpeed, 1.0f);
                     ImGui::DragFloat("Max Motor Torque##jt", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
+                }
+                if (ImGui::Checkbox("Use Limits##jt", &jt->useLimits)) ed.dirty = true;
+                oked::FieldTip("Use Limits##jt");
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Angle##jt", &jt->minAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                    oked::FieldTip("Min Angle##jt");
+                    if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                    oked::FieldTip("Max Angle##jt");
                 }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
@@ -32730,15 +32718,19 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* mcol = dynamic_cast<MeshCollider3D*>(curComp)) {
         if (CompHeader("Mesh Collider 3D", mcol, &toRemove)) {
-            // Exact per-triangle collision against the MeshRenderer's mesh (BVH). Static only.
+            // Exact triangles while static or kinematic. A dynamic body uses the convex hull.
             const std::string status = mcol->StatusMessage();
-            if (mcol->HasTriangles()) {
+            if (mcol->UsesConvexHull()) {
+                ImGui::TextDisabled("Dynamic body: convex hull, %d vertices / %d triangles. Concave gaps are filled in.",
+                                    mcol->HullVertexCount(), mcol->HullTriangleCount());
+            } else if (mcol->HasTriangles()) {
                 const TriMesh& tm = mcol->Tris();
                 ImGui::TextDisabled("Exact triangles: %d (BVH %d nodes%s)", tm.TriangleCount(), tm.NodeCount(),
                                     tm.DroppedTriangles() > 0 ? (", " + std::to_string(tm.DroppedTriangles()) + " degenerate skipped").c_str() : "");
             }
             if (!status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", status.c_str());
-            ImGui::TextDisabled("Static geometry: bodies collide with it; it cannot be a dynamic body.");
+            if (!mcol->UsesConvexHull())
+                ImGui::TextDisabled("Static or kinematic: exact triangles. A dynamic Rigidbody uses the convex hull.");
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
@@ -34137,6 +34129,10 @@ void DrawInspector(EditorState& ed) {
             char rbs[256]; std::snprintf(rbs, sizeof(rbs), "%s", cs->recipeBook.c_str());
             if (ImGui::InputText("Recipe Book##cs", rbs, sizeof(rbs))) { cs->recipeBook = rbs; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes for this bench's tag show here too.");
+            if (ImGui::Button("Edit Recipe Book...##cs")) {
+                if (cs->recipeBook.empty()) OpenContentTab(2);
+                else OpenContentFile(cs->recipeBook);
+            }
             char tg[48]; std::snprintf(tg, sizeof(tg), "%s", cs->stationTag.c_str());
             if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
@@ -34259,6 +34255,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Once emptied, fill again after this many seconds (0 = only once).");
             if (ImGui::DragInt("Seed##ls", &ls->seed, 1.0f, 0, 1 << 30)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same seed = same rolls every time (0 = random).");
+            if (ImGui::Button("Edit Loot Table...")) {
+                if (ls->table.empty()) OpenContentTab(1);
+                else OpenContentFile(ls->table);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open this table in Items, Loot & Recipes.");
         }
     }
     if (auto* ch = dynamic_cast<ChestInventory*>(curComp)) {
@@ -35074,6 +35075,10 @@ void DrawInspector(EditorState& ed) {
             char rb[256]; std::snprintf(rb, sizeof(rb), "%s", c->recipeBook.c_str());
             if (ImGui::InputText("Recipe Book##cr", rb, sizeof(rb))) { c->recipeBook = rb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes are added to the ones below.");
+            if (ImGui::Button("Edit Recipe Book...##cr")) {
+                if (c->recipeBook.empty()) OpenContentTab(2);
+                else OpenContentFile(c->recipeBook);
+            }
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
@@ -35882,6 +35887,15 @@ void DrawInspector(EditorState& ed) {
             col4("Border##uitheme", th->border);
             col4("Shadow##uitheme", th->shadowCol);
             col4("Glow##uithemeglow", th->glowColor);
+            ImGui::Separator();
+            ImGui::TextDisabled("Focus ring (keyboard and gamepad)");
+            col4("Focus##uithemefocus", th->focusColor);
+            if (ImGui::DragFloat("Focus Thickness##uitheme", &th->focusThickness, 0.05f, 1.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stroke width of the focus ring, in pixels. Accessibility can scale it.");
+            if (ImGui::DragFloat("Focus Padding##uitheme", &th->focusPadding, 0.05f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gap between the widget and the focus ring.");
+            if (ImGui::Checkbox("Focus Pulse##uitheme", &th->focusPulse)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The ring brightens and dims. Reduce motion and reduce flashing hold it still.");
             ImGui::TextDisabled("Bakes onto panels, buttons, sliders, toggles, bars, dropdowns, fields and screen text under this object.");
             if (ImGui::SmallButton("Remove##uitheme")) toRemove = th;
         }
@@ -36629,6 +36643,35 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Linear: straight fade. Inverse: like real sound, loud up close.\n"
                                       "Logarithmic: loud up close with a long quiet tail.");
+                ImGui::Separator();
+                if (ImGui::Checkbox("Pitch follows speed", &a->doppler)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Raises the pitch when this sound or the listener is moving closer,\n"
+                                      "and lowers it when they move apart. Off leaves the pitch as set above.");
+                if (a->doppler) {
+                    if (ImGui::SliderFloat("Speed amount", &a->dopplerScale, 0.0f, 5.0f, "%.2f")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 matches real speed. 0 is no shift. Higher exaggerates it.");
+                }
+                if (ImGui::Checkbox("Quieter behind walls", &a->occlude)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("A solid wall between this and the listener lowers the volume and muffles it.\n"
+                                      "Triggers are ignored. Off leaves the sound as if nothing is in the way.");
+                if (a->occlude) {
+                    if (ImGui::SliderFloat("Loudness behind a wall", &a->occlusionVolume, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How loud it stays when blocked. 1 is no quieter, 0 is silent.");
+                    if (ImGui::SliderFloat("Muffle behind a wall", &a->occlusionLowPass, 80.0f, 8000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cutoff while blocked, in Hz. Lower is duller.");
+                }
+                if (ImGui::Checkbox("Muffle with distance", &a->distanceLowPass)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The sound stays bright up close and gets duller toward Max Distance.\n"
+                                      "Off keeps the tone the same at every distance.");
+                if (a->distanceLowPass) {
+                    if (ImGui::SliderFloat("Muffle at the far edge", &a->distanceLowPassHz, 80.0f, 8000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Cutoff at Max Distance. The fade follows a curve, so the middle\n"
+                                          "stays brighter than a straight line.");
+                }
             }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
@@ -39880,7 +39923,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -40101,6 +40144,9 @@ void DrawInspector(EditorState& ed) {
             // grok/ui-theme
             if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VirtualJoystick>(), "Virtual Joystick")) { go->AddComponent<VirtualJoystick>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TouchDPad>(), "D-Pad")) { go->AddComponent<TouchDPad>(); ed.dirty = true; }
+            if (item(!go->GetComponent<TouchButton>(), "Touch Button")) { go->AddComponent<TouchButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
@@ -40988,7 +41034,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         bool have = false;
         if (auto* sp = okay::SequencePlayer::Playing(ed.scene())) { ov = sp->Overlay(); have = true; }
         else have = TimelinePreviewOverlay(ov);
-        if (have) DrawOverlayCmds(dl, okay::SequencePlayer::BuildOverlay(ov, canvasSize.x, canvasSize.y), canvasPos, canvasSize);
+        if (have) DrawOverlayCmds(dl, okay::SequencePlayer::BuildOverlay(ov, canvasSize.x, canvasSize.y,
+                                                                        !okay::CaptionOverlay::Any(&ed.scene())), canvasPos, canvasSize);
     }
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }
@@ -41596,8 +41643,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 if (!r.valid) continue;
                 Vec2 o, sz;
                 if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
-                if (mouseCanvas.x < o.x || mouseCanvas.y < o.y ||
-                    mouseCanvas.x > o.x + sz.x || mouseCanvas.y > o.y + sz.y) continue;
+                if (!UIScreenContains(g, mouseCanvas, canvasSize.x, canvasSize.y)) continue;
                 float area = (sz.x < 1 ? 1 : sz.x) * (sz.y < 1 ? 1 : sz.y);
                 if (area < bestArea) { bestArea = area; hit = g; }
             }
@@ -43235,8 +43281,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
                          : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
                 if (auto* mcol = dynamic_cast<MeshCollider3D*>(col); mcol && mcol->HasTriangles()) {
-                    // The real collision geometry: triangle edges (sampled for big meshes) in world space.
-                    const TriMesh& tm = mcol->Tris();
+                    // The real collision geometry: exact triangles, or the convex hull on a dynamic body.
+                    const TriMesh& tm = mcol->UsesConvexHull() ? mcol->HullTris() : mcol->Tris();
                     Mat4 w = mcol->WorldMatrix();
                     int nt = tm.TriangleCount();
                     int stride = std::max(1, nt / 1500);
@@ -45794,114 +45840,6 @@ void DrawSpriteEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// Item Database: the project's item definitions (<project>/items.okayitems) — a
-// searchable list, the selected definition's fields, duplicate-id warnings, Save.
-static void DrawItemDatabase(EditorState& ed) {
-    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Item Database", &g_showItemDatabase)) { ImGui::End(); return; }
-    okay::ItemDatabase& db = okay::ItemDatabase::Get();
-    static std::string sel;
-    static char filter[64] = "";
-    static bool dirty = false;
-    const std::string path = !db.Path().empty() ? db.Path() : ed.ItemDatabasePath();
-    if (path.empty()) ImGui::TextDisabled("Open a project to keep item definitions with it.");
-    else ImGui::TextDisabled("%s%s", path.c_str(), dirty ? "  (unsaved)" : "");
-    if (ImGui::Button("+ New Item")) {
-        okay::ItemDefinition d;
-        int n = 1;
-        do { d.id = "item" + std::to_string(n++); } while (db.Find(d.id));
-        d.name = "New Item";
-        sel = db.Put(d).id; dirty = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Save") && !path.empty()) {
-        if (db.Save(path)) { db.Load(path); dirty = false; ConsoleLog("Saved item definitions to " + path); }
-        else ConsoleLog("Couldn't save " + path, 2);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reload") && !path.empty()) { db.Load(path); dirty = false; }
-    for (const std::string& dup : db.DuplicateIds())
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "Duplicate id \"%s\": every item needs its own id.", dup.c_str());
-
-    ImGui::BeginChild("##items", ImVec2(230, 0), true);
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##itemsflt", "Search", filter, sizeof(filter));
-    std::string f = filter; for (auto& c : f) c = (char)std::tolower((unsigned char)c);
-    for (const auto& d : db.Items()) {
-        std::string hay = d.id + " " + d.name + " " + d.category; for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-        if (!f.empty() && hay.find(f) == std::string::npos) continue;
-        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
-        std::string label = d.DisplayName() + (d.loose ? "  (not defined)" : "") + "##" + d.id;
-        if (ImGui::Selectable(label.c_str(), sel == d.id)) sel = d.id;
-    }
-    ImGui::EndChild();
-    ImGui::SameLine();
-    ImGui::BeginChild("##itemdef", ImVec2(0, 0), true);
-    okay::ItemDefinition* d = db.FindMutable(sel);
-    if (!d) ImGui::TextDisabled("Select an item, or add one.");
-    else {
-        bool ch = false;
-        auto text = [&](const char* label, std::string& v, const char* tip) {
-            char b[256]; std::snprintf(b, sizeof(b), "%s", v.c_str());
-            if (ImGui::InputText(label, b, sizeof(b))) { v = b; ch = true; }
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        std::string id = d->id;
-        text("Id", id, "The stable key inventories store. Renaming it breaks saved scenes; change the Name instead.");
-        if (id != d->id && !id.empty() && !db.Find(id)) { d->id = id; sel = id; }
-        text("Name", d->name, "What players see. Rename freely.");
-        text("Description", d->description, nullptr);
-        text("Icon", d->icon, "Image path. Blank = <icon folder><id>.png.");
-        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d->id))) ImGui::Image((ImTextureID)t, ImVec2(48, 48));
-        if (ImGui::DragInt("Stack Size", &d->maxStack, 0.2f, 0, 100000)) ch = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most per stack (0 = only the container's limit).");
-        if (ImGui::DragFloat("Weight", &d->weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ch = true;
-        int sz[2] = {d->gridW, d->gridH};
-        if (ImGui::DragInt2("Grid Size", sz, 0.1f, 1, 12)) { d->gridW = sz[0]; d->gridH = sz[1]; ch = true; }
-        if (ImGui::DragInt("Rarity Tier", &d->rarity, 0.1f, 0, 10)) ch = true;
-        if (ImGui::Checkbox("Rarity Colour", &d->hasRarityColor)) ch = true;
-        if (d->hasRarityColor) { ImGui::SameLine(); if (ImGui::ColorEdit4("##rc", &d->rarityColor.r, ImGuiColorEditFlags_NoInputs)) ch = true; }
-        text("Category", d->category, "e.g. Food, Weapon, Material (used for sorting and filters).");
-        std::string tags;
-        for (const auto& t : d->tags) tags += (tags.empty() ? "" : ", ") + t;
-        std::string tagsEdit = tags;
-        text("Tags", tagsEdit, "Comma-separated.");
-        if (tagsEdit != tags) {
-            d->tags.clear();
-            std::stringstream ts(tagsEdit); std::string t;
-            while (std::getline(ts, t, ',')) { t.erase(0, t.find_first_not_of(' ')); t.erase(t.find_last_not_of(' ') + 1); if (!t.empty()) d->tags.push_back(t); }
-        }
-        int eq = (int)d->equip;
-        const char* slots[] = {"None", "Head", "Chest", "Legs", "Feet", "Hands", "Back", "Main Hand", "Off Hand"};
-        if (ImGui::Combo("Equip Slot", &eq, slots, IM_ARRAYSIZE(slots))) { d->equip = (okay::EquipSlot)eq; ch = true; }
-        text("Use Action", d->useAction, "What using it does: Eat, Drink, Heal, ... (blank = not usable).");
-        if (!d->useAction.empty() && ImGui::DragFloat("Use Amount", &d->useAmount, 0.5f, 0.0f, 10000.0f)) ch = true;
-        text("Drop Prefab", d->worldPrefab, ".okayprefab spawned when it's dropped in the world.");
-        if (ImGui::TreeNode("Custom Fields")) {
-            for (std::size_t i = 0; i < d->custom.size(); ++i) {
-                ImGui::PushID((int)i);
-                ImGui::SetNextItemWidth(120); text("##k", d->custom[i].first, nullptr);
-                ImGui::SameLine(); ImGui::SetNextItemWidth(160); text("##v", d->custom[i].second, nullptr);
-                ImGui::SameLine();
-                if (oked::TipSmallButton("Remove", "x")) { d->custom.erase(d->custom.begin() + i); ch = true; ImGui::PopID(); break; }
-                ImGui::PopID();
-            }
-            if (ImGui::SmallButton("+ Field")) { d->custom.push_back({"key", "value"}); ch = true; }
-            ImGui::TreePop();
-        }
-        if (d->loose) {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Found in a scene but not defined yet.");
-            if (ImGui::Button("Define it")) { d->loose = false; ch = true; }
-        }
-        ImGui::Separator();
-        if (ImGui::Button("Delete Item")) { db.Remove(d->id); sel.clear(); d = nullptr; ch = true; }
-        if (ch && d) d->loose = false;   // editing a found-in-scene item defines it
-        if (ch) dirty = true;
-    }
-    ImGui::EndChild();
-    ImGui::End();
-}
-
 void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
     oked::DrawUIThemeWindowBody(ed);   // editor/UIRuntimeTools.cpp: 12 looks, roles, apply, save / load
@@ -48227,6 +48165,18 @@ int main(int argc, char** argv) {
             ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed,
             gameClicked, playStarted);
         g_gameCursorReleased = pointer.released;
+        // Play reads and writes the operating-system clipboard. Stopping Play puts
+        // the memory clipboard back, so a headless self-test never calls SDL for it.
+        {
+            static okay::SdlClipboard s_playClipboard;
+            static bool s_playClipboardOn = false;
+            if (ed.isPlaying()) {
+                if (!s_playClipboardOn) { okay::InstallGameClipboard(&s_playClipboard); s_playClipboardOn = true; }
+            } else if (s_playClipboardOn) {
+                okay::InstallGameClipboard(nullptr);
+                s_playClipboardOn = false;
+            }
+        }
         if (ed.isPlaying() && pointer.feedGame) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -48237,6 +48187,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
             if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
             if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
+            if (ks[SDL_SCANCODE_LGUI]   || ks[SDL_SCANCODE_RGUI])   down.push_back(Input::KeyCmd);   // Command, for copy / paste
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
             if (pointer.feedEscapeToGame) down.push_back((char)27);
@@ -48354,6 +48305,17 @@ int main(int argc, char** argv) {
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
             g_playPointerGrabbed = capture;
+            // The same touch controls the built player samples, from the SDL finger
+            // events already fed above. The own platform backend stays off.
+            if (g_playCanvasSize.x > 1.0f && g_playCanvasSize.y > 1.0f)
+                UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
+            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            TouchControls::Sample(ed.scene());
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
+#else
+            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
+#endif
             InputActions::Tick();
         } else if (ed.isPlaying()) {
             // Playing, but a text field has the keyboard. Do not feed the game,
@@ -48365,6 +48327,8 @@ int main(int argc, char** argv) {
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
+            Gestures::Reset();
+            TouchControls::ReleaseAll(ed.scene());
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
@@ -48427,14 +48391,21 @@ int main(int argc, char** argv) {
                 }
             // Pause, typing, a modal and a click on UI, independent of PauseMenu's Update.
             if (ed.isPlaying()) okay::SettingsScreen::Ensure(ed.scene());
+            if (ed.isPlaying()) okay::CaptionOverlay::Ensure(ed.scene());
             const bool gameModal = invModal || (ed.isPlaying() && (okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&ed.scene())));
             okay::Input::SetUICaptured(gameModal || (ed.isPlaying() && okay::GameInputBlocked(&ed.scene(), (unsigned)okay::GameInputMask::World)));
             {
+                static bool s_monitors = false;
+                if (!s_monitors && window) {
+                    s_monitors = true;
+                    okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+                }
+                okay::DisplaySettings::TickTrial(dt);
                 static int s_dispGen = 0;
                 const int gen = okay::DisplaySettings::Generation();
                 if (gen != s_dispGen) {
                     s_dispGen = gen;
-                    if (window) SDL_SetWindowFullscreen(window, okay::DisplaySettings::Fullscreen() ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
                     if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
                     okay::DisplaySettings::ApplyQuality();
@@ -48482,6 +48453,7 @@ int main(int argc, char** argv) {
                 if (ed.isPlaying()) {
                     if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
                     if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
+                    if (!g_paused) okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause);   // resume also lets a node breakpoint go
                     ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
                     // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
                     // scene by the scaled delta: 0 while the game or the editor is paused, as before.
@@ -48576,6 +48548,7 @@ int main(int argc, char** argv) {
                 }
             } else {
                 audioDev->ClearQueued();
+                AudioMixer::ResetSpatial();
             }
         }
 
@@ -48722,6 +48695,16 @@ int main(int argc, char** argv) {
                 g_showSceneSettings = true;
                 if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Lighting");
             }
+            // OKAY_UI_BUILD=1 opens Build Settings (pair with OKAY_UI_BUILDSEC). OKAY_UI_SPOTLIGHT=1
+            // adds a spot light and selects it, so a screenshot can show the Cast Shadows note.
+            if (std::getenv("OKAY_UI_BUILD") && s_focusFrames == 40) g_showBuildGame = true;
+            if (std::getenv("OKAY_UI_SPOTLIGHT") && s_focusFrames == 36) {
+                GameObject* spot = ed.scene().CreateGameObject("Spot Light");
+                auto* li = spot->AddComponent<Light>();
+                li->type = Light::Type::Spot;
+                li->castShadows = true;
+                ed.Select(spot);
+            }
             if (const char* lp = std::getenv("OKAY_UI_PRESET"); lp && s_focusFrames == 33) ApplyLookPresetToScene(ed, lp);
             // OKAY_UI_POST="bloom=1;exposure=1.2" (PostSet names), OKAY_UI_SKY=<cloud cover>
             // (the Procedural sky), OKAY_UI_WEATHER=rain|snow|storm: one look for a screenshot.
@@ -48746,6 +48729,7 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
@@ -49271,7 +49255,7 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
-        { OKAY_PROFILE("UI.ItemDatabase"); if (g_showItemDatabase) DrawItemDatabase(ed); }
+        { OKAY_PROFILE("UI.ContentEditors"); DrawContentEditors(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
         // Make Playable Character is queued from the Project panel, which draws
         // after the Inspector. A drop onto a player is queued from the Hierarchy,

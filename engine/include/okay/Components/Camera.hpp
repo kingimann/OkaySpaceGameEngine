@@ -99,6 +99,11 @@ public:
     float shakeRecovery = 1.5f;     // trauma lost per second
     /// Add shake (0..1; stacks up to 1). Explosions ~0.6, hits ~0.3, footsteps ~0.1.
     void Shake(float strength = 0.5f);
+    /// A cutscene's keyed shake, in camera-local units (position) and degrees.
+    /// Added in the view, on top of trauma, so the transform stays put and every
+    /// renderer sees it. The sequence clears it when it stops.
+    void SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg);
+    void ClearCutsceneShake();
     float ShakeTrauma() const { return m_trauma; }
     /// Smoothly change `zoom` to `target` over `seconds` (0 = instantly).
     void ZoomTo(float target, float seconds);
@@ -208,6 +213,7 @@ public:
 private:
     float m_trauma = 0.0f, m_shakeTime = 0.0f;
     Vec3  m_shakePos{0, 0, 0}, m_shakeRot{0, 0, 0};   // camera-local offset / euler degrees
+    Vec3  m_cutPos{0, 0, 0}, m_cutRot{0, 0, 0};       // the sequence's keyed shake, same space
     float m_zoomFrom = 1.0f, m_zoomTarget = 1.0f, m_zoomTime = 0.0f, m_zoomDur = 0.0f;
 };
 

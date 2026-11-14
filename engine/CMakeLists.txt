@@ -1,3 +1,30 @@
+# ---- okay::crypto as its own static library --------------------------
+# Our own crypto primitives (docs/crypto.md). A separate target so that code which must not
+# link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
+# the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
+# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/crypto.md.
+add_library(okay_crypto STATIC
+    src/Crypto/Util.cpp
+    src/Crypto/Random.cpp
+    src/Crypto/ChaCha20.cpp
+    src/Crypto/Poly1305.cpp
+    src/Crypto/Aead.cpp
+    src/Crypto/Blake2b.cpp
+    src/Crypto/Sha256.cpp
+    src/Crypto/Sha512.cpp
+    src/Crypto/X25519.cpp
+    src/Crypto/Ed25519.cpp
+)
+target_include_directories(okay_crypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_crypto PUBLIC cxx_std_17)
+if(WIN32)
+    target_link_libraries(okay_crypto PUBLIC bcrypt)   # BCryptGenRandom
+endif()
+if(OKAY_OWN_CRYPTO)
+    target_compile_definitions(okay_crypto PUBLIC OKAY_OWN_CRYPTO)
+endif()
+add_library(okay::crypto ALIAS okay_crypto)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -13,6 +40,7 @@ add_library(okay_engine
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
     src/Core/GameSaves.cpp
+    src/Core/Clipboard.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/TimerDebug.cpp
@@ -31,7 +59,11 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
+    src/Input/GestureRecognizer.cpp
+    src/Input/Gestures.cpp
+    src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
+    src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
@@ -50,17 +82,8 @@ add_library(okay_engine
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
+    src/Net/CheatDetect.cpp
     src/Net/SessionTicket.cpp
-    src/Crypto/Util.cpp
-    src/Crypto/Random.cpp
-    src/Crypto/ChaCha20.cpp
-    src/Crypto/Poly1305.cpp
-    src/Crypto/Aead.cpp
-    src/Crypto/Blake2b.cpp
-    src/Crypto/Sha256.cpp
-    src/Crypto/Sha512.cpp
-    src/Crypto/X25519.cpp
-    src/Crypto/Ed25519.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
@@ -156,6 +179,7 @@ add_library(okay_engine
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/SpatialFx.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/Audio/AudioStream.cpp
@@ -192,6 +216,7 @@ add_library(okay_engine
     src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    src/UI/UIFrameTransform.cpp
     # Localization tools (docs/localization_tools.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
@@ -202,10 +227,13 @@ add_library(okay_engine
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
     src/UI/FocusGraph.cpp
+    src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
     src/Render/ModelReaders.cpp
     src/Render/ColladaReader.cpp
+    src/Render/Max3dsReader.cpp
+    src/Render/BvhReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -265,7 +293,7 @@ endif()
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
 set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
-# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
+# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.
@@ -335,9 +363,7 @@ endif()
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
-if(WIN32)
-    target_link_libraries(okay_engine PUBLIC bcrypt)   # BCryptGenRandom
-endif()
+target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 if(OKAY_OWN_CRYPTO)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
     message(STATUS "OkaySpace: packet encryption ENABLED (OUR OWN crypto, unreviewed; OKAY_OWN_CRYPTO=ON)")
@@ -479,6 +505,16 @@ endif()
 if(OKAY_OWN_COLLADA)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
+endif()
+# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
+# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_3DS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
+endif()
+if(OKAY_OWN_BVH)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

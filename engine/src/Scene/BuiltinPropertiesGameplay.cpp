@@ -693,7 +693,7 @@ void RegisterProjectile3D() {
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
-    b.AddEnum("kind", &Volume::kind, {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience"}).Tooltip("What the region does")
+    b.AddEnum("kind", &Volume::kind, {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience", "Reverb"}).Tooltip("What the region does")
      .AddEnum("shape", &Volume::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("Box, the ellipsoid inside the box, or the cylinder standing on the Y axis")
      .AddVec3("size", &Volume::size).Range(0.05, kBig, 0.1).Tooltip("The box the shape fills, in local units (scaled by the Transform)")
      .AddVec3("offset", &Volume::offset).Range(-kBig, kBig, 0.1).Tooltip("Centre of the region, in local units")
@@ -709,8 +709,10 @@ void RegisterVolume() {
      .AddFloat("fogStart", &Volume::fogStart).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog starts")
      .AddFloat("fogEnd", &Volume::fogEnd).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog is solid")
      .AddFloat("vignette", &Volume::vignette).Range(0, 1, 0.01).Tooltip("Atmosphere: edge darkening inside")
-     .AddFloat("blend", &Volume::blend).Range(0, 1, 0.01).Tooltip("Atmosphere: how far in from the edge it takes to reach full strength")
-     .AddFloat("fadeTime", &Volume::fadeTime).Range(0, 60, 0.1).Tooltip("Ambience: seconds to fade the sound in and out");
+     .AddFloat("blend", &Volume::blend).Range(0, 1, 0.01).Tooltip("Atmosphere and Reverb: how far in from the edge it takes to reach full strength")
+     .AddFloat("fadeTime", &Volume::fadeTime).Range(0, 60, 0.1).Tooltip("Ambience: seconds to fade the sound in and out")
+     .AddEnum("reverbPreset", &Volume::reverbPreset, {"Room", "Hall", "Cave", "Outdoor"}).Tooltip("Reverb: the kind of echo")
+     .AddFloat("reverbAmount", &Volume::reverbAmount).Range(0, 1, 0.01).Tooltip("Reverb: how strong the echo is. 0 is dry");
     b.Commit();
 }
 
@@ -909,7 +911,10 @@ void RegisterJoint3D() {
      .AddVec3("axis", &Joint3D::axis).Range(-kBig, kBig, 0.1).Tooltip("World hinge axis the body may spin about")
      .AddBool("useMotor", &Joint3D::useMotor).Tooltip("Drive the spin about the axis toward motorSpeed")
      .AddFloat("motorSpeed", &Joint3D::motorSpeed).Range(-10000, 10000, 0.1).Tooltip("Target angular speed about the axis (deg/s)")
-     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it");
+     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it")
+     .AddBool("useLimits", &Joint3D::useLimits).Tooltip("Clamp the hinge angle to [minAngle, maxAngle]")
+     .AddFloat("minAngle", &Joint3D::minAngle).Range(-360, 360, 1).Tooltip("Lower limit (deg, relative to the start angle)")
+     .AddFloat("maxAngle", &Joint3D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)");
     b.Commit();
 }
 

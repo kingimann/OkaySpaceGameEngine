@@ -1,6 +1,6 @@
 # 17. Launcher & platform
 
-The OkaySpace launcher (`launcher/`, one 24,802-line `main.cpp` plus `VoiceChat.hpp`) and the online platform it talks to:
+The OkaySpace launcher (`launcher/`, one 26,450-line `main.cpp` plus `VoiceChat.hpp`) and the online platform it talks to:
 accounts, friends, chat, forums, marketplace, profiles, admin, the official game, Steam and PlayFab. The client code for the
 online services is header-only in `engine/include/okay/Platform`; the server side is Supabase (SQL in `docs/sql`, one Edge
 function in `supabase/functions`). Anything in `shared/` that the launcher, editor and player all use is mapped here too.
@@ -16,7 +16,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.1.3 Supabase mirror and periodic check - `launcher/main.cpp` (L810-1031) - uses whichever of the Supabase `releases` bucket and GitHub Releases has the newer version; `OKAY_UPDATE_SERVER` overrides; "newer version" badge
   - 17.1.4 What's New and Tips - `launcher/main.cpp` (L4050, tabs 12 and 13) - release history cards and a searchable tips list with a tip of the day
   - 17.1.5 Settings page - `launcher/main.cpp` (tab 4, L20333) - Appearance, Chat & Notifications, Loading screen, Behavior, Game libraries, Account, About, Privacy & Safety, Voice & Audio, Crash reports; saved in `launcher.cfg` next to the exe
-  - 17.1.6 Tray, single instance, notifications - `launcher/main.cpp` (L9614, L9696, L1682, L14945) - minimize to the Windows tray, one launcher per machine, a notification bell and toast pop-ups
+  - 17.1.6 Tray, single instance, notifications - `launcher/main.cpp` (L9614, L9696, L1682, L14945) - Windows tray icon code exists but is not used (the launcher never hides to the tray; the old `min_to_tray` setting was removed), one launcher per machine, a notification bell and toast pop-ups
   - 17.1.7 Shared look and startup frame - `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h` - the Slate theme shared with the editor, a branded splash drawn before ImGui starts, a procedural window icon, embedded fonts
   - 17.1.8 Windows resources and build - `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico` - target `okayspace-launcher` builds `OkaySpace.exe`; it does not link the engine library (only engine headers plus `ServerQuery.cpp` and `UdpSocket.cpp`)
   - 17.1.9 Script UI bridge and test panel - `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp` - not launcher code: OkayUI widgets for script `ui_*` calls and the F1 "Test UI" panel, used by the editor and the player
@@ -188,7 +188,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Docs:** `docs/supabase-backend.md`
 - **Tests:** none for `Admin`; the anti-cheat parts of `admin.sql` are exercised by `anticheat_sql`; user reports by `user_reports` (requests, outcomes) and `reports_sql` (RLS on a local Postgres)
 - **Status:** Works - shipping page; untested client
-- **Open:** create test servers without a game (old map)
+- **Open:** create test servers without a game (old map). Needs a definition of "test server" from the owner first (see docs/unfinished_launcher.md)
 - **Related:** 39.6, 17.14, 17.5, 17.6
 - **Words:** admin, moderator, staff, role, badge, ban, unban, audit log, admin_log, site_bans, dashboard
 - **Seen as:** Admin tab missing (rank 0); ban banner on sign-in; a moderation action is refused

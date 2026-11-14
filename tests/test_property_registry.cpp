@@ -1614,6 +1614,9 @@ static void TestGameplayAndEnvironmentRegistrations() {
         CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.minAngle", PropertyValue::MakeFloat(-45.0f)) && go->GetComponent<Joint2D>()->minAngle == -45.0f);
         CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint2D.mode", "hinge") && go->GetComponent<Joint2D>()->mode == (int)Joint2D::Mode::Hinge);
         CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint3D.axis", "0 0 1") && go->GetComponent<Joint3D>()->axis.z == 1.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.useLimits", PropertyValue::MakeBool(true)) && go->GetComponent<Joint3D>()->useLimits);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.minAngle", PropertyValue::MakeFloat(-15.0f)) && go->GetComponent<Joint3D>()->minAngle == -15.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.maxAngle", PropertyValue::MakeFloat(400.0f)) && go->GetComponent<Joint3D>()->maxAngle == 360.0f);
     }
     {   // the environment: the clock is 0..24 hours; water's colour is red, green and blue, its alpha is `opacity`
         go->AddComponent<DayNightCycle>();

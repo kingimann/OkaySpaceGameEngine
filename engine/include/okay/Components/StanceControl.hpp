@@ -9,6 +9,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include <algorithm>
 
 namespace okay {
@@ -52,8 +53,12 @@ struct StanceControl {
     /// Keys() from the keyboard (for controllers that read input in Update).
     void ReadKeys() {
         if (!crouchKey && !proneKey) return;
+        const bool saved = toggle;
+        if (!toggle && (Accessibility::ToggleFor("Crouch") || Accessibility::ToggleFor("Prone")))
+            toggle = true;
         Keys(crouchKey && Input::GetKeyDown(crouchKey), crouchKey && Input::GetKey(crouchKey),
              proneKey && Input::GetKeyDown(proneKey), proneKey && Input::GetKey(proneKey));
+        toggle = saved;
     }
     /// Settle the stance asked for (headroom permitting) and ease the body there.
     void Step(GameObject* go, float dt) {

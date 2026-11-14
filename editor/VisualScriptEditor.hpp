@@ -426,6 +426,15 @@ inline const std::vector<VsDef>& Registry() {
         {"OnAction", "On Action Pressed", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
         {"OnActionUp", "On Action Released", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
         {"OnActionHeld", "On Action Held", CAT_EVENT, false, {""}, {}, {}, 1, "interact, jump, fire"},
+        {"OnTap", "On Tap", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDoubleTap", "On Double Tap", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnLongPress", "On Long Press", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnSwipe", "On Swipe", CAT_EVENT, false, {""}, {}, {}, 1, "up, down, left, right, or blank for any"},
+        {"OnPinch", "On Pinch", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnRotate", "On Two Finger Rotate", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"GestureSwipeDirection", "Get Swipe Direction", CAT_INPUT, false, {}, {}, {"Direction"}, 0, nullptr},
+        {"GesturePinchScale", "Get Pinch Scale", CAT_INPUT, false, {}, {}, {"Scale"}, 0, nullptr},
+        {"GestureTwist", "Get Twist Angle", CAT_INPUT, false, {}, {}, {"Degrees"}, 0, nullptr},
         {"GetMoveAxis", "Get Move Axis", CAT_INPUT, false, {}, {}, {"Move"}, 0, nullptr},
         {"RandomPick", "Random Pick", CAT_MATH, false, {}, {"List"}, {"Item"}, 0, nullptr},
         {"RandomPoint", "Random Point In Area", CAT_MATH, false, {}, {"Center","Size"}, {"Point"}, 0, nullptr},
@@ -732,6 +741,15 @@ inline const std::vector<VsDef>& Registry() {
                                                 {"Count", "Objects", "Nearest"}, 1, "layers (blank = all)"},
         {"OverlapSphere3D", "Overlap Sphere",   CAT_INPUT, false, {}, {"Center", "Radius"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
         {"OverlapBox3D",    "Overlap Box",      CAT_INPUT, false, {}, {"Center", "Half Size"}, {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"BoxCast2D",       "Box Cast",         CAT_INPUT, false, {}, {"Center", "Flat Half", "Heading", "Box Angle", "Reach"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"CapsuleCast2D",   "Capsule Cast",     CAT_INPUT, false, {}, {"Segment Start", "Segment End", "Capsule Radius", "Heading", "Reach"},
+                                                {"Hit", "Point", "Normal", "Distance", "Object"}, 1, "layers (blank = all)"},
+        {"OverlapBox2D",    "Overlap Rectangle", CAT_INPUT, false, {}, {"Center", "Flat Half", "Box Angle"},
+                                                {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"OverlapCapsule2D","Overlap Capsule",  CAT_INPUT, false, {}, {"Segment Start", "Segment End", "Capsule Radius"},
+                                                {"Count", "Objects"}, 1, "layers (blank = all)"},
+        {"AddExplosionForce", "Add Explosion Force", CAT_ACTION, true, {""}, {"Blast Point", "Blast Force", "Blast Radius", "Upward Bias"}, {}, 0, nullptr},
         {"ContactPoint",    "Contact Point",    CAT_DATA,  false, {}, {}, {"Point"}, 0, nullptr},
         {"ContactNormal",   "Contact Normal",   CAT_DATA,  false, {}, {}, {"Normal"}, 0, nullptr},
         {"ImpactSpeed",     "Impact Speed",     CAT_DATA,  false, {}, {}, {"Speed"}, 0, nullptr},
@@ -966,6 +984,9 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnLanguageChanged" || type == "OnInteract" || type == "OnDeath" || type == "OnHealthChanged") return type;
     if (type == "OnTagEnter" || type == "OnTagStay" || type == "OnTagExit" || type == "OnCollisionTag")
         return type + ":" + tok(arg, "Player");
+    if (type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnPinch" || type == "OnRotate")
+        return type;
+    if (type == "OnSwipe") return arg.empty() ? std::string("OnSwipe") : "OnSwipe:" + tok(arg, "");
     if (type == "OnAction") return "OnAction:" + tok(arg, "interact");
     if (type == "OnActionUp") return "OnActionUp:" + tok(arg, "interact");
     if (type == "OnActionHeld") return "OnActionHeld:" + tok(arg, "interact");
@@ -1738,6 +1759,42 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
                            ", " + VsInput(g, nodeId, 1, box ? "vec3(0.5, 0.5, 0.5)" : "1") + ", " + q(lit("")) + ")";
         return outPin == 0 ? "count(" + call + ")" : call;
     }
+    // Flat casts. A leading word selects the output, the same way ray3_cast does.
+    if (t == "BoxCast2D" || t == "CapsuleCast2D") {
+        auto xy = [&](int pin, const char* def, char axis) {
+            return std::string("vec_") + axis + "(" + VsInput(g, nodeId, pin, def) + ")";
+        };
+        static const char* kWhat[] = {"hit", "point", "normal", "distance", "object"};
+        const int w = outPin >= 0 && outPin < 5 ? outPin : 0;
+        const std::string layers = q(lit(""));
+        if (t == "BoxCast2D")
+            return "box_cast(" + q(kWhat[w]) + ", " + xy(0, "transform.position", 'x') + ", " +
+                   xy(0, "transform.position", 'y') + ", " + xy(1, "vec3(0.5, 0.5, 0)", 'x') + ", " +
+                   xy(1, "vec3(0.5, 0.5, 0)", 'y') + ", " + xy(2, "vec3(1, 0, 0)", 'x') + ", " +
+                   xy(2, "vec3(1, 0, 0)", 'y') + ", " + VsInput(g, nodeId, 4, "100") + ", " +
+                   layers + ", true, " + VsInput(g, nodeId, 3, "0") + ")";
+        return "capsule_cast(" + q(kWhat[w]) + ", " + xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'x') + ", " +
+               xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'y') + ", " +
+               xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'x') + ", " +
+               xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'y') + ", " +
+               VsInput(g, nodeId, 2, "0.5") + ", " + xy(3, "vec3(1, 0, 0)", 'x') + ", " +
+               xy(3, "vec3(1, 0, 0)", 'y') + ", " + VsInput(g, nodeId, 4, "100") + ", " + layers + ", true)";
+    }
+    if (t == "OverlapBox2D" || t == "OverlapCapsule2D") {
+        auto xy = [&](int pin, const char* def, char axis) {
+            return std::string("vec_") + axis + "(" + VsInput(g, nodeId, pin, def) + ")";
+        };
+        std::string call = t == "OverlapBox2D"
+            ? "overlap_box(" + xy(0, "transform.position", 'x') + ", " + xy(0, "transform.position", 'y') + ", " +
+              xy(1, "vec3(0.5, 0.5, 0)", 'x') + ", " + xy(1, "vec3(0.5, 0.5, 0)", 'y') + ", \"\", false, " +
+              VsInput(g, nodeId, 2, "0") + ")"
+            : "overlap_capsule(" + xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'x') + ", " +
+              xy(0, "vec3(pos_x(), pos_y() - 0.5, 0)", 'y') + ", " +
+              xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'x') + ", " +
+              xy(1, "vec3(pos_x(), pos_y() + 0.5, 0)", 'y') + ", " +
+              VsInput(g, nodeId, 2, "0.5") + ")";
+        return outPin == 0 ? "count(" + call + ")" : call;
+    }
     if (t == "ContactPoint")  return "contact_point";
     if (t == "ContactNormal") return "contact_normal";
     if (t == "ImpactSpeed")   return "impact_speed";
@@ -1817,6 +1874,20 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
 
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited);
+// Nodes this export could not turn into script. The editor shows each one in
+// Problems and on the node; the preview does not offer a script that skips them.
+struct VsExportReport { std::vector<okay::vs::VsIssue> issues; };
+inline VsExportReport*& VsExportReportSink() { static VsExportReport* p = nullptr; return p; }
+inline void VsExportFail(int nodeId, const std::string& type) {
+    VsExportReport* r = VsExportReportSink();
+    if (!r) return;
+    for (const auto& e : r->issues) if (e.node == nodeId) return;
+    okay::vs::VsIssue is;
+    is.severity = 0;
+    is.node = nodeId;
+    is.message = "Cannot export node " + type + " (#" + std::to_string(nodeId) + "): this node has no script.";
+    r->issues.push_back(std::move(is));
+}
 // Functions generated for Wait / Delay during one CompileToOkayScript call.
 // The pointer is set for that call and restored when it returns.
 struct VsExportFns { std::vector<std::string> bodies; };
@@ -1896,6 +1967,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="Spawn")       out += ind + "spawn3(" + q(arg("")) + ", " + in(0, "transform.position.x") + ", " + in(1, "transform.position.y") + ", " + in(2, "transform.position.z") + ")\n";
     else if (t=="Destroy")     out += ind + "destroy()\n";
     else if (t=="AddForce")    out += ind + "add_force(" + in(0)+", "+in(1)+", "+in(2)+")\n";
+    else if (t=="AddExplosionForce")
+        out += ind + "add_explosion_force(vec_x(" + in(0, "vec3(0, 0, 0)") + "), vec_y(" + in(0, "vec3(0, 0, 0)") +
+               "), " + in(1, "10") + ", " + in(2, "5") + ", " + in(3, "0") + ")\n";
     else if (t=="SetVelocity") out += ind + "set_velocity(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="AddImpulse")  out += ind + "add_impulse(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="Branch") {
@@ -2131,7 +2205,26 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
         out += ind + "}\n";
     }
-    else if (t=="Timer") out += ind + "// Every (" + VsCommentText(arg("1")) + "s): wire actions to this node\n";
+    else if (t=="Timer") {
+        // Same rule as TimerNode: pass at most once every `seconds`, keeping the
+        // leftover (clamped to four intervals). Zero, negative, and NaN pass every time.
+        const std::string seconds = VsNum(arg("1"), "1");
+        const double sec = std::strtod(seconds.c_str(), nullptr);
+        auto follow = [&](const std::string& bodyInd) {
+            for (int s : VsExecTargets(g, nodeId, 0)) VsEmitChain(g, s, out, bodyInd, visited);
+        };
+        if (!(sec > 0.0)) {
+            follow(ind);
+        } else {
+            const std::string acc = "_vs_timer_" + std::to_string(nodeId);
+            out += ind + acc + " += Time.deltaTime\n";
+            out += ind + "if (" + acc + " >= " + seconds + ") {\n";
+            out += ind + "    " + acc + " -= " + seconds + "\n";
+            out += ind + "    if (" + acc + " > (" + seconds + " * 4)) " + acc + " = (" + seconds + " * 4)\n";
+            follow(ind + "    ");
+            out += ind + "}\n";
+        }
+    }
     else if (t=="Wait" || t=="Delay") VsEmitLatentDelay(g, nodeId, t=="Wait", VsNum(arg("1"), "1"), out, ind, visited);
     else if (t=="Action" || t=="Actions") out += ind + "run_action(" + q(n->arg) + ")\n";
     else if (t=="Condition") {
@@ -2141,7 +2234,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         if (fn>=0) { out += ind + "} else {\n"; VsEmitChain(g, fn, out, ind+"    ", visited); }
         out += ind + "}\n";
     }
-    else                 out += ind + "// unsupported node: " + t + "\n";
+    else                 VsExportFail(nodeId, t);
 }
 inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
                         const std::string& ind, std::set<int>& visited) {
@@ -2153,14 +2246,20 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
         VsEmitNode(g, cur, out, ind, visited);
         static const std::set<std::string> kSelfContinued = {
             "Branch", "Sequence", "Once", "ForLoop", "Repeat", "FlipFlop", "Gate", "DoN", "SwitchInt",
-            "ChanceBranch", "EveryN", "Condition", "While", "Wait", "Delay"};
+            "ChanceBranch", "EveryN", "Condition", "While", "Wait", "Delay", "Timer"};
         if (kSelfContinued.count(n->type)) break;
         const std::vector<int> next = VsExecTargets(g, cur, 0);
         if (next.size() > 1) { for (int t : next) VsEmitChain(g, t, out, ind, visited); break; }
         cur = next.empty() ? -1 : next[0];
     }
 }
-inline std::string CompileToOkayScript(const VsEditGraph& g) {
+inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::vs::VsIssue>* exportIssues = nullptr) {
+    VsExportReport report;
+    struct ReportScope {
+        VsExportReport* prev;
+        explicit ReportScope(VsExportReport* r) : prev(VsExportReportSink()) { VsExportReportSink() = r; }
+        ~ReportScope() { VsExportReportSink() = prev; }
+    } reportScope(&report);
     VsExportFnScope latent;   // Wait / Delay callbacks collected while the chains are emitted
     // The graph's events become Start / Update / OnCollisionEnter / OnTriggerEnter /
     // OnMouseDown functions; its state becomes fields. A script's fields and
@@ -2223,6 +2322,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         if (n.type=="TweenKillTag" || n.type=="TweenPauseTag" || n.type=="TweenPlayTag") fields += "    int _tw_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="EveryN")   fields += "    int _evn_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="OnTimer")  fields += "    float _timer_"+std::to_string(n.id)+" = 0;\n";
+        if (n.type=="Timer")    fields += "    float _vs_timer_"+std::to_string(n.id)+" = 0;\n";
         if (n.type=="Wait") {
             fields += "    bool _vs_wait_done_"+std::to_string(n.id)+" = false;\n";
             fields += "    bool _vs_wait_busy_"+std::to_string(n.id)+" = false;\n";
@@ -2397,6 +2497,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         fin += line; if (e < out.size()) fin += '\n';
         a = e + 1;
     }
+    if (exportIssues) *exportIssues = std::move(report.issues);
     return fin;
 }
 
@@ -3700,6 +3801,12 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string now = g.toText();
         if (now != st.checkedText) {
             st.issues = okay::vs::ValidateGraphText(now, ed.projectDir());
+            std::vector<okay::vs::VsIssue> exp;
+            CompileToOkayScript(g, &exp);
+            if (!exp.empty()) {
+                st.issues.insert(st.issues.end(), exp.begin(), exp.end());
+                st.showIssues = true;
+            }
             st.checkedText = std::move(now);
         }
     }
@@ -5284,6 +5391,20 @@ inline void Draw(EditorState& ed, bool* open) {
     } else if (st.showScript) {
         ImGui::SameLine();
         ImGui::BeginChild("vsscript", ImVec2(0, 0), true);
+        std::vector<const okay::vs::VsIssue*> blocked;
+        for (const auto& is : st.issues)
+            if (is.severity == 0 && is.message.rfind("Cannot export node ", 0) == 0) blocked.push_back(&is);
+        if (!blocked.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.40f, 1.0f), "This graph cannot be exported.");
+            ImGui::TextWrapped("These nodes have no script. The export stops instead of skipping them.");
+            ImGui::Separator();
+            for (const okay::vs::VsIssue* is : blocked) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.48f, 1.0f));
+                ImGui::TextWrapped("%s", is->message.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndChild();
+        } else {
         std::string code = CompileToOkayScript(g);
         ImGui::TextDisabled("OkayScript (generated from the graph)");
         ImGui::SameLine();
@@ -5304,6 +5425,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::InputTextMultiline("##vsscriptview", buf.data(), buf.size(),
                                   ImVec2(-FLT_MIN, -FLT_MIN), ImGuiInputTextFlags_ReadOnly);
         ImGui::EndChild();
+        }
     } else if (st.showDetails) {
         ImGui::SameLine();
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));

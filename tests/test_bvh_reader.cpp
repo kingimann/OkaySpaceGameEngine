@@ -15,6 +15,22 @@
 
 using namespace okay;
 
+// setenv / unsetenv exist on POSIX only; the Windows C runtime has _putenv_s (an empty value removes the variable).
+static void TestSetEnv(const char* n, const char* v) {
+#ifdef _WIN32
+    _putenv_s(n, v);
+#else
+    setenv(n, v, 1);
+#endif
+}
+static void TestUnsetEnv(const char* n) {
+#ifdef _WIN32
+    _putenv_s(n, "");
+#else
+    unsetenv(n);
+#endif
+}
+
 static const std::string kDir = std::string(OKAY_SOURCE_DIR) + "/tests/data/models/";
 static bool Near(const Vec3& a, const Vec3& b, float e = 1e-4f) {
     return std::fabs(a.x - b.x) < e && std::fabs(a.y - b.y) < e && std::fabs(a.z - b.z) < e;
@@ -108,7 +124,7 @@ int main() {
 
     {   // the seam
         CHECK(HasOwnReader(".bvh"));
-        unsetenv("OKAY_OWN_BVH");
+        TestUnsetEnv("OKAY_OWN_BVH");
         SetImportBackend(".bvh", ImportBackend::Default);
         ImportedModel m;
         if (!AssimpAvailable() && EffectiveImportBackend(".bvh") == ImportBackend::Default) {
@@ -116,11 +132,11 @@ int main() {
             CHECK(err.find("OKAY_OWN_BVH") != std::string::npos);
             CHECK(ImportableExtensions().find(".bvh") == std::string::npos);
         }
-        setenv("OKAY_OWN_BVH", "1", 1);
+        TestSetEnv("OKAY_OWN_BVH", "1");
         CHECK(EffectiveImportBackend(".bvh") == ImportBackend::Own);
         CHECK(ImportableExtensions().find(".bvh") != std::string::npos);
         CHECK(ImportModelData(kDir + "walk.bvh", m, ImportBackend::Default, false, &err) && m.backend == "own" && m.nodes.size() == 4);
-        setenv("OKAY_OWN_BVH", "0", 1);
+        TestSetEnv("OKAY_OWN_BVH", "0");
         CHECK(EffectiveImportBackend(".bvh") != ImportBackend::Own);
         CHECK(SetImportBackend(".bvh", ImportBackend::Own));
         CHECK(EffectiveImportBackend(".bvh") == ImportBackend::Own);
@@ -137,7 +153,7 @@ int main() {
         // The merged-mesh path has nothing to merge.
         bool mok = true; ImportModel(kDir + "walk.bvh", &mok); CHECK(!mok);
         SetImportBackend(".bvh", ImportBackend::Default);
-        unsetenv("OKAY_OWN_BVH");
+        TestUnsetEnv("OKAY_OWN_BVH");
     }
 
     TEST_MAIN_RESULT();

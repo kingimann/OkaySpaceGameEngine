@@ -2,6 +2,8 @@
 // nodes and the motion as one animation clip. Written from the public description of
 // the text format. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp
 // and docs/own_bvh_reader.md.
+#include "FileOpen.hpp"
+#include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <cmath>
@@ -78,7 +80,7 @@ struct Reader {
     static bool Num(const std::string& s, double& v) {
         if (s.empty()) return false;
         char* e = nullptr;
-        v = std::strtod(s.c_str(), &e);
+        v = detail::StrToD(s.c_str(), &e);
         return e && *e == '\0' && std::isfinite(v) && std::fabs(v) <= 1e15;
     }
 
@@ -237,7 +239,7 @@ struct Reader {
                 while (*s && IsWs(*s)) ++s;
                 if (!*s) return Fail("the motion data is shorter than the frame count says");
                 char* e = nullptr;
-                const double v = std::strtod(s, &e);
+                const double v = detail::StrToD(s, &e);
                 if (e == s || !std::isfinite(v) || std::fabs(v) > 1e15) return Fail("bad motion value");
                 if (*e && !IsWs(*e)) return Fail("bad motion value");
                 data.push_back((float)v);
@@ -330,7 +332,7 @@ bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err
 
 bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
     char buf[65536];

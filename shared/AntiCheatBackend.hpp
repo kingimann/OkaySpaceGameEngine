@@ -320,6 +320,31 @@ inline Request SessionTicket(const std::string& serverId, const std::string& hwH
     return r;
 }
 
+// What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
+inline bool IsTicketAudience(const std::string& s) {
+    if (s.empty() || s.size() > 64) return false;
+    for (char c : s) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == ':' || c == '-')) return false;
+    return true;
+}
+inline bool IsKeyBinding(const std::string& s) {
+    if (s.size() != 43) return false;
+    for (char c : s) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) return false;
+    return true;
+}
+// The checked form: a ticket for `serverId`, bound to one connection when `cnf` is given (NetworkManager::TicketBinding()). A malformed
+// server id or binding is refused here, never sent (and never silently turned into an unbound ticket).
+inline bool SessionTicket(const std::string& serverId, const std::string& hwHash, const std::string& cnf, Request& out, std::string* err = nullptr) {
+    if (!IsTicketAudience(serverId)) return detail::Fail(err, "That isn't a valid game server id for a session ticket.");
+    if (!cnf.empty() && !IsKeyBinding(cnf)) return detail::Fail(err, "Bad key binding.");
+    if (!hwHash.empty() && !IsHwHash(hwHash)) return detail::Fail(err, "Bad hardware hash.");
+    out = Request{};
+    out.method = "POST";
+    out.path = "/functions/v1/session-ticket";
+    out.body = "{\"aud\":" + JStr(serverId) + (cnf.empty() ? std::string() : ",\"cnf\":" + JStr(cnf)) +
+               (hwHash.empty() ? std::string() : ",\"hw_hash\":" + JStr(hwHash)) + "}";
+    return true;
+}
+
 // ---- Rows ----------------------------------------------------------------------
 struct Report {
     long id = 0;
@@ -454,7 +479,7 @@ inline bool ParseUsernames(const std::string& body, std::map<std::string, std::s
 
 // The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
 // caller refreshes ac_my_bans so the ban banner shows), or neither (an error).
-struct TicketReply { std::string ticket; long exp = 0; bool banned = false; };
+struct TicketReply { std::string ticket; long exp = 0, iat = 0; bool banned = false; };   // iat: the service's clock when it signed (0 = an older service)
 inline bool IsBannedReply(long status, const std::string& body) {
     detail::Value root;
     return status == 403 && body.size() < 65536 && og::json::Reader(body).Parse(root) &&
@@ -467,6 +492,7 @@ inline bool ParseTicket(long status, const std::string& body, TicketReply& out) 
     if (status != 200 || body.size() >= 65536 || !og::json::Reader(body).Parse(root) || root.kind != detail::Value::Object) return false;
     out.ticket = detail::S(root, "ticket");
     out.exp = detail::N(root, "exp");
+    out.iat = detail::N(root, "iat");
     if (out.ticket.rfind("okt1.", 0) != 0) { out.ticket.clear(); return false; }
     return true;
 }

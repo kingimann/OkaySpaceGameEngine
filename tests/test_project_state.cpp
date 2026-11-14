@@ -117,6 +117,8 @@ int main() {
         a.defaultWidth = 1920; a.defaultHeight = 1080;
         a.gravity2D[0] = 1.5f; a.gravity2D[1] = -20.25f;
         a.gravity3D[0] = 0.1f; a.gravity3D[1] = -1.0f / 3.0f; a.gravity3D[2] = 123456.789f;
+        a.physicsHz = 30.0f;
+        a.smoothPhysics = false;
         a.ambient = 0.123456789f;
         a.skybox = false;
         Put(a.splashLogo, "Assets/Textures/logo with spaces.png");
@@ -142,6 +144,8 @@ int main() {
         COVER(a, b, d, defaultHeight);
         COVER(a, b, d, gravity2D);
         COVER(a, b, d, gravity3D);
+        COVER(a, b, d, physicsHz);
+        COVER(a, b, d, smoothPhysics);
         COVER(a, b, d, ambient);
         COVER(a, b, d, skybox);
         COVER(a, b, d, splashLogo);
@@ -155,7 +159,7 @@ int main() {
         if (g_covered != DeclaredFields(header, "ProjectSettings")) {
             for (const auto& f : DeclaredFields(header, "ProjectSettings")) if (!g_covered.count(f)) std::cerr << "    ProjectSettings." << f << " has no line in this test\n";
         }
-        CHECK(sizeof(ProjectSettings) == 500);   // a new field changes this: add it to the writer, the reader and this test
+        CHECK(sizeof(ProjectSettings) == 508);   // a new field changes this: add it to the writer, the reader and this test
 
         // The lists came back too.
         CHECK(Tags::Custom().size() == tagsBefore && Tags::Contains("Boss") && Tags::Contains("Pickup Spot"));
@@ -184,6 +188,7 @@ int main() {
         ParseProjectSettings(p, old);
         CHECK(std::string(p.company) == "Old Co" && std::string(p.version) == "1.2.3" && p.defaultWidth == 800 && p.defaultHeight == 600);
         CHECK(p.gravity2D[1] == -9.81f && p.gravity3D[1] == -9.81f && p.ambient == 0.3f && p.skybox && p.splashShowBar);
+        CHECK(p.physicsHz == 50.0f && p.smoothPhysics);   // a file from before the step-rate lines keeps 50 Hz, drawn smoothly
         CHECK(p.splashBgTop[2] == 0.106f && p.splashAccent[1] == 0.475f);
         CHECK(Tags::Custom().empty() && Layers::Name(8) == "Layer 8");   // no list lines: the defaults
 
@@ -229,6 +234,8 @@ int main() {
         a.shadowDistance = 150.5f; a.shadowSoftness = 4.25f; a.shadowCascades = 4; a.shadowResolution = 4096;
         a.bloom = true; a.ssao = true; a.fxaa = false; a.antialias = 2; a.gpuRenderer = false; a.preferD3D12 = true;
         a.openFolderAfter = false; a.zipAfter = true; a.fullscreenToggle = false;
+        a.layout = 2; a.stripAssets = false; a.compress = false; a.buildNumber = 41; a.autoBuildNumber = false;
+        Put(a.archiveName, "{name}_b{build}");
         a.scenes = {{"Assets/Level 1.okayscene", true}, {"Assets/Menu.okayscene", false}, {"C:/Games/x y/Final.okayscene", true}};
         a.srvTarget = 1; Put(a.srvName, "Acme Server"); a.srvPort = 45123; a.srvMaxPlayers = 64; a.srvTick = 60;
         Put(a.srvPassword, "hunter2"); a.srvAuth = true; a.srvAdvertise = true;
@@ -254,16 +261,18 @@ int main() {
             COVER(a, b, d, bloom); COVER(a, b, d, ssao); COVER(a, b, d, fxaa); COVER(a, b, d, antialias);
             COVER(a, b, d, gpuRenderer); COVER(a, b, d, preferD3D12); COVER(a, b, d, openFolderAfter); COVER(a, b, d, zipAfter);
             COVER(a, b, d, fullscreenToggle); COVER(a, b, d, scenes);
+            COVER(a, b, d, layout); COVER(a, b, d, stripAssets); COVER(a, b, d, compress); COVER(a, b, d, buildNumber);
+            COVER(a, b, d, autoBuildNumber); COVER(a, b, d, archiveName);
             COVER(a, b, d, srvTarget); COVER(a, b, d, srvName); COVER(a, b, d, srvPort); COVER(a, b, d, srvMaxPlayers);
             COVER(a, b, d, srvTick); COVER(a, b, d, srvPassword); COVER(a, b, d, srvAuth); COVER(a, b, d, srvAdvertise);
             COVER(a, b, d, srvPublicAddr); COVER(a, b, d, srvRegion); COVER(a, b, d, srvMaxSpeed); COVER(a, b, d, srvRateLimit);
             COVER(a, b, d, srvKickAfter);
-            g_values += 62 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
+            g_values += 68 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
             const std::set<std::string> declared = DeclaredFields(header, "BuildSettings");
             CHECK(g_covered == declared);
             for (const auto& f : declared) if (!g_covered.count(f)) std::cerr << "    BuildSettings." << f << " has no line in this test\n";
             for (const auto& f : g_covered) if (!declared.count(f)) std::cerr << "    " << f << " is not a BuildSettings member\n";
-            CHECK(declared.size() == 62);
+            CHECK(declared.size() == 68);
             CHECK(WriteBuildProfiles(back) == text);                      // stable
         }
         {   // the profile's own members

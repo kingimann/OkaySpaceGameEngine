@@ -298,15 +298,16 @@ has `enabled`.
 | ThirdPersonShooterController, TopDownShooterController, Platformer25DController | 47, 49, 58 | movement, camera, aim and fire, ammo, dash, depth layers, grab |
 | VehicleController, VehicleController2D | 25, 11 | the suspension fields are saved only while `suspension` is on |
 | Projectile3D, Spawner, MusicPlayer | 9, 14, 6 | `Spawner.usePool` makes the copies from an object pool; the playlist `tracks` is a list, not a property |
-| NavMeshAgent, NavMeshObstacle, NavMeshSurface | 15, 3, 14 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...) |
+| NavMeshAgent, NavMeshObstacle, NavMeshSurface, NavMeshModifier, NavMeshLink | 16, 10, 14, 2, 8 | the surface's bake settings are flat (`agentRadius`, `maxSlope`, `cellSize` ...); its per-area costs and names are saved in the scene but are not properties |
 | NetworkObject, NetworkSync, NetworkTransform, SyncVar, NetworkPlayerSpawner | 4, 6, 1, 3, 7 | `NetworkObject.netId` refuses a `/` |
 | UIButton, TextRenderer, UIImage, UISlider, UIToggle, UIProgressBar, UIInputField, UIStepper, UIDropdown | 41, 32, 22, 24, 14, 22, 14, 16, 16 | position, size, anchor, colours, shape, shadow, border, behaviour switches |
 | LoadingScreen | 46 | look (layout, bar and spinner styles, colours), title and tips line, bar, spinner, and `asyncLoad` / `objectsPerFrame` for a background load; the `tips` list is not a property |
-| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 6, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties) |
+| Crosshair, UIRadialProgress, UIRating, UIScrollView, UILayoutGroup, UIFrame, UIFlexItem, UIRawImage, UIKeybindField, UIDraggable | 25, 14, 10, 12, 12, 8, 5, 11, 18, 9 | the other UI widgets and layout parts that save plain fields (not the tabs, whose lists are not properties). UIFrame's extra two are rotation and scale |
 | UITheme, UIStyleVariant, UIDamageNumbers, UIDialogueBox | 37, 3, 15, 5 | the UI looks (12 built in), a widget's role in the theme, floating combat text and the dialogue box. See [ui_runtime.md](ui_runtime.md). `UIPanel.blocksPointer`, `UIToggle.radioGroup` and `UIDraggable.dragParent` / `keepOnScreen` were added with them |
+| UISearchBar, UIDateTimePicker, UIFilePicker, UIAccordion, UIBreadcrumbs, UIPagination, UISkeleton, UIBottomSheet | | search text and list, date and time, the sandboxed folder, accordion sections, the breadcrumb path, the page, the loading placeholder, and whether the bottom sheet is open. See [ui_runtime.md](ui_runtime.md) |
 | Collectible, DamageOnTouch, Teleporter, JumpPad, TriggerZone, FollowTarget2D | 7, 7, 5, 6, 7, 4 | the no-code gameplay components; `TriggerZone.action` is an enum |
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
-| Joint2D, Joint3D | 16, 14 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way |
+| Joint2D, Joint3D | 16, 17 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way. A 3D hinge stops when `useLimits` is on (`minAngle` / `maxAngle`, degrees from the start pose) |
 | DayNightCycle, Water | 16, 16 | `DayNightCycle.time` is 0..24 hours; `Water.color` is red, green and blue (its alpha is `opacity`) |
 
 How the new types are described, so a tool can rely on it:

@@ -1,0 +1,71 @@
+# Declared variables: an array of vectors, a map and a struct
+struct Enemy hp:Number=100 "pos:Vector3=(0, 1, 0)" "tint:Color=#ff4040"
+decl route List<Vector3> object "[(0, 0, 0), (2, 0, 1), (4, 0, 0)]"
+decl stats Map<Number> object "{coins: 0, kills: 0}"
+decl boss Enemy object
+decl total Number object 0
+node 1 OnStart
+entry OnStart 1
+node 2 GetVar route
+node 3 MakeVec3
+default 3 0 1
+default 3 1 5
+default 3 2 1
+node 4 ListInsert
+data 4 0 2 0
+default 4 1 1
+data 4 2 3 0
+node 5 ForEach
+data 5 0 2 0
+node 6 VecX
+data 6 0 5 0
+node 7 AddVar total
+data 7 0 6 0
+node 8 GetVar stats
+node 9 GetVar total
+node 10 MapSet
+data 10 0 8 0
+default 10 1 "coins"
+data 10 2 9 0
+node 11 GetVar boss
+node 12 StructSet hp
+data 12 0 11 0
+default 12 1 55
+node 14 ListSort
+data 14 0 2 0
+default 14 1 true
+node 15 Print
+data 15 0 17 0
+node 16 Print
+data 16 0 18 0
+node 17 Format "route={0}  total={1}"
+data 17 0 2 0
+data 17 1 9 0
+node 18 Format "stats={0}  boss={1}"
+data 18 0 8 0
+data 18 1 11 0
+exec 1 0 4
+exec 4 0 5
+exec 5 0 7
+exec 7 0 10
+exec 5 1 14
+exec 14 0 12
+exec 12 0 15
+exec 15 0 16
+pos 1 40 40
+pos 4 300 40
+pos 5 580 40
+pos 7 880 0
+pos 10 1160 0
+pos 14 880 260
+pos 12 1160 260
+pos 15 1440 260
+pos 16 1720 260
+pos 2 40 200
+pos 3 40 340
+pos 6 580 200
+pos 8 300 260
+pos 9 300 380
+pos 11 880 420
+pos 17 1160 420
+pos 18 1440 420

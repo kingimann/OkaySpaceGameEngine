@@ -113,6 +113,25 @@ gives the ratio; a test checks every look and role.
 | `ui_dialogue_show("Mara", "Hello", "Yes", "No")` | Show a line with up to four choices. |
 | `ui_dialogue_choice()` / `ui_dialogue_open()` | Last picked choice (-1 none) / is the box up. |
 
+## App widgets
+
+Search bar, date and time, file picker, accordion, breadcrumbs, pagination, skeleton and bottom sheet are ordinary components. Add them from **GameObject > UI > App** (or the same names in the hierarchy's UI menu). Each one has plain-English fields in the Inspector, saves with the scene, and takes part in keyboard and gamepad navigation.
+
+| Widget | What it does | Script |
+| --- | --- | --- |
+| UI Search Bar | Keeps the rows whose text contains the query. An empty query shows every row | `ui_set_search`, `ui_search_query`, `ui_search_count`. `on_change` when the text or the row changes, `on_submit` on Enter |
+| UI Date and Time | Year, month, day, hour and minute. A day the month does not have is pulled back (31 February becomes the last day of February) | `ui_set_date`, `ui_set_time`, `ui_date_text`. `on_change` when the value changes. Left and right step the day |
+| UI File Picker | Lists one folder, in the game. It cannot open anything outside that folder, and it does not open the computer's own file window | `ui_file_set_root`, `ui_file_open`, `ui_file_selected`. `on_change` when the folder or the file changes, `on_submit` when a file is chosen |
+| UI Accordion | Headings that open and close. With "more than one" off, opening one closes the others | `ui_accordion_toggle`, `ui_accordion_open`. `on_change` when a section opens or closes |
+| UI Breadcrumbs | A path such as Home / Library / Books. Choosing a crumb drops the ones after it | `ui_breadcrumb_select`, `ui_breadcrumb_path`. `on_change` when the path changes |
+| UI Pagination | Previous, page numbers and next. The page stays inside 1 to the page count | `ui_set_page`, `ui_page`, `ui_page_count`. `on_change` when the page changes. Left and right move a page |
+| UI Skeleton | Grey bars (and an optional circle) while something is loading | `ui_set_loading`. `on_change` when the placeholder is shown or hidden |
+| UI Bottom Sheet | A panel that slides up. The handle opens and closes it | `ui_sheet_open`, `ui_sheet_close`, `ui_sheet_open_state`. `on_change` when it opens or closes. Confirm on a gamepad does the same |
+
+The same calls are visual-script nodes named `Fn.ui_set_search` and so on. On the object itself, the nodes are `UISearchBar.SetQuery`, `UIDateTimePicker.SetDate`, `UIFilePicker.Open`, `UIAccordion.Toggle`, `UIBreadcrumbs.Select`, `UIPagination.SetPage`, `UISkeleton.SetLoading` and `UIBottomSheet.Open` / `Close`.
+
+File > Examples > UI Gallery includes one of each, on the App card.
+
 Events on the widget's own script: `on_click`, `on_toggle` (radio buttons too), `on_change` (sliders,
 steppers, ratings, dropdowns, tabs), `on_submit` (input fields), `on_drag_start`, `on_drag`, `on_drop`,
 `on_receive`, `on_tab_close`, plus the dialogue box's `on_dialogue_line`, `on_dialogue_choice` and

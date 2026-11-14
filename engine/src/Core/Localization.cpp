@@ -48,7 +48,7 @@ struct Lexer {
     std::size_t i = 0;
     bool unterminated = false;   // a quoted string ran to the end of the file
 
-    void SkipBlanks() { while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r')) ++i; }
+    void SkipBlanks() { while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\v' || s[i] == '\f')) ++i; }
     bool AtLineEnd() { SkipBlanks(); return i >= s.size() || s[i] == '\n'; }
     void SkipLine() {
         while (i < s.size() && s[i] != '\n') ++i;

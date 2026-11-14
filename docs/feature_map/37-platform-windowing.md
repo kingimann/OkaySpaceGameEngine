@@ -3,49 +3,50 @@
 How the engine meets the operating system. `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
 clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The window, DPI, focus, file dialog
 and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2) plus `Core/DisplaySettings`,
-`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI, clipboard or thread API exists. 37.9 maps the
+`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
 online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ## 37. Platform & windowing
 
 ### 37.1 Window, fullscreen and display settings
-- **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, toggles fullscreen with Alt+Enter or F11, and applies the Settings screen's fullscreen, vsync and quality choices.
+- **What:** The game player creates its SDL window (size, resizable, borderless, fullscreen, start maximized, minimum size, icon, hidden until the splash is ready), is per-monitor DPI aware on Windows, and applies the Settings screen's monitor, display mode, resolution, refresh rate, vsync and quality. A shared SDL helper lists monitors and modes for the player and the editor.
 - **Parts:**
   - 37.1.1 Window creation - `player/main.cpp` - flags, centered position, minimum size, window icon PNG, hidden-then-reveal to avoid a black flash, optional boot splash
   - 37.1.2 High DPI - `player/main.cpp`, `editor/main.cpp` - `SDL_HINT_WINDOWS_DPI_AWARENESS` per-monitor, `SDL_WINDOW_ALLOW_HIGHDPI`; the editor scales its Game view by `DisplayFramebufferScale`
-  - 37.1.3 Fullscreen, vsync and quality settings - `Core/DisplaySettings` - Prefs-backed `Fullscreen`, `VSync`, `Quality`; hosts re-apply when `Generation()` moves; the player also toggles on Alt+Enter and F11 when Build Settings allows
+  - 37.1.3 Fullscreen, vsync and quality settings - `Core/DisplaySettings` - Prefs-backed window mode, resolution, refresh, monitor, `VSync`, `Quality`; hosts re-apply when `Generation()` moves; the player also toggles on Alt+Enter and F11 when Build Settings allows
   - 37.1.4 Build Settings window options - `editor/main.cpp` - run in background, mute when unfocused, fullscreen toggle, start maximized, minimum size, company and save-to-user-folder, read by the player from its config
   - 37.1.5 Console host loop - `Core/Application` - the terminal game loop (`Application::Run`) with console renderer, frame pacing and quit-on-Q; used by tests and headless demos
   - 37.1.6 GPU preference - `player/main.cpp` - on Windows exports NVIDIA Optimus and AMD flags so hybrid laptops use the discrete GPU
-- **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/Application`
-- **API:** `DisplaySettings::SetFullscreen`, `DisplaySettings::SetVSync`, `DisplaySettings::SetQuality`, `DisplaySettings::Generation`, `Application::Config`, Build Settings window options
-- **Editor:** Build Settings (window and presentation options); Settings Screen component drives the same values in game
-- **Docs:** `docs/packaging.md`, `docs/web_mobile.md`
-- **Tests:** -
-- **Status:** Works for the player window (player/main.cpp window, DPI and fullscreen code read); the editor and launcher windows are separate SDL setups. No tests cover window code (it needs a display)
-- **Open:** no engine-level window abstraction: each host program repeats its own SDL setup; no multi-monitor selection and no resolution list (the Settings screen has Music, Effects, Fullscreen, VSync, Quality and Done per its header); no Linux or macOS DPI hint (the hint is Windows only); `DisplaySettings` is documented only in code comments
+  - 37.1.7 Monitors, modes and the confirm clock - `Core/DisplayModes`, `shared/SdlDisplays.cpp` - list, filter and fall back; Apply then "Keep these settings?" for 10 seconds, restored on the next launch if the question was never answered
+- **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/DisplayModes`, `shared/SdlDisplays.hpp`, `shared/SdlDisplays.cpp`, `Core/Application`
+- **API:** `DisplaySettings::SetMode`, `SetMonitorName`, `SetResolution`, `SetRefreshHz`, `BeginTrial`, `ResolveSaved`, `sdldisplay::ListMonitors`, `sdldisplay::Apply`, script `set_display_mode`, `set_monitor`, `begin_display_confirm`
+- **Editor:** Build Settings (window and presentation options); the Settings screen in play uses the same SDL helper on the editor window
+- **Docs:** `docs/display_settings.md`, `docs/packaging.md`, `docs/web_mobile.md`
+- **Tests:** `display_settings`, `display_screen`
+- **Status:** Works for the choice itself (filtering, fallback, the 10-second revert, the Settings screen and the script nodes are tested). The player and the editor apply it through SDL. Each host still creates its own window. The own-code platform backend is not used.
+- **Open:** no single window class shared by the player, editor and launcher (each still creates its SDL window); no Linux or macOS DPI hint (the hint is Windows only)
 - **Related:** 7.4, 8.4, 12.8, 12.9, 15.7, 18.1, 2.1
-- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, Application
+- **Words:** window, SDL window, fullscreen, borderless, windowed, resolution, refresh rate, monitor, vsync, DPI, high DPI, HiDPI, scaling, Windows 11 125%, Alt+Enter, F11, start maximized, minimum size, window icon, DisplaySettings, SdlDisplays, keep these settings, Application
 - **Seen as:** the game looks blurry on a scaled display; the window flashes black at start; fullscreen does not toggle; the game window has the wrong icon or title; the Settings screen quality button changes nothing; the window cannot be resized
 - **Ask me like:** "make the game window resizable with a minimum size"; "add a fullscreen toggle on F11 to my build"
 
 ### 37.2 Focus, cursor and clipboard
-- **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard, which the engine does not wrap.
+- **What:** How the game behaves when the window loses focus (keep running or pause, mute audio, release a locked cursor), the OS text-input event for typing, and the clipboard games and scripts use to copy and paste text.
 - **Parts:**
   - 37.2.1 Focus handling - `player/main.cpp` - `runInBackground`, `muteOnFocusLoss` (sets `AudioMixer::focusMuted`), focus loss releases a locked cursor until the next click
   - 37.2.2 Cursor lock and visibility - `Input/Cursor` - gameplay sets the wish, the player applies it with SDL relative mouse mode (see 8.4)
   - 37.2.3 Text input - `player/main.cpp`, `Input/Input` - `SDL_StartTextInput` and `Input::FeedText` carry real typed characters (see 8.1)
-  - 37.2.4 Clipboard - `editor/ConsolePanel.*`, `editor/LocalizationWindow.*`, `launcher/main.cpp` - only Dear ImGui's `SetClipboardText` copy buttons in the tools; the node editors keep an internal text clipboard, not the OS one
-- **Code:** `player/main.cpp`, `Input/Cursor`, `editor/ConsolePanel.*`, `editor/LocalizationWindow.*`
-- **API:** `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
-- **Editor:** Build Settings; Console panel Copy buttons
-- **Docs:** `docs/audio.md` (mute when unfocused), `docs/input.md`
-- **Tests:** -
-- **Status:** Basic - focus and cursor code read in player/main.cpp; the clipboard is only reachable through the editor's ImGui widgets (no engine API found by search)
-- **Open:** no engine or script clipboard API (copy and paste in game text fields is not available; searched `engine/include` for clipboard and found only a comment in `SceneSerializer`); node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
+  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install an SDL clipboard (SDL directly, not `okay::platform`); tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
+- **Code:** `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
+- **API:** `GetClipboardText`, `SetClipboardText`, `get_clipboard_text`, `set_clipboard_text`, `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
+- **Editor:** Build Settings; Play mode uses the same clipboard as a built game; Console panel Copy buttons
+- **Docs:** `docs/game_ui.md` (text fields), `docs/scripting_reference.md`, `docs/audio.md` (mute when unfocused), `docs/input.md`
+- **Tests:** `tests/test_clipboard.cpp` (sanitize, field copy/cut/paste, script and visual-script functions)
+- **Status:** Works - a focused game text field and scripts can copy and paste text; the player and editor Play mode use SDL; tests never write the operating-system clipboard
+- **Open:** the input field has no caret selection, so there is no select-all shortcut; node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
 - **Related:** 7.4, 8.1, 8.4, 12.3
 - **Words:** clipboard, copy, paste, Ctrl+V, focus, alt-tab, background, run in background, mute when unfocused, IME, text input, cursor release, SetClipboardText
-- **Seen as:** cannot paste into a game text field; the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
+- **Seen as:** the sound keeps playing when the window loses focus; the mouse stays captured after alt-tab; the game pauses (or does not) when minimized
 - **Ask me like:** "let players paste into the chat box"; "pause the game when the window loses focus"
 
 ### 37.3 File dialogs
@@ -97,24 +98,24 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** -
 - **Status:** Partial - web build script and the `__EMSCRIPTEN__` main loop exist (read); Android and iOS are instructions only; the WebGL CI job is covered in area 18.3
-- **Open:** Android and iOS projects are not in the repo; web has no networking; `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself although the player already feeds touches
+- **Open:** Android and iOS projects are not in the repo; web has no networking. The player feeds SDL finger events on desktop and web, and gestures and on-screen controls are described in `docs/input.md`
 - **Related:** 18.2, 18.3, 8.4, 12.9
 - **Words:** WebGL, Emscripten, WebAssembly, wasm, browser build, Android, iOS, mobile build, APK, SDL2 port, touch, build-web.sh
 - **Seen as:** the web build shows a blank page or freezes the tab; multiplayer does not connect in the browser; touch controls do not work on a phone; the mobile build has no project to open
 - **Ask me like:** "export my game to the browser"; "set up an Android project for the player"
 
 ### 37.6 Native HTTP and the game-to-launcher link
-- **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections, falling back to curl elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
+- **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl is the fallback and the default elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
-  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows so callers use the curl path; thread safe
+  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/own_http_client.md`) so callers use the curl path; thread safe
   - 37.6.2 Game and launcher link - `Platform/GameIpc` - small files in the per-user config folder keyed by process id: presence, invite request, join link, `played-with.tsv`
 - **Code:** `Platform/NativeHttp`, `Platform/GameIpc`
 - **API:** `okay::http::Request`, `okay::http::NativeAvailable`, `GameIpc::WritePresence`, `GameIpc::TakeJoin`, `GameIpc::RequestInvite`, `GameIpc::RecordPlayedWith`
 - **Editor:** none
-- **Docs:** `docs/launcher-multiplayer.md`, `docs/accounts.md`
-- **Tests:** `launcher_join`, `match_results`
+- **Docs:** `docs/launcher-multiplayer.md`, `docs/accounts.md`, `docs/own_http_client.md`
+- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`
 - **Status:** Works - both headers read; the player calls GameIpc (presence, join, invite) and the launcher and AccountService use NativeHttp (call sites read); `launcher_join` covers the link
-- **Open:** NativeHttp is Windows only (other systems use the curl process); file-based IPC polls with a 30 s presence age rather than a socket; no tests for NativeHttp itself
+- **Open:** NativeHttp is Windows only by default (other systems use the curl process; the Linux own client is opt-in and macOS has none); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path has no tests (the own client has)
 - **Related:** 17.1, 17.3, 17.2, 16.4, 18.1
 - **Words:** NativeHttp, WinHTTP, HTTPS client, curl, GameIpc, launcher link, presence, join link, invite friends, played with, ipc folder
 - **Seen as:** launcher is slow to fill in at start; invites do not reach the running game; friends do not see what I am playing; account calls fail behind a proxy

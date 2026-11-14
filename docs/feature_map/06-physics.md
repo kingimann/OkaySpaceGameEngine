@@ -20,28 +20,29 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Docs:** -
 - **Tests:** `physics`, `gravity`, `2d_expand`, `angular2d`, `tilemap_collision`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics2D::Step and Rigidbody2D read; covered by the tests above (friction, spin, tilemap strips, NaN and freed-pointer safety)
-- **Open:** no dedicated physics doc; no AddExplosionForce on Rigidbody2D (3D only); 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
+- **Open:** no dedicated physics doc; 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
 - **Related:** 6.3, 6.4, 6.5, 6.7, 2.6, 4.3
 - **Words:** physics, gravity, 2D physics, Rigidbody2D, BoxCollider2D, CircleCollider2D, CapsuleCollider2D, PolygonCollider2D, EdgeCollider2D, one-way platform, trigger, TilemapCollider2D, sleeping, friction, bounce, restitution, Box2D-style
 - **Seen as:** a sprite falls through the floor; a box jitters or never comes to rest; a ball does not bounce; a platform cannot be jumped up through; tilemap tiles do not block the player; a body spins when it should stay upright
 - **Ask me like:** "make a one-way platform you can jump up through"; "why does my 2D ball not bounce off the wall?"
 
 ### 6.2 3D bodies and colliders, collider fit
-- **What:** Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, mesh-bounds) stepped by Physics3D, including heightmap terrain ground-following and voxel terrain collision.
+- **What:** Rigidbody3D bodies and 3D colliders (oriented boxes, spheres, capsules, cylinders, exact triangle meshes) stepped by Physics3D, including heightmap terrain ground-following and voxel terrain collision.
 - **Parts:**
   - 6.2.1 3D solver - `Physics/Physics3D` - Step: integrate, oriented-box (SAT) contacts, friction, bounce, sleeping, terrain ground-follow, tunnelled-floor catch, triggers
   - 6.2.2 Rigidbody3D - `Physics/Rigidbody3D` - body type, mass, drag, gravity scale, friction, terminal fall speed, axis freeze, spin, sleeping, continuous collision, ground signals (`groundedOnTerrain`, `groundNormal`)
-  - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, cylinder and mesh colliders; the mesh collider resolves as the mesh's bounding box
+  - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, cylinder and mesh colliders; the mesh collider is exact per-triangle static geometry (see 6.2.5)
+  - 6.2.5 Mesh collider - `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact` - `MeshCollider3D` collides against the MeshRenderer's triangles through a BVH, placed by the world matrix (rotation and non-uniform scale); rays, sphere / capsule / box overlaps and casts, `ResolveSphere`, trigger overlaps and Rigidbody3D contact (sphere, capsule, box bodies; restitution, friction, spin); rebuilt when the mesh changes; a dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (GJK/EPA), and bodies landing on a solid mesh raise OnCollisionEnter3D / Stay / Exit
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
-- **Code:** `Physics/Physics3D`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
+- **Code:** `Physics/Physics3D`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
-- **Editor:** Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Scene view collider gizmos
+- **Editor:** Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
 - **Docs:** -
-- **Tests:** `physics3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
+- **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
-- **Open:** the header says bodies must be top-level (un-parented) Transforms; MeshCollider3D is only a bounds box, not a triangle mesh; no dedicated physics doc
+- **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; no dedicated physics doc
 - **Related:** 6.1, 6.3, 6.4, 6.5, 6.8, 2.6, 4.1
-- **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic
+- **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic, triangle mesh, BVH, concave collider, static mesh, convex hull, ConvexContact
 - **Seen as:** objects fall through a thin floor; a box stands on its corner or never settles; a collider is bigger or smaller than the mesh; a character sinks into terrain; a parented object does not collide
 - **Ask me like:** "the collider does not match my model"; "make this crate stop sliding on the ramp"
 
@@ -49,15 +50,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld and hinge, with optional breaking.
 - **Parts:**
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
-  - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D` - pins a point and lets the body spin; motor in both, angle limits in 2D only
+  - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
-- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
-- **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`
-- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin)"; inspectors for all four modes
+- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
+- **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
+- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
 - **Docs:** -
 - **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
-- **Open:** possible doc drift: both headers still say "no angular/hinge yet" and the Add Component rows say "(distance/spring/pin)" although a Hinge mode exists; Joint3D hinge has no angle limits (Joint2D has); joints connect by body name, not by object reference
+- **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
 - **Words:** joint, hinge, spring, rope, rod, pin, weld, fixed joint, revolute, motor, connectedBody, breakForce, ragdoll joint
 - **Seen as:** a rope or pendulum stretches or explodes; a door does not swing about its hinge; a spring never settles; a joint snaps unexpectedly
@@ -68,13 +69,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Parts:**
   - 6.4.1 Fixed physics step - `Scene/Scene` - `fixedTimeStep`, `UseFixedStepPhysics`, `maxPhysicsCatchUp` (the step loop is `Scene::StepPhysics`, owned by area 1.3)
   - 6.4.2 Pose history and interpolation - `Physics/PoseHistory` - last two physics poses plus the shown pose per body; `interpolatePhysics` and `PhysicsAlpha()`
-- **Code:** `Physics/PoseHistory`, `Scene/Scene` (StepPhysics)
-- **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`
-- **Editor:** none (the editor Play mode and the player turn it on)
-- **Docs:** -
-- **Tests:** `fixed_step`
-- **Status:** Works - header comments read (player, editor Play and dedicated server use the fixed step; a bare Scene keeps one step per frame); covered by `fixed_step`
-- **Open:** a body moved by game code jumps with no blending (by design, per the header); no setting in the editor to change the step rate
+- **Code:** `Physics/PoseHistory`, `Physics/BodyPose`, `Scene/Scene` (StepPhysics)
+- **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::SetPhysicsStepsPerSecond`, `Scene::SetSmoothPhysics`, `Scene::SetProjectPhysicsRate`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`; script `physics_steps`, `set_physics_steps`, `physics_smooth`, `set_physics_smooth`; `Time.physicsSteps`, `Time.smoothPhysics`
+- **Editor:** Project Settings > Physics: Steps per second, Smooth the motion. The Rigidbody 3D inspector says when a body is parented. Play and a build use the project rate (50 and smooth on when the project never set one)
+- **Docs:** `docs/physics.md`
+- **Tests:** `fixed_step`, `rigidbody_step_parent`
+- **Status:** Works - the step rate is a project setting (default 50, the old rate) that scripts can read and set; interpolation draws between steps at any frame rate; covered by `fixed_step` and `rigidbody_step_parent`
+- **Open:** a body moved by game code jumps with no blending (by design, per the header)
 - **Related:** 1.1, 6.1, 6.2, 16.2
 - **Words:** fixed timestep, FixedUpdate, interpolation, physics rate, PoseHistory, PhysicsAlpha, catch-up, 50 Hz
 - **Seen as:** movement stutters or jitters when frame rate differs from the physics rate; the game plays faster or slower at 30 and 240 FPS; a teleported body smears
@@ -85,15 +86,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Parts:**
   - 6.5.1 3D rays and casts - `Physics/Physics3D` - Raycast, RaycastAll, Linecast, SphereCast, BoxCast, CapsuleCast; layer mask, trigger switch, ignore object, `IgnoreHierarchy`
   - 6.5.2 3D overlaps - `Physics/Physics3D` - OverlapSphere, OverlapBox, OverlapCapsule
-  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, CircleCast
+  - 6.5.3 2D queries - `Physics/Physics2D` - Raycast, RaycastAll, Linecast, OverlapPoint, OverlapCircle, OverlapBox, OverlapCapsule, CircleCast, BoxCast, CapsuleCast
   - 6.5.4 Debug view - `Physics/PhysicsDebug` - per-frame record of contacts and query rays, off by default; editor menu View > Scene Overlays > Physics Debug
 - **Code:** `Physics/PhysicsDebug`, `Physics/Physics2D`, `Physics/Physics3D`, `editor/main.cpp` (Physics Debug menu and overlay)
-- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit` and `overlap` (registered in area 13)
+- **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `Physics2D::BoxCast`, `Physics2D::CapsuleCast`, `Physics2D::OverlapCapsule`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit`, `box_cast`, `capsule_cast` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
-- **Docs:** -
-- **Tests:** `queries`, `physics_queries_ext`, `script_physics`, `phys_math`
-- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`
-- **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header); no 2D box or capsule casts
+- **Docs:** `docs/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
+- **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`
+- **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; 2D box and capsule casts, overlaps and their script and visual-script nodes covered by `physics2d_casts`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
+- **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header)
 - **Related:** 6.7, 13.6, 14.4, 9.5
 - **Words:** raycast, linecast, spherecast, boxcast, capsulecast, overlap, RaycastHit, hit.point, hit.normal, ignore, layerMask, queryTriggers, physics debug, contact points
 - **Seen as:** a ray hits the shooter's own body; a camera ray passes through a wall; a trigger blocks a ray; contact points and rays are hard to see while debugging
@@ -139,15 +140,15 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **What:** The four force modes, explosion shoves, and a lightweight push-out that keeps a transform-moved player (no Rigidbody) from clipping into walls and floors.
 - **Parts:**
   - 6.8.1 Force modes - `Physics/ForceMode` - Force, Acceleration, Impulse, VelocityChange used by `AddForce(force, mode)` on both bodies
-  - 6.8.2 Explosion force - `Physics/Rigidbody3D` - `AddExplosionForce` with linear falloff and an upward bias
+  - 6.8.2 Explosion force - `Physics/Rigidbody3D`, `Physics/Rigidbody2D` - `AddExplosionForce` with linear falloff and an upward bias, in 3D and in the flat plane
   - 6.8.3 Sphere push-out - `Physics/PlayerCollision` - `ResolvePlayerBody` calls `Physics3D::ResolveSphere` after the Transform moved
 - **Code:** `Physics/ForceMode`, `Physics/PlayerCollision`
 - **API:** `ForceMode`, `AddForce`, `AddImpulse`, `AddTorque`, `AddForceAtPosition`, `AddExplosionForce`, `ResolvePlayerBody`, `Physics3D::ResolveSphere`
 - **Editor:** none
 - **Docs:** -
-- **Tests:** `physics_explode`, `phys_math`
-- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above
-- **Open:** AddExplosionForce exists on Rigidbody3D only (no 2D explosion); ResolvePlayerBody approximates the body as one sphere
+- **Tests:** `physics_explode`, `physics2d_casts`, `phys_math`
+- **Status:** Works - ForceMode, AddExplosionForce and ResolvePlayerBody read; explosion falloff and force modes covered by the tests above, including the flat-plane blast
+- **Open:** ResolvePlayerBody approximates the body as one sphere
 - **Related:** 6.2, 4.1, 4.2, 6.6
 - **Words:** AddForce, AddImpulse, ForceMode, VelocityChange, explosion, blast, knockback, AddExplosionForce, push out, depenetration, ResolvePlayerBody
 - **Seen as:** a grenade does not push crates; knockback is too weak or too strong; the player clips into a wall corner

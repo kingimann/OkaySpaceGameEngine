@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -15,9 +16,18 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
+#include "okay/Components/UISearchBar.hpp"
+#include "okay/Components/UIDateTimePicker.hpp"
+#include "okay/Components/UIFilePicker.hpp"
+#include "okay/Components/UIAccordion.hpp"
+#include "okay/Components/UIBreadcrumbs.hpp"
+#include "okay/Components/UIPagination.hpp"
+#include "okay/Components/UISkeleton.hpp"
+#include "okay/Components/UIBottomSheet.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -34,6 +44,7 @@
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIWorldContext.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <vector>
@@ -128,7 +139,10 @@ inline void UIFrameSync(UIFrame* f, UIRect& legacy) {
 inline UIRect GetUIRect(GameObject* go) {
     UIRect r;
     if (!go) return r;
-    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
+    if (auto* j = go->GetComponent<VirtualJoystick>())   { r.valid = true; r.anchor = j->anchor; r.anchorPtr = &j->anchor; r.position = &j->position; r.sizePtr = &j->size; r.size = j->size; }
+    else if (auto* d = go->GetComponent<TouchDPad>())    { r.valid = true; r.anchor = d->anchor; r.anchorPtr = &d->anchor; r.position = &d->position; r.sizePtr = &d->size; r.size = d->size; }
+    else if (auto* tb = go->GetComponent<TouchButton>()) { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
+    else if (auto* b = go->GetComponent<UIButton>())     { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
     else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
     else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
     else if (auto* ri = go->GetComponent<UIRawImage>())   { r.valid = true; r.anchor = ri->anchor; r.anchorPtr = &ri->anchor; r.position = &ri->position; r.sizePtr = &ri->size; r.size = ri->size; }
@@ -144,6 +158,14 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
     else if (auto* kb = go->GetComponent<UIKeybindField>()) { r.valid = true; r.anchor = kb->anchor; r.anchorPtr = &kb->anchor; r.position = &kb->position; r.sizePtr = &kb->size; r.size = kb->size; }
+    else if (auto* sb = go->GetComponent<UISearchBar>()) { r.valid = true; r.anchor = sb->anchor; r.anchorPtr = &sb->anchor; r.position = &sb->position; r.sizePtr = &sb->size; r.size = sb->size; }
+    else if (auto* dt = go->GetComponent<UIDateTimePicker>()) { r.valid = true; r.anchor = dt->anchor; r.anchorPtr = &dt->anchor; r.position = &dt->position; r.sizePtr = &dt->size; r.size = dt->size; }
+    else if (auto* fp = go->GetComponent<UIFilePicker>()) { r.valid = true; r.anchor = fp->anchor; r.anchorPtr = &fp->anchor; r.position = &fp->position; r.sizePtr = &fp->size; r.size = fp->size; }
+    else if (auto* ac = go->GetComponent<UIAccordion>()) { r.valid = true; r.anchor = ac->anchor; r.anchorPtr = &ac->anchor; r.position = &ac->position; r.sizePtr = &ac->size; r.size = ac->size; }
+    else if (auto* bc = go->GetComponent<UIBreadcrumbs>()) { r.valid = true; r.anchor = bc->anchor; r.anchorPtr = &bc->anchor; r.position = &bc->position; r.sizePtr = &bc->size; r.size = bc->size; }
+    else if (auto* pg = go->GetComponent<UIPagination>()) { r.valid = true; r.anchor = pg->anchor; r.anchorPtr = &pg->anchor; r.position = &pg->position; r.sizePtr = &pg->size; r.size = pg->size; }
+    else if (auto* sk = go->GetComponent<UISkeleton>()) { r.valid = true; r.anchor = sk->anchor; r.anchorPtr = &sk->anchor; r.position = &sk->position; r.sizePtr = &sk->size; r.size = sk->size; }
+    else if (auto* sh = go->GetComponent<UIBottomSheet>()) { r.valid = true; r.anchor = sh->anchor; r.anchorPtr = &sh->anchor; r.position = &sh->position; r.sizePtr = &sh->size; r.size = sh->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
     else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
@@ -197,6 +219,13 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
     if (auto* tb = go->GetComponent<UITabs>())    return tb->IsFocused();
     if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->IsFocused();
+    if (auto* sb = go->GetComponent<UISearchBar>()) return sb->IsFocused();
+    if (auto* dt = go->GetComponent<UIDateTimePicker>()) return dt->IsFocused();
+    if (auto* fp = go->GetComponent<UIFilePicker>()) return fp->IsFocused();
+    if (auto* ac = go->GetComponent<UIAccordion>()) return ac->IsFocused();
+    if (auto* bc = go->GetComponent<UIBreadcrumbs>()) return bc->IsFocused();
+    if (auto* pg = go->GetComponent<UIPagination>()) return pg->IsFocused();
+    if (auto* sh = go->GetComponent<UIBottomSheet>()) return sh->IsFocused();
     return false;
 }
 
@@ -335,6 +364,8 @@ inline bool UIHidden(GameObject* go) {
 /// (an inactive ancestor) or disabling the control drops the ring even when the
 /// focus flag was set the frame the widget closed.
 inline bool UIShowsFocusRing(GameObject* go) {
+    // A click hides the ring; keyboard, gamepad and script focus show it.
+    if (!UIFocus::RingVisible()) return false;
     if (!go || !go->active || UIHidden(go)) return false;
     auto on = [](auto* c) { return c && c->enabled && c->IsFocused(); };
     if (auto* b = go->GetComponent<UIButton>())   return on(b);
@@ -345,6 +376,13 @@ inline bool UIShowsFocusRing(GameObject* go) {
     if (auto* d = go->GetComponent<UIDropdown>()) return on(d);
     if (auto* tb = go->GetComponent<UITabs>())    return on(tb);
     if (auto* kb = go->GetComponent<UIKeybindField>()) return on(kb);
+    if (auto* sb = go->GetComponent<UISearchBar>()) return on(sb);
+    if (auto* dt = go->GetComponent<UIDateTimePicker>()) return on(dt);
+    if (auto* fp = go->GetComponent<UIFilePicker>()) return on(fp);
+    if (auto* ac = go->GetComponent<UIAccordion>()) return on(ac);
+    if (auto* bc = go->GetComponent<UIBreadcrumbs>()) return on(bc);
+    if (auto* pg = go->GetComponent<UIPagination>()) return on(pg);
+    if (auto* sh = go->GetComponent<UIBottomSheet>()) return on(sh);
     return false;
 }
 
@@ -487,6 +525,18 @@ enum : int {
     K_Keybind,      // UIKeybindField
     K_ModalDim,     // an open UIModal's backdrop (drawn first in its raised group)
     K_ContextMenu,  // an open UIContextMenu (drawn last, in screen pixels)
+    K_Caption,      // CaptionOverlay: subtitle and sound-caption lines
+    K_TouchStick,   // virtual joystick (above the base widgets so a thumb can reach it)
+    K_TouchPad,     // on-screen directional pad
+    K_TouchButton,  // on-screen action button
+    K_Search,       // search bar (appended so older layer numbers stay put)
+    K_DateTime,
+    K_FilePicker,
+    K_Accordion,
+    K_Breadcrumbs,
+    K_Pagination,
+    K_Skeleton,
+    K_BottomSheet,
     K_Count
 };
 } // namespace uilayers
@@ -497,7 +547,8 @@ inline const char* UILayerName(int kind) {
         "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
         "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
-        "keybind", "modal dim", "context menu"};
+        "keybind", "modal dim", "context menu", "captions", "virtual stick", "d-pad", "touch button",
+        "search", "date", "files", "accordion", "breadcrumbs", "pages", "skeleton", "sheet"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -523,6 +574,9 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIToggle>())         add(K_Toggle);
     if (g->GetComponent<UITabs>())           add(K_Tabs);
     if (g->GetComponent<UIButton>())         add(K_Button);
+    if (g->GetComponent<VirtualJoystick>())  add(K_TouchStick);
+    if (g->GetComponent<TouchDPad>())        add(K_TouchPad);
+    if (g->GetComponent<TouchButton>())      add(K_TouchButton);
     if (g->GetComponent<TextRenderer>())     add(K_Text);
     if (g->GetComponent<WorldUI>())          add(K_WorldUI);
     if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
@@ -533,6 +587,15 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIKeybindField>())   add(K_Keybind);
     if (g->GetComponent<UIModal>())          add(K_ModalDim);
     if (g->GetComponent<UIContextMenu>())    add(K_ContextMenu);
+    if (g->GetComponent<CaptionOverlay>())   add(K_Caption);
+    if (g->GetComponent<UISearchBar>())      add(K_Search);
+    if (g->GetComponent<UIDateTimePicker>()) add(K_DateTime);
+    if (g->GetComponent<UIFilePicker>())     add(K_FilePicker);
+    if (g->GetComponent<UIAccordion>())      add(K_Accordion);
+    if (g->GetComponent<UIBreadcrumbs>())    add(K_Breadcrumbs);
+    if (g->GetComponent<UIPagination>())     add(K_Pagination);
+    if (g->GetComponent<UISkeleton>())       add(K_Skeleton);
+    if (g->GetComponent<UIBottomSheet>())    add(K_BottomSheet);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -558,13 +621,25 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIRating>())         return K_Rating;
     if (go->GetComponent<UIToggle>())         return K_Toggle;
     if (go->GetComponent<UITabs>())           return K_Tabs;
+    if (go->GetComponent<VirtualJoystick>())  return K_TouchStick;
+    if (go->GetComponent<TouchDPad>())        return K_TouchPad;
+    if (go->GetComponent<TouchButton>())      return K_TouchButton;
     if (go->GetComponent<UIButton>())         return K_Button;
     if (go->GetComponent<WorldUI>())          return K_WorldUI;
     if (go->GetComponent<UIDropdown>())       return K_Dropdown;
     if (go->GetComponent<UIInputField>())     return K_Input;
     if (go->GetComponent<Crosshair>())        return K_Crosshair;
+    if (go->GetComponent<CaptionOverlay>())   return K_Caption;
     if (go->GetComponent<UITooltip>())        return K_Tooltip;
     if (go->GetComponent<UIKeybindField>())   return K_Keybind;
+    if (go->GetComponent<UISearchBar>())      return K_Search;
+    if (go->GetComponent<UIDateTimePicker>()) return K_DateTime;
+    if (go->GetComponent<UIFilePicker>())     return K_FilePicker;
+    if (go->GetComponent<UIAccordion>())      return K_Accordion;
+    if (go->GetComponent<UIBreadcrumbs>())    return K_Breadcrumbs;
+    if (go->GetComponent<UIPagination>())     return K_Pagination;
+    if (go->GetComponent<UISkeleton>())       return K_Skeleton;
+    if (go->GetComponent<UIBottomSheet>())    return K_BottomSheet;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }
@@ -857,6 +932,12 @@ inline Vec2 UITextDrawOrigin(GameObject* go, const TextRenderer* tr, float scree
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;
     if (!GetUIScreenRect(go, screenW, screenH, o, sz)) return false;
+    if (UIFrameTransformed(go)) {
+        Vec2 local;
+        if (!UIFramePointToLocal(go, p, screenW, screenH, local)) return false;
+        const float e = 0.05f;   // a click on the rotated edge still counts
+        return local.x >= -e && local.y >= -e && local.x <= sz.x + e && local.y <= sz.y + e;
+    }
     return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
 }
 

@@ -1,9 +1,12 @@
 #pragma once
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Physics/ForceMode.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -47,6 +50,8 @@ public:
     bool     sleeping   = false;
     /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
     PoseHistory poseHistory;
+    /// Runtime: the parent this body was carried by last step. Not authored.
+    ParentSample parentCarry;
     /// Force this body awake (call after teleporting or externally moving it).
     void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
 
@@ -78,6 +83,23 @@ public:
         WakeUp();
     }
 
+    /// Explosion: shove this body away from `center` with `force`, falling off
+    /// linearly to zero at `radius` (bodies past the radius are untouched).
+    /// `upModifier` biases the push upward (so debris pops up, not just outward).
+    /// No effect on kinematic/static bodies (infinite mass). Same rule as
+    /// Rigidbody3D::AddExplosionForce, in the XY plane.
+    void AddExplosionForce(float force, const Vec2& center, float radius, float upModifier = 0.0f) {
+        if (!gameObject || !gameObject->transform || radius <= 0.0f) return;
+        Vec3 p = gameObject->transform->Position();
+        Vec2 d{p.x - center.x, p.y - center.y};
+        float dist = std::sqrt(d.x * d.x + d.y * d.y);
+        if (dist > radius) return;
+        float falloff = 1.0f - dist / radius;
+        Vec2 dir = dist > 1e-5f ? Vec2{d.x / dist, d.y / dist} : Vec2{0.0f, 1.0f};
+        dir.y += upModifier;
+        AddImpulse(dir * (force * falloff));
+    }
+
     /// Back to rest, as a fresh body starts: no velocity, no spin, no force or torque waiting for the next
     /// step, awake, and no render-interpolation history (so a reused body is not drawn sliding in from
     /// where it was last). Called by an ObjectPool when it hands the object out again.
@@ -86,6 +108,7 @@ public:
         m_forceAccum = Vec2::Zero; m_torqueAccum = 0.0f;
         WakeUp();
         poseHistory = PoseHistory{};
+        parentCarry = ParentSample{};
     }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).

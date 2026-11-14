@@ -1,0 +1,30 @@
+okayseq 1
+sequence "The door"
+length 8
+camera
+  shot 0 pose 0 2.2 7 12 0 0 fov 50 blend 0 ease linear
+  shot 2.2 pose 1.1 1.7 4.4 8 18 0 fov 42 blend 1.4 ease sineinout
+letterbox
+  color 0 0 0 1
+  bar 0 0 linear
+  bar 0.7 0.12 sineinout
+  bar 6.8 0.12 linear
+  bar 7.8 0 linear
+shake
+  strength 0 0 linear
+  strength 3.2 0 linear
+  strength 3.55 1 sineinout
+  strength 4.3 0 sineinout
+  frequency 0 14 linear
+fade
+  rgba 0 0.02 0.03 0.06 1 sineinout
+  rgba 1.2 0.02 0.03 0.06 0 sineinout
+  rgba 6.4 0.08 0.02 0.05 0 sineinout
+  rgba 8 0.08 0.02 0.05 0.9 sineinout
+transform "Hero"
+  pos 0 0 0.5 0 linear
+  pos 4 1.6 0.5 -0.5 sineinout
+events "Lines"
+  subtitle 2.4 "Guide" "The door." 2.2
+nest "The door opens"
+  play 3.2 "glance.okayseq" 0

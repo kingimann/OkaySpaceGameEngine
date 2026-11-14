@@ -127,12 +127,12 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** File menu Save/Open (15.9); the same serializer feeds undo snapshots, copy/paste and prefab files; no window uses the text tools (1.5.7-1.5.10) yet
 - **Docs:** `docs/scene_serializer.md`, `docs/prefabs.md`, `docs/scene_diff_merge.md`
 - **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
-- **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the 8.6k-line `SceneSerializer.cpp` was only skimmed, most components still go through one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names)
-- **Open:** file splitting (19.4); duplicate components of one type save only the first, except scripts, visual scripts, action lists, tweens, sync vars and state machines; #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
+- **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the long `SceneSerializer.cpp` still carries most components in one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names). Every component instance on an object is saved and loaded, in stored order (two colliders, two lights, two sprites, and the rest); a file with one of each is unchanged, and an older file still loads
+- **Open:** file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
 - **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
 - **Seen as:** a scene file will not open or opens half-empty; a component's settings are lost after save and load; two scenes will not merge cleanly
-- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Why did loading drop my second collider?"
+- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.
@@ -145,14 +145,16 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.6.6 Nested prefabs - `Scene/PrefabTools` - (#578) a prefab file may hold `nestedprefab "<file>"` objects with override, remove and unset lines and added objects; cycle detection, depth limit 16, a damaged nested file skips only that part; `SavePrefab` writes the structure back (21.2)
   - 1.6.7 Prefab variants - `Scene/PrefabTools` - (#578) a file with `variant "<base>"` stores only differences; a variant of a variant works; `SaveVariant(instance, path)` (21.3)
   - 1.6.8 Per-field overrides and unpack - `Scene/PrefabTools` - (#578) `Diff`, `RevertOverride`, `RevertAll`, `ApplyToSource`, `ApplyAllToSource`, `Unpack`, `ValidateAsset`, `ValidateInstance` (21.4)
+  - 1.6.10 Editor prefab actions - `editor/PrefabEdit.*` - the editor's use of 1.6.6 to 1.6.8: instance info, per-field names, Revert / Apply with undo and with the other instances updated, Create Variant, Unpack, Update All (21.2 to 21.4)
   - 1.6.9 Prefab text cache - `Scene/SceneSerializer` - (#575) the decoded text of the last 32 prefab files is kept so repeated spawns skip the file read; `SceneSerializer::ClearPrefabCache()`
+  - 1.6.11 Prefab mode - `editor/EditorState` - open a prefab on its own and edit, save, revert and nest it, then go Back and every instance is rebuilt with `PrefabTools::Reapply` (21.1.5); `Reapply` keeps a top-level instance's place in the scene's list
 - **Code:** `Scene/SceneTemplates`, `Scene/UITemplates`, `Scene/UIStyles`, `Scene/UILayoutTools`, `Scene/EnsureCamera`, `Scene/SceneSerializer`, `Scene/PrefabTools`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SceneSerializer::ReapplyPrefab`, `GameObject::prefabOverrides`, `Templates::*`, `UITemplates::AddHUD`, `EnsureSceneCamera`, `PrefabTools::Diff`, `PrefabTools::SavePrefab`, `PrefabTools::SaveVariant`, `PrefabTools::Unpack`
 - **Editor:** GameObject > Create menu, Hierarchy prefab Apply/Revert/Reload (editor/main.cpp); no override UI yet
-- **Docs:** `docs/prefabs.md`, `docs/prefab_system.md`, `docs/making_a_game.md`
-- **Tests:** `instantiate`, `templates`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`
-- **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code (tests; `InstantiateFromFile` routes nested files to `PrefabTools`, read `SceneSerializer.cpp`); the editor calls neither the override API nor `PrefabTools` (docs/prefab_system.md: "nothing in the editor calls it yet")
-- **Open:** prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are not carried over by `ReapplyPrefab`
+- **Docs:** `docs/prefabs.md`, `docs/prefab_system.md`, `docs/prefab_mode.md`, `docs/making_a_game.md`
+- **Tests:** `instantiate`, `templates`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`, `prefab_editor`, `prefab_mode`
+- **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code and the editor shows and edits them (1.6.10; tests `prefab_editor`); prefab mode edits a prefab on its own and saves it to every instance (1.6.11; test `prefab_mode`)
+- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are not carried over by `ReapplyPrefab`
 - **Related:** 1.5, 12.7, 15.2, 21
 - **Words:** prefab, okayprefab, instantiate, override, template, starter, platformer template, player template, UI template, Slate, EnsureSceneCamera, nested prefab, prefab variant, PrefabTools, unpack, apply to prefab, revert override
 - **Seen as:** prefab changes don't apply to instances; a template scene has no camera or starts dark; an instance lost its colour change after re-apply
@@ -264,9 +266,9 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Load the boss music in the background and tell me when it is ready"; "Reload textures when I save them"
 
 ### 1.12 Asset database
-- **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files, move tracking, a dependency graph, typed import settings, thumbnails and a search query. No UI yet.
+- **What:** The data layer an asset browser sits on: stable GUIDs in `.okaymeta` files (or in memory for an asset that has none yet), move tracking, a dependency graph, typed import settings, thumbnails and a search query. The Project panel is built on it.
 - **Parts:**
-  - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels
+  - 1.12.1 GUIDs and meta files - `Core/AssetDatabase` - `Scan`, `Guid`, `.okaymeta` sidecars, `MoveAsset`, rename and duplicate handling, orphan reports, labels; `ScanOptions::indexUnmetaed` (index assets that have no meta in memory, write nothing), `EnsureMeta`, `Folders()` (every folder walked, empty ones too), `Revision()` (moves only when the index changed)
   - 1.12.2 Dependency graph - `Core/AssetDatabaseDeps` - extractors for scenes, prefabs, materials and text assets; `DependenciesOf`, `UsedBy`, `BuildClosure`, `FindUnused`, `FindMissing`, `FixStaleReferences`
   - 1.12.3 Import settings - `Core/ImportSettings` - typed texture, model and audio settings with versions and migration; reimport signal
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
@@ -274,14 +276,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
-- **Editor:** none yet (the Project panel does not call it)
-- **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - merged in #568 with a 1467-line test, but nothing consumes it: no importer reads the import settings, scenes still store paths, the editor does not use it (docs "Not covered")
-- **Open:** asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers reading the settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges
+- **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
+- **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
+- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
+- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
-- **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; no thumbnails in the Project panel
+- **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count
 - **Ask me like:** "List every asset nothing references"; "Which scenes use `hero.png`?"
 
 ### 1.13 Object pooling
@@ -320,17 +322,18 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Ask me like:** "Store enemy stats in a data asset"; "Pack the scene so players can't edit it"
 
 ### 1.15 Display settings
-- **What:** Fullscreen, vsync and the Low/Medium/High quality preset the Settings screen drives.
+- **What:** The Settings screen's window mode, monitor, resolution, refresh rate, vsync and the Low/Medium/High quality preset.
 - **Parts:**
-  - 1.15.1 Settings values - `Core/DisplaySettings` - Fullscreen, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
+  - 1.15.1 Settings values - `Core/DisplaySettings` - window mode, resolution, refresh, monitor, VSync, Quality (0-2), `Generation()` bumps on every Set so hosts know to apply; stored in Prefs as `video.*`
   - 1.15.2 Quality preset - `Core/DisplaySettings` - `ApplyQuality` flips shadows, per-pixel lighting, bloom, SSAO and FXAA, and sets shadow resolution, cascade count and shadow distance
-- **Code:** `Core/DisplaySettings`
-- **API:** `DisplaySettings::SetQuality`, `DisplaySettings::SetFullscreen`, `DisplaySettings::Generation`, `DisplaySettings::ApplyQuality`
+  - 1.15.3 Mode list and fallback - `Core/DisplayModes` - filter and sort modes, pick a connected monitor and a listed size and rate when the saved one is gone, the 10-second confirm clock, and the saved text
+- **Code:** `Core/DisplaySettings`, `Core/DisplayModes`
+- **API:** `DisplaySettings::SetMode`, `SetResolution`, `SetRefreshHz`, `SetMonitorName`, `ResolveSaved`, `BeginTrial`, `FilterDisplayModes`, `ResolveDisplay`
 - **Editor:** none (the player reads it; Settings screen component, 12.8)
-- **Docs:** -
-- **Tests:** `visibility_lod`
-- **Status:** Basic - Low/Medium/High now also set shadow map size, cascade count and distance (High matches the old 2048 / 80 m / 3 defaults); `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
-- **Open:** resolution and window mode options; the editor calls `ApplyQuality()` at start (editor/main.cpp), the player reads `DisplaySettings` too
+- **Docs:** `docs/display_settings.md`
+- **Tests:** `display_settings`, `visibility_lod`
+- **Status:** Works - the choice, the fallback and the confirm clock are plain data with tests; a host applies them when Generation() moves. `FXAAEnabled()` and `PerPixelLighting()` are still read only by the software path
+- **Open:** the editor calls `ApplyQuality()` when the generation moves (editor/main.cpp)
 - **Related:** 12.8, 38.1, 2.3, 2.5
 - **Words:** DisplaySettings, fullscreen, vsync, quality, graphics settings, Low Medium High, video settings
 - **Seen as:** the quality setting changes nothing on a GPU machine; fullscreen is not remembered
@@ -343,15 +346,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.16.2 CSV and build copy - `editor/LocalizationWindow.*` - Import/Export CSV for translators; Build Game copies the table and the fonts the languages name
   - 1.16.3 Preview language - `editor/LocalizationWindow.*` - toolbar language menu and pseudo-localize switch; the scene follows in Scene and Game views
   - 1.16.4 Inspector helpers - `editor/LocalizationWindow.*` - `LocalizedTextField`, `LocKeyInput`, `LocalizedSwitch` for Pause Menu, Hold Prompt and Loading Screen
-  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; not wired to the window (31.1, 31.3)
+  - 1.16.5 Table model, checker, scanner and previews - `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `editor/LocalizationTools` - (#574) cell states, CSV and JSON, placeholder and plural checks, a scan for used, unused and undefined keys, pseudo-localization and mirrored-text previews; the Localization window calls them (31.1, 31.3)
   - 1.16.6 Captions and accessibility settings - `Core/Subtitles`, `Core/AccessibilitySettings` - (#574) caption queue and settings; see 32.2 and 32.3
 - **Code:** `editor/LocalizationWindow.*`, `Scene/SceneLocalization`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`, `Core/LocPreview`, `Core/Subtitles`, `Core/AccessibilitySettings`
 - **API:** `DrawLocalizationWindow`, `LocalizedTextField`, `LocKeyInput`, `CollectLocKeys`
 - **Editor:** View > Editors & Tools > Localization; toolbar language menu next to Build
 - **Docs:** `docs/localization.md`, `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_tools`
-- **Status:** Partial - the window, CSV and pseudo-localization exist (per docs/localization.md; read the header); the grid model, checker, scanner and previews are on main (#574) as engine code but `docs/localization_tools.md` says the window is not wired to them yet
-- **Open:** wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3), accessibility text scaling (area 32); tests for the window itself
+- **Tests:** `localization`, `loc_tools`, `loc_window`
+- **Status:** Partial - the window draws the `LocTable` grid, the `LocCheck` / `LocMissingReport` list, the `LocScanProject` unused and undefined keys, and a `LocPreview` line (pseudo-locale and mirrored right-to-left text). JSON in the window, a confirm step before CSV import, and the font coverage report are still out.
+- **Open:** JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key; the Scene view does not mirror). Accessibility text scaling is area 32.
 - **Related:** 1.8, 31, 32, 15.6
 - **Words:** Localization window, translation table, CSV import, pseudo-localize, language preview, Find in Scene, missing key, translators, LocTable, LocCheck, LocScan, LocPreview, placeholder check, caption manager
 - **Seen as:** a translated text is cut off; unused keys pile up; a language shows empty cells
@@ -425,16 +428,16 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** A cache that returns a small picture for any asset, so an asset browser can show a grid; edited files never show a stale picture.
 - **Parts:**
   - 1.20.1 Cache layers - `Core/ThumbnailCache` - least-recently-used memory layer (`maxEntries`, `maxBytes`) and an optional folder of PNGs keyed by GUID, content hash, size and a tag; `Invalidate`, `Clear`, `ClearDisk`, `GetStats`
-  - 1.20.2 Generators - `Core/ThumbnailCache` - `ThumbnailGenerator` plug-ins (asked newest first); built-in `ImageThumbnailGenerator` for png, jpg, bmp, tga, gif, psd, hdr through `Image::Load`
+  - 1.20.2 Generators - `Core/ThumbnailCache` - `ThumbnailGenerator` plug-ins (asked newest first); built-in `ImageThumbnailGenerator` for png, jpg, bmp, tga, gif, psd, hdr through `Image::Load` and `WaveformThumbnailGenerator` for wav, ogg, mp3 (a min/max waveform)
   - 1.20.3 Scaling and placeholders - `Core/ThumbnailCache` - `BoxDownscale` (area-weighted, alpha-aware, never enlarges) and `MakePlaceholderThumbnail` tiles with the extension; a failing generator gets a red tile and is not retried every frame
-  - 1.20.4 Editor thumbnails today - `editor/SceneManagerPanel.*`, `editor/main.cpp` - the Project panel's `GetThumb` (images and `proc:` textures) and the Scene Manager's `GetSceneThumb` are separate caches that do not use this one
+  - 1.20.4 Editor use - `editor/ProjectBrowser.*`, `editor/main.cpp` - the Project panel and the Scene Manager draw their pictures from this cache through `Browser::Thumb`; prefab, scene, material, model and mesh generators are the editor's own renderers registered with `AddThumbGenerator`; a frame budget (`Browser::ThumbFrame`) spreads the work over frames
 - **Code:** `Core/ThumbnailCache`
 - **API:** `ThumbnailCache::Get`, `ThumbnailCache::AddGenerator`, `ThumbnailGenerator`, `BoxDownscale`, `MakePlaceholderThumbnail`
-- **Editor:** none yet (the Project panel and Scene Manager draw their own thumbnails)
-- **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - merged in #568 and covered by the `asset_database` test, but no editor window uses it; only image files get real pictures
-- **Open:** generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb` onto this cache; an asset browser grid (area 20)
+- **Editor:** Project panel tiles, rows and info strip; Scene Manager scene pictures
+- **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
+- **Tests:** `asset_database`, `project_panel_db`
+- **Status:** Works - used by the Project panel (textures, audio waveforms, models, mesh files, materials, prefabs, scenes), kept on disk under `<project>/.okay/thumbs`, made again when the content (or what a prefab, scene or material uses) changes
+- **Open:** pictures are made on the main thread inside a per-frame time budget, not on a worker thread (the renderers need the editor's scene objects); one picture size (128 px) scaled to the tile size; no pictures for fonts or `.okaydata`; a scene picture loads the whole scene (files over 4 MB are skipped)
 - **Related:** 1.12, 20, 15.4, 2.9
 - **Words:** thumbnail, ThumbnailCache, preview, icon, asset preview, placeholder, BoxDownscale, asset browser
 - **Seen as:** no preview pictures for models or scenes in the Project panel; a thumbnail shows an old version of a texture; a red tile for a broken image

@@ -383,7 +383,8 @@ void RegisterColliders3D() {
     }
     {
         PropertyBuilder<MeshCollider3D> b("MeshCollider3D", "meshcollider3d", "Physics 3D");
-        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1);
+        b.AddVec3("size", &MeshCollider3D::size).Range(0, kBig, 0.1)
+         .Tooltip("Fallback box, used only when the object has no mesh with triangles");
         Collider3DCommon(b);
         b.Commit();
     }
@@ -394,19 +395,27 @@ void RegisterColliders3D() {
 
 void RegisterAudioSource() {
     PropertyBuilder<AudioSource> b("AudioSource", "audio", "Audio");
-    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("WAV file to play")
+    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("Audio file to play (WAV, OGG, MP3 or FLAC)")
      .AddFloat("volume", &AudioSource::volume).Range(0, 1, 0.01)
      .AddFloat("pitch", &AudioSource::pitch).Range(0.01, 8, 0.01).Tooltip("Speed and pitch together")
      .AddFloat("pan", &AudioSource::pan).Range(-1, 1, 0.01).Tooltip("-1 left, 0 centre, 1 right")
      .AddEnum("group", &AudioSource::group, {"SFX", "Music", "UI", "Voice"}).Tooltip("Mixer group")
      .AddBool("loop", &AudioSource::loop)
      .AddBool("playOnAwake", &AudioSource::playOnAwake)
+     .AddBool("stream", &AudioSource::stream).Tooltip("Play the file in small pieces as it plays instead of loading it whole: for long music")
      .AddFloat("lowPass", &AudioSource::lowPass).Range(10, AudioSource::kLowPassOff, 10).Tooltip("Cutoff in Hz; the top of the range leaves the sound untouched")
      .Section("3D sound")
      .AddBool("spatial", &AudioSource::spatial)
      .AddFloat("minDistance", &AudioSource::minDistance).Range(0, kBig, 0.5)
      .AddFloat("maxDistance", &AudioSource::maxDistance).Range(0, kBig, 0.5)
-     .AddEnum("rolloff", &AudioSource::rolloff, {"Linear", "Inverse", "Logarithmic"});
+     .AddEnum("rolloff", &AudioSource::rolloff, {"Linear", "Inverse", "Logarithmic"})
+     .AddBool("doppler", &AudioSource::doppler).Tooltip("Raise the pitch when this sound or the listener is moving closer, and lower it when moving apart")
+     .AddFloat("dopplerScale", &AudioSource::dopplerScale).Range(0, 5, 0.05).Tooltip("1 matches real speed. 0 is no shift. Higher exaggerates it")
+     .AddBool("occlude", &AudioSource::occlude).Tooltip("A wall between this and the listener makes the sound quieter and muffled")
+     .AddFloat("occlusionVolume", &AudioSource::occlusionVolume).Range(0, 1, 0.01).Tooltip("How loud it stays when a wall is in the way. 1 is no quieter")
+     .AddFloat("occlusionLowPass", &AudioSource::occlusionLowPass).Range(10, AudioSource::kLowPassOff, 10).Tooltip("How muffled it is behind a wall, in Hz. Lower is duller")
+     .AddBool("distanceLowPass", &AudioSource::distanceLowPass).Tooltip("Far sounds get muffled. Off keeps the tone the same at every distance")
+     .AddFloat("distanceLowPassHz", &AudioSource::distanceLowPassHz).Range(10, AudioSource::kLowPassOff, 10).Tooltip("Cutoff at the far edge, in Hz. The muffling follows a curve that stays bright up close");
     b.Commit();
 }
 

@@ -38,8 +38,18 @@ struct RefState {
     std::vector<std::string> users, uses;
     std::string root;
     std::function<void(const std::string&)> onPick;
+    okaypb::Browser* browser = nullptr;
+    RefMode mode = RefMode::Both;
+    bool whole = false;         // the whole graph instead of the direct links
 };
 RefState g_refs;
+void FillRefs() {
+    g_refs.users.clear();
+    g_refs.uses.clear();
+    if (!g_refs.browser) return;
+    if (g_refs.mode != RefMode::Uses) g_refs.users = g_refs.browser->UsersOfList(g_refs.asset, g_refs.whole);
+    if (g_refs.mode != RefMode::UsedBy) g_refs.uses = g_refs.browser->DependenciesOf(g_refs.asset, g_refs.whole);
+}
 
 std::string Short(const std::string& root, const std::string& abs) {
     const std::string r = okaypb::Slash(root);
@@ -72,14 +82,43 @@ void AskDelete(okaypb::Browser& browser, std::vector<std::string> paths, std::fu
     g_del.pending = true;
 }
 
-void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick) {
+void ShowReferences(okaypb::Browser& browser, const std::string& assetPath, std::function<void(const std::string&)> onPick, RefMode mode) {
+    browser.Sync();   // incremental: what changed since the last look is in the graph
     g_refs.asset = assetPath;
     g_refs.root = browser.Root();
-    g_refs.users.clear();
-    for (const auto& r : browser.ReferencesTo({assetPath})) g_refs.users.push_back(r.path);
-    g_refs.uses = browser.DependenciesOf(assetPath);
+    g_refs.browser = &browser;
+    g_refs.mode = mode;
+    g_refs.whole = false;
+    FillRefs();
     g_refs.onPick = std::move(onPick);
     g_refs.pending = true;
+}
+
+namespace {
+struct ProbState {
+    bool pending = false, active = false;
+    okaypb::Browser* browser = nullptr;
+    std::vector<okaypb::Browser::MissingRefRow> missing;
+    std::vector<okaypb::Browser::StaleRefRow> stale;
+    std::function<void(const std::string&)> onPick;
+    std::function<void(const okaypb::Result&)> onFixed;
+    std::string message;
+};
+ProbState g_prob;
+void FillProblems() {
+    g_prob.missing = g_prob.browser->MissingRefs();
+    g_prob.stale = g_prob.browser->StaleRefs();
+}
+} // namespace
+
+void ShowReferenceProblems(okaypb::Browser& browser, std::function<void(const std::string&)> onPick, std::function<void(const okaypb::Result&)> onFixed) {
+    browser.Sync();   // incremental: what changed since the last look is in the graph
+    g_prob.browser = &browser;
+    g_prob.onPick = std::move(onPick);
+    g_prob.onFixed = std::move(onFixed);
+    g_prob.message.clear();
+    FillProblems();
+    g_prob.pending = true;
 }
 
 void DrawDialogs() {
@@ -173,7 +212,8 @@ void DrawDialogs() {
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("##projrefs", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("References: %s", NameOf(g_refs.asset).c_str());
+            ImGui::Text("%s: %s", g_refs.mode == RefMode::Uses ? "Dependencies" : g_refs.mode == RefMode::UsedBy ? "Used by" : "References", NameOf(g_refs.asset).c_str());
+            if (ImGui::Checkbox("Whole graph (everything it reaches)", &g_refs.whole)) FillRefs();
             ImGui::Spacing();
             auto list = [&](const char* head, const char* empty, const std::vector<std::string>& v, const char* id) {
                 ImGui::TextDisabled("%s", head);
@@ -191,9 +231,9 @@ void DrawDialogs() {
                 }
                 ImGui::EndChild();
             };
-            list("USED BY (click to show it in the Project panel)", "Nothing uses it.", g_refs.users, "##ru");
-            ImGui::Spacing();
-            if (g_refs.active) list("USES", "It uses nothing.", g_refs.uses, "##rd");
+            if (g_refs.mode != RefMode::Uses) list(g_refs.whole ? "USED BY, directly or through other assets (click to show it)" : "USED BY (click to show it in the Project panel)", "Nothing uses it.", g_refs.users, "##ru");
+            if (g_refs.mode == RefMode::Both) ImGui::Spacing();
+            if (g_refs.active && g_refs.mode != RefMode::UsedBy) list(g_refs.whole ? "USES, directly or through other assets (click to show it)" : "USES (click to show it)", "It uses nothing.", g_refs.uses, "##rd");
             if (g_refs.active) {
                 ImGui::Spacing();
                 if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_refs.active = false; ImGui::CloseCurrentPopup(); }
@@ -201,12 +241,68 @@ void DrawDialogs() {
             ImGui::EndPopup();
         } else g_refs.active = false;
     }
+
+    // ---- broken references -------------------------------------------------------------------
+    if (g_prob.pending) { ImGui::OpenPopup("##projprob"); g_prob.pending = false; g_prob.active = true; }
+    if (g_prob.active) {
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("##projprob", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            const std::string root = g_prob.browser->Root();
+            ImGui::Text("Broken references");
+            ImGui::TextDisabled("Read from the asset database's dependency graph.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("MISSING: the file is not there (click a line to show the asset that names it)");
+            if (g_prob.missing.empty()) ImGui::Text("  None.");
+            else {
+                ImGui::BeginChild("##probmiss", ImVec2(0, std::min<float>(150.0f, 26.0f * (float)g_prob.missing.size() + 20.0f)), true);
+                for (std::size_t i = 0; i < g_prob.missing.size(); ++i) {
+                    ImGui::PushID((int)i);
+                    const std::string line = Short(root, g_prob.missing[i].referrer) + "  names  " + g_prob.missing[i].reference;
+                    if (ImGui::Selectable(line.c_str()) && g_prob.onPick) { auto pick = g_prob.onPick; g_prob.active = false; ImGui::CloseCurrentPopup(); pick(g_prob.missing[i].referrer); ImGui::PopID(); break; }
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            }
+            if (g_prob.active) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("STALE: still the old path of a file that was moved outside the editor");
+                if (g_prob.stale.empty()) ImGui::Text("  None.");
+                else {
+                    ImGui::BeginChild("##probstale", ImVec2(0, std::min<float>(150.0f, 26.0f * (float)g_prob.stale.size() + 20.0f)), true);
+                    for (std::size_t i = 0; i < g_prob.stale.size(); ++i) {
+                        ImGui::PushID(1000 + (int)i);
+                        const std::string line = Short(root, g_prob.stale[i].referrer) + ":  " + g_prob.stale[i].reference + "  ->  " + Short(root, g_prob.stale[i].target);
+                        if (ImGui::Selectable(line.c_str()) && g_prob.onPick) { auto pick = g_prob.onPick; g_prob.active = false; ImGui::CloseCurrentPopup(); pick(g_prob.stale[i].referrer); ImGui::PopID(); break; }
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                }
+            }
+            if (g_prob.active) {
+                if (!g_prob.message.empty()) ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.6f, 1.0f), "%s", g_prob.message.c_str());
+                ImGui::Spacing();
+                ImGui::BeginDisabled(g_prob.stale.empty());
+                if (ImGui::Button("Fix stale references", ImVec2(170, 0))) {
+                    const okaypb::Result r = g_prob.browser->FixStaleRefs();
+                    g_prob.message = r.ok ? ("Rewrote " + std::to_string(r.referencesRewritten) + " reference(s) in " + std::to_string(r.filesRewritten) + " file(s). A scene that is open in the editor keeps its old text until you open it again.") : r.error;
+                    if (r.ok && g_prob.onFixed) g_prob.onFixed(r);
+                    FillProblems();
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Rewrites only the path text in the files that use the old path. Ctrl+Z in the Project panel undoes it.\nMissing references cannot be fixed here: restore the file, or point the asset at another one.");
+                ImGui::SameLine();
+                if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_prob.active = false; ImGui::CloseCurrentPopup(); }
+            }
+            ImGui::EndPopup();
+        } else g_prob.active = false;
+    }
 }
 
 // ---- import settings ------------------------------------------------------------------------------
-// Only settings that an importer really reads are shown: a texture's largest side (the renderer's texture cache) and
-// a model's scale (when the editor adds it to a scene). The other keys in the meta are stored but unused, so there is
-// no control for them.
+// Only settings that an importer really reads are shown. A texture's largest side, a model's scale and normals,
+// and an audio file's loading and channel mix. Quality is not shown: audio is not re-encoded, so that number
+// cannot change the sound (it stays in the file so an older settings file still round-trips).
 
 namespace {
 struct ImportEdit {
@@ -236,7 +332,7 @@ constexpr bool kShowTextureSamplerSettings = false;
 bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     (void)browser;
     const okay::AssetType k = okay::AssetTypeFromPath(assetPath);
-    return k == okay::AssetType::Texture || k == okay::AssetType::Model;
+    return k == okay::AssetType::Texture || k == okay::AssetType::Model || k == okay::AssetType::Audio;
 }
 
 bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
@@ -291,6 +387,17 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             ImGui::Checkbox("Import animations", &e.model.importAnimations);
             ImGui::TextDisabled("Off: no clips, rest pose.");
             ImGui::TextDisabled("Used when the model is next added to a scene.");
+            break;
+        }
+        case ok::AssetType::Audio: {
+            int mode = e.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
+            if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
+                e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
+                                             : ok::AudioImportSettings::LoadMode::Decode;
+            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
+            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
+            ImGui::TextDisabled("Used the next time the file is loaded.");
             break;
         }
         default: return false;

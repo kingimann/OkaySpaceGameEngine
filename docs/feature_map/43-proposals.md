@@ -117,18 +117,18 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Paint or stamp many prefab instances into a level (props, trees, lamps) with random rotation, scale and spacing.
 - **Parts:**
   - 44.2.1 Drop from Project - `editor/main.cpp` - drag a prefab into the scene to place one copy
-  - 44.2.2 Terrain scatter - `editor/main.cpp` - one-shot scatter of built-in props over a terrain (see 29.2)
+  - 44.2.2 Terrain scatter and foliage brush - `editor/LevelTools.*`, `Components/Foliage` - scatter built-in props over a terrain, or paint, erase and rescale a mesh, prefab or built-in prop on a terrain or any surface (see 29.2)
   - 44.2.3 Spline instancer - `Components/SplineMesh` - copies of an object or prefab along a curve
   - 44.2.4 Plugin example - `editor/main.cpp` - the New Plugin templates include a "scatter copies of the selected object" script
-- **Code:** `editor/main.cpp`, `Components/SplineMesh`
-- **API:** `SplineInstancer`
-- **Editor:** Project panel drag and drop, Terrain scatter, Plugins > New Plugin
-- **Docs:** `docs/splines.md`, `docs/editor-plugins.md`
-- **Tests:** `splines`
-- **Status:** Basic - one copy at a time, or terrain-only scatter; no brush.
-- **Exists today:** The four pieces above; nothing paints prefabs over arbitrary surfaces.
+- **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/Foliage`, `Components/SplineMesh`
+- **API:** `SplineInstancer`, `Foliage`
+- **Editor:** Project panel drag and drop, Terrain scatter, Foliage Inspector brush, Plugins > New Plugin
+- **Docs:** `docs/splines.md`, `docs/editor-plugins.md`, `docs/level_tools.md`
+- **Tests:** `splines`, `foliage`
+- **Status:** Works for one plant kind per layer - the foliage brush paints a prefab, mesh file or built-in prop over a terrain or any surface with density, slope and height limits.
+- **Exists today:** The four pieces above. A layer holds one kind; a mix needs several layers.
 - **Suggested priority:** Medium - shared with the foliage brush in 29.2; build one tool for both.
-- **Open:** first step: a Prefab Brush tool: pick a prefab list, brush radius, density, random rotation and scale, align to surface normal, click and drag to paint, Shift to erase; each stroke is one undo group.
+- **Open:** a weighted list of several prefabs in one brush, and colliders for painted copies.
 - **Related:** 29.2, 21.1, 15.3, 22.1
 - **Words:** prefab brush, paint objects, scatter, stamp, place many, props, random rotation, align to surface
 - **Seen as:** placing 100 rocks one by one; copies all face the same way
@@ -138,41 +138,42 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Rulers, size labels and reference figures so a designer can judge distances, jump heights and room sizes.
 - **Parts:**
   - 44.3.1 Stats panel - `editor/main.cpp` - object and triangle counts only
+  - 44.3.3 Measure tool - `editor/LevelTools.*` - View options > Measure tool (or M): click two points on the surfaces in the 3D view and read the distance, the distance across the ground and the height difference
   - 44.3.2 Controller numbers - `Components/PlayerController` - `jumpForce` and speeds exist as fields but no jump arc or reach is drawn as a guide
-- **Code:** `editor/main.cpp`, `Components/PlayerController`
-- **API:** none
-- **Editor:** none
-- **Docs:** -
-- **Tests:** none
-- **Status:** Planned - no measuring tool, no scale reference and no metrics overlay were found.
-- **Exists today:** Only counts and the world axes toggle (`g_showWorldAxes`).
+- **Code:** `editor/main.cpp`, `editor/LevelTools.*`, `Components/PlayerController`
+- **API:** `RaycastSurfaces`
+- **Editor:** Scene view > View options > Measure tool
+- **Docs:** `docs/level_tools.md`
+- **Tests:** `foliage` (the surface ray cast it uses)
+- **Status:** Basic - the measure tool works in the real editor; no scale reference figure and no metrics overlay.
+- **Exists today:** The measure tool, counts and the world axes toggle (`g_showWorldAxes`).
 - **Suggested priority:** Low - useful but small.
-- **Open:** first step: a Measure tool (click two points, show distance and slope) and a reference-figure toggle showing a 1.8 m person and the player's jump arc.
+- **Open:** first step: a reference-figure toggle showing a 1.8 m person and the player's jump arc.
 - **Related:** 4.1, 4.2, 15.3, 44.1
 - **Words:** measure tool, ruler, scale reference, jump arc, level metrics, distance label, player height reference
 - **Seen as:** cannot tell if a gap is jumpable; rooms feel too big or small
 - **Ask me like:** "add a measure tool to the Scene view"
 
 ### 44.4 Volumes and zones
-- **What:** Draw invisible areas (triggers, kill zones, music zones, spawn areas) that show clearly in the editor and report what enters them.
+- **What:** The first step of this proposal is built (11.12): one region shape with checkpoint, kill, force, atmosphere and ambience kinds. What remains is the zone kinds that have nothing under them yet.
 - **Parts:**
   - 44.4.1 Trigger colliders - `Physics/Collider3D`, `Physics/Collider2D` - `isTrigger` colliders send enter and exit events
   - 44.4.2 Survival zone - `Components/SurvivalZone` - a trigger volume that applies cold, radiation, water and other effects while inside
-  - 44.4.3 Spawners and logic links - `Components/Spawner`, `Components/LogicLinks` - spawn areas and wired triggers
+  - 44.4.3 Spawners and logic links - `Components/Spawner`, `Components/LogicLinks` - spawn areas and wired triggers (the plate and trigger zone now show as volumes, see 11.12.5)
   - 44.4.4 Checkpoint trigger (#572) - `Core/SaveFramework` - saves a checkpoint when the player comes near
-- **Code:** `Physics/Collider3D`, `Physics/Collider2D`, `Components/SurvivalZone`, `Components/Spawner`, `Components/LogicLinks`
-- **API:** `Collider3D::isTrigger`, `OnTriggerEnter3D`, `SurvivalZone`
-- **Editor:** Collider Inspector "Trigger" box
-- **Docs:** `docs/survival_kit.md`
-- **Tests:** `physics_callback_removal`, `survival`
-- **Status:** Partial - the pieces exist; no "Volume" concept with a coloured outline, a label and a type menu.
-- **Exists today:** Trigger colliders and several zone-like components, each configured on its own.
-- **Suggested priority:** Medium - designers keep needing it and the parts are already written.
-- **Open:** first step: a GameObject > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one common base so zones share enter and exit handling.
-- **Related:** 6.2, 11.4, 11.6, 35.2
-- **Words:** trigger volume, zone, kill zone, spawn area, area trigger, volume, music zone, isTrigger, SurvivalZone
-- **Seen as:** cannot see where my triggers are; every zone type is set up differently
-- **Ask me like:** "add a GameObject > Volume menu for trigger and kill zones"
+- **Code:** `Physics/Collider3D`, `Physics/Collider2D`, `Components/SurvivalZone`, `Components/Spawner`, `Components/LogicLinks`, `Components/Volume`
+- **API:** `Collider3D::isTrigger`, `OnTriggerEnter3D`, `SurvivalZone`, `Volume`
+- **Editor:** Collider Inspector "Trigger" box; GameObject > Volume (11.12.5)
+- **Docs:** `docs/survival_kit.md`, `docs/volumes.md`
+- **Tests:** `physics_callback_removal`, `survival`, `volumes`
+- **Status:** Partial - 11.12 covers checkpoint, kill, force, fog and sound zones; the rest below is not built.
+- **Exists today:** Trigger colliders, the Survival Zone, spawners and the Volume component (11.12).
+- **Suggested priority:** Low - the common zones exist.
+- **Open:** a reverb zone (needs a reverb effect in the audio mixer); zones for post effects other than fog and vignette (needs per-scene settings for them); a navigation-area volume (needs area costs in the navmesh); convex region shapes; a spawn-area volume (the Spawner has a radius only); a music zone that switches tracks
+- **Related:** 6.2, 11.4, 11.6, 11.12, 35.2
+- **Words:** trigger volume, zone, spawn area, area trigger, volume, music zone, reverb zone, isTrigger, SurvivalZone
+- **Seen as:** need a reverb zone for a cave; need a navigation area that costs more
+- **Ask me like:** "add a reverb zone for the cave"
 
 ## 45. Open-world streaming and world partition
 

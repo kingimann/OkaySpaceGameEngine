@@ -389,4 +389,110 @@ struct RunGraphNode : VsNode {
     }
 };
 
+// ---- More map nodes, and structs ----------------------------------------------
+struct MapClearNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto m = VsMapIn(this, In(0, g, ctx), g, ctx, true)) m->clear();
+        return 0;
+    }
+};
+
+struct MapCountNode : VsNode {   // in0 = map -> how many entries
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto m = In(0, g, ctx).AsMap();
+        return m ? (float)m->size() : 0.0f;
+    }
+};
+
+struct MapCopyNode : VsNode {   // in0 = map, in1 = deep? -> a new map
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto m = VsMapIn(this, In(0, g, ctx), g, ctx, true);
+        if (!m) return VsValue::MakeMap();
+        if (In(1, g, ctx).AsBool()) return VsDeepCopy(VsValue(m));
+        return VsValue(std::make_shared<VsValue::Map>(*m));
+    }
+};
+
+// Map Get Or: the value under Key, or Default when the key isn't there (no Found pin to test).
+struct MapGetOrNode : VsNode {   // in0 = map, in1 = key, in2 = default
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto m = VsMapIn(this, In(0, g, ctx), g, ctx, HasInput(0));
+        if (m) {
+            auto it = m->find(In(1, g, ctx).AsString());
+            if (it != m->end()) return it->second;
+        }
+        return In(2, g, ctx);
+    }
+};
+
+// Map Merge: copy every entry of From into Into (a key in both takes From's value).
+struct MapMergeNode : VsNode {   // in0 = into, in1 = from
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto into = VsMapIn(this, In(0, g, ctx), g, ctx, true);
+        if (!into) return 0;
+        auto from = In(1, g, ctx).AsMap();
+        if (!from) { g.Error(this, ctx, "its From input isn't a map; nothing was merged"); return 0; }
+        if (from == into) return 0;
+        for (const auto& kv : *from) (*into)[kv.first] = kv.second;
+        return 0;
+    }
+};
+
+// ---- Structs: a map with declared, typed fields (`struct` line) ----------------
+struct StructNewNode : VsNode {   // text = struct name -> a new struct with every field at its default
+    std::string name;
+    explicit StructNewNode(std::string n) : name(std::move(n)) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const StructDef* sd = FindStruct(g.Structs(), name);
+        if (!sd) { g.Error(this, ctx, "there is no struct named '" + name + "' (declare it in the Variables panel)"); return VsValue::MakeMap(); }
+        VarType t; t.base = PinType::Map; t.structName = name;
+        return VsDefaultFor(t, g.Structs());
+    }
+};
+
+struct StructGetNode : VsNode {   // text = field; in0 = struct -> the field's value
+    std::string field;
+    explicit StructGetNode(std::string f) : field(std::move(f)) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto m = VsMapIn(this, In(0, g, ctx), g, ctx, true);
+        if (!m) return {};
+        auto it = m->find(field);
+        if (it == m->end()) { g.Error(this, ctx, "the struct has no field '" + field + "'"); return {}; }
+        return it->second;
+    }
+};
+
+struct StructSetNode : VsNode {   // text = field; in0 = struct, in1 = value
+    std::string field;
+    explicit StructSetNode(std::string f) : field(std::move(f)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto m = VsMapIn(this, In(0, g, ctx), g, ctx, true);
+        if (!m) return 0;
+        auto it = m->find(field);
+        if (it == m->end()) { g.Error(this, ctx, "the struct has no field '" + field + "'; nothing was changed"); return 0; }
+        VsValue v = In(1, g, ctx);
+        // The field's declared type, found through whichever struct declares all of this map's fields.
+        for (const StructDef& sd : g.Structs()) {
+            if (sd.fields.size() != m->size()) continue;
+            bool same = true;
+            for (const auto& f : sd.fields) if (!m->count(f.name)) { same = false; break; }
+            if (!same) continue;
+            for (const auto& f : sd.fields) if (f.name == field) {
+                std::string err;
+                if (!VsCoerce(f.type, v, g.Structs(), &err)) {
+                    g.Error(this, ctx, "field '" + field + "': " + err + "; nothing was changed");
+                    return 0;
+                }
+            }
+            break;
+        }
+        it->second = std::move(v);
+        return 0;
+    }
+};
+
+
 } // namespace okay::vs

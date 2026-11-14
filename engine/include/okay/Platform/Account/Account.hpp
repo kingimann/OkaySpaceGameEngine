@@ -62,6 +62,10 @@ public:
                                     const std::string& jsonBody = {},
                                     const std::string& extraHeader = {});
 
+    /// Api with a time limit in seconds (see AccountService::ApiTimed): not-reached when the server doesn't answer in time.
+    static account::ApiResponse ApiTimed(const std::string& path, const std::string& method,
+                                         const std::string& jsonBody, const std::string& extraHeader, int timeoutSec);
+
     // ---- Cloud saves (per-account storage on the server) --------------
     /// Store `data` under save slot `key`. Returns false offline / signed out.
     static bool CloudSave(const std::string& key, const std::string& data);

@@ -112,6 +112,28 @@ public:
     /// included). Scripts get the same as on_object_placed / on_object_removed.
     std::function<void(GameObject*)> onPlaced, onRemoved;
 
+    /// One change to what players built, as networking sees it (see NetworkBuild).
+    struct Op {
+        enum class Type { Place, Remove, Pose, Link, Unlink, Undo, Reset } type = Type::Place;
+        int id = 0;                  ///< the object's build id (Link / Unlink: the source)
+        int other = 0;               ///< Link / Unlink: the target
+        std::string prefab;          ///< Place: the palette prefab
+        Vec3 position, prevPosition; ///< Place / Pose: where it is now (and where it was)
+        Quat rotation, prevRotation;
+        std::string snapshot;        ///< Remove: the object as scene text, so it can be put back
+    };
+    /// Called after every change this build mode made (place, remove, move, link, unlink, undo and
+    /// redo included; a loaded or cleared creation is Reset). A listening server sends them to the
+    /// players. Not called for changes applied from the network (ApplyPlace and the other Apply...).
+    std::function<void(const Op&)> onChanged;
+    /// Set on a client of a networked game: build mode then changes nothing itself. Place, remove,
+    /// move, link, unlink and undo are sent here as requests (return true if one was sent), and the
+    /// result arrives later from the server (ApplyPlace and the others). Duplicate, redo and loading
+    /// or clearing a creation do nothing in this state.
+    std::function<bool(const Op&)> remoteRequest;
+    /// Who installed onChanged / remoteRequest (so only they take them off again).
+    const void* netOwner = nullptr;
+
     // ---- State ----
     bool Active() const { return m_active; }
     void SetActive(bool on);
@@ -175,6 +197,26 @@ public:
     void ClearHistory() { m_undo.clear(); m_redo.clear(); }
     /// Placed objects in the scene (what maxObjects caps).
     int PlacedCount() const;
+
+    // ---- Networking (used by NetworkBuild; they keep no history and call no onChanged) ----
+    /// Put a piece the server placed into the scene under the server's id (or move the one that
+    /// has this id already). `links` are the targets its logic source points at.
+    GameObject* ApplyPlace(const std::string& prefab, int id, const Vec3& position, const Quat& rotation,
+                           const std::vector<int>& links);
+    bool ApplyRemove(int id);
+    bool ApplyPose(int id, const Vec3& position, const Quat& rotation);
+    bool ApplyLink(int source, int target, bool on);
+    /// Remove every placed object without events (a new snapshot follows).
+    void ApplyClearPlaced();
+    /// Put a removed object back from its Op::snapshot, with its old id (reported as a placement).
+    GameObject* RestoreObject(const std::string& snapshot);
+    /// Would a piece of `prefab` fit at this pose: the prefab loads and nothing solid is in the way.
+    bool FitsAt(const std::string& prefab, const Vec3& position, const Quat& rotation, std::string* why = nullptr,
+                GameObject* ignore = nullptr);
+    /// The live object with build id `id`, or nullptr.
+    GameObject* FindBuilt(int id) const { return FindId(id); }
+    /// The build ids a piece's logic source links to.
+    static std::vector<int> LinksOf(GameObject* go);
 
     // ---- Creations ----
     /// Save every placed object and its links to `name` (a file in creationFolder
@@ -268,6 +310,8 @@ private:
     void Push(Command c);
     void Notify(GameObject* go, bool placed);
     bool ToggleLinkIds(int src, int dst, bool on);
+    void Emit(Op op) { if (onChanged) onChanged(op); }
+    Op PlaceOp(GameObject* g);
 
     void SetHighlight(GameObject* go, const Color& c);
     void ClearHighlight();

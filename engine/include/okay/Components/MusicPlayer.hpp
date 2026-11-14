@@ -13,7 +13,7 @@
 
 namespace okay {
 
-/// Background music: a playlist of audio files (WAV, OGG, MP3) on the Music
+/// Background music: a playlist of audio files (WAV, OGG, MP3, FLAC) on the Music
 /// group, crossfading from one track to the next. It plays through two child
 /// AudioSources it creates ("Music A" / "Music B") so the outgoing track can
 /// fade out while the next fades in.
@@ -25,6 +25,12 @@ public:
     bool  loopPlaylist = true;         ///< after the last track, start over
     float crossfade = 2.0f;            ///< seconds two tracks overlap
     float volume = 1.0f;
+    /// Play each track from its file in small pieces (AudioStream) instead of
+    /// decoding it whole: a fixed small amount of memory however long the track,
+    /// at the cost of reading the file while it plays. Off decodes every track
+    /// into memory when it starts, unless that file's import setting says to
+    /// read it while it plays.
+    bool  stream = true;
 
     void Start() override {
         m_rng.Seed(0x6d757369636bULL ^ reinterpret_cast<std::uintptr_t>(this));   // each player shuffles differently
@@ -51,14 +57,18 @@ public:
     bool Play(int index) {
         if (index < 0 || index >= (int)tracks.size()) return false;
         EnsureVoices();
-        auto clip = LoadAudioFile(tracks[(std::size_t)index]);
-        if (!clip) return false;
+        std::shared_ptr<AudioStream> st;
+        std::shared_ptr<const AudioClip> clip;
+        if (stream || AudioImportWantsStream(tracks[(std::size_t)index])) st = OpenAudioStream(tracks[(std::size_t)index]);
+        if (!st) clip = LoadAudioFile(tracks[(std::size_t)index]);   // not streaming, or the stream could not open: decode it whole
+        if (!st && !clip) return false;
         AudioSource* out = Current();
         const bool wasPlaying = out && out->IsPlaying() && m_index >= 0;
         m_cur = 1 - m_cur;
         AudioSource* in = Current();
         if (!in) return false;
-        in->clip = *clip;
+        if (st) in->UseStream(std::move(st));
+        else { in->clip = *clip; in->stream = false; }
         in->loop = tracks.size() == 1 && loopPlaylist;
         in->volume = volume;
         if (wasPlaying && crossfade > 0.0f) {
@@ -87,7 +97,7 @@ public:
             if (s) { if (seconds > 0.0f) s->FadeOut(seconds); else s->Stop(); }
     }
     void Pause()  { for (AudioSource* s : {Current(), Other()}) if (s) s->Pause(); }
-    void Resume() { for (AudioSource* s : {Current(), Other()}) if (s && s->clip.samples.size()) s->Resume(); }
+    void Resume() { for (AudioSource* s : {Current(), Other()}) if (s && s->HasAudio()) s->Resume(); }
 
     bool IsPlaying() const {
         const AudioSource* c = m_voice[m_cur];

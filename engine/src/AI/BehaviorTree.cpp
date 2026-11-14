@@ -391,9 +391,13 @@ const std::vector<BtNodeDef>& Defs() {
         {BtNodeType::Custom, "Custom", "Custom", BtNodeKind::Task,
          "A task written in a script: the function is called every tick with \"enter\", \"tick\" or \"abort\" and returns \"running\", \"success\" or \"failure\".",
          {{"function", "Function", K::Function, "bt_task", "The script function that runs the task.", nullptr}}},
+        {BtNodeType::RunSubtree, "RunSubtree", "Run Sub-Tree", BtNodeKind::Task,
+         "Runs another behavior tree, with its own blackboard. Keys can be copied in and out. A tree that would run itself, or a tree already running above this one, fails instead of looping forever.",
+         {{"tree", "Tree", K::Tree, "", "The .okaybt to run.", "*.okaybt"},
+          {"map", "Key Map", K::Text, "", "Optional: parent>child copies into the sub-tree, parent<child copies back, parent=child does both. Separate pairs with commas.", nullptr}}},
         // ---- services ----
         {BtNodeType::Perception, "Perception", "Perception", BtNodeKind::Service,
-         "While its node runs: looks for the target in a sight cone (with a clear line of sight) and a hearing radius, and keeps the blackboard's target, can-see, last-seen position and seconds-since-seen keys up to date.",
+         "While its node runs: looks for the target with the same sight cone, line of sight and hearing as an NPC Controller, and keeps the blackboard's target, can-see, last-seen position and seconds-since-seen keys up to date. The numbers here are this node's own.",
          {{"targetName", "Target Object", K::Object, "Player", "The object looked for.", nullptr},
           {"range", "Sight Range", K::Number, "12", "How far it can see.", nullptr},
           {"angle", "Field Of View", K::Number, "120", "The sight cone, in degrees (360 = all around).", nullptr},
@@ -610,7 +614,65 @@ std::vector<int> BehaviorTree::Order() const {
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene) const {
+std::vector<BtKeyLink> BtParseKeyMap(const std::string& text) {
+    std::vector<BtKeyLink> out;
+    std::string item;
+    auto flush = [&]() {
+        const std::string s = Trim(item);
+        item.clear();
+        if (s.empty()) return;
+        std::size_t op = s.find('>');
+        char way = '>';
+        if (op == std::string::npos) { op = s.find('<'); way = '<'; }
+        if (op == std::string::npos) { op = s.find('='); way = '='; }
+        if (op == std::string::npos) return;
+        BtKeyLink link;
+        link.parent = Trim(s.substr(0, op));
+        link.child = Trim(s.substr(op + 1));
+        link.way = way;
+        // An unfinished row (one side still empty) is kept so the editor can show it.
+        out.push_back(std::move(link));
+    };
+    for (char c : text) {
+        if (c == ',' || c == ';' || c == '\n') flush();
+        else item += c;
+    }
+    flush();
+    return out;
+}
+
+std::string BtFormatKeyMap(const std::vector<BtKeyLink>& links) {
+    std::string s;
+    for (const BtKeyLink& l : links) {
+        if (!s.empty()) s += ", ";
+        s += l.parent;
+        s += (l.way == '>' || l.way == '<') ? l.way : '=';
+        s += l.child;
+    }
+    return s;
+}
+
+namespace {
+
+// True when `path` (or a tree it runs) runs `target` again. `seen` holds resolved paths.
+bool RefersToTree(const std::string& path, const std::string& target, std::vector<std::string>& seen, int depth) {
+    if (path.empty() || target.empty() || depth > 8) return false;
+    const std::string full = BehaviorTree::ResolvePath(path);
+    if (full == target) return true;
+    for (const std::string& s : seen) if (s == full) return false;
+    seen.push_back(full);
+    std::shared_ptr<const BehaviorTree> sub = BehaviorTree::Load(path);
+    if (!sub) return false;
+    for (const BtNode& n : sub->nodes) {
+        if (n.type != BtNodeType::RunSubtree) continue;
+        if (RefersToTree(n.Str("tree"), target, seen, depth + 1)) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene, const std::string& selfPath) const {
     std::vector<Issue> out;
     auto add = [&](int node, int sev, std::string text) { out.push_back({node, sev, std::move(text)}); };
     if (root < 0 || !Find(root)) { add(-1, 2, "The tree has no root node"); }
@@ -689,7 +751,37 @@ std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene) cons
                 case K::Event:
                     if (v.empty()) add(n.id, 2, label + " names no " + (p.kind == K::Function ? "function" : "event"));
                     break;
+                case K::Tree:
+                    if (v.empty()) add(n.id, 2, label + " names no tree");
+                    else {
+                        std::string err;
+                        const std::shared_ptr<const BehaviorTree> sub = Load(v, &err);
+                        const std::string full = ResolvePath(v);
+                        const std::string self = selfPath.empty() ? std::string() : ResolvePath(selfPath);
+                        if (!sub) add(n.id, 2, label + ": cannot read '" + v + "'" + (err.empty() ? std::string() : " (" + err + ")"));
+                        else if (!self.empty() && full == self) add(n.id, 2, label + " runs this same tree");
+                        else if (!self.empty()) {
+                            std::vector<std::string> seen;
+                            if (RefersToTree(v, self, seen, 0))
+                                add(n.id, 2, label + ": '" + v + "' runs this tree again");
+                        }
+                    }
+                    break;
                 default: break;
+            }
+        }
+        if (n.type == BtNodeType::RunSubtree) {
+            for (const BtKeyLink& link : BtParseKeyMap(n.Str("map"))) {
+                if (link.parent.empty() || link.child.empty()) {
+                    add(n.id, 1, label + " has a key mapping that is only half filled in");
+                    continue;
+                }
+                if (!Key(link.parent)) add(n.id, 1, label + ": mapped key '" + link.parent + "' is not on this tree");
+                if (const std::shared_ptr<const BehaviorTree> sub = Load(n.Str("tree")); sub) {
+                    bool found = false;
+                    for (const auto& k : sub->keys) if (k.name == link.child) found = true;
+                    if (!found) add(n.id, 1, label + ": the sub-tree has no key '" + link.child + "'");
+                }
             }
         }
         if (n.type == BtNodeType::Wait && n.Num("min") < 0.0f) add(n.id, 1, "Wait: a negative time");
@@ -772,6 +864,7 @@ std::string BehaviorTree::Serialize() const {
         out << "node " << n.id << " " << n.Def().name << " parent=" << n.parent
             << " x=" << NumText(std::round(n.x)) << " y=" << NumText(std::round(n.y));
         if (!n.name.empty()) out << " name=" << Quote(n.name);
+        if (n.breakpoint) out << " bp=1";
         for (const auto& kv : n.params) out << " " << kv.first << "=" << Atom(kv.second);
         out << "\n";
     }
@@ -825,6 +918,7 @@ bool BehaviorTree::Deserialize(const std::string& text, std::string* error) {
                 else if (k == "x") n.x = std::strtof(v.c_str(), nullptr);
                 else if (k == "y") n.y = std::strtof(v.c_str(), nullptr);
                 else if (k == "name") n.name = v;
+                else if (k == "bp") n.breakpoint = v != "0" && v != "false";
                 else n.params[k] = v;
             }
             n.parent = parent;
@@ -1010,6 +1104,19 @@ std::shared_ptr<const BehaviorTree> BehaviorTree::Load(const std::string& path, 
     Cache()[full] = t;
     return t;
 }
+void BehaviorTree::CollectReferencedFiles(const std::string& path, std::vector<std::string>& out) {
+    if (path.empty()) return;
+    const std::string full = ResolvePath(path);
+    for (const std::string& e : out) if (e == path || e == full) return;
+    out.push_back(path);
+    const std::shared_ptr<const BehaviorTree> tree = Load(path);
+    if (!tree) return;
+    for (const BtNode& n : tree->nodes) {
+        if (n.type != BtNodeType::RunSubtree) continue;
+        CollectReferencedFiles(n.Str("tree"), out);
+    }
+}
+
 void BehaviorTree::Forget(const std::string& path) {
     std::lock_guard<std::mutex> lock(CacheMutex());
     if (path.empty()) { Cache().clear(); return; }

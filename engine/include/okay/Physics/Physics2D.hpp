@@ -50,13 +50,15 @@ struct RaycastHit2D {
 /// A small but real 2D physics engine: semi-implicit Euler integration with
 /// gravity/drag, box & circle collision detection, impulse + positional
 /// resolution, and Enter/Stay/Exit collision and trigger callbacks. Also offers
-/// scene queries (raycast / overlap / circle cast).
+/// scene queries (raycast / overlap / circle, box and capsule casts).
 ///
 /// Queries take an optional `ignore` object, a `layerMask` (bit n = collider
 /// layer n, default all) and `queryTriggers` (do triggers count as hits?).
-/// Rays and overlaps include triggers by default; CircleCast skips them.
+/// Rays and overlaps include triggers by default; shape casts skip them.
 ///
-/// Assumes physics bodies are top-level (un-parented) Transforms.
+/// A body may sit under a parent. The step moves it in world space, so a moving or
+/// turning parent carries it and gravity stays world-down. Un-parenting keeps the
+/// speed that parent was giving it (see docs/physics.md).
 class Physics2D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
@@ -104,9 +106,15 @@ public:
     /// All colliders overlapping a circle.
     std::vector<Collider2D*> OverlapCircle(Scene& scene, const Vec2& center, float radius,
                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = true);
-    /// All colliders overlapping an axis-aligned box (center + half-extents).
+    /// All colliders overlapping a box (center + half-extents). `angle` is radians
+    /// about Z; 0 keeps the axis-aligned test. `ignore` skips one object's colliders.
     std::vector<Collider2D*> OverlapBox(Scene& scene, const Vec2& center, const Vec2& halfExtents,
-                                        std::uint32_t layerMask = kAllLayers, bool queryTriggers = true);
+                                        std::uint32_t layerMask = kAllLayers, bool queryTriggers = true,
+                                        GameObject* ignore = nullptr, float angle = 0.0f);
+    /// All colliders overlapping a capsule (segment a→b thickened by `radius`).
+    std::vector<Collider2D*> OverlapCapsule(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                            std::uint32_t layerMask = kAllLayers, bool queryTriggers = true,
+                                            GameObject* ignore = nullptr);
 
     /// Sweep a circle of `radius` from `origin` along `direction` and return the
     /// first collider it touches — a "thick ray"
@@ -115,6 +123,19 @@ public:
     RaycastHit2D CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
                             float radius, float maxDistance = 1e9f, GameObject* ignore = nullptr,
                             std::uint32_t layerMask = kAllLayers, bool queryTriggers = false);
+    /// Sweep a box (center, half-extents, `angle` radians about Z) along `direction`
+    /// and return the first collider it touches. The hit point is on the struck
+    /// surface; the normal points back toward the box. Skips triggers unless asked.
+    RaycastHit2D BoxCast(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+                         const Vec2& direction, float angle = 0.0f, float maxDistance = 1e9f,
+                         GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                         bool queryTriggers = false);
+    /// Sweep a capsule (segment a→b thickened by `radius`) along `direction` and
+    /// return the first collider it touches — "would this body fit through there?".
+    RaycastHit2D CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                             const Vec2& direction, float maxDistance = 1e9f,
+                             GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
+                             bool queryTriggers = false);
 
     void Clear() { m_contacts.clear(); }
 

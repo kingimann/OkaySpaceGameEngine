@@ -44,6 +44,10 @@ namespace okay::net {
 ///    and lock everyone else out. Drive
 /// it by calling Poll() in a loop (the standalone `okayspace-relay` binary does
 /// exactly that); tests pump it in-process alongside the peers.
+/// A peer-chosen string made safe to log: anything but printable ASCII (and
+/// the backslash) becomes \xNN, so it can't forge log lines.
+std::string RelayLogSafe(const std::string& s);
+
 class RelayServer {
 public:
     static constexpr std::size_t kMaxPeers = 4096;          ///< peers across all sessions
@@ -114,6 +118,19 @@ public:
     std::uint64_t CookiesSent() const { return m_cookiesSent; }
     std::uint64_t LegacyHellos() const { return m_legacyHellos; }      ///< v1/v2 hellos from new senders
     std::uint64_t DroppedHellos() const { return m_droppedHellos; }    ///< over an address's hello rate
+    /// Hellos seen per protocol version (1..kRelayProtocolVersion; every hello that
+    /// parsed, new sender or keepalive, accepted or not), and the peers registered
+    /// right now that still speak version 1 or 2. Legacy hellos can be switched off
+    /// (`--legacy-hello=off`) once `LegacyPeers()` stays 0 and the v1/v2 counts stop
+    /// growing; the relay logs all of them once a minute while any legacy hello arrives.
+    std::uint64_t HellosByVersion(std::uint8_t version) const {
+        return version < m_helloVersions.size() ? m_helloVersions[version] : 0;
+    }
+    std::size_t LegacyPeers() const {
+        std::size_t n = 0;
+        for (const auto& [ep, p] : m_peers) if (p.version < 3) ++n;
+        return n;
+    }
 
 private:
     struct Peer {
@@ -121,6 +138,7 @@ private:
         std::string   code;
         bool          host = false;     // announced the host role (the session's host is Session::hostSlot)
         std::uint8_t  version = 1;      // relay protocol version it spoke
+        std::uint64_t nonce = 0;        // the welcome-echo nonce its first hello carried (0: none)
         bool          hub = false;      // announced RelayHub: its session is never key-protected
         float         idle = 0.0f;
         float         packets = 0.0f;   // forwarding allowance (token buckets)
@@ -172,6 +190,7 @@ private:
     double m_now = 0.0;   // seconds of Poll() time, for the rate caps
     std::uint64_t m_droppedRoute = 0, m_droppedRate = 0, m_refusedHellos = 0;
     std::uint64_t m_cookiesSent = 0, m_legacyHellos = 0, m_droppedHellos = 0;
+    std::array<std::uint64_t, 8> m_helloVersions{};   // by version; a larger one counts as the newest
     std::uint64_t m_legacyLogged = 0;   // m_legacyHellos at the last log line
     double m_legacyLogAt = 60.0, m_helloPruneAt = 10.0;   // m_now of the next legacy count / rate prune
     float m_logBudget = 20.0f;   // join log lines allowed right now (refills 5/s), so a flood can't spam the log

@@ -135,6 +135,7 @@ linked to it is on.
 | Pressure Plate | something stands on it | **Zone Size / Offset**: the box above the plate that senses things. **Only Tag** narrows it to one tag. |
 | Trigger Zone | something is inside it | The same zone, filling the object. |
 | Timer | on for **On Time** out of every **Interval** seconds | **Starts on**. |
+| Relay | never (no signal of its own) | Only carries I/O links, fired from an Actions list, a script or code. |
 
 Plates and zones count anything that moves: players, NPCs and physics props.
 They ignore objects marked **Static** and placed pieces without a Rigidbody 3D,
@@ -157,6 +158,44 @@ Every target also has:
   - **Toggle**: each new signal flips it, so a momentary button works like a light switch.
 - **Invert**: on while *not* powered.
 - **Signal Name**: the name On Logic Signal reports.
+
+### I/O links: named outputs to any object
+
+A Logic Source (any kind) also has **named outputs**. Each **I/O link** in the
+Inspector's *I/O Links* list says: when output *X* fires, deliver *input* *Y*
+(with an optional *parameter*) to *target* *Z*.
+
+| Field | Meaning |
+|---|---|
+| Enabled | the checkbox at the start of the row; a disabled link is skipped |
+| Output | the output that triggers it. Built in: `OnTurnedOn` and `OnTurnedOff` (the signal changes) and `OnPressed` (a button was pressed). Any other name fires from an Actions list or script |
+| Target | an object name or path. Empty means this object. It is looked up under this object first, then in the whole scene, so a prefab that links to its own child works in every copy |
+| Input | what to do to the target (below), or any custom event name |
+| Param | optional text; a number becomes `event_value`, and the text is `event_text` |
+| Delay | seconds to wait before delivering |
+| Once | deliver only the first time the output fires (reset when Play starts) |
+
+Inputs:
+
+| Input | Does |
+|---|---|
+| `Enable` / `Disable` / `ToggleActive` | turn the target object on or off |
+| `TurnOn` / `TurnOff` / `Toggle` | set the state of a Logic Target on the target (it holds until the next signal change) |
+| `Spawn` | make a Logic Target spawn now |
+| `Press` | press a Logic Source on the target |
+| `Fire` | fire the output named by **Param** on the target's Logic Source, so links chain (nesting stops after 8 levels) |
+| anything else | a custom event of that name: an Actions list's On Message, a graph's On Custom Event, a script's `OnEvent_<name>(value)` |
+
+The **Test** button on a row delivers it at once (ignoring delay and once) and
+prints what it reached. A row whose target or input is missing shows
+**Broken** in red; the scene validator reports the same thing as
+`io.link_broken`.
+
+To fire a custom output, use the Actions step **Fire Output** (`name [value]`)
+or `fire_output("Name", value)` in OkayScript, on an object that has a Logic
+Source (kind **Relay** if it needs no signal of its own). The value replaces
+each link's Param. Links are saved with the scene and in prefabs, and an
+instance can override any field of them like the rest of the Logic Source.
 
 ### Wiring in game
 
@@ -213,6 +252,7 @@ The file starts with a format version (`okaycreation 1`):
 | `build_save(name)` / `build_load(name)` / `build_exists(name)` / `build_clear()` | creations |
 | `build_undo()` / `build_redo()` / `build_count()` | history, and how many objects are placed |
 | `logic_press(name)` / `logic_state(name)` | press a button / read a source or target |
+| `fire_output(name, value)` | fire a named output on this object's Logic Source (runs its I/O links); returns how many links ran or were queued |
 
 Events (define the function and it runs):
 
@@ -271,9 +311,40 @@ Everything players can do is also a call: `PlaceAt` / `PlaceItem`, `Remove`,
 `okay::BuildCreation` saves and loads creations without a Build Mode, for
 example on a server.
 
+## Multiplayer
+
+With a `NetworkManager` in the scene, build mode works over the network with no setup. The **server
+decides**: a client's place, remove, move, link, unlink and undo are sent as requests, the server checks
+each one and does it (or refuses), and everything built is sent to every client in order. A client that
+joins later is sent the whole state. `okay/Net/NetBuildSync.hpp` has the code (include it to use
+`nm->Build()`); the rules are `nm->Build()`:
+
+| Rule | Default | What it does |
+| --- | --- | --- |
+| allowlist | the palettes of the scene's BuildModes, plus `extraPrefabs` | a client may only place a prefab one of them lists |
+| `maxObjects` | 250 | placed objects in the world |
+| `maxPerPlayer` | 0 (off) | placed by one player at a time |
+| `maxRequestsPerSecond` | 10 | per player, a burst of twice that; the rest are dropped |
+| `boundsMin` / `boundsMax` | plus and minus 1000 | where pieces may go |
+| `maxReach` | 16 | from the player's avatar, when the server knows where it is (0 = no check) |
+| `checkBlocked` | on | a piece may not overlap something solid on the server |
+| `ownerOnly` | on | a player moves, removes and links only what it placed (the host may change anything) |
+| `levelEditable` | off | players may also edit the level's own Buildable objects (they need a build id in the scene) |
+
+On a client a BuildMode changes nothing itself: `PlaceItem` returns null and the piece appears when the
+server's answer arrives; `Redo`, `Duplicate` and loading or clearing a creation do nothing. Undo is per
+player: it undoes that player's last steps (a place, a removal, a move, a link) through the same checks
+as a request. A refusal comes back with a reason (`nm->Build().onRefused` on the client). The host's own
+BuildMode builds directly and its changes go out to the clients; a loaded creation replaces what everyone
+sees. `BuildMode::onChanged` and `remoteRequest` are the two hooks this is built on.
+
+What is not replicated: the state of doors, movers and logic outputs (each peer runs its own logic from
+the replicated links and pieces), pieces made or destroyed by a script instead of BuildMode, and
+objects a `.okaycreation` file puts into a scene before the session starts. A piece restored by undo
+comes back with its links to other pieces but not with links other pieces had to it.
+
 ## Not covered yet
 
-- **Multiplayer:** placements and links aren't synced between players yet.
 - **2D:** building is 3D only (it uses the 3D physics raycasts).
 - **Pressure plates and zones** sense colliders. An object needs a collider to
   press one.

@@ -1,3 +1,30 @@
+# ---- okay::crypto as its own static library --------------------------
+# Our own crypto primitives (docs/crypto.md). A separate target so that code which must not
+# link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
+# the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
+# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/crypto.md.
+add_library(okay_crypto STATIC
+    src/Crypto/Util.cpp
+    src/Crypto/Random.cpp
+    src/Crypto/ChaCha20.cpp
+    src/Crypto/Poly1305.cpp
+    src/Crypto/Aead.cpp
+    src/Crypto/Blake2b.cpp
+    src/Crypto/Sha256.cpp
+    src/Crypto/Sha512.cpp
+    src/Crypto/X25519.cpp
+    src/Crypto/Ed25519.cpp
+)
+target_include_directories(okay_crypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_crypto PUBLIC cxx_std_17)
+if(WIN32)
+    target_link_libraries(okay_crypto PUBLIC bcrypt)   # BCryptGenRandom
+endif()
+if(OKAY_OWN_CRYPTO)
+    target_compile_definitions(okay_crypto PUBLIC OKAY_OWN_CRYPTO)
+endif()
+add_library(okay::crypto ALIAS okay_crypto)
+
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
@@ -12,6 +39,8 @@ add_library(okay_engine
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
+    src/Core/GameSaves.cpp
+    src/Core/Clipboard.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
     src/Core/TimerDebug.cpp
@@ -30,7 +59,11 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
+    src/Input/GestureRecognizer.cpp
+    src/Input/Gestures.cpp
+    src/Input/TouchControls.cpp
     src/Core/DisplaySettings.cpp
+    src/Core/DisplayModes.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
@@ -49,12 +82,15 @@ add_library(okay_engine
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
+    src/Net/CheatDetect.cpp
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Components/Ragdoll.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetBuildSync.cpp
+    src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
     src/Net/NetChannels.cpp
     src/Net/NetSim.cpp
@@ -72,6 +108,7 @@ add_library(okay_engine
     src/VisualScript/VsApi.cpp
     src/VisualScript/VsBuiltins.cpp
     src/VisualScript/VsVariables.cpp
+    src/VisualScript/VsDecl.cpp
     src/VisualScript/VsDebug.cpp
     src/VisualScript/ActionGraph.cpp
     src/Components/VisualScriptComponent.cpp
@@ -88,6 +125,9 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Combat/WeaponBook.cpp
+    src/Components/MeleeAttacker.cpp
+    src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
     src/Inventory/InventoryPersistence.cpp
@@ -111,6 +151,9 @@ add_library(okay_engine
     src/Components/UIDraggable.cpp
     src/Components/Draggable.cpp
     src/Components/Terrain.cpp
+    src/Components/Foliage.cpp
+    src/Components/Cable.cpp
+    src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
     src/Components/ModelAnimatorPose.cpp
@@ -128,6 +171,7 @@ add_library(okay_engine
     src/Components/SplineMesh.cpp
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
+    src/Components/Volume.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp
@@ -137,23 +181,35 @@ add_library(okay_engine
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
+    src/Physics/TriMesh.cpp
+    src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
+    src/Audio/SpatialFx.cpp
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
+    src/Audio/AudioStream.cpp
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
+    src/Audio/FlacDecoder.cpp
     src/AI/Pathfinding.cpp
+    src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
+    src/AI/NavMeshCarve.cpp
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
+    src/AI/Perception.cpp
     src/Core/ImageWrite.cpp
+    src/Core/BuildPipeline.cpp
+    src/Core/ImageDecode.cpp
+    src/Core/ImageDecodeJpeg.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
+    src/Graphics/TtfRaster.cpp
     src/Graphics/EmbeddedFont.cpp
     src/Debug/FrameHistory.cpp
     src/Debug/GpuTimer.cpp
@@ -165,8 +221,10 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
+    src/UI/UIFrameTransform.cpp
     # Localization tools (docs/localization_tools.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
@@ -177,8 +235,24 @@ add_library(okay_engine
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
     src/UI/FocusGraph.cpp
+    src/UI/UIFocus.cpp
     src/Input/RemapModel.cpp
     src/Render/ModelImport.cpp
+    src/Render/ModelReaders.cpp
+    src/Render/ColladaReader.cpp
+    src/Render/Max3dsReader.cpp
+    src/Render/BvhReader.cpp
+    src/Render/OffReader.cpp
+    src/Render/SmdReader.cpp
+    src/Render/Md5Reader.cpp
+    src/Render/Ms3dReader.cpp
+    src/Render/AseReader.cpp
+    src/Render/BlendReader.cpp
+    src/Render/ThreeMfReader.cpp
+    src/Render/AmfReader.cpp
+    src/Render/X3dReader.cpp
+    src/Render/DxfReader.cpp
+    src/Render/LwoReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -187,6 +261,7 @@ add_library(okay_engine
     src/Modeling/UVUnwrap.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
+    src/Render/SurfaceRaycast.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp
@@ -201,16 +276,25 @@ add_library(okay_engine
     src/Testing/SceneValidator.cpp
     src/Testing/Regression.cpp
     src/Testing/GoldenImage.cpp
+    src/Render/FbxReader.cpp
+    src/Render/FbxScene.cpp
     third_party/ufbx/ufbx.c
 )
+
+# Our own FBX reader (okay::fbx) sits next to ufbx. OKAY_OWN_FBX=ON makes it the default reader
+# for this build; it can still be switched at run time with the OKAY_OWN_FBX environment variable
+# ("1"/"0") or okay::fbx::SetOwnReaderEnabled(). Default OFF: ufbx stays the default.
+if(OKAY_OWN_FBX)
+    set_source_files_properties(src/Render/FbxScene.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_OWN_FBX_DEFAULT=1)
+endif()
 
 # Public headers live under engine/include; consumers use #include <Okay.hpp>.
 target_include_directories(okay_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# Vendored single-header libraries (stb_image), used only by
-# the Image translation unit. Kept PRIVATE so it doesn't leak to consumers.
+# Vendored third-party libraries (stb_truetype, stb_vorbis, ufbx, dr_libs). Image decoding is
+# our own (Core/ImageDecode*.cpp). Kept PRIVATE so they don't leak to consumers.
 target_include_directories(okay_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ufbx
@@ -226,9 +310,9 @@ endif()
 # is required in addition to `-w`: vendored tables (stb) may initialise `char`
 # arrays with 0xFF, which Clang (Emscripten/WASM) treats as a hard narrowing ERROR
 # that `-w` does not downgrade, even though GCC/MinGW accept it.
-set_source_files_properties(src/Graphics/Image.cpp src/Graphics/TtfFont.cpp
+set_source_files_properties(src/Graphics/Image.cpp
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
-# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
+# The built-in UI font (the launcher's Roboto) lives in shared/RobotoFontOwn.h, in our own OKF1 container (shared/OkfDecode.hpp).
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.
@@ -245,6 +329,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
+
+# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
+    target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
 
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
@@ -293,7 +383,16 @@ endif()
 #    libsodium-win64 dir (the one containing include/sodium.h and lib/libsodium.a).
 # Without it the transport still builds and runs — just unencrypted (the
 # NetworkManager encryption toggle becomes a no-op), so it's a soft dependency.
-if(OKAY_USE_SODIUM)
+# ---- Our own crypto (okay::crypto), side by side with libsodium ------
+# The primitives in src/Crypto are ALWAYS compiled (and tested); OKAY_OWN_CRYPTO only
+# decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
+# outside cryptographer: it must not become the default, and libsodium must not be
+# removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
+target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+if(OKAY_OWN_CRYPTO)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+    message(STATUS "OkaySpace: packet encryption ENABLED (OUR OWN crypto, unreviewed; OKAY_OWN_CRYPTO=ON)")
+elseif(OKAY_USE_SODIUM)
     set(_okay_sodium FALSE)
     if(OKAY_SODIUM_PREFIX)
         # Explicit prefix (e.g. the MinGW prebuilt): reference the static lib directly
@@ -317,7 +416,7 @@ if(OKAY_USE_SODIUM)
         endif()
     endif()
     if(_okay_sodium)
-        target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM)
+        target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM OKAY_NET_CRYPTO)
         message(STATUS "OkaySpace: packet encryption ENABLED (libsodium)")
     else()
         message(STATUS "OkaySpace: libsodium not found; packet encryption disabled")
@@ -397,10 +496,95 @@ if(OKAY_USE_ASSIMP)
         GIT_TAG        v5.4.3
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(assimp)
+    # MinGW-w64 13 (the Ubuntu 26.04 runner) defaults __MSVCRT_VERSION__ to 0x600. Assimp's
+    # DefaultIOStream.cpp then takes its old-CRT branch and calls _fstat32, which the 64-bit msvcrt
+    # import library does not export (link error "undefined reference to __imp__fstat32"). Older
+    # MinGW headers defaulted to 0x700, which picks _fstat64. Say 0x700 for Assimp only.
+    if(MINGW AND TARGET assimp)
+        target_compile_definitions(assimp PRIVATE __MSVCRT_VERSION__=0x700)
+    endif()
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
+    target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
     message(STATUS "OkaySpace: Assimp model import ENABLED (DAE/STL/PLY/3DS/Blend/X/3MF/AMF/X3D/MD2/MD3/MD5/MDL/SMD/MS3D/LWO/DXF/OFF/AC/B3D/BVH/PMX/...)")
 endif()
+
+# The platform seam (windows / events / GL context / timers / clipboard / audio device /
+# gamepad): see cmake/OkayPlatform.cmake. Everything that used SDL for those goes through it.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayPlatform.cmake)
+okay_add_platform_library()
+target_link_libraries(okay_engine PUBLIC okay_platform)
+# okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
+# The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp)
+if(OKAY_PLATFORM_SDL_INCLUDES)
+    target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
+endif()
+if(OKAY_PLATFORM_SDL_OPTIONS)
+    set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
+endif()
+
+# Our own STL / PLY readers are always built. With Assimp also on, this picks which one
+# a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
+if(OKAY_PREFER_OWN_READERS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_PREFER_OWN_READERS_DEFAULT)
+    message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
+endif()
+
+# Our own Collada (.dae) reader sits next to Assimp's. Default OFF: Assimp stays the .dae reader when the build
+# has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
+# -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
+if(OKAY_OWN_COLLADA)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
+endif()
+# Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
+# OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_3DS)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
+endif()
+if(OKAY_OWN_BVH)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
+endif()
+# Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_OFF)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
+endif()
+# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_SMD)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
+endif()
+# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MD5)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
+endif()
+# Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MS3D)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
+endif()
+# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_ASE)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
+endif()
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+if(OKAY_OWN_BLEND)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
+endif()
+# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
+foreach(_fmt 3MF AMF X3D DXF LWO)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
+    endif()
+endforeach()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/AI/NavMesh.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <cstdint>
 #include <vector>
@@ -11,6 +12,7 @@ class NavMesh;
 class NavMeshSurface;
 class NavMeshAgent;
 class NavMeshObstacle;
+class NavMeshLink;
 
 /// Pathfinding for a scene: the baked NavMesh when the scene has a NavMeshSurface
 /// with one, otherwise the lazily sampled NavGrid3D (so NPCs and click-to-move
@@ -20,8 +22,14 @@ class Navigation {
 public:
     /// The scene's active NavMeshSurface with a baked mesh (nullptr = none).
     static NavMeshSurface* Surface(Scene& scene);
-    /// The baked mesh, or nullptr when the scene paths over the grid.
+    /// The mesh queries use, or nullptr when the scene paths over the grid: the baked mesh with the holes
+    /// of every carving NavMeshObstacle cut out (see NavMeshObstacle), rebuilt when they change.
     static const NavMesh* Mesh(Scene& scene);
+    /// The mesh as baked, without any obstacle holes (what the .okaynav file holds).
+    static const NavMesh* BakedMesh(Scene& scene);
+    /// Goes up whenever the carved mesh changes (an obstacle came to rest, moved or went away). Agents
+    /// compare it with the value they planned under and replan. 0 without a mesh.
+    static std::uint32_t CarveGeneration(Scene& scene);
 
     /// Waypoints from `from` to `to` (start first, destination last), empty when no
     /// route exists (callers steer straight at the goal, as they always did).
@@ -32,6 +40,17 @@ public:
     /// The same, into a caller-owned vector (no allocation once it has capacity).
     static bool FindPath(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
                          float agentRadius = 0.4f, GameObject* self = nullptr);
+    /// Like FindPath for an agent with an area mask: honours the surface's area costs and the
+    /// mask (a forbidden area is never entered; an unreachable goal gives false) and plans
+    /// through the scene's enabled NavMeshLinks whose area the mask allows. `legLinks` is
+    /// parallel to `out`: non-null at a corner means "the leg that ends here is this link's
+    /// crossing from the previous corner". Without a baked mesh this is the grid path with
+    /// no links.
+    static bool FindPathForAgent(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
+                                 std::vector<NavMeshLink*>& legLinks, std::uint32_t areaMask,
+                                 float agentRadius = 0.4f, GameObject* self = nullptr);
+    /// Every NavMeshLink in the scene (cached with the agents).
+    static const std::vector<NavMeshLink*>& Links(Scene& scene);
     /// The closest walkable point within `maxDistance` (mesh only; false without one).
     static bool SamplePosition(Scene& scene, const Vec3& p, float maxDistance, Vec3& out);
     /// Straight-line walkability along the mesh: true when blocked, `hit` = where.

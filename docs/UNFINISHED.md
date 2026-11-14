@@ -4,35 +4,62 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **124** rows that are Partial or Planned.
+The feature map currently has **123** rows that are Partial or Planned.
 
 ## Audits
 
-- [Engine-wide audit](unfinished_engine.md): 92 findings across 14 subsystems (9 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO missing on Direct3D 11, no post-processing on Direct3D 12, the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
+- [Engine-wide audit](unfinished_engine.md): 92 findings across 14 subsystems (9 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO on Direct3D 11 (written, unrun on a GPU), no post-processing on Direct3D 12 (labelled preview), the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
 
-- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (8 High, 16 Medium, 14 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, server owners cannot kick, ban or promote, and updates are not signed.
+- [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
 ## Hidden, removed or limited today
 
 | What | State | What is missing |
 |---|---|---|
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
-| Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio is always mono and never streamed |
+| Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |
+| OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
 | Models already in a scene on import-settings Apply | Limited | Stored meshes are not re-imported; the setting applies the next time the model is added |
 | Ten visual-script nodes: `Fn.net_join_link`, `Fn.net_pin_host`, `Fn.pf_*` (delete, leaderboard_top, load, login, login_password, register, save, set_stat) | Hidden from the palette (`kHiddenUntilTested`) | No test covers them; they need a network or PlayFab service |
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |
 | Six engine-API nodes: Input.DefineAction, Input.DefineDirection, Audio.SaveSettings, Rigidbody.AddTorque (covered by other suites); Input.Rumble and Fog.SetMode proven | Partly proven | Show nothing in a headless scene |
 | Photon, PlayFab and Custom net providers | C++ extension points only | Need the vendor SDKs and accounts; nothing in the editor selects them |
+| Play start hitch in the editor | `EditorState::Play()` still runs on the click frame: snapshot text, loading every AudioSource file (each source holds its own copy of the decoded clip), validating every visual script, and (in the editor) baking each NavMeshSurface with Bake Before Play | `tests/test_play_start_bench.cpp` times each step. Not done: skip the bake when nothing changed, share one decoded clip between sources, spread the work over frames. The GPU side (first draw of the Game view) cannot be measured headless |
 | Steamworks backend | Off by default | Needs Valve's proprietary SDK |
 | Glass UI theme | Visible, no real blur | The shared draw path cannot read the framebuffer back |
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
 | UI nameplate | Health bar bound | Name and level are plain text, not bound to data |
 | UI Dropdown | Scrolls with wheel and keys | No touch or drag scrolling |
-| Inventory screen | Shows the bag | Moving items between bags is still the Inventory component's job |
+| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+
+## Own cryptography: waiting for an outside review
+
+`okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
+
+| Step | State | Who |
+|---|---|---|
+| Decide whether to consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`, and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Choose a reviewer, a budget and a date; send the request and the bundle (nobody has been asked; cost and start date unknown) | Not started | Owner |
+| The outside review itself, its report and findings | Not started | Reviewer |
+| Fix every finding or record why it is acceptable, re-run the evidence, send the fixes back for a re-check | Waiting on the report | Team |
+| CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
+| The flip decision: make it the default for new builds, then delete libsodium and the TweetNaCl port one release later | Owner decision, only after a reviewer's yes | Owner |
+
+## Planned: visual-script core upgrade
+
+Steps 1 and 2 turned out to be mostly shipped already (see "Declared variables, lists, maps and structs" in `docs/visual_scripting.md`); the audit and the remaining gaps are below. Steps 3 to 5 are not started. One at a time, each shipped only when finished, tested and usable in the editor:
+
+1. DONE (earlier work, audited again here): a better variable system. Declared variables (`decl name Type scope default`) with Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>` and struct types; object, scene and global scopes with defaults editable in the Inspector; typed Set / Add Var; old `var` lines still load (`tests/data/vs_core_legacy.okayvs` is a graph in the old format, run by `vs_variables`). Not done: a declared "local" scope (function locals via Set Local stay untyped), and a separate "graph" scope distinct from "object" (today `object` is the graph's own variables); typed lists of structs.
+2. DONE for lists and maps: add, remove (by index and by value), insert, set, find, sort, reverse, clear, copy, for each, length, keys, values, count, plus List Append, List Slice, List Pop, Map Get Or and Map Merge (added now), with element types carried through the graph checker. Not done: lists and maps have no OkayScript export (Generate script lists them as not translated); no sort-by-key or sort-with-comparer; List Pop takes only the last item.
+3. Custom events with typed parameters, and delegates (bind, unbind, call).
+4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
+5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.
+
+The text-script nodes below depend on this.
 
 ## Planned: text-script nodes in visual script
 
@@ -50,9 +77,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
-- Admin: create test servers without a game
+- Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
-- Improve inventory systems (survival-game style)
+- Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
 - Improve the blocky character's arms, especially in first person
@@ -73,13 +100,13 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab overrides in the editor (apply, revert, per-field, prefab mode, variant creation, nested roots in the Hierarchy); the old... |
+| [1.6](feature_map/01-core-scene.md#16-prefabs-and-templates) | Prefabs and templates | Partial | prefab mode (editing a prefab in its own scene; Open only isolates the instance); the old... |
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
-| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | asset browser window and thumbnail grid (an old branch claude/asset-browser exists but shares no history with main); importers... |
+| [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | importers reading the remaining settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no file watcher (the Project panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
-| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | wire the window to `LocTable`, the checker and the scanner (31.1), a language preview that mirrors right-to-left text (31.3)... |
+| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key)... |
 | [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
-| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | generators for meshes, materials, prefabs, models and scenes (the docs show a mesh example); move the Project panel's `GetThumb`... |
+| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread; one 128 px size scaled to the tile size; no pictures for fonts or data assets; a scene picture loads the whole scene... |
 
 ### 3. 3D modeling & import
 
@@ -143,19 +170,18 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (the editor's own file vs `.okaymeta` labels); the panel re-lists the folder every 0.6 s instead... |
+| [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (colour labels in `.okaylabels` vs tags in `.okaymeta`); no file watcher, outside changes show on the next poll (2 s or more); no automated UI test of the window... |
 | [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned)... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
 | [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
-| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | the editor's current thumbnails are rebuilt each session (memory only); a scene thumbnail loads the whole scene; no thumbnail for... |
+| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets |
 
 ### 21. Prefab system (Critical)
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can... |
-| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply... |
-| [21.4](feature_map/20-35-planned.md#214-overrides) | Overrides | Partial | `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are... |
+| [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones; nesting errors are not listed in the Console on load; a second instance of the applied file inside the same outer instance is not updated by Apply... |
+| [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no variant badge on the Project panel tile; scene files never contain variant records (only prefab files do); objects added to or lost from a variant instance cannot be applied into the variant... |
 
 ### 22. Undo/redo & recovery (Critical)
 
@@ -237,16 +263,16 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [31.1](feature_map/20-35-planned.md#311-translation-tables) | Translation tables | Partial | the window and the new `LocTable` duplicate the grid logic until package 1 lands; right-to-left scripts are drawn left to right... |
+| [31.1](feature_map/20-35-planned.md#311-translation-tables) | Translation tables | Partial | JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`... |
 | [31.2](feature_map/20-35-planned.md#312-font-fallback) | Font fallback | Partial | system fonts differ between machines, so a CJK game should ship its own font; RTL is drawn left to right. |
-| [31.3](feature_map/20-35-planned.md#313-language-previews) | Language previews | Partial | layout does not mirror for right-to-left languages yet. |
+| [31.3](feature_map/20-35-planned.md#313-language-previews) | Language previews | Partial | the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key. |
 
 ### 32. Accessibility (High)
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | the focus visuals depend on each widget's own `IsFocused` drawing; the graph is built from screen rectangles each time it is... |
-| [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources. |
+| [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | one shared ring is drawn from the theme and the accessibility settings; there is no focus sound; the graph is built from screen rectangles each time it is asked |
+| [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on. |
 | [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | Partial | the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine. |
 | [32.4](feature_map/20-35-planned.md#324-remapping) | Remapping | Partial | the UI navigation keys are fixed in code; mouse-button and wheel rebinding coverage is not checked. |
 

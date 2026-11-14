@@ -30,24 +30,25 @@ using namespace okay;
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
     X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Camera) X(CameraFollow) X(Canvas) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \
-    X(Crosshair) X(CylinderCollider3D) X(DamageOnTouch) X(DayNightCycle) X(Destructible) X(DialogueRunner) \
+    X(Crosshair) X(CylinderCollider3D) X(DamageOnTouch) X(DayNightCycle) X(Decal) X(Destructible) X(DialogueRunner) \
     X(DollyCart) X(DollyPath) X(Draggable) X(DropZone) X(EdgeCollider2D) X(Equipment) X(testing::EventProbe) \
     X(EventSystem) X(FirstPersonController) X(FirstPersonHand) X(FirstPersonHands) X(Flashlight) \
-    X(FollowTarget2D) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridInventory) X(GridInventoryUI) \
+    X(FollowTarget2D) X(Foliage) X(FootIK) X(FreeRoamController) X(FullBodyIK) X(GridCostLayer) X(GridInventory) X(GridInventoryUI) \
+    X(GridObstacle2D) X(GridPathAgent2D) \
     X(HealthStat) X(HoldPrompt) X(HoldableObject) X(HumanoidRetarget) X(HungerStat) X(IKTarget) X(Inventory) \
     X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
-    X(NPCController) X(NavMeshAgent) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) \
+    X(NPCController) X(NavMeshAgent) X(NavMeshLink) X(NavMeshModifier) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) \
     X(NetworkAvatarMotion) X(NetworkManager) X(NetworkObject) X(NetworkPlayerSpawner) X(NetworkSync) \
     X(NetworkTransform) X(OxygenStat) X(ParticleSystem) X(PauseMenu) X(Platformer25DController) \
     X(PlayerController) X(PlayerView) X(PoisonStat) X(PolygonCollider2D) X(PoseCapture) \
-    X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) \
-    X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(Saveable) X(ScriptComponent) X(Seat) \
+    X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) X(RangedWeapon) \
+    X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(SaveConfig) X(Saveable) X(ScriptComponent) X(Seat) \
     X(SequencePlayer) X(SettingsScreen) X(SkinnedMesh) X(SleepStat) X(Spawner) X(SphereCollider3D) X(Spinner) \
     X(Spline) X(SplineFollower) X(SplineInstancer) X(SplineMesh) X(SpriteAnimator) X(SpriteRenderer) \
     X(StaminaStat) X(StatComponent) X(Stats) X(StatusEffectStat) X(SteamManager) X(StoryState) \
@@ -55,13 +56,14 @@ using namespace okay;
     X(TemperatureStat) X(Terrain) X(TerrainDigger) X(TextRenderer) X(ThirdPersonController) \
     X(ThirdPersonShooterController) X(ThirstStat) X(Tilemap) X(TilemapCollider2D) X(TimedDestroy) \
     X(TopDownController) X(TopDownController2D) X(TopDownShooterController) X(TrailRenderer) X(TriggerZone) \
-    X(TurnManager) X(TweenAnimation) X(UIAnimation) X(UIBarBind) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
-    X(UIDamageNumbers) X(UIInventoryBind) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFlexItem) X(UIFrame) X(UIImage) \
+    X(TurnManager) X(TweenAnimation) X(UIAccordion) X(UIAnimation) X(UIBarBind) X(UIBottomSheet) X(UIBreadcrumbs) X(UIButton) X(UIColorPicker) X(UIContextMenu) \
+    X(UIDamageNumbers) X(UIDateTimePicker) X(UIInventoryBind) X(UIDialogueBox) X(UIStyleVariant) X(UIDocument) X(UIDraggable) X(UIDropTarget) X(UIDropdown) X(UIFilePicker) X(UIFlexItem) X(UIFrame) X(UIImage) \
     X(UIInputField) X(UIKeybindField) X(UILayoutGroup) X(UIListView) X(UIMask) X(UIModal) X(UIPanel) \
-    X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISlider) \
+    X(UIPagination) X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISearchBar) X(UISkeleton) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
+    X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VirtualCamera) X(VisualScriptComponent) \
-    X(VoxelDigger) X(VoxelTerrain) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
+    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
     X(WorldUI)
 
 namespace {
@@ -136,9 +138,10 @@ int main() {
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
     //   SteamManager           added by game code at startup (docs/steam_release.md), not a scene object
-    //   Saveable, CheckpointTrigger   the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
+    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
+    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/save_framework.md)
     const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
-                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "Saveable", "CheckpointTrigger"};
+                                                "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);
     for (const auto& n : kRuntimeOnly) CHECK(std::find(dropped.begin(), dropped.end(), n) != dropped.end());   // keep this list honest: remove a type once it is saved
     CHECK(notSwitchable.empty());
@@ -209,6 +212,40 @@ int main() {
             }
         }
         CHECK(SceneSerializer::Serialize(b) == text);                 // and it is stable
+        // A negative pitch must not make the loader drop the audio's optional
+        // mixer fields: the gate peeked for digits only, '-' failed it, the rest
+        // of the line was left on the stream, and the next save wrote the source
+        // wrong (pitch 1, and whatever followed the line leaked into it).
+        {
+            Scene n("n");
+            GameObject* g = n.CreateGameObject("Negative pitch");
+            auto* au = g->AddComponent<AudioSource>();
+            au->clipPath = "tone.wav";
+            au->volume = 0.8f;
+            au->pitch = -1.0f;
+            au->pan = -0.5f;
+            au->spatial = true;
+            au->minDistance = 2.0f; au->maxDistance = 30.0f;
+            au->group = AudioGroup::Voice;
+            au->rolloff = AudioRolloff::Inverse;
+            const std::string text = SceneSerializer::Serialize(n);
+            Scene r("r");
+            std::vector<std::string> warnings;
+            CHECK(SceneSerializer::Deserialize(r, text, nullptr, &warnings));
+            CHECK(warnings.empty());
+            GameObject* back = r.Find("Negative pitch");
+            CHECK(back != nullptr);
+            if (back) {
+                auto* got = back->GetComponent<AudioSource>();
+                CHECK(got != nullptr);
+                if (got) {
+                    CHECK(got->clipPath == "tone.wav" && got->volume == 0.8f && got->pitch == -1.0f);
+                    CHECK(got->pan == -0.5f && got->spatial && got->minDistance == 2.0f && got->maxDistance == 30.0f);
+                    CHECK(got->group == AudioGroup::Voice && got->rolloff == AudioRolloff::Inverse);
+                }
+            }
+            CHECK(SceneSerializer::Serialize(r) == text);             // and the reload saves the same thing
+        }
         // One of a type still writes exactly what it always did (no extra record, same text as the old format).
         Scene one("one");
         GameObject* g1 = one.CreateGameObject("One");

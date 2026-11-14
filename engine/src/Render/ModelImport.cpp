@@ -2,6 +2,13 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ThreeMfReader.hpp"
+#include "okay/Render/AmfReader.hpp"
+#include "okay/Render/X3dReader.hpp"
+#include "okay/Render/DxfReader.hpp"
+#include "okay/Render/LwoReader.hpp"
+#include "okay/Core/Log.hpp"
+#include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -34,6 +41,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
+#include "okay/Render/FbxReader.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -45,14 +53,20 @@
 #include <unordered_set>
 #include <vector>
 
-#ifdef OKAY_HAVE_ASSIMP
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-#include <assimp/config.h>
-#endif
+#include <atomic>
+#include "ModelImportInternal.hpp"
 
 namespace okay {
+// Validate a freshly built skin's joint indices against its joint list (the one
+// place every importer funnels through) and say so when the file had bad ones.
+static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
+    const int bad = sm.SanitizeJoints(sm.joints.size());
+    if (bad > 0)
+        Log::Warning("model import '", path, "': ", bad, " joint index(es) outside the ", sm.joints.size(),
+                     "-joint list were dropped (weight zeroed)");
+}
+
+static std::string Lower(std::string s);
 
 bool AssimpAvailable() {
 #ifdef OKAY_HAVE_ASSIMP
@@ -63,27 +77,27 @@ bool AssimpAvailable() {
 }
 
 std::string ImportableExtensions() {
-#ifdef OKAY_HAVE_ASSIMP
-    // Built-in (.obj .gltf .glb .fbx) + everything this Assimp build can read.
+    // Built in: OBJ, glTF, FBX (ufbx) and our own STL / PLY readers, plus everything
+    // the Assimp build can read. .dae is added when our own Collada reader is switched on
+    // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
-        std::string out = ".obj .gltf .glb .fbx";
-        Assimp::Importer imp; aiString exts; imp.GetExtensionList(exts);   // "*.3ds;*.dae;..."
-        std::string e = exts.C_Str(), cur;
-        auto flush = [&]() {
-            if (cur.size() > 1 && cur[0] == '.' && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
-            cur.clear();
-        };
+        std::string out = ".obj .gltf .glb .fbx .stl .ply";
+#ifdef OKAY_HAVE_ASSIMP
+        std::string e = assimp_backend::Extensions(), cur;
+        e += ' ';
         for (char c : e) {
-            if (c == ';') flush();
-            else if (c != '*') cur += (char)std::tolower((unsigned char)c);
+            if (c != ' ') { cur += c; continue; }
+            if (!cur.empty() && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
+            cur.clear();
         }
-        flush();
+#endif
         return out;
     }();
-    return list;
-#else
-    return ".obj .gltf .glb .fbx";   // FBX is built in (ufbx)
-#endif
+    std::string res = list;
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend"})
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    return res;
 }
 
 static std::string Lower(std::string s) {
@@ -95,6 +109,8 @@ static bool EndsWith(const std::string& s, const char* suf) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture);   // our own reader (okay::fbx)
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err);
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
     if (!root) return;
@@ -107,150 +123,29 @@ static void NormalizeImportedClips(GameObject* root) {
     }
 }
 
-#ifdef OKAY_HAVE_ASSIMP
-// Resolve a material texture of the given TYPE to a file the renderer can load:
-// an external reference resolves next to the model; an embedded texture (the
-// common case for FBX) is written out as a "<model>_<tag><mi>.<ext>" sidecar —
-// the same convention the glTF importer uses ("tex" keeps the legacy name).
-static std::string AssimpTexByType(const aiScene* sc, unsigned mi, const std::string& modelPath,
-                                   aiTextureType type, const char* tag) {
-    if (mi >= sc->mNumMaterials) return std::string();
-    aiString texPath;
-    if (sc->mMaterials[mi]->GetTexture(type, 0, &texPath) != AI_SUCCESS)
-        return std::string();
-    std::string tp = texPath.C_Str();
-    if (tp.empty()) return std::string();
-    if (const aiTexture* emb = sc->GetEmbeddedTexture(tp.c_str())) {
-        // mHeight == 0 -> compressed blob (png/jpg per achFormatHint); mWidth is
-        // then the byte size. Raw-BGRA embeds (mHeight > 0) are rare; skipped.
-        if (emb->mHeight == 0 && emb->pcData && emb->mWidth > 0) {
-            std::string ext = emb->achFormatHint[0] ? emb->achFormatHint : "png";
-            std::string base = modelPath;
-            std::size_t dot = base.find_last_of('.');
-            if (dot != std::string::npos) base = base.substr(0, dot);
-            std::string out = base + "_" + tag + std::to_string(mi) + "." + ext;
-            if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
-                std::fwrite(emb->pcData, 1, emb->mWidth, f);
-                std::fclose(f);
-                return out;
-            }
-        }
-        return std::string();
-    }
-    for (char& c : tp) if (c == '\\') c = '/';
-    bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    std::string dir;
-    { std::size_t s = modelPath.find_last_of("/\\"); if (s != std::string::npos) dir = modelPath.substr(0, s + 1); }
-    return abs ? tp : dir + tp;
-}
-
-static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const std::string& modelPath) {
-    std::string t = AssimpTexByType(sc, mi, modelPath, aiTextureType_DIFFUSE, "tex");
-    if (t.empty()) t = AssimpTexByType(sc, mi, modelPath, aiTextureType_BASE_COLOR, "tex");  // PBR exports
-    return t;
-}
-
-// Pull the WHOLE material onto a MeshRenderer — albedo, normal, specular/gloss
-// and AO maps, plus diffuse/emissive colors and shininess/metallic/roughness
-// factors — so a downloaded FBX lights like it does in other engines instead of
-// arriving as flat white. Mirrors ApplyGltfMaterial for the Assimp formats.
-static void ApplyAssimpMaterial(const aiScene* sc, unsigned mi, const std::string& modelPath,
-                                MeshRenderer* mr) {
-    if (!sc || mi >= sc->mNumMaterials || !mr) return;
-    const aiMaterial* mat = sc->mMaterials[mi];
-    std::string t = AssimpMaterialTexture(sc, mi, modelPath);
-    if (!t.empty()) mr->texture = t;
-    std::string n = AssimpTexByType(sc, mi, modelPath, aiTextureType_NORMALS, "nrm");
-    if (n.empty()) n = AssimpTexByType(sc, mi, modelPath, aiTextureType_HEIGHT, "nrm");   // OBJ/FBX "bump" slot
-    if (!n.empty()) mr->normalMap = n;
-    std::string s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SPECULAR, "spec");
-    if (s.empty()) s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SHININESS, "spec");
-    if (!s.empty()) mr->specularMap = s;
-    std::string a = AssimpTexByType(sc, mi, modelPath, aiTextureType_LIGHTMAP, "ao");     // assimp's AO slot
-    if (a.empty()) a = AssimpTexByType(sc, mi, modelPath, aiTextureType_AMBIENT_OCCLUSION, "ao");
-    if (!a.empty()) mr->aoMap = a;
-    // Scalar factors. The diffuse COLOR only applies when there's no albedo texture
-    // (textured FBX materials often carry a black/grey diffuse that would tint the
-    // texture to mud).
-    aiColor4D dc;
-    if (mr->texture.empty() && mat->Get(AI_MATKEY_COLOR_DIFFUSE, dc) == AI_SUCCESS)
-        if (dc.r + dc.g + dc.b > 0.02f)
-            mr->color = Color(dc.r, dc.g, dc.b, mr->color.a);
-    aiColor4D ec;
-    if (mat->Get(AI_MATKEY_COLOR_EMISSIVE, ec) == AI_SUCCESS)
-        if (ec.r + ec.g + ec.b > 0.02f)
-            mr->emissive = Color(ec.r, ec.g, ec.b, 1.0f);
-    float shin = 0.0f;
-    if (mat->Get(AI_MATKEY_SHININESS, shin) == AI_SUCCESS && shin > 1.0f) {
-        mr->shininess = shin > 128.0f ? 128.0f : shin;
-        if (mr->specular <= 0.0f) mr->specular = 0.4f;
-    }
-    float metal = 0.0f;
-    if (mat->Get(AI_MATKEY_METALLIC_FACTOR, metal) == AI_SUCCESS && metal > 0.0f)
-        mr->metallic = metal > 1.0f ? 1.0f : metal;
-    float rough = -1.0f;
-    if (mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, rough) == AI_SUCCESS && rough >= 0.0f) {
-        float smooth = 1.0f - (rough > 1.0f ? 1.0f : rough);   // same mapping as glTF
-        mr->shininess = 4.0f + smooth * 124.0f;
-        mr->specular  = 0.15f + smooth * 0.85f;
-    }
-}
-
-static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
-    for (unsigned mi = 0; mi < sc->mNumMaterials; ++mi) {
-        std::string t = AssimpMaterialTexture(sc, mi, modelPath);
-        if (!t.empty()) return t;
-    }
-    return std::string();
-}
-
-static Mesh ViaAssimp(const std::string& path, bool* ok, std::string* outTexture = nullptr) {
-    Assimp::Importer imp;
-    const aiScene* sc = imp.ReadFile(path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs | aiProcess_PreTransformVertices);
-    Mesh m;
-    if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return m; }
-    if (outTexture) *outTexture = AssimpDiffuseTexture(sc, path);
-    for (unsigned mi = 0; mi < sc->mNumMeshes; ++mi) {
-        const aiMesh* am = sc->mMeshes[mi];
-        int base = (int)m.vertices.size();
-        for (unsigned v = 0; v < am->mNumVertices; ++v) {
-            m.vertices.push_back(Vec3{am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z});
-            if (am->HasNormals())
-                m.normals.push_back(Vec3{am->mNormals[v].x, am->mNormals[v].y, am->mNormals[v].z});
-            if (am->HasTextureCoords(0))
-                m.uvs.push_back(Vec2{am->mTextureCoords[0][v].x, am->mTextureCoords[0][v].y});
-        }
-        for (unsigned fi = 0; fi < am->mNumFaces; ++fi) {
-            const aiFace& f = am->mFaces[fi];
-            if (f.mNumIndices == 3)
-                for (int k = 0; k < 3; ++k) m.triangles.push_back(base + (int)f.mIndices[k]);
-        }
-    }
-    if (m.normals.size() != m.vertices.size()) m.normals.clear();
-    if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
-    Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
-    if (ok) *ok = !m.vertices.empty();
-    return m;
-}
-#endif
 
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
-    if (EndsWith(p, ".obj"))                          return Mesh::LoadOBJ(path, ok, outTexture);
+    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp)
+        return Mesh::LoadOBJ(path, ok, outTexture);
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
     if (EndsWith(p, ".fbx")) {
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
     }
-#ifdef OKAY_HAVE_ASSIMP
-    return ViaAssimp(path, ok, outTexture);
-#else
-    if (ok) *ok = false;
-    return Mesh{};   // format needs Assimp, which this build wasn't compiled with
-#endif
+    // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
+    // STL / PLY readers, or Assimp when the build has it. One static mesh.
+    ImportedModel im;
+    Mesh m;
+    if (!ImportModelData(path, im, ImportBackend::Default, /*flatten=*/true, nullptr)) {
+        if (ok) *ok = false;
+        return m;
+    }
+    m = MergeModelMeshes(im, outTexture);
+    Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
+    if (ok) *ok = !m.vertices.empty();
+    return m;
 }
 
 static std::string BaseName(const std::string& path) {
@@ -314,13 +209,7 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (g.indexed) {
-            for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-        } else {
-            for (int i = 0; i + 2 < pn; i += 3) {
-                mesh.triangles.push_back(base + i); mesh.triangles.push_back(base + i + 1); mesh.triangles.push_back(base + i + 2);
-            }
-        }
+        for (int v : g.tri) mesh.triangles.push_back(base + v);
     }
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
@@ -462,159 +351,505 @@ static void AutoNormalizeImportScale(Scene& scene, GameObject* root) {
         root->transform->localScale = root->transform->localScale * s;
 }
 
+// ============================================================================
+// The model-import seam (okay/Render/ModelData.hpp): backend choice, the merged
+// mesh, and the scene builder. Nothing below touches a third-party type.
+// ============================================================================
+
+ModelCounts CountModel(const ImportedModel& m) {
+    ModelCounts c;
+    c.nodes = (int)m.nodes.size();
+    c.parts = (int)m.parts.size();
+    std::set<std::string> bones;
+    for (const ImportedPart& p : m.parts) {
+        c.vertices += (int)p.mesh.vertices.size();
+        c.triangles += p.mesh.TriangleCount();
+        if (!p.bones.empty()) ++c.skinnedParts;
+        for (const ImportedBone& b : p.bones) bones.insert(b.name);
+    }
+    c.bones = (int)bones.size();
+    c.clips = (int)m.clips.size();
+    for (const ImportedClip& cl : m.clips) {
+        c.channels += (int)cl.channels.size();
+        for (const ImportedChannel& ch : cl.channels) c.keys += ch.position.size() + ch.rotation.size() + ch.scale.size();
+    }
+    return c;
+}
+
+namespace {
+
+#ifdef OKAY_PREFER_OWN_READERS_DEFAULT
+constexpr bool kPreferOwnDefault = true;
+#else
+constexpr bool kPreferOwnDefault = false;
+#endif
+
+#ifdef OKAY_OWN_COLLADA_DEFAULT
+constexpr bool kOwnColladaDefault = true;
+#else
+constexpr bool kOwnColladaDefault = false;
+#endif
+#ifdef OKAY_OWN_3DS_DEFAULT
+constexpr bool kOwn3dsDefault = true;
+#else
+constexpr bool kOwn3dsDefault = false;
+#endif
+#ifdef OKAY_OWN_BVH_DEFAULT
+constexpr bool kOwnBvhDefault = true;
+#else
+constexpr bool kOwnBvhDefault = false;
+#endif
+
+#ifdef OKAY_OWN_OFF_DEFAULT
+constexpr bool kOwnOffDefault = true;
+#else
+constexpr bool kOwnOffDefault = false;
+#endif
+
+#ifdef OKAY_OWN_SMD_DEFAULT
+constexpr bool kOwnSmdDefault = true;
+#else
+constexpr bool kOwnSmdDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MD5_DEFAULT
+constexpr bool kOwnMd5Default = true;
+#else
+constexpr bool kOwnMd5Default = false;
+#endif
+
+#ifdef OKAY_OWN_MS3D_DEFAULT
+constexpr bool kOwnMs3dDefault = true;
+#else
+constexpr bool kOwnMs3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_ASE_DEFAULT
+constexpr bool kOwnAseDefault = true;
+#else
+constexpr bool kOwnAseDefault = false;
+#endif
+
+#ifdef OKAY_OWN_3MF_DEFAULT
+constexpr bool kOwn3mfDefault = true;
+#else
+constexpr bool kOwn3mfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_AMF_DEFAULT
+constexpr bool kOwnAmfDefault = true;
+#else
+constexpr bool kOwnAmfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_X3D_DEFAULT
+constexpr bool kOwnX3dDefault = true;
+#else
+constexpr bool kOwnX3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_DXF_DEFAULT
+constexpr bool kOwnDxfDefault = true;
+#else
+constexpr bool kOwnDxfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LWO_DEFAULT
+constexpr bool kOwnLwoDefault = true;
+#else
+constexpr bool kOwnLwoDefault = false;
+#endif
+
+#ifdef OKAY_OWN_BLEND_DEFAULT
+constexpr bool kOwnBlendDefault = true;
+#else
+constexpr bool kOwnBlendDefault = false;
+#endif
+
+// Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
+// A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
+struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
+constexpr OptInFormat kOptIn[] = {
+    {"OKAY_OWN_COLLADA", "COLLADA", kOwnColladaDefault},   // 3
+    {"OKAY_OWN_3DS",     "3DS",     kOwn3dsDefault},       // 4
+    {"OKAY_OWN_BVH",     "BVH",     kOwnBvhDefault},       // 5
+    {"OKAY_OWN_OFF",     "OFF",     kOwnOffDefault},       // 6
+    {"OKAY_OWN_SMD",     "SMD",     kOwnSmdDefault},       // 7
+    {"OKAY_OWN_MD5",     "MD5",     kOwnMd5Default},       // 8
+    {"OKAY_OWN_MS3D",    "MS3D",    kOwnMs3dDefault},       // 9
+    {"OKAY_OWN_ASE",     "ASE",     kOwnAseDefault},       // 10
+    {"OKAY_OWN_3MF",     "3MF",     kOwn3mfDefault},       // 11
+    {"OKAY_OWN_AMF",     "AMF",     kOwnAmfDefault},       // 12
+    {"OKAY_OWN_X3D",     "X3D",     kOwnX3dDefault},       // 13
+    {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
+    {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
+    {"OKAY_OWN_BLEND",   "Blender", kOwnBlendDefault},     // 16
+};
+constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
+int OwnSlot(const std::string& ext) {
+    const std::string e = Lower(ext);
+    if (e == ".obj") return 0;
+    if (e == ".stl") return 1;
+    if (e == ".ply") return 2;
+    if (e == ".dae") return 3;
+    if (e == ".3ds") return 4;
+    if (e == ".bvh") return 5;
+    if (e == ".off") return 6;
+    if (e == ".smd") return 7;
+    if (e == ".md5mesh" || e == ".md5anim") return 8;
+    if (e == ".ms3d") return 9;
+    if (e == ".ase") return 10;
+    if (e == ".3mf") return 11;
+    if (e == ".amf") return 12;
+    if (e == ".x3d") return 13;
+    if (e == ".dxf") return 14;
+    if (e == ".lwo") return 15;
+    if (e == ".blend") return 16;
+    return -1;
+}
+std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
+
+// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
+// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+bool OwnOptedIn(int slot) {
+    if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
+    bool v = kOptIn[slot - 3].cmakeDefault;
+    if (const char* e = std::getenv(kOptIn[slot - 3].var)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    return v;
+}
+
+std::string ExtensionOf(const std::string& path) {
+    std::size_t sl = path.find_last_of("/\\"), dot = path.find_last_of('.');
+    if (dot == std::string::npos || (sl != std::string::npos && dot < sl)) return std::string();
+    return Lower(path.substr(dot));
+}
+
+bool AssimpReadsExt(const std::string& ext) {
 #ifdef OKAY_HAVE_ASSIMP
-// Convert assimp's row-major matrix to the engine's column-major Mat4.
-static Mat4 AiToMat4(const aiMatrix4x4& a) {
-    Mat4 r;
-    for (int row = 0; row < 4; ++row)
-        for (int col = 0; col < 4; ++col)
-            r.at(col, row) = a[row][col];
-    return r;
+    return (" " + assimp_backend::Extensions() + " ").find(" " + Lower(ext) + " ") != std::string::npos;
+#else
+    (void)ext; return false;
+#endif
 }
 
-// Geometry of one aiMesh, untransformed (the node hierarchy carries the transforms).
-static Mesh MeshFromAi(const aiMesh* am) {
-    Mesh m;
-    for (unsigned v = 0; v < am->mNumVertices; ++v) {
-        m.vertices.push_back(Vec3{am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z});
-        if (am->HasNormals())
-            m.normals.push_back(Vec3{am->mNormals[v].x, am->mNormals[v].y, am->mNormals[v].z});
-        if (am->HasTextureCoords(0))
-            m.uvs.push_back(Vec2{am->mTextureCoords[0][v].x, am->mTextureCoords[0][v].y});
+// The one-static-mesh mode for the readers added after Collada / 3DS: every node's transform (the root's Z-up to Y-up
+// turn included) is baked into the vertices and normals of the parts on it, skins and clips are dropped and one root
+// node is left, as Assimp's pre-transform step does. (A skinned part at its bind pose is the mesh seen through its
+// root, so the baked result is the bind pose.)
+void FlattenImportedModel(ImportedModel& m) {
+    std::vector<Mat4> world(m.nodes.size());
+    for (std::size_t i = 0; i < m.nodes.size(); ++i) {
+        const ImportedNode& n = m.nodes[i];
+        const Mat4 l = Mat4::TRS(n.position, n.rotation, n.scale);
+        world[i] = (n.parent >= 0 && (std::size_t)n.parent < i) ? world[(std::size_t)n.parent] * l : l;
     }
-    for (unsigned fi = 0; fi < am->mNumFaces; ++fi) {
-        const aiFace& f = am->mFaces[fi];
-        if (f.mNumIndices == 3)
-            for (int k = 0; k < 3; ++k) m.triangles.push_back((int)f.mIndices[k]);
+    for (ImportedPart& p : m.parts) {
+        const Mat4 w = (p.node >= 0 && (std::size_t)p.node < world.size()) ? world[(std::size_t)p.node] : Mat4::Identity();
+        const Mat4 inv = w.Inverse();
+        for (Vec3& v : p.mesh.vertices) v = w.MultiplyPoint(v);
+        for (Vec3& n : p.mesh.normals) {   // normals go through the inverse transpose
+            const Vec3 t{inv.at(0, 0) * n.x + inv.at(0, 1) * n.y + inv.at(0, 2) * n.z,
+                         inv.at(1, 0) * n.x + inv.at(1, 1) * n.y + inv.at(1, 2) * n.z,
+                         inv.at(2, 0) * n.x + inv.at(2, 1) * n.y + inv.at(2, 2) * n.z};
+            n = t.Normalized();
+        }
+        const float det = w.at(0, 0) * (w.at(1, 1) * w.at(2, 2) - w.at(2, 1) * w.at(1, 2)) - w.at(1, 0) * (w.at(0, 1) * w.at(2, 2) - w.at(2, 1) * w.at(0, 2)) +
+                          w.at(2, 0) * (w.at(0, 1) * w.at(1, 2) - w.at(1, 1) * w.at(0, 2));
+        if (det < 0.0f) for (std::size_t i = 0; i + 2 < p.mesh.triangles.size(); i += 3) std::swap(p.mesh.triangles[i + 1], p.mesh.triangles[i + 2]);   // a mirror turns the winding
+        p.bones.clear(); p.jointIdx.clear(); p.jointWt.clear();
+        p.node = 0;
     }
-    if (m.normals.size() != m.vertices.size()) m.normals.clear();
-    if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
-    return m;
+    ImportedNode root;
+    root.name = m.nodes.empty() ? std::string("root") : m.nodes[0].name;
+    m.nodes.assign(1, root);
+    m.clips.clear();
 }
 
-// Import via Assimp PRESERVING the node hierarchy, skins and animations — so FBX
-// (Mixamo / Meshy AI rigs), Collada etc. come in animated, mirroring the glTF branch:
-// one GameObject per node, SkinnedMesh from bones, ModelAnimator clips from channels.
-// Returns nullptr when the file can't be loaded (caller falls back / reports).
-static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path, bool* ok) {
-    Assimp::Importer imp;
-    // Fold FBX pivot helper nodes into the real nodes — otherwise every joint
-    // explodes into $AssimpFbx$_Translation/_Rotation/... chains.
-    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    const aiScene* sc = imp.ReadFile(path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs |
-        aiProcess_LimitBoneWeights);   // ≤4 weights per vertex (SkinnedMesh blends 4)
-    if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return nullptr; }
+} // namespace
 
+bool HasOwnReader(const std::string& ext) { return OwnSlot(ext) >= 0; }
+
+bool SetImportBackend(const std::string& ext, ImportBackend which) {
+    if (ext == "*") { for (auto& c : g_backendChoice) c = (int)which; return true; }
+    int s = OwnSlot(ext);
+    if (s < 0) return false;
+    g_backendChoice[s] = (int)which;
+    return true;
+}
+
+ImportBackend EffectiveImportBackend(const std::string& ext) {
+    const int s = OwnSlot(ext);
+    if (s < 0) return AssimpReadsExt(ext) ? ImportBackend::Assimp : ImportBackend::Default;
+    ImportBackend c = (ImportBackend)g_backendChoice[s].load();
+    if (c == ImportBackend::Own) return ImportBackend::Own;
+    if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
+    // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
+    // build has it (as before our readers existed), unless CMake asked for ours first.
+    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+        if (OwnOptedIn(s)) return ImportBackend::Own;
+        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+    }
+    if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
+    return ImportBackend::Assimp;
+}
+
+bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
+    out = ImportedModel{};
+    // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
+    const std::string ext = ExtensionOf(path);
+    // Our reader rejects a second `element vertex`. Assimp still loads that file,
+    // and the default choice would hand it to Assimp after our reader said no.
+    // The two blocks then contribute normals and UVs that do not line up with
+    // positions. Refuse the file before either backend runs.
+    if (ext == ".ply" && PlyFileDeclaresDuplicateVertex(path)) {
+        if (err) *err = "PLY declares more than one vertex element";
+        return false;
+    }
+    ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
+    if (use == ImportBackend::Assimp) {
+#ifdef OKAY_HAVE_ASSIMP
+        return assimp_backend::Read(path, flatten, out, err);
+#else
+        if (err) *err = "this build was compiled without Assimp";
+        return false;
+#endif
+    }
+    if (use == ImportBackend::Own) {
+        const int s = OwnSlot(ext);
+        if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
+        std::string e1;
+        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
+                  : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
+                  : s == 5 ? ReadBvhFile(path, out, &e1)
+                  : s == 6 ? ReadOffFile(path, out, &e1)
+                  : s == 7 ? ReadSmdFile(path, out, &e1)
+                  : s == 8 ? ReadMd5File(path, out, &e1)
+                  : s == 9 ? ReadMs3dFile(path, out, &e1)
+                  : s == 10 ? ReadAseFile(path, out, &e1)
+                  : s == 11 ? Read3mfFile(path, out, &e1, flatten)
+                  : s == 12 ? ReadAmfFile(path, out, &e1, flatten)
+                  : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
+                  : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
+                  : s == 15 ? ReadLwoFile(path, out, &e1)
+                  : ReadBlendFile(path, out, &e1, flatten);   // 16 (the Blender reader flattens by itself)
+        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
+        if (good) {
+            for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+            return true;
+        }
+        // Our reader said no. With the default choice, give Assimp a go when the build has it.
+        if (which == ImportBackend::Default && AssimpAvailable()) {
+#ifdef OKAY_HAVE_ASSIMP
+            if (assimp_backend::Read(path, flatten, out, nullptr)) return true;
+#endif
+        }
+        out = ImportedModel{};
+        if (err) *err = e1;
+        return false;
+    }
+    if (err) {
+        const std::string x = ExtensionOf(path);
+        const int xs = OwnSlot(x);
+        const bool optIn = xs >= 3 && xs - 3 < (int)(sizeof(kOptIn) / sizeof(kOptIn[0]));
+        const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
+        const char* var = optIn ? kOptIn[xs - 3].var : "";
+        if (nm)
+            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+        else *err = "no reader for this format in this build";
+    }
+    return false;
+}
+
+Mesh MergeModelMeshes(const ImportedModel& m, std::string* outTexture) {
+    Mesh out;
+    for (const ImportedPart& p : m.parts) {
+        const int base = (int)out.vertices.size();
+        out.vertices.insert(out.vertices.end(), p.mesh.vertices.begin(), p.mesh.vertices.end());
+        out.normals.insert(out.normals.end(), p.mesh.normals.begin(), p.mesh.normals.end());
+        out.uvs.insert(out.uvs.end(), p.mesh.uvs.begin(), p.mesh.uvs.end());
+        for (int t : p.mesh.triangles) out.triangles.push_back(base + t);
+    }
+    if (out.normals.size() != out.vertices.size()) out.normals.clear();
+    if (out.uvs.size()     != out.vertices.size()) out.uvs.clear();
+    if (outTexture)
+        for (const ImportedMaterial& mat : m.materials)
+            if (!mat.texture.empty()) { *outTexture = mat.texture; break; }
+    return out;
+}
+
+namespace {
+
+// Pull the WHOLE material onto a MeshRenderer — albedo, normal, specular/gloss
+// and AO maps, plus diffuse/emissive colors and shininess/metallic/roughness
+// factors — so a downloaded model lights like it does in other engines instead
+// of arriving as flat white. Mirrors ApplyGltfMaterial.
+void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
+    if (mi < 0 || mi >= (int)m.materials.size() || !mr) return;
+    const ImportedMaterial& mat = m.materials[(std::size_t)mi];
+    if (!mat.texture.empty())     mr->texture = mat.texture;
+    if (!mat.normalMap.empty())   mr->normalMap = mat.normalMap;
+    if (!mat.specularMap.empty()) mr->specularMap = mat.specularMap;
+    if (!mat.aoMap.empty())       mr->aoMap = mat.aoMap;
+    // The diffuse COLOR only applies when there's no albedo texture (textured
+    // materials often carry a black/grey diffuse that would tint the texture to mud).
+    if (mr->texture.empty() && mat.hasDiffuse && mat.diffuse.r + mat.diffuse.g + mat.diffuse.b > 0.02f)
+        mr->color = Color(mat.diffuse.r, mat.diffuse.g, mat.diffuse.b, mr->color.a);
+    if (mat.hasEmissive && mat.emissive.r + mat.emissive.g + mat.emissive.b > 0.02f)
+        mr->emissive = Color(mat.emissive.r, mat.emissive.g, mat.emissive.b, 1.0f);
+    if (mat.shininess > 1.0f) {
+        mr->shininess = mat.shininess > 128.0f ? 128.0f : mat.shininess;
+        if (mr->specular <= 0.0f) mr->specular = 0.4f;
+    }
+    if (mat.metallic > 0.0f) mr->metallic = mat.metallic > 1.0f ? 1.0f : mat.metallic;
+    if (mat.roughness >= 0.0f) {
+        float smooth = 1.0f - (mat.roughness > 1.0f ? 1.0f : mat.roughness);   // same mapping as glTF
+        mr->shininess = 4.0f + smooth * 124.0f;
+        mr->specular  = 0.15f + smooth * 0.85f;
+    }
+}
+
+} // namespace
+
+GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
+    // A model with nodes but no mesh (a BVH skeleton, a COLLADA file of cameras and lights only) imports as its node
+    // hierarchy; a model with neither nodes nor parts is nothing to build.
+    if (model.parts.empty() && model.nodes.empty()) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
-    std::unordered_map<std::string, GameObject*> byName;
-    struct MeshSite { GameObject* go; const aiMesh* am; };
-    std::vector<MeshSite> sites;
 
+    if (model.nodes.empty()) {
+        // Flat result (our own OBJ / STL / PLY readers): the parts hang straight off
+        // the root. Exporters disagree on units (Meshy etc. emit cm/mm), so scale all
+        // parts together to a usable size — the same rule as Mesh::NormalizeImportScale.
+        std::vector<Mesh> meshes;
+        for (const ImportedPart& p : model.parts) meshes.push_back(p.mesh);
+        {
+            Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+            bool any = false;
+            for (const Mesh& mm : meshes) {
+                if (mm.vertices.empty()) continue;
+                Vec3 a, b; mm.Bounds(a, b);
+                lo = Vec3{std::fmin(lo.x, a.x), std::fmin(lo.y, a.y), std::fmin(lo.z, a.z)};
+                hi = Vec3{std::fmax(hi.x, b.x), std::fmax(hi.y, b.y), std::fmax(hi.z, b.z)};
+                any = true;
+            }
+            if (any) {
+                Vec3 sz = hi - lo;
+                float d = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
+                if (d > 0.0f && (d > 20.0f || d < 0.02f)) {
+                    float s = 2.0f / d;
+                    for (Mesh& mm : meshes) for (Vec3& v : mm.vertices) v = v * s;
+                }
+            }
+        }
+        int made = 0;
+        for (std::size_t i = 0; i < model.parts.size(); ++i) {
+            if (meshes[i].vertices.empty()) continue;
+            GameObject* host = root;
+            if (model.parts.size() > 1) {
+                std::string nm = meshes[i].name.empty() ? "part" + std::to_string(i) : meshes[i].name;
+                host = scene.CreateGameObject(nm);
+                host->transform->SetParent(root->transform, false);
+            }
+            auto* mr = host->AddComponent<MeshRenderer>();
+            mr->mesh = meshes[i]; mr->doubleSided = true;
+            ApplyImportedMaterial(model, model.parts[i].material, mr);
+            ++made;
+        }
+        if (made == 0) { scene.Destroy(root); return nullptr; }
+        AutoNormalizeImportScale(scene, root);
+        return root;
+    }
+
+    std::unordered_map<std::string, GameObject*> byName;
+    struct MeshSite { GameObject* go; const ImportedPart* part; };
+    std::vector<MeshSite> sites;
+    std::vector<GameObject*> goOf(model.nodes.size(), nullptr);
+    std::vector<int> partsOnNode(model.nodes.size(), 0);
     std::unordered_map<std::string, int> nameUse;   // later duplicates get a suffix (first keeps the name bones/channels use)
-    std::function<void(const aiNode*, Transform*)> build = [&](const aiNode* n, Transform* parent) {
-        std::string nm = n->mName.C_Str();
-        std::string objName = nm.empty() ? "node" : nm;
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const ImportedNode& n = model.nodes[i];
+        std::string objName = n.name.empty() ? "node" : n.name;
         if (int c = nameUse[objName]++) objName += "_" + std::to_string(c);
         GameObject* g = scene.CreateGameObject(objName);
-        aiVector3D s, t; aiQuaternion r;
-        n->mTransformation.Decompose(s, r, t);
-        g->transform->localPosition = Vec3{t.x, t.y, t.z};
-        g->transform->localRotation = Quat{r.x, r.y, r.z, r.w};
-        g->transform->localScale    = Vec3{s.x, s.y, s.z};
+        g->transform->localPosition = n.position;
+        g->transform->localRotation = n.rotation;
+        g->transform->localScale    = n.scale;
+        Transform* parent = (n.parent >= 0 && n.parent < (int)i && goOf[(std::size_t)n.parent]) ? goOf[(std::size_t)n.parent]->transform : root->transform;
         g->transform->SetParent(parent, false);
-        if (!nm.empty() && !byName.count(nm)) byName[nm] = g;
-        for (unsigned i = 0; i < n->mNumMeshes; ++i) {
+        goOf[i] = g;
+        if (!n.name.empty() && !byName.count(n.name)) byName[n.name] = g;
+        for (const ImportedPart& part : model.parts) {
+            if (part.node != (int)i) continue;
             GameObject* host = g;
-            if (i > 0) {   // extra meshes on this node get child objects
-                host = scene.CreateGameObject(g->name + "_m" + std::to_string(i));
+            int k = partsOnNode[i]++;
+            if (k > 0) {   // extra meshes on this node get child objects
+                host = scene.CreateGameObject(g->name + "_m" + std::to_string(k));
                 host->transform->SetParent(g->transform, false);
             }
-            sites.push_back({host, sc->mMeshes[n->mMeshes[i]]});
+            sites.push_back({host, &part});
         }
-        for (unsigned c = 0; c < n->mNumChildren; ++c) build(n->mChildren[c], g->transform);
-    };
-    build(sc->mRootNode, root->transform);
+    }
 
     for (const MeshSite& site : sites) {
-        Mesh bind = MeshFromAi(site.am);
-        if (bind.vertices.empty()) continue;
+        const ImportedPart& part = *site.part;
+        if (part.mesh.vertices.empty()) continue;
         auto* mr = site.go->AddComponent<MeshRenderer>();
-        mr->mesh = bind; mr->doubleSided = true;
-        ApplyAssimpMaterial(sc, site.am->mMaterialIndex, path, mr);   // full material, not just albedo
+        mr->mesh = part.mesh; mr->doubleSided = true;
+        ApplyImportedMaterial(model, part.material, mr);   // full material, not just albedo
 
-        if (site.am->mNumBones == 0) continue;
+        if (part.bones.empty()) continue;
         auto* sm = site.go->AddComponent<SkinnedMesh>();
-        sm->bind = bind;
-        sm->jointIdx.assign(bind.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
-        sm->jointWt.assign(bind.vertices.size(), std::array<float, 4>{0, 0, 0, 0});
-        for (unsigned b = 0; b < site.am->mNumBones; ++b) {
-            const aiBone* bone = site.am->mBones[b];
-            std::string bn = bone->mName.C_Str();
-            auto it = byName.find(bn);
+        sm->bind = part.mesh;
+        sm->jointIdx = part.jointIdx;
+        sm->jointWt = part.jointWt;
+        sm->jointIdx.resize(part.mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+        sm->jointWt.resize(part.mesh.vertices.size(), std::array<float, 4>{0, 0, 0, 0});
+        for (const ImportedBone& b : part.bones) {
+            auto it = byName.find(b.name);
             sm->joints.push_back(it != byName.end() ? it->second->transform : nullptr);
-            sm->jointNames.push_back(bn);
-            sm->inverseBind.push_back(AiToMat4(bone->mOffsetMatrix));
-            for (unsigned w = 0; w < bone->mNumWeights; ++w) {
-                unsigned v = bone->mWeights[w].mVertexId;
-                float   wt = bone->mWeights[w].mWeight;
-                if (v >= sm->jointWt.size() || wt <= 0.0f) continue;
-                // Keep the 4 strongest influences (assimp already limits to 4).
-                auto& ws = sm->jointWt[v]; auto& is = sm->jointIdx[v];
-                int slot = 0;
-                for (int k = 1; k < 4; ++k) if (ws[k] < ws[slot]) slot = k;
-                if (wt > ws[slot]) { ws[slot] = wt; is[slot] = (int)b; }
-            }
+            sm->jointNames.push_back(b.name);
+            sm->inverseBind.push_back(b.inverseBind);
         }
+        ValidateSkinJoints(*sm, path);
     }
 
     // Animations -> a ModelAnimator clip library on the root (same as the glTF path).
-    if (sc->mNumAnimations > 0) {
+    if (!model.clips.empty()) {
         auto* ma = root->AddComponent<ModelAnimator>();
-        for (unsigned a = 0; a < sc->mNumAnimations; ++a) {
-            const aiAnimation* an = sc->mAnimations[a];
-            double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 25.0;
+        for (const ImportedClip& ic : model.clips) {
             ModelAnimator::Clip clip;
-            std::string cn = an->mName.C_Str();
-            // FBX tools often emit "Armature|Walk" style names — keep the last segment.
-            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
-            clip.name = cn.empty() ? ("clip" + std::to_string(a)) : cn;
-            for (unsigned c = 0; c < an->mNumChannels; ++c) {
-                const aiNodeAnim* ch = an->mChannels[c];
-                std::string nodeName = ch->mNodeName.C_Str();
-                if (nodeName.empty() || !byName.count(nodeName)) continue;
-                clip.nodes.push_back({nodeName, AnimationClip{}});
+            clip.name = ic.name;
+            for (const ImportedChannel& ch : ic.channels) {
+                if (ch.node.empty() || !byName.count(ch.node)) continue;
+                clip.nodes.push_back({ch.node, AnimationClip{}});
                 AnimationClip& ac = clip.nodes.back().clip;
                 ac.smoothKeys = false;   // sampled data: play back linearly, as authored
-                for (unsigned k = 0; k < ch->mNumPositionKeys; ++k) {
-                    float t = (float)(ch->mPositionKeys[k].mTime / tps);
-                    const aiVector3D& v = ch->mPositionKeys[k].mValue;
-                    ac.AddKey("position.x", t, v.x);
-                    ac.AddKey("position.y", t, v.y);
-                    ac.AddKey("position.z", t, v.z);
+                for (const ImportedKeyV3& k : ch.position) {
+                    ac.AddKey("position.x", k.time, k.value.x);
+                    ac.AddKey("position.y", k.time, k.value.y);
+                    ac.AddKey("position.z", k.time, k.value.z);
                 }
                 // Keep quaternion keys on one hemisphere: the Animator lerps the raw
                 // components, and a sign flip between neighbours reads as a wild spin.
-                aiQuaternion prev; bool hasPrev = false;
-                for (unsigned k = 0; k < ch->mNumRotationKeys; ++k) {
-                    float t = (float)(ch->mRotationKeys[k].mTime / tps);
-                    aiQuaternion q = ch->mRotationKeys[k].mValue;
+                Quat prev; bool hasPrev = false;
+                for (const ImportedKeyQ& k : ch.rotation) {
+                    Quat q = k.value;
                     if (hasPrev && (q.x*prev.x + q.y*prev.y + q.z*prev.z + q.w*prev.w) < 0.0f) {
                         q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w;
                     }
                     prev = q; hasPrev = true;
-                    ac.AddKey("rotation.qx", t, q.x);
-                    ac.AddKey("rotation.qy", t, q.y);
-                    ac.AddKey("rotation.qz", t, q.z);
-                    ac.AddKey("rotation.qw", t, q.w);
+                    ac.AddKey("rotation.qx", k.time, q.x);
+                    ac.AddKey("rotation.qy", k.time, q.y);
+                    ac.AddKey("rotation.qz", k.time, q.z);
+                    ac.AddKey("rotation.qw", k.time, q.w);
                 }
-                for (unsigned k = 0; k < ch->mNumScalingKeys; ++k) {
-                    float t = (float)(ch->mScalingKeys[k].mTime / tps);
-                    const aiVector3D& v = ch->mScalingKeys[k].mValue;
-                    ac.AddKey("scale.x", t, v.x);
-                    ac.AddKey("scale.y", t, v.y);
-                    ac.AddKey("scale.z", t, v.z);
+                for (const ImportedKeyV3& k : ch.scale) {
+                    ac.AddKey("scale.x", k.time, k.value.x);
+                    ac.AddKey("scale.y", k.time, k.value.y);
+                    ac.AddKey("scale.z", k.time, k.value.z);
                 }
                 if (ac.Tracks().empty()) clip.nodes.pop_back();
             }
@@ -625,10 +860,8 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
 
     NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
-    if (ok) *ok = true;
     return root;
 }
-#endif // OKAY_HAVE_ASSIMP
 
 // ============================================================================
 // FBX (built in, via the vendored ufbx — no Assimp needed). Mixamo characters,
@@ -649,7 +882,13 @@ Mat4 UfbxToMat4(const ufbx_matrix& a) {
 }
 std::string UfbxStr(const ufbx_string& s) { return std::string(s.data, s.length); }
 
-ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
+// Hardening: the ufbx path enforces the same numbers as okay::fbx::Limits (one source of truth).
+// The node hierarchy depth is capped inside ufbx itself (node_depth_limit; its default of 0 lets a
+// flat file declare an arbitrarily deep Model chain), and the node / animation counts are checked
+// right after loading, before anything is built from them. `limitHit` is set when the file was
+// refused for size or shape rather than because it could not be read.
+ufbx_scene* LoadFbx(const std::string& path, std::string* err, bool* limitHit = nullptr) {
+    const fbx::Limits lim;
     ufbx_load_opts opts{};
     opts.target_axes = ufbx_axes_right_handed_y_up;
     opts.target_unit_meters = 1.0f;
@@ -660,9 +899,30 @@ ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
     opts.generate_missing_normals = true;
     opts.ignore_missing_external_files = true;
     opts.evaluate_skinning = false;
+    opts.node_depth_limit = (uint32_t)lim.maxNodeDepth;
+    if (limitHit) *limitHit = false;
     ufbx_error e{};
     ufbx_scene* sc = ufbx_load_file(path.c_str(), &opts, &e);
-    if (!sc && err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+    if (!sc) {
+        if (err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+        if (limitHit && (e.type == UFBX_ERROR_NODE_DEPTH_LIMIT || e.type == UFBX_ERROR_MEMORY_LIMIT || e.type == UFBX_ERROR_ALLOCATION_LIMIT)) *limitHit = true;
+        return nullptr;
+    }
+    std::string why;
+    if (sc->nodes.count > lim.maxNodes) why = "too many nodes";
+    else if (sc->anim_stacks.count > lim.maxAnimStacks) why = "too many animation stacks";
+    else if (sc->anim_layers.count > lim.maxAnimLayers) why = "too many animation layers";
+    else if (sc->anim_curves.count > lim.maxAnimCurves) why = "too many animation curves";
+    else {
+        std::size_t keys = 0;
+        for (const ufbx_anim_curve* c : sc->anim_curves) { keys += c->keyframes.count; if (keys > lim.maxAnimKeys) { why = "too many animation keys"; break; } }
+    }
+    if (!why.empty()) {
+        ufbx_free_scene(sc);
+        if (err) *err = "FBX rejected: " + why;
+        if (limitHit) *limitHit = true;
+        return nullptr;
+    }
     return sc;
 }
 
@@ -673,14 +933,14 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
         if (!s->length) continue;
-        fs::path p(UfbxStr(*s));
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
-        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
-        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).string();
+        const fs::path p = fs::u8path(UfbxStr(*s));
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).u8string();
+        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).u8string();
     }
     if (tex->content.size > 0 && tex->content.data) {
         std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
@@ -688,13 +948,13 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
             const unsigned char* d = (const unsigned char*)tex->content.data;
             ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
         }
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -872,6 +1132,11 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
+    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+        bool ownOk = false;
+        Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+        if (ownOk) { if (ok) *ok = true; return m; }
+    }
     ufbx_scene* sc = LoadFbx(path, nullptr);
     if (!sc) { if (ok) *ok = false; return merged; }
     for (const ufbx_node* node : sc->nodes) {
@@ -897,8 +1162,13 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
     return merged;
 }
 
-static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err) {
-    ufbx_scene* sc = LoadFbx(path, err);
+// `rejected` is set when the file was refused for going past a size/shape limit (fbx::Limits): the
+// caller must then fail the import instead of falling back to another reader that would take the
+// same hostile file.
+static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
+    if (fbx::OwnReaderEnabled())
+        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
+    ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
     GameObject* root = scene.CreateGameObject(BaseName(path));
@@ -907,21 +1177,26 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     int texSerial = 0;
 
     // Hierarchy: one GameObject per FBX node (names made unique: clips and
-    // skins refer to nodes by name).
-    std::function<void(const ufbx_node*, Transform*)> build = [&](const ufbx_node* n, Transform* parent) {
-        std::string nm = UfbxStr(n->name);
-        if (nm.empty()) nm = n->mesh ? "mesh" : "node";
-        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
-        GameObject* g = scene.CreateGameObject(nm);
-        goOf[n->typed_id] = g;
-        const ufbx_transform& t = n->local_transform;
-        g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
-        g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
-        g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
-        g->transform->SetParent(parent, false);
-        for (const ufbx_node* c : n->children) build(c, g->transform);
-    };
-    for (const ufbx_node* c : sc->root_node->children) build(c, root->transform);
+    // skins refer to nodes by name). Iterative (explicit stack, depth-first in child order),
+    // so the depth of the file never becomes call depth.
+    {
+        std::vector<std::pair<const ufbx_node*, Transform*>> todo;
+        for (std::size_t i = sc->root_node->children.count; i-- > 0;) todo.push_back({sc->root_node->children.data[i], root->transform});
+        while (!todo.empty()) {
+            const ufbx_node* n = todo.back().first; Transform* parent = todo.back().second; todo.pop_back();
+            std::string nm = UfbxStr(n->name);
+            if (nm.empty()) nm = n->mesh ? "mesh" : "node";
+            if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+            GameObject* g = scene.CreateGameObject(nm);
+            goOf[n->typed_id] = g;
+            const ufbx_transform& t = n->local_transform;
+            g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
+            g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
+            g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
+            g->transform->SetParent(parent, false);
+            for (std::size_t i = n->children.count; i-- > 0;) todo.push_back({n->children.data[i], g->transform});
+        }
+    }
 
     // Meshes (after the hierarchy, so skins can find every bone).
     for (const ufbx_node* node : sc->nodes) {
@@ -971,6 +1246,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
                 // which may sit under a child object) into bone space.
                 sm->inverseBind.push_back(UfbxToMat4(cl->geometry_to_bone));
             }
+            ValidateSkinJoints(*sm, path);
             if (g != host) {   // the part's object is a child of the mesh node: same space
                 g->transform->localPosition = Vec3{0, 0, 0};
             }
@@ -990,18 +1266,45 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     }
     if (sc->anim_stacks.count > 0) {
         auto* ma = root->AddComponent<ModelAnimator>();
+        // Whole-file bake budget (a hostile file can point any number of stacks at the same curves):
+        // baked keys over all stacks, and each bake may not allocate more than what is left.
+        const std::size_t bakeKeyBudget = fbx::Limits().maxTotalBakedSamples;
+        const std::size_t kBakedKeyBytes = 40;   // sizeof(ufbx_baked_quat), the largest baked key
+        std::size_t bakedKeys = 0;
         for (const ufbx_anim_stack* st : sc->anim_stacks) {
             ufbx_bake_opts bo{};
             bo.trim_start_time = true;
             bo.resample_rate = 30.0;
+            bo.result_allocator.memory_limit = std::max<std::size_t>(1, (bakeKeyBudget - bakedKeys) * kBakedKeyBytes);   // 0 would mean unlimited
             ufbx_error be{};
             ufbx_baked_anim* bake = ufbx_bake_anim(sc, st->anim, &bo, &be);
-            if (!bake) continue;
+            if (!bake) {
+                if (be.type == UFBX_ERROR_MEMORY_LIMIT || be.type == UFBX_ERROR_ALLOCATION_LIMIT) {
+                    if (err) *err = "FBX rejected: animation bake budget exceeded";
+                    if (rejected) *rejected = true;
+                    ufbx_free_scene(sc);
+                    scene.Destroy(root);
+                    if (ok) *ok = false;
+                    return nullptr;
+                }
+                continue;
+            }
+            for (const ufbx_baked_node& bn : bake->nodes) bakedKeys += bn.translation_keys.count + bn.rotation_keys.count + bn.scale_keys.count;
+            for (const ufbx_baked_element& be3 : bake->elements) for (const ufbx_baked_prop& bp : be3.props) bakedKeys += bp.keys.count;
+            if (bakedKeys > bakeKeyBudget) {
+                ufbx_free_baked_anim(bake);
+                if (err) *err = "FBX rejected: animation bake budget exceeded";
+                if (rejected) *rejected = true;
+                ufbx_free_scene(sc);
+                scene.Destroy(root);
+                if (ok) *ok = false;
+                return nullptr;
+            }
             ModelAnimator::Clip clip;
             std::string cn = UfbxStr(st->name);
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();   // Mixamo: the file name says what it is
+                cn = std::filesystem::u8path(path).stem().u8string();   // Mixamo: the file name says what it is
                 if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;
@@ -1056,6 +1359,335 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     return root;
 }
 
+// ============================================================================
+// FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx
+// path above and OFF by default: selected by -DOKAY_OWN_FBX=ON, the OKAY_OWN_FBX
+// environment variable, or okay::fbx::SetOwnReaderEnabled(true). It produces the
+// same scene data (hierarchy, per-material meshes, skins, blend shapes, baked
+// clips) so the rest of the engine does not care which reader ran. On failure
+// the ufbx path runs instead.
+// ============================================================================
+namespace {
+
+Mat4 OwnToMat4(const fbx::Mat& a) {
+    Mat4 r = Mat4::Identity();
+    for (int row = 0; row < 4; ++row) for (int col = 0; col < 4; ++col) r.at(col, row) = (float)a.m[row * 4 + col];
+    return r;
+}
+
+std::string OwnTexturePath(const fbx::Texture* tex, const std::string& modelPath, int serial) {
+    if (!tex) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::u8path(modelPath).parent_path();
+    for (const std::string* s : {&tex->fileName, &tex->relativeFileName}) {
+        if (s->empty()) continue;
+        const fs::path p = fs::u8path(*s);
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        // Windows paths in the file ("C:\art\x.png") on a POSIX host: use the part after the last separator.
+        std::string base = *s; const std::size_t sl = base.find_last_of("/\\"); if (sl != std::string::npos) base = base.substr(sl + 1);
+        if (!base.empty()) {
+            if (fs::exists(dir / fs::u8path(base), ec)) return (dir / fs::u8path(base)).u8string();
+            if (fs::exists(dir / "textures" / fs::u8path(base), ec)) return (dir / "textures" / fs::u8path(base)).u8string();
+        }
+    }
+    if (!tex->content.empty()) {
+        std::string ext = fs::path(tex->fileName).extension().string();
+        if (ext.empty()) ext = (tex->content.size() > 2 && tex->content[0] == 0xFF && tex->content[1] == 0xD8) ? ".jpg" : ".png";
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
+        if (!fs::exists(out, ec)) {
+            std::ofstream of(out, std::ios::binary);
+            if (!of) return {};
+            of.write((const char*)tex->content.data(), (std::streamsize)tex->content.size());
+        }
+        return out.u8string();
+    }
+    return {};
+}
+
+void ApplyOwnMaterial(MeshRenderer& mr, const fbx::Scene& sc, int matIdx, const std::string& modelPath, int serial) {
+    if (matIdx < 0 || matIdx >= (int)sc.materials.size()) return;
+    const fbx::Material& m = sc.materials[(std::size_t)matIdx];
+    if (m.diffuseTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.diffuseTexture], modelPath, serial);
+        if (!p.empty()) mr.texture = p;
+    }
+    if (m.hasDiffuse && mr.texture.empty())   // with a texture the factor would only darken it (see ApplyFbxMaterial)
+        mr.color = Color((float)m.diffuse[0], (float)m.diffuse[1], (float)m.diffuse[2], 1.0f);
+    if (m.normalTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.normalTexture], modelPath, serial + 1000);
+        if (!p.empty()) mr.normalMap = p;
+    }
+    if (m.hasEmissive) {
+        const float f = m.hasEmissiveFactor ? (float)m.emissiveFactor : 1.0f;
+        if (m.emissive[0] + m.emissive[1] + m.emissive[2] > 0.0) mr.emissive = Color((float)m.emissive[0] * f, (float)m.emissive[1] * f, (float)m.emissive[2] * f, 1.0f);
+    }
+    if (m.hasRoughness || m.hasMetalness) {
+        const float rough = m.hasRoughness ? (float)m.roughness : 0.6f;
+        const float metal = m.hasMetalness ? (float)m.metalness : 0.0f;
+        const float smooth = 1.0f - std::fmin(1.0f, std::fmax(0.0f, rough));
+        mr.metallic = metal;
+        mr.shininess = 4.0f + smooth * 124.0f;
+        mr.specular = 0.15f + smooth * 0.85f;
+        mr.reflectivity = metal * smooth;
+    }
+}
+
+int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
+    return slot >= 0 && slot < (int)m.materials.size() ? m.materials[(std::size_t)slot] : -1;
+}
+
+// One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
+                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
+                  std::vector<uint32_t>* outVi) {
+    Mesh out;
+    std::vector<FbxVert> verts;
+    verts.reserve(part.corners.size());
+    for (const fbx::Corner& c : part.corners) {
+        FbxVert fv{};
+        fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
+        fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
+        fv.u = c.uv[0]; fv.v = 1.0f - c.uv[1];   // FBX UVs are bottom-up
+        fv.w[0] = 1.0f;
+        fv.vi = c.cp;
+        if (skinned && c.cp < mesh.skinWeights.size()) {
+            const auto& inf = mesh.skinWeights[c.cp];
+            float sum = 0.0f;
+            fv.w[0] = 0.0f;
+            const std::size_t nw = inf.size() < 4 ? inf.size() : 4;
+            for (std::size_t wi = 0; wi < nw; ++wi) { fv.j[wi] = (int)inf[wi].cluster; fv.w[wi] = inf[wi].weight; sum += fv.w[wi]; }
+            if (sum > 1e-6f) for (float& w : fv.w) w /= sum;
+        }
+        verts.push_back(fv);
+    }
+    if (verts.empty()) return out;
+    std::unordered_map<std::string, uint32_t> seen;
+    seen.reserve(verts.size());
+    std::vector<uint32_t> indices(verts.size());
+    std::vector<uint32_t> unique;
+    for (std::size_t i = 0; i < verts.size(); ++i) {
+        auto ins = seen.emplace(std::string((const char*)&verts[i], sizeof(FbxVert)), (uint32_t)unique.size());
+        if (ins.second) unique.push_back((uint32_t)i);
+        indices[i] = ins.first->second;
+    }
+    const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
+    for (uint32_t u : unique) {
+        const FbxVert& v = verts[u];
+        out.vertices.push_back(Vec3{v.px, v.py, v.pz});
+        if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
+        if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
+        if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
+        if (outVi) outVi->push_back(v.vi);
+    }
+    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    return out;
+}
+
+void AddOwnBlendShapes(const fbx::Mesh& mesh, const std::vector<uint32_t>& vi, GameObject* g, const Mat4* lin) {
+    if (!g || mesh.channels.empty()) return;
+    BlendShapes* bs = nullptr;
+    for (const fbx::BlendChannel& ch : mesh.channels) {
+        std::vector<Vec3> dp(vi.size(), Vec3{0, 0, 0}), dn;
+        const bool hasN = !ch.dn.empty() && ch.dn.size() == ch.dp.size();
+        if (hasN) dn.assign(vi.size(), Vec3{0, 0, 0});
+        std::unordered_map<uint32_t, uint32_t> slot;
+        for (std::size_t k = 0; k < ch.indices.size(); ++k) slot[ch.indices[k]] = (uint32_t)k;
+        for (std::size_t v = 0; v < vi.size(); ++v) {
+            auto it = slot.find(vi[v]);
+            if (it == slot.end()) continue;
+            const std::size_t k = it->second;
+            Vec3 d{ch.dp[k * 3], ch.dp[k * 3 + 1], ch.dp[k * 3 + 2]};
+            dp[v] = lin ? lin->MultiplyVector(d) : d;
+            if (hasN) { Vec3 n{ch.dn[k * 3], ch.dn[k * 3 + 1], ch.dn[k * 3 + 2]}; dn[v] = lin ? lin->MultiplyVector(n) : n; }
+        }
+        if (!bs) bs = g->AddComponent<BlendShapes>();
+        std::string nm = ch.name;
+        if (std::size_t dot = nm.find_last_of('.'); dot != std::string::npos && dot + 1 < nm.size()) nm = nm.substr(dot + 1);
+        if (nm.empty()) nm = "shape" + std::to_string(bs->shapes.size());
+        bs->AddShape(nm, dp, dn, (float)ch.weight);
+    }
+    if (!bs) return;
+    if (!g->GetComponent<SkinnedMesh>())
+        if (auto* mr = g->GetComponent<MeshRenderer>()) {
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = mr->mesh;
+            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
+            sm->joints = {g->transform}; sm->jointNames = {g->name};
+            sm->inverseBind = {Mat4::Identity()};
+        }
+    bs->Apply(true);
+}
+
+bool OwnIsIdentity(const fbx::Mat& m) {
+    static const double id[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    for (int i = 0; i < 12; ++i) if (std::fabs(m.m[i] - id[i]) > 1e-6) return false;
+    return true;
+}
+
+} // namespace
+
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
+    Mesh merged;
+    fbx::Scene sc; std::string err;
+    if (!fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
+    for (const fbx::SceneNode& node : sc.nodes) {
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
+        const Mat4 g2w = OwnToMat4(node.geometryToWorld);
+        for (const fbx::Part& part : fm.parts) {
+            Mesh m = TransformedMesh(BuildOwnPart(fm, part, false, nullptr, nullptr, nullptr), g2w);
+            const int base = (int)merged.vertices.size();
+            const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
+            const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
+            merged.vertices.insert(merged.vertices.end(), m.vertices.begin(), m.vertices.end());
+            if (keepN) merged.normals.insert(merged.normals.end(), m.normals.begin(), m.normals.end()); else merged.normals.clear();
+            if (keepUV) merged.uvs.insert(merged.uvs.end(), m.uvs.begin(), m.uvs.end()); else merged.uvs.clear();
+            for (int t : m.triangles) merged.triangles.push_back(base + t);
+            if (outTexture && outTexture->empty()) {
+                MeshRenderer tmp; ApplyOwnMaterial(tmp, sc, OwnMaterialOfSlot(fm, part.slot), path, 0);
+                *outTexture = tmp.texture;
+            }
+        }
+    }
+    if (ok) *ok = !merged.vertices.empty();
+    return merged;
+}
+
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+    fbx::Scene sc;
+    if (!fbx::LoadFile(path, sc, err)) { if (ok) *ok = false; return nullptr; }
+    GameObject* root = scene.CreateGameObject(BaseName(path));
+    std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
+    std::unordered_map<std::string, int> nameUse;
+    int texSerial = 0;
+
+    for (std::size_t i = 0; i < sc.nodes.size(); ++i) {   // parents come before children
+        const fbx::SceneNode& n = sc.nodes[i];
+        std::string nm = n.name;
+        if (nm.empty()) nm = n.mesh >= 0 ? "mesh" : "node";
+        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(nm);
+        goOf[i] = g;
+        g->transform->localPosition = Vec3{(float)n.translation[0], (float)n.translation[1], (float)n.translation[2]};
+        g->transform->localRotation = Quat{(float)n.rotation[0], (float)n.rotation[1], (float)n.rotation[2], (float)n.rotation[3]};
+        g->transform->localScale    = Vec3{(float)n.scale[0], (float)n.scale[1], (float)n.scale[2]};
+        g->transform->SetParent(n.parent >= 0 ? goOf[(std::size_t)n.parent]->transform : root->transform, false);
+    }
+
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        const fbx::SceneNode& node = sc.nodes[ni];
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& mesh = sc.meshes[(std::size_t)node.mesh];
+        GameObject* host = goOf[ni];
+        const bool skinned = !mesh.clusters.empty();
+        const bool geomOffset = !OwnIsIdentity(node.geometryToNode);
+        const Mat4 g2n = OwnToMat4(node.geometryToNode);
+        const std::size_t parts = mesh.parts.size();
+        int made = 0;
+        for (std::size_t pi = 0; pi < parts; ++pi) {
+            const fbx::Part& part = mesh.parts[pi];
+            std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
+            std::vector<uint32_t> vi;
+            Mesh bind = BuildOwnPart(mesh, part, skinned, skinned ? &jIdx : nullptr, skinned ? &jWt : nullptr, mesh.channels.empty() ? nullptr : &vi);
+            if (bind.vertices.empty()) continue;
+            GameObject* g = host;
+            const int matIdx = OwnMaterialOfSlot(mesh, part.slot);
+            if (made++ > 0 || parts > 1) {
+                g = scene.CreateGameObject(host->name + "_" + (matIdx >= 0 ? sc.materials[(std::size_t)matIdx].name : ("mat" + std::to_string(pi))));
+                g->transform->SetParent(host->transform, false);
+            }
+            auto* mr = g->AddComponent<MeshRenderer>();
+            mr->doubleSided = true;
+            ApplyOwnMaterial(*mr, sc, matIdx, path, texSerial);
+            texSerial += 2;
+            if (!skinned) {
+                mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+                AddOwnBlendShapes(mesh, vi, g, geomOffset ? &g2n : nullptr);
+                continue;
+            }
+            mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
+            for (const fbx::Cluster& cl : mesh.clusters) {
+                GameObject* bg = cl.boneNode >= 0 ? goOf[(std::size_t)cl.boneNode] : nullptr;
+                sm->joints.push_back(bg ? bg->transform : nullptr);
+                sm->jointNames.push_back(bg ? bg->name : std::string());
+                sm->inverseBind.push_back(OwnToMat4(cl.geometryToBone));
+            }
+            ValidateSkinJoints(*sm, path);
+            if (g != host) g->transform->localPosition = Vec3{0, 0, 0};
+            AddOwnBlendShapes(mesh, vi, g, nullptr);
+        }
+    }
+
+    // Baked clips -> ModelAnimator
+    std::unordered_map<long long, std::pair<std::string, int>> chanOf;   // (mesh, channel) -> (node name, shape index)
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        if (sc.nodes[ni].mesh < 0) continue;
+        const int mi = sc.nodes[ni].mesh;
+        for (std::size_t c = 0; c < sc.meshes[(std::size_t)mi].channels.size(); ++c)
+            chanOf.emplace((long long)mi * 100000 + (long long)c, std::make_pair(goOf[ni]->name, (int)c));
+    }
+    if (!sc.clips.empty()) {
+        auto* ma = root->AddComponent<ModelAnimator>();
+        for (const fbx::Clip& fc : sc.clips) {
+            ModelAnimator::Clip clip;
+            std::string cn = fc.name;
+            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
+            if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
+                cn = std::filesystem::u8path(path).stem().u8string();
+                if (sc.clips.size() > 1) cn += "_" + std::to_string(ma->clips.size());
+            }
+            clip.name = cn;
+            for (const fbx::NodeAnim& bn : fc.nodes) {
+                if (bn.node < 0 || (std::size_t)bn.node >= goOf.size() || !goOf[(std::size_t)bn.node]) continue;
+                clip.nodes.push_back({goOf[(std::size_t)bn.node]->name, AnimationClip{}});
+                AnimationClip& ac = clip.nodes.back().clip;
+                ac.smoothKeys = false;
+                for (const fbx::Key3& k : bn.translation) {
+                    const float t = (float)k.time;
+                    ac.AddKey("position.x", t, (float)k.v[0]); ac.AddKey("position.y", t, (float)k.v[1]); ac.AddKey("position.z", t, (float)k.v[2]);
+                }
+                double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
+                for (const fbx::Key4& k : bn.rotation) {
+                    double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
+                    if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
+                    for (int a = 0; a < 4; ++a) prev[a] = q[a];
+                    hasPrev = true;
+                    const float t = (float)k.time;
+                    ac.AddKey("rotation.qx", t, (float)q[0]); ac.AddKey("rotation.qy", t, (float)q[1]);
+                    ac.AddKey("rotation.qz", t, (float)q[2]); ac.AddKey("rotation.qw", t, (float)q[3]);
+                }
+                for (const fbx::Key3& k : bn.scale) {
+                    const float t = (float)k.time;
+                    ac.AddKey("scale.x", t, (float)k.v[0]); ac.AddKey("scale.y", t, (float)k.v[1]); ac.AddKey("scale.z", t, (float)k.v[2]);
+                }
+                if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            for (const fbx::BlendAnim& ba : fc.blends) {
+                auto it = chanOf.find((long long)ba.mesh * 100000 + ba.channel);
+                if (it == chanOf.end() || ba.percent.empty()) continue;
+                ModelAnimator::NodeClip* ncp = nullptr;
+                for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
+                if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
+                const std::string track = "weights." + std::to_string(it->second.second);
+                for (const fbx::Key3& k : ba.percent) ncp->clip.AddKey(track, (float)k.time, (float)k.v[0] * 0.01f);
+            }
+            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
+        }
+        if (ma->clips.empty()) root->RemoveComponent<ModelAnimator>();
+        else { ma->active = 0; ma->autoPlay = true; }
+    }
+
+    NormalizeImportedClips(root);
+    AutoNormalizeImportScale(scene, root);
+    if (ok) *ok = true;
+    return root;
+}
+
 static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
@@ -1064,18 +1696,23 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
     // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
     // compiled in) is the fallback for files ufbx can't read.
     if (EndsWith(p, ".fbx")) {
-        std::string ferr;
-        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr)) return r;
+        std::string ferr; bool rejected = false;
+        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr, &rejected)) return r;
+        if (rejected) {   // past a size/shape limit: fail the import (no fallback reader gets the hostile file)
+            Log::Error("model import '", path, "': ", ferr);
+            if (ok) *ok = false;
+            return nullptr;
+        }
     }
-    // Non-glTF (OBJ / Assimp): bring it in as one mesh object.
+    // Non-glTF (OBJ / STL / PLY / Assimp formats): read through the seam, as a node
+    // hierarchy with skins + animations where the format has them (FBX rigs etc.).
+    // Falls through to the flattened single-mesh path on failure.
     if (!isGltf) {
-#ifdef OKAY_HAVE_ASSIMP
-        // Assimp formats: import as a node hierarchy with skins + animations (FBX
-        // rigs etc.). Falls through to the flattened single-mesh path on failure.
-        if (!EndsWith(p, ".obj"))
-            if (GameObject* r = ImportAssimpSceneGraph(scene, path, ok))
-                return r;
-#endif
+        {
+            ImportedModel im;
+            if (ImportModelData(path, im, ImportBackend::Default, /*flatten=*/false, nullptr))
+                if (GameObject* r = BuildSceneFromModel(scene, im, path)) { if (ok) *ok = true; return r; }
+        }
         bool okm = false; std::string tex;
         Mesh m = ImportModel(path, &okm, &tex);
         if (!okm || m.vertices.empty()) { if (ok) *ok = false; return nullptr; }
@@ -1090,6 +1727,22 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
+    if (const JVal* asset = doc.root.Find("asset"))
+        if (const JVal* ver = asset->Find("version"))
+            if (ver->type == JVal::Str && !ver->str.empty() && ver->str[0] == '1') {
+                Log::Error("model import '", path, "': glTF ", ver->str, " is not supported (only glTF 2.0); re-export the model as glTF 2.0");
+                if (ok) *ok = false;
+                return nullptr;
+            }
+    // A file that cannot be read without an extension we do not have would import as an empty scene: say so instead.
+    if (const JVal* req = doc.root.Find("extensionsRequired"))
+        for (const JVal& e : req->arr)
+            if (e.type == JVal::Str && (e.str == "KHR_draco_mesh_compression" || e.str == "EXT_meshopt_compression")) {
+                Log::Error("model import '", path, "': the glTF needs the extension ", e.str, ", which is not supported");
+                if (ok) *ok = false;
+                return nullptr;
+            }
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
@@ -1125,7 +1778,13 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             if (!tex.empty()) mr->texture = tex;
         }
         AutoNormalizeImportScale(scene, root);
-        if (ok) *ok = okm;
+        // A file that names no mesh at all (no nodes, no meshes) is an empty scene, as Assimp reads it; one that names
+        // meshes none of which could be read is a failed import.
+        // (Assimp also wants a scene: a file with no "scenes" at all, or a glTF 1.0 file whose meshes are an object, fails.)
+        const JVal* ms = doc.root.Find("meshes");
+        const JVal* scs = doc.root.Find("scenes");
+        const bool namesNoMesh = !ms || (ms->type == JVal::Arr && ms->arr.empty());
+        if (ok) *ok = okm || (namesNoMesh && scs && scs->type == JVal::Arr && !scs->arr.empty());
         return root;
     }
 
@@ -1267,6 +1926,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             auto* sm = host->AddComponent<SkinnedMesh>();
             sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
             sm->joints = jointTs; sm->jointNames = jointNs; sm->inverseBind = invBind;
+            ValidateSkinJoints(*sm, path);
             AddGltfMorphTargets(doc, meshIdx, pi, host);
         }
     }
@@ -1421,6 +2081,25 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
                 ++ai;
             }
             ma->active = 0; ma->autoPlay = true;
+        }
+    }
+    // Nodes that name a mesh but nothing came out (the .bin file is missing, the data is malformed, only points or lines):
+    // the import failed, it did not produce an empty model.
+    {
+        bool wantsMesh = false;
+        for (int i = 0; i < nodeCount && !wantsMesh; ++i) wantsMesh = nodes->arr[i].Find("mesh") != nullptr;
+        bool anyTriangles = false;   // any geometry: a points / lines primitive keeps its vertices and has no triangles
+        for (const auto& up : scene.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (!mr->mesh.vertices.empty()) { anyTriangles = true; break; } }
+            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (!sm->bind.vertices.empty()) { anyTriangles = true; break; } }
+        }
+        if (wantsMesh && !anyTriangles) {
+            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file or malformed accessors)");
+            scene.Destroy(root);
+            if (ok) *ok = false;
+            return nullptr;
         }
     }
     NormalizeImportedClips(root);

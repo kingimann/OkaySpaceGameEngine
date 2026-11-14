@@ -188,7 +188,7 @@ bool FilterMatches(Filter f, const std::string& e) {
         case Filter::Scenes: return e == ".okayscene";
         case Filter::Materials: return e == ".okaymat";
         case Filter::Prefabs: return e == ".okayprefab";
-        case Filter::Data: return e == ".okaydata" || e == ".okayitems" || e == ".okayloot" || e == ".okayrecipes" || e == ".json";
+        case Filter::Data: return e == ".okaydata" || e == ".okayitems" || e == ".okayloot" || e == ".okayrecipes" || e == ".okayweapon" || e == ".json";
         case Filter::Audio: return e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac";
         case Filter::Models: return okay::AssetTypeFromExtension(e) == okay::AssetType::Model;
         case Filter::All: case Filter::Folders: return true;
@@ -252,7 +252,12 @@ Query ParseQuery(const std::string& text) {
         } else if (w.rfind("ext:", 0) == 0) {
             q.ext = w.substr(4);
             if (!q.ext.empty() && q.ext[0] != '.') q.ext = "." + q.ext;
-        } else q.words.push_back(w);
+        } else if (w.rfind("l:", 0) == 0 && w.size() > 2) q.labels.push_back(w.substr(2));
+        else if (w == "is:unused") q.unused = true;
+        else if (w == "is:broken") q.broken = true;
+        else if (w.rfind("uses:", 0) == 0 && w.size() > 5) q.usedBy = w.substr(5);
+        else if (w.rfind("deps:", 0) == 0 && w.size() > 5) q.dependsOn = w.substr(5);
+        else q.words.push_back(w);
     }
     return q;
 }
@@ -275,66 +280,6 @@ void SortEntries(std::vector<Entry>& v, SortKey key, bool desc) {
         if (c != 0) return desc ? c > 0 : c < 0;
         return byName();
     });
-}
-
-std::vector<Entry> ListFolder(const std::string& dirIn, const ListOptions& opt) {
-    std::vector<Entry> out;
-    const std::string dir = Norm(dirIn);
-    std::error_code ec;
-    if (!fs::is_directory(P(dir), ec)) return out;
-    Query q = ParseQuery(opt.text);
-    Filter filter = q.filter != Filter::All ? q.filter : opt.filter;
-    const bool searching = !q.words.empty() || !q.ext.empty() || q.filter != Filter::All;
-    const bool deep = opt.recursive || searching;
-
-    auto consider = [&](const fs::directory_entry& e) -> bool {   // false: stop
-        std::error_code e1;
-        const std::string name = e.path().filename().generic_u8string();
-        if (IsHiddenName(name)) return true;
-        Entry en;
-        en.name = name;
-        en.path = U(e.path());
-        en.isDir = e.is_directory(e1);
-        if (e.is_symlink(e1) && en.isDir) return true;   // never follow folder links out of the project
-        en.ext = en.isDir ? std::string() : Lower(ExtOf(name));
-        const std::string lname = Lower(name);
-        for (const std::string& w : q.words) if (lname.find(w) == std::string::npos) return true;
-        if (!q.ext.empty() && en.ext != q.ext) return true;
-        if (filter == Filter::Folders) { if (!en.isDir) return true; }
-        else if (filter != Filter::All) {
-            if (en.isDir) { if (deep) return true; }
-            else if (!FilterMatches(filter, en.ext)) return true;
-        }
-        if (!en.isDir) {
-            std::error_code e2;
-            const auto sz = e.file_size(e2);
-            en.size = e2 ? 0 : static_cast<std::uint64_t>(sz);
-            const auto t = e.last_write_time(e2);
-            en.modified = e2 ? 0 : std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
-        } else {
-            std::error_code e2;
-            const auto t = e.last_write_time(e2);
-            en.modified = e2 ? 0 : std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
-        }
-        out.push_back(std::move(en));
-        return out.size() < opt.limit;
-    };
-
-    if (!deep) {
-        for (fs::directory_iterator it(P(dir), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec))
-            if (!consider(*it)) break;
-    } else {
-        for (fs::recursive_directory_iterator it(P(dir), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
-            std::error_code e1;
-            if (IsHiddenName(it->path().filename().generic_u8string()) || (it->is_symlink(e1) && it->is_directory(e1))) {
-                if (it->is_directory(e1)) it.disable_recursion_pending();
-                continue;
-            }
-            if (!consider(*it)) break;
-        }
-    }
-    SortEntries(out, opt.sort, opt.descending);
-    return out;
 }
 
 // ---- references: rewrite the paths in a text asset ----------------------------------------------
@@ -508,137 +453,369 @@ struct Tx {
 
 // ---- Browser -------------------------------------------------------------------------------------
 
-Browser::Browser(std::string assetsRoot) : m_root(Norm(assetsRoot)) {}
+Browser::Browser(std::string assetsRoot) : m_root(Norm(assetsRoot)) {
+    // Scripts can name assets too ("hero.png" in code): they count as references, so Unused Assets stays honest.
+    m_db.RegisterExtractor("script", {"okay", "lua", "cs"}, [](const std::string&, const std::string& text, std::vector<okay::FoundRef>& out) {
+        for (okay::FoundRef& r : okay::ExtractTextRefs(text)) out.push_back(std::move(r));
+    });
+}
 Browser::~Browser() = default;
 
 std::string Browser::ProjectDir() const { return ParentOf(m_root); }
 
 namespace {
-// Text assets that can point at other assets (the same kinds the asset database reads).
-bool IsTextAssetExt(const std::string& e) {
-    static const char* k[] = {".okayscene", ".okayprefab", ".okaymat", ".okayanim", ".okayclip", ".okaydialog", ".okayquest", ".okaybt",
-                              ".okayvs", ".okayseq", ".okayloot", ".okayitems", ".okayrecipes", ".okaydata", ".okaynav", ".gltf"};
-    for (const char* x : k) if (e == x) return true;
+
+// FNV-1a over a string, for the stand-in thumbnail GUID of an asset that has no meta file yet.
+std::uint64_t Fnv(const std::string& s, std::uint64_t h) {
+    for (unsigned char ch : s) { h ^= ch; h *= 1099511628211ull; }
+    return h;
+}
+okay::Guid SyntheticGuid(const std::string& rel) {
+    okay::Guid g;
+    g.hi = Fnv(rel, 1469598103934665603ull) | 1;
+    g.lo = Fnv(rel, 88172645463325252ull);
+    return g;
+}
+std::uint64_t Mix(std::uint64_t h, std::uint64_t v) { return (h ^ v) * 1099511628211ull + 0x9E3779B97F4A7C15ull; }
+
+// The words a plain search word may match as the asset's type ("hero texture").
+bool TypeWordMatches(const std::string& word, const std::string& ext, okay::AssetType kind) {
+    if (word.size() < 3) return false;
+    const std::string label = Lower(TypeLabel(ext, false));
+    if (word == label) return true;
+    using T = okay::AssetType;
+    switch (kind) {
+        case T::Texture: return word == "texture" || word == "image" || word == "sprite";
+        case T::Model: case T::Mesh: return word == "model" || word == "mesh";
+        case T::Audio: return word == "audio" || word == "sound" || word == "music";
+        case T::Material: return word == "material";
+        case T::Scene: return word == "scene" || word == "level";
+        case T::Prefab: return word == "prefab";
+        default: break;
+    }
     return false;
 }
 
-// The asset file a written reference names, as an absolute path; "" when it names no existing file.
-std::string ResolveRefTarget(const std::string& raw, const std::string& referrerDir, const std::string& root, const std::string& project) {
-    if (raw.empty() || raw.find("://") != std::string::npos || raw.rfind("proc:", 0) == 0) return {};
-    const std::string n = Slash(raw);
-    const bool abs = n[0] == '/' || (n.size() > 1 && n[1] == ':');
-    std::vector<std::string> cands;
-    if (abs) cands.push_back(Norm(n));
-    else {
-        cands.push_back(Norm(root + "/" + n));
-        if (!project.empty()) cands.push_back(Norm(project + "/" + n));
-        if (!referrerDir.empty()) cands.push_back(Norm(referrerDir + "/" + n));
-    }
-    std::error_code ec;
-    for (const std::string& c : cands)
-        if (UnderOrEqual(root, c) && fs::is_regular_file(P(c), ec)) return c;
-    return {};
-}
-
-std::int64_t StampOf(const fs::path& p, std::uint64_t* size) {
-    std::error_code ec;
-    const auto t = fs::last_write_time(p, ec);
-    const auto s = fs::file_size(p, ec);
-    if (size) *size = ec ? 0 : static_cast<std::uint64_t>(s);
-    return std::chrono::duration_cast<std::chrono::microseconds>(t.time_since_epoch()).count();
-}
+bool ContainsCI(const std::string& hay, const std::string& needleLower) { return Lower(hay).find(needleLower) != std::string::npos; }
 } // namespace
 
-// Re-read the text assets that changed since the last look and keep "who uses what" up to date. Only the
-// project's own text files are read: no meta files are needed and nothing is written.
-bool Browser::RefreshRefs() {
-    bool changed = false;
-    std::set<std::string> seen;
-    std::error_code ec;
-    int count = 0;
-    const std::string project = ProjectDir();
-    for (fs::recursive_directory_iterator it(P(m_root), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e1;
-        const std::string name = it->path().filename().generic_u8string();
-        if (IsHiddenName(name)) { if (it->is_directory(e1)) it.disable_recursion_pending(); continue; }
-        if (it->is_symlink(e1) && it->is_directory(e1)) { it.disable_recursion_pending(); continue; }
-        if (!it->is_regular_file(e1)) continue;
-        if (!IsTextAssetExt(Lower(ExtOf(name)))) continue;
-        if (++count > 50000) break;
-        const std::string abs = U(it->path());
-        seen.insert(abs);
-        std::uint64_t size = 0;
-        const std::int64_t stamp = StampOf(it->path(), &size);
-        auto f = m_refs.find(abs);
-        if (f != m_refs.end() && f->second.stamp == stamp && f->second.size == size) continue;
-        RefEntry e;
-        e.stamp = stamp; e.size = size;
-        std::string text;
-        if (size <= (32u << 20) && ReadText(abs, text, 32u << 20)) {
-            const std::string dir = ParentOf(abs);
-            std::set<std::string> uniq;
-            for (const okay::FoundRef& r : ExtractFor(name, text)) {
-                const std::string t = ResolveRefTarget(r.path, dir, m_root, project);
-                if (!t.empty() && t != abs && uniq.insert(t).second) e.targets.push_back(t);
-            }
-        }
-        m_refs[abs] = std::move(e);
-        changed = true;
-    }
-    for (auto i = m_refs.begin(); i != m_refs.end();) {
-        if (!seen.count(i->first)) { i = m_refs.erase(i); changed = true; } else ++i;
-    }
-    if (changed) m_usersValid = false;
-    return changed;
-}
-
-void Browser::BuildUsers() {
-    if (m_usersValid) return;
-    m_users.clear();
-    for (const auto& kv : m_refs) for (const std::string& t : kv.second.targets) m_users[t].push_back(kv.first);
-    m_usersValid = true;
-}
-
-bool Browser::Sync() {
+bool Browser::DoScan() {
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) return false;
     okay::ScanOptions o;
     o.logWarnings = false;
-    o.createMetas = false;        // opening a project writes nothing: a meta is made only when an asset is given settings
+    o.createMetas = false;        // opening a project writes nothing: a meta is made only when an asset is given labels or settings
+    o.indexUnmetaed = true;       // ...yet every asset is in the database (an in-memory GUID until it has a meta)
     o.verifyHashes = false;
-    o.buildDependencies = false;  // references come from RefreshRefs, which needs no metas
     o.fullHashLimit = 32u << 20;
     o.ignoreExtensions.push_back("autosave");   // the editor's own recovery copies are not assets
-    m_db.Scan(m_root, o);
-    RefreshRefs();
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::uint64_t dbBefore = m_db.Revision();
+    const okay::ScanReport rep = m_db.Scan(m_root, o);
+    m_scanMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    const bool changed = !m_indexed || m_db.Revision() != dbBefore || !rep.reimports.empty();
+    if (changed) ++m_revision;
+    if (!rep.removed.empty() || !rep.moved.empty()) m_prunePending = true;
     m_indexed = true;
+    m_scanChanged = changed;
     return true;
 }
 
+bool Browser::Sync() { return DoScan(); }
+
 bool Browser::Poll(std::uint64_t nowMs) {
     if (!m_indexed || nowMs < m_nextPoll) return false;
-    const auto t0 = std::chrono::steady_clock::now();
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
-    okay::ScanOptions o;
-    o.logWarnings = false;
-    o.createMetas = false;
-    o.verifyHashes = false;
-    o.buildDependencies = false;
-    o.fullHashLimit = 32u << 20;
-    o.ignoreExtensions.push_back("autosave");
-    const okay::ScanReport rep = m_db.Scan(m_root, o);
-    const bool refs = RefreshRefs();
-    const auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
-    m_nextPoll = nowMs + std::max<std::uint64_t>(2000, 30 * ms);
-    return refs || rep.created > 0 || !rep.moved.empty() || !rep.removed.empty() || !rep.reimports.empty();
+    if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }
+    m_nextPoll = nowMs + std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs));
+    return m_scanChanged;
+}
+
+std::vector<okay::Guid> Browser::GuidsUnder(const std::string& absIn) {
+    std::vector<okay::Guid> out;
+    const std::string abs = Norm(absIn);
+    std::error_code ec;
+    if (fs::is_directory(P(abs), ec)) {
+        for (const okay::AssetRecord* r : m_db.All())
+            if (UnderOrEqual(abs, AbsOf(r->path))) out.push_back(r->guid);
+    } else {
+        const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(abs));
+        if (!g.IsNull()) out.push_back(g);
+    }
+    return out;
 }
 
 int Browser::UsersOf(const std::string& path) {
     if (!m_indexed && !Sync()) return 0;
-    BuildUsers();
-    auto it = m_users.find(Norm(path));
-    return it == m_users.end() ? 0 : static_cast<int>(it->second.size());
+    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
+    return g.IsNull() ? 0 : static_cast<int>(m_db.UsedBy(g).size());
+}
+
+void Browser::EnsureMissing() {
+    if (m_missingRev == m_revision) return;
+    m_missing.clear();
+    for (const okay::MissingRef& m : m_db.FindMissing()) m_missing[m.referrer].push_back(m.reference);
+    m_missingRev = m_revision;
+}
+
+std::vector<Entry> Browser::List(const std::string& dirIn, const ListOptions& opt) {
+    std::vector<Entry> out;
+    if (!m_indexed && !Sync()) return out;
+    const std::string dir = Norm(dirIn);
+    if (!UnderOrEqual(m_root, dir)) return out;
+    const std::string relDir = dir.size() > m_root.size() ? dir.substr(m_root.size() + 1) : std::string();
+    const Query q = ParseQuery(opt.text);
+    const Filter filter = q.filter != Filter::All ? q.filter : opt.filter;
+    const bool assetProps = !q.labels.empty() || q.unused || q.broken || !q.usedBy.empty() || !q.dependsOn.empty() ||
+                            opt.unusedOnly || opt.modifiedWithinSeconds > 0;
+    const bool searching = !q.words.empty() || !q.ext.empty() || q.filter != Filter::All || assetProps;
+    const bool deep = opt.recursive || searching;
+    EnsureMissing();
+
+    okay::AssetQuery aq;
+    aq.folder = relDir;
+    aq.recursive = deep || relDir.empty();
+    aq.labels = q.labels;
+    aq.unusedOnly = q.unused || opt.unusedOnly;
+    aq.withMissingRefsOnly = q.broken;
+    aq.modifiedWithinSeconds = opt.modifiedWithinSeconds;
+    aq.now = opt.now;
+    auto resolveName = [&](const std::string& text, okay::Guid& g) {   // a project path, a GUID or a file name (any case)
+        const okay::AssetResolution r = m_db.Resolve(text);
+        if (r) { g = r.guid; return true; }
+        for (const okay::AssetRecord* rec : m_db.All())
+            if (Lower(rec->path) == text || Lower(rec->Name()) == text) { g = rec->guid; return true; }
+        const okay::AssetRecord* only = nullptr;   // a part of a name works when exactly one asset has it ("uses:hero.pn")
+        int hits = 0;
+        for (const okay::AssetRecord* rec : m_db.All()) if (ContainsCI(rec->Name(), text)) { only = rec; ++hits; }
+        if (hits == 1) { g = only->guid; return true; }
+        return false;
+    };
+    bool noMatch = false;
+    if (!q.usedBy.empty()) { if (!resolveName(q.usedBy, aq.referencing)) noMatch = true; }
+    if (!q.dependsOn.empty()) { if (!resolveName(q.dependsOn, aq.referencedBy)) noMatch = true; }
+
+    if (!noMatch) {
+        const okay::AssetPage page = m_db.Search(aq);
+        for (const okay::AssetRecord* rec : page.items) {
+            const std::string ext = rec->Extension().empty() ? std::string() : "." + rec->Extension();
+            if (!deep) {   // only this folder's own files
+                const auto sl = rec->path.find_last_of('/');
+                const std::string parent = sl == std::string::npos ? std::string() : rec->path.substr(0, sl);
+                if (parent != relDir) continue;
+            }
+            if (filter == Filter::Folders) continue;
+            if (filter != Filter::All && !FilterMatches(filter, ext)) continue;
+            if (!q.ext.empty() && ext != q.ext) continue;
+            bool ok = true;
+            for (const std::string& w : q.words) {
+                if (ContainsCI(rec->Name(), w) || TypeWordMatches(w, ext, rec->kind)) continue;
+                bool inLabel = false;
+                for (const std::string& l : rec->labels) if (ContainsCI(l, w)) { inLabel = true; break; }
+                if (!inLabel) { ok = false; break; }
+            }
+            if (!ok) continue;
+            Entry e;
+            e.path = AbsOf(rec->path);
+            e.name = rec->Name();
+            e.ext = ext;
+            e.size = static_cast<std::uint64_t>(rec->size < 0 ? 0 : rec->size);
+            e.modified = rec->modified;
+            e.guid = rec->guid;
+            e.kind = rec->kind;
+            e.hasMeta = rec->metaVersion > 0;
+            auto mi = m_missing.find(rec->guid);
+            if (mi != m_missing.end()) e.missingRefs = static_cast<int>(mi->second.size());
+            out.push_back(std::move(e));
+        }
+        // Folders (the database lists every folder it walked, empty ones too): only when nothing narrows the search to assets.
+        const bool foldersWanted = !assetProps && q.ext.empty() &&
+                                   !(deep && filter != Filter::All && filter != Filter::Folders);
+        if (foldersWanted) {
+            for (const std::string& f : m_db.Folders()) {
+                const auto sl = f.find_last_of('/');
+                const std::string parent = sl == std::string::npos ? std::string() : f.substr(0, sl);
+                const std::string name = sl == std::string::npos ? f : f.substr(sl + 1);
+                if (deep) {
+                    if (!(relDir.empty() || (f.size() > relDir.size() && f.compare(0, relDir.size(), relDir) == 0 && f[relDir.size()] == '/'))) continue;
+                } else if (parent != relDir) continue;
+                bool ok = true;
+                for (const std::string& w : q.words) if (!ContainsCI(name, w)) { ok = false; break; }
+                if (!ok) continue;
+                Entry e;
+                e.path = AbsOf(f);
+                e.name = name;
+                e.isDir = true;
+                out.push_back(std::move(e));
+            }
+        }
+    }
+    SortEntries(out, opt.sort, opt.descending);
+    if (out.size() > opt.limit) out.resize(opt.limit);
+    return out;
+}
+
+std::vector<Browser::FolderRow> Browser::SubFolders(const std::string& absDirIn) {
+    std::vector<FolderRow> out;
+    if (!m_indexed && !Sync()) return out;
+    if (m_folderStatsRev != m_revision) {
+        m_folderStats.clear();
+        auto parentOf = [](const std::string& rel) { const auto sl = rel.find_last_of('/'); return sl == std::string::npos ? std::string() : rel.substr(0, sl); };
+        for (const okay::AssetRecord* r : m_db.All()) ++m_folderStats[parentOf(r->path)].files;
+        for (const std::string& f : m_db.Folders()) m_folderStats[parentOf(f)].kids.push_back(f);
+        m_folderStatsRev = m_revision;
+    }
+    const std::string absDir = Norm(absDirIn);
+    if (!UnderOrEqual(m_root, absDir)) return out;
+    const std::string rel = absDir.size() > m_root.size() ? absDir.substr(m_root.size() + 1) : std::string();
+    auto it = m_folderStats.find(rel);
+    if (it == m_folderStats.end()) return out;
+    for (const std::string& k : it->second.kids) {
+        FolderRow row;
+        row.path = AbsOf(k);
+        auto st = m_folderStats.find(k);
+        if (st != m_folderStats.end()) { row.hasKids = !st->second.kids.empty(); row.items = st->second.files + static_cast<int>(st->second.kids.size()); }
+        out.push_back(std::move(row));
+    }
+    std::sort(out.begin(), out.end(), [](const FolderRow& a, const FolderRow& b) { return Lower(FileNameOf(a.path)) < Lower(FileNameOf(b.path)); });
+    return out;
+}
+
+const Browser::Counts& Browser::CountsNow(std::int64_t now) {
+    if (!m_indexed) Sync();
+    const std::int64_t t = now != 0 ? now : static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    if (m_countsRev == m_revision && m_countsNow == now) return m_counts;
+    m_counts = Counts();
+    for (const okay::AssetRecord* r : m_db.All()) {
+        const std::string ext = r->Extension().empty() ? std::string() : "." + r->Extension();
+        for (int f = 1; f <= 8; ++f) if (FilterMatches(static_cast<Filter>(f), ext)) ++m_counts.byFilter[f];
+        if (r->modified >= t - 7 * 24 * 3600) ++m_counts.recent;
+        ++m_counts.total;
+    }
+    m_countsRev = m_revision;
+    m_countsNow = now;
+    return m_counts;
+}
+
+Browser::AssetInfo Browser::Info(const std::string& path) {
+    AssetInfo info;
+    if (!m_indexed) Sync();
+    const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(Norm(path)));
+    if (!rec) return info;
+    EnsureMissing();
+    info.indexed = true;
+    info.kind = rec->kind;
+    info.typeName = TypeLabel(rec->Extension().empty() ? std::string() : "." + rec->Extension(), false);
+    info.size = static_cast<std::uint64_t>(rec->size < 0 ? 0 : rec->size);
+    info.guid = rec->guid;
+    info.guidShort = rec->guid.ToString().substr(0, 8);
+    info.hasMeta = rec->metaVersion > 0;
+    info.hash = rec->hash;
+    info.uses = static_cast<int>(m_db.DependenciesOf(rec->guid, false).size());
+    info.usesAll = static_cast<int>(m_db.DependenciesOf(rec->guid, true).size());
+    info.usedBy = static_cast<int>(m_db.UsedBy(rec->guid).size());
+    auto mi = m_missing.find(rec->guid);
+    if (mi != m_missing.end()) info.missing = mi->second;
+    info.labels = rec->labels;
+    return info;
+}
+
+bool Browser::AddLabel(const std::string& path, const std::string& label, std::string* error) {
+    if (!m_indexed) Sync();
+    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
+    if (g.IsNull()) { if (error) *error = "That file is not in the asset database."; return false; }
+    if (!m_db.AddLabel(g, label, error)) return false;
+    ++m_revision;
+    return true;
+}
+
+bool Browser::RemoveLabel(const std::string& path, const std::string& label, std::string* error) {
+    if (!m_indexed) Sync();
+    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
+    if (g.IsNull()) { if (error) *error = "That file is not in the asset database."; return false; }
+    if (!m_db.RemoveLabel(g, label, error)) return false;
+    ++m_revision;
+    return true;
+}
+
+std::vector<std::string> Browser::DependenciesOf(const std::string& path, bool recursive) {
+    std::vector<std::string> out;
+    if (!m_indexed && !Sync()) return out;
+    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
+    if (g.IsNull()) return out;
+    for (const okay::Guid& d : m_db.DependenciesOf(g, recursive)) { const std::string a = m_db.AbsolutePath(d); if (!a.empty()) out.push_back(Norm(a)); }
+    return out;
+}
+
+std::vector<Browser::MissingRefRow> Browser::MissingRefs() {
+    std::vector<MissingRefRow> out;
+    if (!m_indexed && !Sync()) return out;
+    for (const okay::MissingRef& m : m_db.FindMissing()) out.push_back({AbsOf(m.referrerPath), m.reference});
+    std::sort(out.begin(), out.end(), [](const MissingRefRow& a, const MissingRefRow& b) { return a.referrer != b.referrer ? a.referrer < b.referrer : a.reference < b.reference; });
+    return out;
+}
+
+std::vector<Browser::StaleRefRow> Browser::StaleRefs() {
+    std::vector<StaleRefRow> out;
+    if (!m_indexed && !Sync()) return out;
+    for (const okay::StaleRef& s : m_db.FindStaleReferences()) out.push_back({AbsOf(s.referrerPath), s.reference, AbsOf(s.targetPath)});
+    std::sort(out.begin(), out.end(), [](const StaleRefRow& a, const StaleRefRow& b) { return a.referrer != b.referrer ? a.referrer < b.referrer : a.reference < b.reference; });
+    return out;
+}
+
+int Browser::ReferenceProblemCount() {
+    if (!m_indexed) Sync();
+    if (m_problemRev != m_revision) {
+        m_problemCount = static_cast<int>(m_db.FindMissing().size() + m_db.FindStaleReferences().size());
+        m_problemRev = m_revision;
+    }
+    return m_problemCount;
+}
+
+Result Browser::FixStaleRefs() {
+    Result r;
+    if (!Sync()) { r.error = "The Assets folder could not be read."; return r; }
+    std::map<std::string, std::string> before;   // the text of every file that is about to change, for Undo
+    for (const StaleRefRow& s : StaleRefs()) {
+        std::string text;
+        if (!before.count(s.referrer) && ReadText(s.referrer, text, 32u << 20)) before[s.referrer] = text;
+    }
+    if (before.empty()) { r.ok = true; r.note = "There are no stale references to fix."; return r; }
+    std::vector<std::string> changed;
+    const int n = m_db.FixStaleReferences(&changed);
+    Sync();
+    ++m_revision;
+    std::map<std::string, std::string> undoTexts;
+    for (const std::string& c : changed) {
+        const std::string abs = AbsOf(c);
+        r.paths.push_back(abs);
+        auto it = before.find(abs);
+        if (it != before.end()) undoTexts[abs] = it->second;
+    }
+    r.ok = true;
+    r.referencesRewritten = n;
+    r.filesRewritten = static_cast<int>(changed.size());
+    if (!undoTexts.empty())
+        PushUndo("Fix references", [this, undoTexts]() {
+            Result u;
+            Tx tx(*this);
+            for (const auto& kv : undoTexts) if (!tx.Write(kv.first, kv.second)) { tx.Rollback(); u.error = tx.error + " Nothing was changed."; return u; }
+            Sync();
+            ++m_revision;
+            u.ok = true;
+            return u;
+        });
+    return r;
+}
+
+std::vector<std::string> Browser::UsersOfList(const std::string& path, bool recursive) {
+    std::vector<std::string> out;
+    if (!m_indexed && !Sync()) return out;
+    const okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(Norm(path)));
+    if (g.IsNull()) return out;
+    for (const okay::Guid& d : m_db.UsedBy(g, recursive)) { const std::string a = m_db.AbsolutePath(d); if (!a.empty()) out.push_back(Norm(a)); }
+    return out;
 }
 
 okay::Guid Browser::EnsureMeta(const std::string& path) {
@@ -646,13 +823,13 @@ okay::Guid Browser::EnsureMeta(const std::string& path) {
     const std::string p = Norm(path);
     std::error_code ec;
     if (!fs::is_regular_file(P(p), ec)) return {};
-    if (!Exists(p + ".okaymeta")) {
-        Tx tx(*this);
-        const std::string text = "okaymeta 1\nguid " + okay::Guid::Generate().ToString() + "\ntype " + okay::AssetTypeName(okay::AssetTypeFromPath(p)) + "\n";
-        if (!tx.Write(p + ".okaymeta", text)) return {};
-    }
-    Sync();
-    return m_db.PathToGuid(m_db.ToProjectPath(p));
+    if (!m_indexed) Sync();
+    okay::Guid g = m_db.PathToGuid(m_db.ToProjectPath(p));
+    if (g.IsNull()) { Sync(); g = m_db.PathToGuid(m_db.ToProjectPath(p)); }
+    if (g.IsNull()) return {};
+    if (!m_db.EnsureMeta(g)) return {};   // the GUID the asset already has is the one that is written
+    ++m_revision;
+    return g;
 }
 
 bool Browser::GetImportSettings(const std::string& path, okay::ImportSettings& out) {
@@ -676,23 +853,117 @@ bool Browser::SetImportSettings(const std::string& path, const okay::ImportSetti
 bool Browser::Reimport(const std::string& path) {
     if (!m_indexed) Sync();
     const std::string p = Norm(path);
-    m_refs.erase(p);
-    m_usersValid = false;
     if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(p))) m_db.RefreshFile(rec->path);
-    RefreshRefs();
+    ForgetThumb(p);
+    ++m_revision;
     return true;
 }
 
-void Browser::ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash) const {
-    // A key from the path and the file's size and time: no meta file and no reading of the file.
-    auto fnv = [](const std::string& s, std::uint64_t h) { for (unsigned char ch : s) { h ^= ch; h *= 1099511628211ull; } return h; };
+// ---- thumbnails ----------------------------------------------------------------------------------
+
+okay::Guid Browser::ThumbGuidOf(const okay::AssetRecord& rec) const {
+    // The GUID in the meta file is stable across sessions; without a meta the GUID only lasts for this session, so a
+    // stand-in from the path keeps the pictures on disk usable the next time the project is opened.
+    return rec.metaVersion > 0 && !rec.guid.IsNull() ? rec.guid : SyntheticGuid(rec.path);
+}
+
+void Browser::ThumbKey(const std::string& path, okay::Guid& guid, std::uint64_t& hash) {
     const std::string p = Norm(path);
-    std::string rel = p.size() > m_root.size() ? p.substr(m_root.size() + 1) : p;
-    guid.hi = fnv(rel, 1469598103934665603ull) | 1;
-    guid.lo = fnv(rel, 88172645463325252ull);
-    std::uint64_t size = 0;
-    const std::int64_t stamp = StampOf(P(p), &size);
-    hash = (size * 1000003ull) ^ static_cast<std::uint64_t>(stamp) ^ 0x9E3779B97F4A7C15ull;
+    if (!m_indexed) Sync();
+    auto cached = m_thumbKeys.find(p);
+    if (cached != m_thumbKeys.end() && cached->second.rev == m_revision) { guid = cached->second.guid; hash = cached->second.hash; return; }
+    const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(p));
+    if (rec) {
+        guid = ThumbGuidOf(*rec);
+        hash = rec->hash;
+        using T = okay::AssetType;
+        if (rec->kind == T::Prefab || rec->kind == T::Scene || rec->kind == T::Material || rec->kind == T::Model) {
+            // What the picture shows also depends on what the asset uses: a changed texture or mesh changes the key.
+            int n = 0;
+            for (const okay::Guid& d : m_db.DependenciesOf(rec->guid, true)) {
+                if (const okay::AssetRecord* dr = m_db.Find(d)) hash = Mix(hash, dr->hash);
+                if (++n >= 256) break;
+            }
+        }
+    } else {   // not in the database yet (a file just made): a key from path, size and time, so nothing is shown stale
+        const std::string rel = p.size() > m_root.size() ? p.substr(m_root.size() + 1) : p;
+        guid = SyntheticGuid(rel);
+        std::error_code ec;
+        const auto sz = fs::file_size(P(p), ec);
+        const auto tm = fs::last_write_time(P(p), ec);
+        hash = Mix(static_cast<std::uint64_t>(sz), static_cast<std::uint64_t>(tm.time_since_epoch().count()));
+    }
+    ThumbKeyEntry e; e.rev = m_revision; e.guid = guid; e.hash = hash;
+    if (m_thumbKeys.size() > 8192) m_thumbKeys.clear();
+    m_thumbKeys[p] = e;
+}
+
+okay::ThumbnailCache& Browser::Thumbs() {
+    if (!m_thumbs) {
+        okay::ThumbnailCache::Options o;
+        o.size = 128;
+        o.diskDir = ProjectDir() + "/.okay/thumbs";   // hidden, so the database never lists it
+        m_thumbs = std::make_unique<okay::ThumbnailCache>(o);
+        for (auto& g : m_thumbGens) m_thumbs->AddGenerator(g.first, g.second);
+    }
+    return *m_thumbs;
+}
+
+void Browser::AddThumbGenerator(const std::vector<std::string>& extensions, std::function<okay::Image(const std::string&)> render) {
+    m_thumbGens.emplace_back(extensions, render);
+    if (m_thumbs) m_thumbs->AddGenerator(extensions, std::move(render));
+}
+
+void Browser::ThumbFrame(double budgetMs) {
+    m_thumbBudgetMs = budgetMs;
+    m_thumbSpentMs = 0;
+    if (m_prunePending && m_thumbs) { m_prunePending = false; PruneThumbs(); }
+}
+
+Browser::ThumbResult Browser::Thumb(const std::string& path) {
+    ThumbResult r;
+    okay::Guid g; std::uint64_t h = 0;
+    ThumbKey(path, g, h);
+    r.key = g.ToString() + ":" + std::to_string(h);
+    okay::ThumbnailCache& cache = Thumbs();
+    const bool have = cache.InMemory(g, h) || cache.OnDisk(g, h);
+    if (!have && m_thumbSpentMs > m_thumbBudgetMs) return r;   // out of time this frame: the icon shows, the picture comes later
+    const auto t0 = std::chrono::steady_clock::now();
+    const okay::ThumbnailCache::Thumb t = cache.Get(g, h, Norm(path), okay::AssetTypeFromPath(path));
+    if (!have) m_thumbSpentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    r.placeholder = t.placeholder;
+    r.failed = t.failed;
+    r.ready = !t.placeholder && t.image && t.image->Valid();
+    if (r.ready) r.image = t.image;
+    return r;
+}
+
+void Browser::ForgetThumb(const std::string& path) {
+    const std::string p = Norm(path);
+    m_thumbKeys.erase(p);
+    if (!m_thumbs) return;
+    okay::Guid g; std::uint64_t h = 0;
+    ThumbKey(p, g, h);
+    m_thumbs->Invalidate(g);
+}
+
+int Browser::PruneThumbs() {
+    if (!m_indexed) return 0;
+    const std::string dir = ProjectDir() + "/.okay/thumbs";
+    std::error_code ec;
+    if (!fs::is_directory(P(dir), ec)) return 0;
+    std::set<std::string> live;
+    for (const okay::AssetRecord* r : m_db.All()) live.insert(ThumbGuidOf(*r).ToString());
+    int removed = 0;
+    std::vector<fs::path> doomed;
+    for (fs::recursive_directory_iterator it(P(dir), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e1;
+        if (!it->is_regular_file(e1)) continue;
+        const std::string name = it->path().filename().generic_u8string();
+        if (name.size() < 32 || !live.count(name.substr(0, 32))) doomed.push_back(it->path());
+    }
+    for (const fs::path& f : doomed) { std::error_code e2; if (fs::remove(f, e2)) ++removed; }
+    return removed;
 }
 
 Result Browser::ImportFile(const std::string& source, const std::string& destDir) {
@@ -828,12 +1099,9 @@ Result Browser::MoveCore(const std::vector<std::pair<std::string, std::string>>&
 
     // Who uses the things that move: gather before anything changes.
     std::set<std::string> referrers;
-    for (const auto& kv : m_refs)
-        for (const std::string& t : kv.second.targets) {
-            bool hit = false;
-            for (const auto& mv : map) if (UnderOrEqual(mv.first, t)) { hit = true; break; }
-            if (hit) { referrers.insert(kv.first); break; }
-        }
+    for (const auto& mv : map)
+        for (const okay::Guid& target : GuidsUnder(mv.first))
+            for (const okay::Guid& user : m_db.UsedBy(target)) referrers.insert(Norm(m_db.AbsolutePath(user)));
     struct Staged { std::string newPath, text; int n; };
     std::vector<Staged> staged;
     std::string skipped;
@@ -1104,24 +1372,29 @@ std::vector<Referrer> Browser::ReferencesTo(const std::vector<std::string>& path
     if (!Sync()) return out;
     const std::vector<std::string> paths = Outermost(pathsIn);
     std::set<std::pair<std::string, std::string>> seen;
-    for (const auto& kv : m_refs) {
-        bool inside = false;
-        for (const std::string& q : paths) if (UnderOrEqual(q, kv.first)) { inside = true; break; }
-        if (inside) continue;
-        for (const std::string& t : kv.second.targets)
-            for (const std::string& p : paths)
-                if (UnderOrEqual(p, t) && seen.insert({kv.first, t}).second) out.push_back({kv.first, t});
+    for (const std::string& p : paths) {
+        for (const okay::Guid& target : GuidsUnder(p)) {
+            const std::string targetPath = Norm(m_db.AbsolutePath(target));
+            for (const okay::Guid& user : m_db.UsedBy(target)) {
+                const std::string userPath = Norm(m_db.AbsolutePath(user));
+                bool inside = false;
+                for (const std::string& q : paths) if (UnderOrEqual(q, userPath)) { inside = true; break; }
+                if (inside) continue;
+                if (seen.insert({userPath, targetPath}).second) out.push_back({userPath, targetPath});
+            }
+        }
     }
     std::sort(out.begin(), out.end(), [](const Referrer& a, const Referrer& b) { return a.path != b.path ? a.path < b.path : a.target < b.target; });
     return out;
 }
 
-std::vector<std::string> Browser::DependenciesOf(const std::string& path) {
-    std::vector<std::string> out;
-    if (!Sync()) return out;
-    auto it = m_refs.find(Norm(path));
-    if (it != m_refs.end()) out = it->second.targets;
-    return out;
+bool RemapPaths(const PathMap& map, std::vector<std::string>& paths) {
+    bool changed = false;
+    for (std::string& p : paths) {
+        const std::string to = RemapPath(map, p);
+        if (!to.empty()) { p = to; changed = true; }
+    }
+    return changed;
 }
 
 // ---- favourites ----------------------------------------------------------------------------------

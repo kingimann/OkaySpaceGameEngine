@@ -368,12 +368,14 @@ static void TestRegistryBasics() {
         "PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D", "CharacterController3D",
         "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
         "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
-        "MusicPlayer", "NavMeshAgent", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
+        "MusicPlayer", "NavMeshAgent", "NavMeshLink", "NavMeshModifier", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
         "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
         "Flashlight", "Joint2D", "Joint3D", "DayNightCycle", "Water", "Crosshair", "UIRadialProgress", "UIRating", "UIScrollView",
         "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
-        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind"};
+        "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind",
+        "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
+        "UIPagination", "UISkeleton", "UIBottomSheet"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");
@@ -1505,7 +1507,7 @@ static void TestNavNetUiRegistrations() {
     RUN_SUITE("navigation, networking and UI widgets");
     RegisterBuiltinProperties();
     auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
-    for (const char* name : {"NavMeshAgent", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
+    for (const char* name : {"NavMeshAgent", "NavMeshLink", "NavMeshModifier", "NavMeshObstacle", "NavMeshSurface"}) CHECK(find(name) && find(name)->category == "Navigation");
     for (const char* name : {"NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar", "NetworkPlayerSpawner"}) CHECK(find(name) && find(name)->category == "Networking");
     for (const char* name : {"UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown"})
         CHECK(find(name) && find(name)->category == "UI");
@@ -1521,6 +1523,14 @@ static void TestNavNetUiRegistrations() {
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.avoidancePriority", PropertyValue::MakeInt(150)) && agent->avoidancePriority == 99);
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshAgent.stoppingDistance", PropertyValue::MakeFloat(-3.0f)) && agent->stoppingDistance == 0.0f);
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.size", PropertyValue::MakeVec3(Vec3{2, 3, 4})) && go->GetComponent<NavMeshObstacle>()->size.z == 4.0f);
+        auto* obstacle = go->GetComponent<NavMeshObstacle>();   // carving: shape, capsule size and the carve timing, clamped
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.shape", PropertyValue::MakeEnum(1)) && obstacle->shape == NavMeshObstacle::Shape::Capsule);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.capsuleRadius", PropertyValue::MakeFloat(0.75f)) && obstacle->capsuleRadius == 0.75f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.capsuleHeight", PropertyValue::MakeFloat(1.5f)) && obstacle->capsuleHeight == 1.5f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.carve", PropertyValue::MakeBool(true)) && obstacle->carve);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.carveOnlyWhenStationary", PropertyValue::MakeBool(false)) && !obstacle->carveOnlyWhenStationary);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.timeToStationary", PropertyValue::MakeFloat(-2.0f)) && obstacle->timeToStationary == 0.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "NavMeshObstacle.moveThreshold", PropertyValue::MakeFloat(0.3f)) && obstacle->moveThreshold == 0.3f);
         auto* surface = go->GetComponent<NavMeshSurface>();
         CHECK(PropertyRegistry::GetProperty(*go, "NavMeshSurface.agentRadius") == PropertyValue::MakeFloat(surface->settings.agentRadius));
         CHECK(PropertyRegistry::SetProperty(*go, "NavMeshSurface.agentRadius", PropertyValue::MakeFloat(0.75f)) && surface->settings.agentRadius == 0.75f);
@@ -1604,6 +1614,9 @@ static void TestGameplayAndEnvironmentRegistrations() {
         CHECK(PropertyRegistry::SetProperty(*go, "Joint2D.minAngle", PropertyValue::MakeFloat(-45.0f)) && go->GetComponent<Joint2D>()->minAngle == -45.0f);
         CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint2D.mode", "hinge") && go->GetComponent<Joint2D>()->mode == (int)Joint2D::Mode::Hinge);
         CHECK(PropertyRegistry::SetPropertyFromText(*go, "Joint3D.axis", "0 0 1") && go->GetComponent<Joint3D>()->axis.z == 1.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.useLimits", PropertyValue::MakeBool(true)) && go->GetComponent<Joint3D>()->useLimits);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.minAngle", PropertyValue::MakeFloat(-15.0f)) && go->GetComponent<Joint3D>()->minAngle == -15.0f);
+        CHECK(PropertyRegistry::SetProperty(*go, "Joint3D.maxAngle", PropertyValue::MakeFloat(400.0f)) && go->GetComponent<Joint3D>()->maxAngle == 360.0f);
     }
     {   // the environment: the clock is 0..24 hours; water's colour is red, green and blue, its alpha is `opacity`
         go->AddComponent<DayNightCycle>();

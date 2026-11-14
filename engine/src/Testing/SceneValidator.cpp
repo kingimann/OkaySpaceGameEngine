@@ -9,12 +9,15 @@
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/Foliage.hpp"
+#include "okay/Components/Decal.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NoCode.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -31,6 +34,7 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -163,6 +167,7 @@ std::string JoinPath(const std::string& dir, const std::string& rel) {
 bool SceneValidator::AssetExists(const std::string& path, const ValidatorOptions& o) {
     if (path.empty()) return true;
     if (path.rfind("proc:", 0) == 0 || path.find("://") != std::string::npos) return true;   // built in / remote
+    if (path[0] == '@') return true;   // a picture made in memory (a terrain's baked layers)
     auto exists = [&](const std::string& p) { return o.fileExists ? o.fileExists(p) : DiskFileExists(p); };
     const std::string rel = Slashes(path);
     if (std::filesystem::path(rel).is_absolute()) return exists(rel);
@@ -191,6 +196,12 @@ std::vector<AssetRef> SceneValidator::AssetReferences(const GameObject& go) {
     for (auto* c : go.GetComponents<Terrain>()) {
         add("Terrain", "texture", "texture", c->texture);
         add("Terrain", "normalMap", "texture", c->normalMap);
+        for (const auto& l : c->layers) add("Terrain", "layers.texture", "texture", l.texture);
+    }
+    for (auto* c : go.GetComponents<Decal>()) add("Decal", "texture", "texture", c->texture);
+    for (auto* c : go.GetComponents<Foliage>()) {
+        add("Foliage", "meshPath", "mesh", c->meshPath);
+        add("Foliage", "prefabPath", "prefab", c->prefabPath);
     }
     for (auto* c : go.GetComponents<VoxelTerrain>()) add("VoxelTerrain", "texture", "texture", c->texture);
     for (auto* c : go.GetComponents<ParticleSystem>()) add("ParticleSystem", "texture", "texture", c->texture);
@@ -350,6 +361,18 @@ struct Checker {
                 Reference(path, "TriggerZone", "targetName", c->targetName);
     }
 
+    // I/O links on a Logic Source: an output or input left empty, or a target that is not in the scene.
+    void IoLinks(const GameObject& go, const std::string& path) {
+        for (LogicSource* ls : go.GetComponents<LogicSource>())
+            for (std::size_t i = 0; i < ls->ioLinks.size(); ++i) {
+                const std::string why = ls->IoProblem(ls->ioLinks[i]);
+                if (!why.empty())
+                    Add(Severity::Warning, "io.link_broken", path, "LogicSource",
+                        "I/O link " + std::to_string(i + 1) + " (" + ls->ioLinks[i].output + " -> " +
+                        ls->ioLinks[i].input + ") cannot work: " + why);
+            }
+    }
+
     void Physics(const GameObject& go, const std::string& path) {
         if (go.GetComponent<Rigidbody2D>() && !go.GetComponent<Collider2D>())
             Add(Severity::Warning, "physics.rigidbody_no_collider", path, "Rigidbody2D",
@@ -357,6 +380,75 @@ struct Checker {
         if (go.GetComponent<Rigidbody3D>() && !go.GetComponent<Collider3D>())
             Add(Severity::Warning, "physics.rigidbody_no_collider", path, "Rigidbody3D",
                 "Rigidbody3D without a 3D collider: it will fall through everything");
+    }
+
+    void FoliageRules(const GameObject& go, const std::string& path) {
+        for (auto* f : go.GetComponents<Foliage>()) {
+            // Const-cast: Problem() / TrianglesPerInstance() build the shape on first use, which is not an edit.
+            Foliage* fm = const_cast<Foliage*>(f);
+            const int tpi = fm->TrianglesPerInstance();
+            if (!fm->Problem().empty())
+                Add(Severity::Error, "foliage.shape", path, "Foliage", "Foliage layer cannot draw: " + fm->Problem());
+            if (fm->Count() > 0 && fm->TotalTriangles() > fm->maxTriangles)
+                Add(Severity::Warning, "foliage.budget", path, "Foliage",
+                    "Foliage layer has " + std::to_string(fm->Count()) + " copies (" + std::to_string(fm->Count() * tpi) +
+                    " triangles), over its budget of " + std::to_string(fm->maxTriangles) + ": erase some or raise the budget");
+            else if (fm->Count() == 0)
+                Add(Severity::Info, "foliage.empty", path, "Foliage", "Foliage layer has nothing painted yet");
+        }
+    }
+
+    // Volumes and logic zones: a region with no size never holds anything, and a zone that does nothing is a mistake.
+    void Volumes(const GameObject& go, const std::string& path) {
+        for (auto* v : go.GetComponents<Volume>()) {
+            if (!v->Geometry().Valid())
+                Add(Severity::Warning, "volume.zero_size", path, "Volume",
+                    std::string(Volume::KindName(v->kind)) + " volume has a size of zero or less on an axis (" + Num(v->size.x) +
+                    " x " + Num(v->size.y) + " x " + Num(v->size.z) + "): nothing is ever inside it");
+            if (v->kind == Volume::Kind::Force && v->forceStrength == 0.0f)
+                Add(Severity::Warning, "volume.force_zero", path, "Volume", "Force volume has a strength of 0: it pushes nothing");
+            if (v->kind == Volume::Kind::Ambience) {
+                auto* a = go.GetComponent<AudioSource>();
+                if (!a)
+                    Add(Severity::Warning, "volume.no_audio", path, "Volume",
+                        "Ambience volume needs an Audio Source on the same object: there is nothing to play");
+                else if (a->clipPath.empty() && !a->HasAudio())
+                    Add(Severity::Warning, "volume.no_audio", path, "Volume",
+                        "Ambience volume's Audio Source has no clip: there is nothing to play");
+            }
+        }
+        for (auto* ls : go.GetComponents<LogicSource>()) {
+            if ((ls->kind == LogicSource::Kind::PressurePlate || ls->kind == LogicSource::Kind::TriggerZone) &&
+                !(ls->zoneSize.x > 0.0f && ls->zoneSize.y > 0.0f && ls->zoneSize.z > 0.0f))
+                Add(Severity::Warning, "volume.zero_size", path, "LogicSource",
+                    std::string(LogicSource::KindName(ls->kind)) + " zone has a size of zero or less on an axis: nothing is ever inside it");
+        }
+    }
+
+    // Navigation obstacles: a solid with no size blocks nothing, and carving needs a baked mesh to cut.
+    void NavObstacles(const GameObject& go, const std::string& path) {
+        for (auto* o : go.GetComponents<NavMeshObstacle>()) {
+            const bool capsule = o->shape == NavMeshObstacle::Shape::Capsule;
+            if (capsule ? !(o->capsuleRadius > 0.0f && o->capsuleHeight > 0.0f)
+                        : !(o->size.x > 0.0f && o->size.y > 0.0f && o->size.z > 0.0f))
+                Add(Severity::Warning, "navobstacle.zero_size", path, "NavMeshObstacle",
+                    capsule ? "Capsule has a radius or height of zero or less: it fills no space, so agents do not avoid it and it carves nothing"
+                            : "Box has a size of zero or less on an axis (" + Num(o->size.x) + " x " + Num(o->size.y) + " x " + Num(o->size.z) +
+                              "): it fills no space, so agents do not avoid it and it carves nothing");
+            if (!o->carve) continue;
+            const auto surfaces = scene.FindObjectsOfType<NavMeshSurface>();
+            bool baked = false;
+            for (auto* sf : surfaces) if (sf->HasMesh() || !sf->navPath.empty()) baked = true;
+            if (surfaces.empty())
+                Add(Severity::Warning, "navobstacle.carve_no_surface", path, "NavMeshObstacle",
+                    "Carve is on but the scene has no Nav Mesh Surface: there is no mesh to cut a hole in (agents only dodge it locally)");
+            else if (!baked)
+                Add(Severity::Warning, "navobstacle.carve_no_mesh", path, "NavMeshObstacle",
+                    "Carve is on but the Nav Mesh Surface has no baked mesh (bake it, or turn Bake Before Play on): nothing is carved until it has one");
+            if (!o->carveOnlyWhenStationary && o->moveThreshold <= 0.0f)
+                Add(Severity::Warning, "navobstacle.carve_every_frame", path, "NavMeshObstacle",
+                    "Carve Only When Stationary is off and Move Threshold is 0: the mesh is rebuilt every frame the obstacle moves; raise the threshold");
+        }
     }
 
     static int CountDescendants(const Transform* t) {
@@ -434,8 +526,9 @@ struct Checker {
             if (opt.checkTransforms) { CheckTransform(go, path); Layer(go, path); }
             if (opt.checkAssets) Assets(go, path);
             if (opt.checkScripts) Scripts(go, path);
-            if (opt.checkReferences) References(go, path);
-            if (opt.checkPhysics) Physics(go, path);
+            if (opt.checkReferences) { References(go, path); IoLinks(go, path); }
+            FoliageRules(go, path);
+            if (opt.checkPhysics) { Physics(go, path); Volumes(go, path); NavObstacles(go, path); }
             if (opt.checkInactive) Inactive(go, path);
         }
         if (opt.checkAssets && !scene.uiFont.empty() && !SceneValidator::AssetExists(scene.uiFont, opt))

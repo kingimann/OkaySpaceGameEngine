@@ -8,32 +8,32 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ## 20. Asset management (Critical)
 
 ### 20.1 Asset browser
-- **What:** The editor window where you find, preview, organise and use project files. Today that is the Project panel, a file-system browser built into the editor; it does not use the new asset database yet.
+- **What:** The editor window where you find, preview, organise and use project files. Today that is the Project panel; its listing, search, filters, counts, folder tree, dependency lookups and pictures come from the asset database and the thumbnail cache.
 - **Parts:**
   - 20.1.1 Folder tree, grid and list views - `editor/main.cpp` - browse the Assets folder with breadcrumb, back/forward, favourite folders, tile size and sort saved in `okay_projectview.txt`
   - 20.1.2 Search and smart filters - `editor/main.cpp` - "All Models/Textures/Audio/...", Recently Changed, Unused Assets, colour labels; search words `t:model`, `l:red`, `ext:png`
   - 20.1.3 Asset actions - `editor/main.cpp` - create script/scene/material/prefab, import files, rename (F2), delete with confirm, copy/cut/paste, multi-select, drag assets onto Inspector fields or into the scene
-  - 20.1.4 Details strip and previews - `editor/main.cpp` - preview, size, dimensions, path, "used in scene" and Find References In Scene for the selected asset
+  - 20.1.4 Details strip and previews - `editor/main.cpp` - preview, size, dimensions, path, GUID, dependency and user counts, tags, a broken-reference warning, "used in scene", Find References, Show Dependencies and Find References In Scene for the selected asset
   - 20.1.5 Asset Manager window - `editor/main.cpp` - lists Marketplace downloads (`.okayasset` sidecars written by the launcher) and imports them into the open project
-  - 20.1.6 Database search model (not wired to a window) - `Core/AssetDatabase` - `Search(AssetQuery)` with text, type, label, folder, recent, used-by filters, sort and paging
+  - 20.1.6 Database search model - `Core/AssetDatabase`, `editor/ProjectBrowser.*` - `Search(AssetQuery)` (folder, label, recent, unused, used-by, depends-on) behind `Browser::List`; the panel adds name, type-word and extension matching on top
 - **Code:** `editor/main.cpp`, `Core/AssetDatabase`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`
 - **API:** `AssetDatabase::Search`, `AssetQuery`, `AssetPage`, `CountByType`, `AllLabels`; editor: View > Panels > Project and Asset Manager
 - **Editor:** Project panel (`DrawProject`), Asset Manager window (`DrawAssetManager`)
 - **Docs:** `docs/asset_database.md`, `docs/editor.md`
-- **Tests:** `asset_database` (database side only; the Project panel has no automated test)
-- **Status:** Partial - the Project panel is a full-featured file browser (read in code), but it scans the disk itself and ignores `AssetDatabase`.
-- **Exists today:** Project panel in `editor/main.cpp` (about 1,200 lines: tree, grid and list, thumbnails, per-project colour labels, favourites, an unused-asset scan that reads scene text, clipboard, rename, delete confirm). Asset Manager window for Marketplace downloads. `Core/AssetDatabase` has the search, sort, paging and counts a browser needs (merged in #568, no caller outside tests).
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db` (the model: listing, search, references, thumbnails, a 5,000-asset refresh)
+- **Status:** Partial - the Project panel is driven by `AssetDatabase` and `ThumbnailCache`; the rows below are what is still open.
+- **Exists today:** Project panel in `editor/main.cpp` and `editor/ProjectBrowser.*`: tree, grid and list from the database, search and type filters, colour labels, tags, favourites, Unused Assets from the dependency graph, clipboard, rename, delete confirm, info strip. Asset Manager window for Marketplace downloads.
 - **Work packages:**
   1. S - Own one `AssetDatabase` in `EditorState`, call `Scan` when a project opens and when the editor window regains focus; no UI change. Depends on: #568 (on main).
   2. M - Drive the Project panel's list, filters and counts from `AssetDatabase::Search` and `CountByType`, keeping the view prefs. Depends on: package 1.
   3. S - Replace the "Unused Assets" smart filter and "used in scene" text scan with `FindUnused` / `UsedBy`. Depends on: package 2.
   4. S - Add GUID, type, import settings summary and "Used by" list to the details strip. Depends on: package 2, 20.3.
-  5. M - Missing and stale references list with a Fix button (`FindMissing`, `FindStaleReferences`, `FixStaleReferences`). Depends on: package 1, 20.2.
-- **Open:** Two sources of truth for labels (the editor's own file vs `.okaymeta` labels); the panel re-lists the folder every 0.6 s instead of reacting to the database's reimport signal; no automated test for the panel; possible gap: the "Unused Assets" filter only reads files the editor knows how to scan (scenes, prefabs, materials, scripts, data), not dialogue or quest files.
+  5. Done - Broken References list (missing and stale) with a Fix button and undo (`Browser::MissingRefs`, `StaleRefs`, `FixStaleRefs`).
+- **Open:** Two sources of truth for labels (the editor's own colour labels in `.okaylabels` vs tags in `.okaymeta`); changes outside the editor are seen by polling the incremental scan (2 s or more), there is no file watcher; Unused Assets reads the references the database extracts (scenes, prefabs, materials, scripts, clips, dialogue, quests and the other text formats), not paths a script builds at run time; the window has no automated UI test (the model, including the missing and stale lists and Fix, is tested).
 - **Related:** 20.2, 20.3, 20.5, 15.4, 3.6
 - **Words:** Project panel, asset browser, content browser, Assets folder, favorites, smart filters, Recently Changed, Unused Assets, asset labels, Asset Manager, Marketplace downloads, okayasset, AssetQuery
-- **Seen as:** cannot find a texture or model; Project panel slow in a huge folder; labels or favourites vanish; downloaded asset not in my project; "unused" list shows things that are used
-- **Ask me like:** "make the Project panel use the asset database"; "show which scenes use this texture in the details strip"
+- **Seen as:** cannot find a texture or model; labels or favourites vanish; downloaded asset not in my project; "unused" list shows things that are used
+- **Ask me like:** "list the assets that depend on this prefab"; "show a Fix button for stale references"
 
 ### 20.2 Dependencies and references
 - **What:** Knowing which assets use which other assets, so a build ships exactly what a game needs and a moved or deleted file shows up before it breaks a scene.
@@ -104,7 +104,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   1. M - Inspector for the selected asset (texture, model, audio blocks) writing through `SetSettings`. Depends on: 20.1 package 2.
   2. M - Texture loader applies `maxSize`, `mipmaps`, `sRGB` from the meta when the image is loaded (`AssetManager` Image loader). Depends on: package 1.
   3. M - Model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations`. Depends on: package 1, 3.6.
-  4. S - Audio loader honours `loadMode`, `forceMono`, `quality`. Depends on: package 1, 7.2.
+  4. S - Audio loader honours `loadMode` and `forceMono` (done; `quality` is not applied because audio is not re-encoded). Depends on: package 1, 7.2.
   5. S - On `SettingsChanged` reload the asset in the open scene. Depends on: packages 2-4.
 - **Open:** no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
 - **Related:** 20.1, 3.6, 2.2, 7.2
@@ -115,22 +115,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 20.5 Thumbnails
 - **What:** Small preview pictures for assets in the browser, cached so the grid stays fast.
 - **Parts:**
-  - 20.5.1 Editor thumbnails today - `editor/main.cpp` - images, materials (a shaded ball), prefabs, scenes, models and primitives are rendered into small pictures and cached in memory
-  - 20.5.2 Thumbnail cache (not wired) - `Core/ThumbnailCache` - memory plus disk cache keyed by GUID and content hash, generators per type, placeholders, stats
+  - 20.5.1 Editor renderers - `editor/main.cpp` - prefabs, scenes, materials (a sphere), models and `.okaymesh` files are rendered into 128 px pictures by generators registered with the cache; primitives in the Modeling panel keep their own small cache
+  - 20.5.2 Thumbnail cache - `Core/ThumbnailCache`, `editor/ProjectBrowser.*` - memory plus disk cache keyed by GUID and content hash (a prefab, scene or material also by what it uses), generators per type, placeholders, stats; the Project panel and the Scene Manager use it
   - 20.5.3 Image generator and downscale - `Core/ThumbnailCache` - `ImageThumbnailGenerator`, area-weighted `BoxDownscale`
 - **Code:** `Core/ThumbnailCache`, `editor/main.cpp`
 - **API:** `ThumbnailCache::Get`, `AddGenerator`, `Invalidate`, `Options::diskDir`
 - **Editor:** Project panel tiles and details strip
 - **Docs:** `docs/asset_database.md`
-- **Tests:** `asset_database`
-- **Status:** Partial - the editor has working thumbnails of its own; the shared disk cache is written and tested but unused.
-- **Exists today:** `GetThumb`, `GetPrefabThumb`, `GetSceneThumb`, `GetModelThumb` and `GetPrimitiveThumb` in `editor/main.cpp` render previews on demand (scene and prefab previews instantiate into a throwaway scene with scripts off). `ThumbnailCache` adds a disk cache and failure memory.
+- **Tests:** `asset_database`, `project_panel_db`
+- **Status:** Partial - the Project panel gets every picture from the shared cache (kept on disk, made again when the content changes); pictures are made on the main thread, inside a frame time budget.
+- **Exists today:** `Browser::Thumb` and the generators in `editor/main.cpp` (scene and prefab previews instantiate into a throwaway scene with scripts off); `GetPrimitiveThumb` still serves the Modeling panel. `ThumbnailCache` adds the disk cache, failure memory and the audio waveform generator.
 - **Work packages:**
   1. M - Project panel gets its pictures from `ThumbnailCache`, with the editor's renderers registered as generators for prefab, scene, model and mesh. Depends on: 20.1 package 2.
   2. S - Disk cache under `<project>/.okay/thumbs` (hidden so scans skip it). Depends on: package 1.
   3. S - Invalidate on `SourceChanged` so an edited file refreshes its picture. Depends on: package 1, 20.4.
   4. S - Generate thumbnails off the UI thread or spread over frames for big folders. Depends on: package 1.
-- **Open:** the editor's current thumbnails are rebuilt each session (memory only); a scene thumbnail loads the whole scene; no thumbnail for audio (waveform) or fonts.
+- **Open:** pictures are made on the main thread inside a time budget, not on a worker thread (packages 1 to 3 are done; package 4 is the budget, not a thread); a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets.
 - **Related:** 20.1, 15.4, 3.5
 - **Words:** thumbnail, preview picture, asset preview, ThumbnailCache, tile icon, model preview, prefab preview
 - **Seen as:** blank tiles; slow first open of a folder full of models; stale preview after editing a texture
@@ -142,21 +142,21 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Save an object and its children as a `.okayprefab` file and place copies of it in any scene or spawn it from a script.
 - **Parts:**
   - 21.1.1 Prefab files and instantiate - `Scene/SceneSerializer` - `SaveObjectToFile`, `InstantiateFromFile`, `Instantiate` (duplicate/paste); an instance root remembers its file in `prefabSource`
-  - 21.1.2 Editor save and place - `editor/main.cpp` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools
+  - 21.1.2 Editor save and place - `editor/main.cpp`, `editor/PrefabEdit.*` - Save As Prefab (Hierarchy menu and Inspector button), drag an object into the Project panel, drop a prefab into the scene, UI prefabs from the UI tools; an object holding prefab instances is saved with `PrefabTools::SavePrefab` so the nested links stay (`SaveAsPrefabFile`)
   - 21.1.3 Spawning and pooling - `Scene/ObjectPool` - `spawn("prefab", x, y)` in scripts, `net_spawn` for replicated spawns, `ObjectPool` reuses spawned objects
   - 21.1.4 Starter templates - `Scene/SceneTemplates`, `Scene/UITemplates` - built-in object and UI templates the editor can create (different from prefab files)
+  - 21.1.5 Prefab mode - `editor/EditorState` (`OpenPrefab`, `SavePrefab`, `RevertPrefab`, `ClosePrefab`), `editor/main.cpp` bar - double-click a prefab in the Project panel, or Open Prefab in the Hierarchy menu or the Inspector's Prefab box: the prefab opens alone with a Scene > Prefab > Nested bar, Back, Save, Revert; nested prefabs drill in; each level has its own undo history and unsaved mark; saving then going Back rebuilds every instance in the scene keeping its overrides; Play is off meanwhile
 - **Code:** `Scene/SceneSerializer`, `Scene/ObjectPool`, `Scene/SceneTemplates`, `Scene/UITemplates`, `editor/main.cpp`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SaveObjectToFile`, `GameObject::prefabSource`, `ObjectPool`, script `spawn`, `spawn3`, `net_spawn`
-- **Editor:** Hierarchy right-click > Save As Prefab, Project panel (drag in and out), Inspector prefab banner
-- **Docs:** `docs/prefabs.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
-- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`
+- **Editor:** Hierarchy right-click > Save As Prefab and the Prefab submenu (Open enters prefab mode), Project panel (drag in and out, double-click or right-click > Open Prefab, Place in Scene), Inspector prefab header (21.4; Open enters prefab mode), the prefab mode bar above the Scene view
+- **Docs:** `docs/prefabs.md`, `docs/prefab_mode.md`, `docs/scene_serializer.md`, `docs/scene_management.md`
+- **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`, `prefab_mode`
 - **Status:** Works - save, place and spawn are in daily use and covered by tests.
 - **Exists today:** Everything in the Parts list on main. #575 added a cache of the last 32 decoded prefab files (`SceneSerializer::ClearPrefabCache` drops it) so repeated spawns skip the file read; #578's `PrefabTools` is reached through `InstantiateFromFile` for nested and variant files.
 - **Work packages:**
-  1. S - Prefab "Open in Prefab Mode" button that isolates the prefab in a scratch scene, edits, saves. Depends on: 21.4 package 1.
-  2. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
-  3. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
-- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; editor's Apply overwrites the whole file from one instance.
+  1. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
+  2. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
+- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; prefab mode does not open variants, saves only the prefab's root tree and keeps no crash-recovery copy of a prefab being edited (`docs/prefab_mode.md`).
 - **Related:** 1.6, 15.1, 15.4, 11.6, 21.2, 21.4
 - **Words:** prefab, okayprefab, instantiate, spawn, template, Save As Prefab, prefab instance, ObjectPool, prefabSource
 - **Seen as:** I changed the prefab but my placed copies did not change; dragging an object into Project does not create what I expected; spawned bullets stutter (pooling)
@@ -170,20 +170,19 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 21.2.3 Saving nested structures (#578) - `Scene/PrefabTools` - `SavePrefab(root, path)` writes nested instances as `nestedprefab` objects and refuses a result that would not load
   - 21.2.4 Queries and validator (#578) - `Scene/PrefabTools` - `IsPrefabInstance`, `PrefabRoot`, `NestedInstances`, `ValidateAsset`, `ValidateInstance`
   - 21.2.5 Plain prefab records - `Scene/SceneSerializer` - a `prefab` record is written for any object with `prefabSource`; plain prefab files still take the old path, only files with `nestedprefab` or `variant` go to `PrefabTools`
+  - 21.2.6 Nested prefabs in the editor - `editor/PrefabEdit.*`, `editor/main.cpp`, `editor/InspectorPanel.*` - `DescribePrefabInstance` (root, outer instance, kind), Hierarchy badge and tooltip, Inspector header, `SaveAsPrefabFile`, Validate Prefab; Apply through the inner instance updates every user of the inner prefab
 - **Code:** `Scene/PrefabTools`, `Scene/SceneSerializer`
 - **API:** `PrefabTools::SavePrefab`, `NestedInstances`, `ValidateAsset`; `SceneSerializer::InstantiateFromFile` routes nested files to `PrefabTools`
-- **Editor:** none (`docs/prefab_system.md`: "nothing in the editor calls it yet")
+- **Editor:** Hierarchy marks nested prefab instances (a square in a square) and variants (violet), the Inspector header names the kind ("nested in Car.okayprefab") with Select Asset, Save As Prefab keeps nested links, Project panel > Validate Prefab
 - **Docs:** `docs/prefab_system.md`; `docs/prefabs.md`
-- **Tests:** `prefab_nested`
-- **Status:** Partial - the data layer is on main (#578; `InstantiateFromFile` routes nested files to it, read `SceneSerializer.cpp`) and has tests (`prefab_nested`); nothing in the editor calls it (grep finds no `PrefabTools` in `editor/`).
-- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs. `docs/prefab_system.md`: "nothing in the editor calls it yet".
+- **Tests:** `prefab_nested`; `prefab_editor`
+- **Status:** Partial - the data layer (#578) and the editor side are on main: nested instances are marked in the Hierarchy, named in the Inspector, saved without losing their links and checked by Validate Prefab (tests `prefab_nested`, `prefab_editor`); a Console list of nesting errors with the file chain and the "Used in N scenes" dependency are not built.
+- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs, and the editor side in 21.2.6 (`docs/prefab_system.md`, "In the editor").
 - **Work packages:**
-  1. M - Editor: prefab files that use `nestedprefab` open and save without losing structure (Project panel "Save As Prefab" goes through `PrefabTools::SavePrefab`). Depends on: #578 (on main).
-  2. M - Hierarchy shows nested instance roots with a prefab icon and a link to their own file. Depends on: package 1.
-  3. S - Validator button on a prefab in the Project panel (`ValidateAsset`) and on Build (33.2). Depends on: package 1.
-  4. S - Prefab nesting depth and cycle errors shown in the Console with the file chain. Depends on: package 1.
-  5. S - Wire "Used in N scenes" and the asset database's dependency extractor to understand `nestedprefab` and `variant` lines (check `Core/AssetDatabaseDeps`). Depends on: 20.2.
-- **Open:** the editor does not use it (see Status); objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones (the page says so); a nested prefab edit does not update other open instances until they are re-applied.
+  1. S - Validate Prefab on Build (33.2); the Project panel entry exists (`ValidateAsset` result in the Console). Depends on: 21.2.6.
+  2. S - Prefab nesting depth and cycle errors shown in the Console with the file chain when a scene loads. Depends on: 21.2.6.
+  3. S - Wire "Used in N scenes" and the asset database's dependency extractor to understand `nestedprefab` and `variant` lines (check `Core/AssetDatabaseDeps`). Depends on: 20.2.
+- **Open:** objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones (the page says so); the editor's Apply updates the other instances in the scene, but not a second instance of the applied file inside the same outer instance.
 - **Related:** 21.1, 21.3, 21.4, 1.6
 - **Words:** nested prefab, prefab inside prefab, child prefab, nestedprefab, prefab hierarchy, instance of instance, PrefabTools
 - **Seen as:** a prefab built from other prefabs loses their link; editing a part prefab does not update the big one
@@ -194,19 +193,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 21.3.1 Variant file format (#578) - `Scene/PrefabTools` - a prefab file with `variant "<base>"` plus `override`, `unset`, `remove` and added objects (`under <i>`); a variant of a variant works
   - 21.3.2 Save a variant from an edited instance (#578) - `Scene/PrefabTools` - `SaveVariant(instance, path)` writes the differences and never touches the base
-  - 21.3.3 Variant creation UI - not built
+  - 21.3.3 Variant creation UI - `editor/PrefabEdit.*`, `editor/InspectorPanel.*`, `editor/main.cpp` - Inspector **Create Variant** (name box; `SaveVariant`, then the instance is linked to the new variant; one undo step that also removes the file), Hierarchy Prefab menu, Project panel **Create Variant** on a prefab (a variant with no differences yet), `PrefabNewVariantFile`
+  - 21.3.4 Variant display - `editor/PrefabEdit.*`, `editor/InspectorPanel.*` - violet Hierarchy mark, header "Prefab Variant of <base>" with **Select Base**; Apply on an instance of a variant writes the variant's override and never the base, and updates the other instances of the variant
 - **Code:** `Scene/PrefabTools`
-- **API:** `PrefabTools::SaveVariant`, `Instantiate`, `FileUsesPrefabStructure`
-- **Editor:** none
+- **API:** `PrefabTools::SaveVariant`, `Instantiate`, `FileUsesPrefabStructure`; `oked::PrefabCreateVariant`, `PrefabNewVariantFile`, `PrefabKindOfFile`, `ResolveVariantBase`
+- **Editor:** Inspector prefab header > Create Variant / Select Base, Hierarchy row menu > Prefab > Create Variant..., Project panel right-click > Create Variant
 - **Docs:** `docs/prefab_system.md`
-- **Tests:** `prefab_variants`
-- **Status:** Partial - the variant data layer is on main (#578) with tests (`prefab_variants`); no editor UI creates or shows variants (21.3.3 is not built).
-- **Exists today:** Variant files, chains with cycle and depth checks, `SaveVariant`, and compatibility (an older build loads only the added objects with warnings).
+- **Tests:** `prefab_variants`; `prefab_editor`
+- **Status:** Partial - variants can be created, shown and applied into from the editor (`prefab_editor`); a variant badge in the Project panel and "changing the base shows its effect on variants" feedback are not built.
+- **Exists today:** Variant files, chains with cycle and depth checks, `SaveVariant`, compatibility (an older build loads only the added objects with warnings), and the editor side in 21.3.3 and 21.3.4. Editing the base and pressing Apply or Update All rebuilds the variants' placed instances (each keeps its own overrides).
 - **Work packages:**
-  1. S - Project panel "Create Variant" on a prefab and in the Inspector banner ("Save as Variant" from an edited instance). Depends on: #578 (on main).
-  2. M - Variant badge and base link in the Project panel and Inspector; "Select Base". Depends on: package 1.
-  3. M - Editing the base updates variants and their placed instances (reapply). Depends on: package 1, 21.4 package 1.
-- **Open:** no UI; scene files never contain variant records (only prefab files do); override unit is a whole record, with field-level apply and revert done by writing the whole record.
+  1. S - Variant badge on the prefab's tile in the Project panel (the Hierarchy and Inspector already show it). Depends on: 21.3.4.
+- **Open:** scene files never contain variant records (only prefab files do); objects added to or lost from an instance of a variant cannot be applied into the variant (Create Variant keeps them); override unit is a whole record, with field-level apply and revert done by writing the whole record.
 - **Related:** 21.2, 21.4
 - **Words:** prefab variant, derived prefab, inherit prefab, base prefab, variant of variant, enemy variants, SaveVariant
 - **Seen as:** I need ten similar enemies and copy-pasting prefabs makes them drift apart
@@ -216,24 +214,24 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Remember how a placed instance differs from its prefab, and offer to apply, revert or re-apply those differences.
 - **Parts:**
   - 21.4.1 Override data layer - `Scene/SceneSerializer`, `Scene/GameObject` - `CapturePrefabOverrides`, `InstantiatePrefab(scene, path, overrides)`, `ReapplyPrefab`; overrides saved as `override <object> "<line>"` records (merged #570)
-  - 21.4.2 Editor instance banner - `editor/main.cpp` - Apply (overwrite the file with this instance), Revert, Reload All, Select in Project, Unlink
+  - 21.4.2 Editor prefab header - `editor/InspectorPanel.*`, `editor/PrefabEdit.*` - **Prefab: <name>** with Open, Select Asset, Revert All, Apply All, Create Variant, Update All, Unpack (the old whole-file Apply, Revert, Reload All and Unlink buttons are gone)
   - 21.4.3 Per-field diff, revert and apply (#578) - `Scene/PrefabTools` - `Diff` lists changed, added and removed records and fields ("Transform position.x: 0 -> 4"), `RevertOverride`, `RevertAll`, `ApplyToSource`, `ApplyAllToSource`; apply writes atomically into the prefab, a variant's override or a nested instance's override
   - 21.4.4 Unpack (#578) - `Scene/PrefabTools` - `Unpack(go, completely)` cuts the prefab link and keeps the objects and their ids
-  - 21.4.5 Per-field apply through the property registry - planned - `Scene/PropertyRegistry` (#578, 1.19) can list a component's fields by name (`Light.intensity`), snapshot, diff and revert them; `PrefabTools::Diff` still uses its own fixed field list
+  - 21.4.5 Per-field apply through the property registry - planned - `Scene/PropertyRegistry` (#578, 1.19) can list a component's fields by name (`Light.intensity`), snapshot, diff and revert them; `PrefabTools::Diff` still uses its own fixed field list (the editor maps an Inspector label to the diff's field names with `ChangedFieldsForLabel`)
+  - 21.4.6 Per-property display - `editor/InspectorPanel.*` (`PrefabFieldMark`), `editor/PrefabEdit.*` - a blue bar on an overridden property's row (generic card and hand-written fields), right-click **Revert Property** / **Apply Property to Prefab**; component header bar and menu **Revert / Apply Component to Prefab**
+  - 21.4.7 Changes list - `editor/InspectorPanel.*` (`DrawPrefabChanges`) - per component and per field (old -> new) with Revert / Apply, components added or lost, child objects added or lost (Revert deletes or restores them; Apply writes them into a plain prefab)
+  - 21.4.8 Apply and Revert actions with undo - `editor/PrefabEdit.*`, `editor/EditorState.*` - `PrefabRevert`, `PrefabApply`, `PrefabApplyAll`, `PrefabRevertObject`, `PrefabApplyObject`, `PrefabUnpack`, `PrefabUpdateInstances`; one undo step each; the prefab files an Apply wrote travel with the step (`AttachUndoFiles`); Apply captures the other instances' overrides against the old file and rebuilds them from the new one, so an instance that changed the same field keeps its value
 - **Code:** `Scene/SceneSerializer`, `Scene/GameObject`, `Scene/PrefabTools`, `editor/main.cpp`
 - **API:** `SceneSerializer::CapturePrefabOverrides`, `ReapplyPrefab`, `InstantiatePrefab`; `GameObject::prefabOverrides`; `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`, `Unpack`
-- **Editor:** Inspector prefab banner (Apply, Revert, Reload All, Select, Unlink)
+- **Editor:** Inspector prefab header and Changed from the prefab list, right-click a marked property, component `...` menu, Hierarchy row menu > Prefab
 - **Docs:** `docs/prefabs.md`; `docs/prefab_system.md`
-- **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`
-- **Status:** Partial - the editor still uses its own whole-instance Apply and Revert; the per-field layer is on main (#578, tests `prefab_apply_revert`) but unused by the editor.
-- **Exists today:** Banner buttons in `editor/main.cpp` (`RevertPrefabInstance`, `ReloadPrefabInstances`) and the data layer for overrides. Also on main, called from nowhere in the editor: per-field diff, revert and apply, unpack and a validator.
+- **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`; `prefab_editor`; `inspector_model`
+- **Status:** Works - the editor reads, shows, reverts and applies overrides per property, component, child object and instance through `PrefabTools`, with undo and with the other instances updated (tests `prefab_editor`, `prefab_apply_revert`); the registry-based field list (21.4.5) and an "are you sure" before Apply All are not built.
+- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene: the file edits are a command in the same `UndoStack` group as the scene change (`docs/prefab_system.md`, "In the editor").
 - **Work packages:**
-  1. M - Editor Revert and Reload use `PrefabTools::Reapply` so overrides survive a prefab edit; Unlink becomes `Unpack` with a "completely" choice. Depends on: #578 (on main).
-  2. M - Inspector shows a blue bar on overridden components and fields, with per-field Apply and Revert menu items (`RevertOverride`, `ApplyToSource`). Depends on: package 1.
-  3. S - "Overrides" popup listing `Diff` output (what differs, including added and lost objects). Depends on: #578 (on main).
-  4. S - Apply All and Revert All buttons using `ApplyAllToSource` and `RevertAll`; Apply All asks before overwriting. Depends on: package 2.
-  5. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: package 2, #578 (on main).
-- **Open:** `Diff` is exact for well-known records and falls back to whole records for others; objects added or lost on an instance are reported but `ApplyToSource` only handles records (use `SavePrefab` or `SaveVariant`); other instances of the same file are not touched by an apply.
+  1. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: #578 (on main).
+  2. S - Apply All asks before overwriting the prefab file. Depends on: 21.4.8.
+- **Open:** `Diff` is exact for well-known records and falls back to whole records for others; `ApplyToSource` only handles records, so the editor applies an added or lost child object itself (`SavePrefab`, plain prefab files only; variants and nested instances say why it is off); a second instance of the applied file inside the same outer instance is not updated.
 - **Related:** 21.1, 21.2, 21.3, 15.2, 1.6, 22.1
 - **Words:** prefab overrides, apply, revert, reload all, unlink, unpack, overridden, instance differences, ReapplyPrefab, CapturePrefabOverrides, PrefabTools, per-field override
 - **Seen as:** I tweaked one instance and it lost the change after the prefab was edited; Apply overwrote things I did not mean to; no way to see what is different
@@ -244,30 +242,31 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 22.1 Undo history
 - **What:** Step back and forward through your edits with Ctrl+Z and Ctrl+Y, and jump to any earlier step from a history list.
 - **Parts:**
-  - 22.1.1 Whole-scene snapshot undo - `editor/EditorState.*` - `PushUndo` stores the whole scene as text before a change; 100 steps; `Undo`, `Redo`, `UndoDepth`
-  - 22.1.2 History window - `editor/main.cpp` - View > History lists the steps; click one to jump there
-  - 22.1.3 Separate undo stacks - `editor/main.cpp` - mesh edit mode keeps its own stack (`g_meshUndo`), the animation draft and the Localization window have their own; Ctrl+Z goes to whichever has focus
+  - 22.1.1 Scene undo on `UndoStack` - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - `PushUndo` opens a step, closed at the next boundary as a `SceneDeltaCommand` (scene-text delta, selection by GUID); 100 steps; named steps; drags and repeated edits of one widget merged; `Undo`, `Redo`, `UndoName`, `UndoDepth`; empty history on New / Open; off during Play
+  - 22.1.2 History window - `editor/main.cpp` - View > History lists the step names ("After: ...", "Before: ..."); click one to jump there; Edit > Undo / Redo show the name and grey out when empty
+  - 22.1.3 Separate undo stacks - `editor/main.cpp` - mesh edit mode keeps its own stack (`g_meshUndo`), the Localization, Timeline and Project panels have their own; the animation draft is now a command in the main stack (`AnimDraftCommand`); Ctrl+Z goes to whichever has focus
   - 22.1.4 Command-based undo stack (#572) - `Core/Undo`, `Core/UndoCommands` - `UndoStack` with groups, merging of slider drags, count and memory caps, dirty tracking; `SetProperty`, `ListEdit`, object create/delete/reparent by id
+  - 22.1.6 Asset files inside an undo step - `editor/EditorState.*` - `AttachUndoFiles(edits)` adds a file command (`MakeFileUndo`, before and after text of files an edit wrote: a prefab Apply, a new variant) to the step `PushUndo` opened, as `PushUndo(name, alsoUndo)` does; Undo and Redo move the files with the scene in one `UndoStack` group
   - 22.1.5 Property change hook as an undo source - planned - `Scene/PropertyRegistry` (#578, 1.19) fires a hook with old and new value on every real property change and has `ScopedHookSuppression` so an undo does not record itself; `Core/UndoCommands` has a `SetProperty` command, nothing connects the two or the editor
-- **Code:** `editor/EditorState.*`, `editor/main.cpp`, `Core/Undo`, `Core/UndoCommands`
-- **API:** `EditorState::PushUndo`, `Undo`, `Redo`, `CanUndo`; `UndoStack`, `UndoSet`, `UndoRecordSet`, `SnapshotRecorder`, `CreateObjectCommand`, `DeleteObjectCommand`, `ObjectOps`
+- **Code:** `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp`, `editor/main.cpp`, `Core/Undo`, `Core/UndoCommands`
+- **API:** `EditorState::PushUndo(name)`, `PushUndoText`, `CommitUndo`, `Undo`, `Redo`, `CanUndo`, `UndoName`, `undoStack()`; `SceneDeltaCommand`, `TextDelta`, `DescribeSceneChange`; `UndoStack`, `UndoSet`, `UndoRecordSet`, `SnapshotRecorder`, `CreateObjectCommand`, `DeleteObjectCommand`, `ObjectOps`
 - **Editor:** Edit > Undo / Redo, View > History
-- **Docs:** `docs/editor.md`; `docs/undo_recovery.md`
-- **Tests:** editor `--selftest` covers undo around a creation; `undo`
-- **Status:** Partial - the snapshot undo is what ships; the command-based stack is on main (#572, test `undo`) but the editor does not use it (grep finds `UndoStack` only in the engine).
-- **Exists today:** Every edit pushes the whole scene as text, so one step costs a full serialize and the history holds 100 scene copies. `docs/undo_recovery.md` ("engine side only") describes how to adopt `UndoStack` in the editor step by step, with `SnapshotRecorder` as a bridge so behaviour stays the same.
+- **Docs:** `docs/editor.md`; `docs/editor_undo.md` (audit of every edit); `docs/undo_recovery.md`
+- **Tests:** `editor_undo` (delta, command, 25 edit kinds by scene text, merge, GUID restore, limit, New / Open, Play, saved tracking); editor `--selftest` covers undo around a creation; `undo`
+- **Status:** Partial - the editor records scene edits on the engine `UndoStack` (headless tests above). Not done: per-object and per-property commands (each Undo rebuilds the scene), folding mesh edit / Timeline / Localization / Project undo into one stack, an asset move keeps the scene history. The GUI paths (Edit menu, shortcuts, History panel, `WatchEditUndo`) were compiled but not run.
+- **Exists today:** One step costs a scene serialisation at the boundary and stores only the differing stretch of text; an undo rebuilds the scene from text, as the snapshot undo did. Undo history survives Play and Stop (it is off, and records nothing, while Play runs).
 - **Work packages:**
-  1. M - Put one `UndoStack` in `EditorState` fed by `SnapshotRecorder` (same behaviour); use `IsDirty()` for the title-bar mark. Depends on: #572 (on main).
-  2. M - Inspector sliders and drags use `UndoRecordSet` plus `BreakMerge()` so one drag is one step and costs no scene copy; the property registry's change hook could feed this for registered components. Depends on: package 1.
+  1. Done - one `UndoStack` in `EditorState`; `IsDirty()` tracks saved state (`MarkClean` is the save point; the title-bar mark still reads `dirty`, kept in step on undo and redo).
+  2. Done in effect - a drag is one step and costs the changed text, not a scene copy (`WatchEditUndo` + `TextDelta`); same-widget edits merge. The property registry hook is not used. Depends on: package 1.
   3. L - Create, delete, duplicate and reparent use object commands keyed by `GameObject::Guid()` (ids must survive a restore). Depends on: package 1, #570 (on main).
   4. M - Fold the mesh-edit, animation-draft and localization stacks into the same stack so Ctrl+Z always does the expected thing. Depends on: package 1.
-  5. M - History window shows the step names (`UndoNames`) and the memory used. Depends on: package 1.
-  6. M - Undo across Play and Stop (history is kept). Depends on: package 1, 34.1.
-- **Open:** each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the stack across Play and Stop is not verified; the property registry (on main, #578, 1.19) offers names and change hooks that `SetProperty` commands could use.
+  5. Done for names (History and Edit menu); the memory figure is not shown. Depends on: package 1.
+  6. Done - history is kept across Play and Stop; Undo is off and nothing is recorded while Play runs. Depends on: package 1, 34.1.
+- **Open:** per-object commands (`ObjectOps`, Guid) would avoid the rebuild and keep Inspector state; asset moves clear the scene history; several stacks remain (mesh, Timeline, Localization, Project) and Ctrl+Z goes to the focused one; the property registry (#578, 1.19) could feed `SetProperty` commands.
 - **Related:** 15.9, 15.2, 22.2, 34.1
 - **Words:** undo, redo, Ctrl+Z, history window, PushUndo, UndoStack, command undo, snapshot undo, SetProperty, merge slider drags
-- **Seen as:** undo is slow in a big scene; one slider drag makes dozens of undo steps; Ctrl+Z undoes the wrong thing after mesh editing; undo stops working after Play
-- **Ask me like:** "switch the editor to the command undo stack"; "make dragging a slider one undo step"
+- **Seen as:** undo is slow in a big scene; Ctrl+Z undoes the wrong thing after mesh editing; undo does nothing after an asset was moved
+- **Ask me like:** "make delete / reparent per-object undo commands"; "keep the scene history when an asset is moved"
 
 ### 22.2 Autosave
 - **What:** The editor quietly saves a recovery copy of your work every few minutes so a crash costs little.
@@ -841,7 +840,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** WorldStreamer Inspector section
 - **Docs:** `docs/scene_management.md`, `docs/asset_manager.md`; `docs/optimization_tools.md`
 - **Tests:** `worldstreamer`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
-- **Status:** Partial - cell streaming of prefabs works; `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
+- **Status:** Partial - cell streaming of prefabs works (cells are held by instance id, so a cell root destroyed by a script is skipped, not freed twice); `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
 - **Exists today:** `WorldStreamer` instantiates and destroys cell prefabs on the main thread. Cells must be authored by hand as separate prefab files. Missing cell files are skipped.
 - **Work packages:**
   1. M - Streamer uses `StreamingGrid` decisions and `AssetManager::LoadAsync` so a cell load never blocks a frame. Depends on: #574 (on main).
@@ -963,49 +962,72 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.1.3 Whole-terrain tools - `Components/Terrain` - Generate (mountains, hills, plains, plateau, islands, ridged, canyons), hydraulic and thermal erosion, terrace, normalize, invert
   - 29.1.4 Heightmap import and export - `Components/Terrain` - grayscale PNG with black to `lowY` and white to `highY`
   - 29.1.5 Voxel terrain - `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger` - marching-cubes terrain with caves and runtime digging
-- **Code:** `Components/Terrain`, `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger`, `editor/main.cpp`
-- **API:** `Terrain::RaiseAt`, `SmoothAt`, `FlattenAt`, `NoiseAt`, `Generate`, `Erode`, `ThermalErode`, `ExportHeightmap`, `ImportHeightmap`, `SampleHeight`, `SlopeAt`
-- **Editor:** 3D Modeling window "Terrain" tab, Terrain Inspector section, GameObject > Terrain
-- **Docs:** `docs/modeling.md`, `docs/editor.md`
-- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`
-- **Status:** Works - brushes and generators are in the engine and covered by tests; the Scene view brush UI is read in `editor/main.cpp`.
+  - 29.1.6 Texture layers - `Components/Terrain`, `editor/LevelTools.*` - up to four ground layers (picture, tint, tiling) blended by a painted weight map; saved with the terrain (`terrainlayers`); drawn from one baked ground picture, so the software, OpenGL, Direct3D 11 and Direct3D 12 renderers all show it through the shared texture cache
+  - 29.1.7 Terrain ray cast - `Components/Terrain` - `Terrain::Raycast` finds where a ray meets the height field; the sculpt, layer and foliage brushes land on the real surface of a hill
+- **Code:** `Components/Terrain`, `Components/VoxelTerrain`, `Components/TerrainDigger`, `Components/VoxelDigger`, `editor/main.cpp`, `editor/LevelTools.*`
+- **API:** `Terrain::RaiseAt`, `SmoothAt`, `FlattenAt`, `NoiseAt`, `Generate`, `Erode`, `ThermalErode`, `ExportHeightmap`, `ImportHeightmap`, `SampleHeight`, `SlopeAt`, `Raycast`, `AddLayer`, `RemoveLayer`, `PaintLayerAt`, `FillLayer`, `LayerWeightAt`
+- **Editor:** 3D Modeling window "Terrain" tab, Terrain Inspector section (Texture layers), GameObject > Terrain
+- **Docs:** `docs/modeling.md`, `docs/editor.md`, `docs/level_tools.md`
+- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `foliage`
+- **Status:** Works - brushes and generators are in the engine and covered by tests; texture layers are covered by the `foliage` suite and checked in the real editor (software renderer); the GPU renderers read the same baked picture but were not run here.
 - **Exists today:** Everything above on main; the planned item "sculpting brushes" is largely done.
 - **Work packages:**
-  1. M - Splat layers: paint several ground textures (grass, rock, dirt) with a brush into a weight map. Depends on: nothing.
-  2. M - Terrain undo per stroke (today a stroke uses the whole-scene snapshot). Depends on: 22.1 package 1.
-  3. M - Large terrains: tiled terrain with neighbours stitched, with `WorldStreamer` cells (27.4). Depends on: 27.4 package 1.
-  4. S - Brush preview ring and height gizmo in the Scene view. Depends on: nothing.
-  5. M - Holes and cliffs (cut a hole for caves, sharp slopes). Depends on: package 1.
-- **Open:** one `Terrain` is one square grid with a vertex colour per face, so there are no texture layers; resolution is one setting for the whole grid.
+  1. M - Terrain undo per stroke (today a stroke uses the whole-scene snapshot). Depends on: 22.1 package 1.
+  2. M - Large terrains: tiled terrain with neighbours stitched, with `WorldStreamer` cells (27.4). Depends on: 27.4 package 1.
+  3. S - Height gizmo in the Scene view (the layer and foliage brushes already draw a ring on the surface). Depends on: nothing.
+  4. M - Holes and cliffs (cut a hole for caves, sharp slopes). Depends on: nothing.
+  5. M - Per-layer normal maps and a real multi-texture shader (the layers are baked into one picture, so detail is limited by its size). Depends on: 2.1.
+- **Open:** the layers are baked into one ground picture (at most 2048 pixels a side), so fine texture detail over a very large terrain is limited by that size; resolution is one setting for the whole grid; there are no holes.
 - **Related:** 2.6, 3.1, 29.2, 29.3, 27.4
-- **Words:** terrain, sculpt, brush, heightmap, raise lower, smooth, flatten, erosion, generate landscape, voxel terrain, caves, dig
+- **Words:** terrain, sculpt, brush, heightmap, raise lower, smooth, flatten, erosion, generate landscape, voxel terrain, caves, dig, texture layers, splat, paint ground, weight map
 - **Seen as:** terrain looks blocky or one colour; cannot paint a path or sand patch; huge terrain is heavy
-- **Ask me like:** "add texture layer painting to the terrain"; "make terrain strokes undoable one by one"
+- **Ask me like:** "paint grass and dirt on the terrain"; "make terrain strokes undoable one by one"
 
 ### 29.2 Vegetation painting
 - **What:** Fill terrain with trees, rocks, bushes and grass by painting with a brush or by rules, without placing each by hand.
 - **Parts:**
-  - 29.2.1 Scatter button - `editor/main.cpp` - Terrain Inspector "Scatter props": choose prop (Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal), count, scale range, max slope and height band; each prop is a child object with its own procedural variant
+  - 29.2.1 Scatter button - `editor/LevelTools.*` - Terrain Inspector "Scatter props": choose prop (Tree, Pine, PalmTree, DeadTree, Bush, Rock, Mushroom, Cactus, Crystal), count (up to 5000), scale range, max slope and height band; the copies go into a Foliage layer under the terrain (one object per prop, not one per copy)
   - 29.2.2 Spline instancer - `Components/SplineMesh` - places copies of an object, prefab or mesh along a spline at a spacing (trees, lamp posts)
   - 29.2.3 Procedural prop shapes - `Render/Mesh` - `Mesh::FromNameSeeded` gives varied trees and rocks
-- **Code:** `editor/main.cpp`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
-- **API:** `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
-- **Editor:** Terrain Inspector > Scatter props, Spline tools
-- **Docs:** `docs/modeling.md`, `docs/splines.md`
-- **Tests:** `splines`, `mesh_variant_hash`, `terrain_ops`
-- **Status:** Partial - one-shot scatter exists; no brush painting, no erase, no grass or detail layer.
-- **Exists today:** Scatter creates real GameObjects (up to 500 per click), so thousands of trees mean thousands of objects.
+  - 29.2.4 Foliage layer - `Components/Foliage` - one plant kind (built-in prop, mesh file or prefab) as a list of copies (position, turn, scale, lean); drawn merged into one mesh per 16 m square, so a forest is a few draw calls and whole squares out of view are skipped; saved in the scene (`foliage`); budget in triangles
+  - 29.2.5 Foliage brush - `editor/LevelTools.*` - Paint, Erase (or Shift) and Rescale in the Scene view on a terrain or any surface, with radius, density, spacing, scale range, slope and height limits, follow-ground lean; one undo step per stroke
+  - 29.2.6 Foliage checks - `Testing/SceneValidator` - `foliage.shape` (a plant that cannot be built), `foliage.budget` (over its triangle budget), `foliage.empty`, and missing mesh or prefab files
+  - 29.2.7 Surface ray cast - `Render/SurfaceRaycast` - `RaycastSurfaces` finds the first mesh surface under a ray with no colliders needed (foliage, decals and the measuring tool use it)
+- **Code:** `Components/Foliage`, `Render/SurfaceRaycast`, `editor/LevelTools.*`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
+- **API:** `Foliage::Paint`, `Erase`, `Rescale`, `ScatterOnTerrain`, `TerrainSurface`, `SceneSurface`, `EnsureBuilt`, `RaycastSurfaces`, `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
+- **Editor:** GameObject > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
+- **Docs:** `docs/level_tools.md`, `docs/modeling.md`, `docs/splines.md`
+- **Tests:** `foliage`, `save_coverage`, `splines`, `mesh_variant_hash`, `terrain_ops`
+- **Status:** Works - the foliage layer, brush, scatter and checks are covered by the `foliage` suite and were driven with the mouse in the real editor; no grass or detail layer, no wind, no hardware instancing.
+- **Exists today:** Painting, erasing, rescaling and scattering plants as data, drawn merged by chunk. The copies have no collider and do not sway.
 - **Work packages:**
-  1. M - Foliage brush: paint, erase and density in the Scene view, remembering each scatter operation as a group. Depends on: nothing.
-  2. M - Foliage layer component storing instances as data (position, scale, rotation) instead of objects. Depends on: package 1.
-  3. L - Instanced rendering of foliage with distance fade (needs batching, 27.3). Depends on: package 2, 27.3 package 4.
-  4. M - Grass and detail layer (billboards or cross-quads) with wind (`Environment/Wind`). Depends on: package 3.
-  5. S - Rules: avoid water, avoid steep slopes, keep distance between instances. Depends on: package 1.
-- **Open:** object-per-instance scatter will not scale; no undo grouping for a scatter pass beyond the scene snapshot.
+  1. L - Hardware instancing of foliage with distance fade (needs batching, 27.3); today a layer is merged geometry per chunk. Depends on: 27.3 package 4.
+  2. M - Grass and detail layer (billboards or cross-quads) with wind (`Environment/Wind`). Depends on: package 1.
+  3. S - Colliders for painted trees (a trunk capsule per copy, or on demand). Depends on: nothing.
+  4. S - Several prefabs in one brush with weights. Depends on: nothing.
+- **Open:** a layer holds one kind of plant (use several layers for a forest mix); the budget is triangles, not distance-faded; a prefab is flattened into one shape, so its parts share the first part's texture.
 - **Related:** 2.6, 29.1, 29.3, 27.3, 2.4
-- **Words:** vegetation, foliage, scatter, trees, grass, details, paint trees, instancer, props on terrain
+- **Words:** vegetation, foliage, scatter, trees, grass, details, paint trees, instancer, props on terrain, foliage brush, erase trees, density, slope limit
 - **Seen as:** I want to paint forests; scatter makes the editor slow; no grass
-- **Ask me like:** "add a foliage painting brush"; "scatter grass with wind"
+- **Ask me like:** "paint trees on the terrain"; "scatter grass with wind"
+
+### 29.4 Decals and cables
+- **What:** Small level-dressing pieces: a picture projected onto walls and floors, and a rope or wire that hangs between two points.
+- **Parts:**
+  - 29.4.1 Decal projector - `Components/Decal` - projects a picture along the object's forward axis onto the surfaces inside its box, as a thin mesh cut from the triangles it touches (follows bumps and corners, draws in every renderer); built on Project, not every frame
+  - 29.4.2 Cable - `Components/Cable` - a parabola with sag between this object (or a named one) and another, laid on a Line Renderer; follows its end objects in the editor and in Play; visual only
+- **Code:** `Components/Decal`, `Components/Cable`, `Render/SurfaceRaycast`, `editor/LevelTools.*`
+- **API:** `Decal::Project`, `Cable::Curve`, `Cable::Rebuild`, `Cable::Length`
+- **Editor:** GameObject > Decal Projector, GameObject > Cable, Add Component > Rendering, Inspector with a Project button
+- **Docs:** `docs/level_tools.md`
+- **Tests:** `foliage`, `save_coverage`
+- **Status:** Works - both are covered by the `foliage` suite (geometry, save and load); the cable and decal were shown in the real editor.
+- **Exists today:** Decals do not follow surfaces that move after projection (press Project again); cables have no physics (Joint3D is the physical one).
+- **Open:** soft edge fade by angle, decals on skinned meshes, a rope that swings.
+- **Related:** 29.2, 2.6, 6.1
+- **Words:** decal, projector, stain, crack, bullet hole, sign, cable, rope, wire, sag, power line, hanging
+- **Seen as:** need a dirt patch on a wall; wires between poles are straight lines
+- **Ask me like:** "add a decal projector"; "hang a cable between two poles"
 
 ### 29.3 Procedural generation
 - **What:** Generate terrain, props and layouts from rules and random seeds, repeatably.
@@ -1147,17 +1169,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `Localization::Get`, `Localize`, `PluralText`, `FormatNumber`, `FormatDate`; script `loc`, `set_language`; `LocTable`, `LocGrid`, `LocCheck`, `LocScanProject`
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/localization.md`, `docs/localization_prefs_time.md`; `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`
-- **Status:** Partial - the window with grid, CSV, missing and unused filters works; the stricter checker, JSON and key scanner (#574, test `loc_tools`) are on main but not wired to the window.
-- **Exists today:** The window and file format (docs say it all in `docs/localization.md`). The old map listed "translation table editor window, missing-key report, import and export (CSV)" as missing: those are done. `docs/localization_tools.md` says the window still draws its own grid and "wiring it to LocTable ... is the next step".
+- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
+- **Exists today:** The window and file format (`docs/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
 - **Work packages:**
-  1. M - Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter. Depends on: #574 (on main).
-  2. S - Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key. Depends on: package 1.
-  3. S - Import preview: show what an import will change before applying it. Depends on: package 1.
+  1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
+  2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
+  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
   4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
-  5. M - Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys. Depends on: package 1.
+  5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** the window and the new `LocTable` duplicate the grid logic until package 1 lands; right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet
@@ -1198,15 +1220,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `OKAY_UI_LANG` dev hook; `LocPreview`, `LocPseudoText`, `LocMirrorText`
 - **Editor:** toolbar language menu, Localization window "Pseudo-localize"
 - **Docs:** `docs/localization.md`; `docs/localization_tools.md`
-- **Tests:** `localization`; `loc_tools`
-- **Status:** Partial - language switch and pseudo-localization work in the editor; the `LocPreview` model with mirrored text is on main (#574) but not wired to a window.
-- **Exists today:** Both preview features in the editor. The new `LocPreview` can preview without switching the running language or logging missing keys.
+- **Tests:** `localization`; `loc_tools`, `loc_window`
+- **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers, and mirrored text for a right-to-left language) and does not change the table.
+- **Exists today:** The Scene view follows the toolbar language, including pseudo-localization. The window's preview line is `LocPreview`. Layout does not mirror.
 - **Work packages:**
   1. S - Pseudo-localize options (expansion percent, markers) in the window, using `LocPseudoOptions`. Depends on: #574 (on main).
   2. M - Mirrored preview for right-to-left languages in the Game view. Depends on: package 1, 31.2 package 3.
   3. M - "Show all strings" screenshot sheet: render every UI screen in each language to image files for review. Depends on: 33.3.
   4. S - Overflow warning when a localized text no longer fits its UI box. Depends on: package 1.
-- **Open:** layout does not mirror for right-to-left languages yet.
+- **Open:** the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key.
 - **Related:** 1.8, 12.1, 31.1, 31.2, 33.3
 - **Words:** language preview, pseudo-localization, pseudo loc, switch language, ploc, overflow, text expansion
 - **Seen as:** German text overflows buttons; I cannot see what my game looks like in Japanese
@@ -1218,23 +1240,23 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Play and use every menu with a gamepad or keyboard only, with a visible focus that moves the way the screen looks.
 - **Parts:**
   - 32.1.1 UI navigation - `Components/UINavigation` - `NavigateUI` moves focus to the nearest widget in the pressed direction (arrows, WASD, D-pad), wraps at the ends, scrolls a focused widget into view, handles button, toggle, slider, dropdown, tabs and keybind fields, and keeps focus inside an open modal
-  - 32.1.2 Gamepad input - `Input/SdlGamepad`, `Input/InputActions`, `Input/Input` - sticks, buttons, curves and dead zones; extended keys and contexts (merged #571)
+  - 32.1.2 Gamepad input - `Input/PlatformGamepad`, `Input/InputActions`, `Input/Input` - sticks, buttons, curves and dead zones; extended keys and contexts (merged #571)
   - 32.1.3 Focus graph (#574) - `UI/FocusGraph` - directional focus graph with tab order, wrap, traps; `BuildFocusGraph`, `IsNavFocusable`
   - 32.1.4 Cursor and touch - `Input/Cursor` - menus also work with the mouse and touch (area 8)
-- **Code:** `Components/UINavigation`, `Input/SdlGamepad`, `Input/InputActions`, `UI/FocusGraph`
+- **Code:** `Components/UINavigation`, `Input/PlatformGamepad`, `Input/InputActions`, `UI/FocusGraph`
 - **API:** `NavigateUI(scene)`, widget `IsFocused()`; `FocusGraph`, `BuildFocusGraph`
 - **Editor:** none (the editor itself is not controller-navigable)
 - **Docs:** `docs/input.md`, `docs/game_ui.md`; `docs/accessibility.md`
-- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`
+- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Partial - directional navigation works (per code and `ui_nav_touch`); `FocusGraph` and `BuildFocusGraph` (tab order, links, traps, #574, test `focus_remap`) are on main but `NavigateUI` does not use the graph; keys are fixed.
 - **Exists today:** `NavigateUI` as described, called by the player every frame. The navigation keys are fixed in code (`docs/accessibility.md`: "WASD, Enter, Space, the D-pad and A").
 - **Work packages:**
   1. M - `NavigateUI` builds a `FocusGraph` so a designer can set neighbours, tab order and focus traps. Depends on: #574 (on main).
   2. S - Navigation keys and buttons come from `InputActions` (remappable, 32.4). Depends on: package 1.
-  3. S - Focus ring style and focus sound in the UI theme. Depends on: 12.7.
+  3. S - Focus ring style is done (theme colour, thickness, padding, pulse; high-visibility and thickness scale in Accessibility). A focus sound is not. Depends on: 12.7.
   4. S - Scene check that every interactive widget can be reached by navigation (reports in 33.2). Depends on: package 1.
   5. M - Same navigation for world-space and HTML UI. Depends on: package 1.
-- **Open:** the focus visuals depend on each widget's own `IsFocused` drawing; the graph is built from screen rectangles each time it is asked.
+- **Open:** one shared ring is drawn from the theme and the accessibility settings (tests `ui_focus`, `ui_focus_render`); there is no focus sound; the graph is built from screen rectangles each time it is asked and `NavigateUI` does not use its links.
 - **Related:** 8.2, 8.3, 12.2, 12.4, 12.7, 32.4
 - **Words:** controller navigation, gamepad menus, focus, D-pad, tab order, NavigateUI, FocusGraph, keyboard navigation, menu focus
 - **Seen as:** cannot reach a button with the gamepad; focus jumps to a surprising widget; focus lost after a popup closes
@@ -1251,15 +1273,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Timeline window (subtitle actions)
 - **Docs:** `docs/cutscenes.md`; `docs/accessibility.md`
 - **Tests:** `accessibility`
-- **Status:** Partial - cutscenes show subtitles with their own fixed look; the shared `CaptionManager` (#574, test `accessibility`) is on main but nothing connects the Sequencer, dialogue or audio to it, and there is no widget.
-- **Exists today:** The cutscene subtitle card. `docs/accessibility.md` says the Sequencer's subtitle still shows its own text rather than going through `CaptionManager`, and there is no ready-made subtitle widget.
+- **Status:** Partial - `CaptionOverlay` draws `CaptionManager` lines in the player and in editor Play (test `accessibility_remaining`). Cutscene subtitles and dialogue call `Say`. An Audio Source `caption` calls `Sound` when sound captions are on. The Settings screen turns subtitles and sound captions on or off. Still open: subtitle size, background and speaker-name rows, and SRT import.
+- **Exists today:** `CaptionOverlay` draws the caption lines. Cutscene subtitles and dialogue call `Say`. An Audio Source has a caption field. The old cutscene card is skipped while the widget is in the scene. Size, background, speaker-name rows and SRT import are still open.
 - **Work packages:**
   1. M - Subtitle widget component drawing `CaptionManager::Lines()` with the player's settings. Depends on: #574 (on main), 12.2.
   2. S - Sequence subtitle action and dialogue lines go through `CaptionManager`. Depends on: package 1.
   3. S - Audio Source option "caption text" so a sound can show `[door slams]`. Depends on: package 1, 7.3.
   4. S - Settings screen section: size, background, speaker names, sound captions. Depends on: package 1, 12.8.
   5. M - SRT import for recorded voice-over in the Timeline. Depends on: package 1.
-- **Open:** speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources.
+- **Open:** speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on.
 - **Related:** 10.1, 10.2, 7.3, 31.1, 32.3
 - **Words:** subtitles, captions, closed captions, CaptionManager, speaker names, SRT, sound captions, dialogue text, subtitle size
 - **Seen as:** subtitles too small or hard to read; no captions for sounds; subtitles ignore the language setting
@@ -1269,22 +1291,22 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand.
 - **Parts:**
   - 32.3.1 Colour vision maths (#574) - `Graphics/ColorVision` - simulate and correct for protanopia, deuteranopia, tritanopia, achromatopsia on colours and images; a colour-vision-safe palette; contrast checks
-  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, saved in Prefs, with change listeners
-  - 32.3.3 Full-screen filter - `-` - not built (a function on colours and images only; renderers do not apply it)
+  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, subtitles, hold-to-toggle and aim assist, saved in Prefs, with change listeners; those rows are on the Settings screen (12.8.4). Screen-reader hints still have no reader and no control
+  - 32.3.3 Colour filter - `Graphics/ColorVision`, `player/main.cpp` - the rendered 3D frame of every renderer and the flat colours and text of the screen UI are daltonized (protanopia, deuteranopia, tritanopia); UI images are not; the editor has no preview
 - **Code:** `Graphics/ColorVision`, `Core/AccessibilitySettings`
 - **API:** `SimulateColorblind`, `DaltonizeColor`, `Accessibility::FilterColor`, `TextColor`, `SetColorblind`
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
-- **Tests:** `accessibility`
-- **Status:** Partial - the colour vision maths and the accessibility settings are on main (#574, test `accessibility`); no renderer applies them ("a full-screen filter in the renderers is future work", per docs) and the editor has no preview.
-- **Exists today:** `Graphics/ColorVision` and `Core/AccessibilitySettings` as data and functions on colours and images; nothing in the renderers, the editor or the player reads the settings.
+- **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
+- **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
-  1. M - Post-process filter in the renderers using the settings (all four renderers or software plus GL/D3D11 first). Depends on: #574 (on main).
+  1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).
   2. S - Game view "Simulate colour blindness" preview menu in the editor to check a scene. Depends on: package 1.
   3. S - UI theme and health bars use `Accessibility::FilterColor` or shapes plus colour. Depends on: 12.7.
-  4. S - Settings screen section with a preview strip. Depends on: 12.8.
+  4. S - Preview strip in the Settings screen section (the section itself is done). Depends on: 12.8.
   5. M - Palette checker: report colour pairs that are hard to tell apart for a given mode. Depends on: package 2.
-- **Open:** the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine.
+- **Open:** UI images and the editor are not filtered; the colour filter runs on the CPU after the renderer, not in the GPU shaders; Achromatopsia has no correction and is not offered.
 - **Related:** 2.5, 12.7, 32.2
 - **Words:** colorblind, colour blind, protanopia, deuteranopia, tritanopia, daltonize, high contrast, safe palette, accessibility filter
 - **Seen as:** red and green indicators look the same; team colours indistinguishable
@@ -1295,9 +1317,9 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Parts:**
   - 32.4.1 Input actions and persistence - `Input/InputActions` - named actions with keys, mouse buttons, gamepad buttons and sticks; bindings saved to the player's prefs; defaults restorable
   - 32.4.2 Keybind field widget - `Components/UIKeybindField` - press-to-bind field for an action or a plain key; Escape cancels, Backspace restores the default
-  - 32.4.3 Gamepad and key tables - `Input/SdlGamepad`, `Input/SdlKeys` - extended keys, contexts and curves (merged #571)
+  - 32.4.3 Gamepad and key tables - `Input/PlatformGamepad`, `Input/PlatformKeys` - extended keys, contexts and curves (merged #571)
   - 32.4.4 Remap model (#574) - `Input/RemapModel` - controls list, conflict detection (including four-key directions and the D-pad), `RemapBind` with cancel, swap, unbind or allow, reserved actions
-- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/SdlGamepad`, `Input/SdlKeys`, `Input/RemapModel`
+- **Code:** `Input/InputActions`, `Components/UIKeybindField`, `Input/PlatformGamepad`, `Input/PlatformKeys`, `Input/RemapModel`
 - **API:** `InputActions::Get`, `UIKeybindField` (`action`, `gamepad`, `part`), `RemapConflicts`, `RemapBind`, `RemapAllConflicts`
 - **Editor:** Inspector for the Keybind Field; Project Settings has no input section yet
 - **Docs:** `docs/input.md`; `docs/accessibility.md`
@@ -1487,15 +1509,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.1.3 Framework slots (#572) - `Core/SaveFramework` - `SaveManager` slots `<slot>.okayslot` with headers (label, scene, time, play time, thumbnail, kind, game version), listing, copy, rename and delete
   - 35.1.4 Slot menu model (#572) - `Core/SaveFramework` - `SaveMenuModel` rows with ready-made text and flags (empty, corrupt, newer version, auto, quick, can load, can save)
   - 35.1.5 Cloud sync hooks (#572) - `Core/SaveFrameworkSync` - `ISaveSync` with in-memory and folder backends; PlayFab user data and Steam Cloud calls exist elsewhere (`Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`) but nothing connects saves to them
-- **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`
-- **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`
-- **Editor:** none (no save slot UI component; a load menu is built by the game from `SaveGame::List`)
+  - 35.1.6 No-code slot calls - `Core/GameSaves` - `GameSaves::Save`, `Load`, `Continue`, `Delete`, `Exists`, `SavedText`, `SecondsSinceSave`, `AutoSave`; script `game_save`, `game_load`, `game_continue`, `game_delete_slot`, `game_slot_exists`, `game_slot_text`, `game_slot_age`, `game_slot_label`, `game_can_continue`, `game_autosave`; visual-script `Fn.game_*` nodes; Action List `game_*` actions; every failure is a `[save]` Console error
+  - 35.1.7 Save Slots screen - `Scene/UITemplates` - `AddSaveSlots`: three slots with label and saved time, Save / Load / Delete, Continue, Close, status line (UI > Prebuilt Screens > Menus)
+- **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Scene/UITemplates`, `Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`
+- **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`; `GameSaves`
+- **Editor:** UI > Prebuilt Screens > Menus > Save Slots (Save / Load / Delete / Continue per slot); Add Component > Saveable and Save Settings
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`
-- **Status:** Works - `SaveGame` slots are in use and tested; the richer framework (`SaveManager`, #572, tests `save_framework`, `save_scene`) is on main but no component, scene template or editor window uses it.
-- **Exists today:** SaveGame slots with durable writes. A load screen is made by hand from `List()`. The framework's slots, menu model and sync hooks exist as library code only (grep finds no use in `editor/`, `player/` or `Components/`).
+- **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `ui_templates`
+- **Status:** Works - `SaveGame` slots are in use and tested; the framework (`SaveManager`, tests `save_framework`, `save_scene`) is now reachable without code through `GameSaves`, script builtins, visual-script nodes, Action List actions and the Save Slots screen (test `save_nocode`).
+- **Exists today:** SaveGame slots with durable writes. The framework's slots are used by the no-code route (`game_*` calls and the Save Slots screen, which shows the slot label and saved time, not a thumbnail). The screen does not use `SaveMenuModel` and has three fixed slots; rename and thumbnails are not in it. Sync hooks are library code only.
 - **Work packages:**
-  1. M - Save Slots UI component: a list bound to `SaveMenuModel` with load, delete, rename and a thumbnail (UI kit widget). Depends on: #572 (on main), 12.4.
+  1. S - Save Slots screen: a list bound to `SaveMenuModel` with any number of slots, rename and a thumbnail (the shipped screen has three fixed slots). Depends on: #572 (on main), 12.4.
   2. S - Screenshot thumbnail captured on save (needs 50.1). Depends on: package 1.
   3. M - Choose one system: either move SaveGame callers to the framework or keep both with clear names (two slot formats). Depends on: #572 (on main).
   4. M - Cloud sync: `ISaveSync` backends for Steam Cloud and PlayFab user data. Depends on: package 3, 49.1.
@@ -1504,7 +1528,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Related:** 1.7, 12.8, 17.10, 35.2, 49.1
 - **Words:** save slot, save game, load game, Continue, SaveGame, SaveManager, slot list, load screen, cloud save, save folder
 - **Seen as:** Load screen is empty; save corrupted after a crash (handled by .bak); two kinds of saves in the folder
-- **Ask me like:** "add a Save Slots UI component"; "sync saves to Steam Cloud"
+- **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 ### 35.2 Checkpoints
 - **What:** Automatic save points (entering a level, reaching a checkpoint, timed autosave) and quick save and load.
@@ -1512,15 +1536,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.2.1 Auto Save component - `Components/AutoSave` - saves the whole game to a slot every N seconds and optionally when the scene starts
   - 35.2.2 Quick save, autosave ring and Continue (#572) - `Core/SaveFramework` - `SaveManager::QuickSave`, `AutoSave` rotating `autosave_1..3`, `ContinueSlot` loads the newest valid slot
   - 35.2.3 Named checkpoints and trigger (#572) - `Core/SaveFramework` - `CheckpointManager` (`Reach`, `Restore`, `RestoreLast`, keep newest N) and a `CheckpointTrigger` component that fires when the player comes within a radius or enters a trigger collider
-- **Code:** `Components/AutoSave`, `Core/SaveFramework`
-- **API:** `AutoSave` fields (`interval`, `slot`, `label`, `saveOnStart`), `SaveNow()`; `SaveManager::QuickSave`, `AutoSave`, `CheckpointManager::Reach`, `RestoreLast`, `CheckpointTrigger`
-- **Editor:** Add Component > Auto Save
+  - 35.2.4 Save Settings component - `Core/GameSaves` - one per scene: autosave every N seconds and/or when the scene starts, into the ring of N autosave slots (skipped while a load is putting a save back); script `game_autosave`, Action List `game_autosave`
+- **Code:** `Components/AutoSave`, `Core/SaveFramework`, `Core/GameSaves`
+- **API:** `AutoSave` fields (`interval`, `slot`, `label`, `saveOnStart`), `SaveNow()`; `SaveConfig` fields (`autosaveInterval`, `autosaveOnSceneStart`, `autosaveSlots`); `SaveManager::QuickSave`, `AutoSave`, `CheckpointManager::Reach`, `RestoreLast`, `CheckpointTrigger`
+- **Editor:** Add Component > Auto Save, Save Settings (autosave)
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`; `save_framework`
-- **Status:** Partial - a timer autosave component exists; quick save, the autosave ring and checkpoints are on main (#572) but a `CheckpointTrigger` cannot be saved in a scene file yet.
-- **Exists today:** `AutoSave` (interval 120 s by default) saving through `SaveGame`. `docs/save_framework.md` says the scene file has no record for Saveable components yet, so `CheckpointTrigger` and `Saveable` must be attached from code.
+- **Tests:** `save_game`; `save_framework`; `save_nocode`
+- **Status:** Partial - `AutoSave` and the framework's autosave ring (set up with Save Settings) work without code; quick save and checkpoints are on main (#572) but a `CheckpointTrigger` cannot be saved in a scene file yet.
+- **Exists today:** `AutoSave` (interval 120 s by default) saving through `SaveGame`, and `SaveConfig` saving through the framework's ring. `CheckpointTrigger` still has to be attached from code (`Saveable` now has a scene-file record).
 - **Work packages:**
-  1. M - Scene serializer entries and Inspector for `CheckpointTrigger` and `Saveable` (so levels made in the editor can use them). Depends on: #572 (on main).
+  1. S - Scene serializer entry and Inspector for `CheckpointTrigger` (`Saveable` has both now). Depends on: #572 (on main).
   2. S - Death and respawn flow: `RestoreLast` after the player dies, as a visual-script node and script call. Depends on: package 1.
   3. S - Quick save and quick load keys through `InputActions`. Depends on: #572 (on main), 32.4.
   4. S - "Saving..." indicator widget. Depends on: 12.2.
@@ -1539,18 +1564,18 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 35.3.3 Saveable state (#572) - `Core/SaveFrameworkScene` - `Saveable` component with a key, typed field helpers, `SaveSystem::CaptureScene` and `ApplyScene`, spawned and destroyed objects handled
   - 35.3.4 Stable object ids - `Scene/SceneSerializer` - persistent `GameObject::Guid()` (merged #570), usable as a save key
   - 35.3.5 Clocks, time scale and random streams - `Core/TimeSnapshot`, `Core/Countdown` - (#585) `TimeSnapshot::Capture().AddRandom("loot", rng).Write(doc.Writer("time"))` stores every `Clock`, the gameplay time scale and named random streams in a save document so a reload cannot re-roll a chest; `Cooldown` and `Countdown` have `Save/Load` through `SaveWriter`/`SaveReader` (1.1.14, 1.1.15); `Time::ElapsedTime` and `FrameCount` are deliberately not restored
+  - 35.3.6 No-code Saveable - `Core/SaveFrameworkScene`, `Scene/SceneSerializer` - the `Saveable` component stored in the scene file (record `saveable`) with a save id, flags for transform / active / built-in components, a list of property-registry paths, script and visual-script variables, scene-wide Action List and visual-script variables; added and edited in the Inspector
 - **Code:** `Core/SaveGame`, `Inventory/InventoryPersistence`, `Core/SaveFrameworkScene`, `Core/SaveFramework`, `Core/TimeSnapshot`, `Core/Countdown`, `Scene/SceneSerializer`
-- **API:** `SaveGame::Save`; `Saveable`, `SaveSystem::CaptureScene`, `ApplyScene`
-- **Editor:** none yet (no Add Component entry or Inspector section for Saveable)
+- **API:** `SaveGame::Save`; `Saveable` (`saveId`, `properties`, `saveVariables`, `saveSceneVariables`), `SaveSystem::CaptureScene`, `ApplyScene`
+- **Editor:** Add Component > Saveable (keep when saving); Inspector: save id, New id, what to save, property picker
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `time_snapshot`, `countdown`
-- **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model is on main (#572, test `save_scene`) but has no scene-file record or Inspector.
+- **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `save_nocode`, `time_snapshot`, `countdown`
+- **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model has a scene-file record, an Inspector and a no-code route (tests `save_scene`, `save_nocode`).
 - **Exists today:** Whole-scene save replaces the scene on load, so scripts restart and saves tie to one scene layout. Streamed worlds (27.4) are not covered.
 - **Work packages:**
-  1. M - Scene file record, Add Component entry and Inspector section for `Saveable` (the scene format has none today, per `docs/save_framework.md`). Depends on: #572 (on main).
-  2. S - Save keys use `GameObject::Guid()` (the framework doc says "GameObject has no GUID in this build"; #570 added one) instead of name paths. Depends on: package 1.
+  1. S - Save keys use `GameObject::Guid()` (the framework doc says "GameObject has no GUID in this build"; #570 added one) instead of name paths; the Saveable's own save id is the key today.
   3. M - Saves cover streamed cells (state of unloaded cells kept as data). Depends on: 27.4 package 1.
-  4. S - Per-component "save this" attributes from the property registry (flags such as `RuntimeOnly` and `Structural` already exist). Depends on: the property registry (on main, #578, 1.19).
+  4. S - Pick properties by flag, not by path: save every property that is not `RuntimeOnly` (the Saveable lists paths one by one today). Depends on: the property registry (on main, #578, 1.19).
   5. S - Save diff viewer in the editor for debugging. Depends on: 28.2.
 - **Open:** the two systems (whole scene vs saveable state) overlap; streamed worlds not covered.
 - **Related:** 1.5, 11.1, 27.4, 35.1, 35.4
@@ -1569,14 +1594,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `SaveGame::SetMigration`; `SaveStore::SetDataVersion`, `RegisterMigration`, `MigrationPath`, `SaveSlotInfo::incompatible`
 - **Editor:** none
 - **Docs:** `docs/save_games.md`; `docs/save_framework.md`
-- **Tests:** `durable_saves`, `save_game`; `save_framework`
-- **Status:** Works - header, checksum, newer-version refusal and migration hook are in the shipped code and tested.
+- **Tests:** `durable_saves`, `save_game`; `save_framework`; `save_nocode`
+- **Status:** Works - header, checksum, newer-version refusal and migration hook are in the shipped code and tested; the no-code calls (`game_load`, Continue) report a newer-version, damaged or missing slot as a `[save]` Console error.
 - **Exists today:** Everything in Parts 35.4.1-35.4.3.
 - **Work packages:**
   1. S - Game-version string in the header (framework slot header has `gameVersion`); show it in a load screen. Depends on: #572 (on main).
   2. M - Migration helpers for common changes (rename a key, move a value) so authors do not write text code. Depends on: nothing.
   3. S - Test pack of old save files kept in the repo, loaded in CI. Depends on: nothing.
-  4. S - Slot status text ("Saved by a newer version") in the Save Slots component. Depends on: 35.1 package 1.
+  4. S - Slot status text ("Saved by a newer version") in the Save Slots screen rows (the Console reports it today). Depends on: 35.1 package 1.
 - **Open:** migrations operate on text; no tool to inspect a save.
 - **Related:** 1.7, 25.3, 35.1, 22.4
 - **Words:** save version, migration, newer version, incompatible save, checksum, SetMigration, old saves, damaged save

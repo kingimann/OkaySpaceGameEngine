@@ -44,7 +44,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/editor.md` (Add Component, Component headers)
 - **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character)
 - **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`
-- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found yet for editing component values during Play and keeping them (planned area 34); prefab override editing UI is planned (area 21)
+- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found yet for editing component values during Play and keeping them (planned area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
 - **Related:** 15.10, 12.10, 13.4, 14.1, 21, 34
 - **Words:** Inspector, Add Component, component header, enable checkbox, Remove Component, tag, static, Character Model panel, Rig Model, script fields, component search
 - **Seen as:** a component has no card or a field is missing; Add Component search cannot find a component; values reset after editing; the Inspector is slow with many components
@@ -64,6 +64,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.3.9 Game view - `editor/main.cpp` (`DrawGameView` ~42926-43174) - runs the game image, Resolution presets, Safe area, Stats overlay, Capture mouse, Physics toggle
   - 15.3.10 Mobile emulator and shared game resolution - `editor/main.cpp` (~41398-41507, ~42845-42925) - phone and tablet frames shared by Game view and UI editing
   - 15.3.11 Play mode - `editor/EditorState.*`, `editor/main.cpp` - Play snapshots the scene and Stop restores it; mouse capture rules; Error Pause
+  - 15.3.12 Orthographic views - `editor/LevelTools.*` - View options > Perspective / Orthographic and Top, Bottom, Front, Back, Right, Left (numpad 7, 1, 3 with Ctrl for the opposite, numpad 5 switches projection); a true orthographic projection of the Scene view, zoomed with the wheel; a label names the view
 - **Code:** `editor/main.cpp`, `editor/SplineTools.*`, `editor/NavigationWindow.*`, `editor/EditorState.*`, `editor/UIPreviewPainter.*`
 - **API:** View > Panels > Game; Scene toolbar; GameObject > Spline
 - **Editor:** Scene panel, Game panel, UI panel (12.10)
@@ -72,15 +73,15 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Status:** Works - used daily; only the non-GUI play and snapshot logic is tested
 - **Open:** world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code comments call it the biggest per-frame cost); live editing during Play is planned (area 34)
 - **Related:** 15.9, 12.10, 2.1, 2.7, 6.5
-- **Words:** Scene view, Game view, gizmo, move rotate scale, snap, frame selected, 2D 3D toggle, view cube, axis gizmo, Play, Stop, Capture mouse, resolution, Stats overlay, spline editing, collider handles
+- **Words:** Scene view, Game view, gizmo, move rotate scale, snap, frame selected, 2D 3D toggle, view cube, axis gizmo, Play, Stop, Capture mouse, resolution, Stats overlay, spline editing, collider handles, orthographic, top view, front view, side view, numpad view, measure tool
 - **Seen as:** gizmo handles are hard to hit or move the wrong axis; the Game view differs from the built game; Play does not restore the scene; the mouse is stuck in Play; low FPS in the editor
 - **Ask me like:** "work on 15.3.4, a pivot-to-centre toggle for the gizmo"; "the Game view stats overlay is wrong"
 
 ### 15.4 Project panel and asset manager
 - **What:** The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window that imports marketplace downloads into the project.
 - **Parts:**
-  - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject` ~8590-9804) - folder tree, list and grid, search with type words (`t:model`), smart filters (All Models, Recently Changed, Unused Assets), multi-select
-  - 15.4.2 Asset icons and thumbnails - `editor/main.cpp` (~6945, ~7106) - drawn icons per asset kind, material ball, drag-drop character model swap
+  - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
+  - 15.4.2 Asset icons and thumbnails - `editor/main.cpp`, `editor/ProjectBrowser.*` - drawn icons per asset kind while a picture is not made yet; pictures from `ThumbnailCache` (textures, audio waveforms, models, meshes, materials, prefabs, scenes), tile size Small / Medium / Large and a slider, grid or list
   - 15.4.3 Asset color labels - `editor/main.cpp` (~8542-8589) - per-project labels stored in `.okaylabels`
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
   - 15.4.5 Asset Manager window - `editor/main.cpp` (`DrawAssetManager` ~7643-7935) - lists marketplace downloads by type (sidecar `.okayasset`) and imports them into Assets
@@ -89,9 +90,9 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
 - **Docs:** `docs/editor.md` (Drag & drop from Project)
-- **Tests:** `assetmanager`, `asset_database` (engine data layers, not the panel)
-- **Status:** Works - the browser and manager are implemented in `main.cpp`
-- **Open:** polish (carried from the earlier map); planned area 20: an asset browser window on top of the new asset manager (PR #568, on main) and asset database (GUIDs, dependencies, import settings, thumbnails); the panel does not use them yet (per the code: no database calls found)
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`
+- **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
+- **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2
 - **Words:** Project panel, assets, Assets folder, import, asset browser, asset manager, marketplace downloads, thumbnails, labels, unused assets, drag from project
 - **Seen as:** an asset does not show or has the wrong icon; import fails; dragging into the scene does nothing; the panel is slow on a big project; marketplace download is not listed
@@ -134,7 +135,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/navigation.md`, `docs/behavior_trees.md`, `docs/dialogue_quests.md`, `docs/localization.md`, `docs/modeling.md`, `docs/editor.md`
 - **Tests:** `editor` (selftest only); engine side: `navmesh`, `behavior_tree`, `dialogue`, `quests`, `localization`, `meshedit`
 - **Status:** Works - each window has its own file or function; none has a unit test
-- **Open:** #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs the Localization window is not wired to them yet; Modeling and UV Editor still live in `main.cpp`
+- **Open:** Modeling and UV Editor still live in `main.cpp`. The Localization window calls the translation grid, the missing-key and placeholder report, the project scan and the pseudo-locale preview (31.1, 31.3).
 - **Related:** 9.1, 9.4, 10.2, 10.3, 1.8, 3.1, 31
 - **Words:** Navigation window, bake navmesh, Behavior Tree window, Dialogue window, Quests tab, Localization window, string table, Modeling window, UV Editor
 - **Seen as:** the navmesh does not bake or shows wrong polygons; a tree node cannot be wired; the dialogue Test panel does not match Play; a language preview shows keys; CJK text shows boxes
@@ -186,23 +187,24 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The editor's state and shell behaviours: panel tabs and layouts, undo and redo, autosave with a recovery prompt, and the non-GUI editor model.
 - **Parts:**
   - 15.9.1 Editor model - `editor/EditorState.*` - scene, selection, create helpers, Play and Stop with snapshot restore, editor camera; free of ImGui so tests can use it
-  - 15.9.2 Undo and redo - `editor/EditorState.*` - snapshot-based: the whole scene as text, up to 100 steps; History panel jumps to any step (`DrawHistory` ~6709)
+  - 15.9.2 Undo and redo - `editor/EditorState.*`, `editor/SceneUndo.hpp`, `editor/EditUndo.hpp` - scene edits are `SceneDeltaCommand`s on an `UndoStack` (text delta, selection by GUID, up to 100 steps, drags and repeated edits of one widget merged, named steps); Edit menu shows "Undo <name>" and greys out; History panel lists and jumps to steps (`DrawHistory`); no recording and no undo during Play; New / Open start an empty history; saved state follows undo
   - 15.9.3 Autosave and recovery - `editor/main.cpp`, `editor/DocRecovery.hpp` - recovery-folder copies of dirty graphs, scripts and the scene; a newer leftover `<scene>.autosave` is still offered and is not written again
   - 15.9.4 Panel tabs and layouts - `editor/EditorTabs.hpp`, `editor/main.cpp` (~4337-5388) - saved named layouts, presets (Default, Tall, Wide, 2 by 3, Scripting, Animation), Ctrl+Tab switcher, tab overflow, side tabs
   - 15.9.5 Edit-mode undo for meshes - `editor/main.cpp` (~3021) - undo inside mesh edit mode
   - 15.9.6 Focus-aware undo - `editor/LocalizationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/TimelineWindow.*` - while one of these windows has focus, Ctrl+Z and Ctrl+Y act on its own file (string table, tree, dialogue, sequence), not on the scene
   - 15.9.7 Roomier shared layout - `editor/main.cpp`, `editor/ConsolePanel.cpp` - (#577) larger shared spacing, type size and hit targets for the menu, docks, Hierarchy, Inspector, Project browser, scene toolbar and Console; the default dock keeps a wider Inspector and Hierarchy without giving up the Scene view, also at 1280x800; the camera projection combo is no longer clipped (per the PR description; the drawing code was not read)
+  - 15.9.8 Scene view overlays, toolbar, density and maximize - `editor/EditorLayoutMath.hpp`, `editor/EditorWidgets.*`, `editor/main.cpp` - optional collapsible camera overlay and stats line that step clear of each other and the view-axis gizmo, collision-free object names that fade when crowded, icon tooltips and a Toolbar labels mode that collapses into the ... menu when narrow, Compact / Comfortable density, Shift+Space maximize viewport, Collapse / Expand Group on docked panels, the last panel arrangement restored at start; all saved in `okay_settings.txt`
 - **Code:** `editor/EditorState.*`, `editor/EditorTabs.hpp`, `editor/main.cpp`
 - **API:** Edit > Undo / Redo, View > Layout, File > Autosave, View > Panels > History
 - **Editor:** Edit menu, History panel, Layout dropdown
-- **Docs:** `docs/editor.md` (Panel tabs & layouts, Editor quality-of-life)
-- **Tests:** `editor_tabs`, `ui_frame` (drives the editor undo stack), `editor` (selftest)
-- **Status:** Works - snapshot undo and tabs are tested headlessly; autosave has no test
-- **Open:** #572 added an engine-side command undo stack, recovery and backups (`docs/undo_recovery.md`: "engine side only", the editor still uses the full snapshot, "Adopting it in the editor" is the plan); undo across Play, rolling backups and a restore UI are planned (area 22)
+- **Docs:** `docs/editor.md` (Panel tabs & layouts, Editor quality-of-life), `docs/editor_undo.md`
+- **Tests:** `editor_undo` (every edit kind do / undo / redo by scene text, merge, GUID restore, limit, Play, saved tracking), `editor_tabs`, `editor_layout` (overlay anchoring, label placement and crowd fade, density metrics, toolbar plan, maximize state, view preferences round trip), `ui_frame`, `editor_hooks`, `inspector_model`, `project_save`, `editor` (selftest)
+- **Status:** Works - scene undo on `UndoStack` and tabs are tested headlessly; the Edit menu, shortcuts, History panel and `WatchEditUndo` are GUI code that was compiled but not run; autosave has no test
+- **Open:** audit in `docs/editor_undo.md`; each Undo rebuilds the whole scene (no per-object or per-property commands); moving an asset the scene uses clears the scene history; mesh edit, Project panel, Timeline, Localization and script editors keep their own undo; rolling backups and a restore UI are planned (area 22)
 - **Related:** 22, 15.3, 15.11, 15.12
-- **Words:** undo, redo, history, autosave, crash recovery, console (editor), editor, layout, tabs, Ctrl+Tab, save layout, side tabs, panel switcher, snapshot undo
+- **Words:** undo, redo, history, autosave, crash recovery, console (editor), editor, layout, tabs, Ctrl+Tab, save layout, side tabs, panel switcher, snapshot undo, delta undo, undo stack, Undo menu
 - **Seen as:** undo skips or restores too much; the layout resets; the editor crashes or shows a black screen; a crash loses work; the recovery prompt does not appear; Ctrl+Tab picks the wrong panel
-- **Ask me like:** "work on 15.9.2, per-property undo using the new engine command stack"; "layouts reset after restart"
+- **Ask me like:** "work on 15.9.2, per-object undo commands so Undo does not rebuild the scene"; "layouts reset after restart"
 
 ### 15.10 Splitting `editor/main.cpp` into panel files (~45k lines)
 - **What:** The ongoing move of panels out of the huge `main.cpp` into their own files with small headers, so each can be edited and reviewed alone.
@@ -271,17 +273,17 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.13.1 Sprite Editor - `editor/main.cpp` (`DrawSpriteEditor` ~42208-42417) - pixel paint, shapes, flood fill
   - 15.13.2 Material editor - `editor/main.cpp` (`DrawMaterialEditor` ~10174) - `.okaymat` albedo, emissive, specular, texture, tiling, Apply to Selection
   - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor` ~10009) - data assets for scripts
-  - 15.13.4 Item Database - `editor/main.cpp` (`DrawItemDatabase` ~42480) - item definitions for inventory (11.2)
+  - 15.13.4 Items, Loot & Recipes - `editor/ContentEditors.cpp` - items, loot tables and crafting recipes (11.2, 11.3); Window menu and View > Editors & Tools
   - 15.13.5 Save Manager - `editor/main.cpp` (`DrawSaveManager` ~10046) - browse and edit `.okaysave` files
   - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer` ~6588) - mixer buses and volumes (7.1)
   - 15.13.7 UI Theme window - `editor/main.cpp` (`DrawUIThemer` ~42586) - see 12.7
   - 15.13.8 Custom Actions window - `editor/main.cpp` (`DrawCustomActions` ~2219) - see 14.6
-- **Code:** `editor/main.cpp`
-- **API:** View > Editors & Tools and View > Panels menus
+- **Code:** `editor/main.cpp`, `editor/ContentEditors.cpp`
+- **API:** View > Editors & Tools, View > Panels, and Window > Items, Loot & Recipes
 - **Editor:** each window
 - **Docs:** `docs/editor.md`, `docs/save_games.md`, `docs/audio.md`
-- **Tests:** `dataasset`, `savedata`, `item_database`, `audio_mixer` (engine side)
-- **Status:** Works - implemented as functions in `main.cpp`
+- **Tests:** `dataasset`, `savedata`, `item_database`, `item_loot_recipes`, `audio_mixer` (engine side)
+- **Status:** Works - most of these windows are functions in `main.cpp`; items, loot and recipes are `ContentEditors.cpp`
 - **Open:** none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs
 - **Related:** 2.2, 7.1, 11.2, 1.7, 26, 12.7
 - **Words:** Sprite Editor, Material editor, Data Asset, Item Database, Save Manager, Audio Mixer, UI Theme window
@@ -315,7 +317,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.15.2 Main loop - `editor/main.cpp` (`main` ~43674-45136) - frame loop, panel draw order with profiler scopes, camera safety, dev screenshot hooks (`OKAY_UI_*` variables)
   - 15.15.3 Launcher gate and handshake - `editor/main.cpp` (~43267, ~43572, `DrawProjectGate` ~16655, `DrawNewProjectPopup` ~16748) - open a project from the launcher, "save and close" requests
   - 15.15.4 Single instance and multi-window - `editor/main.cpp` (~43329-43571) - hand-off to a running editor, dual-monitor viewport windows
-  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher
+  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher; the editor update and the player fetch now require a SHA-256 from `versions.json` (`updater::FetchVerified`) and the restart helper self-checks the new editor and rolls back (`docs/updater.md`)
   - 15.15.6 Theme and fonts - `editor/main.cpp` (~4273), `shared/OkayTheme.hpp` - Slate theme, accent colours, UI scale
   - 15.15.7 Headless selftest - `editor/main.cpp` (~1-445, `RunSelfTest`) - ctest `editor` runs `OkayEngine --selftest` with no display
 - **Code:** `editor/main.cpp`, `editor/EditorCommon.hpp`, `editor/EditorWidgets.*`, `editor/okayspace.rc`, `editor/okayspace.ico`

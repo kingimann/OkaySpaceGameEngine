@@ -76,6 +76,5 @@ Not fixed (seen):
   an optional `comporder` record. In the fifth pass the order of plain `AddComponent` calls is saved too, for the objects
   whose order the loader would not reproduce; see `scene_serializer.md`.)
 - `Instantiate` copies only what the serializer writes: a plain C++ `Behaviour` subclass without a
-  serializer entry is not cloned, and a type with several instances other than the per-instance ones
-  saves only the first.
+  serializer entry is not cloned. Every saved component type keeps each instance.
 - `FindByGuid` scans the objects; fine for a handful of lookups, not for one per object.

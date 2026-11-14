@@ -15,6 +15,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <vector>
 
 namespace okay {
 
@@ -825,13 +827,15 @@ bool Layer3Decoder::DecodeFrame(const std::uint8_t* frame, std::size_t frameLen,
 // Stream level: ID3v2, frame search, Xing/Info/VBRI
 // ---------------------------------------------------------------------------
 
-std::size_t SkipId3v2(const unsigned char* d, std::size_t n) {
-    std::size_t pos = 0;
-    while (pos + 10 <= n && d[pos] == 'I' && d[pos + 1] == 'D' && d[pos + 2] == '3' && d[pos + 3] != 0xFF &&
-           d[pos + 4] != 0xFF && ((d[pos + 6] | d[pos + 7] | d[pos + 8] | d[pos + 9]) & 0x80) == 0) {
-        std::size_t size = (static_cast<std::size_t>(d[pos + 6]) << 21) | (static_cast<std::size_t>(d[pos + 7]) << 14) |
-                           (static_cast<std::size_t>(d[pos + 8]) << 7) | static_cast<std::size_t>(d[pos + 9]);
-        std::size_t total = 10 + size + ((d[pos + 5] & 0x10) ? 10 : 0);
+// Skips leading ID3v2 tags; returns the offset of the first byte after them.
+std::uint64_t SkipId3v2(AudioByteSource& src, std::uint64_t n) {
+    std::uint64_t pos = 0;
+    std::uint8_t d[10];
+    while (pos + 10 <= n && src.Read(pos, d, 10) == 10 && d[0] == 'I' && d[1] == 'D' && d[2] == '3' && d[3] != 0xFF &&
+           d[4] != 0xFF && ((d[6] | d[7] | d[8] | d[9]) & 0x80) == 0) {
+        std::uint64_t size = (static_cast<std::uint64_t>(d[6]) << 21) | (static_cast<std::uint64_t>(d[7]) << 14) |
+                             (static_cast<std::uint64_t>(d[8]) << 7) | static_cast<std::uint64_t>(d[9]);
+        std::uint64_t total = 10 + size + ((d[5] & 0x10) ? 10 : 0);
         if (pos + total > n) return n;
         pos += total;
     }
@@ -887,6 +891,264 @@ XingInfo ParseXing(const std::uint8_t* frame, std::size_t len, const FrameHeader
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Mp3Stream: the frame-at-a-time decoder behind DecodeMp3 and music streaming
+// ---------------------------------------------------------------------------
+
+struct Mp3Stream::Impl {
+    static constexpr std::size_t kWindow = 8192;      // bytes read from the source at a time
+    static constexpr std::size_t kMaxFrame = 1500;    // longest Layer III frame is 1441 bytes
+    static constexpr int kIndexEvery = 32;            // frames between index entries
+    static constexpr int kPreroll = 24;               // frames decoded and dropped before a seek target
+
+    std::shared_ptr<AudioByteSource> src;
+    std::uint64_t size = 0;
+    std::vector<std::uint8_t> win;
+    std::uint64_t winPos = 0;
+    std::size_t winLen = 0;
+
+    bool open = false, indexed = false, trim = true;
+    FrameHeader first;
+    XingInfo xing;
+    std::uint64_t startPos = 0;                       // first audio frame
+
+    std::unique_ptr<Layer3Decoder> dec;
+    std::uint64_t pos = 0;                            // where the next frame is looked for
+    bool exact = true;
+
+    int framesDecoded = 0, framesSkipped = 0;
+    std::vector<std::uint64_t> index;                 // byte offset of every kIndexEvery-th audio frame
+    std::uint64_t audioFrames = 0;
+    std::int64_t startSkip = 0, outFrames = 0;        // gapless trim, in sample frames
+
+    std::vector<float> pend;                          // PCM of the last decoded frame, interleaved
+    std::size_t pendOff = 0;                          // frames of `pend` already used
+    std::int64_t decPos = 0;                          // untrimmed frame index of pend[0]
+    std::int64_t outPos = 0;                          // next output (trimmed) frame
+
+    // Bytes from `at` on (as many as the window holds, `avail`); the pointer
+    // stays valid until the next call.
+    const std::uint8_t* Bytes(std::uint64_t at, std::size_t& avail) {
+        avail = 0;
+        if (at >= size) return win.data();
+        const bool inWin = winLen > 0 && at >= winPos && at < winPos + winLen &&
+                           (winPos + winLen >= size || at + kMaxFrame + 8 <= winPos + winLen);
+        if (!inWin) {
+            winPos = at;
+            winLen = src->Read(at, win.data(), static_cast<std::size_t>(std::min<std::uint64_t>(kWindow, size - at)));
+            if (winLen == 0) { size = at; return win.data(); }      // source shrank or failed: treat as the end
+            if (winPos + winLen < size && winLen < kWindow) size = winPos + winLen;
+        }
+        avail = static_cast<std::size_t>(winPos + winLen - at);
+        return win.data() + (at - winPos);
+    }
+
+    // Finds the next frame at or after `from`; `exactFirst` tries `from` itself
+    // before scanning (the stream is expected to continue without a gap). The
+    // resync rule is the one DecodeMp3 always used: a header must be confirmed
+    // by a compatible header after it (or end the data). Once the first frame
+    // is known (`haveFirst`), headers must also match it.
+    bool Locate(std::uint64_t from, bool exactFirst, bool haveFirst, FrameHeader& h, std::uint64_t& at) {
+        if (exactFirst && from + 4 <= size) {
+            std::size_t avail = 0;
+            const std::uint8_t* w = Bytes(from, avail);
+            if (ParseHeader(w, avail, h) && from + static_cast<std::uint64_t>(h.frameBytes) <= size &&
+                (!haveFirst || Compatible(first, h))) {
+                at = from;
+                return true;
+            }
+        }
+        std::uint64_t p = exactFirst ? from + 1 : from;
+        while (p + 4 <= size) {
+            std::size_t avail = 0;
+            const std::uint8_t* w = Bytes(p, avail);
+            if (avail < 4) break;
+            const bool atEnd = p + avail >= size;
+            const std::size_t limit = atEnd ? avail : (avail > kMaxFrame + 8 ? avail - kMaxFrame - 8 : 0);
+            if (limit == 0) break;
+            for (std::size_t i = 0; i < limit && i + 4 <= avail; ++i) {
+                if (w[i] != 0xFF) continue;
+                FrameHeader c;
+                if (!ParseHeader(w + i, avail - i, c)) continue;
+                if (p + i + static_cast<std::uint64_t>(c.frameBytes) > size) continue;
+                if (haveFirst && !Compatible(first, c)) continue;
+                const std::uint64_t next = p + i + static_cast<std::uint64_t>(c.frameBytes);
+                FrameHeader h2;
+                const std::size_t nrel = i + static_cast<std::size_t>(c.frameBytes);
+                const bool end = next == size;
+                const bool nextOk = next + 4 <= size && nrel + 4 <= avail && ParseHeader(w + nrel, avail - nrel, h2) &&
+                                    Compatible(c, h2);
+                if (end || nextOk || (haveFirst && next + 4 > size)) { h = c; at = p + i; return true; }
+            }
+            p += limit;
+        }
+        return false;
+    }
+
+    // Decodes the next frame, appending its PCM. 1 = decoded, 0 = replaced by silence, -1 = no more frames.
+    int Next(std::vector<float>& out) {
+        FrameHeader h;
+        std::uint64_t at = 0;
+        if (!Locate(pos, exact, true, h, at)) { pos = size; return -1; }
+        std::size_t avail = 0;
+        const std::uint8_t* frame = Bytes(at, avail);
+        const std::size_t len = static_cast<std::size_t>(h.frameBytes);
+        bool ok = false;
+        if (avail >= len) ok = dec->DecodeFrame(frame, len, h, out);
+        else out.resize(out.size() + static_cast<std::size_t>(first.lsf ? 576 : 1152) * static_cast<std::size_t>(first.channels), 0.0f);
+        pos = at + len;
+        exact = true;
+        if (ok) ++framesDecoded; else ++framesSkipped;
+        return ok ? 1 : 0;
+    }
+
+    void ResetTo(std::uint64_t at) {
+        dec.reset(new Layer3Decoder());
+        pos = at;
+        exact = true;
+        pend.clear();
+        pendOff = 0;
+    }
+};
+
+Mp3Stream::Mp3Stream() : m(new Impl) {}
+Mp3Stream::~Mp3Stream() = default;
+bool Mp3Stream::IsOpen() const { return m->open; }
+int Mp3Stream::SampleRate() const { return m->open ? m->first.sampleRate : 0; }
+int Mp3Stream::Channels() const { return m->open ? m->first.channels : 0; }
+std::int64_t Mp3Stream::TotalFrames() const { return m->indexed ? m->outFrames : -1; }
+int Mp3Stream::FramesDecoded() const { return m->framesDecoded; }
+int Mp3Stream::FramesSkipped() const { return m->framesSkipped; }
+bool Mp3Stream::HasLameTag() const { return m->xing.present && m->xing.hasLame; }
+int Mp3Stream::EncoderDelay() const { return HasLameTag() ? m->xing.delay : 0; }
+int Mp3Stream::EncoderPadding() const { return HasLameTag() ? m->xing.padding : 0; }
+std::uint32_t Mp3Stream::XingFrames() const { return m->xing.hasFrames ? m->xing.frames : 0; }
+int Mp3Stream::SamplesPerFrame() const { return m->first.lsf ? 576 : 1152; }
+std::size_t Mp3Stream::MemoryBytes() const {
+    return sizeof(Impl) + m->win.capacity() + m->pend.capacity() * sizeof(float) +
+           m->index.capacity() * sizeof(std::uint64_t) + 4096 /* decoder state and reservoir */;
+}
+
+bool Mp3Stream::Open(std::shared_ptr<AudioByteSource> source, std::string* error, const Mp3Options* options,
+                     bool buildIndex) {
+    Impl& s = *m;
+    s = Impl();
+    auto fail = [&]() {
+        if (error) *error = "not a readable MP3 file";
+        s.open = s.indexed = false;
+        return false;
+    };
+    if (!source) return fail();
+    s.src = std::move(source);
+    s.size = s.src->Size();
+    if (s.size < 4) return fail();
+    s.win.resize(Impl::kWindow);
+    s.trim = options ? options->trimGapless : Mp3Options().trimGapless;
+
+    FrameHeader h;
+    std::uint64_t at = 0;
+    if (!s.Locate(SkipId3v2(*s.src, s.size), false, false, h, at)) return fail();
+    s.first = h;
+    s.startPos = at;
+    {
+        std::size_t avail = 0;
+        const std::uint8_t* frame = s.Bytes(at, avail);
+        s.xing = ParseXing(frame, std::min<std::size_t>(avail, static_cast<std::size_t>(h.frameBytes)), h);
+        if (s.xing.present) s.startPos += static_cast<std::uint64_t>(h.frameBytes);   // the header frame carries no audio
+    }
+    s.open = true;
+    s.ResetTo(s.startPos);
+
+    if (buildIndex) {
+        std::uint64_t p = s.startPos;
+        std::uint64_t n = 0;
+        for (;;) {
+            FrameHeader f;
+            std::uint64_t fat = 0;
+            if (!s.Locate(p, true, true, f, fat)) break;
+            if (n % Impl::kIndexEvery == 0) s.index.push_back(fat);
+            ++n;
+            p = fat + static_cast<std::uint64_t>(f.frameBytes);
+        }
+        if (n == 0) return fail();
+        s.audioFrames = n;
+        const std::int64_t spf = h.lsf ? 576 : 1152;
+        const std::int64_t total = static_cast<std::int64_t>(n) * spf;
+        std::int64_t skip = 0, keep = total;
+        if (s.trim && HasLameTag()) {
+            skip = static_cast<std::int64_t>(EncoderDelay()) + 529;
+            if (s.xing.hasFrames && s.xing.frames > 0) {
+                const std::int64_t all = static_cast<std::int64_t>(s.xing.frames) * spf;
+                const std::int64_t pad = EncoderPadding();
+                const std::int64_t e = all > pad ? all - pad + 529 : 0;
+                keep = std::min(total, e);
+            }
+            if (!(skip < keep)) { skip = 0; keep = total; }
+        }
+        s.startSkip = skip;
+        s.outFrames = keep - skip;
+        s.indexed = true;
+        s.ResetTo(s.startPos);
+    }
+    return true;
+}
+
+bool Mp3Stream::DecodeFrame(std::vector<float>& out) {
+    if (!m->open) return false;
+    return m->Next(out) >= 0;
+}
+
+void Mp3Stream::Rewind() {
+    if (!m->open) return;
+    m->ResetTo(m->startPos);
+    m->decPos = 0;
+    m->outPos = 0;
+}
+
+bool Mp3Stream::Seek(std::int64_t frame) {
+    Impl& s = *m;
+    if (!s.indexed) return false;
+    frame = std::max<std::int64_t>(0, std::min(frame, s.outFrames));
+    const std::int64_t spf = SamplesPerFrame();
+    const std::int64_t k = (frame + s.startSkip) / spf;
+    const std::int64_t k0 = k > Impl::kPreroll ? k - Impl::kPreroll : 0;
+    std::int64_t j = k0 / Impl::kIndexEvery;
+    if (j >= static_cast<std::int64_t>(s.index.size())) j = static_cast<std::int64_t>(s.index.size()) - 1;
+    s.ResetTo(s.index[static_cast<std::size_t>(j)]);
+    s.decPos = j * Impl::kIndexEvery * spf;
+    s.outPos = frame;
+    return true;
+}
+
+std::size_t Mp3Stream::Read(float* dst, std::size_t maxFrames) {
+    Impl& s = *m;
+    if (!s.indexed || !dst) return 0;
+    const std::size_t ch = static_cast<std::size_t>(s.first.channels);
+    std::size_t got = 0;
+    while (got < maxFrames && s.outPos < s.outFrames) {
+        if (s.pendOff >= s.pend.size() / ch) {
+            s.decPos += static_cast<std::int64_t>(s.pend.size() / ch);
+            s.pend.clear();
+            s.pendOff = 0;
+            if (s.Next(s.pend) < 0) break;
+        }
+        const std::int64_t have = static_cast<std::int64_t>(s.pend.size() / ch) - static_cast<std::int64_t>(s.pendOff);
+        const std::int64_t u = s.decPos + static_cast<std::int64_t>(s.pendOff);
+        const std::int64_t wanted = s.startSkip + s.outPos;
+        if (u < wanted) {
+            s.pendOff += static_cast<std::size_t>(std::min(have, wanted - u));
+            continue;
+        }
+        const std::size_t n = static_cast<std::size_t>(
+            std::min<std::int64_t>({have, static_cast<std::int64_t>(maxFrames - got), s.outFrames - s.outPos}));
+        std::memcpy(dst + got * ch, s.pend.data() + s.pendOff * ch, n * ch * sizeof(float));
+        s.pendOff += n;
+        s.outPos += static_cast<std::int64_t>(n);
+        got += n;
+    }
+    return got;
+}
+
 bool DecodeMp3(const unsigned char* data, std::size_t size, Mp3Audio& out, std::string* error, const Mp3Options* options) {
     out = Mp3Audio();
     if (!data || size < 4) {
@@ -894,69 +1156,28 @@ bool DecodeMp3(const unsigned char* data, std::size_t size, Mp3Audio& out, std::
         return false;
     }
     const bool trim = options ? options->trimGapless : Mp3Options().trimGapless;
-    Layer3Decoder decoder;
-    FrameHeader first;
-    bool haveFirst = false;
-    XingInfo xing;
-    std::size_t pos = SkipId3v2(data, size);
-    bool exact = false;      // next frame is expected at `pos` exactly
-    std::uint32_t xingFrames = 0;
-
-    while (pos + 4 <= size) {
-        FrameHeader h;
-        bool found = false;
-        if (exact && ParseHeader(data + pos, size - pos, h) && pos + h.frameBytes <= size &&
-            (!haveFirst || Compatible(first, h))) {
-            found = true;
-        } else {
-            // Resynchronise: scan for a header confirmed by the one after it.
-            for (std::size_t p = exact ? pos + 1 : pos; p + 4 <= size; ++p) {
-                if (data[p] != 0xFF) continue;
-                if (!ParseHeader(data + p, size - p, h)) continue;
-                if (p + static_cast<std::size_t>(h.frameBytes) > size) continue;
-                if (haveFirst && !Compatible(first, h)) continue;
-                const std::size_t next = p + static_cast<std::size_t>(h.frameBytes);
-                FrameHeader h2;
-                const bool atEnd = next == size;
-                const bool nextOk = next + 4 <= size && ParseHeader(data + next, size - next, h2) && Compatible(h, h2);
-                if (atEnd || nextOk || (haveFirst && next + 4 > size)) { pos = p; found = true; break; }
-            }
-        }
-        if (!found) break;
-        const std::uint8_t* frame = data + pos;
-        const std::size_t len = static_cast<std::size_t>(h.frameBytes);
-        if (!haveFirst) {
-            first = h;
-            haveFirst = true;
-            out.sampleRate = h.sampleRate;
-            out.channels = h.channels;
-            xing = ParseXing(frame, len, h);
-            if (xing.present) {
-                if (xing.hasLame) {
-                    out.hasLameTag = true;
-                    out.encoderDelay = xing.delay;
-                    out.encoderPadding = xing.padding;
-                }
-                if (xing.hasFrames) xingFrames = xing.frames;
-                pos += len;
-                exact = true;
-                continue;       // the header frame carries no audio
-            }
-        }
-        if (decoder.DecodeFrame(frame, len, h, out.samples)) ++out.framesDecoded;
-        else ++out.framesSkipped;
-        pos += len;
-        exact = true;
+    Mp3Stream stream;
+    if (!stream.Open(AudioByteSource::FromPointer(data, size), error, options, false)) return false;
+    out.sampleRate = stream.SampleRate();
+    out.channels = stream.Channels();
+    if (stream.HasLameTag()) {
+        out.hasLameTag = true;
+        out.encoderDelay = stream.EncoderDelay();
+        out.encoderPadding = stream.EncoderPadding();
     }
+    const std::uint32_t xingFrames = stream.XingFrames();
+    while (stream.DecodeFrame(out.samples)) {}
+    out.framesDecoded = stream.FramesDecoded();
+    out.framesSkipped = stream.FramesSkipped();
 
-    if (!haveFirst || out.samples.empty()) {
+    if (out.samples.empty()) {
         out = Mp3Audio();
         if (error) *error = "not a readable MP3 file";
         return false;
     }
 
     if (trim && out.hasLameTag) {
-        const std::size_t spf = first.lsf ? 576 : 1152;
+        const std::size_t spf = static_cast<std::size_t>(stream.SamplesPerFrame());
         const std::size_t ch = static_cast<std::size_t>(out.channels);
         const std::size_t total = out.samples.size() / ch;
         const std::size_t startSkip = static_cast<std::size_t>(out.encoderDelay) + 529;

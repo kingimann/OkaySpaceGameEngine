@@ -3,7 +3,12 @@
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
+#include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -29,6 +34,11 @@ namespace okay {
 const std::string& Saveable::EnsureId() {
     if (saveId.empty()) saveId = SaveSystem::NewId();
     return saveId;
+}
+
+void Saveable::Start() {
+    if (dynamic) return;
+    if (Scene* s = GetScene()) SaveSystem::NoteLevelObject(*s, *gameObject);
 }
 
 namespace {
@@ -118,6 +128,7 @@ bool Qualifies(const KeyEntry& e, bool allObjects, const std::string& includeTag
 struct Baseline {
     std::string sceneName;
     std::set<std::string> keys;
+    std::uint64_t maxId = 0;     // the newest object instance id the level held when this was taken
 };
 
 std::unordered_map<std::uint64_t, Baseline>& Baselines() {
@@ -130,10 +141,184 @@ Baseline& EnsureBaseline(Scene& scene, const KeyTable& kt, bool allObjects, cons
     if (reset || b.sceneName != scene.Name() || b.keys.empty()) {
         b.sceneName = scene.Name();
         b.keys.clear();
+        b.maxId = 0;
+        for (const auto& up : scene.Objects()) if (up) b.maxId = std::max(b.maxId, up->InstanceId());
         for (const KeyEntry& e : kt.entries)
             if (!e.duplicate && !e.underDynamic && Qualifies(e, allObjects, includeTag)) b.keys.insert(e.key);
     }
     return b;
+}
+
+// ---------------------------------------------------------------------
+// Variables and registry properties (the no-code Saveable settings)
+// ---------------------------------------------------------------------
+
+constexpr int kMaxSavedVariables = 4096;   // a hostile count can't make a load run long
+
+// One script value at `w`: kind letter plus value. False for kinds a save can't hold.
+bool PutValue(SaveWriter w, const vs::VsValue& v) {
+    if (v.IsNumber())      { w.String("k", "f"); w.Float("v", v.AsFloat()); return true; }
+    if (v.IsBool())        { w.String("k", "b"); w.Bool("v", v.AsBool()); return true; }
+    if (v.IsString())      { w.String("k", "s"); w.String("v", v.AsString()); return true; }
+    if (v.IsVec3())        { w.String("k", "v"); w.Vector3("v", v.AsVec3()); return true; }
+    if (v.IsColor() || v.IsArray() || v.IsMap()) { w.String("k", "j"); w.String("v", vs::VsToLiteral(v)); return true; }
+    return false;
+}
+
+bool GetValue(SaveReader r, vs::VsValue& out) {
+    const std::string k = r.String("k");
+    if (k == "f") { out = vs::VsValue{r.Float("v", 0.0f)}; return true; }
+    if (k == "b") { out = vs::VsValue{r.Bool("v", false)}; return true; }
+    if (k == "s") { out = vs::VsValue{r.String("v")}; return true; }
+    if (k == "v") { out = vs::VsValue{r.Vector3("v", Vec3::Zero)}; return true; }
+    if (k == "j") return vs::VsParseLiteral(r.String("v"), out);   // a bad one is skipped
+    return false;
+}
+
+void WriteObjectVariables(GameObject& go, SaveWriter w) {
+    int n = 0;
+    std::size_t nth = 0;
+    for (ScriptComponent* sc : go.GetComponents<ScriptComponent>()) {
+        if (IScriptVM* vm = sc->VM())
+            for (const std::string& name : vm->GlobalNames()) {
+                SaveWriter e = w.Scope("e" + std::to_string(n));
+                if (!PutValue(e, vm->GetGlobal(name))) continue;
+                e.String("src", "script"); e.Int("n", (int)nth); e.String("name", name);
+                ++n;
+            }
+        ++nth;
+    }
+    nth = 0;
+    for (VisualScriptComponent* vc : go.GetComponents<VisualScriptComponent>()) {
+        std::vector<std::string> names;
+        for (const auto& kv : vc->Variables()) names.push_back(kv.first);
+        std::sort(names.begin(), names.end());   // the same bytes for the same state
+        for (const std::string& name : names) {
+            SaveWriter e = w.Scope("e" + std::to_string(n));
+            if (!PutValue(e, vc->GetVariable(name))) continue;
+            e.String("src", "graph"); e.Int("n", (int)nth); e.String("name", name);
+            ++n;
+        }
+        ++nth;
+    }
+    w.Int("count", n);
+}
+
+void ReadObjectVariables(GameObject& go, SaveReader r, std::vector<std::string>& warnings) {
+    const int n = std::min(std::max(0, r.Int("count", 0)), kMaxSavedVariables);
+    auto scripts = go.GetComponents<ScriptComponent>();
+    auto graphs = go.GetComponents<VisualScriptComponent>();
+    for (int i = 0; i < n; ++i) {
+        SaveReader e = r.Scope("e" + std::to_string(i));
+        vs::VsValue v;
+        if (!GetValue(e, v)) continue;
+        const std::string src = e.String("src"), name = e.String("name");
+        const std::size_t nth = (std::size_t)std::max(0, e.Int("n", 0));
+        if (src == "script") {
+            if (nth < scripts.size() && scripts[nth]->VM()) scripts[nth]->VM()->SetGlobal(name, v);
+            else warnings.push_back("\"" + go.name + "\" has no script #" + std::to_string(nth) + " for the saved variable \"" + name + "\"");
+        } else if (src == "graph") {
+            if (nth < graphs.size()) graphs[nth]->SetVariable(name, v);
+            else warnings.push_back("\"" + go.name + "\" has no visual script #" + std::to_string(nth) + " for the saved variable \"" + name + "\"");
+        }
+    }
+}
+
+void WriteVarMap(SaveWriter w, const vs::VarMap& m) {
+    std::vector<std::string> names;
+    for (const auto& kv : m) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    int n = 0;
+    for (const std::string& name : names) {
+        SaveWriter e = w.Scope("e" + std::to_string(n));
+        if (!PutValue(e, m.at(name))) continue;
+        e.String("name", name);
+        ++n;
+    }
+    w.Int("count", n);
+}
+
+void ReadVarMap(SaveReader r, vs::VarMap& m) {
+    const int n = std::min(std::max(0, r.Int("count", 0)), kMaxSavedVariables);
+    for (int i = 0; i < n; ++i) {
+        SaveReader e = r.Scope("e" + std::to_string(i));
+        vs::VsValue v;
+        const std::string name = e.String("name");
+        if (!name.empty() && GetValue(e, v)) m[name] = v;
+    }
+}
+
+// The scene-wide variables: Action List numbers and text, and the visual scripts'
+// scene and global variables.
+void WriteSceneVariables(Scene& scene, SaveWriter w) {
+    ActionList::UseScene(&scene);
+    {
+        std::vector<std::string> names;
+        for (const auto& kv : ActionList::Vars()) names.push_back(kv.first);
+        std::sort(names.begin(), names.end());
+        SaveWriter a = w.Scope("num");
+        for (std::size_t i = 0; i < names.size(); ++i) { a.String("n" + std::to_string(i), names[i]); a.Float("v" + std::to_string(i), ActionList::Vars()[names[i]]); }
+        a.Int("count", (int)names.size());
+    }
+    {
+        std::vector<std::string> names;
+        for (const auto& kv : ActionList::StrVars()) names.push_back(kv.first);
+        std::sort(names.begin(), names.end());
+        SaveWriter a = w.Scope("txt");
+        for (std::size_t i = 0; i < names.size(); ++i) { a.String("n" + std::to_string(i), names[i]); a.String("v" + std::to_string(i), ActionList::StrVars()[names[i]]); }
+        a.Int("count", (int)names.size());
+    }
+    WriteVarMap(w.Scope("scene"), vs::SceneVariables(&scene));
+    WriteVarMap(w.Scope("global"), vs::GlobalVariables());
+}
+
+void ReadSceneVariables(Scene& scene, SaveReader r) {
+    ActionList::UseScene(&scene);
+    {
+        SaveReader a = r.Scope("num");
+        const int n = std::min(std::max(0, a.Int("count", 0)), kMaxSavedVariables);
+        ActionList::Vars().clear();
+        for (int i = 0; i < n; ++i) ActionList::Vars()[a.String("n" + std::to_string(i))] = a.Float("v" + std::to_string(i), 0.0f);
+    }
+    {
+        SaveReader a = r.Scope("txt");
+        const int n = std::min(std::max(0, a.Int("count", 0)), kMaxSavedVariables);
+        ActionList::StrVars().clear();
+        for (int i = 0; i < n; ++i) ActionList::StrVars()[a.String("n" + std::to_string(i))] = a.String("v" + std::to_string(i));
+    }
+    vs::SceneVariables(&scene).clear();
+    ReadVarMap(r.Scope("scene"), vs::SceneVariables(&scene));
+    vs::GlobalVariables().clear();
+    ReadVarMap(r.Scope("global"), vs::GlobalVariables());
+}
+
+// The property paths a Saveable lists, as text (what the property registry reads back).
+void WriteProperties(GameObject& go, const std::vector<std::string>& paths, SaveWriter w, std::vector<std::string>* warnings) {
+    int n = 0;
+    for (const std::string& path : paths) {
+        PropertyValue v;
+        std::string err;
+        if (!PropertyRegistry::TryGetProperty(go, path, v, &err)) {
+            if (warnings) warnings->push_back("\"" + go.name + "\": the saved property \"" + path + "\" can't be read (" + err + ")");
+            continue;
+        }
+        SaveWriter e = w.Scope("e" + std::to_string(n++));
+        e.String("path", path);
+        e.String("value", v.ToString());
+    }
+    w.Int("count", n);
+}
+
+void ReadProperties(GameObject& go, SaveReader r, std::vector<std::string>& warnings) {
+    const int n = std::min(std::max(0, r.Int("count", 0)), kMaxSavedVariables);
+    for (int i = 0; i < n; ++i) {
+        SaveReader e = r.Scope("e" + std::to_string(i));
+        const std::string path = e.String("path");
+        std::string err;
+        if (path.empty()) continue;
+        if (!PropertyRegistry::SetPropertyFromText(go, path, e.String("value"), &err))
+            warnings.push_back("\"" + go.name + "\": the saved property \"" + path + "\" couldn't be put back (" + err + ")");
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -372,6 +557,15 @@ void SaveSystem::MarkSceneLoaded(Scene& scene, const SaveCaptureOptions& options
     EnsureBaseline(scene, kt, options.allObjects, options.includeTag, /*reset=*/true);
 }
 
+void SaveSystem::NoteLevelObject(Scene& scene, GameObject& go) {
+    Saveable* sv = go.GetComponent<Saveable>();
+    if (!sv || sv->dynamic) return;
+    auto it = Baselines().find(scene.Uid());
+    // Already part of the baseline taken for this load of this level: nothing to do.
+    if (it != Baselines().end() && it->second.sceneName == scene.Name() && !it->second.keys.empty() && go.InstanceId() <= it->second.maxId) return;
+    MarkSceneLoaded(scene);   // a level (re)loaded: its objects are the new starting set
+}
+
 SaveDocument SaveSystem::CaptureScene(Scene& scene, const SaveCaptureOptions& options, SaveCaptureReport* report) {
     SaveCaptureReport rep;
     for (const auto& up : scene.Objects()) {   // dynamic objects need their id before keys are built
@@ -394,6 +588,7 @@ SaveDocument SaveSystem::CaptureScene(Scene& scene, const SaveCaptureOptions& op
     }
 
     int n = 0;
+    bool sceneVars = false;
     for (std::size_t idx : chosen) {
         const KeyEntry& e = kt.entries[idx];
         GameObject* go = e.go;
@@ -432,6 +627,11 @@ SaveDocument SaveSystem::CaptureScene(Scene& scene, const SaveCaptureOptions& op
                 SaveWriter aw = w.Scope("a." + a.name);
                 a.save(*go, aw);
             }
+        if (e.sv) {
+            if (!e.sv->properties.empty()) WriteProperties(*go, e.sv->properties, w.Scope("p"), &rep.warnings);
+            if (e.sv->saveVariables) WriteObjectVariables(*go, w.Scope("v"));
+            if (e.sv->saveSceneVariables) sceneVars = true;
+        }
         ++rep.objects;
     }
 
@@ -450,6 +650,7 @@ SaveDocument SaveSystem::CaptureScene(Scene& scene, const SaveCaptureOptions& op
     sw.Bool("allObjects", options.allObjects);
     sw.String("includeTag", options.includeTag);
     sw.Strings("destroyed", destroyed);
+    if (sceneVars) WriteSceneVariables(scene, doc.Writer("sys.vars"));
 
     if (report) *report = rep;
     return doc;
@@ -495,6 +696,8 @@ SaveApplyReport SaveSystem::ApplyScene(Scene& scene, const SaveDocument& doc, co
     KeyTable kt = BuildKeys(scene);
     {   // the level as it is now is what "start of level" means for later captures
         Baseline& base = EnsureBaseline(scene, kt, allObjects, includeTag, /*reset=*/false);
+        // Every object here is part of the level as it is now (a later Saveable::Start must not re-take the set).
+        for (const auto& up : scene.Objects()) if (up) base.maxId = std::max(base.maxId, up->InstanceId());
         for (const KeyEntry& e : kt.entries)
             if (!e.duplicate && !e.underDynamic && Qualifies(e, allObjects, includeTag)) base.keys.insert(e.key);
         for (const std::string& k : destroyedKeys) base.keys.insert(k);
@@ -550,10 +753,8 @@ SaveApplyReport SaveSystem::ApplyScene(Scene& scene, const SaveDocument& doc, co
         ++spawned;
     }
     rep.spawned = spawned;
-    if (spawned > 0) {
-        if (options.startSpawned) scene.Start();   // Awake / Start first, so they can't overwrite restored values
-        kt = BuildKeys(scene);                     // the spawned prefabs' own children have keys now
-    }
+    if (options.startSpawned) scene.Start();   // Awake / Start first (a level that just loaded too), so they can't overwrite restored values
+    if (spawned > 0 || options.startSpawned) kt = BuildKeys(scene);   // spawned prefabs' own children have keys now
 
     // 3. State, object by object.
     std::vector<GameObject*> restored;
@@ -586,6 +787,12 @@ SaveApplyReport SaveSystem::ApplyScene(Scene& scene, const SaveDocument& doc, co
                 SaveReader ar = r.Scope("a." + a.name);
                 if (ar.HasAny()) a.load(*go, ar);
             }
+        if (e.sv) {
+            SaveReader pr = r.Scope("p");
+            if (pr.HasAny()) ReadProperties(*go, pr, rep.warnings);
+            SaveReader vr = r.Scope("v");
+            if (e.sv->saveVariables && vr.HasAny()) ReadObjectVariables(*go, vr, rep.warnings);
+        }
         restored.push_back(go);
         ++rep.restored;
     }
@@ -602,6 +809,8 @@ SaveApplyReport SaveSystem::ApplyScene(Scene& scene, const SaveDocument& doc, co
     // 5. Everything is back: let components fix up references.
     for (GameObject* go : restored)
         for (const NamedSaveable& s : SaveablesOf(*go)) s.comp->OnLoadComplete();
+
+    if (const SaveBlock* vb = doc.Find("sys.vars")) ReadSceneVariables(scene, SaveReader(*vb));
 
     if (options.restorePlayTime && sb->Has("playTime")) SetPlayTime(sr.Float("playTime", 0.0f));
     return rep;
@@ -643,14 +852,14 @@ bool SaveManager::Save(Scene& scene, const std::string& slot, const SaveRequest&
         return ok;
     };
     for (const std::string& name : request.extra.Names()) {
-        if (name == "scene" || name.rfind("obj.", 0) == 0) { err = "the block name \"" + name + "\" is reserved"; return finish(false); }
+        if (name == "scene" || name.rfind("obj.", 0) == 0 || name.rfind("sys.", 0) == 0) { err = "the block name \"" + name + "\" is reserved"; return finish(false); }
     }
     doc.Merge(request.extra);
     if (request.collect) {
         SaveDocument more;
         request.collect(more);
         for (const std::string& name : more.Names())
-            if (name == "scene" || name.rfind("obj.", 0) == 0) { err = "the block name \"" + name + "\" is reserved"; return finish(false); }
+            if (name == "scene" || name.rfind("obj.", 0) == 0 || name.rfind("sys.", 0) == 0) { err = "the block name \"" + name + "\" is reserved"; return finish(false); }
         doc.Merge(more);
     }
     SaveSlotInfo meta;

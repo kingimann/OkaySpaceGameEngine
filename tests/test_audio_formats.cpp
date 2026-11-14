@@ -29,11 +29,16 @@ float Peak(const AudioClip& c) {
 int main() {
     RUN_SUITE("audio_formats");
 
-    // OGG Vorbis: a 0.25 s, 440 Hz stereo file at 22.05 kHz comes in mono at its own rate.
+    // OGG Vorbis: a 0.25 s, 440 Hz stereo file at 22.05 kHz keeps both channels at its own
+    // rate; downmix on request gives the mono clip.
     {
+        AudioClip st;
+        CHECK(st.LoadOGG(kData + "tone_stereo.ogg"));
+        CHECK(st.channels == 2 && st.samples.size() == st.FrameCount() * 2);
         AudioClip c;
         std::string err;
-        CHECK(c.LoadOGG(kData + "tone_stereo.ogg", &err));
+        CHECK(c.LoadOGG(kData + "tone_stereo.ogg", &err, true));
+        CHECK(c.channels == 1 && c.FrameCount() == st.FrameCount());
         CHECK(c.sampleRate == 22050);
         CHECK_NEAR(c.Duration(), 0.25f, 0.02f);
         CHECK_NEAR(EstimateHz(c), 440.0f, 15.0f);

@@ -1,4 +1,7 @@
 #include "okay/Components/ActionList.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/DisplaySettings.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -41,6 +44,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/GameSaves.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -890,7 +894,7 @@ void ActionList::Update(float dt) {
                     tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
-                } else {                            // flash [seconds] [r g b] — blink, then restore
+                } else if (Accessibility::FlashScale() > 0.0f) {   // flash [seconds] [r g b] — blink, then restore (skipped with reduced flashing)
                     float dur = Num(it, 0);
                     if (dur <= 0.0f) dur = 0.2f;
                     Color fc = it.args.size() > 3 ? Color{Num(it, 1), Num(it, 2), Num(it, 3), start.a}
@@ -1153,6 +1157,12 @@ void ActionList::Update(float dt) {
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
+        // fire_output name [value]: raise a named output on this object's Logic Source, so
+        // its I/O links (target, input, delay, once) run. The value replaces each link's parameter.
+        else if (op == "fire_output") {
+            if (gameObject) for (LogicSource* ls : gameObject->GetComponents<LogicSource>())
+                ls->FireOutput(Str(it, 0), it.args.size() > 1 ? Str(it, 1) : std::string());
+        }
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
@@ -1580,6 +1590,35 @@ void ActionList::Update(float dt) {
                 Log::Error("[actions] save_prefs: refusing '", name, "' (absolute paths and '..' aren't allowed)");
             else Prefs::Save(Save::Resolve(name));
         }
+        // Save slots (Saveable components mark what is stored; problems go to the Console).
+        else if (op == "game_save")        { if (scene) GameSaves::Save(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0), Rest(it, 1)); }
+        else if (op == "game_load")        { if (scene) GameSaves::Load(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_continue")    { if (scene) GameSaves::Continue(*scene); }
+        else if (op == "game_autosave")    { if (scene) GameSaves::AutoSave(*scene); }
+        else if (op == "game_delete_slot") { GameSaves::Delete(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_exists") { Vars()[Str(it, 1).empty() ? "slot_exists" : Str(it, 1)] = GameSaves::Exists(Str(it, 0).empty() ? "slot_1" : Str(it, 0)) ? 1.0f : 0.0f; }
+        else if (op == "game_can_continue") { Vars()[Str(it, 0).empty() ? "can_continue" : Str(it, 0)] = GameSaves::CanContinue() ? 1.0f : 0.0f; }
+        else if (op == "game_slot_age")    { Vars()[Str(it, 1).empty() ? "slot_age" : Str(it, 1)] = (float)GameSaves::SecondsSinceSave(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_text")   { StrVars()[Str(it, 1).empty() ? "slot_text" : Str(it, 1)] = GameSaves::SavedText(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "set_display_mode") {
+            WindowMode mode = WindowMode::Windowed;
+            if (DisplaySettings::ParseMode(Str(it, 0), mode)) DisplaySettings::SetMode(mode);
+        }
+        else if (op == "set_display_resolution") DisplaySettings::SetResolution((int)Num(it, 0), (int)Num(it, 1));
+        else if (op == "set_refresh_rate") DisplaySettings::SetRefreshHz((int)Num(it, 0));
+        else if (op == "set_monitor") {
+            const std::string name = Str(it, 0);
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) DisplaySettings::SetMonitorIndex(std::atoi(name.c_str()));
+            else DisplaySettings::SetMonitorName(name);
+        }
+        else if (op == "begin_display_confirm") DisplaySettings::BeginTrial(10.f);
+        else if (op == "keep_display_settings") DisplaySettings::KeepTrial();
+        else if (op == "revert_display_settings") DisplaySettings::RevertTrial();
+        else if (op == "get_display_mode") StrVars()[Str(it, 0).empty() ? "display_mode" : Str(it, 0)] = DisplaySettings::ModeName(DisplaySettings::Mode());
+        else if (op == "get_monitor") StrVars()[Str(it, 0).empty() ? "monitor" : Str(it, 0)] = DisplaySettings::MonitorName();
+        else if (op == "get_refresh_rate") Vars()[Str(it, 0).empty() ? "refresh_rate" : Str(it, 0)] = (float)DisplaySettings::RefreshHz();
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }

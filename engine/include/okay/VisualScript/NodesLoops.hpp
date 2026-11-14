@@ -7,7 +7,9 @@
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 
 namespace okay::vs {
@@ -129,6 +131,16 @@ inline VsValue::ArrayRef VsListIn(VsNode* n, const VsValue& v, NodeGraph& g, VsC
     return a;
 }
 
+/// An index pin as a whole number. False for NaN / inf / absurdly large values (the caller
+/// reports them), so a hostile index never reaches a float -> long cast it can't hold.
+inline bool VsIndexFrom(const VsValue& v, long& out) {
+    const float f = v.AsFloat();
+    if (!std::isfinite(f) || std::fabs(f) > 1.0e9f) return false;
+    out = std::lround(f);
+    return true;
+}
+inline std::string VsIndexText(const VsValue& v) { return VsValue::FormatNumber(v.AsFloat()); }
+
 struct NewListNode : VsNode {   // out0 = a new, empty list
     VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue::MakeArray(); }
 };
@@ -146,9 +158,10 @@ struct ListRemoveAtNode : VsNode {   // in0 = list, in1 = index
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto a = VsListIn(this, In(0, g, ctx), g, ctx);
         if (!a) return 0;
-        const long i = std::lround(In(1, g, ctx).AsFloat());
-        if (i < 0 || i >= (long)a->size())
-            g.Error(this, ctx, "index " + std::to_string(i) + " is outside the list (it has " + std::to_string(a->size()) +
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size())
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
                                " item(s), numbered from 0); nothing was removed");
         else
             a->erase(a->begin() + i);
@@ -160,9 +173,10 @@ struct ListGetNode : VsNode {   // in0 = list, in1 = index -> item
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
         auto a = VsListIn(this, In(0, g, ctx), g, ctx);
         if (!a) return {};
-        const long i = std::lround(In(1, g, ctx).AsFloat());
-        if (i < 0 || i >= (long)a->size()) {
-            g.Error(this, ctx, "index " + std::to_string(i) + " is outside the list (it has " + std::to_string(a->size()) +
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
                                " item(s), numbered from 0)");
             return {};
         }
@@ -188,6 +202,199 @@ struct ListContainsNode : VsNode {   // in0 = list, in1 = item -> bool
             if (v.IsObject() && want.IsString() && v.AsString() == want.AsString()) return true;
         }
         return false;
+    }
+};
+
+
+// ---- More list nodes: insert, set, find, remove, sort, reverse, clear, copy ----
+// A list or map is a reference: every variable and pin holding it sees a change.
+// Copy List / Copy Map make an independent one. Every node reports a bad index or a
+// non-list input through the graph's error hook (with the node's id) and changes nothing.
+struct ListInsertNode : VsNode {   // in0 = list, in1 = index (0..length), in2 = item
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i > (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s); you can insert at 0 to " + std::to_string(a->size()) + "); nothing was inserted");
+            return 0;
+        }
+        a->insert(a->begin() + i, In(2, g, ctx));
+        return 0;
+    }
+};
+
+struct ListSetNode : VsNode {   // in0 = list, in1 = index, in2 = item
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s), numbered from 0); nothing was changed");
+            return 0;
+        }
+        (*a)[(std::size_t)i] = In(2, g, ctx);
+        return 0;
+    }
+};
+
+struct ListFindNode : VsNode {   // in0 = list, in1 = item -> out0 index (-1 = not there), out1 found
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        long at = -1;
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) {
+            const VsValue want = In(1, g, ctx);
+            for (std::size_t i = 0; i < a->size(); ++i) {
+                const VsValue& v = (*a)[i];
+                if (VsSameValue(v, want) || (v.IsObject() && want.IsString() && v.AsString() == want.AsString())) { at = (long)i; break; }
+            }
+        }
+        return pin == 1 ? VsValue(at >= 0) : VsValue((float)at);
+    }
+};
+
+struct ListRemoveItemNode : VsNode {   // in0 = list, in1 = item -> out0 removed? (the first match goes)
+    bool removed = false;
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return removed; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        removed = false;
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue want = In(1, g, ctx);
+        for (std::size_t i = 0; i < a->size(); ++i) {
+            const VsValue& v = (*a)[i];
+            if (VsSameValue(v, want) || (v.IsObject() && want.IsString() && v.AsString() == want.AsString())) {
+                a->erase(a->begin() + (long)i);
+                removed = true;
+                break;
+            }
+        }
+        return 0;
+    }
+};
+
+struct ListSortNode : VsNode {   // in0 = list, in1 = descending?
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const bool desc = In(1, g, ctx).AsBool();
+        std::stable_sort(a->begin(), a->end(), [desc](const VsValue& x, const VsValue& y) {
+            return desc ? VsCompare(y, x) < 0 : VsCompare(x, y) < 0;
+        });
+        return 0;
+    }
+};
+
+struct ListReverseNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) std::reverse(a->begin(), a->end());
+        return 0;
+    }
+};
+
+struct ListClearNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) a->clear();
+        return 0;
+    }
+};
+
+struct ListCopyNode : VsNode {   // in0 = list, in1 = deep? -> a new list
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return VsValue::MakeArray();
+        if (In(1, g, ctx).AsBool()) return VsDeepCopy(VsValue(a));
+        return VsValue(std::make_shared<VsValue::Array>(*a));
+    }
+};
+
+// List Append: add every item of Other to the end of List (Other is read first, so appending a list
+// to itself doubles it instead of running away).
+struct ListAppendNode : VsNode {   // in0 = list, in1 = other list
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue ov = In(1, g, ctx);
+        auto o = ov.AsArray();
+        if (!o) { g.Error(this, ctx, "its Other input isn't a list; nothing was added"); return 0; }
+        const VsValue::Array items = *o;
+        a->insert(a->end(), items.begin(), items.end());
+        return 0;
+    }
+};
+
+// List Slice: a new list of Count items starting at Start. No Count wired = everything from Start.
+// Start 0..length is fine (length gives an empty list); Count past the end stops at the end.
+struct ListSliceNode : VsNode {   // in0 = list, in1 = start, in2 = count -> a new list
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        VsValue out = VsValue::MakeArray();
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return out;
+        const VsValue sv = In(1, g, ctx);
+        long start = 0;
+        if (!VsIndexFrom(sv, start) || start < 0 || start > (long)a->size()) {
+            g.Error(this, ctx, "start " + VsIndexText(sv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s), numbered from 0); the slice is empty");
+            return out;
+        }
+        long count = (long)a->size() - start;
+        if (HasInput(2)) {
+            const VsValue cv = In(2, g, ctx);
+            long c = 0;
+            if (!VsIndexFrom(cv, c) || c < 0) {
+                g.Error(this, ctx, "count " + VsIndexText(cv) + " isn't a whole number of zero or more; the slice is empty");
+                return out;
+            }
+            count = std::min(count, c);
+        }
+        out.AsArray()->assign(a->begin() + start, a->begin() + start + count);
+        return out;
+    }
+};
+
+// List Pop: remove the last item and give it back. An empty list is not an error: Popped is false.
+struct ListPopNode : VsNode {   // in0 = list -> out0 item, out1 popped?
+    VsValue item;
+    bool popped = false;
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int pin, NodeGraph&, VsContext&) override { return pin == 0 ? item : VsValue(popped); }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        item = VsValue{};
+        popped = false;
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a || a->empty()) return 0;
+        item = a->back();
+        a->pop_back();
+        popped = true;
+        return 0;
+    }
+};
+
+// ---- Colors --------------------------------------------------------------------
+struct MakeColorNode : VsNode {   // in0..in3 = r, g, b, a (0..1; a defaults to 1)
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto ch = [&](int i, float d) {
+            const float f = In(i, g, ctx, d).AsFloat();
+            return std::isnan(f) ? 0.0f : std::fmin(std::fmax(f, 0.0f), 1.0f);
+        };
+        return VsValue::Color(ch(0, 0.0f), ch(1, 0.0f), ch(2, 0.0f), ch(3, 1.0f));
+    }
+};
+
+struct SplitColorNode : VsNode {   // in0 = colour -> r, g, b, a
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        const VsColor c = In(0, g, ctx).AsColor();
+        return pin == 0 ? c.r : pin == 1 ? c.g : pin == 2 ? c.b : c.a;
     }
 };
 
@@ -222,14 +429,20 @@ struct ScopedVarNode : VsNode {
         return it != m.end() ? it->second : VsValue{};
     }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const VsValue v = In(0, g, ctx);
+        VsValue v = In(0, g, ctx);
         VarMap& m = Store(ctx);
-        if (op == Op::Set) m[name] = v;
-        else {
-            float cur = 0.0f;
-            if (auto it = m.find(name); it != m.end()) cur = it->second.AsFloat();
-            m[name] = cur + v.AsFloat();
+        if (op == Op::Add) {
+            VsValue cur;
+            if (auto it = m.find(name); it != m.end()) cur = it->second;
+            v = (cur.IsVec3() || v.IsVec3()) ? VsValue(cur.AsVec3() + v.AsVec3()) : VsValue(cur.AsFloat() + v.AsFloat());
         }
+        std::string err;
+        if (!g.CoerceForStore(name, scope == Scope::Global ? VarScope::Global : VarScope::Scene, v, &err)) {
+            g.Error(this, ctx, std::string(op == Op::Set ? "Set " : "Add ") + (scope == Scope::Global ? "Global" : "Scene") +
+                               " Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        m[name] = std::move(v);
         return 0;
     }
 };

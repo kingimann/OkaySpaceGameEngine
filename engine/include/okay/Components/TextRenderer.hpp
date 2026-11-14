@@ -6,6 +6,7 @@
 #include "okay/Graphics/Font.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Core/Utf8.hpp"
 #include "okay/UI/RichText.hpp"
 #include <string>
@@ -103,7 +104,7 @@ public:
     /// The pixel size actually used to draw: the best-fit size when `autoSize` is on,
     /// else `pixelSize`. Hosts call this instead of reading `pixelSize` directly.
     float EffectivePixelSize() const {
-        if (!autoSize || wrap || size.x <= 0.0f || size.y <= 0.0f) return pixelSize;
+        if (!autoSize || wrap || size.x <= 0.0f || size.y <= 0.0f) return pixelSize * A11yScale();
         float w = (float)PixelWidth(), h = (float)PixelHeight();   // font px (pixelSize-independent when !wrap)
         if (w <= 0.0f || h <= 0.0f) return pixelSize;
         float fit = std::min(size.x / w, size.y / h);
@@ -111,6 +112,10 @@ public:
         if (fit > autoSizeMax) fit = autoSizeMax;
         return fit;
     }
+
+    /// The player's text size (Accessibility) for screen-space text; world text keeps its size.
+    /// Best Fit text already fills its box, so it is not scaled again.
+    float A11yScale() const { return screenSpace ? Accessibility::Get().textScale : 1.0f; }
 
     /// Horizontal advance per glyph / vertical advance per line, in font pixels.
     float Advance() const { return (float)Font8x8::Width + 1.0f + letterSpacing; }
@@ -153,7 +158,7 @@ public:
             boxW = sz.x;
         }
         if (wrap && boxW > 0.0f && pixelSize > 0.0f) {
-            float glyphW = Advance() * pixelSize;
+            float glyphW = Advance() * pixelSize * A11yScale();
             maxChars = glyphW > 0.0f ? (int)(boxW / glyphW) : 0;
         }
         if (!cut && !uppercase && maxChars < 1) { if (srcp == &text) return text; scratch = src; return scratch; }

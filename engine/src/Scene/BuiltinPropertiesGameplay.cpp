@@ -17,11 +17,18 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshLink.hpp"
+#include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Components/NetworkObject.hpp"
@@ -40,6 +47,7 @@
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
 
 namespace okay {
@@ -526,6 +534,7 @@ void RegisterTopDownShooterController() {
      .AddFloat("bulletSize", &TopDownShooterController::bulletSize).Range(0, kBig, 0.05).Tooltip("Size of a bullet")
      .AddColor("bulletColor", &TopDownShooterController::bulletColor).Range(0, 1, 0.01).Tooltip("Colour of a bullet")
      .AddString("projectile", &TopDownShooterController::projectile).Tooltip("Prefab for FireMode::Prefab")
+     .AddString("weapon", &TopDownShooterController::weapon).Tooltip("A gun from the weapon list. Empty keeps the numbers in this section")
      .AddFloat("muzzleHeight", &TopDownShooterController::muzzleHeight).Range(-kBig, kBig, 0.05).Tooltip("Bullets start this high above the player origin")
      .AddFloat("muzzleForward", &TopDownShooterController::muzzleForward).Range(-kBig, kBig, 0.05).Tooltip("... and this far in front")
      .Section("Ammo")
@@ -687,6 +696,32 @@ void RegisterProjectile3D() {
     b.Commit();
 }
 
+// Volume
+void RegisterVolume() {
+    PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
+    b.AddEnum("kind", &Volume::kind, {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience", "Reverb"}).Tooltip("What the region does")
+     .AddEnum("shape", &Volume::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("Box, the ellipsoid inside the box, or the cylinder standing on the Y axis")
+     .AddVec3("size", &Volume::size).Range(0.05, kBig, 0.1).Tooltip("The box the shape fills, in local units (scaled by the Transform)")
+     .AddVec3("offset", &Volume::offset).Range(-kBig, kBig, 0.1).Tooltip("Centre of the region, in local units")
+     .AddString("activatorTag", &Volume::activatorTag).Tooltip("Who counts: a tag or name text. Blank = any body (Force)")
+     .AddString("eventName", &Volume::eventName).Tooltip("Checkpoint / Kill: sent to scripts as an On Logic Signal when it fires")
+     .AddEnum("killAction", &Volume::killAction, {"Respawn", "Destroy"}).Tooltip("Kill: send the body back to its checkpoint, or remove it")
+     .AddFloat("killDamage", &Volume::killDamage).Range(0, kBig, 1).Tooltip("Kill: health taken before the respawn")
+     .AddEnum("forceShape", &Volume::forceShape, {"Direction", "Radial"}).Tooltip("Force: one steady direction, or away from / toward the centre")
+     .AddVec3("forceDirection", &Volume::forceDirection).Range(-1, 1, 0.05).Tooltip("Force (Direction): which way it pushes")
+     .AddBool("forceLocal", &Volume::forceLocal).Tooltip("Force (Direction): the direction turns with the object")
+     .AddFloat("forceStrength", &Volume::forceStrength).Range(-kBig, kBig, 0.5).Tooltip("Force: acceleration in m/s^2 (Radial: negative pulls in)")
+     .AddColor("fogColor", &Volume::fogColor).Tooltip("Atmosphere: fog colour inside")
+     .AddFloat("fogStart", &Volume::fogStart).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog starts")
+     .AddFloat("fogEnd", &Volume::fogEnd).Range(0, kBig, 0.5).Tooltip("Atmosphere: where the fog is solid")
+     .AddFloat("vignette", &Volume::vignette).Range(0, 1, 0.01).Tooltip("Atmosphere: edge darkening inside")
+     .AddFloat("blend", &Volume::blend).Range(0, 1, 0.01).Tooltip("Atmosphere and Reverb: how far in from the edge it takes to reach full strength")
+     .AddFloat("fadeTime", &Volume::fadeTime).Range(0, 60, 0.1).Tooltip("Ambience: seconds to fade the sound in and out")
+     .AddEnum("reverbPreset", &Volume::reverbPreset, {"Room", "Hall", "Cave", "Outdoor"}).Tooltip("Reverb: the kind of echo")
+     .AddFloat("reverbAmount", &Volume::reverbAmount).Range(0, 1, 0.01).Tooltip("Reverb: how strong the echo is. 0 is dry");
+    b.Commit();
+}
+
 // Spawner
 void RegisterSpawner() {
     PropertyBuilder<Spawner> b("Spawner", "spawner", "Gameplay");
@@ -715,7 +750,8 @@ void RegisterMusicPlayer() {
      .AddBool("shuffle", &MusicPlayer::shuffle).Tooltip("Play the tracks in random order")
      .AddBool("loopPlaylist", &MusicPlayer::loopPlaylist).Tooltip("After the last track, start over")
      .AddFloat("crossfade", &MusicPlayer::crossfade).Range(0, 3600, 0.05).Tooltip("Seconds two tracks overlap")
-     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)");
+     .AddFloat("volume", &MusicPlayer::volume).Range(0, 1, 0.01).Tooltip("Playback volume (0 to 1)")
+     .AddBool("stream", &MusicPlayer::stream).Tooltip("Read each track from its file as it plays (small fixed memory) instead of loading it whole");
     b.Commit();
 }
 
@@ -775,6 +811,43 @@ void RegisterTriggerZone() {
      .AddFloat("amount", &TriggerZone::amount).Range(0, 1000, 0.01).Tooltip("Value to set / add")
      .AddString("targetName", &TriggerZone::targetName).Tooltip("Object to activate/deactivate")
      .AddBool("once", &TriggerZone::once).Tooltip("Fire a single time (default) or on every entry");
+    b.Commit();
+}
+
+// Grid path agent, its tile prices, and a cell blocker (2D).
+void RegisterGridPathAgent2D() {
+    PropertyBuilder<GridPathAgent2D> b("GridPathAgent2D", "gridpath2d", "Gameplay");
+    b.AddString("mapName", &GridPathAgent2D::mapName).Tooltip("Name of the tilemap to walk. Leave empty to use the first tilemap in the scene")
+     .AddFloat("speed", &GridPathAgent2D::speed).Range(0, 10000, 0.1).Tooltip("How fast it walks, in world units per second")
+     .AddFloat("stopDistance", &GridPathAgent2D::stopDistance).Range(0, 1000, 0.05).Tooltip("How close to the last cell counts as arrived")
+     .AddBool("allowDiagonal", &GridPathAgent2D::allowDiagonal).Tooltip("Also step diagonally. A diagonal step never squeezes between two walls")
+     .AddBool("smoothPath", &GridPathAgent2D::smoothPath).Tooltip("Straighten the route wherever the line of sight is clear, so it is not a staircase of cells")
+     .AddBool("useCosts", &GridPathAgent2D::useCosts).Tooltip("Pay the tilemap's movement costs. Off: only empty tiles are open, and every step costs the same")
+     .AddFloat("repathInterval", &GridPathAgent2D::repathInterval).Range(0, 60, 0.05).Tooltip("Seconds between fresh plans. A new obstacle on the route plans again at once");
+    b.Commit();
+}
+void RegisterGridCostLayer() {
+    PropertyBuilder<GridCostLayer> b("GridCostLayer", "gridcost2d", "Gameplay");
+    b.AddInt("roadTile", &GridCostLayer::roadTile).Range(0, 4095, 1).Tooltip("Tile number that is a road")
+     .AddFloat("roadCost", &GridCostLayer::roadCost).Range(0, 1000, 0.05).Tooltip("How hard a road step is. Lower is cheaper. 0 blocks the tile")
+     .AddInt("mudTile", &GridCostLayer::mudTile).Range(0, 4095, 1).Tooltip("Tile number that is mud")
+     .AddFloat("mudCost", &GridCostLayer::mudCost).Range(0, 1000, 0.05).Tooltip("How hard a mud step is. Higher is slower. 0 blocks the tile")
+     .Custom("extraTiles", PropertyType::String,
+             [](const GridCostLayer& c) { return PropertyValue::MakeString(c.ExtraTiles()); },
+             [](GridCostLayer& c, const PropertyValue& v) { c.SetExtraTiles(v.AsString()); return true; })
+        .Hidden().Tooltip("Other tile prices, written as id:cost,id:cost")
+     .Custom("cellText", PropertyType::String,
+             [](const GridCostLayer& c) { return PropertyValue::MakeString(c.CellText()); },
+             [](GridCostLayer& c, const PropertyValue& v) { c.SetCellText(v.AsString()); return true; })
+        .Hidden().Tooltip("Per-cell prices, written as x,y,cost;x,y,cost");
+    b.Commit();
+}
+void RegisterGridObstacle2D() {
+    PropertyBuilder<GridObstacle2D> b("GridObstacle2D", "gridblock2d", "Gameplay");
+    b.AddString("mapName", &GridObstacle2D::mapName).Tooltip("Name of the tilemap these cells belong to. Leave empty for the first tilemap")
+     .AddInt("cellsWide", &GridObstacle2D::cellsWide).Range(1, 256, 1).Tooltip("How many cells across this blocks")
+     .AddInt("cellsTall", &GridObstacle2D::cellsTall).Range(1, 256, 1).Tooltip("How many cells down this blocks")
+     .AddBool("blocks", &GridObstacle2D::blocks).Tooltip("On: these cells are walls. An agent already walking through them plans a new route");
     b.Commit();
 }
 
@@ -881,7 +954,10 @@ void RegisterJoint3D() {
      .AddVec3("axis", &Joint3D::axis).Range(-kBig, kBig, 0.1).Tooltip("World hinge axis the body may spin about")
      .AddBool("useMotor", &Joint3D::useMotor).Tooltip("Drive the spin about the axis toward motorSpeed")
      .AddFloat("motorSpeed", &Joint3D::motorSpeed).Range(-10000, 10000, 0.1).Tooltip("Target angular speed about the axis (deg/s)")
-     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it");
+     .AddFloat("maxMotorTorque", &Joint3D::maxMotorTorque).Range(0, kBig, 0.1).Tooltip("Torque the motor can apply to reach it")
+     .AddBool("useLimits", &Joint3D::useLimits).Tooltip("Clamp the hinge angle to [minAngle, maxAngle]")
+     .AddFloat("minAngle", &Joint3D::minAngle).Range(-360, 360, 1).Tooltip("Lower limit (deg, relative to the start angle)")
+     .AddFloat("maxAngle", &Joint3D::maxAngle).Range(-360, 360, 1).Tooltip("Upper limit (deg, relative to the start angle)");
     b.Commit();
 }
 
@@ -949,15 +1025,45 @@ void RegisterNavMeshAgent() {
      .AddBool("autoBraking", &NavMeshAgent::autoBraking).Tooltip("Slow down over the last stretch instead of stopping dead")
      .AddBool("faceMovement", &NavMeshAgent::faceMovement).Tooltip("Turn to face the direction of travel")
      .AddBool("driveAnimation", &NavMeshAgent::driveAnimation).Tooltip("Drive a sibling Character's idle / walk / run")
-     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)");
+     .AddFloat("baseOffset", &NavMeshAgent::baseOffset).Range(-kBig, kBig, 0.05).Tooltip("The object's origin above its feet (a cube's centre: half its height)")
+     .AddInt("areaMask", &NavMeshAgent::areaMask).Tooltip("Areas this agent may enter (bit n = area n). Default: all but Not Walkable");
+    b.Commit();
+}
+
+// NavMeshModifier
+void RegisterNavMeshModifier() {
+    PropertyBuilder<NavMeshModifier> b("NavMeshModifier", "navmod", "Navigation");
+    b.AddInt("area", &NavMeshModifier::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area (0 Walkable, 1 Not Walkable, 2 Water, 3 Road, 4..31 custom) the colliders on this object bake as")
+     .AddBool("applyToChildren", &NavMeshModifier::applyToChildren).Tooltip("Also colliders on child objects that have no modifier of their own");
+    b.Commit();
+}
+
+// NavMeshLink
+void RegisterNavMeshLink() {
+    PropertyBuilder<NavMeshLink> b("NavMeshLink", "navlink", "Navigation");
+    b.AddEnum("type", &NavMeshLink::type, {"Jump", "Drop", "Ladder"}).Tooltip("How an agent crosses: an arc, a fall, or a straight climb")
+     .AddVec3("startPoint", &NavMeshLink::startPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing starts, in local space (must be on the baked mesh)")
+     .AddVec3("endPoint", &NavMeshLink::endPoint).Range(-kBig, kBig, 0.1).Tooltip("Where the crossing ends, in local space (must be on the baked mesh)")
+     .AddBool("bidirectional", &NavMeshLink::bidirectional).Tooltip("Off: only from the start point to the end point")
+     .AddFloat("cost", &NavMeshLink::cost).Range(0, kBig, 0.1).Tooltip("Multiplier on the crossing distance in the path search")
+     .AddInt("area", &NavMeshLink::area).Range(0, kNavAreaCount - 1, 1).Tooltip("Navigation area, checked against each agent's area mask")
+     .AddFloat("speed", &NavMeshLink::speed).Range(0, kBig, 0.1).Tooltip("Crossing speed in units per second (0 = the agent's own speed)")
+     .AddFloat("arcHeight", &NavMeshLink::arcHeight).Range(0, kBig, 0.1).Tooltip("Jump: how high the arc peaks");
     b.Commit();
 }
 
 // NavMeshObstacle
 void RegisterNavMeshObstacle() {
     PropertyBuilder<NavMeshObstacle> b("NavMeshObstacle", "navobstacle", "Navigation");
-    b.AddVec3("size", &NavMeshObstacle::size).Range(-kBig, kBig, 0.1).Tooltip("The box, in local units (scaled by the Transform)")
-     .AddVec3("center", &NavMeshObstacle::center).Range(-kBig, kBig, 0.1).Tooltip("Offset from the Transform, in local units");
+    b.AddEnum("shape", &NavMeshObstacle::shape, {"Box", "Capsule"}).Tooltip("The solid agents go around: a box, or an upright capsule")
+     .AddVec3("size", &NavMeshObstacle::size).Range(-kBig, kBig, 0.1).Tooltip("Box: the box, in local units (scaled by the Transform)")
+     .AddVec3("center", &NavMeshObstacle::center).Range(-kBig, kBig, 0.1).Tooltip("Offset from the Transform, in local units")
+     .AddFloat("capsuleRadius", &NavMeshObstacle::capsuleRadius).Range(0, kBig, 0.05).Tooltip("Capsule: radius, in local units (scaled by the Transform's X and Z)")
+     .AddFloat("capsuleHeight", &NavMeshObstacle::capsuleHeight).Range(0, kBig, 0.1).Tooltip("Capsule: total height including both caps, in local units (scaled by the Transform's Y)")
+     .AddBool("carve", &NavMeshObstacle::carve).Tooltip("Cut a hole in the navigation mesh so the path search goes around it (agents otherwise only dodge it locally)")
+     .AddBool("carveOnlyWhenStationary", &NavMeshObstacle::carveOnlyWhenStationary).Tooltip("Carve only once it has stopped moving; a moving obstacle is only dodged locally")
+     .AddFloat("timeToStationary", &NavMeshObstacle::timeToStationary).Range(0, 60, 0.1).Tooltip("Seconds without moving before it counts as stationary and carves")
+     .AddFloat("moveThreshold", &NavMeshObstacle::moveThreshold).Range(0, kBig, 0.05).Tooltip("Not stationary-only: carve again after it has moved this far");
     b.Commit();
 }
 
@@ -1038,6 +1144,56 @@ void RegisterNetworkTransform() {
 
 } // namespace
 
+void RegisterMeleeAttacker() {
+    PropertyBuilder<MeleeAttacker> b("MeleeAttacker", "melee", "Gameplay");
+    b.Section("Swing")
+     .AddFloat("damage", &MeleeAttacker::damage).Range(0, kBig, 0.1).Tooltip("How much health one hit removes")
+     .AddFloat("range", &MeleeAttacker::range).Range(0, 1000, 0.05).Tooltip("How far the swing reaches")
+     .AddFloat("arc", &MeleeAttacker::arc).Range(0, 360, 1).Tooltip("How wide the swing is, in degrees. 360 hits all around")
+     .AddFloat("cooldown", &MeleeAttacker::cooldown).Range(0, 60, 0.01).Tooltip("Seconds before another swing can start")
+     .AddKey("attackKey", &MeleeAttacker::attackKey).Tooltip("The key that starts a swing. 0 means no key")
+     .AddBool("useMouse", &MeleeAttacker::useMouse).Tooltip("Also swing with the left mouse button")
+     .AddFloat("swingTime", &MeleeAttacker::swingTime).Range(0, 30, 0.01).Tooltip("How long the swing lasts. 0 lands the hit at once")
+     .AddFloat("hitStart", &MeleeAttacker::hitStart).Range(0, 30, 0.01).Tooltip("Seconds into the swing when a hit can land")
+     .AddFloat("hitEnd", &MeleeAttacker::hitEnd).Range(0, 30, 0.01).Tooltip("Seconds into the swing when the hit closes")
+     .AddFloat("knockback", &MeleeAttacker::knockback).Range(0, kBig, 0.1).Tooltip("How hard a hit pushes a body away")
+     .AddInt("comboSteps", &MeleeAttacker::comboSteps).Range(1, 20, 1).Tooltip("Hits in one chain. 1 is a single swing")
+     .AddFloat("comboWindow", &MeleeAttacker::comboWindow).Range(0, 30, 0.01).Tooltip("Seconds after a swing to continue the chain")
+     .AddFloat("comboBonus", &MeleeAttacker::comboBonus).Range(0, 10, 0.01).Tooltip("Extra damage fraction for each hit after the first")
+     .AddBool("useHitbox", &MeleeAttacker::useHitbox).Tooltip("Use a box in front instead of the cone")
+     .AddFloat("hitboxWidth", &MeleeAttacker::hitboxWidth).Range(0, 100, 0.05).Tooltip("How wide the hit box is")
+     .AddFloat("hitboxHeight", &MeleeAttacker::hitboxHeight).Range(0, 100, 0.05).Tooltip("How tall the hit box is")
+     .AddFloat("hitboxDepth", &MeleeAttacker::hitboxDepth).Range(0, 100, 0.05).Tooltip("How far in front the hit box reaches")
+     .AddString("weapon", &MeleeAttacker::weapon).Tooltip("A weapon from the project list. Empty uses the numbers above, or the held item")
+     .AddString("weaponFile", &MeleeAttacker::weaponFile).Tooltip("An .okayweapon file of its own. Empty uses the project list");
+    b.Commit();
+}
+
+void RegisterRangedWeapon() {
+    PropertyBuilder<RangedWeapon> b("RangedWeapon", "gun", "Gameplay");
+    b.Section("Shot")
+     .AddFloat("damage", &RangedWeapon::damage).Range(0, kBig, 0.1).Tooltip("How much health one shot removes")
+     .AddFloat("fireRate", &RangedWeapon::fireRate).Range(0, 1000, 0.1).Tooltip("Shots per second")
+     .AddFloat("range", &RangedWeapon::range).Range(0, kBig, 0.1).Tooltip("How far an instant shot reaches")
+     .AddFloat("knockback", &RangedWeapon::knockback).Range(0, kBig, 0.1).Tooltip("How hard a shot pushes a body")
+     .AddFloat("spread", &RangedWeapon::spread).Range(0, 180, 0.1).Tooltip("Aim wobble, in degrees")
+     .AddBool("hitscan", &RangedWeapon::hitscan).Tooltip("On: the shot lands at once. Off: it spawns a projectile")
+     .AddString("projectile", &RangedWeapon::projectile).Tooltip("Prefab for a shot that is not instant")
+     .AddFloat("projectileSpeed", &RangedWeapon::projectileSpeed).Range(0, kBig, 0.1).Tooltip("How fast that projectile flies")
+     .AddFloat("muzzleHeight", &RangedWeapon::muzzleHeight).Range(-10, 10, 0.05).Tooltip("How high above the object the shot starts")
+     .Section("Rounds")
+     .AddInt("magazine", &RangedWeapon::magazine).Range(0, 100000, 1).Tooltip("Rounds the gun holds. 0 means it never reloads")
+     .AddInt("reserve", &RangedWeapon::reserve).Range(-1, 1000000, 1).Tooltip("Spare rounds. -1 means they never run out")
+     .AddFloat("reloadTime", &RangedWeapon::reloadTime).Range(0, 60, 0.01).Tooltip("Seconds to refill the gun")
+     .AddBool("autoReload", &RangedWeapon::autoReload).Tooltip("Start a reload when the gun is empty")
+     .AddKey("fireKey", &RangedWeapon::fireKey).Tooltip("The key that fires. 0 means no key")
+     .AddInt("fireButton", &RangedWeapon::fireButton).Range(-1, 4, 1).Tooltip("Mouse button that fires. -1 means none. 0 is the left button")
+     .AddKey("reloadKey", &RangedWeapon::reloadKey).Tooltip("The key that reloads")
+     .AddString("weapon", &RangedWeapon::weapon).Tooltip("A gun from the project list. Empty uses the numbers above, or the held item")
+     .AddString("weaponFile", &RangedWeapon::weaponFile).Tooltip("An .okayweapon file of its own. Empty uses the project list");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
     RegisterPlayerController();
     RegisterPlayerView();
@@ -1055,7 +1211,10 @@ void RegisterGameplayProperties() {
     RegisterVehicleController();
     RegisterVehicleController2D();
     RegisterProjectile3D();
+    RegisterMeleeAttacker();
+    RegisterRangedWeapon();
     RegisterSpawner();
+    RegisterVolume();
     RegisterMusicPlayer();
     RegisterCollectible();
     RegisterDamageOnTouch();
@@ -1063,6 +1222,9 @@ void RegisterGameplayProperties() {
     RegisterJumpPad();
     RegisterTriggerZone();
     RegisterFollowTarget2D();
+    RegisterGridPathAgent2D();
+    RegisterGridCostLayer();
+    RegisterGridObstacle2D();
     RegisterDestructible();
     RegisterDraggable();
     RegisterDropZone();
@@ -1073,6 +1235,8 @@ void RegisterGameplayProperties() {
     RegisterWater();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
+    RegisterNavMeshModifier();
+    RegisterNavMeshLink();
     RegisterNavMeshSurface();
     RegisterNetworkObject();
     RegisterNetworkSync();

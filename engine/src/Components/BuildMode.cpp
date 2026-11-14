@@ -26,6 +26,7 @@
 #include "okay/Core/DataPack.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -147,14 +148,125 @@ const char* LogicSource::KindName(Kind k) {
         case Kind::PressurePlate: return "Pressure Plate";
         case Kind::TriggerZone: return "Trigger Zone";
         case Kind::Timer: return "Timer";
+        case Kind::Relay: return "Relay";
     }
     return "Button";
 }
 
 void LogicSource::Press() {
-    if (!m_init) { m_init = true; m_out = startOn && toggle; }
-    if (toggle) m_out = !m_out;
-    else { m_out = true; m_timer = holdTime; }
+    if (!m_init) { m_init = true; m_out = startOn && toggle; m_prevOut = m_out; }
+    if (kind != Kind::Relay) {
+        if (toggle) m_out = !m_out;
+        else { m_out = true; m_timer = holdTime; }
+    }
+    FireOutput("OnPressed");
+}
+
+// ---- I/O links ---------------------------------------------------------------
+
+const std::vector<std::string>& LogicSource::InputNames() {
+    static const std::vector<std::string> n = {"Enable", "Disable", "ToggleActive", "TurnOn", "TurnOff",
+                                               "Toggle", "Spawn", "Press", "Fire"};
+    return n;
+}
+const std::vector<std::string>& LogicSource::BuiltInOutputs() {
+    static const std::vector<std::string> n = {"OnTurnedOn", "OnTurnedOff", "OnPressed"};
+    return n;
+}
+
+GameObject* LogicSource::IoTarget(const IoLink& l) const {
+    if (!gameObject) return nullptr;
+    if (l.target.empty() || l.target == "self") return gameObject;
+    if (transform) {
+        Transform* t = l.target.find('/') != std::string::npos ? transform->Find(l.target) : transform->FindDeep(l.target);
+        if (t && t->gameObject && !t->gameObject->IsDestroyed()) return t->gameObject;
+    }
+    Scene* s = GetScene();
+    GameObject* g = s ? s->Find(l.target) : nullptr;
+    return g && !g->IsDestroyed() ? g : nullptr;
+}
+
+std::string LogicSource::IoProblem(const IoLink& l) const {
+    if (l.output.empty()) return "no output name";
+    if (l.input.empty()) return "no input";
+    if (!IoTarget(l)) return "target '" + l.target + "' not found";
+    return "";
+}
+
+namespace { int g_ioDepth = 0; }   // Fire links that fire links: stop runaway loops
+
+bool LogicSource::DeliverIo(const IoLink& l, const std::string& param, std::string* why) {
+    GameObject* t = IoTarget(l);
+    if (!t) { if (why) *why = "target '" + l.target + "' not found"; return false; }
+    if (l.input.empty()) { if (why) *why = "no input"; return false; }
+    if (g_ioDepth >= 8) { if (why) *why = "links nest too deeply"; return false; }
+    struct Depth { Depth() { ++g_ioDepth; } ~Depth() { --g_ioDepth; } } depth;
+    const std::string& in = l.input;
+    const std::string name = t->name;
+    auto note = [&](const std::string& m) { if (why) *why = m; return true; };
+    if (in == "Enable")       { t->active = true;  return note("enabled " + name); }
+    if (in == "Disable")      { t->active = false; return note("disabled " + name); }
+    if (in == "ToggleActive") { t->active = !t->active; return note(std::string(t->active ? "enabled " : "disabled ") + name); }
+    if (in == "TurnOn" || in == "TurnOff" || in == "Toggle") {
+        auto ts = InTree<LogicTarget>(t);
+        if (ts.empty()) { if (why) *why = name + " has no Logic Target"; return false; }
+        for (LogicTarget* lt : ts) lt->SetState(in == "Toggle" ? !lt->State() : in == "TurnOn");
+        return note(in + " -> " + name);
+    }
+    if (in == "Spawn") {
+        auto ts = InTree<LogicTarget>(t);
+        if (ts.empty()) { if (why) *why = name + " has no Logic Target"; return false; }
+        int made = 0;
+        for (LogicTarget* lt : ts) if (lt->SpawnNow()) ++made;
+        return note("spawned " + std::to_string(made) + " from " + name);
+    }
+    if (in == "Press") {
+        auto ss = InTree<LogicSource>(t);
+        if (ss.empty()) { if (why) *why = name + " has no Logic Source"; return false; }
+        for (LogicSource* ls : ss) ls->Press();
+        return note("pressed " + name);
+    }
+    if (in == "Fire") {
+        auto ss = InTree<LogicSource>(t);
+        if (ss.empty()) { if (why) *why = name + " has no Logic Source"; return false; }
+        int n = 0;
+        for (LogicSource* ls : ss) n += ls->FireOutput(param);
+        return note("fired '" + param + "' on " + name + " (" + std::to_string(n) + " links)");
+    }
+    // Anything else: a custom event, the way the Send Event node delivers it.
+    char* end = nullptr;
+    const float num = std::strtof(param.c_str(), &end);
+    const bool isNum = !param.empty() && end && *end == 0;
+    ActionList::StrVars()["event_text"] = param;
+    DeliverCustomEvent(t, in, vs::VsValue(isNum ? num : 0.0f), gameObject);
+    if (isNum) ActionList::Vars()["event_value"] = num;
+    return note("sent '" + in + "' to " + name);
+}
+
+int LogicSource::FireOutput(const std::string& name, const std::string& param) {
+    int n = 0;
+    // Index loop: delivering may edit this very list through a script.
+    for (std::size_t i = 0; i < ioLinks.size(); ++i) {
+        IoLink l = ioLinks[i];
+        if (!l.enabled || l.output != name || (l.once && l.spent)) continue;
+        if (l.once) ioLinks[i].spent = true;
+        const std::string p = param.empty() ? l.param : param;
+        if (l.delay > 0.0f) { m_pendingIo.push_back({l, l.delay, p}); ++n; }
+        else if (DeliverIo(l, p, nullptr)) ++n;
+    }
+    return n;
+}
+
+std::string LogicSource::TestFire(std::size_t index) {
+    if (index >= ioLinks.size()) return "no such link";
+    std::string why;
+    const IoLink& l = ioLinks[index];
+    return DeliverIo(l, l.param, &why) ? "OK: " + why : "Failed: " + why;
+}
+
+void LogicSource::ResetIo() {
+    m_pendingIo.clear();
+    for (IoLink& l : ioLinks) l.spent = false;
 }
 
 void LogicSource::SetOutput(bool on) {
@@ -250,8 +362,17 @@ void LogicSource::Update(float dt) {
         m_out = (kind == Kind::Button && toggle) ? startOn : false;
         m_timer = 0.0f;
         if (kind == Kind::Timer) m_timer = startOn ? 0.0f : std::min(onTime, std::max(interval, 0.05f));
+        m_prevOut = m_out;
+    }
+    // Deliveries that have waited out their delay (a delivery may queue more).
+    if (!m_pendingIo.empty()) {
+        std::vector<QueuedIo> due, keep;
+        for (QueuedIo& p : m_pendingIo) { p.left -= dt; (p.left <= 0.0f ? due : keep).push_back(std::move(p)); }
+        m_pendingIo = std::move(keep);
+        for (QueuedIo& p : due) DeliverIo(p.link, p.param, nullptr);
     }
     switch (kind) {
+        case Kind::Relay: break;
         case Kind::Button: {
             Scene* s = GetScene();
             const bool key = pressKey && Input::GetKeyDown(pressKey);
@@ -276,6 +397,10 @@ void LogicSource::Update(float dt) {
         }
     }
     for (LogicTarget* t : Targets()) t->Feed(m_out);
+    if (m_out != m_prevOut) {
+        m_prevOut = m_out;
+        FireOutput(m_out ? "OnTurnedOn" : "OnTurnedOff");
+    }
 }
 
 // ===========================================================================
@@ -365,8 +490,9 @@ void LogicTarget::LateUpdate(float dt) {
         ApplyLight();
     } else {
         bool next = m_state;
+        const bool prevAct = m_prevAct;
         const bool rising = act && !m_prevAct;
-        if (mode == Mode::Follow) next = act;
+        if (mode == Mode::Follow) { if (act != prevAct) next = act; }
         else if (rising) next = !m_state;
         m_prevAct = act;
         m_powered = powered;
@@ -912,9 +1038,21 @@ void BuildMode::Notify(GameObject* go, bool placedEvt) {
     }
 }
 
+BuildMode::Op BuildMode::PlaceOp(GameObject* g) {
+    Op op; op.type = Op::Type::Place;
+    if (Buildable* b = g ? g->GetComponent<Buildable>() : nullptr) { op.id = b->buildId; op.prefab = b->prefab; }
+    if (g && g->transform) { op.position = g->transform->Position(); op.rotation = g->transform->Rotation(); }
+    return op;
+}
+
 GameObject* BuildMode::PlaceItem(int slot, const Vec3& position, const Quat& rotation) {
     Scene* s = GetScene();
     if (!s || slot < 0 || slot >= (int)palette.size()) return nullptr;
+    if (remoteRequest) {   // a client: the server places it, and it arrives from there
+        Op op; op.type = Op::Type::Place; op.prefab = palette[slot].prefab; op.position = position; op.rotation = rotation;
+        remoteRequest(op);
+        return nullptr;
+    }
     if (maxObjects > 0 && PlacedCount() >= maxObjects) return nullptr;
     Template* t = TemplateFor(palette[slot].prefab);
     if (!t || !t->ok) return nullptr;
@@ -932,24 +1070,37 @@ GameObject* BuildMode::PlaceItem(int slot, const Vec3& position, const Quat& rot
     Command c; c.type = Command::Type::Place; c.id = b->buildId; c.data = Snapshot(g);
     Push(c);
     Notify(g, true);
+    Emit(PlaceOp(g));
     return g;
 }
 
 bool BuildMode::Remove(GameObject* go) {
     if (!CanEdit(go)) return false;
     GameObject* root = Buildable::Of(go)->gameObject;
+    if (remoteRequest) {
+        Op op; op.type = Op::Type::Remove; op.id = Buildable::Of(go)->buildId;
+        return op.id != 0 && remoteRequest(op);
+    }
     if (root == Carried()) CancelCarry();
     Command c; c.type = Command::Type::Remove;
     c.id = EnsureBuildable(root)->buildId;
     c.data = Snapshot(root);
     Destroy(root, true);
     Push(c);
+    Op op; op.type = Op::Type::Remove; op.id = c.id; op.snapshot = c.data;
+    Emit(op);
     return true;
 }
 
 bool BuildMode::SetPose(GameObject* go, const Vec3& position, const Quat& rotation) {
     if (!CanEdit(go)) return false;
     GameObject* root = Buildable::Of(go)->gameObject;
+    if (remoteRequest) {
+        Op op; op.type = Op::Type::Pose; op.id = Buildable::Of(go)->buildId;
+        op.position = position; op.rotation = rotation;
+        op.prevPosition = root->transform->Position(); op.prevRotation = root->transform->Rotation();
+        return op.id != 0 && remoteRequest(op);
+    }
     for (LogicTarget* lt : InTree<LogicTarget>(root)) lt->ResetPose();
     Command c; c.type = Command::Type::Pose;
     c.id = EnsureBuildable(root)->buildId;
@@ -958,6 +1109,9 @@ bool BuildMode::SetPose(GameObject* go, const Vec3& position, const Quat& rotati
     root->transform->SetPosition(position);
     root->transform->SetRotation(rotation);
     Push(c);
+    Op op; op.type = Op::Type::Pose; op.id = c.id; op.position = c.p1; op.rotation = c.r1;
+    op.prevPosition = c.p0; op.prevRotation = c.r0;
+    Emit(op);
     return true;
 }
 
@@ -978,6 +1132,7 @@ bool BuildMode::BeginMove(GameObject* go) {
 }
 
 GameObject* BuildMode::Duplicate(GameObject* go) {
+    if (remoteRequest) return nullptr;   // a client places new pieces from the palette
     if (Carried() || !CanEdit(go)) return nullptr;
     if (maxObjects > 0 && PlacedCount() >= maxObjects) return nullptr;
     GameObject* root = Buildable::Of(go)->gameObject;
@@ -1018,16 +1173,32 @@ bool BuildMode::DropCarried() {
     if (!g || !m_carryValid) return false;
     ClearHighlight();
     for (LogicTarget* lt : InTree<LogicTarget>(g)) lt->SetSuspended(false);
+    if (remoteRequest) {   // a client: ask the server to move it (the server's answer decides where it stays)
+        Buildable* rb = Buildable::Of(g);
+        Op op; op.type = Op::Type::Pose; op.id = rb ? rb->buildId : 0;
+        op.position = g->transform->Position(); op.rotation = g->transform->Rotation();
+        op.prevPosition = m_carryPos0; op.prevRotation = m_carryRot0;
+        if (op.id != 0 && (Vec3::Distance(op.position, op.prevPosition) > 1e-5f || Quat::Angle(op.rotation, op.prevRotation) > 1e-3f))
+            remoteRequest(op);
+        m_carry = 0;
+        return true;
+    }
     Buildable* b = EnsureBuildable(g);
     if (m_carryNew) {
         Command c; c.type = Command::Type::Place; c.id = b->buildId; c.data = Snapshot(g);
         Push(c);
         Notify(g, true);
+        Emit(PlaceOp(g));
     } else {
         Command c; c.type = Command::Type::Pose; c.id = b->buildId;
         c.p0 = m_carryPos0; c.r0 = m_carryRot0;
         c.p1 = g->transform->Position(); c.r1 = g->transform->Rotation();
-        if (Vec3::Distance(c.p0, c.p1) > 1e-5f || Quat::Angle(c.r0, c.r1) > 1e-3f) Push(c);
+        if (Vec3::Distance(c.p0, c.p1) > 1e-5f || Quat::Angle(c.r0, c.r1) > 1e-3f) {
+            Push(c);
+            Op op; op.type = Op::Type::Pose; op.id = c.id; op.position = c.p1; op.rotation = c.r1;
+            op.prevPosition = c.p0; op.prevRotation = c.r0;
+            Emit(op);
+        }
     }
     m_carry = 0;
     return true;
@@ -1059,10 +1230,15 @@ bool BuildMode::Link(GameObject* source, GameObject* target) {
     if (sr == tr) return false;
     auto sources = InTree<LogicSource>(sr);
     if (sources.empty() || InTree<LogicTarget>(tr).empty()) return false;
+    if (remoteRequest) {
+        Op op; op.type = Op::Type::Link; op.id = Buildable::Of(sr)->buildId; op.other = Buildable::Of(tr)->buildId;
+        return op.id != 0 && op.other != 0 && remoteRequest(op);
+    }
     const int sid = EnsureBuildable(sr)->buildId, tid = EnsureBuildable(tr)->buildId;
     if (!sources[0]->AddLink(tid)) return false;
     Command c; c.type = Command::Type::Link; c.id = sid; c.other = tid;
     Push(c);
+    { Op op; op.type = Op::Type::Link; op.id = sid; op.other = tid; Emit(op); }
     return true;
 }
 
@@ -1072,10 +1248,15 @@ bool BuildMode::Unlink(GameObject* source, GameObject* target) {
     GameObject* tr = Buildable::Of(target)->gameObject;
     auto sources = InTree<LogicSource>(sr);
     if (sources.empty()) return false;
+    if (remoteRequest) {
+        Op op; op.type = Op::Type::Unlink; op.id = Buildable::Of(sr)->buildId; op.other = Buildable::Of(tr)->buildId;
+        return op.id != 0 && op.other != 0 && remoteRequest(op);
+    }
     const int sid = EnsureBuildable(sr)->buildId, tid = EnsureBuildable(tr)->buildId;
     if (!sources[0]->RemoveLink(tid)) return false;
     Command c; c.type = Command::Type::Unlink; c.id = sid; c.other = tid;
     Push(c);
+    { Op op; op.type = Op::Type::Unlink; op.id = sid; op.other = tid; Emit(op); }
     return true;
 }
 
@@ -1097,24 +1278,27 @@ bool BuildMode::LinkClickAt(Scene& scene, const Vec3& origin, const Vec3& dir, f
 
 bool BuildMode::Undo() {
     CancelCarry();
+    if (remoteRequest) { Op op; op.type = Op::Type::Undo; return remoteRequest(op); }
     if (m_undo.empty()) return false;
     Command c = m_undo.back();
     m_undo.pop_back();
+    Op op; op.id = c.id; op.other = c.other;
     switch (c.type) {
         case Command::Type::Place:
-            if (GameObject* g = FindId(c.id)) Destroy(g, true);
+            if (GameObject* g = FindId(c.id)) { Destroy(g, true); op.type = Op::Type::Remove; op.snapshot = c.data; Emit(op); }
             break;
         case Command::Type::Remove:
-            if (GameObject* g = Restore(c.data)) Notify(g, true);
+            if (GameObject* g = Restore(c.data)) { Notify(g, true); Emit(PlaceOp(g)); }
             break;
         case Command::Type::Pose:
             if (GameObject* g = FindId(c.id)) {
                 for (LogicTarget* lt : InTree<LogicTarget>(g)) lt->ResetPose();
                 g->transform->SetPosition(c.p0); g->transform->SetRotation(c.r0);
+                op.type = Op::Type::Pose; op.position = c.p0; op.rotation = c.r0; op.prevPosition = c.p1; op.prevRotation = c.r1; Emit(op);
             }
             break;
-        case Command::Type::Link:   ToggleLinkIds(c.id, c.other, false); break;
-        case Command::Type::Unlink: ToggleLinkIds(c.id, c.other, true); break;
+        case Command::Type::Link:   if (ToggleLinkIds(c.id, c.other, false)) { op.type = Op::Type::Unlink; Emit(op); } break;
+        case Command::Type::Unlink: if (ToggleLinkIds(c.id, c.other, true)) { op.type = Op::Type::Link; Emit(op); } break;
     }
     m_redo.push_back(c);
     return true;
@@ -1122,24 +1306,27 @@ bool BuildMode::Undo() {
 
 bool BuildMode::Redo() {
     CancelCarry();
+    if (remoteRequest) return false;
     if (m_redo.empty()) return false;
     Command c = m_redo.back();
     m_redo.pop_back();
+    Op op; op.id = c.id; op.other = c.other;
     switch (c.type) {
         case Command::Type::Place:
-            if (GameObject* g = Restore(c.data)) Notify(g, true);
+            if (GameObject* g = Restore(c.data)) { Notify(g, true); Emit(PlaceOp(g)); }
             break;
         case Command::Type::Remove:
-            if (GameObject* g = FindId(c.id)) Destroy(g, true);
+            if (GameObject* g = FindId(c.id)) { Destroy(g, true); op.type = Op::Type::Remove; op.snapshot = c.data; Emit(op); }
             break;
         case Command::Type::Pose:
             if (GameObject* g = FindId(c.id)) {
                 for (LogicTarget* lt : InTree<LogicTarget>(g)) lt->ResetPose();
                 g->transform->SetPosition(c.p1); g->transform->SetRotation(c.r1);
+                op.type = Op::Type::Pose; op.position = c.p1; op.rotation = c.r1; op.prevPosition = c.p0; op.prevRotation = c.r0; Emit(op);
             }
             break;
-        case Command::Type::Link:   ToggleLinkIds(c.id, c.other, true); break;
-        case Command::Type::Unlink: ToggleLinkIds(c.id, c.other, false); break;
+        case Command::Type::Link:   if (ToggleLinkIds(c.id, c.other, true)) { op.type = Op::Type::Link; Emit(op); } break;
+        case Command::Type::Unlink: if (ToggleLinkIds(c.id, c.other, false)) { op.type = Op::Type::Unlink; Emit(op); } break;
     }
     m_undo.push_back(c);
     return true;
@@ -1168,23 +1355,114 @@ bool BuildMode::SaveCreation(const std::string& name, std::string* error) {
 bool BuildMode::LoadCreation(const std::string& name, std::string* error) {
     Scene* s = GetScene();
     if (!s) { if (error) *error = "no scene"; return false; }
+    if (remoteRequest) { if (error) *error = "the server owns what players built"; return false; }
     CancelCarry();
     ClearHighlight();
     m_linkPick = 0;
     if (!BuildCreation::Load(*s, CreationPath(name, creationFolder), true, error)) return false;
     ClearHistory();
     m_nextId = std::max(m_nextId, Buildable::MaxId(*s));
+    { Op op; op.type = Op::Type::Reset; Emit(op); }
     return true;
 }
 
 void BuildMode::ClearCreation() {
+    Scene* s = GetScene();
+    if (!s || remoteRequest) return;
+    CancelCarry();
+    ClearHighlight();
+    m_linkPick = 0;
+    BuildCreation::Clear(*s);
+    ClearHistory();
+    Op op; op.type = Op::Type::Reset; Emit(op);
+}
+
+// ---- Networking ---------------------------------------------------------------
+
+std::vector<int> BuildMode::LinksOf(GameObject* go) {
+    std::vector<int> out;
+    for (LogicSource* ls : InTree<LogicSource>(go)) { out = ls->links; break; }
+    return out;
+}
+
+GameObject* BuildMode::ApplyPlace(const std::string& prefab, int id, const Vec3& position, const Quat& rotation,
+                                  const std::vector<int>& links) {
+    Scene* s = GetScene();
+    if (!s || id <= 0) return nullptr;
+    GameObject* g = FindId(id);
+    const bool isNew = (g == nullptr);
+    if (!g) {
+        Template* t = TemplateFor(prefab);
+        if (!t || !t->ok) return nullptr;
+        g = SceneSerializer::InstantiateFromText(*s, t->text, nullptr);
+        if (!g || !g->transform) return nullptr;
+        g->prefabSource = t->prefab;
+        Buildable* b = g->GetComponent<Buildable>();
+        if (!b) b = g->AddComponent<Buildable>();
+        b->buildId = id;
+        b->placed = true;
+        b->prefab = t->prefab;
+    }
+    for (LogicTarget* lt : InTree<LogicTarget>(g)) lt->ResetPose();
+    g->transform->SetPosition(position);
+    g->transform->SetRotation(rotation);
+    auto sources = InTree<LogicSource>(g);
+    if (!sources.empty()) {
+        sources[0]->links.clear();
+        for (int l : links) if (l > 0) sources[0]->AddLink(l);
+    }
+    m_nextId = std::max(m_nextId, id);
+    if (isNew) Notify(g, true);
+    return g;
+}
+
+bool BuildMode::ApplyRemove(int id) {
+    GameObject* g = FindId(id);
+    if (!g) return false;
+    if (g == Carried()) CancelCarry();
+    Destroy(g, true);
+    return true;
+}
+
+bool BuildMode::ApplyPose(int id, const Vec3& position, const Quat& rotation) {
+    GameObject* g = FindId(id);
+    if (!g || g == Carried()) return false;   // what this player is carrying is theirs until they drop it
+    for (LogicTarget* lt : InTree<LogicTarget>(g)) lt->ResetPose();
+    g->transform->SetPosition(position);
+    g->transform->SetRotation(rotation);
+    return true;
+}
+
+bool BuildMode::ApplyLink(int source, int target, bool on) {
+    if (source <= 0 || target <= 0) return false;
+    return ToggleLinkIds(source, target, on);
+}
+
+void BuildMode::ApplyClearPlaced() {
     Scene* s = GetScene();
     if (!s) return;
     CancelCarry();
     ClearHighlight();
     m_linkPick = 0;
     BuildCreation::Clear(*s);
-    ClearHistory();
+}
+
+GameObject* BuildMode::RestoreObject(const std::string& snapshot) {
+    GameObject* g = Restore(snapshot);
+    if (!g) return nullptr;
+    Notify(g, true);
+    Emit(PlaceOp(g));
+    return g;
+}
+
+bool BuildMode::FitsAt(const std::string& prefab, const Vec3& position, const Quat& rotation, std::string* why,
+                       GameObject* ignore) {
+    Scene* s = GetScene();
+    Template* t = s ? TemplateFor(prefab) : nullptr;
+    if (!t || !t->ok) { if (why) *why = "prefab not found"; return false; }
+    Vec3 rmn, rmx; RotateBounds(t->mn, t->mx, rotation * t->rotation.Inverse(), rmn, rmx);
+    if (Blocked(*s, position, rmn, rmx, ignore)) { if (why) *why = "blocked"; return false; }
+    return true;
 }
 
 // ---- Visuals ---------------------------------------------------------------

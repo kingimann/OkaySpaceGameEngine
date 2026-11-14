@@ -14,32 +14,32 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
   - 8.1.2 Mouse - `Input/Input` - position, `MouseDelta` (first sample is not a jump), buttons 0-2, wheel via `FeedMouseWheel`
   - 8.1.3 Typed text - `Input/Input` - `TypedText` and `FeedText` carry real typed characters (shift, caps, symbols) from the OS text event
   - 8.1.4 Terminal fallback - `Input/Input` - raw non-blocking console keys when there is no window; no input in a headless run
-  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/SdlKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `SdlKeys` feeds them from SDL scancodes (the player includes it, `editor/main.cpp` does not)
+  - 8.1.5 Extended keys (#571) - `Input/Input`, `Input/PlatformKeys` - F1-F12, Insert/Delete/Home/End/PageUp/PageDown, left and right Shift, Ctrl and Alt, `Input::KeyF(n)`; `PlatformKeys` (`AppendExtendedKeys`) feeds them from physical keys through `okay::platform` (the player includes it, `editor/main.cpp` does not; it replaced `SdlKeys`)
 - **Code:** `Input/Input`, `engine/src/Input/Input.cpp`, `player/main.cpp` (SDL event feed), `editor/main.cpp` (Play-mode feed)
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
 - **Docs:** `docs/input.md`
 - **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `SdlKeys`)
-- **Open:** the editor's Play mode does not include `SdlKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
+- **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
+- **Open:** the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
 - **Related:** 8.3, 8.5, 12.3, 13.4
 - **Words:** Input, GetKey, GetKeyDown, keyboard, mouse, mouse look, wheel, scroll, typed text, text input, key code, KeyFromName, press any key, WASD, arrow keys, function keys, F1, modifiers, Alt
 - **Seen as:** a key does nothing in the game; F-keys or Alt cannot be bound; mouse-look jumps on the first frame; typed text misses capitals or symbols; holding two keys drops one
 - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"
 
 ### 8.2 Gamepad (SDL)
-- **What:** One SDL game controller is read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
+- **What:** Game controllers (read through `okay::platform`: SDL2, or our own evdev backend) are read into Input: both sticks (radial dead zone 0.18), both triggers, 14 buttons plus trigger-as-button, and the left stick, d-pad and A also press W, A, S, D and Space so keyboard games play on a pad.
 - **Parts:**
   - 8.2.1 Pad state - `Input/Input` - `GamepadAxis`, `GamepadRightAxis`, `GamepadTrigger`, `GetGamepadButton`(Down/Up), `GamepadConnected`, button names and `FirstGamepadButtonDown`
-  - 8.2.2 SDL bridge - `Input/SdlGamepad` - header-only `FeedSdlGamepad` opens nothing itself; the host picks the first controller and calls it each frame
-  - 8.2.3 Multiple controllers, dead zones and curves (#571) - `Input/Input`, `Input/SdlGamepad` - up to four players (`kMaxGamepads`), `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `SdlGamepadSet` (the player uses it; the editor still calls the single-pad `FeedSdlGamepad`)
-- **Code:** `Input/Input`, `Input/SdlGamepad`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
-- **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedSdlGamepad`, script `Input.gamepadConnected`
+  - 8.2.2 Platform bridge - `Input/PlatformGamepad`, `Platform/Platform` - header-only `FeedPad` reads an `okay::platform::Gamepad` (no SDL types); the host picks the first controller and calls it each frame
+  - 8.2.3 Multiple controllers, dead zones and curves (#571) - `Input/Input`, `Input/PlatformGamepad` - up to four players (`kMaxGamepads`), `GamepadSettings(player)` shape, dead zone, outer zone, curve, trigger threshold, `PadSet` (the player uses it; the editor still calls the single-pad `FeedPad`)
+- **Code:** `Input/Input`, `Input/PlatformGamepad`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
+- **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedPad`, `PadSet`, `platform::Gamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `SdlGamepadSet`; test `input_keys_gamepad`); the editor Play view still feeds one pad
-- **Open:** the editor reads only one controller through `FeedSdlGamepad`; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
+- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`, `platform_gamepad`
+- **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view still feeds one pad
+- **Open:** the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
 - **Related:** 8.3, 8.6, 12.4, 32.1
 - **Words:** gamepad, controller, joystick, stick, dead zone, trigger, d-pad, Xbox, PlayStation, SDL_GameController, FeedGamepad, rumble, hot-plug, split screen
 - **Seen as:** the character drifts with the stick untouched; the pad does nothing in the editor Play view; a second controller is ignored; triggers act as buttons too early or late
@@ -60,7 +60,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Docs:** `docs/input.md`
 - **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
 - **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
-- **Open:** no game or UI uses input contexts yet (a pause menu has to call `PushContext` itself; `Input::SetUICaptured` is the older separate mechanism, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
+- **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
@@ -76,9 +76,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Cursor::Capture`, `Cursor::SetLock`, `Cursor::SetVisible`, `Cursor::IsLocked`, `Input::TouchCount`, `Input::GetTouch`, `Input::PointerIsTouch`
 - **Editor:** none
 - **Docs:** `docs/input.md`, `docs/web_mobile.md`
-- **Tests:** `ui_nav_touch`, `uicapture_look`
+- **Tests:** `ui_nav_touch`, `uicapture_look`, `ui_touch_scroll`
 - **Status:** Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`)
-- **Open:** no gesture recognition (pinch, swipe, long press, rotate); `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself although the player and the editor already call `Input::FeedTouch`; no on-screen virtual stick or touch buttons
+- **Open:** none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised (`Input/GestureRecognizer`, `Gestures`). A virtual joystick, D-pad and touch button drive the action map and can hide until a touch screen is present (`Components/TouchControls`). `docs/input.md` and `docs/web_mobile.md` describe them.
 - **Related:** 8.5, 12.9, 18.2, 37.1
 - **Words:** cursor, lock cursor, hide cursor, mouse capture, relative mouse, touch, touchscreen, finger, tap, drag, fling, mobile, phone, multi-touch, gestures, pinch
 - **Seen as:** the cursor stays visible during mouse-look or escapes the window; a tap does nothing on a phone; scrolling a list with a finger also presses buttons; the cursor does not come back after Esc

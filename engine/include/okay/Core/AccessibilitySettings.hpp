@@ -10,6 +10,7 @@
 #include "okay/Core/Subtitles.hpp"
 #include "okay/Graphics/ColorVision.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <set>
@@ -34,7 +35,8 @@ enum AccessibilityField : std::uint32_t {
     kA11yHoldToggle      = 1u << 6,
     kA11yAimAssist       = 1u << 7,
     kA11yScreenReader    = 1u << 8,
-    kA11yAll             = (1u << 9) - 1,
+    kA11yFocusVisual     = 1u << 9,   ///< high-visibility focus ring and its thickness scale
+    kA11yAll             = (1u << 10) - 1,
 };
 
 struct AccessibilitySettings {
@@ -49,6 +51,8 @@ struct AccessibilitySettings {
     std::set<std::string> toggleActions;  ///< actions that toggle ("Sprint", "Aim", "Crouch") while others hold
     AimAssist aimAssist = AimAssist::Medium;
     bool screenReaderHints = false;       ///< announce menus, focus and events to a screen reader
+    bool focusHighVisibility = false;     ///< thick bright focus ring, easier to see than the theme's
+    float focusThicknessScale = 1.0f;     ///< multiplies the theme's focus-ring thickness, 0.5 .. 3
 
     /// Bring every value into range.
     void Clamp();
@@ -95,6 +99,8 @@ public:
     static void SetToggleAction(const std::string& action, bool toggle);
     static void SetAimAssist(AimAssist level);
     static void SetScreenReaderHints(bool on);
+    static void SetFocusHighVisibility(bool on);
+    static void SetFocusThicknessScale(float scale);
 
     // ---- What games ask ----
     /// A text size in pixels scaled by the player's text size.
@@ -107,6 +113,9 @@ public:
     static float FlashScale();
     /// `c` shifted for the player's colour vision (unchanged with no deficiency set).
     static Color FilterColor(const Color& c);
+    /// The player's colour vision correction over a rendered frame of `pixels` RGBA8 pixels
+    /// (the player's 3D view), in place. Does nothing with no deficiency set.
+    static void FilterFrame(std::uint8_t* rgba, std::size_t pixels);
     /// `foreground` as it should be drawn over `background`: with high contrast on, moved until
     /// the contrast is at least 7:1 (WCAG AAA), else unchanged.
     static Color TextColor(const Color& foreground, const Color& background);

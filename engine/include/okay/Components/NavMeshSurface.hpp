@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace okay {
 
@@ -31,10 +32,22 @@ public:
     std::uint32_t layerMask = 0xFFFFFFFFu;
     /// Editor: bake again every time Play starts.
     bool bakeBeforePlay = false;
+    /// What one unit of distance costs in each area (A* cost = distance * this). Tunable
+    /// without a rebake: the baked polygons only carry the area number. A cost below 1
+    /// makes an area preferred (a road), above 1 avoided (a swamp). Which areas an agent
+    /// may enter at all is its own `areaMask`.
+    float areaCost[kNavAreaCount];
+    /// Project names for the areas (blank = the default name), shown in the editor.
+    std::string areaName[kNavAreaCount];
+    const char* AreaName(int area) const {
+        return area >= 0 && area < kNavAreaCount && !areaName[area].empty() ? areaName[area].c_str() : NavAreaDefaultName(area);
+    }
+    /// Copy this surface's area costs into a query filter.
+    void FillFilter(NavQueryFilter& f) const { for (int i = 0; i < kNavAreaCount; ++i) f.areaCost[i] = areaCost[i]; }
     /// Folder of the scene file this surface was loaded from (resolves a relative navPath).
     std::string sceneDir;
 
-    NavMeshSurface() = default;
+    NavMeshSurface() { for (int i = 0; i < kNavAreaCount; ++i) areaCost[i] = NavAreaDefaultCost(i); }
     ~NavMeshSurface() override;
     NavMeshSurface(const NavMeshSurface&) = delete;
     NavMeshSurface& operator=(const NavMeshSurface&) = delete;
@@ -42,6 +55,16 @@ public:
     /// The baked mesh, loading navPath on first use; nullptr when there is none.
     const NavMesh* Mesh();
     bool HasMesh() const { return m_mesh && !m_mesh->Empty(); }
+    /// The mesh path queries use: the baked mesh with `volumes` (solid NavMeshObstacle shapes) cut out
+    /// of it, rebuilt only when the volumes differ from last time. With none, the baked mesh itself.
+    /// nullptr when there is no baked mesh. The baked mesh and its .okaynav file are never changed.
+    const NavMesh* ApplyCarving(const std::vector<NavCarveVolume>& volumes);
+    /// The carved copy, or nullptr while nothing is carved.
+    const NavMesh* CarvedMesh() const { return m_carved.get(); }
+    /// Goes up every time the carved mesh is rebuilt or dropped (agents replan when it changes).
+    std::uint32_t CarveGeneration() const { return m_carveGen; }
+    /// Polygons of the baked mesh the current carve cut or removed.
+    int CarvedPolyCount() const { return m_carvedPolys; }
     /// Replace the mesh (takes ownership).
     void SetMesh(std::unique_ptr<NavMesh> mesh);
     /// Drop the baked mesh (the file is left alone).
@@ -87,6 +110,11 @@ private:
     std::unique_ptr<Job> m_job;
     NavBakeStats m_stats;
     std::string m_triedPath;   // the navPath the lazy load last attempted
+    void DropCarve();
+    std::unique_ptr<NavMesh> m_carved;       // m_mesh with the carve volumes cut out
+    std::vector<NavCarveVolume> m_carveVolumes;
+    std::uint32_t m_carveGen = 0;
+    int m_carvedPolys = 0;
 };
 
 } // namespace okay

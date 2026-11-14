@@ -66,12 +66,19 @@ struct AudioMixer {
     /// World-space listener for 3D (spatial) sources: set it each frame to the
     /// camera. `right` is the listener's right-hand direction; sources on that
     /// side pan right. Without it (zero), 3D sources are only faded, not panned.
+    /// Motion for doppler is the change in this position (and each source's)
+    /// between mixes. A jump faster than most of the speed of sound is ignored.
     static inline Vec3 listener = Vec3::Zero;
     /// How far a 3D source to the listener's side pans (1 would silence the far ear).
     static constexpr float kSpatialPan = 0.7f;
     static inline Vec3 listenerRight = Vec3::Zero;
     static void SetListener(const Vec3& p) { listener = p; listenerRight = Vec3::Zero; }
     static void SetListener(const Vec3& p, const Vec3& right) { listener = p; listenerRight = right; }
+
+    /// Drop the reverb tail and the remembered listener motion. The editor calls
+    /// this when Play stops so the next session does not inherit a frozen tail.
+    /// A new scene does the same on its first mix.
+    static void ResetSpatial();
 
     /// Distance fade [0..1] for one source at `distance` from the listener.
     static float Attenuation(const AudioSource& src, float distance);

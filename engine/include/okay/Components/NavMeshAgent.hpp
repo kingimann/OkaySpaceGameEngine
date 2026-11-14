@@ -1,6 +1,9 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/AI/NavMesh.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace okay {
@@ -8,6 +11,7 @@ namespace okay {
 class Scene;
 class NPCController;
 class ClickToMoveController;
+class NavMeshLink;
 
 /// Moves its object along the scene's navigation (the baked NavMesh, or the grid
 /// when there is none): SetDestination() plans a path, the agent follows the
@@ -16,7 +20,17 @@ class ClickToMoveController;
 /// `stoppingDistance`. Moves a sibling Rigidbody3D by velocity, else the Transform
 /// (projected to the mesh height). On an object with an NPCController or
 /// ClickToMoveController it hands the destination to that controller instead and
-/// only reports on it. Broadcasts `nav_arrived` to Action Lists on arrival.
+/// only reports on it (it does not use off-mesh links). Broadcasts `nav_arrived` to Action Lists on arrival.
+///
+/// Areas and links: the path search honours the surface's area costs and this agent's
+/// `areaMask` (a forbidden area is never entered), and goes through the scene's enabled
+/// NavMeshLinks whose area the mask allows. On a link the agent walks to the start point,
+/// then crosses to the end point over the link's duration (`IsTraversingLink`), and
+/// carries on. `onLinkStart` / `onLinkEnd` fire at the two ends of the crossing (hook an
+/// animation on them); Action Lists get `nav_link_start` / `nav_link_end`.
+///
+/// Carving: a NavMeshObstacle with Carve on cuts a hole in the mesh; the agent replans at once when the
+/// hole appears, moves or goes (and gives up, like for any unreachable goal, if no route is left).
 class NavMeshAgent : public Behaviour {
 public:
     /// Before the animation components, so they pose this frame's movement.
@@ -36,6 +50,16 @@ public:
     bool  faceMovement = true;      ///< turn to face the direction of travel
     bool  driveAnimation = true;    ///< drive a sibling Character's idle / walk / run
     float baseOffset = 0.0f;        ///< the object's origin above its feet (a cube's centre: half its height)
+    /// Areas this agent may enter (bit n = NavArea n). Default: all but NotWalkable.
+    std::uint32_t areaMask = kNavDefaultAreaMask;
+
+    /// Called as a link crossing begins / ends (the agent is at the start / end point).
+    std::function<void(NavMeshAgent&, NavMeshLink&)> onLinkStart, onLinkEnd;
+    /// A link crossing is under way.
+    bool IsTraversingLink() const { return m_link != nullptr; }
+    NavMeshLink* CurrentLink() const { return m_link; }
+    /// How far across the current link the agent is, 0..1 (0 when not on one).
+    float LinkProgress() const { return m_link && m_linkDur > 0.0f ? m_linkT / m_linkDur : 0.0f; }
 
     void SetDestination(const Vec3& worldPoint);
     /// Stop in place and keep the destination (Resume() continues).
@@ -63,6 +87,9 @@ public:
 
 private:
     bool Replan(Scene& scene, const Vec3& pos);
+    NavMeshLink* LinkInto(int corner) const { return corner >= 0 && corner < (int)m_pathLinks.size() ? m_pathLinks[(std::size_t)corner] : nullptr; }
+    void BeginLink(Scene& scene, const Vec3& pos, NavMeshLink* link, const Vec3& landing);
+    void UpdateLink(Scene& scene, float dt);
     Vec3 Avoid(Scene& scene, const Vec3& pos, const Vec3& desired) const;
     void Move(Scene& scene, const Vec3& pos, const Vec3& vel, float dt);
     void Face(const Vec3& vel, float dt);
@@ -72,6 +99,10 @@ private:
     ClickToMoveController* Ctm() const;
 
     std::vector<Vec3> m_path;
+    std::vector<NavMeshLink*> m_pathLinks;   // parallel to m_path: the link crossed by the leg that ends at that corner
+    NavMeshLink* m_link = nullptr;           // the crossing in progress
+    Vec3  m_linkFrom{0, 0, 0}, m_linkTo{0, 0, 0};
+    float m_linkT = 0.0f, m_linkDur = 0.0f;
     int   m_corner = 0;
     Vec3  m_dest{0, 0, 0};
     bool  m_hasDest = false, m_stopped = false, m_arrived = false;
@@ -82,6 +113,7 @@ private:
     float m_stuckT = 0.0f;
     int   m_stuckCount = 0;
     bool  m_drivenHadDest = false;
+    std::uint32_t m_carveGen = 0;   // Navigation::CarveGeneration the path was planned under
 };
 
 } // namespace okay

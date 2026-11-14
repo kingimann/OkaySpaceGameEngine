@@ -34,7 +34,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.2.3 Procedural textures - `Render/ProcTexture` - `proc:checker`, `grid`, `brick`, `wood`, `stone`, `tiles`, `marble`, `metal`, `noise`, `grass`, `sand`, `lava`; 256x256, tileable, deterministic, usable anywhere a texture path goes
   - 2.2.4 Mesh geometry - `Render/Mesh` - indexed triangle mesh with optional normals, UVs and per-face colours; primitives (Cube, Sphere, Cylinder, Cone, Torus, TorusKnot, Tube, Capsule, Icosphere...), prop library (Tree, House, Campfire, Bench...), `FromName`
   - 2.2.5 Mesh operations - `Render/Mesh` - smooth normals, UV projections, Combine, Weld, Subdivide, extrude, inset, Boolean, ConvexHull, Decimate, OBJ load and save; shared with the modeling windows (3.1-3.5)
-  - 2.2.6 Model loaders - `Render/Gltf`, `Render/ModelImport` - glTF and GLB, OBJ, FBX built in, many more formats through optional Assimp; base colour, normal, occlusion, packed metallic-roughness (green roughness, blue metallic) and emissive textures land on the MeshRenderer; detail and tests in 3.6
+  - 2.2.6 Model loaders - `Render/Gltf`, `Render/ModelImport` - glTF and GLB, OBJ, STL, PLY, FBX built in, many more formats through optional Assimp; base colour, normal, occlusion, packed metallic-roughness (green roughness, blue metallic) and emissive textures land on the MeshRenderer; detail and tests in 3.6
 - **Code:** `Render/Material`, `Render/ProcTexture`, `Render/Mesh`, `Render/Gltf`, `Render/ModelImport`, `Components/MeshRenderer`
 - **API:** `Material`, `Material::ApplyTo`, `MeshRenderer`, `Mesh::Cube`, `Mesh::FromName`, `GenerateProcTexture`, `ImportModel`, `proc:wood`
 - **Editor:** Mesh Renderer inspector section and material ball preview (editor/main.cpp); Project panel materials; Modeling window (3.1)
@@ -60,7 +60,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
 - **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
-- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`
+- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
 - **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
@@ -103,7 +103,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** `docs/rendering.md`
 - **Tests:** `post_sky`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player
@@ -175,19 +175,20 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **What:** The CPU side of text and pictures: the built-in 8x8 font, TrueType fonts baked into glyph atlases, the compiled-in UI font, the RGBA image buffer, and the world and screen text component.
 - **Parts:**
   - 2.9.1 Bitmap font - `Graphics/Font` - `Font8x8` built-in hand-drawn 8x8 monochrome ASCII glyphs (printable 32-126), `Pixel`, `MeasureWidth`
-  - 2.9.2 TrueType fonts - `Graphics/TtfFont` - stb_truetype atlas, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
+  - 2.9.2 TrueType fonts - `Graphics/TtfFont` - glyph atlas over our own reader, any glyph baked on first use, atlas grows, `Generation()` tells hosts to re-upload
+  - 2.9.6 TrueType reader and rasterizer - `Graphics/TtfRaster` - our own sfnt parser (TrueType, OpenType CFF, .ttc; cmap 0/4/6/12/13; glyf with composite glyphs; CFF Type 2 charstrings incl. CID-keyed) and exact-area anti-aliased glyph rasterizer, unhinted; every read bounds-checked so a corrupt font loads as nothing instead of crashing; `ShelfPacker` and `BakeGlyph` for atlases
   - 2.9.3 Built-in UI font - `Graphics/EmbeddedFont` - the launcher's Roboto font compiled in as base85
-  - 2.9.4 Images - `Graphics/Image` - RGBA8 buffer, load PNG, JPG, BMP, TGA and more through stb_image, save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
+  - 2.9.4 Images - `Graphics/Image`, `Core/ImageDecode` - RGBA8 buffer, load PNG (every colour type and depth, Adam7, tRNS), JPG (baseline and progressive, any chroma subsampling, restart markers), BMP, TGA, GIF (first frame, or every frame with `DecodeGifFrames`), HDR and PSD through our own decoder (`Core/ImageDecode`, no third-party code; also the launcher's cover art, avatars and chat images), save PNG through our own encoder (`Core/ImageWrite`), get/set pixel, fill
   - 2.9.5 Text component - `Components/TextRenderer` - world or screen-space text, pixel size, alignment, wrap, auto size, shadow, outline, gradient, typewriter reveal, localized text
-- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Components/TextRenderer`
-- **API:** `Font8x8`, `TtfFont`, `Image::Load`, `Image::Save`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
+- **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/TtfRaster`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Core/ImageDecode`, `Components/TextRenderer`
+- **API:** `Font8x8`, `TtfFont`, `ttf::Face`, `ttf::BakeGlyph`, `Image::Load`, `Image::Save`, `DecodeImage`, `DecodeGifFrames`, `GetImageInfo`, `Inflate`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
 - **Editor:** Text Renderer inspector section; Lighting panel "UI Font" (editor/main.cpp); thumbnails in the Project panel
 - **Docs:** `docs/localization.md` (Fonts section)
-- **Tests:** `text`, `ttf`, `image`, `loaders_robust`
-- **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box
-- **Open:** right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels
+- **Tests:** `text`, `ttf`, `ttf_rasterizer`, `image`, `image_decoder`, `loaders_robust`
+- **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box; `ttf_rasterizer` needs no system font (synthetic fonts, DejaVu from assets/fonts, fuzzed files)
+- **Open:** fonts are not hinted, and kerning, GPOS/GSUB, variable fonts and colour or bitmap glyph tables (emoji fonts like Noto Color Emoji) are not read; where two contours of one glyph overlap, the overlap's anti-aliased edge pixels can be a little too dark; right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels; the decoder refuses CMYK/YCCK, arithmetic-coded and 12-bit JPEGs, RLE BMPs and PNM/PIC files, and fails on truncated data instead of showing the part it got; JPEG pixels match libjpeg to within 3 levels, not bit for bit
 - **Related:** 1.8, 12.2, 2.2, 1.12
-- **Words:** font, TTF, TtfFont, Font8x8, bitmap font, Image, PNG, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
+- **Words:** font, TTF, OTF, TTC, TrueType, OpenType, CFF, glyf, cmap, rasterizer, TtfFont, TtfRaster, Font8x8, bitmap font, Image, PNG, JPEG, progressive JPEG, GIF decode, image decoder, inflate, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
 - **Seen as:** letters show as boxes; text is blurry at some sizes; a huge image crashes the load; text sits in the wrong corner
 - **Ask me like:** "Use a pixel font for the score and Roboto for the menu"; "Why does Japanese text fall back to another font?"
 

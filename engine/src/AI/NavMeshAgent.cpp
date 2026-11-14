@@ -6,6 +6,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -48,7 +49,7 @@ ClickToMoveController* NavMeshAgent::Ctm() const { return gameObject ? gameObjec
 void NavMeshAgent::SetDestination(const Vec3& worldPoint) {
     m_dest = worldPoint;
     m_hasDest = true; m_stopped = false; m_arrived = false;
-    m_path.clear(); m_corner = 0; m_repath = 0.0f; m_stuckT = 0.0f; m_stuckCount = 0;
+    m_path.clear(); m_pathLinks.clear(); m_corner = 0; m_repath = 0.0f; m_stuckT = 0.0f; m_stuckCount = 0;
     if (NPCController* n = Npc()) { n->CommandGoTo(worldPoint); m_drivenHadDest = true; }
     else if (ClickToMoveController* c = Ctm()) { c->MoveTo(worldPoint); m_drivenHadDest = true; }
 }
@@ -67,7 +68,8 @@ void NavMeshAgent::Resume() {
 
 void NavMeshAgent::Warp(const Vec3& worldPoint) {
     if (transform) transform->SetPosition(worldPoint);
-    m_path.clear(); m_corner = 0; m_repath = 0.0f; m_velocity = Vec3{0, 0, 0};
+    m_link = nullptr;   // a crossing in progress is dropped without its end event
+    m_path.clear(); m_pathLinks.clear(); m_corner = 0; m_repath = 0.0f; m_velocity = Vec3{0, 0, 0};
     m_lastPos = worldPoint;
 }
 
@@ -98,8 +100,38 @@ void NavMeshAgent::Start() {
 bool NavMeshAgent::Replan(Scene& scene, const Vec3& pos) {
     m_repath = repathInterval;
     m_corner = 0;
-    if (!Navigation::FindPath(scene, pos, m_dest, m_path, radius, gameObject)) { m_path.clear(); return false; }
+    if (!Navigation::FindPathForAgent(scene, pos, m_dest, m_path, m_pathLinks, areaMask, radius, gameObject)) {
+        m_path.clear(); m_pathLinks.clear();
+        return false;
+    }
     return true;
+}
+
+void NavMeshAgent::BeginLink(Scene& scene, const Vec3& pos, NavMeshLink* link, const Vec3& landing) {
+    m_link = link;
+    m_linkFrom = pos;
+    m_linkTo = Vec3{landing.x, landing.y + baseOffset, landing.z};
+    m_linkT = 0.0f;
+    m_linkDur = link->Duration(m_linkFrom, m_linkTo, speed);
+    m_velocity = Vec3{0, 0, 0};
+    if (onLinkStart) onLinkStart(*this, *link);
+    Broadcast(scene, "nav_link_start");
+}
+
+void NavMeshAgent::UpdateLink(Scene& scene, float dt) {
+    NavMeshLink* link = m_link;
+    m_linkT += dt;
+    const float t = std::min(m_linkT / m_linkDur, 1.0f);
+    const Vec3 p = link->PointAt(m_linkFrom, m_linkTo, t);
+    if (transform) transform->SetPosition(p);
+    if (Rigidbody3D* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr) rb->velocity = Vec3{0, 0, 0};
+    Face(Vec3{m_linkTo.x - m_linkFrom.x, 0.0f, m_linkTo.z - m_linkFrom.z}, dt);
+    m_lastPos = p; m_stuckT = 0.0f;
+    if (t < 1.0f) return;
+    m_link = nullptr;   // landed exactly on the end point; the path goes on from the landing corner
+    m_corner = std::min(m_corner + 1, std::max((int)m_path.size() - 1, 0));
+    if (onLinkEnd) onLinkEnd(*this, *link);
+    Broadcast(scene, "nav_link_end");
 }
 
 Vec3 NavMeshAgent::Avoid(Scene& scene, const Vec3& pos, const Vec3& desired) const {
@@ -232,6 +264,8 @@ void NavMeshAgent::Update(float dt) {
         return;
     }
 
+    if (m_link) { UpdateLink(scene, dt); Animate(dt); return; }   // a crossing runs to its end
+
     const float ease = acceleration > 0.0f ? 1.0f - std::exp(-acceleration * dt) : 1.0f;
     if (!m_hasDest || m_stopped) {
         m_velocity += (Vec3{0, 0, 0} - m_velocity) * ease;
@@ -248,6 +282,8 @@ void NavMeshAgent::Update(float dt) {
     m_stuckT = wedged ? m_stuckT + dt : 0.0f;
     m_lastPos = pos;
     bool needPlan = m_path.empty() || (autoRepath && m_repath <= 0.0f);
+    const std::uint32_t carveGen = Navigation::CarveGeneration(scene);
+    if (carveGen != m_carveGen) { m_carveGen = carveGen; needPlan = true; }   // an obstacle's hole came, moved or went
     if (m_stuckT > 0.8f) {
         m_stuckT = 0.0f; needPlan = true;
         if (++m_stuckCount > 4) { m_hasDest = false; m_path.clear(); m_velocity = Vec3{0, 0, 0}; Move(scene, pos, m_velocity, dt); return; }
@@ -259,13 +295,24 @@ void NavMeshAgent::Update(float dt) {
         return;
     }
     const float reach = std::max(0.3f, radius * 0.75f);
-    while (m_corner + 1 < (int)m_path.size() && Dist2D(pos, m_path[(std::size_t)m_corner]) < reach) ++m_corner;
+    while (m_corner + 1 < (int)m_path.size() && Dist2D(pos, m_path[(std::size_t)m_corner]) < reach) {
+        if (LinkInto(m_corner + 1)) break;   // this corner is a link's start: cross it, do not skip it
+        ++m_corner;
+    }
+    if (NavMeshLink* lk = LinkInto(m_corner + 1);
+        lk && m_corner + 1 < (int)m_path.size() && Dist2D(pos, m_path[(std::size_t)m_corner]) < reach) {
+        if (lk->Usable()) { BeginLink(scene, pos, lk, m_path[(std::size_t)m_corner + 1]); return; }
+        m_path.clear(); m_pathLinks.clear();   // switched off since planning: plan again
+        return;
+    }
     const Vec3 target = m_path.empty() ? m_dest : m_path[(std::size_t)m_corner];
     m_remaining = Dist2D(pos, target);
     for (std::size_t i = (std::size_t)m_corner; i + 1 < m_path.size(); ++i) m_remaining += Dist2D(m_path[i], m_path[i + 1]);
 
-    if (m_remaining <= stoppingDistance) {   // there
-        m_hasDest = false; m_arrived = true; m_path.clear(); m_corner = 0;
+    bool linkAhead = false;   // a crossing still to make: not there yet, however short the rest looks
+    for (std::size_t i = (std::size_t)m_corner + 1; i < m_pathLinks.size(); ++i) if (m_pathLinks[i]) { linkAhead = true; break; }
+    if (m_remaining <= stoppingDistance && !linkAhead) {   // there
+        m_hasDest = false; m_arrived = true; m_path.clear(); m_pathLinks.clear(); m_corner = 0;
         m_velocity = Vec3{0, 0, 0};
         Move(scene, pos, m_velocity, dt);
         Animate(dt);

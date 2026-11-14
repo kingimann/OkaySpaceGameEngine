@@ -120,6 +120,8 @@ public:
         Fire(entry, other);
     }
     /// Set a blackboard variable from outside (Set Object Var node, gameplay code).
+    /// Put each declared variable's default in its scope (object / scene / global) unless already set.
+    void ApplyDeclDefaults();
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 
     /// Most custom events that may trigger each other in a chain within one call.
@@ -192,6 +194,7 @@ private:
     std::vector<TimerEntry> m_timerEntries;
     struct ActionEntry { std::string entry; std::string action; int edge; };   // 0 pressed, 1 released, 2 held
     std::vector<ActionEntry> m_actionEntries;
+    std::vector<std::string> m_gestureEntries;   // OnTap, OnSwipe:up, ...
     float m_lastHealth = -1.0f;
     bool  m_sawHealth = false;
     bool  m_deathFired = false;

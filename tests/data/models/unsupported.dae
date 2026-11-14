@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- Hand-written test fixture: a triangle plus content our reader reports as not read:
+     lines, a linestrip, a vertex-color input, a camera, a lookat, a polygon hole. -->
+<COLLADA version="1.4.1">
+  <asset><up_axis>Y_UP</up_axis></asset>
+  <library_geometries>
+    <geometry id="g" name="G">
+      <mesh>
+        <source id="p"><float_array id="pa" count="9">0 0 0  1 0 0  0 1 0</float_array>
+          <technique_common><accessor source="#pa" count="3" stride="3"/></technique_common></source>
+        <source id="c"><float_array id="ca" count="9">1 0 0  0 1 0  0 0 1</float_array>
+          <technique_common><accessor source="#ca" count="3" stride="3"/></technique_common></source>
+        <vertices id="v"><input semantic="POSITION" source="#p"/></vertices>
+        <triangles count="1">
+          <input semantic="VERTEX" source="#v" offset="0"/>
+          <input semantic="COLOR" source="#c" offset="1"/>
+          <p>0 0  1 1  2 2</p>
+        </triangles>
+        <lines count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1</p></lines>
+        <linestrips count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1 2</p></linestrips>
+        <polygons count="1"><input semantic="VERTEX" source="#v" offset="0"/><ph><p>0 1 2</p><h>0 1 2</h></ph></polygons>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="S"><node id="N"><lookat>0 0 0 0 0 1 0 1 0</lookat><instance_geometry url="#g"/><instance_camera url="#cam"/></node></visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#S"/></scene>
+</COLLADA>

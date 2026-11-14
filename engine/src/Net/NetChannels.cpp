@@ -58,7 +58,17 @@ std::vector<std::uint8_t> OrderedEnd::Push(const std::string& channel, const std
     if (!ChannelNameOk(channel) || data.size() > kChannelPayloadMax) return {};
     if (!m_out.count(channel) && m_out.size() >= kMaxChannels) return {};
     OutStream& st = m_out[channel];
-    if (st.pending.size() >= kOrderedWindow || st.next == 0xFFFFFFFFu) return {};
+    if (!st.backlog.empty() || st.pending.size() >= kOrderedWindow) {
+        // The window is full: keep the message (behind any already waiting, so
+        // order holds) instead of dropping it.
+        if (st.backlog.size() >= kOrderedBacklogMax ||
+            st.backlogBytes + data.size() > kOrderedBacklogBytes)
+            return {};
+        st.backlog.push_back(Queued{data, cookie});
+        st.backlogBytes += data.size();
+        return {};
+    }
+    if (st.next == 0xFFFFFFFFu) return {};
     const std::uint32_t seq = st.next++;
     std::vector<std::uint8_t> bytes = BuildChanRel(seq, channel, data, cookie);
     st.pending.emplace(seq, Slot{bytes, 0.0f});
@@ -74,7 +84,47 @@ void OrderedEnd::CollectResend(float dt, std::vector<std::vector<std::uint8_t>>&
                 due.push_back(item.second.bytes);
             }
         }
+        // Acks have freed room: number and send what was waiting.
+        OutStream& st = stream.second;
+        while (!st.backlog.empty() && st.pending.size() < kOrderedWindow && st.next != 0xFFFFFFFFu) {
+            Queued q = std::move(st.backlog.front());
+            st.backlog.pop_front();
+            st.backlogBytes -= q.data.size();
+            const std::uint32_t seq = st.next++;
+            std::vector<std::uint8_t> bytes = BuildChanRel(seq, stream.first, q.data, q.cookie);
+            due.push_back(bytes);
+            st.pending.emplace(seq, Slot{std::move(bytes), 0.0f});
+        }
     }
+}
+
+std::size_t OrderedEnd::Backlog(const std::string& channel) const {
+    auto it = m_out.find(channel);
+    return it == m_out.end() ? 0 : it->second.backlog.size();
+}
+
+std::size_t OrderedEnd::Unacked(std::vector<std::pair<std::string, std::string>>& out,
+                                std::size_t maxMessages, std::size_t maxBytes) const {
+    std::size_t left = 0, bytes = 0, taken = 0;
+    // A channel is cut at the first message that does not fit, so what is kept is always a
+    // prefix of the channel's order; the others (every later message of it) are counted as left out.
+    for (const auto& [channel, st] : m_out) {
+        bool full = false;
+        auto add = [&](const std::string& data) {
+            if (full || taken >= maxMessages || bytes + data.size() > maxBytes) { full = true; ++left; return; }
+            out.emplace_back(channel, data);
+            bytes += data.size();
+            ++taken;
+        };
+        for (const auto& [seq, slot] : st.pending) {
+            Packet p(slot.bytes.data(), slot.bytes.size());   // [type][u32 seq][channel][data][cookie]
+            p.ReadU8(); p.ReadU32(); p.ReadString();
+            std::string data = p.ReadString();
+            if (p.Ok()) add(data);
+        }
+        for (const auto& q : st.backlog) add(q.data);
+    }
+    return left;
 }
 
 void OrderedEnd::Ack(const std::string& channel, std::uint32_t ack) {

@@ -194,6 +194,36 @@ bool IconButton(const char* id, TbIcon ic, const char* tip, bool active) {
     if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     return clicked;
 }
+// Icon + text button: the icon at the left, the name after it. The width is the icon plus the text.
+bool IconLabelButton(const char* id, TbIcon ic, const char* label, const char* tip, bool active) {
+    const float h = ImGui::GetFrameHeight();
+    const float textW = ImGui::CalcTextSize(label).x;
+    bool clicked = AccentToggleButton(id, active, ImVec2(h + textW + ImGui::GetStyle().FramePadding.x * 1.4f, h));
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    const bool hot = ImGui::IsItemHovered();
+    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1) : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    if (!active && !hot) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawTbIcon(dl, ic, ImVec2(mn.x + h * 0.5f, (mn.y + mx.y) * 0.5f), h * 0.5f, col);
+    dl->AddText(ImVec2(mn.x + h, mn.y + (mx.y - mn.y - ImGui::GetTextLineHeight()) * 0.5f), col, label);
+    if (tip && hot) ImGui::SetTooltip("%s", tip);
+    return clicked;
+}
+bool TipButton(const char* tip, const char* label, const ImVec2& size) {
+    const bool c = ImGui::Button(label, size);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return c;
+}
+bool TipSmallButton(const char* tip, const char* label) {
+    const bool c = ImGui::SmallButton(label);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return c;
+}
+bool TipArrowButton(const char* tip, const char* id, ImGuiDir dir) {
+    const bool c = ImGui::ArrowButton(id, dir);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return c;
+}
 // A search field with a drawn magnifier inside and a clear (x) affordance when it
 // has text. `width` <= 0 fills the remaining width minus |width|.
 bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width) {

@@ -55,27 +55,37 @@ add_executable(okay-editor main.cpp EditorState.cpp EditorVisibility.cpp Surface
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
+    LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
     SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
+    VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
+    ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
-    InspectorPanel.cpp InspectorModel.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
+    UIInspectorWidgetsMore.cpp                                         # search, date, files, accordion, crumbs, pages, skeleton, sheet
+    InspectorPanel.cpp InspectorModel.cpp PrefabEdit.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
     UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
+    WeaponEditor.cpp                                                   # the Weapons window (weapon definitions)
+    LocalizationTools.cpp                                              # grid, check, scan and preview the window draws (ImGui-free)
+    ContentEditors.cpp                                                 # Items, Loot & Recipes (.okayitems, .okayloot, .okayrecipes)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
+    ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
+    ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
-target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 # The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
 set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
@@ -98,8 +108,11 @@ if(WIN32)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
-    target_link_libraries(okay-editor PRIVATE okay_ui)
+    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

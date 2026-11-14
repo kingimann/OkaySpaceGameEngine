@@ -1,0 +1,8 @@
+okaybt 1
+name Greet
+key target object ""
+key greeted string ""
+root 0
+node 0 Sequence parent=-1 x=160 y=0 name=Greet
+node 1 LookAt parent=0 x=40 y=120 name=Face target=target turnSpeed=360
+node 2 SetBlackboard parent=0 x=280 y=120 key=greeted value=yes

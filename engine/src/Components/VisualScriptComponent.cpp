@@ -5,6 +5,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/VisualScript/NodesLoops.hpp"
@@ -55,7 +56,18 @@ void VisualScriptComponent::AdoptGraph(std::unique_ptr<vs::NodeGraph> graph) {
     if (m_graph) m_graph->CaptureFlow(flows, parked);
     m_graph = std::move(graph);
     if (m_graph) m_graph->RestoreFlow(flows, parked);
+    if (m_graph && m_started) ApplyDeclDefaults();   // a variable declared while playing starts at its default
     m_pendingGraph.reset();
+}
+
+void VisualScriptComponent::ApplyDeclDefaults() {
+    if (!m_graph) return;
+    for (const auto& d : m_graph->Decls()) {
+        vs::VarMap* store = &m_ctx.variables;
+        if (d.scope == vs::VarScope::Scene) store = &vs::SceneVariables(gameObject ? gameObject->scene() : nullptr);
+        else if (d.scope == vs::VarScope::Global) store = &vs::GlobalVariables();
+        if (!store->count(d.name)) (*store)[d.name] = vs::VsDeepCopy(d.value);   // each owner gets its own list / map
+    }
 }
 
 void VisualScriptComponent::ApplyPendingGraph() {
@@ -90,6 +102,7 @@ void VisualScriptComponent::ScanPolledEvents() {
     m_keyEntries.clear();
     m_timerEntries.clear();
     m_actionEntries.clear();
+    m_gestureEntries.clear();
     m_watches.clear();
     if (!m_graph) return;
     for (const auto& kv : m_graph->AllEntries()) {
@@ -108,6 +121,9 @@ void VisualScriptComponent::ScanPolledEvents() {
             m_actionEntries.push_back({n, n.substr(11), 1});
         else if (n.rfind("OnActionHeld:", 0) == 0)
             m_actionEntries.push_back({n, n.substr(13), 2});
+        else if (n == "OnTap" || n == "OnDoubleTap" || n == "OnLongPress" || n == "OnPinch" || n == "OnRotate" ||
+                 n == "OnSwipe" || n.rfind("OnSwipe:", 0) == 0)
+            m_gestureEntries.push_back(n);
         else if (n.rfind("OnVarChanged:", 0) == 0 || n.rfind("OnSceneVarChanged:", 0) == 0 ||
                    n.rfind("OnGlobalVarChanged:", 0) == 0) {
             for (int id : kv.second)
@@ -175,9 +191,7 @@ void VisualScriptComponent::Start() {
     ScanPolledEvents();
     m_started = true;
     ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
-    // Starting values from `var` lines, unless something already set them.
-    for (const auto& v : m_graph->ExposedVars())
-        if (!m_ctx.variables.count(v.name)) m_ctx.variables[v.name] = v.value;
+    ApplyDeclDefaults();   // declared variables' starting values, unless something already set them
     Fire("OnEnable", nullptr);   // like a script: OnEnable, then Start
     if (m_graph) m_graph->RunEntries("OnStart", m_ctx);
     CheckWatches();
@@ -223,6 +237,21 @@ void VisualScriptComponent::Update(float dt) {
     // On Key Pressed / Released.
     for (const KeyEntry& k : m_keyEntries)
         if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDown(k.key)) Fire(k.entry.c_str(), nullptr);
+    for (const std::string& e : m_gestureEntries) {
+        bool go = false;
+        if (e == "OnTap") go = Gestures::Happened("tap");
+        else if (e == "OnDoubleTap") go = Gestures::Happened("double tap");
+        else if (e == "OnLongPress") go = Gestures::Happened("long press");
+        else if (e == "OnPinch") go = Gestures::Happened("pinch");
+        else if (e == "OnRotate") go = Gestures::Happened("rotate");
+        else if (e == "OnSwipe") go = Gestures::Happened("swipe");
+        else if (e.rfind("OnSwipe:", 0) == 0) go = Gestures::Happened("swipe " + e.substr(8));
+        if (!go) continue;
+        m_ctx.variables["gesture_direction"] = vs::VsValue(Gestures::SwipeDirection());
+        m_ctx.variables["gesture_scale"] = vs::VsValue(Gestures::PinchScale());
+        m_ctx.variables["gesture_degrees"] = vs::VsValue(Gestures::TwistDegrees());
+        Fire(e.c_str(), nullptr);
+    }
     // On Timer: fire every `period` seconds (catching up at most a few per frame).
     for (TimerEntry& t : m_timerEntries) {
         t.acc += dt;

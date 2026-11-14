@@ -2,6 +2,7 @@
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Audio/AudioClip.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -55,6 +56,32 @@ Image BoxDownscale(const Image& src, int maxSide) {
         }
     }
     return out;
+}
+
+bool WaveformThumbnailGenerator::Handles(const std::string& e) const {
+    return e == "wav" || e == "ogg" || e == "mp3" || e == "flac";
+}
+
+Image WaveformThumbnailGenerator::Render(const std::string& absolutePath, std::string* error) {
+    std::error_code ec;
+    const auto bytes = fs::file_size(PathFromU8(absolutePath), ec);
+    if (ec || bytes > (64u << 20)) { if (error) *error = "audio file too large or unreadable"; return Image(); }
+    AudioClip clip;
+    if (!clip.Load(absolutePath, error) || clip.samples.empty()) return Image();
+    const int W = 128, H = 128, mid = H / 2;
+    Image img(W, H);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) img.SetPixel(x, y, Color(0.10f, 0.12f, 0.14f, 1.0f));
+    for (int x = 0; x < W; ++x) img.SetPixel(x, mid, Color(0.25f, 0.30f, 0.34f, 1.0f));
+    const std::size_t n = clip.samples.size();
+    for (int x = 0; x < W; ++x) {
+        const std::size_t a = n * static_cast<std::size_t>(x) / W, b = std::max(a + 1, n * static_cast<std::size_t>(x + 1) / W);
+        float lo = 0.0f, hi = 0.0f;
+        for (std::size_t i = a; i < b && i < n; ++i) { lo = std::min(lo, clip.samples[i]); hi = std::max(hi, clip.samples[i]); }
+        const int y0 = mid - static_cast<int>(std::min(1.0f, hi) * (mid - 4)), y1 = mid - static_cast<int>(std::max(-1.0f, lo) * (mid - 4));
+        for (int y = std::min(y0, mid); y <= std::max(y1, mid); ++y) img.SetPixel(x, y, Color(0.35f, 0.85f, 0.55f, 1.0f));
+    }
+    return img;
 }
 
 namespace {
@@ -154,6 +181,7 @@ private:
 ThumbnailCache::ThumbnailCache(Options options) : m_opt(std::move(options)) {
     m_opt.size = std::max(16, m_opt.size);
     if (m_opt.imageGenerator) m_generators.push_back(std::make_shared<ImageThumbnailGenerator>());
+    if (m_opt.audioGenerator) m_generators.push_back(std::make_shared<WaveformThumbnailGenerator>());
 }
 
 void ThumbnailCache::AddGenerator(std::shared_ptr<ThumbnailGenerator> generator) {

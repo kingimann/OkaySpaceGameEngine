@@ -56,7 +56,7 @@ static bool ExtMatches(const std::string& reader, std::string ext) {
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb");
 }
-static bool IsRawReader(const std::string& r) { return r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply"; }
+static bool IsRawReader(const std::string& r) { return r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "blend"; }
 
 static CorpusStats MeasureFile(const std::string& reader, const std::string& path) {
     CorpusStats s;

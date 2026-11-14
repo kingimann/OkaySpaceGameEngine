@@ -184,8 +184,13 @@ int main() {
         for (int i = 0; i < 30; ++i) { w.srv->story->SetFlag("blink", i % 2 == 0); w.Step(); }
         w.srv->story->SetFlag("blink", true);
         CHECK(w.srv->log->CompleteObjective("q", 0));
-        CHECK(w.Until([&] { return c.nm->Joined() && c.log->Status("q") == QuestStatus::Completed && c.story->HasFlag("blink") &&
-                                   a.log->Status("q") == QuestStatus::Completed && b.story->HasFlag("blink"); }, 4000));
+        const bool converged = w.Until([&] { return c.nm->Joined() && c.log->Status("q") == QuestStatus::Completed && c.story->HasFlag("blink") &&
+                                   a.log->Status("q") == QuestStatus::Completed && b.story->HasFlag("blink"); }, 4000);
+        CHECK(converged);
+        if (!converged)
+            std::fprintf(stderr, "  (c joined %d, c quest %d, c blink %d, a quest %d, b blink %d, c snapshots %d, c malformed %d, srv blink %d)\n", c.nm->Joined(),
+                         (int)c.log->Status("q"), c.story->HasFlag("blink"), (int)a.log->Status("q"), b.story->HasFlag("blink"), c.nm->Quests().SnapshotsApplied(),
+                         c.nm->Quests().Malformed(), w.srv->story->HasFlag("blink"));
         CHECK(c.story->Get("counter").AsFloat() == 40.0f);
         CHECK(qs.Malformed() == 0 && c.nm->Quests().Malformed() == 0);
     }

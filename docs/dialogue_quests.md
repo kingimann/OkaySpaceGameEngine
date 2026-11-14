@@ -208,7 +208,7 @@ objective kind=kill desc="Kill 2 wolves" target="Wolf" count=2 optional=0
 ## Multiplayer
 
 With a `NetworkManager` in the scene the server is the truth for quests and story variables
-(`nm->Quests()`, `okay/Net/NetQuestSync.hpp`). The dialogue box, the pause and the events still happen on
+(`nm->Quests()`; include `okay/Net/NetQuestSync.hpp` to use it). The dialogue box, the pause and the events still happen on
 the machine of the player who talks; what changes is where the state lives.
 
 - **Quests** are shared by default: the server's Quest Log is the one everybody sees, changes are sent as

@@ -300,7 +300,10 @@ void QuestSync::Flush() {
 void QuestSync::SendSnapshot(std::uint32_t peer) {
     PeerState* ps = Peer(peer, true);
     if (!ps) return;
-    const Lines shared = SharedNow();
+    // The diffs are taken against what everybody has been told (m_shared), so the joiner's snapshot must be
+    // that same state: bring everyone up to now first, then send the joiner what everyone has now.
+    Flush();
+    const Lines shared = m_shared;
     const Lines own = PlayerNow(*ps);
     std::vector<std::string> lines{"B"};
     for (const auto& kv : shared) lines.push_back(kv.second);

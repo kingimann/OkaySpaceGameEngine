@@ -170,6 +170,24 @@ int main() {
         CHECK(!w.srv->story->Has("pos"));
     }
 
+    // ---- A join between a change and the next diff must not leave the joiner behind ----
+    {
+        Rig w;
+        auto& qs = w.srv->nm->Quests();
+        Peer& a = w.Add();
+        w.srv->story->SetFlag("f1");
+        CHECK(w.Until([&] { return a.story->HasFlag("f1"); }));   // everyone has been told: f1 is on
+        qs.syncInterval = 1000.0f;                                  // no diff goes out for a while
+        w.srv->story->SetFlag("f1", false);                         // so this is not told to anyone...
+        Peer& b = w.Add();                                          // ...but the joiner's snapshot has it
+        CHECK(w.Until([&] { return !b.story->HasFlag("f1") && !a.story->HasFlag("f1"); }));
+        qs.syncInterval = 0.1f;
+        w.srv->story->SetFlag("f1");                                // on again: the same as what was last told
+        CHECK(w.Until([&] { return a.story->HasFlag("f1") && b.story->HasFlag("f1"); }));
+        w.srv->story->Set("n", vs::VsValue(1.0f));
+        CHECK(w.Until([&] { return b.story->Get("n").AsFloat() == 1.0f; }));
+    }
+
     // ---- Per-player: each player's own quests and variables, told to that player only ----
     {
         Rig w;

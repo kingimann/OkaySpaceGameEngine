@@ -177,7 +177,8 @@ Ranked by player-visible impact. Each has a regression test in
     loaded creation also works. New generic pieces in `NetworkManager`: `SetRequestHandler` (a `__req/`
     channel that reaches the server's handler only, on all four transports, never relayed or put in the
     inbox), `AddJoinHook` and `PeerPosition`. Code: `Net/NetBuildSync.*`, `BuildMode` (`Op`, `onChanged`,
-    `remoteRequest`, `Apply...`). Test: `tests/test_net_build_sync.cpp` (request channel, replicate, late
+    `remoteRequest`, `Apply...`). It is idle (registers nothing, sends nothing) while the scene has no BuildMode, and
+    catches up the clients already connected if one appears mid-session. Test: `tests/test_net_build_sync.cpp` (request channel, replicate, late
     join, ownership, per-player undo, caps, bounds, reach, overlap, rate limit, 28 hostile request shapes,
     forged `__bld`, hostile server messages, level objects, session end). Not replicated: the state of doors,
     movers and logic outputs (each peer runs its own logic), pieces a script makes or destroys.
@@ -190,7 +191,11 @@ Ranked by player-visible impact. Each has a regression test in
     flags are shared unless they start with a `perPlayerVars` prefix. Per-player state is kept by the server per
     player, sent to that player only, and survives a resume. A client may only write its own per-player names, or
     shared names under `clientWritableVars` (none by default); a client can never start a quest or add progress.
-    Limits per player and for the shared story, and a request rate. A client keeps a working local log until the
+    Limits per player and for the shared story, and a request rate. Idle (nothing registered, nothing sent) while the
+    scene has neither a QuestLog nor a StoryState: the first version sent every joiner an empty snapshot, which
+    changed the datagram sequence of games that use neither, and `net_interp` (its jitter proxy draws one random
+    delay per datagram, so one extra datagram shifted the whole pattern) and `net_resume_resend` (it counts re-sent
+    messages) caught it. A client keeps a working local log until the
     server's first snapshot (a server that does not run this changes nothing). Test:
     `tests/test_net_quest_sync.cpp` (shared and per-player scope, late joiners, resume, client writes refused,
     about 30 hostile request shapes, hostile server lines, caps, rate, forged `__qst`, session end).
@@ -250,6 +255,14 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
    transport) and **no replay or spectator stream**.
 
 ## What could not be verified
+
+- Round 4: the new suites ran on loopback, with NetSim for loss, delay, reordering and duplication, with
+  encryption off and without a relay in between (the relay and encryption suites were re-run and pass, but
+  none of the new messages went through a relay or a sealed session in a test; they are ordinary game
+  channels, so both are expected to carry them). A snapshot of a full world (250 pieces, a few thousand story
+  variables) was sized by reasoning (chunks of at most 24 KB under the 48 KB channel limit), not measured on a
+  real link. The quest and build code paths were exercised through the API and raw requests; no editor or
+  player UI was run (the build-mode hotbar, ghost and link wires on a client were not looked at).
 
 - Windows and macOS: everything here was built and run on Linux only. Winsock-specific
   behaviour (socket errors, `near`/`far` macros) is untested; the new code avoids those

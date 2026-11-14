@@ -316,8 +316,8 @@ example on a server.
 With a `NetworkManager` in the scene, build mode works over the network with no setup. The **server
 decides**: a client's place, remove, move, link, unlink and undo are sent as requests, the server checks
 each one and does it (or refuses), and everything built is sent to every client in order. A client that
-joins later is sent the whole state. `okay/Net/NetBuildSync.hpp` has the code; the rules are
-`nm->Build()`:
+joins later is sent the whole state. `okay/Net/NetBuildSync.hpp` has the code (include it to use
+`nm->Build()`); the rules are `nm->Build()`:
 
 | Rule | Default | What it does |
 | --- | --- | --- |

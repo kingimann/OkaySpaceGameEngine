@@ -49,6 +49,7 @@ int main() {
         p.vignetteSmooth = 0.35f; p.fxaa = true;
         p.ssao = true; p.ssaoRadius = 0.8f; p.ssaoIntensity = 1.1f;
         p.dof = true; p.dofFocus = 14.0f; p.dofRange = 5.5f;
+        p.bloomSoftness = 0.4f; p.ssaoPower = 1.8f;
         auto& w = rs.weather;
         w.preset = WS::Storm; w.intensity = 0.75f; w.fade = 3.5f; w.wind = {4.0f, 0.5f, -2.0f};
         w.thunderSound = "Assets/Audio/thunder.wav";
@@ -88,6 +89,7 @@ int main() {
         CHECK_NEAR(q.vignetteSmooth, 0.35f, 1e-5f); CHECK(q.fxaa);
         CHECK(q.ssao); CHECK_NEAR(q.ssaoRadius, 0.8f, 1e-5f); CHECK_NEAR(q.ssaoIntensity, 1.1f, 1e-5f);
         CHECK(q.dof); CHECK_NEAR(q.dofFocus, 14.0f, 1e-5f); CHECK_NEAR(q.dofRange, 5.5f, 1e-5f);
+        CHECK_NEAR(q.bloomSoftness, 0.4f, 1e-5f); CHECK_NEAR(q.ssaoPower, 1.8f, 1e-5f);
         const auto& v = r.weather;
         CHECK(v.preset == WS::Storm); CHECK_NEAR(v.intensity, 0.75f, 1e-5f); CHECK_NEAR(v.fade, 3.5f, 1e-5f);
         CHECK_NEAR(v.wind.x, 4.0f, 1e-5f); CHECK_NEAR(v.wind.y, 0.5f, 1e-5f); CHECK_NEAR(v.wind.z, -2.0f, 1e-5f);
@@ -188,6 +190,13 @@ int main() {
     {
         RS rs;
         CHECK(PostSet(rs, "bloom", 1)); CHECK(rs.post.bloom);
+        // New quality settings: default to today's look, clamp, and an untouched scene writes nothing extra.
+        { RS d; CHECK_NEAR(d.post.bloomSoftness, 0.0f, 0.0f); CHECK_NEAR(d.post.ssaoPower, 1.0f, 0.0f); }
+        CHECK(PostSet(rs, "bloom_softness", 5.0f)); CHECK_NEAR(rs.post.bloomSoftness, 1.0f, 1e-6f);
+        CHECK(PostSet(rs, "ssao_power", 0.0f)); CHECK_NEAR(rs.post.ssaoPower, 0.25f, 1e-6f);
+        CHECK(PostSet(rs, "ssao_power", 2.0f)); CHECK_NEAR(rs.post.ssaoPower, 2.0f, 1e-6f);
+        rs.post.bloomSoftness = 0.0f; rs.post.ssaoPower = 1.0f;
+        { Scene plain("plain"); CHECK(SceneSerializer::Serialize(plain).find("postq") == std::string::npos); }
         CHECK(PostSet(rs, "bloom_threshold", 0.5f)); CHECK_NEAR(rs.post.bloomThreshold, 0.5f, 1e-6f);
         CHECK(PostSet(rs, "exposure", 1.8f)); CHECK_NEAR(rs.post.exposure, 1.8f, 1e-6f);
         CHECK(PostSet(rs, "tonemap", 2)); CHECK(rs.post.tonemap == PS::TonemapFilmic);

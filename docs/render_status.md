@@ -68,11 +68,17 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 | Shared SSAO maths (`SsaoMath.hpp`): constants, CPU reference, and the HLSL text | `tests/test_ssao_math.cpp`: CPU maths, a frame from the software renderer, and a text check that GL, D3D11 and the header agree | The HLSL has never been compiled by the real HLSL compiler (`D3DCompile`) |
 | Shared depth of field maths (`DofMath.hpp`): constants, CPU reference, HLSL text | `tests/test_dof_math.cpp`: CPU maths, and a text check that GL, D3D11 and the header agree | The HLSL has never been compiled by `D3DCompile` |
 | Direct3D 11 depth of field pass (`PSDof`) | Compile-checked with `x86_64-w64-mingw32-g++ -fsyntax-only`; not run. UNVERIFIED | Blur quality and focus on a real frame |
+| Bloom Softness and Ambient Occlusion Power (`PostQualityMath.hpp`, `post.bloomSoftness`, `post.ssaoPower`, saved as a `postq` line, `post_set` names, inspector sliders) | `tests/test_post_quality_math.cpp` (CPU maths: softness 0 and power 1 equal today's output exactly; knee is continuous; text check that GL and D3D11 paste the same code), `tests/test_post_sky.cpp` (save round-trip, clamps, defaults write nothing); D3D11 compile-checked | GLSL never compiled here; HLSL never run through `D3DCompile`; unrun on a GPU. UNVERIFIED |
 | Direct3D 11 ambient occlusion pass | Compile-checked with `x86_64-w64-mingw32-g++ -fsyntax-only` | Not run. No Windows, no GPU. UNVERIFIED |
 | Direct3D 12 honest labels (Build Settings, `RendererFeatures.hpp`, header comment) | `tests/test_renderer_features.cpp` | n/a |
 
+## Why these two quality settings
+
+I picked Bloom Softness and Ambient Occlusion Power from the candidate list because both are pure maths on a number the shader already has (a pixel's brightness, the occlusion value). That means the whole formula can be unit tested on the CPU, and with the default (softness 0, power 1) the output is mathematically the same as before, so no saved scene changes. Auto-exposure needs a GPU brightness read-back, shadow cascade blending changes the shadow sampling loop on both backends, and contact shadows need a new depth march and a light-direction input: all bigger, and harder to test without a GPU. They are still open (see below).
+
 ## Next three renderer items
 
+0. Still open on GL and D3D11, in order of value: shadow cascade blending (visible seam between cascades), auto-exposure, screen-space contact shadows. The software renderer ignores Bloom Softness and AO Power (another agent owns it).
 1. Turn the software renderer's per-pixel path on by default (or make shadows work on the vertex path), then read the scene's Post-processing section so it matches the GPU renderers. This is the biggest gap for people who see the software frame.
 2. Put the new D3D11 ambient occlusion in front of a real Windows GPU and fix what the first frame shows. Then do the same review for the D3D11 depth of field pass.
 3. Direct3D 12 post chain: share the D3D11 post shaders and targets instead of copying them a second time, or park D3D12 for good and say so.

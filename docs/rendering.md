@@ -59,11 +59,11 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 | **Filmic Rendering** | The linear-lighting pipeline (on by default). Off = the legacy flat response, and no tonemap curve. |
 | **Exposure** | Scene brightness multiplier, 1 = as lit. |
 | **Tonemap** | How highlights roll off: **ACES** (the default, punchy), **Filmic** (a softer shoulder), **None** (clip). |
-| **Bloom** | Glow around bright pixels: **Threshold** (brightness that starts to glow; with Filmic Rendering 1 = white), **Intensity**, **Radius**. Blurred at half and quarter resolution, so it stays cheap at 1080p. |
+| **Bloom** | Glow around bright pixels: **Threshold** (brightness that starts to glow; with Filmic Rendering 1 = white), **Intensity**, **Radius**, **Softness** (0 = the hard cut, as before; higher fades the glow in around the threshold instead of popping on). Blurred at half and quarter resolution, so it stays cheap at 1080p. |
 | **Colour Grading** | **Temperature** (cool ↔ warm) and **Tint** white balance, **Saturation**, **Contrast**, and per-channel **Lift** (blacks), **Gamma** (mid-tones), **Gain** (whites). |
 | **Vignette** | Darkens the edges and corners, with a **Smoothness** for how far in it reaches. 0 = off. The post chain draws it when it runs; otherwise it is an overlay that looks the same on every renderer. |
 | **Anti-aliasing (FXAA)** | A luma-driven edge filter on the finished frame. |
-| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. OpenGL, and Direct3D 11 (new, unrun on a GPU). |
+| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units), **Intensity** and **Power** (1 = as before; higher keeps only deep creases dark, lower spreads a lighter shadow). OpenGL, and Direct3D 11 (new, unrun on a GPU). |
 | **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL, and Direct3D 11 (new, unrun on a GPU). Off unless the switch is on. |
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a

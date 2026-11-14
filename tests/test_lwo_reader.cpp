@@ -89,7 +89,138 @@ static std::size_t Tris(const ImportedModel& m) { std::size_t n = 0; for (const 
 static bool HasNote(const ImportedModel& m, const char* part) { for (const std::string& n : m.notes) if (n.find(part) != std::string::npos) return true; return false; }
 static bool Read(const std::string& s, ImportedModel& m, std::string& e) { return ReadLwoBuffer(s, "dir/", m, &e); }
 
+
+// ---- generated UVs of projected maps: single triangles in file space with hand-computed answers ----
+struct P3 { float x, y, z; };
+static std::string ProjFile(const std::vector<P3>& pts, const std::vector<std::vector<int>>& polys, int proj, int axis, float ww, float wh, const float* cen = nullptr, const float* siz = nullptr) {
+    std::string pn; for (const P3& p : pts) { BF(pn, p.x); BF(pn, p.y); BF(pn, p.z); }
+    std::string pl = "FACE"; for (const auto& q : polys) { B16(pl, (unsigned)q.size()); for (int i : q) BVX(pl, (std::uint32_t)i); }
+    std::string c = Tags({"S"}) + Layr(0, "L") + Chunk("PNTS", pn) + Chunk("POLS", pl) + PtagSurf(std::vector<unsigned>(polys.size(), 0));
+    std::string head; BS0(head, "\x80"); head += Sub("CHAN", "COLR");
+    std::string pj; B16(pj, (unsigned)proj); std::string ax; B16(ax, (unsigned)axis);
+    std::string blok = Sub("IMAP", head) + Sub("PROJ", pj) + Sub("IMAG", [] { std::string s; BVX(s, 1); return s; }()) + Sub("AXIS", ax);
+    std::string w1; BF(w1, ww); B16(w1, 0); blok += Sub("WRPW", w1);
+    std::string w2; BF(w2, wh); B16(w2, 0); blok += Sub("WRPH", w2);
+    if (cen && siz) {
+        std::string tm; std::string a; for (int k = 0; k < 3; ++k) BF(a, cen[k]); B16(a, 0); tm += Sub("CNTR", a);
+        std::string b; for (int k = 0; k < 3; ++k) BF(b, siz[k]); B16(b, 0); tm += Sub("SIZE", b);
+        blok += Sub("TMAP", tm);
+    }
+    std::string clip; B32(clip, 1); clip += Sub("STIL", [] { std::string s; BS0(s, "a.tga"); return s; }());
+    c += Chunk("CLIP", clip) + Surf2("S", Sub("COLR", F3(1, 1, 1)) + Sub("BLOK", blok));
+    return Form("LWO2", c);
+}
+// the (u, v) of the vertex at file-space point p (the reader negates z); false if no such vertex
+static bool UvOf(const ImportedModel& m, const P3& p, double& u, double& v) {
+    for (const ImportedPart& pt : m.parts) for (std::size_t i = 0; i < pt.mesh.vertices.size() && i < pt.mesh.uvs.size(); ++i) {
+        const Vec3& q = pt.mesh.vertices[i];
+        if (Near(q.x, p.x, 1e-3f) && Near(q.y, p.y, 1e-3f) && Near(q.z, -p.z, 1e-3f)) { u = pt.mesh.uvs[i].x; v = 1.0 - pt.mesh.uvs[i].y; return true; }
+    }
+    return false;
+}
+static bool UvIs(const ImportedModel& m, const P3& p, double eu, double ev, double tol = 2e-4) {
+    double u = 0, v = 0; return UvOf(m, p, u, v) && std::fabs(u - eu) < tol && std::fabs(v - ev) < tol;
+}
+static bool AllUvFinite(const ImportedModel& m) {
+    for (const ImportedPart& pt : m.parts) for (const Vec2& t : pt.mesh.uvs) if (!std::isfinite(t.x) || !std::isfinite(t.y) || std::fabs(t.x) > 1.0001e15f || std::fabs(t.y) > 1.0001e15f) return false;
+    return true;
+}
+
+static void ProjectionTests() {
+    const double kPi = 3.14159265358979323846;
+    ImportedModel m; std::string err;
+    RUN_SUITE("lwo: generated UVs, hand-computed");
+    {   // planar, main axis Z with the map's centre (1, 2, 0) and size (4, 2, 1): u = (x - 1) / 4 + 1/2, v = (y - 2) / 2 + 1/2
+        const float cen[3] = {1, 2, 0}, siz[3] = {4, 2, 1};
+        const std::vector<P3> pts = {{3, 3, 0}, {1, 2, 5}, {-1, 1, 0}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 0, 2, 1, 1, cen, siz), m, err) && HasNote(m, "UVs were generated"));
+        CHECK(UvIs(m, pts[0], 1.0, 1.0) && UvIs(m, pts[1], 0.5, 0.5) && UvIs(m, pts[2], 0.0, 0.0));
+    }
+    {   // planar, main axis X: u from the file's z, v from y; centre (0, 1, 1), size (1, 4, 2); u = (z - 1) / 2 + 1/2, v = (y - 1) / 4 + 1/2
+        const float cen[3] = {0, 1, 1}, siz[3] = {1, 4, 2};
+        const std::vector<P3> pts = {{0, 2, 0}, {0, 1, 1}, {5, -1, 3}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 0, 0, 1, 1, cen, siz), m, err));
+        CHECK(UvIs(m, pts[0], 0.0, 0.75) && UvIs(m, pts[1], 0.5, 0.5) && UvIs(m, pts[2], 1.5, 0.0));
+    }
+    {   // planar, main axis Y: u from x, v from z; no map centre or size: the box of the points (here x in [0, 2], z in [0, 4])
+        const std::vector<P3> pts = {{0, 0, 0}, {2, 5, 4}, {0, 1, 0}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 0, 1, 1, 1), m, err));
+        CHECK(UvIs(m, pts[0], 0.0, 0.0) && UvIs(m, pts[1], 1.0, 1.0) && UvIs(m, pts[2], 0.0, 0.0));
+    }
+    {   // cylindrical round Y, centre 0, size (1, 2, 1), wrap 2 x 3: lon = atan2(z, x) (the planar pair for axis Y: x then z), t = lon / 2pi + 1/2, v = y / 2 + 1/2
+        const float cen[3] = {0, 0, 0}, siz[3] = {1, 2, 1};
+        const std::vector<P3> pts = {{0, 1, 1}, {1, 0, 0.5f}, {-1, 0, 0.5f}};   // lon atan2(1, 0), atan2(.5, 1), atan2(.5, -1)
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 1, 1, 2, 3, cen, siz), m, err));
+        const double t0 = std::atan2(1.0, 0.0) / (2 * kPi) + 0.5, t1 = std::atan2(0.5, 1.0) / (2 * kPi) + 0.5, t2 = std::atan2(0.5, -1.0) / (2 * kPi) + 0.5;
+        CHECK(UvIs(m, pts[0], t0 * 2, 1.0 * 3) && UvIs(m, pts[1], t1 * 2, 0.5 * 3) && UvIs(m, pts[2], t2 * 2, 0.5 * 3));
+    }
+    {   // spherical round Y: a pole corner takes the mean longitude of its triangle; latitude = atan2(y, radius), v = lat / pi + 1/2
+        const float cen[3] = {0, 0, 0}, siz[3] = {1, 1, 1};
+        const std::vector<P3> pts = {{0, 1, 0}, {0, 0, 1}, {1, 1, 1}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 2, 1, 1, 1, cen, siz), m, err));
+        const double t1 = 0.5 + (kPi / 2) / (2 * kPi), t2 = 0.5 + (kPi / 4) / (2 * kPi), lat2 = std::atan2(1.0, std::sqrt(2.0));
+        CHECK(UvIs(m, pts[1], t1, 0.5) && UvIs(m, pts[2], t2, lat2 / kPi + 0.5) && UvIs(m, pts[0], 0.5 * (t1 + t2), 1.0));
+        // wrap 4 x 2 repeats the texture round the sphere and from pole to pole
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 2, 1, 4, 2, cen, siz), m, err) && UvIs(m, pts[1], t1 * 4, 1.0));
+    }
+    RUN_SUITE("lwo: generated UVs, the wrap seam");
+    {   // a triangle across the longitude seam of a cylinder round Y: corners at t = 0.984, 0.016 and 1.0 (x = -1, z = +-0.1 and 0) must not stretch over the texture
+        const float cen[3] = {0, 0, 0}, siz[3] = {1, 1, 1};
+        const std::vector<P3> pts = {{-1, 0, 0.1f}, {-1, 0, -0.1f}, {-1, 1, 0}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 1, 1, 1, 1, cen, siz), m, err));
+        double u[3], v[3]; bool ok = true;
+        for (int i = 0; i < 3; ++i) ok = UvOf(m, pts[(std::size_t)i], u[i], v[i]) && ok;
+        CHECK(ok);
+        if (ok) {
+            CHECK(std::fabs(u[0] - u[1]) < 0.5 && std::fabs(u[0] - u[2]) < 0.5 && std::fabs(u[1] - u[2]) < 0.5);
+            const double lon0 = std::atan2(0.1, -1.0) / (2 * kPi) + 0.5;   // 0.984: the corner at z = -0.1 is moved up by one turn to 1.016
+            CHECK(std::fabs(u[0] - lon0) < 2e-4 && std::fabs(u[1] - (2.0 - lon0)) < 2e-4 && std::fabs(u[2] - 1.0) < 2e-4);
+        }
+        // the same triangle on a sphere
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 2, 1, 1, 1, cen, siz), m, err));
+        ok = true; for (int i = 0; i < 3; ++i) ok = UvOf(m, pts[(std::size_t)i], u[i], v[i]) && ok;
+        CHECK(ok && std::fabs(u[0] - u[1]) < 0.5 && std::fabs(u[0] - u[2]) < 0.5 && std::fabs(u[1] - u[2]) < 0.5);
+        // a whole cylinder-mapped cube: no triangle spreads over more than 2/3 of a turn (the most any three points can need)
+        CHECK(Read(Box2(true, 1, 2), m, err));
+        bool tight = true;
+        for (const ImportedPart& p : m.parts) if (!p.mesh.uvs.empty()) for (std::size_t i = 0; i + 2 < p.mesh.triangles.size(); i += 3) {
+            double lo = 1e9, hi = -1e9;
+            for (int k = 0; k < 3; ++k) { const double uu = p.mesh.uvs[p.mesh.triangles[i + (std::size_t)k]].x; lo = std::min(lo, uu); hi = std::max(hi, uu); }
+            if (hi - lo > 0.667) tight = false;
+        }
+        CHECK(tight);
+    }
+    RUN_SUITE("lwo: generated UVs, degenerate and hostile input");
+    {   // corners on the cylinder's axis have no longitude: they take the one the triangle has
+        const float cen[3] = {0, 0, 0}, siz[3] = {1, 1, 1};
+        const std::vector<P3> pts = {{0, 0, 0}, {0, 1, 0}, {1, 0, 0}};
+        CHECK(Read(ProjFile(pts, {{0, 1, 2}}, 1, 1, 1, 1, cen, siz), m, err));
+        CHECK(UvIs(m, pts[0], 0.5, 0.5) && UvIs(m, pts[1], 0.5, 1.5) && UvIs(m, pts[2], 0.5, 0.5));   // lon of (1, 0, 0) round Y: atan2(z = 0, x = 1) = 0
+        // an axis number outside 0..2 is read as X; a size of 0 falls back to the box's extent (the centre stays)
+        const float zs[3] = {0, 0, 0};
+        const std::vector<P3> t3 = {{0, 0, 0}, {2, 2, 0}, {0, 2, 3}};
+        CHECK(Read(ProjFile(t3, {{0, 1, 2}}, 0, 7, 1, 1, cen, zs), m, err) && AllUvFinite(m) && UvIs(m, t3[0], 0.5, 0.5) && UvIs(m, t3[1], 0.5, 1.5) && UvIs(m, t3[2], 1.5, 1.5));   // axis X; centre 0 kept, size from the box: u = z / 3 + 1/2, v = y / 2 + 1/2
+    }
+    {   // NaN, infinite, zero, tiny and huge centres, sizes and wrap amounts, on every projection and axis: every UV stays finite
+        const float bad[] = {std::nanf(""), INFINITY, -INFINITY, 0.0f, -0.0f, 1e-30f, 1e30f, -1e30f, 1.0f, 3.5f};
+        std::uint32_t seed = 12345u;
+        auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+        bool fin = true; int ran = 0;
+        for (int it = 0; it < 600; ++it) {
+            const float cen[3] = {bad[rnd() % 10], bad[rnd() % 10], bad[rnd() % 10]}, siz[3] = {bad[rnd() % 10], bad[rnd() % 10], bad[rnd() % 10]};
+            std::vector<P3> pts; for (int k = 0; k < 3; ++k) pts.push_back({(float)(rnd() % 7) - 3, (float)(rnd() % 7) - 3, (float)(rnd() % 7) - 3});
+            if (it % 5 == 0) pts[0] = {1e9f, -1e9f, 5e8f};
+            ImportedModel mm; std::string e;
+            if (!Read(ProjFile(pts, {{0, 1, 2}}, it % 3, (int)(rnd() % 4), bad[rnd() % 10], bad[rnd() % 10], cen, siz), mm, e)) continue;
+            ++ran;
+            if (!AllUvFinite(mm)) fin = false;
+        }
+        CHECK(fin && ran > 100);
+    }
+}
+
 int main() {
+    ProjectionTests();
     ImportedModel m; std::string err;
     RUN_SUITE("lwo2: surfaces, parts, materials");
     {
@@ -192,9 +323,9 @@ int main() {
             const Mesh& pm = wp->mesh;
             bool uvOk = pm.uvs.size() == pm.vertices.size() && !pm.uvs.empty();
             Vec3 lo, hi; pm.Bounds(lo, hi);
-            for (std::size_t i = 0; uvOk && i < pm.vertices.size(); ++i) {   // planar, axis X: U from Z, V from Y, each over the part's own box; stored as (u, 1 - v)
+            for (std::size_t i = 0; uvOk && i < pm.vertices.size(); ++i) {   // planar, axis X: U from Z, V from Y, each over the part's own box, with U from the file's z (the engine's z negated); stored as (u, 1 - v)
                 const Vec3& v = pm.vertices[i]; const Vec2& t = pm.uvs[i];
-                if (!Near(t.x, (v.z - lo.z) / (hi.z - lo.z), 1e-4f) || !Near(t.y, 1.0f - (v.y - lo.y) / (hi.y - lo.y), 1e-4f)) uvOk = false;
+                if (!Near(t.x, (hi.z - v.z) / (hi.z - lo.z), 1e-4f) || !Near(t.y, 1.0f - (v.y - lo.y) / (hi.y - lo.y), 1e-4f)) uvOk = false;
             }
             CHECK(uvOk);
         }
@@ -218,7 +349,7 @@ int main() {
             for (std::size_t i = 0; ok && i < pm.vertices.size(); ++i) {
                 // Blue is the three faces at x = 1, y = 1 and z = 1 ... in the file's z (negated on reading): the box of its vertices is the whole cube
                 const Vec3& v = pm.vertices[i]; const Vec2& t = pm.uvs[i];
-                if (!Near(t.x, v.x, 1e-4f) || !Near(t.y, -v.z, 1e-4f)) ok = false;   // stored (u, 1 - v) with v = z + 1
+                if (!Near(t.x, v.x, 1e-4f) || !Near(t.y, 1.0f + v.z, 1e-4f)) ok = false;   // v is the file's z = -z: stored (u, 1 - v) = (x, 1 + z)
             }
             CHECK(ok);
         }
@@ -226,11 +357,11 @@ int main() {
         CHECK(Read(Box2(true, 1, 2, 2.0f, 1.0f), m, err) && HasNote(m, "UVs were generated"));
         bool fin = true; float maxU = 0;
         for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) { if (!std::isfinite(t.x) || !std::isfinite(t.y)) fin = false; maxU = std::max(maxU, t.x); }
-        CHECK(fin && maxU > 1.0f && maxU <= 2.0001f);
-        // spherical: finite UVs, U in 0..1, V in 0..1
+        CHECK(fin && maxU > 1.0f && maxU <= 3.4f);   // at most 2 (one turn, wrap 2) plus the up-to-2/3-turn shift of a triangle across the seam
+        // spherical: finite UVs, V in 0..1, U in 0..1 or a little above for a triangle moved across the seam
         CHECK(Read(Box2(true, 2, 1), m, err));
         bool in01 = true;
-        for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) if (!(t.x >= -1e-4f && t.x <= 1.0001f && t.y >= -1e-4f && t.y <= 1.0001f)) in01 = false;
+        for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) if (!(t.x >= -1e-4f && t.x <= 1.5f && t.y >= -1e-4f && t.y <= 1.0001f)) in01 = false;
         CHECK(in01);
         // cubic projection: the texture is kept, no UVs, a note
         CHECK(Read(Box2(true, 3), m, err) && HasNote(m, "cubic or front"));

@@ -3,8 +3,10 @@
 // tests can check a pitch ratio, a muffling curve and an occlusion level without
 // a scene. The reverberator is a Schroeder design: eight parallel comb filters
 // with a damped feedback, then four all-pass filters in series, run per channel
-// with a short extra delay on the right. Lengths are the published 44.1 kHz
-// tunings, scaled to the output rate. Nothing here is on unless a caller asks.
+// with a different set of delays on the right. Delay lengths are primes we chose
+// (25 to 45 ms combs, 5 to 12 ms all-passes at 44.1 kHz), scaled to the output rate;
+// the tail time is an RT60 worked out from `room` (see SpatialFx.cpp). Nothing here
+// is on unless a caller asks.
 #include "okay/Math/Vec3.hpp"
 #include <vector>
 
@@ -50,15 +52,17 @@ private:
         std::vector<float> buf;
         int idx = 0;
         float store = 0.0f;
+        float gain = 0.8f, damp = 0.0f;   // comb loop gain and low-pass coefficient, set by Retune
         void Resize(int n);
         void Wipe();
-        float Comb(float input, float feedback, float damp);
-        float Allpass(float input, float feedback);
+        float Comb(float input);
+        float Allpass(float input, float g);
     };
+    void Retune();
 
     Delay m_combL[8], m_combR[8], m_allL[4], m_allR[4];
     int m_rate = 0;
-    float m_feedback = 0.82f;
+    float m_rt60 = 1.0f;   // seconds, from `room`
     float m_damp = 0.5f;
     float m_wet = 0.0f;
     float m_width = 1.0f;

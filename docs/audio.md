@@ -129,7 +129,7 @@ session; players set their own (below).
 
 A **Reverb** volume (GameObject > Volume, or Add Component > Volume: Reverb) puts an echo on **3D** sounds while the listener is inside it. 2D sounds, including music and UI, stay dry. There is no echo at all until a Reverb volume exists, so an old scene stays dry.
 
-The echo is a Schroeder reverberator: eight comb filters in parallel, each with a little damping in the feedback, then four all-pass filters in series. The right channel uses a slightly longer set of delays so the tail spreads in stereo. It is our own code, written from that public description.
+The echo is a Schroeder reverberator: eight comb filters in parallel, each with a little damping in the feedback, then four all-pass filters in series. The right channel uses a slightly longer set of delays so the tail spreads in stereo. It is our own code, written from that public description. The numbers are our own too: comb delays are primes between 25 and 45 ms (at 44.1 kHz), all-pass delays are primes between 5 and 12 ms, and the tail length and damping come from an RT60 formula (`g = 10^(-3 d / (RT60 * rate))` per comb; `room` 0 to 1 gives an RT60 of 0.3 s to 6 s). The derivation is in the comment at the top of `engine/src/Audio/SpatialFx.cpp`. This tuning replaced an earlier one, so reverb tails sound a little different from older versions.
 
 | Echo | What you hear |
 | --- | --- |

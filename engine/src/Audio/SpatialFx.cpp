@@ -7,15 +7,52 @@ namespace okay {
 
 namespace {
 
-constexpr float kInputGain = 0.015f;   // eight combs would otherwise sum far too hot
-constexpr float kAllpassFeedback = 0.5f;
-constexpr int kSpread = 23;
-constexpr int kCombTuning[8] = {1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617};
-constexpr int kAllpassTuning[4] = {556, 441, 341, 225};
+// Reverb tuning, chosen and derived here (nothing is taken from another reverb's published numbers).
+//
+// Shape: eight parallel feedback combs with a one-pole low-pass in the loop, then four all-pass filters in series;
+// the textbook Schroeder / Moorer layout. The numbers below are ours:
+//  * Comb delays are primes between 1102 and 1984 samples, i.e. 25 to 45 ms at 44.1 kHz, spread roughly evenly
+//    (1151, 1303, 1427, ... 1949; steps of 100 to 150 samples). Distinct primes share no common factor, so the
+//    combs' echo trains do not line up into a ringing pitch (they are not harmonics of one another). Long enough
+//    for a smooth tail, short enough that the first echo is heard as part of the room and not as a slapback.
+//  * The right channel uses a second set of primes a few samples to a few dozen longer, so the two tails differ
+//    (stereo width) without a fixed copy of the left one.
+//  * All-pass delays are primes between 233 and 521 samples, i.e. 5.3 to 11.5 ms at 44.1 kHz, shortest last.
+//    They add echo density without colouring the level (an all-pass has a flat magnitude).
+//  * At another sample rate every delay is scaled by rate / 44100, rounded, and moved up to the next prime so
+//    the delays stay mutually prime.
+//  * The tail time comes from `room` as an RT60 (seconds for the tail to fall by 60 dB): rt60 = 0.3 * 20^room,
+//    so 0.3 s to 6 s. A comb of d samples that must lose 60 dB in rt60 seconds needs, per pass round its loop,
+//    the gain g = 10^(-3 d / (rt60 * rate)) (60 dB is a factor of 10^-3; a pass takes d / rate seconds).
+//  * Damping makes the high frequencies die faster: the in-loop one-pole low-pass y = (1 - a) x + a y has gain 1 at
+//    DC and (1 - a) / (1 + a) at half the sample rate. `damp` 0..1 sets the RT60 at the top of the band to
+//    rt60 * (1 - 0.9 * damp); the comb then needs g_hf = 10^(-3 d / (rt60_hf * rate)), and a follows from
+//    (1 - a) / (1 + a) = g_hf / g. a is capped at 0.98.
+//  * g is capped at 0.995 so the loop gain is always below 1: the reverb cannot blow up, whatever the settings.
+//  * All-pass gain 0.65 (Schroeder's classic range is 0.5 to 0.7). The all-pass is the exact form
+//    v = x - g * buffer, y = buffer + g * v, whose magnitude response is 1 at every frequency.
+//  * Input gain 1/80: the eight combs add, so a hot input is scaled down; chosen so a full-scale noise input
+//    stays well inside the range at the longest RT60.
+// The sound is therefore not the same as the earlier tuning's; the API and the presets' names are unchanged.
+constexpr float kInputGain = 1.0f / 80.0f;
+constexpr float kAllpassGain = 0.65f;
+constexpr int kCombLeft[8]   = {1151, 1303, 1427, 1571, 1693, 1787, 1873, 1949};
+constexpr int kCombRight[8]  = {1163, 1319, 1439, 1583, 1709, 1801, 1889, 1951};
+constexpr int kAllLeft[4]    = {509, 401, 311, 233};
+constexpr int kAllRight[4]   = {521, 409, 317, 239};
+constexpr double kMinRt60 = 0.05, kMaxCombGain = 0.995, kMaxDamp = 0.98;
+
+bool IsPrime(int n) {
+    if (n < 2) return false;
+    for (int k = 2; (long long)k * k <= n; ++k) if (n % k == 0) return false;
+    return true;
+}
 
 int ScaledDelay(int tuning, int rate) {
-    const int n = (int)std::lround((double)tuning * (double)rate / 44100.0);
-    return n < 1 ? 1 : n;
+    int n = (int)std::lround((double)tuning * (double)rate / 44100.0);
+    if (n < 2) n = 2;
+    while (!IsPrime(n)) ++n;
+    return n;
 }
 
 float SnapDenormal(float x) {
@@ -58,21 +95,22 @@ void SchroederReverb::Delay::Wipe() {
     store = 0.0f;
 }
 
-float SchroederReverb::Delay::Comb(float input, float feedback, float damp) {
+float SchroederReverb::Delay::Comb(float input) {
     if (buf.empty()) return 0.0f;
     const float output = buf[(std::size_t)idx];
     store = SnapDenormal(output * (1.0f - damp) + store * damp);
-    buf[(std::size_t)idx] = SnapDenormal(input + store * feedback);
+    buf[(std::size_t)idx] = SnapDenormal(input + store * gain);
     if (++idx >= (int)buf.size()) idx = 0;
     return output;
 }
 
-float SchroederReverb::Delay::Allpass(float input, float feedback) {
+float SchroederReverb::Delay::Allpass(float input, float g) {
     if (buf.empty()) return 0.0f;
     const float buffered = buf[(std::size_t)idx];
-    buf[(std::size_t)idx] = SnapDenormal(input + buffered * feedback);
+    const float v = SnapDenormal(input - g * buffered);
+    buf[(std::size_t)idx] = v;
     if (++idx >= (int)buf.size()) idx = 0;
-    return -input + buffered;
+    return buffered + g * v;
 }
 
 void SchroederReverb::Prepare(int rate) {
@@ -81,14 +119,32 @@ void SchroederReverb::Prepare(int rate) {
     if (rate == m_rate && !m_combL[0].buf.empty()) return;
     m_rate = rate;
     for (int i = 0; i < 8; ++i) {
-        m_combL[i].Resize(ScaledDelay(kCombTuning[i], rate));
-        m_combR[i].Resize(ScaledDelay(kCombTuning[i] + kSpread, rate));
+        m_combL[i].Resize(ScaledDelay(kCombLeft[i], rate));
+        m_combR[i].Resize(ScaledDelay(kCombRight[i], rate));
     }
     for (int i = 0; i < 4; ++i) {
-        m_allL[i].Resize(ScaledDelay(kAllpassTuning[i], rate));
-        m_allR[i].Resize(ScaledDelay(kAllpassTuning[i] + kSpread, rate));
+        m_allL[i].Resize(ScaledDelay(kAllLeft[i], rate));
+        m_allR[i].Resize(ScaledDelay(kAllRight[i], rate));
     }
+    Retune();
     Clear();
+}
+
+void SchroederReverb::Retune() {
+    // per comb: loop gain for the wanted RT60 and a low-pass coefficient for the shorter RT60 at the top of the band
+    const double rate = (double)m_rate;
+    const double rt60 = std::max(kMinRt60, (double)m_rt60), rt60hf = std::max(kMinRt60, rt60 * (1.0 - 0.9 * (double)m_damp));
+    Delay* combs[2] = {m_combL, m_combR};
+    for (Delay* set : combs) {
+        for (int i = 0; i < 8; ++i) {
+            const double d = (double)set[i].buf.size();
+            const double g = std::min(kMaxCombGain, std::pow(10.0, -3.0 * d / (rt60 * rate)));
+            const double ghf = std::min(g, std::pow(10.0, -3.0 * d / (rt60hf * rate)));
+            const double a = std::min(kMaxDamp, std::max(0.0, (1.0 - ghf / g) / (1.0 + ghf / g)));
+            set[i].gain = (float)g;
+            set[i].damp = (float)a;
+        }
+    }
 }
 
 void SchroederReverb::Clear() {
@@ -98,11 +154,13 @@ void SchroederReverb::Clear() {
 }
 
 void SchroederReverb::Configure(const ReverbSettings& settings) {
-    const float room = Mathf::Clamp(settings.room, 0.0f, 1.0f);
-    m_feedback = Mathf::Clamp(room * 0.28f + 0.70f, 0.0f, 0.98f);
-    m_damp = Mathf::Clamp(settings.damp, 0.0f, 1.0f);
-    m_wet = Mathf::Clamp(settings.wet, 0.0f, 1.0f);
-    m_width = Mathf::Clamp(settings.width, 0.0f, 1.0f);
+    const auto fin = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };   // NaN keeps the default
+    const float room = Mathf::Clamp(fin(settings.room, 0.42f), 0.0f, 1.0f);
+    m_rt60 = (float)(0.3 * std::pow(20.0, (double)room));   // 0.3 s to 6 s
+    m_damp = Mathf::Clamp(fin(settings.damp, 0.5f), 0.0f, 1.0f);
+    m_wet = Mathf::Clamp(fin(settings.wet, 0.22f), 0.0f, 1.0f);
+    m_width = Mathf::Clamp(fin(settings.width, 0.55f), 0.0f, 1.0f);
+    if (m_rate > 0 && !m_combL[0].buf.empty()) Retune();
 }
 
 void SchroederReverb::BeginBlock() { m_blockPeak = 0.0f; }
@@ -113,12 +171,12 @@ void SchroederReverb::Process(float input, float& left, float& right) {
     const float x = input * kInputGain;
     float l = 0.0f, r = 0.0f;
     for (int i = 0; i < 8; ++i) {
-        l += m_combL[i].Comb(x, m_feedback, m_damp);
-        r += m_combR[i].Comb(x, m_feedback, m_damp);
+        l += m_combL[i].Comb(x);
+        r += m_combR[i].Comb(x);
     }
     for (int i = 0; i < 4; ++i) {
-        l = m_allL[i].Allpass(l, kAllpassFeedback);
-        r = m_allR[i].Allpass(r, kAllpassFeedback);
+        l = m_allL[i].Allpass(l, kAllpassGain);
+        r = m_allR[i].Allpass(r, kAllpassGain);
     }
     if (!std::isfinite(l) || !std::isfinite(r)) {
         Clear();

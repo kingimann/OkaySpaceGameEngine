@@ -202,6 +202,119 @@ int main() {
         CHECK(std::fabs(room - cave) > 1.0e-4);
     }
 
+    // ---- Reverb properties: decay time, stability, silence, energy, determinism --------------------
+    // (the delay lengths and gains are derived in SpatialFx.cpp from the RT60 formula; these check what a listener gets)
+    {
+        // impulse response energy: Schroeder backward integration, RT60 read from the -5 dB to -35 dB slope (x2)
+        auto measureRt60 = [](int rate, float room, float damp) {
+            SchroederReverb rev;
+            rev.Prepare(rate);
+            rev.Configure(ReverbSettings{room, damp, 1.0f, 1.0f});
+            rev.BeginBlock();
+            const int n = rate * 12;
+            std::vector<double> e((std::size_t)n);
+            for (int i = 0; i < n; ++i) {
+                float l = 0, r = 0;
+                rev.Process(i == 0 ? 1.0f : 0.0f, l, r);
+                e[(std::size_t)i] = (double)l * l + (double)r * r;
+            }
+            std::vector<double> back((std::size_t)n);
+            double acc = 0;
+            for (int i = n - 1; i >= 0; --i) { acc += e[(std::size_t)i]; back[(std::size_t)i] = acc; }
+            int i5 = -1, i35 = -1;
+            for (int i = 0; i < n; ++i) {
+                const double db = 10.0 * std::log10(back[(std::size_t)i] / back[0] + 1e-300);
+                if (i5 < 0 && db <= -5.0) i5 = i;
+                if (i35 < 0 && db <= -35.0) { i35 = i; break; }
+            }
+            return (i5 < 0 || i35 < 0) ? -1.0 : 2.0 * (double)(i35 - i5) / rate;
+        };
+        for (float room : {0.2f, 0.5f, 0.8f}) {
+            const double want = 0.3 * std::pow(20.0, (double)room);   // the requested RT60 for this `room`
+            for (int rate : {44100, 48000}) {
+                const double got = measureRt60(rate, room, 0.0f);
+                CHECK(got > want * 0.75 && got < want * 1.25);
+            }
+        }
+        CHECK(measureRt60(44100, 0.8f, 1.0f) < measureRt60(44100, 0.8f, 0.0f));   // damping shortens the tail
+
+        // no instability at the largest settings, at several rates, with loud noise in; the output stays bounded
+        for (int rate : {8000, 44100, 192000}) {
+            SchroederReverb rev;
+            rev.Prepare(rate);
+            rev.Configure(ReverbSettings{1.0f, 0.0f, 1.0f, 1.0f});
+            rev.BeginBlock();
+            std::uint32_t seed = 7u; float peak = 0.0f; bool finite = true;
+            for (int i = 0; i < rate * 3; ++i) {
+                seed = seed * 1664525u + 1013904223u;
+                const float x = ((seed >> 8) / 8388608.0f) - 1.0f;   // full-scale noise in [-1, 1)
+                float l = 0, r = 0;
+                rev.Process(x, l, r);
+                if (!std::isfinite(l) || !std::isfinite(r)) finite = false;
+                peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
+            }
+            CHECK(finite && peak < 20.0f);
+            // then silence in: the tail falls, it does not grow or ring forever
+            float lastPeak = 0.0f;
+            for (int i = 0; i < rate * 20; ++i) {
+                float l = 0, r = 0;
+                rev.Process(0.0f, l, r);
+                if (i >= rate * 19) lastPeak = std::max(lastPeak, std::max(std::fabs(l), std::fabs(r)));
+            }
+            CHECK(lastPeak < 0.02f * peak);   // 6 s RT60: 19 s later it is far below -60 dB of the start of the tail
+        }
+
+        // silence in gives silence out, and the mixer's Silent() flag agrees
+        {
+            SchroederReverb rev;
+            rev.Prepare(44100);
+            rev.Configure(PresetSettings(ReverbPreset::Cave));
+            rev.BeginBlock();
+            float worst = 0.0f;
+            for (int i = 0; i < 20000; ++i) { float l = 1, r = 1; rev.Process(0.0f, l, r); worst = std::max(worst, std::max(std::fabs(l), std::fabs(r))); }
+            CHECK(worst == 0.0f && rev.Silent());
+        }
+        // energy is bounded: a unit impulse never makes more total energy than a loose bound (all-passes keep energy, combs lose it)
+        {
+            SchroederReverb rev;
+            rev.Prepare(44100);
+            rev.Configure(ReverbSettings{0.6f, 0.3f, 1.0f, 1.0f});
+            rev.BeginBlock();
+            double total = 0.0;
+            for (int i = 0; i < 44100 * 10; ++i) { float l = 0, r = 0; rev.Process(i == 0 ? 1.0f : 0.0f, l, r); total += (double)l * l + (double)r * r; }
+            CHECK(total > 0.0 && total < 1.0);
+        }
+        // the same settings and input give the same samples every time, and Clear() restores the start state
+        {
+            std::vector<float> a, b;
+            for (int pass = 0; pass < 2; ++pass) {
+                SchroederReverb rev;
+                rev.Prepare(44100);
+                rev.Configure(PresetSettings(ReverbPreset::Hall));
+                rev.BeginBlock();
+                for (int i = 0; i < 6000; ++i) { float l = 0, r = 0; rev.Process((i % 97) == 0 ? 0.5f : 0.0f, l, r); (pass ? b : a).push_back(l); (pass ? b : a).push_back(r); }
+            }
+            CHECK(a == b);
+            SchroederReverb rev;
+            rev.Prepare(44100); rev.Configure(PresetSettings(ReverbPreset::Hall));
+            for (int i = 0; i < 3000; ++i) { float l, r; rev.Process(0.7f, l, r); }
+            rev.Clear();
+            std::vector<float> c;
+            for (int i = 0; i < 6000; ++i) { float l = 0, r = 0; rev.Process((i % 97) == 0 ? 0.5f : 0.0f, l, r); c.push_back(l); c.push_back(r); }
+            CHECK(c == a);
+        }
+        // hostile settings (NaN, huge, negative) still give a finite, bounded tail
+        {
+            SchroederReverb rev;
+            rev.Prepare(44100);
+            rev.Configure(ReverbSettings{std::nanf(""), 1e30f, -5.0f, 3.0f});
+            rev.BeginBlock();
+            bool finite = true;
+            for (int i = 0; i < 20000; ++i) { float l = 0, r = 0; rev.Process(i == 0 ? 1.0f : 0.0f, l, r); if (!std::isfinite(l) || !std::isfinite(r)) finite = false; }
+            CHECK(finite);
+        }
+    }
+
     // ---- Defaults leave a 3D source unchanged -------------------------------------------------
     {
         Reset();

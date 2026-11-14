@@ -146,9 +146,12 @@ void DrawGuides(Ctx& c, const DockDropInfo& d) {
 DockLayout& GetDockLayout() { return C().layout; }
 DockDropInfo GetDockDrop() { return C().drop; }
 
+namespace { int g_nextDockNode = 0; int g_nextDockCond = 0; }
 void DockReset() {
     Ctx& c = C();
     c = Ctx();
+    g_nextDockNode = 0;
+    DockBuilderReset();
 }
 
 std::string DockSaveLayout() { return C().layout.Save(); }
@@ -310,8 +313,13 @@ void DockSpace(Rect area) {
     if (c.drop.active) DrawGuides(c, c.drop);
 }
 
+void SetNextWindowDockID(int node, Cond cond) { g_nextDockNode = node; g_nextDockCond = (int)cond; }
+bool IsWindowDocked() { Ctx& c = C(); return c.inBegin && c.began && c.layout.NodeOf(c.curName) != 0; }
+
 bool DockBegin(const char* title, bool* p_open, int flags) {
     Ctx& c = C();
+    const int wantNode = g_nextDockNode; const int wantCond = g_nextDockCond;   // SetNextWindowDockID applies to this window only
+    g_nextDockNode = 0;
     if (c.inBegin) DockEnd();   // an unmatched DockBegin
     c.inBegin = true; c.began = c.clipped = c.floating = false; c.curName.clear(); c.pOpen = p_open;
     if (!title || !*title) return false;
@@ -324,10 +332,14 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
         return false;
     }
     if (p_open && !*p_open) return false;
+    bool isNew = false;
     if (!c.layout.Contains(name)) {
         const float k = (float)(c.layout.FloatingWindows().size() % 8) * 26.0f;
         if (!c.layout.AddFloating(name, Rect{c.area.x + 40.0f + k, c.area.y + 40.0f + k, 320.0f, 240.0f})) return false;   // layout full
+        isNew = true;
     }
+    if (wantNode && (wantCond == Cond_Always || isNew) && c.layout.Find(wantNode) && !c.layout.Find(wantNode)->IsSplit() && c.layout.NodeOf(name) != wantNode)
+        c.layout.Dock(name, wantNode, DockSide_Center);
     const int node = c.layout.NodeOf(name);
     if (node) {
         const DockLayout::Node* n = c.layout.Find(node);

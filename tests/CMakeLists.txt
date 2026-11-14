@@ -1698,6 +1698,14 @@ if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     target_link_libraries(test_native_fetch PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME native_fetch COMMAND test_native_fetch)
     set_tests_properties(native_fetch PROPERTIES TIMEOUT 120)
+    # PlayFab's HTTP helper through our own client against a loopback server (curl is not on PATH there).
+    add_executable(test_playfab_own test_playfab_own.cpp)
+    target_compile_features(test_playfab_own PRIVATE cxx_std_17)
+    target_compile_definitions(test_playfab_own PRIVATE OKAY_OWN_HTTP=1)
+    target_include_directories(test_playfab_own PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_playfab_own PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME playfab_own COMMAND test_playfab_own)
+    set_tests_properties(playfab_own PROPERTIES TIMEOUT 60)
 endif()
 
 # The self-update decisions (shared/SelfUpdate.hpp, launcher/UpdaterCore.hpp): state file, start-up verdict, retry rule, self-check, rollback,

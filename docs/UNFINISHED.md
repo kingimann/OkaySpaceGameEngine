@@ -36,6 +36,19 @@ The feature map currently has **123** rows that are Partial or Planned.
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 
+## Own cryptography: waiting for an outside review
+
+`okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
+
+| Step | State | Who |
+|---|---|---|
+| Decide whether to consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`, and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Choose a reviewer, a budget and a date; send the request and the bundle (nobody has been asked; cost and start date unknown) | Not started | Owner |
+| The outside review itself, its report and findings | Not started | Reviewer |
+| Fix every finding or record why it is acceptable, re-run the evidence, send the fixes back for a re-check | Waiting on the report | Team |
+| CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
+| The flip decision: make it the default for new builds, then delete libsodium and the TweetNaCl port one release later | Owner decision, only after a reviewer's yes | Owner |
+
 ## Planned: visual-script core upgrade
 
 Steps 1 and 2 turned out to be mostly shipped already (see "Declared variables, lists, maps and structs" in `docs/visual_scripting.md`); the audit and the remaining gaps are below. Steps 3 to 5 are not started. One at a time, each shipped only when finished, tested and usable in the editor:

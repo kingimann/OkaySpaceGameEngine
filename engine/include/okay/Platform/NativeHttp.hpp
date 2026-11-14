@@ -237,6 +237,7 @@ struct ExResult : Result {
     std::string etag, lastModified; ///< validators of the final answer, for the next conditional request
     std::vector<std::string> cookies;   ///< "name=value" the jar holds after the call (only with RequestOptions::cookies)
     int      reusedConnections = 0; ///< requests of this call that used a kept-alive connection
+    std::string rawHead;            ///< the final answer's status line and headers as text (like `curl -D`), for callers that parse them
 };
 
 inline ExResult RequestEx(const std::string& method, const std::string& url,
@@ -307,6 +308,9 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
         r.body = std::move(fr.response.body);
         r.resumed = fr.partial && out->open;
         r.notModified = fr.response.status == 304;
+        r.rawHead = "HTTP/1." + std::string(fr.response.minor ? "1" : "0") + " " + std::to_string(fr.response.status) + " " + fr.response.reason + "\r\n";
+        for (const okay::ownhttp::Header& h : fr.response.headers) r.rawHead += h.name + ": " + h.value + "\r\n";
+        r.rawHead += "\r\n";
         r.reusedConnections = fr.reusedConnections;
         if (const std::string* v = fr.response.Get("etag")) r.etag = *v;
         if (const std::string* v = fr.response.Get("last-modified")) r.lastModified = *v;

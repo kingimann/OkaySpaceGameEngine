@@ -37,7 +37,9 @@ public:
     /// Combined back-to-front sort key: sorting layer first, then order-in-layer.
     /// Compare these to draw correctly; smaller = further back.
     long long SortKey() const {
-        return ((long long)sortingLayer << 32) | (unsigned int)(sortOrder + 0x40000000);
+        // Layer in the high half, order shifted to be non-negative in the low half. The old
+        // "+ 0x40000000" wrapped for orders beyond about +-1 billion and sorted them wrongly.
+        return (long long)sortingLayer * 4294967296LL + ((long long)sortOrder + 2147483648LL);
     }
     /// Mirror the sprite horizontally / vertically (e.g. flip a character to
     /// face the way it's moving) without touching the Transform.

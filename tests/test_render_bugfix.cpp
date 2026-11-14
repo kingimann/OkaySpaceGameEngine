@@ -130,5 +130,16 @@ int main() {
         if (c.HasUVs()) CHECK_NEAR(c.uvs[1].x, 1.0f, 1e-6f);
     }
 
+    RUN_SUITE("sprite sort key orders every int sort order");
+    {
+        SpriteRenderer lo, mid, hi, back;
+        lo.sortOrder = -2000000000; mid.sortOrder = 0; hi.sortOrder = 2000000000;
+        CHECK(lo.SortKey() < mid.SortKey());
+        CHECK(mid.SortKey() < hi.SortKey());
+        back.sortingLayer = -1; back.sortOrder = 2000000000;
+        mid.sortingLayer = 0;   mid.sortOrder = -2000000000;
+        CHECK(back.SortKey() < mid.SortKey());    // the layer always wins
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -17,7 +17,7 @@
 // https -> http redirect are all refused. We send `Accept-Encoding: identity` (gzip only when asked) and
 // `Connection: close`, unless the caller asks for keep-alive (FetchRequest::keepAlive): then a finished
 // connection with clear framing can be handed to the Connector and used again by the next request to the same
-// host (idempotent methods only, one safe retry on a connection that went stale). Cookies are off unless the caller
+// host (GET, HEAD and OPTIONS only, one safe retry on a connection that went stale). Cookies are off unless the caller
 // passes a CookieJar (a per-call jar: no disk, no shared state).
 // ---------------------------------------------------------------------------
 #include <algorithm>
@@ -316,6 +316,7 @@ struct Reader {
     std::string buf;
     size_t pos = 0;
     bool eof = false;
+    uint64_t received = 0;   ///< all bytes ever read from the stream (never reset by Fill)
     explicit Reader(Stream& st) : s(st) {}
     size_t Avail() const { return buf.size() - pos; }
     /// Read more. false on error (e set) or end of stream (eof set, e None).
@@ -329,6 +330,7 @@ struct Reader {
         if (n < 0) { if (e == Err::None) e = Err::Io; return false; }
         if (n == 0) { eof = true; return false; }
         buf.append(tmp, size_t(n));
+        received += uint64_t(n);
         return true;
     }
     bool More(Err& e, std::string* m) {
@@ -666,8 +668,8 @@ struct FetchRequest {
     std::string body;
     bool acceptGzip = false;                ///< ask for gzip/deflate and decode it (Limits::allowGzip is set for the call)
     /// Do not send `Connection: close`; offer finished connections to the Connector and reuse its idle ones. Only
-    /// idempotent methods (GET, HEAD, OPTIONS, PUT, DELETE) ever ride on a reused connection, and a reused connection
-    /// that turns out to be stale (closed before one byte of the answer) is replaced once by a fresh one.
+    /// GET, HEAD and OPTIONS ever ride on a reused connection (PUT and DELETE never do: not safe to send again), and a reused connection
+    /// that turns out to be stale (closed before ZERO bytes of the answer arrived) is replaced once by a fresh one.
     bool keepAlive = false;
     std::shared_ptr<CookieJar> jar;         ///< null = cookies off (the default)
 };
@@ -684,6 +686,9 @@ struct FetchHooks {
 
 struct FetchResult {
     bool        ok = false;       ///< a final response was read completely
+    /// A connection was opened and the request may have reached the server (set immediately before every write of request bytes). A failure with
+    /// this set is NOT a clean "not reached": callers must not send a POST, PUT, PATCH or DELETE again by another route.
+    bool        requestSent = false;
     Err         err = Err::None;
     std::string message;
     Response    response;
@@ -730,6 +735,39 @@ inline bool RequestedRangeStart(const std::vector<Header>& headers, uint64_t& st
         return true;
     }
     return false;
+}
+
+/// What a "Range" request header asks for, so a 206 can be checked against it.
+struct RangeSpec {
+    enum Kind { None, From, Bounded, Suffix, Unverifiable } kind = None;   ///< Unverifiable: multi-range or a form we cannot parse
+    uint64_t first = 0, last = 0;   ///< From: first. Bounded: first..last. Suffix: first = N (the last N bytes)
+};
+
+inline RangeSpec ParseRangeRequest(const std::vector<Header>& headers) {
+    RangeSpec rs;
+    for (const Header& h : headers) {
+        if (!detail::IEq(h.name, "range")) continue;
+        rs.kind = RangeSpec::Unverifiable;
+        std::string v = detail::Trim(h.value);
+        if (!detail::IPrefix(v, "bytes=")) return rs;
+        v = v.substr(6);
+        size_t dash = v.find('-');
+        if (dash == std::string::npos || v.find(',') != std::string::npos || v.find('-', dash + 1) != std::string::npos) return rs;
+        auto num = [](const std::string& t, uint64_t& o) {
+            if (t.empty() || t.size() > 18) return false;
+            o = 0; for (unsigned char c : t) { if (c < '0' || c > '9') return false; o = o * 10 + (c - '0'); }
+            return true;
+        };
+        std::string a = v.substr(0, dash), b = v.substr(dash + 1);
+        uint64_t x = 0, y = 0;
+        if (a.empty()) { if (!num(b, x) || x == 0) return rs; rs.kind = RangeSpec::Suffix; rs.first = x; return rs; }
+        if (!num(a, x)) return rs;
+        if (b.empty()) { rs.kind = RangeSpec::From; rs.first = x; return rs; }
+        if (!num(b, y) || y < x) return rs;
+        rs.kind = RangeSpec::Bounded; rs.first = x; rs.last = y;
+        return rs;
+    }
+    return rs;
 }
 
 inline bool SensitiveHeader(const std::string& name) {
@@ -782,27 +820,32 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         }
         std::string wire;
         if (!BuildRequest(method, url, sendHeaders, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip, req.keepAlive)) return bad(e, msg);
-        const bool idempotent = method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "PUT" || method == "DELETE";
+        // Only GET, HEAD and OPTIONS may ride a kept connection and be sent again after it turned out stale.
+        // PUT and DELETE are repeatable by the book but a server may already have acted, so they never use the pool.
+        const bool poolable = method == "GET" || method == "HEAD" || method == "OPTIONS";
         std::unique_ptr<Stream> st;
         std::unique_ptr<Reader> rdp;
         Response head;
         bool usedIdle = false;
         for (int attempt = 0;; ++attempt) {
             usedIdle = false;
-            if (attempt == 0 && req.keepAlive && idempotent) { st = conn.TakeIdle(url, deadline); usedIdle = st != nullptr; }
+            if (attempt == 0 && req.keepAlive && poolable) { st = conn.TakeIdle(url, deadline); usedIdle = st != nullptr; }
             if (!st) {
                 st = conn.Open(url, deadline, e, msg);
                 if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
             }
             bool stale = false;
+            // Rule: set requestSent immediately before EVERY Write of request bytes (fresh, reused and retried alike).
+            res.requestSent = true;
             if (!st->Write(wire.data(), wire.size(), e)) {
                 if (usedIdle && (e == Err::Io || e == Err::None)) stale = true;
                 else return bad(e == Err::None ? Err::Io : e, "write failed");
             } else {
                 rdp = std::make_unique<Reader>(*st);
                 if (!ReadHead(*rdp, lim, head, e, &msg)) {
-                    // Closed or reset before the first byte of the answer on a connection we had kept: it went stale.
-                    if (usedIdle && rdp->buf.empty() && (e == Err::BadResponse || e == Err::Io)) stale = true;
+                    // Closed or reset before ANY byte of the answer on a connection we had kept: it went stale.
+                    // (rdp->received counts every byte read and is never reset, unlike the buffer.)
+                    if (usedIdle && poolable && rdp->received == 0 && (e == Err::BadResponse || e == Err::Io)) stale = true;
                     else return bad(e, msg);
                 }
             }
@@ -843,14 +886,24 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             continue;
         }
         // A Range request: a 206 must be the part we asked for (never a different slice, never unasked).
-        uint64_t wantStart = 0; bool haveRange = false;
-        const bool rangeOk = RequestedRangeStart(headers, wantStart, haveRange);
+        const RangeSpec want = ParseRangeRequest(headers);
         if (head.status == 206) {
             uint64_t a = 0, b = 0, t = 0;
             const std::string* cr = head.Get("content-range");
-            if (!haveRange) return bad(Err::BadResponse, "206 answer to a request without Range");
+            if (want.kind == RangeSpec::None) return bad(Err::BadResponse, "206 answer to a request without Range");
+            if (const std::string* ct = head.Get("content-type"))
+                if (detail::IPrefix(detail::Trim(*ct), "multipart/byteranges")) return bad(Err::BadResponse, "multipart/byteranges answer refused");
+            if (want.kind == RangeSpec::Unverifiable) return bad(Err::BadResponse, "206 to a Range we cannot verify (multi-range or malformed)");
             if (!cr || !ParseContentRange(*cr, a, b, t)) return bad(Err::BadResponse, "206 without a valid Content-Range");
-            if (rangeOk && a != wantStart) return bad(Err::BadResponse, "Content-Range does not start where asked");
+            if (want.kind == RangeSpec::Suffix) {
+                // bytes=-N: the last N bytes. The size must be known, the slice must end at the last byte and be at most N long.
+                if (t == 0) return bad(Err::BadResponse, "suffix Range answered without a known total size");
+                if (b != t - 1) return bad(Err::BadResponse, "Content-Range does not end at the last byte");
+                if (b - a + 1 > want.first) return bad(Err::BadResponse, "Content-Range is longer than the suffix asked for");
+            } else {
+                if (a != want.first) return bad(Err::BadResponse, "Content-Range does not start where asked");
+                if (want.kind == RangeSpec::Bounded && b > want.last) return bad(Err::BadResponse, "Content-Range ends after the end asked for");
+            }
             if (const std::string* cl = head.Get("content-length")) {
                 uint64_t n = 0; bool digits = !cl->empty() && cl->size() < 19;
                 for (unsigned char c : *cl) { if (c < '0' || c > '9') digits = false; else n = n * 10 + (c - '0'); }

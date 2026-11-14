@@ -24,10 +24,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Status:** Partial - the Project panel is driven by `AssetDatabase` and `ThumbnailCache`; the rows below are what is still open.
 - **Exists today:** Project panel in `editor/main.cpp` and `editor/ProjectBrowser.*`: tree, grid and list from the database, search and type filters, colour labels, tags, favourites, Unused Assets from the dependency graph, clipboard, rename, delete confirm, info strip. Asset Manager window for Marketplace downloads.
 - **Work packages:**
-  1. S - Own one `AssetDatabase` in `EditorState`, call `Scan` when a project opens and when the editor window regains focus; no UI change. Depends on: #568 (on main).
-  2. M - Drive the Project panel's list, filters and counts from `AssetDatabase::Search` and `CountByType`, keeping the view prefs. Depends on: package 1.
-  3. S - Replace the "Unused Assets" smart filter and "used in scene" text scan with `FindUnused` / `UsedBy`. Depends on: package 2.
-  4. S - Add GUID, type, import settings summary and "Used by" list to the details strip. Depends on: package 2, 20.3.
+  1. Done - The Project panel owns one `AssetDatabase` (`editor/ProjectBrowser.*`) and scans incrementally (`docs/project_panel.md`).
+  2. Done - List, filters and counts come from `AssetDatabase::Search` and `CountByType`, with the view prefs kept.
+  3. Done - Unused Assets and the used-by lists come from the dependency graph (`FindUnused`, `UsedBy`); `is:unused`, `is:broken`, `uses:` and `deps:` search words exist.
+  4. Mostly done - the details strip shows type, size, path, GUID (first 8 digits, full GUID on hover), uses and used-by counts, tags and a broken-reference warning, and has an Import Settings button (20.4). Not in the strip: a "Used by" list (Find References and Show Dependencies open it instead).
   5. Done - Broken References list (missing and stale) with a Fix button and undo (`Browser::MissingRefs`, `StaleRefs`, `FixStaleRefs`).
 - **Open:** Two sources of truth for labels (the editor's own colour labels in `.okaylabels` vs tags in `.okaymeta`); changes outside the editor are seen by polling the incremental scan (2 s or more), there is no file watcher; Unused Assets reads the references the database extracts (scenes, prefabs, materials, scripts, clips, dialogue, quests and the other text formats), not paths a script builds at run time; the window has no automated UI test (the model, including the missing and stale lists and Fix, is tested).
 - **Related:** 20.2, 20.3, 20.5, 15.4, 3.6
@@ -41,21 +41,21 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 20.2.1 Dependency graph and extractors - `Core/AssetDatabaseDeps` - reads scenes, prefabs, materials, dialogue, quests, behavior trees, glTF for file paths; custom extractors can be registered
   - 20.2.2 Closure and reports - `Core/AssetDatabase` - `BuildClosurePaths`, `FindUnused`, `FindUnreferenced`, `FindMissing`, `FindStaleReferences`, `FixStaleReferences`
   - 20.2.3 Live-scene asset list - `Scene/SceneSerializer` - `CollectAssetPaths` of an open scene, used by Build Game to copy files into the build
-  - 20.2.4 Editor reference tools - `editor/main.cpp` - Find References In Scene (by file name), Unused Assets filter (text scan)
+  - 20.2.4 Editor reference tools - `editor/ProjectBrowser.*`, `editor/main.cpp` - Find References, Show Dependencies (direct or through the whole graph), Unused Assets, Broken References (missing and stale) with Fix, all read from the dependency graph; Find References In Scene (by file name)
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Scene/SceneSerializer`, `editor/main.cpp`
 - **API:** `AssetDatabase::DependenciesOf`, `UsedBy`, `BuildClosure`, `FindMissing`, `RegisterExtractor`; `SceneSerializer::CollectAssetPaths`
 - **Editor:** Project panel (Unused Assets, Find References In Scene), Build Settings (asset copy)
 - **Docs:** `docs/asset_database.md`
 - **Tests:** `asset_database`, `assets`
-- **Status:** Partial - the graph and reports are written and tested but nothing calls them; Build Game uses the older per-scene list.
-- **Exists today:** `AssetDatabase` keeps a dependency graph keyed by GUID, gives the exact closure of a set of scenes, unused and missing reports and a fixer for stale paths. Build Game (`editor/main.cpp`, packing loop) copies assets named by `CollectAssetPaths(ed.scene())`, the open scene only; extra scenes in the build are copied as files but their assets are not collected there.
+- **Status:** Partial - the Project panel calls the graph and reports (Find References, Show Dependencies, Unused Assets, Broken References and Fix; tested through `project_panel_db`); Build Game does not use `AssetDatabase::BuildClosurePaths`: it walks the assets of every scene in the build with its own walker (`Core/BuildPipeline`, `WalkAssets`, which also lists missing files).
+- **Exists today:** `AssetDatabase` keeps a dependency graph keyed by GUID, gives the exact closure of a set of scenes, unused and missing reports and a fixer for stale paths. Build Game (`editor/main.cpp`) collects `CollectAssetPaths` for the open scene and for every other scene in the build, then walks what those assets use (`bp::WalkAssets`). It does not go through the database's closure, so there are two implementations of the same walk.
 - **Work packages:**
-  1. S - Build Game asks `BuildClosurePaths` for every scene in the build (and prefabs, dialogue, quests) instead of the open scene only. Depends on: 20.1 package 1.
+  1. Changed - Build Game already covers every scene in the build with its own walker (`Core/BuildPipeline`); the open question is whether to move it onto `BuildClosurePaths` so there is one walk, not two. Depends on: nothing.
   2. S - Build report lists "referenced but missing" files from `FindMissing` before building. Depends on: package 1.
-  3. M - Editor "Dependencies" panel: select an asset, see what it uses and what uses it, jump to either. Depends on: 20.1 package 2.
-  4. S - Rename or move inside the editor goes through `MoveAsset` so references are kept; offer `FixStaleReferences` after external moves. Depends on: 20.3.
+  3. Done - Show Dependencies and Find References lists in the Project panel (select an asset, see what it uses and what uses it, jump to either).
+  4. Partly done - Rename and Move in the Project panel keep references (the panel rewrites the paths, and the `.okaymeta` moves with the file), and Broken References offers `FixStaleReferences` after outside moves with undo; the panel does not call `AssetDatabase::MoveAsset` itself.
   5. M - Extractors for the remaining binary or custom formats (FBX external textures, scripts that load files by name). Depends on: package 1.
-- **Open:** possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned); references are found by reading text, so a path built at run time is never seen; binary FBX files have no edges.
+- **Open:** Build Game and the database each have their own dependency walk (see Status); references are found by reading text, so a path built at run time is never seen; binary FBX files have no edges.
 - **Related:** 20.1, 20.3, 18.1, 15.7, 1.5
 - **Words:** dependencies, references, used by, unused assets, missing references, build closure, asset graph, CollectAssetPaths, Build Game copies assets
 - **Seen as:** the built game is missing a texture or sound; the build contains files nothing uses; a scene shows pink or empty after I moved a file; Find References finds nothing
@@ -70,17 +70,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 20.3.4 Object GUIDs (different thing) - `Scene/SceneSerializer` - each GameObject has a persistent id (`GameObject::Guid()`, `Scene::FindByGuid`), merged in #570
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseInternal`, `Scene/SceneSerializer`
 - **API:** `Guid`, `AssetRecord`, `AssetDatabase::Scan`, `GuidToPath`, `PathToGuid`, `Resolve`, `MoveAsset`; `GameObject::Guid`
-- **Editor:** none yet
-- **Docs:** `docs/asset_database.md`, `docs/prefabs.md`
+- **Editor:** Project panel: the details strip shows the GUID (first 8 digits, whole GUID on hover); Tags and Import Settings write the `.okaymeta`; rename and move carry it along (`docs/project_panel.md`)
+- **Docs:** `docs/asset_database.md`, `docs/prefabs.md`, `docs/project_panel.md`
 - **Tests:** `asset_database`, `scene_ids_prefabs`
-- **Status:** Partial - the meta files and tracking are written and tested; scenes still store plain paths, and the editor never creates metas.
+- **Status:** Partial - the meta files and tracking are written and tested; the Project panel shows the GUID and keeps the meta with a renamed or moved file; scenes still store plain paths. By design the editor writes a `.okaymeta` only when something is stored in it (a tag or import settings); opening a project writes nothing and every asset has a GUID for the session.
 - **Exists today:** `AssetDatabase::Scan` creates and repairs `.okaymeta` files and reports moves, duplicates and orphan metas; the dependency graph survives moves. Scene files do not contain asset GUIDs (`docs/asset_database.md` says so); `FixStaleReferences` rewrites paths as a bridge.
 - **Work packages:**
-  1. S - Create metas when a project opens and show "meta written" in the Console; commit-friendly defaults (`.okaymeta` not ignored). Depends on: 20.1 package 1.
-  2. M - Editor file operations (rename, move, duplicate, delete in the Project panel) call `MoveAsset` and keep the meta together. Depends on: package 1.
+  1. Decided otherwise - metas are not written when a project opens (`docs/project_panel.md`: "Opening a project writes nothing"); they are written on first use (`EnsureMeta`, tags, import settings). Open question: a note telling teams to commit the metas.
+  2. Done in the panel's own way - rename, move and duplicate in the Project panel keep the meta with the file and update references; it does not call `AssetDatabase::MoveAsset`.
   3. L - Scenes and prefabs store asset GUIDs next to the path and resolve GUID first, path as fallback; old files keep loading. Depends on: package 2, scene serializer (1.5).
   4. S - Check script: scene or prefab referencing a GUID with no asset reports `MissingAsset`. Depends on: package 3, 33.2.
-- **Open:** meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already under version control needs a note telling people to commit the metas; no editor UI shows a GUID.
+- **Open:** meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already under version control needs a note telling people to commit the metas; the GUID is shown only as the first 8 digits in the Project panel's details strip (whole value on hover), and the Inspector shows none.
 - **Related:** 20.1, 20.2, 21.4, 28.1, 1.5
 - **Words:** GUID, meta file, okaymeta, asset id, stable reference, rename keeps references, move asset, duplicate asset, FindByGuid
 - **Seen as:** renaming a file breaks scenes that used it; two copies of an asset fight over one id; merge conflicts in id files
@@ -92,21 +92,21 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 20.4.1 Typed settings and migration - `Core/ImportSettings` - texture, model, audio blocks with defaults, clamping, version upgrade of old layouts
   - 20.4.2 Reimport signal - `Core/AssetDatabase` - `Added`, `SourceChanged`, `SettingsChanged` events, callback or queue
   - 20.4.3 Hot reload bridge - `Core/AssetDatabase`, `Core/AssetManager` - file change reloads in place and raises SourceChanged
-  - 20.4.4 Import today - `Render/ModelImport`, `Components/MeshRenderer` - a model dropped or double-clicked is imported with fixed rules (hierarchy, textures, rig, clips, size normalization); texture filter, tiling and normal map are set per object
+  - 20.4.4 Import today - `Render/ModelImport`, `Components/MeshRenderer` - a model dropped or double-clicked is imported with fixed rules (hierarchy, textures, rig, clips, size normalization) adjusted by the asset's Import Settings (scale, normals, import animations); texture filter, tiling and normal map are also set per object
 - **Code:** `Core/ImportSettings`, `Core/AssetDatabase`, `Core/AssetManager`, `Render/ModelImport`
 - **API:** `ImportSettings`, `TextureImportSettings`, `ModelImportSettings`, `AudioImportSettings`, `AssetDatabase::SetSettings`, `SetReimportCallback`, `TakeReimports`
-- **Editor:** none yet (no per-asset options; model import uses fixed rules, see 3.6)
+- **Editor:** Project panel details strip > Import Settings button (`oked::projectpanel::DrawImportSettings`): texture Largest side; model Scale, Normals with Smoothing angle, Import animations. Filter, Wrap and Mipmaps are hidden until the Direct3D renderers read them; sRGB, Compress and the audio options are not offered (`docs/project_panel.md`)
 - **Docs:** `docs/asset_database.md`
 - **Tests:** `asset_database`
-- **Status:** Partial - settings are stored and signalled; no importer reads them (stated in `docs/asset_database.md`).
-- **Exists today:** Settings round-trip through the meta with unknown keys kept; changing them raises a reimport event. The renderers and loaders still take texture filter, wrap and so on from the object using the texture (`MeshRenderer`), not from the asset.
+- **Status:** Partial - settings are stored and signalled, and some importers read them (`Core/ImportSidecar.hpp`): texture max size (software renderer's texture cache), texture filter, wrap and mipmaps (software and OpenGL renderers), model scale, normals, smoothing angle and import animations (applied when a model is added to a scene; parts already in a scene are not changed); audio load mode and force-mono are read by the audio loader. sRGB, compress and audio quality are stored but not applied. Whether this is verified in a real editor session was not checked here: the code and `docs/project_panel.md` say so.
+- **Exists today:** Settings round-trip through the meta with unknown keys kept; changing them raises a reimport event; the Project panel edits them and the importers listed in Status read them. The `MeshRenderer` still has its own texture filter and wrap fields (see Open).
 - **Work packages:**
-  1. M - Inspector for the selected asset (texture, model, audio blocks) writing through `SetSettings`. Depends on: 20.1 package 2.
-  2. M - Texture loader applies `maxSize`, `mipmaps`, `sRGB` from the meta when the image is loaded (`AssetManager` Image loader). Depends on: package 1.
-  3. M - Model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations`. Depends on: package 1, 3.6.
+  1. Done for textures and models - the Import Settings box in the Project panel writes through `SetSettings`; audio options are not offered in it.
+  2. Partly done - texture `maxSize`, filter, wrap and mipmaps are applied (see Status); `sRGB` is not.
+  3. Done - the model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations` (`Render/ModelImport`).
   4. S - Audio loader honours `loadMode` and `forceMono` (done; `quality` is not applied because audio is not re-encoded). Depends on: package 1, 7.2.
   5. S - On `SettingsChanged` reload the asset in the open scene. Depends on: packages 2-4.
-- **Open:** no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
+- **Open:** no audio options in the UI, no sRGB or compress effect; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
 - **Related:** 20.1, 3.6, 2.2, 7.2
 - **Words:** import settings, texture import, model import, sRGB, mipmaps, max size, compress, reimport, importer, scale factor
 - **Seen as:** textures blurry or too large; imported model is the wrong size; normal maps look wrong because they are treated as colour; I changed a setting and nothing happened

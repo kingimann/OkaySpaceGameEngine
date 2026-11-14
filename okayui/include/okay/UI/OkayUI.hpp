@@ -911,6 +911,9 @@ struct DrawList {
     void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
     /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
     void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
+    /// Text set in a font added with AddFontFrom* (okay/UI/OkayUIFonts.hpp) at `sizePx` pixels (0: the font's own size), with '\n' line
+    /// breaks and word wrap at `wrapWidth` (> 0). FontId 0 draws in the UI's own font. Not scaled by the theme text scale.
+    void AddText(int font, float sizePx, Vec2 pos, Color32 col, const char* text, float wrapWidth = 0.0f) const;
     /// A textured rectangle. Always goes to the main batch, also on the foreground list. The software test backend
     /// skips textured commands.
     void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},

@@ -1,6 +1,7 @@
 // OkayUI software backend. See OkayUI_Soft.hpp.
 #include "OkayUI_Soft.hpp"
 #include "OkayUI_SoftRaster.hpp"
+#include "okay/Graphics/TtfFont.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,11 @@ void Render(const DrawData& data, Bitmap& bm) {
         bool textured = false;
         if (cmd.texture) {
             if (cmd.texture == data.atlasTexture && data.atlasRgba && data.atlasW > 0 && data.atlasH > 0) { tex.w = data.atlasW; tex.h = data.atlasH; tex.rgba = data.atlasRgba; textured = true; }
+            else if (okay::TtfFont* font = FallbackFontOf(cmd.texture)) {   // a font's own glyph atlas (a fallback font, or one added with AddFontFrom*)
+                const okay::Image& a = font->Atlas();
+                if (!font->Valid() || a.Width() <= 0 || a.Height() <= 0 || a.Width() > 8192 || a.Height() > 8192) continue;
+                tex.w = a.Width(); tex.h = a.Height(); tex.rgba = a.Data(); textured = true;
+            }
             else continue;      // a GPU texture we cannot see
         }
         if (cmd.idxOffset < 0 || cmd.idxCount <= 0) continue;

@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <vector>
+#include "okay/UI/OkayUIFonts.hpp"
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -57,7 +59,7 @@ SDL_Texture*  g_atlasTex = nullptr;                 // the atlas on g_atlasR
 SDL_Renderer* g_atlasR = nullptr;
 // Engine fonts drawing text the atlas lacks (fontatlas::FallbackFont). Their spans
 // carry the font's address as a placeholder; EndFrame binds the font's atlas.
-okay::TtfFont* g_fbFonts[8];
+okay::TtfFont* g_fbFonts[128];
 int            g_nfb = 0;
 // Texture changes inside the overlay batch (fallback-font text in toasts and
 // popups): the overlay index each starts at. mergeOverlay turns them into spans.
@@ -66,7 +68,7 @@ OverlaySpan g_ovSpans[32];
 int         g_novSpans = 0;
 SDL_Texture* fallbackTex(okay::TtfFont* f) {
     for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (SDL_Texture*)(void*)f;
-    if (g_nfb == 8) return nullptr;
+    if (g_nfb == 128) return nullptr;
     g_fbFonts[g_nfb++] = f;
     return (SDL_Texture*)(void*)f;
 }
@@ -483,12 +485,24 @@ bool boldGlyph(char c, int x, int y) { return okay::Font8x8::Pixel(c, x, y) || (
 const Font kFontDefault{8, 8, defGlyph};
 const Font kFontBold{8, 8, boldGlyph};
 const Font* g_font = &kFontDefault;
+// A font from OkayUIFonts.hpp pushed with PushFont: while it is set, text is measured and drawn with it. `g_ufPx` is its em in pixels at
+// the default text scale (2); the cell the widgets size rows from is half of that (a cell is 1/2 px at scale 2).
+OkayUI::FontId g_uf = 0;
+float          g_ufPx = 0.0f;
+struct UfFrame { OkayUI::FontId id; float px; const Font* prevFont; };
+UfFrame g_ufStack[16];
+int     g_ufTop = 0;
+Font    g_ufCell{8, 8, nullptr};
 inline int  fW() { return g_font->width; }
 inline int  fH() { return g_font->height; }
 inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c, x, y); }
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
 inline float fMeasure(const char* s) {
+    if (g_uf && s) {
+        OkayUI::Vec2 sz; OkayUI::fontsys::Layout(g_uf, g_ufPx, s, 0.0f, nullptr, &sz);
+        return sz.x * 0.5f;
+    }
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
@@ -503,7 +517,7 @@ inline float fMeasure(const char* s) {
     return (float)(fW() * cstrlen(s));
 }
 // Average character width in cell units (spacing glyph-like icons).
-inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
+inline float fCharW() { return (g_ttf || g_uf) ? fMeasure("n") : (float)fW(); }
 
 inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float textH() { return fH() * g_theme.textScale; }
@@ -784,9 +798,58 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
     bindTexture(g_defTex);
 }
 
+// Text set in a font from OkayUIFonts.hpp at `px` pixels, top-left at (x, y): one textured quad per glyph from the glyph's own face
+// atlas (a span each time the face changes). A false return means "could not draw" (the overlay has no spans left): the caller
+// draws the text in the UI's own font instead.
+bool drawTextFont(OkayUI::FontId font, float px, float x, float y, const char* str, float wrap, const unsigned char c[4]) {
+    if (!str || !*str) return true;
+    if (g_cullRow && !g_toOverlay) return true;
+    if (g_toOverlay && g_novSpans > 24) return false;
+    static std::vector<OkayUI::fontsys::Placed> placed;
+    OkayUI::Vec2 sz;
+    OkayUI::fontsys::Layout(font, px, str, wrap, &placed, &sz);
+    if (placed.empty()) return true;
+    const float base = SDL_floorf(y + OkayUI::fontsys::Ascent(font, px) + 0.5f);
+    const float ox = SDL_floorf(x + 0.5f);
+    const SDL_Color sc = toColor(c);
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    okay::TtfFont* bound = nullptr;
+    float aw = 1, ah = 1;
+    const float lineBase = base;
+    for (const OkayUI::fontsys::Placed& pg : placed) {
+        if (pg.face != bound) {
+            SDL_Texture* tex = fallbackTex(pg.face);
+            if (!tex) continue;
+            bindTexture(tex);
+            bound = pg.face;
+            aw = (float)pg.face->Atlas().Width(); ah = (float)pg.face->Atlas().Height();
+            if (!(aw > 0) || !(ah > 0)) { bound = nullptr; continue; }
+        }
+        const okay::TtfFont::Glyph* g = pg.g;
+        if (!(nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx)) { noteDrop(); continue; }
+        const float x0 = SDL_floorf(ox + pg.x + g->xoff * pg.k + 0.5f), y0 = SDL_floorf(lineBase + pg.y + g->yoff * pg.k + 0.5f);
+        const float x1 = x0 + (g->x1 - g->x0) * pg.k, y1 = y0 + (g->y1 - g->y0) * pg.k;
+        const float u0 = g->x0 / aw, v0 = g->y0 / ah, u1 = g->x1 / aw, v1 = g->y1 / ah;
+        const int b0 = nv;
+        SDL_Vertex v; v.color = sc;
+        v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
+        v.position.x = x1; v.position.y = y0; v.tex_coord.x = u1; v.tex_coord.y = v0; V[nv++] = v;
+        v.position.x = x1; v.position.y = y1; v.tex_coord.x = u1; v.tex_coord.y = v1; V[nv++] = v;
+        v.position.x = x0; v.position.y = y1; v.tex_coord.x = u0; v.tex_coord.y = v1; V[nv++] = v;
+        I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2;
+        I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
+    }
+    bindTexture(g_defTex);
+    return true;
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
+    if (g_uf && drawTextFont(g_uf, g_ufPx * s * 0.5f, x, y, str, 0.0f, c)) return;   // a pushed font (PushFont); else the UI's own
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
         if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
@@ -1974,6 +2037,32 @@ void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* 
 }
 
 void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
+
+void PushFont(FontId font, float sizePx) {
+    if (g_ufTop >= 16) return;
+    UfFrame& fr = g_ufStack[g_ufTop++];
+    fr.id = g_uf; fr.px = g_ufPx; fr.prevFont = g_font;
+    if (!FontValid(font)) {   // the UI's own font
+        g_uf = 0; g_ufPx = 0.0f;
+        return;
+    }
+    if (!(sizePx > 0.0f) || !std::isfinite(sizePx)) sizePx = FontDefaultSize(font);
+    if (sizePx > 512.0f) sizePx = 512.0f;
+    g_uf = font; g_ufPx = sizePx;
+    // widgets size their rows from the cell height: half the em at the default text scale, rounded up
+    g_ufCell.width = std::max(1, (int)std::ceil(sizePx * 0.25f));
+    g_ufCell.height = std::max(1, (int)std::ceil(sizePx * 0.5f));
+    g_ufCell.pixel = nullptr;
+    g_font = &g_ufCell;
+}
+void PopFont() {
+    if (g_ufTop <= 0) return;
+    const UfFrame& fr = g_ufStack[--g_ufTop];
+    g_uf = fr.id; g_ufPx = fr.px; g_font = fr.prevFont;
+}
+Vec2 GetFontTexUvWhitePixel() { return Vec2{g_ttf ? g_whiteU : 0.0f, g_ttf ? g_whiteV : 0.0f}; }
+FontId GetCurrentFont() { return g_uf; }
+float  GetCurrentFontSizePx() { return g_uf ? g_ufPx : 0.0f; }
 const Font* GetFont()       { return g_font; }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
@@ -5168,6 +5257,16 @@ void DrawList::AddText(Vec2 pos, Color32 col, const char* text, float scale) con
     drawText(pos.x, pos.y, text, scale, c);
 }
 
+void DrawList::AddText(int font, float sizePx, Vec2 pos, Color32 col, const char* text, float wrapWidth) const {
+    if (!text || !*text || !finite2(pos) || !finite1(sizePx) || !finite1(wrapWidth)) return;
+    const OkayUI::FontId id = FontValid(font) ? font : 0;
+    if (sizePx <= 0.0f) sizePx = id ? FontDefaultSize(id) : g_theme.textScale * 8.0f;
+    if (sizePx > 1024.0f) sizePx = 1024.0f;
+    ListScope s(overlay); unsigned char c[4]; unpack(col, c);
+    if (id && drawTextFont(id, sizePx, pos.x, pos.y, text, wrapWidth, c)) return;
+    drawText(pos.x, pos.y, text, sizePx / 8.0f, c);   // the UI's own font: one line at this size
+}
+
 void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint) const {
     if (!tex || !finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y || !finite2(uv0) || !finite2(uv1)) return;   // (a non-finite texture coordinate would reach the vertices)
     ListScope s(false); unsigned char c[4]; unpack(tint, c);   // textured geometry always goes to the main batch
@@ -5638,6 +5737,8 @@ bool BeginTabBar(const char* id, int /*tabBarFlags*/) { return BeginTabBar(id); 
 
 void ResetState() {
     UseLauncherLook(false);
+    g_uf = 0; g_ufPx = 0.0f; g_ufTop = 0; g_nfb = 0;
+    ClearFonts();
     resetGapState();
     g_theme = Theme();
     g_font = &kFontDefault;

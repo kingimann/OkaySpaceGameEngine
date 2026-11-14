@@ -258,6 +258,7 @@ add_library(okay_engine
     src/Render/IrrMeshReader.cpp
     src/Render/B3dReader.cpp
     src/Render/XFileReader.cpp
+    src/Render/TerragenReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -598,6 +599,12 @@ foreach(_fmt MD2 MD3 IRRMESH B3D X)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()
+
+# Our own Terragen (.ter) reader (docs/own_terragen_reader.md), same opt-in rules as 3DS: default OFF.
+if(OKAY_OWN_TER)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_TER_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ter with the built-in Terragen reader first")
+endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

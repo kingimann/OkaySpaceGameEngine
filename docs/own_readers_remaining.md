@@ -17,13 +17,14 @@ below were made by counting those files by extension; where I could not check so
 | Importers in Assimp v5.4.3's registry | **51** (glTF 1.0 and glTF 2.0 are two importers) |
 | Importers our Windows distribution switches on (`engine/CMakeLists.txt`) | **45** (not switched on: USD, M3D, Unreal, IFC, Assbin, and Cinema 4D, which needs the non-free Maxon SDK and is off in every build) |
 | Importers we covered **before** this batch (including Blender, merged as #829, off by default) | 19 |
-| Importers we cover **now** (this batch adds MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | **24** of the 45 switched on |
-| Switched on in our build and still **without an own reader** | **21** (the table below, first 21 rows, plus glTF 1.0) |
+| Importers we cover **now** (batch C added MD2, MD3, Irrlicht mesh, B3D, DirectX .x; then Terragen) | **25** of the 45 switched on |
+| Switched on in our build and still **without an own reader** | **20** (the table below, first 21 rows minus Terragen, which now has one) |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
 tree. **Nothing was flipped.** Which formats the 24 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
-COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x.
+COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, Terragen
+(`docs/own_terragen_reader.md`).
 
 ## What is left
 
@@ -51,7 +52,7 @@ none were invented.
 | 14 | **CSM** (`.csm`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 | yes |
 | 15 | **MDC** (`.mdc`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`) | yes |
 | 16 | **HMP** (`.hmp`) | 3D GameStudio terrain | very low | easy | 2 | yes |
-| 17 | **Terragen** (`.ter`) | Terragen heightfield | low | easy | 2 | yes |
+| 17 | **Terragen** (`.ter`): **own reader written, off by default** (`OKAY_OWN_TER`, `docs/own_terragen_reader.md`) | Terragen heightfield | low | easy | 2 (both read and equal Assimp) | yes |
 | 18 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 19 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
 | 20 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
@@ -77,15 +78,15 @@ Order of what to write next, by (how likely a user meets it) x (how small it is)
 5. **NFF**: trivial text, 13 files.
 6. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
 7. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
-8. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
+8. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, RAW, Unreal** (Terragen is done: `docs/own_terragen_reader.md`).
 9. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 10. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
 11. Not in our build, so not needed to remove Assimp from the Windows distribution: **M3D, USD, IFC, Assbin, C4D**. If the owner wants them anyway: USD `usda` first, then `usdc`; IFC is a project of its own; Assbin can be dropped; C4D needs a decision about reverse engineering.
 
 ## How far this is from removing Assimp
 
-See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 21 importers
-our build still switches on have no own reader; the 24 that do are all off by default; none was checked on real Windows (only
+See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 20 importers
+our build still switches on have no own reader; the 25 that do are all off by default; none was checked on real Windows (only
 MinGW under wine for the first batch); no default may be flipped without the owner's approval; and the release note that announces
 the dropped formats one release ahead is not written. The remaining formats are almost all small; the real cost is the
 hostile-input work and the real-file comparison for each, about the same per format as the five done here.

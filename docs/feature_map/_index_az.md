@@ -2989,6 +2989,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own MD2 reader (side by side, off by default) (3.6.26)
 - Own MD3 reader (side by side, off by default) (3.6.27)
 - Own STL and PLY readers, import seam (3.6.9)
+- Own Terragen reader (side by side, off by default) (3.6.32)
 - Own Windows backend (17.17.4)
 - Own X3D reader (side by side, off by default) (3.6.23)
 - owner (1.2)

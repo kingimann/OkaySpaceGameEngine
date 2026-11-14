@@ -3221,3 +3221,14 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Our own Terragen (.ter) reader (docs/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
+# from the specification, the import seam; and the hostile-input test, which builds without the engine library.
+add_executable(test_terragen_reader test_terragen_reader.cpp)
+target_link_libraries(test_terragen_reader PRIVATE okay::engine)
+add_test(NAME terragen_reader COMMAND test_terragen_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_terragen_hostile test_terragen_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/TerragenReader.cpp)
+target_include_directories(test_terragen_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_terragen_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME terragen_hostile COMMAND test_terragen_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(terragen_hostile PROPERTIES TIMEOUT 300)

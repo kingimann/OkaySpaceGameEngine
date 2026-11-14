@@ -54,6 +54,16 @@ public:
     // ---- Messaging ----
     virtual void Send(const std::string& channel, const std::string& data) = 0;
     virtual void SendReliable(const std::string& channel, const std::string& data) = 0;
+    /// Reliable ordered, one sequence per channel. A transport without that
+    /// stream falls back to SendReliable (still reliable, not per-channel).
+    virtual void SendOrdered(const std::string& channel, const std::string& data) {
+        SendReliable(channel, data);
+    }
+    /// Unreliable sequenced: a late packet on this channel is dropped. Falls
+    /// back to plain Send where the transport has no sequence numbers.
+    virtual void SendSequenced(const std::string& channel, const std::string& data) {
+        Send(channel, data);
+    }
     virtual void Rpc(const std::string& name, const std::string& data = "") = 0;
     virtual void OnRpc(const std::string& name, std::function<void(std::uint32_t, const std::string&)> f) = 0;
 };

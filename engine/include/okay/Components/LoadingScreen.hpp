@@ -4,6 +4,9 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/Localization.hpp"
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +24,15 @@ namespace okay {
 ///     `targetScene` set: load THIS scene to show the loading screen, then it
 ///     loads the real level when the bar fills.
 /// You can also trigger one mid-game from code/script via Begin("NextLevel").
+///
+/// Background loading (`asyncLoad`, on for a screen made now): when the screen is on an object of its own (just a
+/// Transform and this component, the transition scene above) it loads `targetScene` over several frames
+/// (`objectsPerFrame` objects each) as soon as it begins, so the frame loop and the bar keep running and nothing
+/// hitches. The bar shows the slower of the time and the real progress; the screen stays up for at least `duration`,
+/// then fades out over the new scene, and its own object goes away (it was kept alive across the swap with
+/// DontDestroyOnLoad). If the scene cannot be loaded the current scene is revealed after the fade and
+/// LoadFailed() says so. With other components on the object, or `asyncLoad` off (what a scene saved before this
+/// existed does), it loads in one go after `duration` as it always did.
 class LoadingScreen : public Behaviour {
 public:
     /// How the pieces are arranged (see LoadingScreenLayout.hpp for each one).
@@ -54,6 +66,13 @@ public:
     std::string title           = "Loading...";
     std::vector<std::string> tips;               ///< a different one is shown each time
     Color       textColor       = Color::White;
+    /// Localized: `title`, `subtitle` and each tip are string-table keys, shown in
+    /// the player's language.
+    bool        localized       = false;
+    /// A text field as players read it: its string-table text when localized.
+    std::string Shown(const std::string& field) const {
+        return localized && !field.empty() ? Localization::Get(field) : field;
+    }
 
     // ---- Title ----
     bool        showTitle       = true;
@@ -86,6 +105,8 @@ public:
     float       spinnerSpeed    = 6.0f;          ///< revolutions-ish per second
     float       spinnerY        = 0.62f;
 
+    bool        asyncLoad       = true;          ///< load `targetScene` over several frames (see the class comment)
+    int         objectsPerFrame = 64;            ///< objects made per frame by a background load
     float       duration        = 2.5f;          ///< minimum seconds the screen stays up
     std::string targetScene;                     ///< scene to load when done (empty = reveal this one)
     bool        showOnStart     = true;          ///< show automatically when the scene starts
@@ -94,7 +115,17 @@ public:
     // ---- Runtime state (read by the renderer) ----
     bool  Active()    const { return active_; }
     float Elapsed()   const { return timer_; }   ///< seconds shown (drives the spinner)
-    float Progress()  const { return duration > 1e-4f ? Mathf::Clamp01(timer_ / duration) : 1.0f; }
+    /// 0..1: how far the screen is. With a background load the slower of the time (`duration`) and the real progress.
+    float Progress()  const {
+        const float t = duration > 1e-4f ? Mathf::Clamp01(timer_ / duration) : 1.0f;
+        if (!load_) return t;
+        const float l = load_->phase == Phase::Loaded ? 1.0f : Mathf::Clamp01(load_->progress);
+        return std::min(t, l);
+    }
+    /// True while a background load of `targetScene` is running.
+    bool Loading() const { return load_ && load_->phase == Phase::Loading; }
+    /// True when the background load of `targetScene` failed (the scene that was showing stays).
+    bool LoadFailed() const { return load_ && load_->phase == Phase::Failed; }
     const std::string& CurrentTip() const { return tip_; }
     /// Overlay opacity 0..1 — eases in at the start and (for a reveal) out at the end.
     float Alpha() const {
@@ -102,8 +133,8 @@ public:
         float a = 1.0f;
         if (fadeTime > 1e-4f) {
             if (timer_ < fadeTime) a = Mathf::Clamp01(timer_ / fadeTime);
-            if (targetScene.empty()) {              // a reveal fades back out at the end
-                float remain = duration - timer_;
+            if (targetScene.empty() || revealing_) {   // a reveal fades back out at the end
+                float remain = (revealing_ ? endTime_ : duration) - timer_;
                 if (remain < fadeTime) a = Mathf::Min(a, Mathf::Clamp01(remain / fadeTime));
             }
         }
@@ -114,7 +145,9 @@ public:
     void Begin(const std::string& target = "") {
         if (!target.empty()) targetScene = target;
         active_ = true; loaded_ = false; timer_ = 0.0f; tipTimer_ = 0.0f;
+        revealing_ = false; endTime_ = duration; load_.reset();
         PickTip();
+        StartBackgroundLoad();
     }
 
     void Start() override { if (showOnStart) Begin(); else PickTip(); }
@@ -126,11 +159,26 @@ public:
             tipTimer_ += dt;
             if (tipTimer_ >= tipInterval) { tipTimer_ = 0.0f; PickTip(); }
         }
+        if (load_) {   // a background load was started by Begin: wait for it, hold the screen for `duration`, then reveal
+            if (load_->phase == Phase::Loading) return;
+            if (!revealing_) {
+                revealing_ = true;
+                const float fade = fadeTime > 0.0f ? fadeTime : 0.0f;
+                endTime_ = load_->phase == Phase::Failed ? timer_ + fade : std::max(duration, timer_ + fade);
+            }
+            if (timer_ >= endTime_) {
+                active_ = false;
+                Retire();
+            }
+            return;
+        }
         if (timer_ >= duration && !loaded_) {
             loaded_ = true;
             if (!targetScene.empty()) {
-                if (Scene* s = GetScene()) SceneManager::LoadSceneByName(*s, targetScene);
-                // stay visible until the scene actually swaps (deferred to frame end)
+                Scene* s = GetScene();
+                if (!s || !SceneManager::LoadSceneByName(*s, targetScene))
+                    active_ = false;   // no such scene: reveal the current one instead of covering it for ever
+                // else stay visible until the scene actually swaps (deferred to frame end)
             } else {
                 active_ = false;   // nothing to load — just reveal the current scene
             }
@@ -138,6 +186,44 @@ public:
     }
 
 private:
+    enum class Phase { Loading, Loaded, Failed };
+    /// What the load callbacks write to. Shared, so a callback that runs after this component is gone (the scene was
+    /// cleared by another load) touches nothing that was freed.
+    struct LoadState { Phase phase = Phase::Loading; float progress = 0.0f; };
+    std::shared_ptr<LoadState> load_;
+    bool  revealing_ = false;    // the background load is over: fading out
+    float endTime_ = 0.0f;       // `timer_` at which the reveal ends
+
+    /// Start the background load of `targetScene` when it can run: on, a target, and an object of its own.
+    void StartBackgroundLoad() {
+        Scene* s = GetScene();
+        if (!asyncLoad || targetScene.empty() || !s || !gameObject || !gameObject->transform) return;
+        if (gameObject->Components().size() != 2 || !gameObject->transform->Children().empty()) return;   // Transform + this only
+        auto state = std::make_shared<LoadState>();
+        Scene::AsyncLoadOptions o;
+        o.objectsPerFrame = std::max(1, objectsPerFrame);
+        o.onProgress = [state](float p) { state->progress = p; };
+        o.onDone = [state](bool ok) { state->phase = ok ? Phase::Loaded : Phase::Failed; };
+        s->DontDestroyOnLoad(gameObject);   // the screen outlives the swap: it is what the player sees while the scene builds
+        const int h = SceneManager::LoadSceneAsyncByName(*s, targetScene, o);
+        if (h == 0) {   // unknown scene or unreadable file: nothing to wait for
+            s->CancelDontDestroyOnLoad(gameObject);
+            if (state->phase == Phase::Loading) state->phase = Phase::Failed;
+        }
+        load_ = state;
+    }
+    /// The load is over and the screen has faded out. Its object was only here for the load and goes now; when it
+    /// did not load (or the object is not alone any more) it only gives up its place in the next scene.
+    void Retire() {
+        Scene* s = GetScene();
+        if (!s || !gameObject) return;
+        if (load_ && load_->phase == Phase::Loaded) {
+            if (gameObject->Components().size() == 2 && gameObject->transform->Children().empty()) { s->Destroy(gameObject); return; }
+            targetScene.clear(); showOnStart = false;   // a saved game must not start the load again
+        }
+        s->CancelDontDestroyOnLoad(gameObject);
+    }
+
     bool  active_ = false, loaded_ = false;
     float timer_  = 0.0f;
     float tipTimer_ = 0.0f;

@@ -559,8 +559,50 @@ private:
         ~NestGuard() { --n; }
     };
 
+    // x =>, () =>, (a, b) =>
+    bool IsLambdaAhead() const {
+        if (Is(T::Ident)) return Is(T::Arrow, 1);
+        if (!Is(T::LParen)) return false;
+        std::size_t o = 1;
+        if (!Is(T::RParen, o)) {
+            for (;;) {
+                if (!Is(T::Ident, o)) return false;
+                ++o;
+                if (Is(T::RParen, o)) break;
+                if (!Is(T::Comma, o)) return false;
+                ++o;
+            }
+        }
+        return Is(T::Arrow, o + 1);
+    }
+    ExprPtr Lambda() {
+        auto e = Make(EK::Lambda, Peek().loc);
+        e->lambda = std::make_unique<LambdaDecl>();
+        auto param = [&] {
+            Param p;
+            p.loc = Peek().loc;
+            p.name = Expect(T::Ident, "a parameter name").text;
+            e->lambda->params.push_back(std::move(p));
+        };
+        if (Match(T::LParen)) {
+            if (!Is(T::RParen)) do { param(); } while (Match(T::Comma));
+            Expect(T::RParen, "')'");
+        } else {
+            param();
+        }
+        Expect(T::Arrow, "'=>'");
+        if (Is(T::LBrace)) {
+            NestGuard guard(stmtNesting_, Peek().loc, "code");
+            e->lambda->body = Block();
+        } else {
+            e->lambda->value = Assignment();
+        }
+        return e;
+    }
+
     ExprPtr Assignment() {
         NestGuard guard(nesting_, Peek().loc);
+        if (IsLambdaAhead()) return Lambda();
         ExprPtr lhs = Conditional();
         switch (Peek().type) {
             case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq:
@@ -704,6 +746,15 @@ private:
                 auto c = Make(EK::Call, e->loc);
                 c->name = e->name;
                 c->args = Args();
+                e = std::move(c);
+                continue;
+            }
+            if (Is(T::LParen) && (e->kind == EK::Call || e->kind == EK::Index)) {   // calling the function a call or an item gives
+                auto c = Make(EK::Call, Peek().loc);
+                c->name = "Invoke";
+                c->object = std::move(e);
+                c->args = Args();
+                c->bind = Bind::Invoke;   // marks the implicit Invoke for the checker
                 e = std::move(c);
                 continue;
             }

@@ -21,6 +21,9 @@ UI documents.
   the colours they already had. To restyle existing UI in one go, open
   **View → Editors & Tools → UI Theme**, pick **OkaySpace** and click **Apply to All UI**.
 
+More looks (twelve in all), roles such as Primary and Danger, radio buttons, windows, floating numbers
+and a dialogue box are in [ui_runtime.md](ui_runtime.md).
+
 Prefer the old pixel look? Call `ui_style("classic")` in a script, or start the
 game with `OKAY_CLASSIC_UI=1`.
 
@@ -71,6 +74,14 @@ Screens lay out against a 1280×720 canvas that **scales with the screen**, so
 they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
+
+## Text fields
+
+An **Input Field** takes typed text. Click it to focus. Backspace deletes the last character, Enter submits (a sibling script's `on_submit`) unless the field is multiline, and Escape leaves the field.
+
+While it is focused, Ctrl or Command with C copies the whole value, X cuts it, and V pastes. The field has no caret selection, so there is no select-all shortcut. A password field does not copy or cut. Pasted text stops at the field's character limit. Control characters are removed. A newline is kept only when the field is multiline.
+
+The same text is what `get_clipboard_text()` and `set_clipboard_text("s")` read and write, and what the visual-script nodes **Get Clipboard Text** and **Set Clipboard Text** (under Text) use. In a built game, and in the editor's Play mode, that text is the operating-system clipboard. A test uses a memory clipboard, so it does not change the machine's clipboard.
 
 ## Tabs
 
@@ -245,7 +256,7 @@ function update(dt) {
 }
 ```
 
-Press **F1** in a built game to see the Test UI panel and a sample **Lobby**
+Press **F1** in a development build (Build Settings > Development build) to see the Test UI panel and a sample **Lobby**
 built from these blocks (`shared/OkayTestPanel.hpp` has the code).
 
 ## Theming

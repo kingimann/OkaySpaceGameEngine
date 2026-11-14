@@ -25,14 +25,21 @@ The bucket layout:
 
 | Path | What |
 | --- | --- |
+| `versions.json` | every released version with file sizes and SHA-256 (required by the updater; uploaded before `VERSION.txt`) |
 | `VERSION.txt` | newest version, uploaded last (cached 30 s) |
 | `NOTES.txt` | "what's new" lines for the launcher (default: recent commit subjects; set `NOTES_FILE` to choose) |
 | `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's files |
 
+`versions.json` is required: it lists the size and SHA-256 of `OkayEngine.exe`, `OkaySpacePlayer.exe` and `OkaySpace.exe`, and the launcher
+refuses to update any file without one. The script checks that it can compute all of them before it uploads anything (also under
+`DRY_RUN=1`), uploads `versions.json` before `VERSION.txt`, reads it back from the bucket and compares it with the uploaded files, and
+stops (no `VERSION.txt`, so nobody is offered the version) if anything is off. Re-running the publish is safe. A release that exists only
+on GitHub has no `versions.json`, so launchers show "cannot update: no checksum list" instead of installing unchecked files.
+
 Only the newest 3 versions are kept (`KEEP=n` to change). `DRY_RUN=1` checks
 the build and key without uploading.
 
-Limits: on the current plan each file must be at most 50 MB. The editor is
+Limits: each file must be at most 100 MB (the project and bucket limit, set in Supabase Settings > Storage; the script checks `MAX_MB`, default 100). The editor is
 about 23 MB because its debug info is split into `build-win-symbols/OkayEngine.debug`
 (keep that file to decode crash addresses; it isn't uploaded to Supabase).
 Storage and download traffic count against the Supabase plan's quotas.
@@ -57,7 +64,7 @@ from the launcher is refused and the tab says to run it.
 
 Then, signed in as an admin:
 
-1. In the editor: File > Build Game for Windows, into its own folder. Optional
+1. In the editor: File > Build Settings… (Windows), into its own folder. Optional
    extras in that folder: `cover.png` / `cover.jpg` and `VERSION.txt`.
 2. In the launcher: **Admin > Official game**. "Live now" shows the published
    version, its notes, size and file count.
@@ -67,7 +74,7 @@ Then, signed in as an admin:
    the live one unless you tick "Allow same or older" (the script's `FORCE=1`).
    Type the "What's new" lines (they become `NOTES.txt`).
 4. **Check** lists anything that would stop the publish: not exactly one
-   Windows game exe, a file over 50 MB, names Windows can't store or that clash,
+   Windows game exe, a file over the size limit (100 MB), names Windows can't store or that clash,
    an empty or oversized game, a version that isn't newer.
 5. **Publish...** uploads with your own sign-in: every file to `official/v<ver>/`,
    then `manifest.json`, then `NOTES.txt`, and `VERSION.txt` last. A progress bar
@@ -90,7 +97,7 @@ The script needs a Supabase key (the service key, or a management token that
 fetches it), so only use it on a machine you trust:
 
 ```bash
-# 1. In the editor: File > Build Game for Windows, into its own folder.
+# 1. In the editor: File > Build Settings… (Windows), into its own folder.
 #    Optional extras in that folder: cover.png / cover.jpg (the card's picture)
 #    and VERSION.txt (the version, if you don't pass one).
 # 2. Upload it. Same keys as above, read from the environment only.
@@ -114,7 +121,7 @@ The bucket layout, beside the engine's files:
 
 The game's name is `title=` from `Data/game.okayconfig` (or `NAME=...`); its exe
 is `<title>.exe`, or the only `.exe` at the top of the folder (or `EXE=...`). The
-script refuses a non-Windows exe, a file over 50 MB, names Windows can't store
+script refuses a non-Windows exe, a file over the size limit (100 MB), names Windows can't store
 (or that only differ in case), a top-level `manifest.json`, and an empty or
 over-10 GB game. Hidden files (`.git`, `.DS_Store`) are left out. As with the engine, `KEEP` (default 3) versions are kept (the script, unlike
 the launcher, cleans up on its own) and `DRY_RUN=1`

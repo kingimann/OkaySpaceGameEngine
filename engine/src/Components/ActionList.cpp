@@ -1,4 +1,7 @@
 #include "okay/Components/ActionList.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/DisplaySettings.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -8,6 +11,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -18,6 +22,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"   // messages also reach node graphs
 #include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
 #include "okay/Components/Consumables.hpp"       // UseIndex
+#include "okay/Components/ItemPickup.hpp"        // InventoryOf (give / take / has_item)
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -39,6 +44,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/GameSaves.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -54,10 +60,41 @@
 
 namespace okay {
 
-std::unordered_map<std::string, float>& ActionList::Vars() {
-    static std::unordered_map<std::string, float> v;
-    return v;
+namespace {
+
+// One scene's action-list memory. The process-wide pool is the fallback used
+// when no scene is current (a test that only calls Vars(), the editor before Play).
+struct ActionPools {
+    std::unordered_map<std::string, float> vars;
+    std::unordered_map<std::string, std::vector<float>> arrays;
+    std::unordered_map<std::string, std::unordered_map<std::string, float>> maps;
+    std::unordered_map<std::string, std::string> strs;
+    // `cooldown` condition state: the next time each condition item may pass again.
+    // Keyed by the item's address — runtime-only, cleared with the variable pools.
+    std::unordered_map<const void*, float> cooldowns;
+};
+
+struct PoolStore {
+    ActionPools global;
+    std::unordered_map<const Scene*, ActionPools> scenes;
+    const Scene* current = nullptr;
+};
+
+PoolStore& Store() {
+    static PoolStore s;
+    return s;
 }
+
+ActionPools& Active() {
+    PoolStore& st = Store();
+    if (!st.current) return st.global;
+    auto it = st.scenes.find(st.current);
+    return it != st.scenes.end() ? it->second : st.global;
+}
+
+} // namespace
+
+std::unordered_map<std::string, float>& ActionList::Vars() { return Active().vars; }
 float ActionList::GetVar(const std::string& key) {
     auto& v = Vars();
     auto it = v.find(key);
@@ -65,29 +102,56 @@ float ActionList::GetVar(const std::string& key) {
     return Prefs::Has(key) ? Prefs::GetFloat(key, 0.0f) : 0.0f;   // fall back to a saved/published value
 }
 
-std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() {
-    static std::unordered_map<std::string, std::vector<float>> a;
-    return a;
-}
+std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() { return Active().arrays; }
 
 std::unordered_map<std::string, std::unordered_map<std::string, float>>& ActionList::Maps() {
-    static std::unordered_map<std::string, std::unordered_map<std::string, float>> m;
-    return m;
+    return Active().maps;
 }
 
-std::unordered_map<std::string, std::string>& ActionList::StrVars() {
-    static std::unordered_map<std::string, std::string> s;
-    return s;
+std::unordered_map<std::string, std::string>& ActionList::StrVars() { return Active().strs; }
+
+void ActionList::UseScene(const Scene* scene) {
+    PoolStore& st = Store();
+    if (!scene) { st.current = nullptr; return; }
+    if (!st.scenes.count(scene)) {
+        // Start from the pools already in use, so a value written before this
+        // scene runs (or left by the scene that was just current) is visible.
+        // The copy is independent: later writes do not cross back.
+        ActionPools fresh;
+        if (st.current && st.current != scene) {
+            auto src = st.scenes.find(st.current);
+            fresh = (src != st.scenes.end()) ? src->second : st.global;
+        } else if (st.current != scene) {
+            fresh = st.global;
+        }
+        fresh.cooldowns.clear();
+        st.scenes.emplace(scene, std::move(fresh));
+    }
+    st.current = scene;
 }
 
-// `cooldown` condition state: the next time each condition item may pass again.
-// Keyed by the item's address — runtime-only, cleared with the variable pools.
-static std::unordered_map<const void*, float> g_condCooldowns;
+void ActionList::ForgetScene(const Scene* scene) {
+    if (!scene) return;
+    PoolStore& st = Store();
+    st.scenes.erase(scene);
+    if (st.current == scene) st.current = nullptr;
+}
 
 void ActionList::ResetVars() {
-    Vars().clear(); Arrays().clear(); Maps().clear(); StrVars().clear();
-    g_condCooldowns.clear();
+    PoolStore& st = Store();
+    st.global = ActionPools{};
+    st.scenes.clear();
+    st.current = nullptr;
 }
+
+namespace {
+
+void BindOwner(GameObject* go) {
+    if (!go) return;
+    if (Scene* s = go->scene()) ActionList::UseScene(s);
+}
+
+} // namespace
 
 bool& ActionList::DebugPaused() { static bool p = false; return p; }
 int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
@@ -131,6 +195,15 @@ std::string Rest(const ActionList::Item& it, std::size_t i) {
 }
 // An object-name argument: a literal name, or "$textvar" to read the name from a
 // text variable — so a For Each Tagged loop can act on "the current object".
+// give / take / has_item: an item id or name, a count (default 1), and an optional
+// object whose Inventory it is (default this object's, else its root's).
+int ItemCount(const ActionList::Item& it) { return it.args.size() > 1 ? (int)std::atof(it.args[1].c_str()) : 1; }
+std::string ObjName(const ActionList::Item& it, std::size_t i);
+Inventory* ItemInv(const ActionList::Item& it, GameObject* self, Scene* s) {
+    GameObject* g = it.args.size() > 2 ? (s ? s->Find(ObjName(it, 2)) : nullptr) : self;
+    return ItemPickup::InventoryOf(g);
+}
+std::string ItemName(const ActionList::Item& it) { return ItemDatabase::Get().Resolve(Str(it, 0)); }
 std::string ObjName(const ActionList::Item& it, std::size_t i) {
     std::string s = Str(it, i);
     if (s.size() > 1 && s[0] == '$') {
@@ -500,6 +573,7 @@ void ActionList::SeedVariable(const VarDecl& v) {
 }
 
 void ActionList::Start() {
+    BindOwner(gameObject);
     if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
     m_startDeferred = false;
     // Seed declared variables into the shared pools before anything runs, so they
@@ -509,6 +583,7 @@ void ActionList::Start() {
 }
 
 bool ActionList::EvalConditions(const std::vector<Item>& conds) {
+    BindOwner(gameObject);
     for (const Item& c : conds) {
         const std::string& op = c.op;
         bool ok = true;
@@ -528,7 +603,7 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "chance")   ok = Random::Shared().Range(0.0f, 1.0f) < Num(c, 0);
         else if (op == "cooldown") {   // pass at most once every N seconds (attack rate, pickups)
             float now = Time::ElapsedTime();
-            float& nxt = g_condCooldowns[(const void*)&c];
+            float& nxt = Active().cooldowns[(const void*)&c];
             if (now >= nxt) { nxt = now + Num(c, 0); ok = true; } else ok = false;
         }
         else if (op == "var_eq")   ok = Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
@@ -588,7 +663,16 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "str_starts")   { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.rfind(p, 0) == 0; }
         else if (op == "str_ends")     { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
+        else if (op == "is_in_action") ok = HumanoidActions::IsInAction(gameObject);
+        else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
+        else if (op == "can_dive") ok = HumanoidActions::CanDive(gameObject);
+        else if (op == "is_sitting") ok = HumanoidActions::IsSitting(gameObject);
+        else if (op == "is_hanging") ok = HumanoidActions::IsHanging(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
+        else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
+            Inventory* inv = ItemInv(c, gameObject, GetScene());
+            ok = inv && inv->Has(ItemName(c), ItemCount(c));
+        }
         else if (op == "obj_has_tag") {   // does a NAMED object have this tag?
             Scene* s = GetScene(); GameObject* g = s ? s->Find(ObjName(c, 0)) : nullptr;
             ok = g && g->tag == Str(c, 1);
@@ -632,6 +716,7 @@ void ActionList::Fire() { FireHandler(conditions, instructions, m_fired, once); 
 // Begin running one handler's instructions (if idle and its gate passes). Only one
 // handler runs at a time; the others latch/poll again once it finishes.
 bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag) {
+    BindOwner(gameObject);
     if (m_running) return false;
     if (onceFlag && fired) return false;
     if (!EvalConditions(conds)) return false;
@@ -642,6 +727,7 @@ bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, b
 }
 
 void ActionList::Update(float dt) {
+    BindOwner(gameObject);
     if (!ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
     // ---- Triggers ----
@@ -725,39 +811,45 @@ void ActionList::Update(float dt) {
                  op == "punch_scale" || op == "tween_rotate") {
             Transform* tt = transform;
             if (scene && tt) {
-                Scheduler& sch = scene->scheduler();
+                // These effects write to this object's components, so they end with the object
+                // (destroyed or its scene unloaded) instead of running on freed memory.
+                Scheduler& schedulerRef = scene->scheduler();
+                Scheduler::Options bound; bound.object = gameObject;
+                auto tween = [&](float dur, std::function<void(float)> update, std::function<void()> done = {}) {
+                    schedulerRef.Tween(dur, std::move(update), std::move(done), bound);
+                };
                 const auto easeOf = EaseByName;   // shared ease-name mapping
                 if (op == "tween_move") {           // x y seconds [ease]
                     Vec3 start = tt->localPosition, target{Num(it, 0), Num(it, 1), start.z};
                     Ease e = easeOf(Str(it, 3));
-                    sch.Tween(Num(it, 2), [tt, start, target, e](float u) {
+                    tween(Num(it, 2), [tt, start, target, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localPosition = start + (target - start) * k;
                     });
                 } else if (op == "tween_scale") {   // scale seconds [ease]
                     Vec3 start = tt->localScale; float v = Num(it, 0); Vec3 target{v, v, v};
                     Ease e = easeOf(Str(it, 2));
-                    sch.Tween(Num(it, 1), [tt, start, target, e](float u) {
+                    tween(Num(it, 1), [tt, start, target, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localScale = start + (target - start) * k;
                     });
                 } else if (op == "shake") {         // intensity seconds
                     Vec3 start = tt->localPosition; float inten = Num(it, 0);
-                    sch.Tween(Num(it, 1), [tt, start, inten](float u) {
+                    tween(Num(it, 1), [tt, start, inten](float u) {
                         float decay = (1.0f - u) * inten;
                         tt->localPosition = start + Vec3{Random::Shared().Range(-1.0f, 1.0f) * decay,
                                                          Random::Shared().Range(-1.0f, 1.0f) * decay, 0.0f};
                     }, [tt, start]() { tt->localPosition = start; });
                 } else if (op == "punch_scale") {    // amount seconds
                     Vec3 start = tt->localScale; float amount = Num(it, 0);
-                    sch.Tween(Num(it, 1), [tt, start, amount](float u) {
+                    tween(Num(it, 1), [tt, start, amount](float u) {
                         float osc = Mathf::Sin(u * Mathf::PI * 6.0f) * amount * (1.0f - u);
                         tt->localScale = start + Vec3{osc, osc, osc};
                     }, [tt, start]() { tt->localScale = start; });
                 } else {                             // tween_rotate: degrees seconds [ease]
                     Quat start = tt->localRotation; float deg = Num(it, 0);
                     Ease e = easeOf(Str(it, 2));
-                    sch.Tween(Num(it, 1), [tt, start, deg, e](float u) {
+                    tween(Num(it, 1), [tt, start, deg, e](float u) {
                         float k = Easing::Evaluate(e, u);
                         tt->localRotation = start * Quat::Euler({0, 0, deg * k});
                     });
@@ -781,27 +873,33 @@ void ActionList::Update(float dt) {
                     return Color{a.r + (b.r - a.r) * k, a.g + (b.g - a.g) * k,
                                  a.b + (b.b - a.b) * k, a.a + (b.a - a.a) * k};
                 };
-                Scheduler& sch = scene->scheduler();
+                // These effects write to this object's components, so they end with the object
+                // (destroyed or its scene unloaded) instead of running on freed memory.
+                Scheduler& schedulerRef = scene->scheduler();
+                Scheduler::Options bound; bound.object = gameObject;
+                auto tween = [&](float dur, std::function<void(float)> update, std::function<void()> done = {}) {
+                    schedulerRef.Tween(dur, std::move(update), std::move(done), bound);
+                };
                 if (op == "tween_color") {          // r g b seconds [ease]
                     Color to{Num(it, 0), Num(it, 1), Num(it, 2), start.a};
                     float dur = it.args.size() > 3 ? Num(it, 3) : 0.3f;
                     Ease e = EaseByName(Str(it, 4));
-                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                    tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
                 } else if (op == "fade") {          // alpha seconds [ease]
                     Color to = start; to.a = Num(it, 0);
                     float dur = it.args.size() > 1 ? Num(it, 1) : 0.3f;
                     Ease e = EaseByName(Str(it, 2));
-                    sch.Tween(dur, [apply, mix, start, to, e](float u) {
+                    tween(dur, [apply, mix, start, to, e](float u) {
                         apply(mix(start, to, Easing::Evaluate(e, u)));
                     });
-                } else {                            // flash [seconds] [r g b] — blink, then restore
+                } else if (Accessibility::FlashScale() > 0.0f) {   // flash [seconds] [r g b] — blink, then restore (skipped with reduced flashing)
                     float dur = Num(it, 0);
                     if (dur <= 0.0f) dur = 0.2f;
                     Color fc = it.args.size() > 3 ? Color{Num(it, 1), Num(it, 2), Num(it, 3), start.a}
                                                   : Color{1.0f, 1.0f, 1.0f, start.a};
-                    sch.Tween(dur, [apply, mix, start, fc](float u) {
+                    tween(dur, [apply, mix, start, fc](float u) {
                         apply(mix(start, fc, 1.0f - std::fabs(2.0f * u - 1.0f)));   // up, then back
                     }, [apply, start]() { apply(start); });
                 }
@@ -1059,6 +1157,12 @@ void ActionList::Update(float dt) {
         }
         // Events with a payload: the receiver reads `event_value` (number) and
         // `event_text` (text), set just before the message fires.
+        // fire_output name [value]: raise a named output on this object's Logic Source, so
+        // its I/O links (target, input, delay, once) run. The value replaces each link's parameter.
+        else if (op == "fire_output") {
+            if (gameObject) for (LogicSource* ls : gameObject->GetComponents<LogicSource>())
+                ls->FireOutput(Str(it, 0), it.args.size() > 1 ? Str(it, 1) : std::string());
+        }
         else if (op == "send_value") {
             Vars()["event_value"] = Num(it, 1); StrVars()["event_text"].clear();
             if (scene) for (ActionList* a : scene->FindObjectsOfType<ActionList>()) a->ReceiveMessage(Str(it, 0));
@@ -1191,6 +1295,59 @@ void ActionList::Update(float dt) {
                 }
             }
         }
+        else if (op == "play_action") {
+            HumanoidActions::Play(gameObject, Str(it, 0), it.args.size() > 1 ? Num(it, 1) : 0.2f);
+        }
+        else if (op == "die") {
+            int dir = 0; Vec3 from{}; const Vec3* hit = nullptr;
+            if (it.args.size() >= 3) { from = {Num(it, 0), Num(it, 1), Num(it, 2)}; hit = &from; }
+            else if (!it.args.empty()) dir = HumanoidActions::DirFromName(Str(it, 0));
+            HumanoidActions::RequestDeath(gameObject, dir, hit);
+        }
+        else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
+        else if (op == "dive") HumanoidActions::RequestDive(gameObject);
+        else if (op == "sit") {
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!it.args.empty()) {
+                const std::string s = Str(it, 0);
+                const bool num = !s.empty() && (std::isdigit((unsigned char)s[0]) || s[0] == '-' || s[0] == '.');
+                if (num) type = (int)Num(it, 0);
+                else if (gameObject && gameObject->scene()) {
+                    seat = gameObject->scene()->Find(s);
+                    if (!seat) {
+                        std::string k = s;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            HumanoidActions::RequestSit(gameObject, seat, type);
+        }
+        else if (op == "stand_up") HumanoidActions::RequestStandUp(gameObject);
+        else if (op == "interact") HumanoidActions::Interact(gameObject);
+        else if (op == "hit_react") {
+            int dir = 0; bool heavy = false;
+            if (it.args.size() >= 3) {
+                dir = HumanoidActions::HitDirFromWorld(gameObject, Vec3{Num(it, 0), Num(it, 1), Num(it, 2)});
+                if (it.args.size() >= 4) heavy = Num(it, 3) != 0.0f;
+            } else if (!it.args.empty()) {
+                dir = HumanoidActions::DirFromName(Str(it, 0));
+                if (it.args.size() >= 2) heavy = Num(it, 1) != 0.0f;
+            }
+            HumanoidActions::HitReact(gameObject, dir, heavy);
+        }
+        else if (op == "roll")
+            HumanoidActions::RequestRoll(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "dodge")
+            HumanoidActions::RequestDodge(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "vault") HumanoidActions::RequestVault(gameObject);
+        else if (op == "mantle") HumanoidActions::RequestMantle(gameObject);
+        else if (op == "ledge_grab") HumanoidActions::RequestLedgeGrab(gameObject);
+        else if (op == "climb_up") HumanoidActions::RequestClimbUp(gameObject);
+        else if (op == "let_go") HumanoidActions::RequestLetGo(gameObject);
+        else if (op == "shimmy") HumanoidActions::SetShimmy(gameObject, Num(it, 0));
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;
@@ -1433,6 +1590,35 @@ void ActionList::Update(float dt) {
                 Log::Error("[actions] save_prefs: refusing '", name, "' (absolute paths and '..' aren't allowed)");
             else Prefs::Save(Save::Resolve(name));
         }
+        // Save slots (Saveable components mark what is stored; problems go to the Console).
+        else if (op == "game_save")        { if (scene) GameSaves::Save(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0), Rest(it, 1)); }
+        else if (op == "game_load")        { if (scene) GameSaves::Load(*scene, Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_continue")    { if (scene) GameSaves::Continue(*scene); }
+        else if (op == "game_autosave")    { if (scene) GameSaves::AutoSave(*scene); }
+        else if (op == "game_delete_slot") { GameSaves::Delete(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_exists") { Vars()[Str(it, 1).empty() ? "slot_exists" : Str(it, 1)] = GameSaves::Exists(Str(it, 0).empty() ? "slot_1" : Str(it, 0)) ? 1.0f : 0.0f; }
+        else if (op == "game_can_continue") { Vars()[Str(it, 0).empty() ? "can_continue" : Str(it, 0)] = GameSaves::CanContinue() ? 1.0f : 0.0f; }
+        else if (op == "game_slot_age")    { Vars()[Str(it, 1).empty() ? "slot_age" : Str(it, 1)] = (float)GameSaves::SecondsSinceSave(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "game_slot_text")   { StrVars()[Str(it, 1).empty() ? "slot_text" : Str(it, 1)] = GameSaves::SavedText(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "set_display_mode") {
+            WindowMode mode = WindowMode::Windowed;
+            if (DisplaySettings::ParseMode(Str(it, 0), mode)) DisplaySettings::SetMode(mode);
+        }
+        else if (op == "set_display_resolution") DisplaySettings::SetResolution((int)Num(it, 0), (int)Num(it, 1));
+        else if (op == "set_refresh_rate") DisplaySettings::SetRefreshHz((int)Num(it, 0));
+        else if (op == "set_monitor") {
+            const std::string name = Str(it, 0);
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) DisplaySettings::SetMonitorIndex(std::atoi(name.c_str()));
+            else DisplaySettings::SetMonitorName(name);
+        }
+        else if (op == "begin_display_confirm") DisplaySettings::BeginTrial(10.f);
+        else if (op == "keep_display_settings") DisplaySettings::KeepTrial();
+        else if (op == "revert_display_settings") DisplaySettings::RevertTrial();
+        else if (op == "get_display_mode") StrVars()[Str(it, 0).empty() ? "display_mode" : Str(it, 0)] = DisplaySettings::ModeName(DisplaySettings::Mode());
+        else if (op == "get_monitor") StrVars()[Str(it, 0).empty() ? "monitor" : Str(it, 0)] = DisplaySettings::MonitorName();
+        else if (op == "get_refresh_rate") Vars()[Str(it, 0).empty() ? "refresh_rate" : Str(it, 0)] = (float)DisplaySettings::RefreshHz();
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }
@@ -1578,6 +1764,14 @@ void ActionList::Update(float dt) {
             if (gameObject) if (auto* cons = gameObject->GetComponent<Consumables>())
                 cons->UseIndex((int)Num(it, 0));
         }
+        else if (op == "give") {   // item [count] [object]: as many as fit (on_inventory_full reports the rest)
+            if (Inventory* inv = ItemInv(it, gameObject, GetScene())) inv->AddPartial(ItemName(it), ItemCount(it));
+        }
+        else if (op == "take") {   // item [count] [object]: all or nothing
+            Inventory* inv = ItemInv(it, gameObject, GetScene());
+            const std::string item = ItemName(it);
+            if (inv && inv->Has(item, ItemCount(it))) inv->Remove(item, ItemCount(it));
+        }
         // ---- Added ops: single-axis position, game flow, facing, chase/spawn ----
         else if (op == "set_x") { if (t) t->localPosition.x = Num(it, 0); }
         else if (op == "set_y") { if (t) t->localPosition.y = Num(it, 0); }
@@ -1630,6 +1824,7 @@ void ActionList::Update(float dt) {
 }
 
 void ActionList::LateUpdate(float /*dt*/) {
+    BindOwner(gameObject);
     // OnLateUpdate handlers start here (after every object's Update); their instructions
     // then run on the next Update tick like any other started handler.
     if (m_running) return;

@@ -7,9 +7,24 @@
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
+#include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
+#include "okay/Components/SettingsScreen.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
+#include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
+#include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
+#include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/Paths.hpp"
+#include <filesystem>
+#if defined(__linux__)
+#include <unistd.h>
+#endif
+#include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
+#include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
 #include <termios.h>
@@ -28,16 +43,21 @@
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
-#include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
+#include "okay/UI/TooltipPlace.hpp"
+#include "okay/UI/UIPainterSDL.hpp"     // (the SDL colour/rect conversions; the painter itself is okay::platform::Painter)
+#include "okay/Platform/Painter.hpp"    // ...drawn through the platform painter
 #include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
 #include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
+#include "TicketJoin.hpp"                // session tickets: the join gate (okay_tickets.cfg)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
+#include "OkayUI_SoftPainter.hpp"   // the software painter of the own platform backend (own code, not ready)
 #include "OkayScriptUIBridge.hpp"
 #include "OkayTestPanel.hpp"
 #endif
+#include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -72,12 +92,11 @@ static SDL_Point W2S(const Vec3& p, const Vec3& camPos, float scale, int w, int 
 
 // UI drawing helpers. The implementations live in the engine (okay::ui2d in
 // UIRenderer.hpp, shared with the in-game UI pass); these keep the player's own
-// overlays (inventory, crafting, loading screen, effects) on their SDL_Renderer.
-static void FillUIShape(SDL_Renderer* ren, const SDL_Rect& r, UIShape shape, float radius,
+// overlays (inventory, crafting, loading screen, effects) on the platform painter.
+static void FillUIShape(okay::platform::Painter* ren, const SDL_Rect& r, UIShape shape, float radius,
                         const Color& top, const Color& bottom, bool gradient, bool horizontal,
                         float op, int diag = 0, int cornerMask = UICornerAll) {
-    ui2d::SDLPainter p(ren);
-    ui2d::FillUIShape(p, ui2d::FromSDL(r), shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
+    ui2d::FillUIShape(*ren, ui2d::FromSDL(r), shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
 }
 
 // A stable, distinct color for each non-zero tile id (no palette is stored).
@@ -88,60 +107,131 @@ static SDL_Color TileColor(int id) {
 }
 
 // Draw a world-space axis-aligned quad (used for tiles and particles).
-static void FillWorldQuad(SDL_Renderer* r, const Vec3& center, float wWorld, float hWorld,
+static void FillWorldQuad(okay::platform::Painter* r, const Vec3& center, float wWorld, float hWorld,
                           const Vec3& camPos, float scale, int w, int h, SDL_Color col) {
     SDL_Point c = W2S(center, camPos, scale, w, h);
     int hw = (int)(wWorld * 0.5f * scale), hh = (int)(hWorld * 0.5f * scale);
     SDL_Rect rect{c.x - hw, c.y - hh, hw * 2 > 0 ? hw * 2 : 1, hh * 2 > 0 ? hh * 2 : 1};
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
-    SDL_RenderFillRect(r, &rect);
+    r->SetDrawColor(col.r, col.g, col.b, col.a);
+    r->FillRect((const ui2d::Rect*)&rect);
 }
 
-static void MMFillCircle(SDL_Renderer* r, int cx, int cy, int rad, SDL_Color col) {
-    ui2d::SDLPainter p(r);
-    ui2d::MMFillCircle(p, cx, cy, rad, ui2d::FromSDL(col));
+static void MMFillCircle(okay::platform::Painter* r, int cx, int cy, int rad, SDL_Color col) {
+    ui2d::MMFillCircle(*r, cx, cy, rad, ui2d::FromSDL(col));
 }
-static void MMThickLine(SDL_Renderer* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
-    ui2d::SDLPainter p(r);
-    ui2d::MMThickLine(p, x0, y0, x1, y1, width, ui2d::FromSDL(col));
+static void MMThickLine(okay::platform::Painter* r, float x0, float y0, float x1, float y1, float width, SDL_Color col) {
+    ui2d::MMThickLine(*r, x0, y0, x1, y1, width, ui2d::FromSDL(col));
 }
 // Width of `text` in screen pixels at font-pixel size `px` (the scene's UI font while
 // one is set, else the 8x8 bitmap font).
 static float UITextW(const std::string& text, float px) { return ui2d::UITextW(text, px); }
-static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float oy,
+static void DrawText(okay::platform::Painter* r, const std::string& text, float ox, float oy,
                      float px, SDL_Color col, float letterSp = 0.0f, float lineSp = 0.0f,
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
-    ui2d::SDLPainter p(r);
-    ui2d::DrawUIText(p, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
+    ui2d::DrawUIText(*r, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
                    ui2d::FromSDL(col2), ttf);
 }
 // Load (and cache) a sprite texture; nullptr if the image can't be read (callers fall
 // back to a flat colored quad).
-static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
-                               const std::string& baseDir,
-                               std::unordered_map<std::string, SDL_Texture*>& cache) {
-    return ui2d::LoadSDLTexture(r, path, baseDir, cache);
+static ui2d::Tex GetTexture(okay::platform::Painter* r, const std::string& path) {
+    return r->LoadTexture(path);
+}
+
+// Line and Trail Renderers seen through `vp`, in the view rect: SDL geometry with a
+// colour per vertex, alpha-blended like the particles (the same on every backend).
+static void DrawLineDraws(okay::platform::Painter* r, const Scene& scene, const Mat4& vp, const Vec3& eye, float vx, float vy,
+                          float vw, float vh, const GameObject* ignore, int cullingMask, LineOcclusionFn occluded) {
+    static std::vector<LineDraw> draws;
+    static std::vector<SDL_Vertex> verts;
+    CollectLineDraws(scene, vp, eye, vx, vy, vw, vh, draws, ignore, cullingMask, occluded);
+    if (draws.empty()) return;
+    auto byte = [](float c) { return (Uint8)(c <= 0.0f ? 0 : c >= 1.0f ? 255 : (int)(c * 255.0f + 0.5f)); };
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    for (const LineDraw& d : draws) {
+        ui2d::Tex tex = d.texture.empty() ? nullptr : GetTexture(r, d.texture);
+        if (tex) {   // the vertex colours tint it
+            r->SetTextureBlendMode(tex, okay::platform::BlendMode::Blend);
+            r->SetTextureColorMod(tex, 255, 255, 255);
+            r->SetTextureAlphaMod(tex, 255);
+        }
+        verts.clear();
+        for (const LineDrawVertex& q : d.tris)
+            verts.push_back(SDL_Vertex{SDL_FPoint{q.x, q.y}, SDL_Color{byte(q.color.r), byte(q.color.g), byte(q.color.b), byte(q.color.a)},
+                                       SDL_FPoint{q.u, q.v}});
+        r->Geometry(tex, (const ui2d::Vertex*)verts.data(), (int)verts.size(), nullptr, 0);
+    }
 }
 
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
-static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
-                                std::unordered_map<std::string, SDL_Texture*>& cache) {
-    return path.empty() ? nullptr : GetTexture(r, path, baseDir, cache);
+static ui2d::Tex IconTexture(okay::platform::Painter* r, const std::string& path) {
+    return path.empty() ? nullptr : GetTexture(r, path);
+}
+
+// The item's picture, or a colour tile with its initials when the file is missing.
+// An atlas definition samples a UV cell of the sheet.
+static void DrawItemIcon(okay::platform::Painter* r, const std::string& folder, const std::string& item,
+                         float x, float y, float w, float h) {
+    const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
+    if (ui2d::Tex tex = IconTexture(r, ref.path)) {
+        SDL_Rect dst{(int)x, (int)y, (int)w, (int)h};
+        SDL_Rect src{};
+        SDL_Rect* sp = nullptr;
+        if (ref.atlas) {
+            int tw = 0, th = 0;
+            r->QueryTexture(tex, &tw, &th);
+            if (tw > 0 && th > 0) {
+                src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
+                src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
+                src.h = std::max(1, (int)((ref.v1 - ref.v0) * th));
+                sp = &src;
+            }
+        }
+        r->Copy(tex, (const ui2d::Rect*)sp, (const ui2d::Rect*)&dst);
+        return;
+    }
+    const okay::ItemGlyph g = okay::GlyphFor(item);
+    SDL_Rect tile{(int)x, (int)y, (int)w, (int)h};
+    FillUIShape(r, tile, UIShape::Rounded, 3.0f, g.bg, g.bg, false, false, 1.0f);
+    if (g.letters.empty()) return;
+    float px = h / ((Font8x8::Height + 1) * (g.letters.size() > 1 ? 2.4f : 1.8f));
+    if (px < 1.0f) px = 1.0f;
+    const float tw = UITextW(g.letters, px);
+    DrawText(r, g.letters, x + (w - tw) * 0.5f, y + (h - Font8x8::Height * px) * 0.5f, px,
+             SDL_Color{(Uint8)(g.fg.r * 255), (Uint8)(g.fg.g * 255), (Uint8)(g.fg.b * 255), 255});
+}
+
+static void DrawItemTip(okay::platform::Painter* r, const okay::ItemTip& tip, float mx, float my, float px,
+                        const Color& bg, const Color& text, int W, int H) {
+    if (tip.lines.empty()) return;
+    if (px < 1.0f) px = 1.0f;
+    float maxW = 0;
+    for (const auto& ln : tip.lines) maxW = std::max(maxW, UITextW(ln.text, px));
+    const float lineH = (Font8x8::Height + 2) * px, pad = 6.0f;
+    const float bw = maxW + pad * 2, bh = lineH * (float)tip.lines.size() + pad * 2;
+    const okay::TooltipBox tipBox = okay::PlaceTooltip(mx, my, bw, bh, 0.0f, 0.0f, (float)W, (float)H);
+    const float x = tipBox.x, y = tipBox.y;
+    SDL_Rect box{(int)x, (int)y, (int)tipBox.w, (int)tipBox.h};
+    FillUIShape(r, box, UIShape::Rounded, 4.0f, bg, bg, false, false, 1.0f);
+    for (std::size_t i = 0; i < tip.lines.size(); ++i) {
+        const Color c = tip.lines[i].useTint ? tip.lines[i].tint : text;
+        DrawText(r, tip.lines[i].text, x + pad, y + pad + lineH * (float)i, px,
+                 SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255});
+    }
 }
 
 
 // Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
 // the corners. A cheap post overlay of stepped 1px border frames fading inward, so
 // it looks the same regardless of which 3D backend rendered the scene beneath it.
-static void DrawVignette(SDL_Renderer* r, float strength) {
+static void DrawVignette(okay::platform::Painter* r, float strength) {
     if (strength <= 0.0f) return;
     if (strength > 1.0f) strength = 1.0f;
     int w = 0, h = 0;
-    SDL_GetRendererOutputSize(r, &w, &h);
+    r->OutputSize(&w, &h);
     if (w <= 2 || h <= 2) return;
-    SDL_BlendMode prev; SDL_GetRenderDrawBlendMode(r, &prev);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    const okay::platform::BlendMode prev = r->GetBlendMode();
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     const int steps = 56;
     const float maxInset = 0.42f * (float)std::min(w, h);   // how far the fade reaches
     for (int i = 0; i < steps; ++i) {
@@ -150,30 +240,27 @@ static void DrawVignette(SDL_Renderer* r, float strength) {
         if (w - 2 * inset <= 0 || h - 2 * inset <= 0) break;
         Uint8 a = (Uint8)(strength * 160.0f * (1.0f - t) * (1.0f - t));   // strongest at edge
         if (a == 0) continue;
-        SDL_SetRenderDrawColor(r, 0, 0, 0, a);
+        r->SetDrawColor(0, 0, 0, a);
         SDL_Rect top{inset, inset, w - 2 * inset, 1};
         SDL_Rect bot{inset, h - inset - 1, w - 2 * inset, 1};
         SDL_Rect lft{inset, inset, 1, h - 2 * inset};
         SDL_Rect rgt{w - inset - 1, inset, 1, h - 2 * inset};
-        SDL_RenderFillRect(r, &top); SDL_RenderFillRect(r, &bot);
-        SDL_RenderFillRect(r, &lft); SDL_RenderFillRect(r, &rgt);
+        r->FillRect((const ui2d::Rect*)&top); r->FillRect((const ui2d::Rect*)&bot);
+        r->FillRect((const ui2d::Rect*)&lft); r->FillRect((const ui2d::Rect*)&rgt);
     }
-    SDL_SetRenderDrawBlendMode(r, prev);
+    r->SetBlendMode(prev);
 }
 
-// Full-screen loading-screen overlay: draws the layout BuildLoadingScreen() makes
-// (the editor's Play view draws the same list, so both look the same).
-static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
-                              std::unordered_map<std::string, SDL_Texture*>& cache) {
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
-    if (W <= 0 || H <= 0) return;
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+// Draw an overlay's command list (a loading screen, a cutscene's fade and
+// subtitle); the editor's Play view draws the same list, so both look the same.
+static void DrawOverlayCmds(okay::platform::Painter* r, const std::vector<okay::LoadingDrawCmd>& cmds) {
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     auto sc = [](const Color& c, float a) {
         return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                          (Uint8)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
     };
     using K = okay::LoadingDrawCmd::Kind;
-    for (const okay::LoadingDrawCmd& d : okay::BuildLoadingScreen(ls, (float)W, (float)H)) {
+    for (const okay::LoadingDrawCmd& d : cmds) {
         SDL_Rect box{(int)std::lround(d.x), (int)std::lround(d.y), (int)std::lround(d.w), (int)std::lround(d.h)};
         switch (d.kind) {
         case K::Rect: {
@@ -186,17 +273,17 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
             break;
         case K::Outline: {
             SDL_Color c = sc(d.color, d.alpha);
-            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
-            SDL_RenderDrawRect(r, &box);
+            r->SetDrawColor(c.r, c.g, c.b, c.a);
+            r->DrawRect((const ui2d::Rect*)&box);
             break;
         }
         case K::Image: {
-            SDL_Texture* tex = GetTexture(r, d.text, baseDir, cache);
+            ui2d::Tex tex = GetTexture(r, d.text);
             if (!tex) break;
-            int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            int tw = 0, th = 0; r->QueryTexture(tex, &tw, &th);
             SDL_Rect src{(int)(d.u0 * tw), (int)(d.v0 * th), (int)((d.u1 - d.u0) * tw), (int)((d.v1 - d.v0) * th)};
-            SDL_SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
-            SDL_RenderCopy(r, tex, &src, &box);
+            r->SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
+            r->Copy(tex, (const ui2d::Rect*)&src, (const ui2d::Rect*)&box);
             break;
         }
         case K::Text: {
@@ -214,7 +301,7 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
             break;
         case K::Arc: {   // exact pixel spans of the ring, so a see-through track has no seams
             SDL_Color c = sc(d.color, d.alpha);
-            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+            r->SetDrawColor(c.r, c.g, c.b, c.a);
             const float ro = d.w + d.radius * 0.5f, ri = std::max(0.0f, d.w - d.radius * 0.5f);
             const float span = d.u1 - d.u0;
             const bool full = std::fabs(span) >= 6.2831853f - 1e-3f;
@@ -233,12 +320,12 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
                                          {(int)std::lround(d.x + xi), (int)std::lround(d.x + xo)}};
                 for (int k = 0; k < (xi > 0.0f ? 2 : 1); ++k) {
                     int s0 = spans[k][0], s1 = xi > 0.0f ? spans[k][1] : spans[1][1];
-                    if (full) { if (s1 > s0) SDL_RenderDrawLine(r, s0, yy, s1 - 1, yy); continue; }
+                    if (full) { if (s1 > s0) r->DrawLine(s0, yy, s1 - 1, yy); continue; }
                     int run = -1;   // draw the runs of pixels inside the arc's angle range
                     for (int xx = s0; xx <= s1; ++xx) {
                         const bool in = xx < s1 && inArc(xx + 0.5f, yy + 0.5f);
                         if (in && run < 0) run = xx;
-                        else if (!in && run >= 0) { SDL_RenderDrawLine(r, run, yy, xx - 1, yy); run = -1; }
+                        else if (!in && run >= 0) { r->DrawLine(run, yy, xx - 1, yy); run = -1; }
                     }
                 }
             }
@@ -246,6 +333,13 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
         }
         }
     }
+}
+
+// Full-screen loading-screen overlay: the layout BuildLoadingScreen() makes.
+static void DrawLoadingScreen(okay::platform::Painter* r, okay::LoadingScreen& ls) {
+    int W = 0, H = 0; r->OutputSize(&W, &H);
+    if (W <= 0 || H <= 0) return;
+    DrawOverlayCmds(r, okay::BuildLoadingScreen(ls, (float)W, (float)H));
 }
 
 // "okay://match?mode=duel&players=2&min=2&region=EU" — the launcher's "Find match"
@@ -279,7 +373,7 @@ static bool ParseMatchLink(const std::string& link, okay::MatchRequest& out) {
 // The built-in in-game server browser ("Find a server"): public servers for this
 // game plus the LAN, with ping, players, filters, a password prompt and Join. A
 // game opens it with net_browser_open() (or the Open Server Browser action).
-static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
+static void DrawServerBrowserWindow(okay::Scene& scene, okay::platform::Window* window) {
     okay::ServerBrowser& sb = okay::ServerBrowser::Shared();
     static bool wasOpen = false;
     static int tab = 0, shownTab = -1, sel = -1;
@@ -290,14 +384,14 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     static Uint32 lastClick = 0; static int lastClickRow = -1;
     static bool cursorWasShown = true;
     if (!sb.windowOpen) {
-        if (wasOpen) { wasOpen = false; SDL_ShowCursor(cursorWasShown ? SDL_ENABLE : SDL_DISABLE); }
+        if (wasOpen) { wasOpen = false; okay::platform::Default()->ShowCursor(cursorWasShown); }
         return;
     }
     if (!wasOpen) {   // just opened: fresh search, free the mouse (FPS games capture it)
         wasOpen = true; shownTab = -1; sel = -1; status.clear(); joining = nullptr;
-        cursorWasShown = SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE;
+        cursorWasShown = okay::platform::Default()->IsCursorShown();
         okay::Cursor::Capture(false);
-        SDL_ShowCursor(SDL_ENABLE);
+        okay::platform::Default()->ShowCursor(true);
     }
     const int sources = tab == 1 ? okay::ServerBrowser::kInternet : tab == 2 ? okay::ServerBrowser::kLan : okay::ServerBrowser::kAll;
     if (shownTab != tab && !sb.Busy()) { shownTab = tab; sb.Refresh(sources); sel = -1; }
@@ -309,10 +403,15 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     };
     if (joining) {   // close once we're in; say why if refused
         if (joining->Joined()) { sb.windowOpen = false; joining = nullptr; return; }
-        if (joining->JoinRejected()) { status = "Couldn't join: the server is full or the password is wrong."; joining = nullptr; }
+        if (joining->JoinRejected()) {
+            const std::string& why = joining->JoinRejectReason();
+            status = why.empty() ? "Couldn't join: the server is full or the password is wrong."
+                                 : "Couldn't join: " + why;
+            joining = nullptr;
+        }
     }
 
-    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    int ww = 960, wh = 600; window->GetSize(ww, wh);
     const float W = (float)std::min(780, ww - 40), H = (float)std::min(620, wh - 40);
     bool open = true;
     if (OkayUI::Begin("Find a server", (ww - W) * 0.5f, (wh - H) * 0.5f, W, H, &open)) {
@@ -357,7 +456,7 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
                     OkayUI::PushID(i);
                     const std::string label = fit(std::string(e.info.password ? "(locked) " : "") + (e.info.name.empty() ? e.info.Address() : e.info.name), nameW);
                     if (OkayUI::Selectable(label.c_str(), sel == i)) {
-                        const Uint32 now = SDL_GetTicks();
+                        const Uint32 now = okay::platform::TicksMs32();
                         if (lastClickRow == i && now - lastClick < 400 && !e.info.password) joinLink(e.Link());   // double-click joins
                         lastClick = now; lastClickRow = i; sel = i;
                     }
@@ -448,17 +547,17 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
 
 // "Finding a match 0:23 · 6 searching [Cancel]" while matchmaking runs (top of the
 // screen), "Match found" as it connects, and why it stopped if it failed.
-static void DrawMatchmakingBanner(SDL_Window* window) {
+static void DrawMatchmakingBanner(okay::platform::Window* window) {
     okay::Matchmaker& mm = okay::Matchmaker::Shared();
     const auto st = mm.GetState();
     static Uint32 foundAt = 0, failedAt = 0;
     if (st != okay::Matchmaker::State::Found) foundAt = 0;
     if (st != okay::Matchmaker::State::Failed) failedAt = 0;
     if (st == okay::Matchmaker::State::Idle) return;
-    const Uint32 now = SDL_GetTicks();
+    const Uint32 now = okay::platform::TicksMs32();
     if (st == okay::Matchmaker::State::Found) { if (!foundAt) foundAt = now; if (now - foundAt > 4000) return; }
     if (st == okay::Matchmaker::State::Failed) { if (!failedAt) failedAt = now; if (now - failedAt > 8000) { mm.Cancel(); return; } }
-    int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
+    int ww = 960, wh = 600; window->GetSize(ww, wh);
     const float W = std::min(440.0f, (float)ww - 20.0f), H = 184.0f;
     bool open = true;
     if (OkayUI::Begin("Matchmaking", (ww - W) * 0.5f, 14.0f, W, H, &open)) {
@@ -491,20 +590,18 @@ static void DrawMatchmakingBanner(SDL_Window* window) {
 }
 #endif
 
-static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::string& baseDir,
-                            std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawInventoryUI(okay::platform::Painter* r, okay::InventoryUI& ui) {
     okay::Inventory* inv = ui.Inv();
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::HotbarLayout L = okay::InventoryInput::LayoutHotbar(ui, (float)W, (float)H);
     const int n = L.hotbar, total = L.total, bpRows = L.rows;
     const float uiScale = L.scale, sz = L.sz, gap = L.gap, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
-        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
-                               (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
     const float cr = ui.cornerRadius;
     const UIShape shp = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
     // Draw one slot at (x,y) for inventory stack index `idx`, highlighted if selected.
@@ -531,15 +628,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
         if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
-            SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
-            else if (ui.showNames) {
-                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-                float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-                if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
-                DrawText(r, nm, X + 4, Y + 5, px,
-                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-            }
+            int ins = (int)(ui.iconInset * uiScale);
+            DrawItemIcon(r, ui.iconFolder, it.item, (float)(inner.x + ins), (float)(inner.y + ins),
+                         (float)(inner.w - 2 * ins), (float)(inner.h - 2 * ins));
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
                 float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -562,13 +653,13 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             setc(ui.panelBorder);
             for (int k = 0; k < bw; ++k) {
                 SDL_Rect fr{rc.x + k, rc.y + k, rc.w - 2 * k, rc.h - 2 * k};
-                if (fr.w > 0 && fr.h > 0) SDL_RenderDrawRect(r, &fr);
+                if (fr.w > 0 && fr.h > 0) r->DrawRect((const ui2d::Rect*)&fr);
             }
         }
     };
     // Backpack (when open): darken, then the grid.
     if (ui.open && bpRows > 0) {
-        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+        if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
         if (ui.showPanel) {
             float t = bpY(0), b = bpY(bpRows - 1);
             float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
@@ -590,6 +681,33 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
     if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Equipment column (worn items) beside the open backpack.
+    auto equipIcon = [&](const std::string& item, float x, float y) {
+        int ins = (int)(ui.iconInset * uiScale);
+        DrawItemIcon(r, ui.iconFolder, item, x + ins, y + ins, sz - 2 * ins, sz - 2 * ins);
+    };
+    if (L.equip && L.equipN > 0) {
+        float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
+        if (ui.showPanel) panel(x0 - panelPad, y0 - panelPad, sz + 2 * panelPad, (y1 - y0) + sz + 2 * panelPad);
+        for (int e = 0; e < L.equipN; ++e) {
+            float x, y; L.EquipXY(e, x, y);
+            const std::string& it = L.equip->ItemIn(e);
+            SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+            FillUIShape(r, outer, shp, cr, ui.slotBorder, ui.slotBorder, false, false, 1.0f);
+            float b = ui.borderWidth < 0 ? 0 : ui.borderWidth;
+            SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+            const Color fc = it.empty() ? ui.emptySlotColor : ui.slotColor;
+            FillUIShape(r, inner, shp, cr, fc, fc, false, false, 1.0f);
+            if (!it.empty() && e != ui.equipDrag) equipIcon(it, x, y);
+            else if (it.empty()) {   // the slot's name, small, so you know what goes there
+                const std::string& nm = L.equip->slots[e].name;
+                float px = (sz - 6.0f) / ((float)(nm.size() < 4 ? 4 : nm.size()) * (Font8x8::Width + 1));
+                if (px < 1.0f) px = 1.0f;
+                DrawText(r, nm, x + 3, y + sz * 0.5f - Font8x8::Height * px * 0.5f, px,
+                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),110});
+            }
+        }
+    }
     // Hotbar slot numbers (1–9) in the top-left corner.
     if (ui.slotNumbers) {
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -597,26 +715,30 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             DrawText(r, std::to_string(i + 1), hx + i * (sz + gap) + 3, hy + 2, px,
                      SDL_Color{(Uint8)(ui.numberColor.r*255),(Uint8)(ui.numberColor.g*255),(Uint8)(ui.numberColor.b*255),255});
     }
-    // Tooltip helper: a small panel near the cursor with the item's name + count.
+    // Keyboard / gamepad cursor: an outline on the slot A will pick up or drop into.
+    if (ui.open && ui.navSlot >= 0 && ui.navSlot < total) {
+        float sx, sy; L.SlotXY(ui.navSlot, sx, sy);
+        setc(ui.selectedColor);
+        SDL_Rect nr{(int)sx - 2, (int)sy - 2, (int)sz + 4, (int)sz + 4};
+        r->DrawRect((const ui2d::Rect*)&nr);
+    }
+    // Tooltip: the item's definition, and a compare against whatever is worn in that slot.
     okay::Vec2 mpos = okay::Input::MousePosition();
-    auto drawTip = [&](const std::string& label) {
-        if (!ui.showTooltips || label.empty()) return;
-        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
-        float tw = UITextW(label, px), th = Font8x8::Height * px, pad = 6.0f;
-        SDL_Rect bg{(int)(mpos.x + 14), (int)(mpos.y + 14), (int)(tw + pad * 2), (int)(th + pad * 2)};
-        FillUIShape(r, bg, UIShape::Rounded, 4.0f, ui.tooltipColor, ui.tooltipColor, false, false, 1.0f);
-        DrawText(r, label, bg.x + pad, bg.y + pad, px,
-                 SDL_Color{(Uint8)(ui.tooltipText.r*255),(Uint8)(ui.tooltipText.g*255),(Uint8)(ui.tooltipText.b*255),255});
+    const okay::Equipment* worn = inv ? okay::Equipment::Of(inv->gameObject) : nullptr;
+    auto drawTip = [&](const okay::ItemTip& tip) {
+        if (!ui.showTooltips) return;
+        float px = sz * 0.028f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        DrawItemTip(r, tip, mpos.x, mpos.y, px, ui.tooltipColor, ui.tooltipText, W, H);
     };
-    auto slotLabel = [&](const Inventory::Slot& it) {
-        return it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+    auto slotTip = [&](const Inventory::Slot& it) {
+        return okay::DescribeItem(it.item, it.count, &it.data, worn);
     };
     // Hotbar tooltip on hover (shown even when the backpack is closed).
     if (inv && ui.showTooltips && !ui.open && ui.dragIndex < 0)
         for (int i = 0; i < n && i < (int)inv->slots.size(); ++i) {
             float sx = hx + i * (sz + gap);
             if (mpos.x >= sx && mpos.x < sx + sz && mpos.y >= hy && mpos.y < hy + sz &&
-                !inv->slots[i].item.empty()) { drawTip(slotLabel(inv->slots[i])); break; }
+                !inv->slots[i].item.empty()) { drawTip(slotTip(inv->slots[i])); break; }
         }
     // Minecraft-style held-item name above (or below) the hotbar.
     if (ui.showSelectedName) {
@@ -639,25 +761,32 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
     };
+    if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor: highlight + what's worn
+        float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+        SDL_Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
+        FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+        const std::string& it = L.equip->ItemIn(fr.equipHover);
+        if (it.empty()) {
+            okay::ItemTip t; okay::TipLine ln; ln.text = L.equip->slots[fr.equipHover].name; t.lines.push_back(ln);
+            drawTip(t);
+        } else drawTip(okay::DescribeItem(it, 1, &L.equip->slots[fr.equipHover].data, nullptr));
+    }
+    if (L.equip && ui.equipDrag >= 0 && ui.equipDrag < L.equipN) {   // a worn item following the cursor
+        const float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        slot(x, y, -2, false);
+        equipIcon(L.equip->ItemIn(ui.equipDrag), x, y);
+    }
     // Highlight the slot under the cursor while hovering, or where a held stack will land.
     if (fr.hover >= 0) {
         hilite(fr.hover, ui.hoverColor);
-        if (fr.hover < (int)inv->slots.size() && !inv->slots[fr.hover].item.empty()) drawTip(slotLabel(inv->slots[fr.hover]));
+        if (fr.hover < (int)inv->slots.size() && !inv->slots[fr.hover].item.empty()) drawTip(slotTip(inv->slots[fr.hover]));
     }
     hilite(fr.target, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f});
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
         slot(x, y, -2, false);   // an empty slot frame floating under the cursor
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else {
-            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
-            DrawText(r, nm, x + 4, y + 5, px,
-                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-        }
+        DrawItemIcon(r, ui.iconFolder, it.item, x + 4, y + 4, sz - 8, sz - 8);
         // The carried count (the split amount, or the whole stack).
         int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
         if (ui.showCounts && carried > 1) {
@@ -674,18 +803,17 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 // Unturned-style multi-container inventory: the player's own grid + every worn
 // clothing/bag grid stacked in a left column, and nearby ground containers in a
 // right column. Drag-and-drop works across all of them (cross-bag / loot moves).
-static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
-                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawGridInventory(okay::platform::Painter* r, okay::GridInventoryUI& ui) {
     okay::GridInventory* primary = ui.Inv();
     if (!primary || !primary->open) { ui.CancelDrag(); return; }
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::GridLayout GL = okay::InventoryInput::LayoutGrid(ui, *primary, (float)W, (float)H);
     const float cs = GL.cs, gp = GL.gp;
     const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
-        SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
+        r->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
     };
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
@@ -701,7 +829,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     auto darken  = [&](Color c, float f) { return Color{c.r * (1 - f), c.g * (1 - f), c.b * (1 - f), c.a}; };
     auto shadow  = [&](float x, float y, float w, float h, float rad) { if (ui.dropShadows) fill(x + 3, y + 5, w, h, Color{0, 0, 0, 0.35f}, rad); };
     auto stroke  = [&](float x, float y, float w, float h, const Color& c, int a) {
-        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; SDL_RenderDrawRect(r, &bx);
+        setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; r->DrawRect((const ui2d::Rect*)&bx);
     };
 
     const std::vector<okay::GridInventory*>& equipped = GL.equipped;
@@ -710,8 +838,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     const float lw = GL.lw, lh = GL.lh, rw = GL.rw, rh = GL.rh, startX = GL.startX, startY = GL.startY;
     const bool hasNear = GL.hasNear;
 
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&full); }
     // Backing panels (drop shadow + soft vertical gradient + hairline rim) per column.
     auto backing = [&](float x, float y, float w, float h) {
         shadow(x, y, w, h, cr + 3);
@@ -760,12 +888,30 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(u.iconFolder, it.name), baseDir, cache);
-        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
-            float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
-            std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
-            DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
+        if (ui2d::Tex icon = IconTexture(r, okay::ItemIconOf(u.iconFolder, it.name).path)) {
+            r->SetTextureAlphaMod(icon, ghost ? 160 : 255);
+            const okay::ItemIconRef ref = okay::ItemIconOf(u.iconFolder, it.name);
+            SDL_Rect src{}, d{box.x + 6, box.y + 6, box.w - 12, box.h - 12};
+            SDL_Rect* sp = nullptr;
+            if (ref.atlas) {
+                int tw = 0, th = 0; r->QueryTexture(icon, &tw, &th);
+                if (tw > 0 && th > 0) {
+                    src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
+                    src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
+                    src.h = std::max(1, (int)((ref.v1 - ref.v0) * th));
+                    sp = &src;
+                }
+            }
+            r->Copy(icon, (const ui2d::Rect*)sp, (const ui2d::Rect*)&d);
+            if (ghost) r->SetTextureAlphaMod(icon, 255);
+        } else {
+            const okay::ItemGlyph g = okay::GlyphFor(it.name);
+            fill(px0 + 4, py0 + 4, w - 8, h - 8, g.bg, cr);
+            if (!g.letters.empty()) {
+                float px = std::min(u.itemNameScale, (h - 10) / (Font8x8::Height + 1));
+                if (px < 1.0f) px = 1.0f;
+                DrawText(r, g.letters, box.x + 8, box.y + 8, px, sc(g.fg));
+            }
         }
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.3f;
@@ -784,6 +930,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.headerColor, 0.08f), darken(ui.headerColor, 0.05f), cr);
         if (ui.accentBars) fill(P.ox - 6, hy, 3, labelH, acc, 0);    // category accent stripe
         DrawText(r, P.label, P.ox + (ui.accentBars ? 2.0f : 6.0f), hy + 5, 1.4f, sc(ui.textColor));
+        if (P.ground && P.actW > 0)
+            DrawText(r, "Take all", P.actX + 2, P.actY + 4, 1.1f, sc(ui.textColor));
         if (ui.showWeight && inv->weightLimit > 0.0f) {
             char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
             float px = 1.2f, tw = UITextW(wb, px);
@@ -820,12 +968,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         int hov = inv->ItemAtCell(hovCx, hovCy);
         if (hov >= 0) {
             const auto& it = inv->items[hov];
-            char tip[96];
-            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
-                          it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
-            float px = 1.4f, tw = UITextW(tip, px), tpad = 6.0f;
-            fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
-            DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
+            DrawItemTip(r, okay::DescribeItem(it.name, it.count, &it.data, nullptr, it.weight, it.w, it.h),
+                        mp.x, mp.y, 1.3f, ui.tooltipColor, ui.tooltipText, W, H);
         }
     }
     // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer / merge.
@@ -841,10 +985,10 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
 }
 
 // Crafting bench panel: lists recipes, tints by affordability, crafts on click.
-static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
+static void DrawCrafting(okay::platform::Painter* r, okay::CraftingStation& cs) {
     if (!cs.open) return;
     okay::Inventory* inv = cs.Inv();
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    int W = 0, H = 0; r->OutputSize(&W, &H);
     if (W <= 0 || H <= 0) return;
     const float cr = cs.cornerRadius;
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
@@ -852,58 +996,72 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
         SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    int n = (int)cs.recipes.size();
-    float pw = cs.width, ph = n * cs.rowHeight + 8.0f;
-    float px = (W - pw) * 0.5f + cs.marginX, py = (H - ph) * 0.5f + cs.marginY;
-    fill(px, py - 26, pw, ph + 26, cs.panelColor, cr + 2);
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(cs, (float)W, (float)H);
+    const float px = L.px, py = L.py, pw = L.pw, ph = L.ph;
+    const auto recipes = cs.Recipes();
+    const bool busy = !cs.Queue().Jobs().empty();
+    fill(px, py - 26, pw, ph + 26 + (busy ? 16.0f : 0.0f), cs.panelColor, cr + 2);
     fill(px, py - 26, pw, 24, cs.titleBar, cr + 2);
     DrawText(r, cs.title, px + 8, py - 20, 1.6f, sc(cs.textColor));
-    okay::Vec2 mp = okay::Input::MousePosition();
-    for (int i = 0; i < n; ++i) {
-        const auto& rec = cs.recipes[i];
-        float ry = py + i * cs.rowHeight + 4.0f;
-        bool can = inv && cs.CanCraft(rec, *inv);
-        bool hover = mp.x >= px + 4 && mp.x < px + pw - 4 && mp.y >= ry && mp.y < ry + cs.rowHeight - 2;
+    auto label = [](const std::string& item) {
+        const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(item);
+        return d ? d->DisplayName() : item;
+    };
+    const int hover = okay::InventoryInput::HandleCrafting(cs, L, okay::Input::MousePosition());   // click: craft one, shift: max
+    for (int i = 0; i < L.rows && i < (int)recipes.size(); ++i) {
+        const auto& rec = recipes[i];
+        const float ry = L.RowY(i);
+        const bool can = inv && cs.CanCraft(rec, *inv);
         fill(px + 4, ry, pw - 8, cs.rowHeight - 2, can ? cs.canColor : cs.cantColor, cr);
-        if (hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
-        std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+        if (i == hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
+        std::string out = label(rec.output) + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
         DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
         std::string ins;
-        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + label(rec.inputs[k].item); }
         float tw = UITextW(ins, 1.0f);
         DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
-        if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
+    }
+    if (busy) {   // the queue: progress of the item being made, and how many are waiting
+        const float by = py + ph + 2.0f;
+        fill(px + 6, by, pw - 12, 8, cs.cantColor, 3);
+        fill(px + 6, by, (pw - 12) * cs.Queue().Progress(), 8, cs.canColor, 3);
+        const int waiting = (int)cs.Queue().Jobs().size();
+        if (waiting > 1) DrawText(r, "x" + std::to_string(waiting), px + pw - 30, by - 1, 1.0f, sc(cs.textColor));
     }
 }
 
 // A lootable chest: chest contents on top, your inventory below. Click a stack to
 // move the whole thing to the other side (take loot / stash items).
-static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::string& baseDir,
-                      std::unordered_map<std::string, SDL_Texture*>& cache) {
+static void DrawChest(okay::platform::Painter* r, okay::ChestInventory& ch) {
     if (!ch.open) return;
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
+    int W = 0, H = 0; r->OutputSize(&W, &H); if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
     const okay::InventoryInput::ChestLayout L = okay::InventoryInput::LayoutChest(ch, (float)W, (float)H);
     if (!L.chest) return;
     const float cr = ch.cornerRadius;
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
+    r->SetBlendMode(okay::platform::BlendMode::Blend);
+    if (ch.darkenWhenOpen) { r->SetDrawColor(0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; r->FillRect((const ui2d::Rect*)&f); }
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
     auto fill = [&](float x, float y, float w, float h, const Color& c, float rad) {
         SDL_Rect rc2{(int)x, (int)y, (int)w, (int)h};
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     okay::Vec2 mp = okay::Input::MousePosition();
-    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, L.totalH + 46, ch.panelColor, cr + 2);
+    const float bodyH = L.drawH > 0 ? L.drawH : L.totalH + 46.0f;
+    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, bodyH, ch.panelColor, cr + 2);
     fill(L.panelX - 12, L.topY - 34, L.panelW + 24, 26, ch.titleBar, cr + 2);
     DrawText(r, ch.title, L.panelX, L.topY - 28, 1.6f, sc(ch.textColor));
+    auto btn = [&](const okay::InventoryInput::ClickRect& b, const char* label) {
+        fill(b.x, b.y, b.w, b.h, ch.slotColor, 3);
+        DrawText(r, label, b.x + 4, b.y + 3, 1.0f, sc(ch.textColor));
+    };
+    btn(L.takeAll, "Take all"); btn(L.stash, "Stash"); btn(L.sort, "Sort");
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
     L.Pick(mp.x, mp.y, hovSide, hovIdx);
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+        DrawItemIcon(r, ch.iconFolder, it.item, x + 4, y + 4, sz - 8, sz - 8);
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
             DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
@@ -920,10 +1078,26 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
             if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) stack(inv->slots[i], x, y, sz);
         }
     };
+    if (L.scrolling) {
+        SDL_Rect clip{(int)(L.panelX - 12), (int)L.viewY, (int)(L.panelW + 24), (int)L.viewH};
+        r->SetClipRect((const ui2d::Rect*)&clip);
+    }
     grid(0);
-    DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6, 1.2f, sc(ch.textColor));
+    DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6 - (L.scrolling ? ch.scroll : 0.0f), 1.2f, sc(ch.textColor));
     if (L.player) grid(1);
-    okay::InventoryInput::HandleChest(ch, L, mp);   // lift / drop (move, swap, merge)
+    if (L.scrolling) r->SetClipRect(nullptr);
+    // Hover tooltip on whichever stack the cursor is over.
+    if (hovIdx >= 0) {
+        okay::Inventory* hinv = L.Inv(hovSide);
+        if (hinv && hovIdx < (int)hinv->slots.size() && !hinv->slots[hovIdx].item.empty() &&
+            !(hovSide == ch.dragSide && hovIdx == ch.dragIndex)) {
+            const auto& it = hinv->slots[hovIdx];
+            const okay::Equipment* worn = L.player ? okay::Equipment::Of(L.player->gameObject) : nullptr;
+            DrawItemTip(r, okay::DescribeItem(it.item, it.count, &it.data, hovSide == 1 ? worn : nullptr),
+                        mp.x, mp.y, 1.3f, ch.panelColor, ch.textColor, W, H);
+        }
+    }
+    okay::InventoryInput::HandleChest(ch, L, mp);   // buttons, lift / drop (move, swap, merge)
     // The lifted item floats under the cursor, at its source grid's slot size.
     if (ch.dragSide >= 0) {
         const auto& it = L.Inv(ch.dragSide)->slots[ch.dragIndex];
@@ -934,13 +1108,34 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     }
 }
 
+// The game's own name as the file system knows it: the exe's name without ".exe". The _Data folder beside it
+// is called after it (<Name>.exe + <Name>_Data/).
+static std::string PlayerExeStem(const char* argv0) {
+    std::string self = argv0 ? argv0 : "";
+#if defined(__linux__)
+    char buf[4096];
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) { buf[n] = 0; self = buf; }
+#endif
+    return std::filesystem::path(self).stem().string();
+}
+
+// Where the game's files are: <Name>_Data/ beside the exe (the Folder layout), else Data/ (the compact layout),
+// else the exe's own folder (the oldest flat layout). Ends in '/'.
+static std::string ResolveGameBaseDir(const char* argv0) {
+    std::string baseDir;
+    if (okay::platform::Backend* b = okay::platform::Default()) baseDir = b->BasePath();
+    return okay::buildpipe::FindDataDir(baseDir, PlayerExeStem(argv0));
+}
+
 int main(int argc, char** argv) {
-    SDL_SetMainReady();
+    // The window, events, input and GL context go through okay::platform (SDL2 is the default
+    // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
+    okay::platform::Backend* pb = okay::platform::Default();
+    if (!pb) { std::fprintf(stderr, "no okay::platform backend is compiled in\n"); return 1; }
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
-#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24; the Linux server build uses an older SDL
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-#endif
+    pb->SetPerMonitorDpiAware();   // Windows only; a hint on SDL >= 2.24, nothing elsewhere
     // `--server`: run headless as the game's dedicated server (no window, GPU or
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)
@@ -955,9 +1150,42 @@ int main(int argc, char** argv) {
                         "  --find-match [MODE]  matchmaking: get put in a match (--match-players N, --match-min N, --region R)\n\n"
                         "Account (for headless servers):\n"
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
-                        "  --logout             sign out\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+                        "  --logout             sign out\n\n"
+                        "Build:\n"
+                        "  --build-info         print which build this is (version, build number, engine, date) and exit\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
         }
+    // `--build-info`: what build this is (the build.json the editor wrote beside the game's data), then exit.
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--build-info") {
+            const std::string dataDir = ResolveGameBaseDir(argv[0]);
+            std::ifstream bf(dataDir + "build.json", std::ios::binary);
+            std::stringstream bs; bs << bf.rdbuf();
+            okay::buildpipe::BuildManifest bm;
+            std::string berr;
+            if (!bf || !okay::buildpipe::ParseManifestJson(bs.str(), bm, &berr)) {
+                std::fprintf(stderr, "no build info found in %s (%s)\n", dataDir.c_str(), berr.empty() ? "build.json is missing" : berr.c_str());
+                return 1;
+            }
+            std::printf("%s\nidentifier: %s\ndata: %s\nsettings: %s, layout %s, assets %s, %d asset file(s), %llu bytes\n", okay::buildpipe::ManifestSummary(bm).c_str(), bm.bundleId.c_str(),
+                        dataDir.c_str(), bm.settingsHash.c_str(), bm.layout.c_str(), bm.stripped ? "stripped" : "all", bm.assetCount, (unsigned long long)bm.totalBytes);
+            return 0;
+        }
+    // Which arguments take a value, so a positional scene path is found wherever it is
+    // (`player --windowed scene.okayscene`, `player --log out.txt scene.okayscene`)
+    // without mistaking a flag's value for it. Unknown flags are tolerated.
+    okay::CommandLine pcl;
+    for (const char* v : {"join", "connect", "password", "room", "match-players", "match-min", "region",
+                          "login", "log", "config", "scene", "port", "name", "max-players", "tick",
+                          "status", "run-for", "public-addr", "max-speed", "rate-limit", "kick-after",
+                          "anticheat", "host-key"})
+        pcl.Value(v, "VALUE");
+    pcl.OptionalValue("find-match", "MODE");
+    for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
+                          "advertise", "logout", "help", "build-info"})
+        pcl.Flag(f);
+    pcl.AllowUnknown();
+    pcl.Parse(argc, argv);   // a flag missing its value is reported by the code that reads it
     // `--login NAME` / `--logout`: sign this machine in to OkaySpace without the
     // launcher (a headless server needs it to list itself with --advertise).
     // The password comes from OKAY_LOGIN_PASSWORD or is typed (not echoed).
@@ -992,6 +1220,8 @@ int main(int argc, char** argv) {
         std::printf("Signed in as %s. Servers on this machine can now use --advertise.\n", okay::Account::Username().c_str());
         return 0;
     }
+    // The scene to open: `--scene FILE`, else the first positional argument (any position).
+    const std::string launchScene = pcl.Has("scene") ? pcl.Get("scene") : pcl.Positional(0);
     okay::DedicatedServerOptions serverOpts;
     std::string serverArgErr;
     const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);
@@ -999,13 +1229,15 @@ int main(int argc, char** argv) {
     // --log FILE: send stdout + stderr (the engine log, [server] lines, script
     // prints) to a file. The Windows player has no console, so without this a
     // server's output is lost. Unbuffered so a crash still leaves the last lines.
-    if (dedicatedServer && !serverOpts.logPath.empty()) {
+    // Also works for a normal (windowed) player: the Windows player has no console.
+    const std::string logPath = dedicatedServer ? serverOpts.logPath : pcl.Get("log");
+    if (!logPath.empty()) {
         // Start it empty, then open both streams for appending, so each line lands
         // at the end whichever stream wrote it.
-        if (std::FILE* f = std::fopen(serverOpts.logPath.c_str(), "w")) std::fclose(f);
-        if (!std::freopen(serverOpts.logPath.c_str(), "a", stdout) ||
-            !std::freopen(serverOpts.logPath.c_str(), "a", stderr)) {
-            std::fprintf(stderr, "Couldn't open the log file %s\n", serverOpts.logPath.c_str());
+        if (std::FILE* f = std::fopen(logPath.c_str(), "w")) std::fclose(f);
+        if (!std::freopen(logPath.c_str(), "a", stdout) ||
+            !std::freopen(logPath.c_str(), "a", stderr)) {
+            std::fprintf(stderr, "Couldn't open the log file %s\n", logPath.c_str());
             return 1;
         }
         std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1040,28 +1272,29 @@ int main(int argc, char** argv) {
         else launchJoin.clear();
     }
     if (dedicatedServer) {
-        if (SDL_Init(SDL_INIT_TIMER) != 0) { std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError()); return 1; }
-    } else
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        okay::platform::InitFlags none; none.video = none.audio = none.gamepad = false;   // headless: timers only
+        if (!pb->Init(none)) { std::fprintf(stderr, "SDL_Init failed: %s\n", pb->LastError().c_str()); return 1; }
+    } else if (!pb->Init(okay::platform::InitFlags())) {   // video + audio + game controllers
+        pb->Log("SDL_Init failed: " + pb->LastError());
         return 1;
     }
+    // Games copy and paste through SDL. The memory clipboard stays the default
+    // everywhere else (tests, a headless run), so this does not turn okay::platform on.
+    static okay::SdlClipboard s_osClipboard;
+    okay::InstallGameClipboard(&s_osClipboard);
 
-    // Resolve where the game files live. New builds use a clean layout
-    // (exe + DLLs at the root, scenes/config/assets in a Data/ subfolder); prefer
-    // that when present, else fall back to the flat layout (everything beside exe).
-    std::string baseDir;
-    { char* base = SDL_GetBasePath(); baseDir = base ? base : ""; if (base) SDL_free(base); }
-    {
-        std::ifstream probe(baseDir + "Data/game.okayconfig");
-        if (probe.good()) baseDir += "Data/";
-    }
+    // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
+    // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
+    const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
+    okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
 
     // Build settings (written by the editor's Build Settings) live in an optional
     // game.okayconfig beside the exe: window size/title/flags, the scene list (so
     // load_scene_index works) and which scene starts. Sensible defaults if absent.
     struct GameConfig {
         std::string title = "OkaySpace Game";
+        std::string version;       // the public version (1.2.0) and the build counter, from the build
+        int buildNumber = 0;
         int  width = 960, height = 600;
         bool fullscreen = false, borderless = false, resizable = true, vsync = true;
         bool smoothDt = true;   // even frame steps (Time::SmoothDelta) for movement and cameras
@@ -1069,6 +1302,8 @@ int main(int argc, char** argv) {
         int  fpsCap = 0;
         float volume = 1.0f;
         bool lockCursor = false, perPixel = false, shadows = true, bloom = false, ssao = false, fxaa = true;
+        int cursorMode = 0;          // 0 none, 1 locked, 2 confined
+        bool sawCursorMode = false;
         float shadowDistance = 80.0f, shadowSoftness = 2.5f;
         int  shadowCascades = 3, shadowResolution = 2048;
         int  antialias = 1;
@@ -1081,6 +1316,7 @@ int main(int argc, char** argv) {
         bool runInBackground = true;
         bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
         bool muteOnFocusLoss = false;
+        bool development = false;        // Build Settings > Development build: allows the F1 developer test panel
         bool startMaximized = false;
         int  minWidth = 0, minHeight = 0;
         std::string company = "OkaySpace";
@@ -1124,7 +1360,14 @@ int main(int argc, char** argv) {
             else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
             else if (k == "volume")     cfg.volume = (float)std::atof(v.c_str());
             else if (k == "show_fps")   cfg.showFps = std::atoi(v.c_str()) != 0;
+            else if (k == "development") cfg.development = std::atoi(v.c_str()) != 0;
             else if (k == "lock_cursor") cfg.lockCursor = std::atoi(v.c_str()) != 0;
+            else if (k == "cursor_lock") {
+                cfg.sawCursorMode = true;
+                if (v == "locked" || v == "1") cfg.cursorMode = 1;
+                else if (v == "confined" || v == "2") cfg.cursorMode = 2;
+                else cfg.cursorMode = 0;
+            }
             else if (k == "perpixel")   cfg.perPixel = std::atoi(v.c_str()) != 0;
             else if (k == "shadows")    cfg.shadows = std::atoi(v.c_str()) != 0;
             else if (k == "shadow_distance")   cfg.shadowDistance = (float)std::atof(v.c_str());
@@ -1147,6 +1390,8 @@ int main(int argc, char** argv) {
             else if (k == "min_width")      cfg.minWidth = std::atoi(v.c_str());
             else if (k == "min_height")     cfg.minHeight = std::atoi(v.c_str());
             else if (k == "company")        cfg.company = v;
+            else if (k == "version")        cfg.version = v;
+            else if (k == "build_number")   cfg.buildNumber = std::atoi(v.c_str());
             else if (k == "save_userdir")   cfg.saveToUserDir = std::atoi(v.c_str()) != 0;
             else if (k == "splash")         cfg.splash = v;
             else if (k == "splash_time")    cfg.splashTime = (float)std::atof(v.c_str());
@@ -1169,7 +1414,7 @@ int main(int argc, char** argv) {
         scenePath = serverOpts.scenePath;
         if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
     }
-    else if (!dedicatedServer && argc > 1 && argv[1][0] != '-') scenePath = argv[1];
+    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
     else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
     else scenePath = baseDir + "game.okayscene";
 
@@ -1180,16 +1425,31 @@ int main(int argc, char** argv) {
     if (cfg.saveToUserDir) {
         const char* org = cfg.company.empty() ? "OkaySpace" : cfg.company.c_str();
         const char* app = cfg.title.empty() ? "Game" : cfg.title.c_str();
-        if (char* pref = SDL_GetPrefPath(org, app)) { saveDir = pref; SDL_free(pref); }
+        const std::string pref = pb->PrefPath(org, app);
+        if (!pref.empty()) saveDir = pref;
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
 
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
+    okay::Accessibility::Load();   // the player's saved accessibility choices (text size, contrast, motion, colour filter)
+    okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
+    // The project's strings in every language (shipped by Build Game), and the
+    // language to show: the one the player chose before, else the OS language
+    // when the game has it, else the table's default.
+    if (std::ifstream(baseDir + "strings.okayloc").good()) {
+        std::string locErr;
+        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) pb->Log("strings.okayloc: " + locErr);
+    }
+    {
+        std::vector<std::string> osLocales = pb->PreferredLocales();
+        Localization::LoadSettings(osLocales);
+    }
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
     // the build (anticheat=) or OKAY_ANTICHEAT turns it on (either only makes it
@@ -1199,9 +1459,9 @@ int main(int argc, char** argv) {
     // at all, and its signed mode can't be lowered by editing game.okayconfig.
     // The runtime checks run in the frame loop. (Dedicated servers: not checked.)
     std::string acRoot;
-    { char* b = SDL_GetBasePath(); acRoot = b ? b : ""; if (b) SDL_free(b); }
-    auto acLog = [&saveDir](const std::string& line) {
-        SDL_Log("%s", line.c_str());
+    acRoot = pb->BasePath();
+    auto acLog = [&saveDir, pb](const std::string& line) {
+        pb->Log(line);
         std::ofstream(saveDir + "anticheat.log", std::ios::app) << line << "\n";
     };
     okayac::StartDecision acStart;
@@ -1217,7 +1477,7 @@ int main(int argc, char** argv) {
     };
     if (!dedicatedServer) {
         const char* acEnv = std::getenv("OKAY_ANTICHEAT");
-        const std::string acScene = argc > 1 && argv[1][0] != '-' ? std::string(argv[1]) : std::string();
+        const std::string acScene = launchScene;
         const okayac::TrustedKeySet acTrusted = okayac::TrustedKeys();
         acStart = okayac::DecideStart(std::filesystem::u8path(acRoot), okayac::ParseMode(cfg.antiCheat),
                                       okayac::ParseMode(acEnv ? acEnv : ""), acTrusted, acScene);
@@ -1232,8 +1492,8 @@ int main(int argc, char** argv) {
             }
         }
         if (!acStart.allow) {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), acStart.message.c_str(), nullptr);
-            SDL_Quit();
+            pb->ShowErrorBox(cfg.title, acStart.message);
+            pb->Shutdown();
             return 1;
         }
     }
@@ -1242,24 +1502,34 @@ int main(int argc, char** argv) {
     const bool acHaveManifest = !acManifest.files.empty();
 
     Scene scene("Game");
+    scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
+    // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.
+    const bool devPanels = cfg.development || (std::getenv("OKAY_DEV") && std::getenv("OKAY_DEV")[0] && std::getenv("OKAY_DEV")[0] != '0');
+    okay::devlog::Start(devPanels, okay::devlog::LogPathFor(argv[0], baseDir), saveDir + "game.log",
+                        cfg.title, cfg.version.empty() ? std::string() : cfg.version + " (build " + std::to_string(cfg.buildNumber) + ")", scenePath);
+    okay::devlog::HitchWatch hitchWatch;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
-        SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
+        pb->Log("Could not load " + scenePath + ": " + err);
+        okay::Log::Error("[scene] could not load '", scenePath, "': ", err);
         // Keep running with an empty scene rather than failing outright.
+    } else {
+        okay::Log::Info("[scene] loaded '", scenePath, "'");
     }
     if (dedicatedServer) {   // headless: run the scene as the server until stopped
         std::printf("[server] scene %s\n", scenePath.c_str());
         if (serverOpts.game.empty())   // what the server browser shows as the game
             serverOpts.game = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
+        scene.interpolatePhysics = false;   // nothing is drawn; snapshots send the real physics poses
         const int rc = okay::RunDedicatedServer(scene, serverOpts);
         Prefs::Save(prefsPath);
-        SDL_Quit();
+        pb->Shutdown();
         return rc;
     }
     {   // A scene without a camera would render nothing: add one.
         bool made = false;
         okay::EnsureSceneCamera(scene, okay::SceneLooks2D(scene), &made);
-        if (made) SDL_Log("Scene has no camera; added a Main Camera.");
+        if (made) pb->Log("Scene has no camera; added a Main Camera.");
     }
     // Multiplayer: a signed-in OkaySpace player presents their account when joining
     // (servers started with --auth only let signed-in accounts in).
@@ -1268,45 +1538,100 @@ int main(int argc, char** argv) {
             if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
     if (okay::Account::IsLoggedIn())   // also for networks scripts create later
         okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
+    {   // Session tickets (docs/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
+        // (the launcher's --join, a reconnect, a script's net_join) first gets a ticket from the ticket service and never goes out without
+        // one when the file says `mode required`. No file = no gate: joins behave as before.
+        okayac::ticket::Config tcfg = okayac::ticket::LoadConfig((std::filesystem::u8path(baseDir) / okayac::ticket::kConfigName).u8string());
+        if (tcfg.mode != okayac::ticket::Mode::Off) {
+            okayac::ticket::Hooks th;
+            th.hwHash = [] { return okayac::MachineHash(); };
+            th.onBanned = [pb] { pb->Log("Not joining: this account or machine has an anti-cheat ban. The launcher shows the details and how to appeal."); };
+            okayac::ticket::InstallJoinGate(tcfg, th);
+            pb->Log(std::string("Session tickets: ") + okayac::ticket::ModeName(tcfg.mode) + (tcfg.badLine ? " (some lines of okay_tickets.cfg were not understood)" : ""));
+        }
+    }
     if (!launchJoin.empty()) {
-        SDL_Log("Joining %s", launchJoin.c_str());
+        pb->Log("Joining " + launchJoin);
         okay::NetworkManager::SetLaunchJoin(launchJoin);
     }
 
-    Uint32 winFlags = SDL_WINDOW_ALLOW_HIGHDPI;
-    if (cfg.resizable)  winFlags |= SDL_WINDOW_RESIZABLE;
-    if (cfg.fullscreen) winFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    if (cfg.borderless) winFlags |= SDL_WINDOW_BORDERLESS;
-    if (cfg.startMaximized && cfg.resizable && !cfg.fullscreen) winFlags |= SDL_WINDOW_MAXIMIZED;
+    okay::platform::WindowDesc wd;
+    wd.highDpi = true;
+    wd.resizable = cfg.resizable;
+    wd.fullscreen = cfg.fullscreen;
+    wd.borderless = cfg.borderless;
+    wd.maximized = cfg.startMaximized && cfg.resizable && !cfg.fullscreen;
+    wd.hidden = false;
 #if !defined(__EMSCRIPTEN__)
     // Create hidden so the game never flashes a black window during renderer /
     // GPU setup; we draw the boot splash then reveal it (see below).
-    if (!cfg.fullscreen) winFlags |= SDL_WINDOW_HIDDEN;
+    wd.hidden = !cfg.fullscreen;
 #endif
-    if (!cfg.showCursor) SDL_ShowCursor(SDL_DISABLE);
+    if (!cfg.showCursor) pb->ShowCursor(false);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
-    SDL_Window* window = SDL_CreateWindow(
-        title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        cfg.width, cfg.height, winFlags);
+    wd.title = title;
+    // A zero or negative size in the config would make every backend refuse the window.
+    cfg.width  = okay::platform::ValidWindowExtent(cfg.width, 960);
+    cfg.height = okay::platform::ValidWindowExtent(cfg.height, 600);
+    wd.width = cfg.width; wd.height = cfg.height;
+    std::unique_ptr<okay::platform::Window> windowOwner = pb->MakeWindow(wd);
+    okay::platform::Window* window = windowOwner.get();
+    if (!window) {   // the main loop reads the window every frame: stop here with a message, not a crash
+        pb->Log(std::string("could not create the game window: ") + SDL_GetError());
+        pb->Shutdown();
+        return 1;
+    }
     if (window && cfg.minWidth > 0 && cfg.minHeight > 0)
-        SDL_SetWindowMinimumSize(window, cfg.minWidth, cfg.minHeight);
+        window->SetMinimumSize(cfg.minWidth, cfg.minHeight);
     // Window/taskbar icon: load the PNG and apply it.
     if (window && !cfg.icon.empty()) {
         okay::Image ico;
-        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon)) {
-            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-                (void*)ico.Data(), ico.Width(), ico.Height(), 32, ico.Width() * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (surf) { SDL_SetWindowIcon(window, surf); SDL_FreeSurface(surf); }
-        }
+        if (ico.Load(cfg.icon) || ico.Load(baseDir + cfg.icon))
+            window->SetIcon((const uint8_t*)ico.Data(), ico.Width(), ico.Height());
     }
-    Uint32 renFlags = SDL_RENDERER_ACCELERATED | (cfg.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, renFlags);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    // Monitors and the saved display choice. SDL lists the modes; the own platform backend is not used.
+    auto applyDisplay = [&]() {
+        if (!window) return;
+        if (window->Kind() == okay::platform::BackendKind::Sdl2)
+            okay::sdldisplay::Apply(static_cast<SDL_Window*>(window->NativeHandle()), okay::DisplaySettings::CurrentApply());
+        else
+            window->SetFullscreen(okay::DisplaySettings::Fullscreen());
+    };
+    if (window && window->Kind() == okay::platform::BackendKind::Sdl2) {
+        okay::DisplaySettings::SetMonitors(okay::sdldisplay::ListMonitors());
+        okay::DisplaySettings::ResolveSaved();
+    }
+    applyDisplay();
+    // The 2D drawing goes through okay::platform::Painter: SDL_Renderer on an sdl2 window (as always),
+    // or on the own backend the software painter, which draws into a frame buffer on the CPU and hands it to the
+    // window. The software painter is own code and NOT READY: it is only reachable by choosing the own backend
+    // through OKAY_PLATFORM_BACKEND=own in the environment (docs/platform_layer.md).
+    std::unique_ptr<okay::platform::Painter> painterOwner;
+    if (window) {
+        okay::platform::PainterDesc pd;
+        pd.vsync = cfg.vsync;
+        std::string perr;
+        if (pb->Kind() == okay::platform::BackendKind::Sdl2) painterOwner = okay::platform::CreateSdl2Painter(*window, pd, &perr);
+#ifdef OKAY_HAVE_OKAYUI
+        else painterOwner = OkayUI::soft::CreateWindowPainter(*window, pd, &perr);
+#else
+        else perr = "this build has no software painter (OkayUI is not part of it)";
+#endif
+        if (!painterOwner) {
+            pb->Log(std::string("no 2D painter for backend '") + pb->Name() + "': " + perr);
+            windowOwner.reset();
+            pb->Shutdown();
+            return 2;
+        }
+        painterOwner->SetBaseDir(baseDir);
+        pb->Log(std::string("2D painter: ") + painterOwner->Name());
+    }
+    okay::platform::Painter* renderer = painterOwner.get();
 
     // ---- Boot splash: the project's branded loading frame, shown immediately so
     // the game doesn't flash a black window while the renderer / GPU / scene set
     // up. Matches the editor/launcher loading screen. Reveal the window on it.
-    SDL_Texture* bootTex = nullptr;
+    ui2d::Tex bootTex = nullptr;
     if (renderer && window) {
         okay::SplashStyle st;
         if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
@@ -1317,18 +1642,16 @@ int main(int argc, char** argv) {
         if (!cfg.bootLogo.empty()) {
             okay::Image img;
             if (img.Load(cfg.bootLogo) || img.Load(baseDir + cfg.bootLogo)) {
-                if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
-                        (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                    bootTex = SDL_CreateTextureFromSurface(renderer, s);
-                    SDL_FreeSurface(s);
-                }
+                okay::platform::TextureDesc td;
+                td.width = img.Width(); td.height = img.Height();
+                bootTex = renderer->CreateTexture(td, (const std::uint8_t*)img.Data());
             }
         }
         st.logo = bootTex;
-        int bw = cfg.width, bh = cfg.height; SDL_GetRendererOutputSize(renderer, &bw, &bh);
+        int bw = cfg.width, bh = cfg.height; renderer->OutputSize(&bw, &bh);
         okay::DrawSplashStyled(renderer, bw, bh, st);
 #if !defined(__EMSCRIPTEN__)
-        SDL_ShowWindow(window); SDL_RaiseWindow(window);
+        window->Show(); window->Raise();
         okay::DrawSplashStyled(renderer, bw, bh, st);
 #endif
     }
@@ -1343,8 +1666,10 @@ int main(int argc, char** argv) {
     BloomEnabled()     = cfg.bloom;
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
-    if (cfg.lockCursor) Cursor::Capture(true);
-    SDL_StartTextInput();   // deliver SDL_TEXTINPUT events for UI input fields
+    if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
+    if (cfg.cursorMode == 1) Cursor::Capture(true);
+    else if (cfg.cursorMode == 2) { Cursor::SetLock(Cursor::LockMode::Confined); Cursor::SetVisible(true); }
+    pb->StartTextInput();   // deliver text-input events for UI input fields
 
     // Optional GPU 3D renderer — the same hardware path the editor's Scene view uses,
     // now shipped with the game. Picks the best backend for this machine (Direct3D 11
@@ -1357,8 +1682,8 @@ int main(int argc, char** argv) {
     okay::D3D11Renderer* d3dRenderer = nullptr;  // Direct3D 11 backend (Windows)
     okay::D3D12Renderer* d3d12Renderer = nullptr;// Direct3D 12 backend (Windows, opt-in)
 #endif
-    SDL_Window*          glWindow = nullptr;      // hidden context window for the GL path
-    SDL_GLContext        glCtx = nullptr;
+    std::unique_ptr<okay::platform::Window> glWindow;   // hidden context window for the GL path
+    bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
     if (cfg.gpu) {
@@ -1373,21 +1698,20 @@ int main(int argc, char** argv) {
         if (d3dRenderer->Init()) d3dReady = true;
         else { delete d3dRenderer; d3dRenderer = nullptr; }
 #endif
-        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders.
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
+        // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
+        okay::platform::WindowDesc gd;
+        gd.title = "okay-gl"; gd.x = 0; gd.y = 0; gd.width = 16; gd.height = 16;
+        gd.resizable = false; gd.opengl = true; gd.hidden = true;
+        glWindow = pb->MakeWindow(gd);
         if (glWindow) {
-            glCtx = SDL_GL_CreateContext(glWindow);
-            if (glCtx) {
-                SDL_GL_MakeCurrent(glWindow, glCtx);
-                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+            glCtx = glWindow->CreateGLContext(okay::platform::GLAttributes());
+            if (glCtx) {   // CreateGLContext also made it current
+                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Default()->GLProcAddress(n); })) {
                     glRenderer = new okay::GLRenderer();
                     glReady = true;
                 }
-                SDL_GL_MakeCurrent(nullptr, nullptr);
+                pb->ReleaseCurrent();
             }
         }
     }
@@ -1396,34 +1720,31 @@ int main(int argc, char** argv) {
     std::vector<std::uint32_t> mesh3DGpu;
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
-    SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+    okay::platform::AudioSpec want, have;
+    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.allowChange = true;
+    // Float output at whatever rate and channel count the device gives us.
+    std::unique_ptr<okay::platform::AudioDevice> audioDev;
+    if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
+    AudioMixer::LoadSettings();   // the player's own volume settings win over it
+    InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
-    std::unordered_map<std::string, SDL_Texture*> textureCache;
     // The UI pass draws through one batcher for the whole run: it keeps the UI atlas
     // (fonts + images) and its vertex buffers between frames.
-    ui2d::SDLPainter uiPainter(renderer, &textureCache, baseDir);
-    ui2d::BatchPainter uiBatch(uiPainter, [&baseDir](const std::string& path, Image& out) {
+    ui2d::BatchPainter uiBatch(*renderer, [&baseDir](const std::string& path, Image& out) {
         return out.Load(path) || out.Load(baseDir + path);
     });
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
     // overlapping faces occlude correctly, then blitted under the 2D/UI layers.
     Raster mesh3D;
-    SDL_Texture* mesh3DTex = nullptr;
+    ui2d::Tex mesh3DTex = nullptr;
     int mesh3DW = 0, mesh3DH = 0;
 
-    // Load any WAV clips referenced by AudioSources, resampled to the mix rate.
-    for (const auto& up : scene.Objects()) {
-        auto* au = up->GetComponent<AudioSource>();
-        if (!au || au->clipPath.empty()) continue;
-        AudioClip wav;
-        if (wav.LoadWAV(au->clipPath) || wav.LoadWAV(baseDir + au->clipPath))
-            au->clip = wav.Resampled(44100);
-    }
+    // Load the audio files (WAV, OGG, MP3) AudioSources name, resampled to the mix rate.
+    LoadSceneAudio(scene, baseDir, AudioMixer::sampleRate);
 
     // Load any .OBJ models referenced by MeshRenderers (resolve next to the exe).
     for (const auto& up : scene.Objects()) {
@@ -1435,17 +1756,32 @@ int main(int argc, char** argv) {
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }
 
-    okay::Game::Reset();   // clear any stale pause/quit state from a prior scene
+    // One frame driver for the run (okay/Core/GameLoop.hpp). It does what this loop used to do by hand,
+    // in the same order: clamp the frame time to 0.1 s (a window drag or an alt-tab is not a giant
+    // step), even it out when smoothDt (and snap to the display's refresh periods with vsync),
+    // Time::Step, the scene's Update, and the quit check. docs/loop_and_time.md ("Adopting GameLoop in
+    // the player and the editor") and test_loop_player_style pin that the Time values are identical.
+    // On top of that it ticks the Clock channels ("ui", "game", "cinematic"), keeps frame statistics
+    // (loop.Stats()) and runs OnFixedUpdate steps for anything that registers one.
+    bool loopTick = true;   // false while the window is unfocused and Run In Background is off: no scene update
+    float loopRefreshHz = 0.0f;
+    okay::GameLoop::Options loopOpt;
+    loopOpt.maxDelta = 0.1f;
+    loopOpt.smoothDelta = cfg.smoothDt;
+    okay::GameLoop loop(loopOpt);
+    loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
+    // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
+    // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
+    loop.BeginSession();
     scene.Start();
 
-    // Open the first connected game controller, if any.
-    SDL_GameController* pad = nullptr;
-    for (int i = 0; i < SDL_NumJoysticks(); ++i)
-        if (SDL_IsGameController(i)) { pad = SDL_GameControllerOpen(i); break; }
+    // Open every connected game controller (up to Input::kMaxGamepads, one per player).
+    okay::PadSet pads;
+    pads.OpenAll();
 
     bool running = true;
 #ifdef OKAY_HAVE_OKAYUI
-    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay
+    bool g_testUI = false;            // F1 toggles the OkayUI "Test UI" overlay (development builds only)
     if (std::getenv("OKAY_TESTUI")) g_testUI = true;   // dev screenshot hook
     // Safe-area insets (fractions of the screen: "left,top,right,bottom") for UI Safe
     // Area containers, from the platform / a launcher, or to test a phone layout.
@@ -1458,6 +1794,10 @@ int main(int argc, char** argv) {
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
+    g_uiBridge.painter = renderer;    // dialogue portraits as textures
+    // OkayUI's frame on a painter without an SDL_Renderer behind it (the software painter of the own backend).
+    std::unique_ptr<OkayUI::soft::FrameDrawer> uiFrame;
+    if (!renderer->NativeRenderer()) uiFrame.reset(new OkayUI::soft::FrameDrawer(*renderer));
     okay::SetScriptUI(&g_uiBridge);
 #endif
     // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
@@ -1484,7 +1824,7 @@ int main(int argc, char** argv) {
     std::string presenceLast;
     std::map<std::string, Uint32> playedWith;   // who we've logged this run (key -> when)
     auto pumpPresence = [&]() {
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         if (now - presenceAt < 1000) return;
         presenceAt = now;
         okay::NetworkManager* nm = scene.FindObjectOfType<okay::NetworkManager>();
@@ -1495,9 +1835,9 @@ int main(int argc, char** argv) {
         std::string link;
         if (okay::GameIpc::TakeJoin(link)) {   // the launcher: "join this now" (or "find me a match")
             okay::MatchRequest mr;
-            if (ParseMatchLink(link, mr)) { SDL_Log("Launcher asked to find a match (%d players)", mr.players); okay::Matchmaker::Shared().Start(mr); }
+            if (ParseMatchLink(link, mr)) { pb->Log("Launcher asked to find a match (" + std::to_string(mr.players) + " players)"); okay::Matchmaker::Shared().Start(mr); }
             else {
-                SDL_Log("Launcher asked to join %s", link.c_str());
+                pb->Log("Launcher asked to join " + link);
                 if (nm) nm->JoinByLink(link); else okay::NetworkManager::SetLaunchJoin(link);
             }
         }
@@ -1533,63 +1873,75 @@ int main(int argc, char** argv) {
         }
     };
 #endif
-    Uint64 last = SDL_GetPerformanceCounter();
+    Uint64 last = okay::platform::PerfCounter();
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
     okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
-        Uint64 fStart = SDL_GetPerformanceCounter();
+        Uint64 fStart = okay::platform::PerfCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
 #endif
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
+        okay::platform::Event e;
+        using ET = okay::platform::EventType;
+        using PK = okay::platform::Key;
+        while (pb->PollEvent(e)) {
+            const bool keyDown = e.type == ET::KeyDown;
+            // The wheel as the OS user set it up (natural scrolling flips it), as SDL reported it.
+            const float osWheelY = e.wheelFlipped ? -e.wheelY : e.wheelY;
+            if (e.type == ET::Quit) running = false;
 #ifdef OKAY_HAVE_OKAYUI
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F1) g_testUI = !g_testUI;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_F3) g_statsUI = !g_statsUI;
-            if (e.type == SDL_MOUSEWHEEL) g_uiWheel += (float)e.wheel.y;   // for OkayUI scrolling
+            if (keyDown && e.key == PK::F1 && devPanels) g_testUI = !g_testUI;
+            if (keyDown && e.key == PK::F3) g_statsUI = !g_statsUI;
+            if (e.type == ET::MouseWheel) g_uiWheel += osWheelY;   // for OkayUI scrolling
             if (g_testUI || okay::ServerBrowser::Shared().windowOpen) {   // OkayUI text fields need the typing
-                if (e.type == SDL_TEXTINPUT) SDL_strlcat(g_uiText, e.text.text, sizeof(g_uiText));
-                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) g_uiBack = true;
+                if (e.type == ET::TextInput) {   // append, truncated to the buffer like SDL_strlcat did
+                    const size_t used = std::strlen(g_uiText);
+                    const size_t room = sizeof(g_uiText) - 1 - used;
+                    std::strncat(g_uiText, e.text.c_str(), room);
+                }
+                if (keyDown && e.key == PK::Backspace) g_uiBack = true;
             }
 #endif
 #if !defined(__EMSCRIPTEN__)
-            if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym == SDLK_TAB &&
-                (e.key.keysym.mod & KMOD_SHIFT)) {
+            if (keyDown && !e.repeat && e.key == PK::Tab && (e.mods & okay::platform::ModShift)) {
                 okay::GameIpc::RequestInvite();   // the launcher pops its invite-friends window
-                SDL_Log("Asked the OkaySpace launcher to open Invite friends");
+                pb->Log("Asked the OkaySpace launcher to open Invite friends");
             }
 #endif
-            if (e.type == SDL_WINDOWEVENT) {
-                if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) windowFocused = true;
-                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { windowFocused = false; cursorReleased = true; }
-            }
+            if (e.type == ET::WindowFocusGained) windowFocused = true;
+            else if (e.type == ET::WindowFocusLost) { windowFocused = false; cursorReleased = true; }
             // A click in the window gives a released cursor back to the game.
-            if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
-                pad = SDL_GameControllerOpen(e.cdevice.which);
-            if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
-            if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
+            if (e.type == ET::MouseButtonDown && cursorReleased) cursorReleased = false;
+            if (e.type == ET::GamepadAdded) pads.Add(e.deviceId);
+            if (e.type == ET::GamepadRemoved) pads.Remove(e.deviceId);
+            if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
+            if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
+            if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
+                // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
+                int ow = 0, oh = 0;
+                renderer->OutputSize(&ow, &oh);
+                const int state = e.type == ET::FingerDown ? 0 : e.type == ET::FingerMotion ? 1 : 2;
+                Input::FeedTouch(e.fingerId, state, Vec2{e.fx * ow, e.fy * oh});
+            }
             // Alt+Enter / F11: switch between fullscreen and windowed (when enabled in Build Settings).
-            if (cfg.fullscreenToggle && e.type == SDL_KEYDOWN && !e.key.repeat &&
-                (e.key.keysym.sym == SDLK_F11 ||
-                 ((e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && (e.key.keysym.mod & KMOD_ALT)))) {
-                const bool fs = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-                SDL_SetWindowFullscreen(window, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+            if (cfg.fullscreenToggle && keyDown && !e.repeat &&
+                (e.key == PK::F11 ||
+                 ((e.key == PK::Return || e.key == PK::KpEnter) && (e.mods & okay::platform::ModAlt)))) {
+                okay::DisplaySettings::SetFullscreen(!window->IsFullscreen());
                 continue;
             }
             // Esc quits only when no input field is focused (otherwise it cancels it).
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+            if (keyDown && e.key == PK::Escape) {
                 bool typing = false;
                 for (const auto& up : scene.Objects())
                     if (auto* f = up->GetComponent<UIInputField>()) if (f->focused) typing = true;
                 // Shift+Esc is a GUARANTEED quit: it always closes the game regardless of
                 // pause menus, fullscreen or a hidden cursor — so a player can never get
                 // trapped in a game with no visible way out.
-                bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+                bool shift = (pb->ModState() & okay::platform::ModShift) != 0;
                 if (shift && !typing) { running = false; }
                 else {
                     // A PauseMenu owns a plain Escape (it pauses instead of quitting); only
@@ -1608,51 +1960,29 @@ int main(int argc, char** argv) {
         okay::Matchmaker::Shared().Pump(scene.FindObjectOfType<okay::NetworkManager>());   // a found match: join / host it
 #endif
         // Feed keyboard into the engine Input.
-        const Uint8* ks = SDL_GetKeyboardState(nullptr);
+        auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
         std::vector<char> down;
         for (char c = 'a'; c <= 'z'; ++c)
-            if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
+            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works
         for (char c = '0'; c <= '9'; ++c)
-            if (ks[SDL_GetScancodeFromKey(c)]) down.push_back(c);
-        if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
-        if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
-        if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
+            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);
+        if (keyHeld(PK::Space)) down.push_back(' ');
+        if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
+        if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
+        if (keyHeld(PK::LGui)   || keyHeld(PK::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
         // Editing keys for text fields (held-state; edge-detected by the field).
-        if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
-        if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
-        if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
-        // Map arrow keys onto WASD so arrow-key movement just works.
-        if (ks[SDL_SCANCODE_UP])    down.push_back('w');
-        if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
-        if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
-        if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+        if (keyHeld(PK::Backspace)) down.push_back((char)8);
+        if (keyHeld(PK::Return) || keyHeld(PK::KpEnter)) down.push_back('\r');
+        if (keyHeld(PK::Escape)) down.push_back((char)27);
+        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
+        if (keyHeld(PK::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
+        if (keyHeld(PK::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+        if (keyHeld(PK::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
+        if (keyHeld(PK::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-        // Read the gamepad (first connected controller).
-        Vec2 padAxis; unsigned padMask = 0;
-        if (pad) {
-            float lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
-            float ly = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
-            if (lx > -0.18f && lx < 0.18f) lx = 0.0f; // stick deadzone
-            if (ly > -0.18f && ly < 0.18f) ly = 0.0f;
-            padAxis = {lx, ly};
-            auto bit = [&](SDL_GameControllerButton b, int id) {
-                if (SDL_GameControllerGetButton(pad, b)) padMask |= 1u << id;
-            };
-            bit(SDL_CONTROLLER_BUTTON_A, 0); bit(SDL_CONTROLLER_BUTTON_B, 1);
-            bit(SDL_CONTROLLER_BUTTON_X, 2); bit(SDL_CONTROLLER_BUTTON_Y, 3);
-            bit(SDL_CONTROLLER_BUTTON_BACK, 4); bit(SDL_CONTROLLER_BUTTON_START, 5);
-            bit(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 6); bit(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 7);
-            bit(SDL_CONTROLLER_BUTTON_DPAD_UP, 8); bit(SDL_CONTROLLER_BUTTON_DPAD_DOWN, 9);
-            bit(SDL_CONTROLLER_BUTTON_DPAD_LEFT, 10); bit(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, 11);
-            // Fold the stick / d-pad into WASD so movement scripts work on a pad.
-            if (lx > 0.4f || (padMask & (1u << 11))) down.push_back('d');
-            if (lx < -0.4f || (padMask & (1u << 10))) down.push_back('a');
-            if (ly > 0.4f || (padMask & (1u << 8)))  down.push_back('w');
-            if (ly < -0.4f || (padMask & (1u << 9)))  down.push_back('s');
-            if (padMask & (1u << 0)) down.push_back(' '); // A -> space (jump/confirm)
-        }
+        okay::AppendExtendedKeys(*pb, down);
+        pads.Feed(down);   // every controller (sticks, triggers, buttons, rumble); the first also types WASD / Space
         Input::FeedKeys(down);
-        Input::FeedGamepad(padAxis, padMask);
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
@@ -1670,73 +2000,122 @@ int main(int argc, char** argv) {
             // The fullscreen pause-map is modal too: free + show the cursor so it can be
             // clicked to drop a waypoint (GTA-style), and pause look/move.
             if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
+            if (StoryUIModal(up.get())) invModal = true;   // a running dialogue or an open quest journal
         }
-        Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
+        // Pause, a focused field, a modal, dialogue and a click on UI count here
+        // too, before any component Update. PauseMenu used to set the flag itself,
+        // which components that ran first that frame never saw.
+        okay::SettingsScreen::Ensure(scene);
+        okay::CaptionOverlay::Ensure(scene);
+        const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
+        Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
-        bool locked = Cursor::IsLocked() && !invModal && !cursorReleased;
+        bool locked = Cursor::IsLocked() && !gameModal && !cursorReleased;
+        const bool confined = Cursor::IsConfined() && !gameModal && !cursorReleased;
         // hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
         static bool s_prevInvModal = false;
-        if (invModal != s_prevInvModal && Cursor::IsLocked()) {
-            int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
-            SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
+        if (gameModal != s_prevInvModal && Cursor::IsLocked()) {
+            int ww = 0, wh = 0; window->GetSize(ww, wh);
+            pb->WarpMouse(window, ww / 2, wh / 2);
         }
-        s_prevInvModal = invModal;
-        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        s_prevInvModal = gameModal;
+        // Relative mode only on the transition. Calling it every frame re-warps,
+        // and that warp was added on top of the real delta.
+        static bool s_relLocked = false;
+        if (locked != s_relLocked) {
+            pb->SetRelativeMouse(locked);
+            okay::NoteMouseSpaceChanged();
+            s_relLocked = locked;
+        }
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
         // tip — ~half a slot above where it looks like it's pointing — which biased the
         // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
         // reference, so "drop where the item is" lines up with the slot under it.
-        bool showCursor = (Cursor::visible || invModal || cursorReleased) && !itemDragging;
-        SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
+        bool showCursor = (Cursor::visible || gameModal || cursorReleased) && !itemDragging;
+        pb->ShowCursor(showCursor);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
         // locked we accumulate relative motion into a virtual position so the
         // controllers' look deltas keep working with a hidden, centred cursor.
         int mx, my; Uint32 mb;
         if (locked) {
-            int rx, ry; mb = SDL_GetRelativeMouseState(&rx, &ry);
+            int rx, ry; mb = pb->RelativeMouseState(&rx, &ry);
             s_virtualMouse.x += (float)rx; s_virtualMouse.y += (float)ry;
         } else {
-            int ax, ay; mb = SDL_GetMouseState(&ax, &ay);
+            int ax, ay; mb = pb->MouseState(&ax, &ay);
             // SDL_GetMouseState is in window POINTS, but the UI is drawn in renderer
             // PIXELS (the window is High-DPI). Scale so UI hit-testing — inventory
             // slots, buttons — lines up with what's on screen.
             int ww = 0, wh = 0, ow = 0, oh = 0;
-            SDL_GetWindowSize(window, &ww, &wh);
-            SDL_GetRendererOutputSize(renderer, &ow, &oh);
+            window->GetSize(ww, wh);
+            renderer->OutputSize(&ow, &oh);
             float sx = ww > 0 ? (float)ow / ww : 1.0f, sy = wh > 0 ? (float)oh / wh : 1.0f;
+            if (confined && ww > 1 && wh > 1) {
+                if (ax < 0) ax = 0;
+                if (ay < 0) ay = 0;
+                if (ax > ww - 1) ax = ww - 1;
+                if (ay > wh - 1) ay = wh - 1;
+                pb->WarpMouse(window, ax, ay);
+            }
             s_virtualMouse = Vec2{ax * sx, ay * sy};
         }
         unsigned mask = 0;
-        if (mb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-        if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-        if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+        if (mb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
+        // On-screen controls and gestures read the SDL finger events already fed above
+        // (desktop and the web build). This stays on the SDL player path: it does not
+        // switch on the own platform backend.
+        {
+            int ow = 0, oh = 0;
+            renderer->OutputSize(&ow, &oh);
+            if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
+            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            TouchControls::Sample(scene);
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
+#else
+            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
+#endif
+        }
+        InputActions::Tick();   // after every device is fed, including the on-screen controls
 
-        Uint64 now = SDL_GetPerformanceCounter();
-        float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
+        // The Settings screen (or a script) asked for a window or quality change.
+        // The confirm clock is ticked with this frame's time, just before the scene,
+        // so a revert is on the window before the Settings screen draws.
+
+        Uint64 now = okay::platform::PerfCounter();
+        const float measuredDt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
-        if (dt > 0.1f) dt = 0.1f;
+        if (okay::devlog::Active()) hitchWatch.Frame(measuredDt);
         // The game steps by an evened-out frame time (vsync: whole refresh
-        // periods); the FPS readouts below keep the measured `dt`. The refresh
-        // rate is re-read now and then (the window can move to another display).
+        // periods; the loop does it). The refresh rate is re-read now and then
+        // (the window can move to another display).
         static float s_refreshHz = 0.0f;
         static int s_refreshAge = 0;
         if (s_refreshAge-- <= 0) {
-            SDL_DisplayMode dm;
-            s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+            s_refreshHz = window ? (float)window->RefreshRateHz() : 0.0f;
             s_refreshAge = 120;
         }
-        const float stepDt = cfg.smoothDt ? Time::SmoothDelta(dt, cfg.vsync ? s_refreshHz : 0.0f) : dt;
+        {   // the loop snaps to refresh periods only with vsync on (Settings can switch it while playing)
+            const float hz = cfg.vsync ? s_refreshHz : 0.0f;
+            if (hz != loopRefreshHz) {
+                loopRefreshHz = hz;
+                okay::GameLoop::Options o = loop.options();
+                o.refreshHz = hz;
+                loop.SetOptions(o);
+            }
+        }
 
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
-        { int cw, ch; SDL_GetRendererOutputSize(renderer, &cw, &ch);
+        { int cw, ch; renderer->OutputSize(&cw, &ch);
           UICanvas::Set((float)cw, (float)ch);
           // Make the world-space UI projector live during scene.Update too, so a
           // world-space button's Contains() hit-tests where it actually appears
@@ -1768,11 +2147,11 @@ int main(int argc, char** argv) {
         // (via the installed ScriptUIBridge) draw into this frame. Flushed after the
         // game is rendered (see EndFrame near the present), so UI sits on top.
         {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            int mx, my; Uint32 mb = pb->MouseState(&mx, &my);
             OkayUI::Input ui;
             ui.mouseX = (float)mx; ui.mouseY = (float)my;
-            ui.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-            ui.rightDown = (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0;
+            ui.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
+            ui.rightDown = (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0;
             ui.text = g_uiText[0] ? g_uiText : nullptr;
             ui.backspace = g_uiBack;
             ui.wheel = g_uiWheel;
@@ -1783,7 +2162,7 @@ int main(int argc, char** argv) {
 #endif
         // Focus behaviour: optionally pause the sim and/or mute audio
         // when the window isn't focused.
-        if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
+        AudioMixer::focusMuted = cfg.muteOnFocusLoss && !windowFocused;
         const bool tick = windowFocused || cfg.runInBackground;
 
         // --- Built-in Builder Mode (an engine feature, not a component to add): F2
@@ -1794,8 +2173,7 @@ int main(int argc, char** argv) {
         {
             static bool s_bmPrev = false, s_bmOn = false;
             static BuilderMode* s_bm = nullptr;
-            const Uint8* kb = SDL_GetKeyboardState(nullptr);
-            bool f2 = kb && kb[SDL_SCANCODE_F2] != 0;
+            bool f2 = pb->IsKeyDown(PK::F2);
             if (f2 && !s_bmPrev) {
                 s_bmOn = !s_bmOn;
                 if (s_bmOn && !s_bm && scene.mainCamera && scene.mainCamera->gameObject) {
@@ -1809,9 +2187,6 @@ int main(int argc, char** argv) {
             s_bmPrev = f2;
         }
 
-        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
-        // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(tick ? stepDt : 0.0f);
         // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
         // frame: bone matrices per frame instead of every vertex on the CPU plus a
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
@@ -1830,34 +2205,56 @@ int main(int argc, char** argv) {
             okay::SkinnedMesh::GpuSkinning() = gpuSkin;
             okay::SkinnedMesh::GpuMaxJoints() = maxJoints;
         }
-        if (tick) scene.Update(Time::DeltaTime());
-        if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
+        // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then advance the scene by the
+        // scaled delta (timeScale 0 = paused): the loop's OnUpdate does that unless the window is
+        // unfocused and the game does not run in the background (that frame is a 0 s step, as before).
+        loopTick = tick;
+        okay::DisplaySettings::TickTrial(measuredDt);
+        {
+            static int s_dispGen = -1;
+            const int gen = okay::DisplaySettings::Generation();
+            if (gen != s_dispGen) {
+                s_dispGen = gen;
+                applyDisplay();
+                cfg.vsync = okay::DisplaySettings::VSync();
+                if (renderer) renderer->SetVSync((cfg.vsync ? 1 : 0) != 0);
+                okay::DisplaySettings::ApplyQuality();
+            }
+        }
+        if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
             running = false;
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(),
-                ("The game was closed by its anti-cheat: " + acGuard.Findings().back().detail + ".").c_str(), window);
+            pb->ShowErrorBox(cfg.title,
+                "The game was closed by its anti-cheat: " + acGuard.Findings().back().detail + ".", window);
         }
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
         NavigateUI(scene);
 
         if (audioDev) {
-            int n = (int)(dt * 44100.0f); if (n > 8192) n = 8192;
+            // Top the queue up to a fixed ~70 ms instead of rendering dt worth:
+            // dt drifts against the sound card, which starves or piles up audio.
+            const int ch = have.channels >= 2 ? 2 : 1;
+            const int target = have.freq / 14;
+            const int queued = (int)(audioDev->QueuedBytes() / (sizeof(float) * ch));
+            const int n = std::min(target - queued, 8192);
             if (n > 0) {
-                if (scene.mainCamera)   // listener for 3D/spatial audio sources
-                    AudioMixer::SetListener(scene.mainCamera->gameObject->transform->Position());
-                std::vector<float> ab(n);
-                AudioMixer::Render(scene, ab.data(), n);
-                SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));
+                if (scene.mainCamera) {   // listener for 3D/spatial audio sources
+                    Transform* lt = scene.mainCamera->gameObject->transform;
+                    AudioMixer::SetListener(lt->Position(), lt->Right());
+                }
+                std::vector<float> st((size_t)n * 2);
+                AudioMixer::RenderStereo(scene, st.data(), n);
+                if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
+                audioDev->Queue(st.data(), (uint32_t)((size_t)n * ch * sizeof(float)));
             }
         }
 
-        int w, h; SDL_GetRendererOutputSize(renderer, &w, &h);
+        int w, h; renderer->OutputSize(&w, &h);
         Camera* cam = scene.mainCamera;
         Color bg = cam ? cam->backgroundColor : Color::Black;
-        SDL_SetRenderDrawColor(renderer, (Uint8)(bg.r * 255), (Uint8)(bg.g * 255),
-                               (Uint8)(bg.b * 255), 255);
-        SDL_RenderClear(renderer);
+        renderer->SetDrawColor((Uint8)(bg.r * 255), (Uint8)(bg.g * 255), (Uint8)(bg.b * 255), 255);
+        renderer->Clear();
 
         bool perspective = cam && cam->projection == Camera::Projection::Perspective;
         // A camera set to "Solid Color" clear flags suppresses the skybox (the
@@ -1870,63 +2267,72 @@ int main(int argc, char** argv) {
         // horizontal strips (SDL_RenderFillRect) rather than SDL_RenderGeometry so
         // it renders on every driver — RenderGeometry can silently no-op on some
         // GPUs/backends, which left the game showing a black sky.
+        // The GPU renderers draw the Procedural sky themselves under the same conditions.
+        okay::SkyPassEnabled() = perspective && scene.renderSettings.skybox && !solidClear;
         if (perspective && scene.renderSettings.skybox && !solidClear && w > 0 && h > 0) {
             const auto& rs = scene.renderSettings;
             auto lerp = [](const Color& a, const Color& b, float t) {
                 return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                              a.b + (b.b - a.b) * t, 1.0f};
             };
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            // The gradient colours: the authored ones, or the sun's palette in
+            // Procedural mode (what shows behind the scene on the software renderer).
+            Vec3 topV, horV, botV;
+            okay::EffectiveSkyColors(rs, topV, horV, botV);
+            const Color skyTop{topV.x, topV.y, topV.z, 1.0f}, skyHorizon{horV.x, horV.y, horV.z, 1.0f},
+                        skyBottom{botV.x, botV.y, botV.z, 1.0f};
+            const bool procedural = rs.skyMode == Scene::RenderSettings::SkyProcedural;
+            renderer->SetBlendMode(okay::platform::BlendMode::None);
             float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
             const int strips = h < 128 ? h : 128;     // smooth enough, cheap
             for (int s = 0; s < strips; ++s) {
                 float t = (float)s / (float)(strips - 1);   // 0 (top) .. 1 (bottom)
                 // Two-stop gradient with the horizon band at `hp` (top->horizon above
                 // it, horizon->bottom below it).
-                Color c = (t < hp) ? lerp(rs.skyTop, rs.skyHorizon, t / hp)
-                                   : lerp(rs.skyHorizon, rs.skyBottom, (t - hp) / (1.0f - hp));
+                Color c = (t < hp) ? lerp(skyTop, skyHorizon, t / hp)
+                                   : lerp(skyHorizon, skyBottom, (t - hp) / (1.0f - hp));
                 // Atmospheric horizon haze: pale/warm brightening centered on the
                 // horizon line (matches the editor preview).
                 float hz = 1.0f - std::fabs(t - hp) / 0.10f;
                 if (hz > 0.0f) {
-                    Color haze{std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
-                               std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
-                               std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
+                    Color haze{std::fmin(skyHorizon.r * 1.15f + 0.12f, 1.0f),
+                               std::fmin(skyHorizon.g * 1.15f + 0.12f, 1.0f),
+                               std::fmin(skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
                     c = lerp(c, haze, hz * 0.5f);
                 }
-                SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
-                                       (Uint8)(c.b * 255), 255);
+                renderer->SetDrawColor((Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255);
                 int y0 = (int)((float)s / strips * h);
                 int y1 = (int)((float)(s + 1) / strips * h);
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
-                SDL_RenderFillRect(renderer, &rrect);
+                renderer->FillRect((const ui2d::Rect*)&rrect);
             }
-            // Optional star field in the upper sky (above the horizon band).
-            if (rs.skyStars) {
+            // Optional star field in the upper sky (above the horizon band). The
+            // procedural sky draws its own stars and sun.
+            if (rs.skyStars && !procedural) {
                 int horizonPx = (int)(hp * h);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                renderer->SetBlendMode(okay::platform::BlendMode::Blend);
                 for (const auto& st : okay::SkyStars((float)w, (float)h, (float)horizonPx,
                                                      rs.skyStarDensity, rs.skyStarBright)) {
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 255, st.a);
+                    renderer->SetDrawColor(255, 255, 255, st.a);
                     int r = (int)(st.r + 0.5f); if (r < 1) r = 1;
                     SDL_Rect sq{(int)st.x - r / 2, (int)st.y - r / 2, r, r};
-                    SDL_RenderFillRect(renderer, &sq);
+                    renderer->FillRect((const ui2d::Rect*)&sq);
                 }
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+                renderer->SetBlendMode(okay::platform::BlendMode::None);
             }
             // Optional sun disc: a filled circle + soft glow at a screen-space position.
-            if (rs.skySun) {
+            if (rs.skySun && !procedural) {
                 int cx = (int)(rs.skySunX * w), cy = (int)(rs.skySunY * h);
                 int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
                 const Color& sk = rs.skySunColor;
                 Uint8 sr = (Uint8)(sk.r * 255), sg = (Uint8)(sk.g * 255), sb = (Uint8)(sk.b * 255);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                renderer->SetBlendMode(okay::platform::BlendMode::Blend);
                 auto fillDisc = [&](int r, Uint8 a) {
-                    SDL_SetRenderDrawColor(renderer, sr, sg, sb, a);
+                    renderer->SetDrawColor(sr, sg, sb, a);
                     for (int dy = -r; dy <= r; ++dy) {
                         int dx = (int)std::sqrt((double)(r * r - dy * dy));
                         SDL_Rect row{cx - dx, cy + dy, 2 * dx + 1, 1};
-                        SDL_RenderFillRect(renderer, &row);
+                        renderer->FillRect((const ui2d::Rect*)&row);
                     }
                 };
                 // Broad sun-scattering glow: faint warm discs brightening the sky
@@ -1939,7 +2345,7 @@ int main(int argc, char** argv) {
                 }
                 for (int g = 4; g >= 1; --g) fillDisc((int)(rad * (1.0f + g * 0.7f)), (Uint8)(40 - g * 6));
                 fillDisc(rad, 255);
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+                renderer->SetBlendMode(okay::platform::BlendMode::None);
             }
         }
 
@@ -1957,13 +2363,60 @@ int main(int argc, char** argv) {
                 vw = std::max(1, (int)(rw * w + 0.5f)); vh = std::max(1, (int)(rh * h + 0.5f));
                 vx = (int)(rx * w + 0.5f); vy = std::max(0, h - vh - (int)(ry * h + 0.5f));
             }
-            const bool fullView = vx == 0 && vy == 0 && vw == w && vh == h;
+            bool fullView = vx == 0 && vy == 0 && vw == w && vh == h;
             Mat4 vp = cam->ProjectionMatrix(vh > 0 ? (float)vw / vh : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
                 okay::RenderCullingMask() = cam ? cam->cullingMask : ~0;   // honor the camera's layer mask (software + GPU)
+                if (cam && cam->projection == Camera::Projection::Perspective)
+                    okay::visibility::RenderViewFovY() = cam->VerticalFovDegrees(vh > 0 ? (float)vw / (float)vh : 1.0f);
                 const std::uint32_t* px = nullptr;
+                std::vector<std::uint32_t> stackHold;
+                const okay::CameraStackPlan stackPlan = okay::PlanCameraStack(scene, w, h, ignore);
+                if (!stackPlan.singleFullFrame) {
+                    auto onePass = [&](const okay::CameraPass& p) -> const std::uint32_t* {
+                        const bool prevSky = okay::SkyPassEnabled();
+                        const int prevMask = okay::RenderCullingMask();
+                        const float prevFov = okay::visibility::RenderViewFovY();
+                        okay::SkyPassEnabled() = p.sky && scene.renderSettings.skybox;
+                        okay::RenderCullingMask() = p.cullingMask;
+                        okay::visibility::RenderViewFovY() = p.fovY;
+                        const std::uint32_t* got = nullptr;
+                        if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+#if defined(_WIN32)
+                            if (!got && d3d12Ready && d3d12Renderer)
+                                got = d3d12Renderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                    p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                            if (!got && d3dReady && d3dRenderer)
+                                got = d3dRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                  p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+#endif
+                            if (!got && glReady && glRenderer && glWindow && glCtx) {
+                                if (glWindow->MakeCurrent()) {
+                                    got = glRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                     p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                    okay::platform::Default()->ReleaseCurrent();
+                                }
+                            }
+                        }
+                        if (!got) {
+                            static Raster stackR[4];
+                            static std::vector<std::uint32_t> stackD[4];
+                            static int stackN = 0;
+                            const int s = stackN++ & 3;
+                            got = RenderMeshesSS(stackR[s], stackD[s], scene, p.vp, p.eye, p.w, p.h, 1, p.ignore);
+                        }
+                        okay::SkyPassEnabled() = prevSky;
+                        okay::RenderCullingMask() = prevMask;
+                        okay::visibility::RenderViewFovY() = prevFov;
+                        return got;
+                    };
+                    if (okay::CompositeCameraStack(stackPlan, onePass, stackHold)) {
+                        px = stackHold.data();
+                        vx = 0; vy = 0; vw = w; vh = h; fullView = true;
+                    }
+                }
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
@@ -1977,10 +2430,10 @@ int main(int argc, char** argv) {
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
-                        if (SDL_GL_MakeCurrent(glWindow, glCtx) == 0) {
+                        if (glWindow->MakeCurrent()) {
                             px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                            SDL_GL_MakeCurrent(nullptr, nullptr);
+                            okay::platform::Default()->ReleaseCurrent();
                         }
                     }
                     if (!px) ++gpuFails; else gpuFails = 0;
@@ -1995,23 +2448,31 @@ int main(int argc, char** argv) {
                 if (!px)
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)
+                    okay::StoreCameraTarget(cam->renderTarget, px, vw, vh);
                 if (px) {
                     if (!mesh3DTex || mesh3DW != vw || mesh3DH != vh) {
-                        if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-                        mesh3DTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                                                      SDL_TEXTUREACCESS_STREAMING, vw, vh);
-                        SDL_SetTextureBlendMode(mesh3DTex, SDL_BLENDMODE_BLEND);
+                        if (mesh3DTex) renderer->DestroyTexture(mesh3DTex);
+                        okay::platform::TextureDesc td;
+                        td.width = vw; td.height = vh; td.streaming = true;
+                        mesh3DTex = renderer->CreateTexture(td, nullptr);
                         mesh3DW = vw; mesh3DH = vh;
                     }
-                    SDL_UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
-                    if (fullView) SDL_RenderCopy(renderer, mesh3DTex, nullptr, nullptr);
+                    if (okay::Accessibility::Get().colorblind != okay::ColorblindMode::None) {   // colour vision filter over the 3D frame
+                        static std::vector<std::uint32_t> a11yFrame;
+                        a11yFrame.assign(px, px + (std::size_t)vw * (std::size_t)vh);
+                        okay::Accessibility::FilterFrame((std::uint8_t*)a11yFrame.data(), a11yFrame.size());
+                        px = a11yFrame.data();
+                    }
+                    renderer->UpdateTexture(mesh3DTex, nullptr, px, vw * 4);
+                    if (fullView) renderer->Copy(mesh3DTex, nullptr, nullptr);
                     else {   // outside the camera's rect stays black, like an empty screen area
-                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        renderer->SetDrawColor(0, 0, 0, 255);
                         const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
                                                   {0, vy, vx, vh}, {vx + vw, vy, w - vx - vw, vh}};
-                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) SDL_RenderFillRect(renderer, &b);
+                        for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) renderer->FillRect((const ui2d::Rect*)&b);
                         const SDL_Rect dst{vx, vy, vw, vh};
-                        SDL_RenderCopy(renderer, mesh3DTex, nullptr, &dst);
+                        renderer->Copy(mesh3DTex, nullptr, (const ui2d::Rect*)&dst);
                     }
                 }
                 // Depth occlusion on the GPU color path: the GPU renderers don't read
@@ -2019,13 +2480,14 @@ int main(int argc, char** argv) {
                 // HALF-resolution software depth pre-pass to fill the occlusion buffer so
                 // particles still hide behind geometry. Only pay it when particles exist.
                 if (!SceneOcclusionDepth().valid) {
-                    bool anyParticles = false;
+                    bool anyParticles = false;   // (or lines / trails: they hide behind geometry the same way)
                     for (const auto& up : scene.Objects())
-                        if (up && up->active && up->GetComponent<ParticleSystem>()) { anyParticles = true; break; }
+                        if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
+                                                 up->GetComponent<TrailRenderer>())) { anyParticles = true; break; }
                     if (anyParticles) {
                         static Raster occWork; static std::vector<std::uint32_t> occDown;
                         int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
-                        RenderMeshesSS(occWork, occDown, scene, vp, camPos, hw, hh, 1, ignore);
+                        FillOcclusionDepth(occWork, occDown, scene, vp, camPos, hw, hh, ignore);
                     }
                 }
                 // Particles in 3D: camera-facing billboards projected with the camera
@@ -2034,13 +2496,13 @@ int main(int argc, char** argv) {
                 // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
                 {
                     // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
-                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; SDL_Texture* tex; bool stretch; };
+                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; ui2d::Tex tex; bool stretch; };
                     std::vector<PP> pp;
                     for (const auto& up : scene.Objects()) {
                         auto* ps = up->GetComponent<ParticleSystem>();
                         if (!ps || !up->active || UIHidden(up.get())) continue;
-                        SDL_Texture* ptex = ps->texture.empty() ? nullptr
-                                            : GetTexture(renderer, ps->texture, baseDir, textureCache);
+                        ui2d::Tex ptex = ps->texture.empty() ? nullptr
+                                            : GetTexture(renderer, ps->texture);
                         const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
                         for (const auto& p : ps->Particles()) {
                             if (!p.alive) continue;
@@ -2076,11 +2538,11 @@ int main(int argc, char** argv) {
                     for (const PP& q : pp) {
                         if (q.tex) {
                             // Rotated, tinted sprite — elongated along velocity in stretch mode.
-                            SDL_SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
-                            SDL_SetTextureAlphaMod(q.tex, q.col.a);
-                            SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+                            renderer->SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
+                            renderer->SetTextureAlphaMod(q.tex, q.col.a);
+                            renderer->SetTextureBlendMode(q.tex, okay::platform::BlendMode::Blend);
                             SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
-                            SDL_RenderCopyExF(renderer, q.tex, nullptr, &dst, q.ang, nullptr, SDL_FLIP_NONE);
+                            renderer->CopyExF(q.tex, nullptr, (const ui2d::FRect*)&dst, q.ang, nullptr, ui2d::FlipNone);
                         } else if (q.stretch) {
                             // Untextured streak: a thick line along the velocity.
                             float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
@@ -2092,6 +2554,9 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
+                DrawLineDraws(renderer, scene, vp, camPos, (float)vx, (float)vy, (float)vw, (float)vh, ignore,
+                              RenderCullingMask(), SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr);
             }
         } else {
             float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
@@ -2119,9 +2584,8 @@ int main(int argc, char** argv) {
                 // Texture coords map the image upright onto the quad corners
                 // (corner 3 = top-left in world = texture uvMin). Honors the
                 // sprite's uv sub-region so sprite sheets / atlases work.
-                SDL_Texture* tex = GetTexture(renderer, sr->texture, baseDir, textureCache);
-                if (tex) SDL_SetTextureScaleMode(tex,
-                    sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+                ui2d::Tex tex = GetTexture(renderer, sr->texture);
+                if (tex) renderer->SetTextureScaleMode(tex, sr->texFilter == SpriteRenderer::TexFilter::Pixel ? okay::platform::ScaleMode::Nearest : okay::platform::ScaleMode::Linear);
                 float u0 = sr->uvMin.x, v0 = sr->uvMin.y, u1 = sr->uvMax.x, v1 = sr->uvMax.y;
                 if (sr->flipX) std::swap(u0, u1);
                 if (sr->flipY) std::swap(v0, v1);
@@ -2133,11 +2597,11 @@ int main(int argc, char** argv) {
                     vtx[k] = SDL_Vertex{{(float)s.x, (float)s.y}, col, uv[k]};
                 }
                 const int idx[6] = {0, 1, 2, 0, 2, 3};
-                SDL_RenderGeometry(renderer, tex, vtx, 4, idx, 6);
+                renderer->Geometry(tex, (const ui2d::Vertex*)vtx, 4, idx, 6);
             }
 
             // Drop-zone highlight: tint a zone while a valid item hovers it.
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            renderer->SetBlendMode(okay::platform::BlendMode::Blend);
             for (const auto& up : scene.Objects()) {
                 auto* dz = up->GetComponent<DropZone>();
                 auto* sr = up->GetComponent<SpriteRenderer>();
@@ -2149,7 +2613,7 @@ int main(int argc, char** argv) {
             }
 
             // Tilemaps: draw each non-empty cell as a colored quad.
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            renderer->SetBlendMode(okay::platform::BlendMode::Blend);
             for (const auto& up : scene.Objects()) {
                 auto* tm = up->GetComponent<Tilemap>();
                 if (!tm || !up->active || UIHidden(up.get())) continue;
@@ -2174,6 +2638,9 @@ int main(int argc, char** argv) {
                                   camPos, scale, w, h, col);
                 }
             }
+            // Lines and trails in 2D, on the same mapping as the sprites.
+            DrawLineDraws(renderer, scene, LineView2D(camPos, scale, (float)w, (float)h), camPos - Vec3{0, 0, 1000.0f},
+                          0.0f, 0.0f, (float)w, (float)h, nullptr, cam ? cam->cullingMask : ~0, nullptr);
         }
 
         // World-space text only (sits with the 2D scene). Screen-space HUD text is
@@ -2215,7 +2682,7 @@ int main(int argc, char** argv) {
         // every widget (Canvas sortOrder, uiDrawOrder / type layer, hierarchy order),
         // done by the engine's UI renderer (okay::ui2d::RenderSceneUI) on this
         // SDL_Renderer.
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        renderer->SetBlendMode(okay::platform::BlendMode::Blend);
         // World-space Canvas projection: hand the shared UI layout helpers a camera
         // projector for this frame so any widget under a world-space Canvas renders
         // (and hit-tests) in 3D. Cleared after the pass; screen-space UI is untouched.
@@ -2240,16 +2707,38 @@ int main(int argc, char** argv) {
 
         // Optional FPS overlay (top-left) when enabled in build settings.
         if (cfg.showFps) {
-            static float fpsSmooth = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            fpsSmooth = fpsSmooth <= 0.0f ? inst : fpsSmooth * 0.9f + inst * 0.1f;
-            char buf[32]; std::snprintf(buf, sizeof(buf), "FPS %d", (int)(fpsSmooth + 0.5f));
+            // The loop's own REAL frame times over the last 30 frames (okay/Core/FrameOverlay.hpp), the numbers
+            // the F3 panel shows. This used to read `dt`, the frame time cut to 0.1 s, so it never showed
+            // under 10 FPS and a stall barely moved it.
+            const std::string fpsText = okay::FrameOverlay::FpsLabel(loop);
+            const char* buf = fpsText.c_str();
             float px = 2.0f;
             float tw = UITextW(buf, px);
             SDL_Rect bg{4, 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 160);
-            SDL_RenderFillRect(renderer, &bg);
+            renderer->SetDrawColor(0, 0, 0, 160);
+            renderer->FillRect((const ui2d::Rect*)&bg);
             DrawText(renderer, buf, 8, 8, px, SDL_Color{80, 255, 120, 255});
+        }
+        if (devPanels) {   // a development build says so on screen, with which build it is (release builds draw nothing)
+            const std::string badge = "DEV  " + cfg.title + (cfg.version.empty() ? std::string() : "  v" + cfg.version + " build " + std::to_string(cfg.buildNumber));
+            const float px = 2.0f;
+            const float tw = UITextW(badge.c_str(), px);
+            SDL_Rect bg{4, h - (int)(Font8x8::Height * px + 8) - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            renderer->SetDrawColor(0, 0, 0, 160);
+            renderer->FillRect((const ui2d::Rect*)&bg);
+            DrawText(renderer, badge.c_str(), 8, bg.y + 4, px, SDL_Color{255, 200, 80, 255});
+        }
+        if (Cursor::IsLocked() || Cursor::IsConfined() || cursorReleased) {
+            const char* hint = cursorReleased ? "Click to capture the cursor" : "Esc to release the cursor";
+            float px = 2.0f;
+            float tw = UITextW(hint, px);
+            int x = (int)(w * 0.5f - tw * 0.5f);
+            int y = h - (int)(Font8x8::Height * px) - 12;
+            if (x < 8) x = 8;
+            SDL_Rect bg{x - 4, y - 4, (int)(tw + 8), (int)(Font8x8::Height * px + 8)};
+            renderer->SetDrawColor(0, 0, 0, 140);
+            renderer->FillRect((const ui2d::Rect*)&bg);
+            DrawText(renderer, hint, (float)x, (float)y, px, SDL_Color{230, 245, 230, 230});
         }
         UIWorld().active = false;   // end of the frame's world-space UI projection
 #ifdef OKAY_HAVE_OKAYUI
@@ -2261,51 +2750,50 @@ int main(int argc, char** argv) {
         if (!toastDemo && std::getenv("OKAY_TESTUI")) { toastDemo = true; OkayUI::Toast("Match found - joining EU 1", 1, 30.0f); OkayUI::Toast("Maya invited you to play", 0, 30.0f); }
         DrawServerBrowserWindow(scene, window);   // net_browser_open(): the in-game "Find a server" window
         DrawMatchmakingBanner(window);            // net_queue_join() / Find match: progress + Cancel
-        // F3 performance HUD — a real in-engine use of OkayUI (FPS graph, frame time,
-        // and a scrollable list of scene objects). Showcases PlotLines/LabelText/child.
+        // F3 performance HUD — a real in-engine use of OkayUI (stat lines, FPS graph, and a scrollable
+        // list of scene objects). The numbers are the loop's own (okay/Core/FrameOverlay.hpp, from
+        // GameLoop::Stats()): REAL frame times over the last 240 frames (a stall reads as the stall it was,
+        // not the 0.1 s the game stepped), plus the time scale, hit stop, debug scale and pause reasons. The
+        // editor's Game view shows the same lines.
         if (g_statsUI) {
-            static float s_fps = 0.0f;
-            float inst = dt > 0.0001f ? 1.0f / dt : 0.0f;
-            s_fps = s_fps <= 0.0f ? inst : s_fps * 0.9f + inst * 0.1f;   // smoothed FPS
-            static float s_fpsHist[90] = {0};
-            static int   s_fpsIdx = 0;
-            s_fpsHist[s_fpsIdx] = s_fps;
-            s_fpsIdx = (s_fpsIdx + 1) % 90;
-            float plot[90];
-            for (int i = 0; i < 90; ++i) plot[i] = s_fpsHist[(s_fpsIdx + i) % 90];  // chronological
+            const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
 
-            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 320.0f, 320.0f);
+            OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list
+            for (const std::string& ol : overlayLines) OkayUI::Text(ol.c_str());
             char line[64];
-            std::snprintf(line, sizeof(line), "%d", (int)(s_fps + 0.5f));
-            OkayUI::LabelText("FPS", line);
-            std::snprintf(line, sizeof(line), "%.2f ms", dt * 1000.0f);
-            OkayUI::LabelText("Frame time", line);
             std::snprintf(line, sizeof(line), "%d", (int)scene.Objects().size());
             OkayUI::LabelText("Objects", line);
             OkayUI::SeparatorText("FPS (last 90 frames)");
-            OkayUI::PlotLines("##fps", plot, 90, 0.0f, 0.0f, 56.0f);
+            OkayUI::PlotLines("", plot.data(), (int)plot.size(), 0.0f, 0.0f, 56.0f);   // no label: OkayUI draws "##" ids as text
             OkayUI::SeparatorText("Scene objects");
-            if (OkayUI::BeginChild("##objs", 0.0f, 130.0f, true)) {
+            if (OkayUI::BeginChild("##objs", 0.0f, 64.0f, true)) {
                 for (const auto& up : scene.Objects())
                     if (up) OkayUI::BulletText(up->name.c_str());
             }
             OkayUI::EndChild();
             OkayUI::End();
         }
-        OkayUI::EndFrame(renderer);
-        SDL_StartTextInput();   // keep text flowing for OkayUI text fields
+        if (uiFrame) {
+            int uw = 0, uh = 0; renderer->OutputSize(&uw, &uh);
+            OkayUI::EndFrameData(uw, uh);
+            uiFrame->Draw(OkayUI::GetDrawData());
+        } else {
+            OkayUI::EndFrame((SDL_Renderer*)renderer->NativeRenderer());
+        }
+        pb->StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
             if (!ui) continue;
-            DrawInventoryUI(renderer, *ui, baseDir, textureCache);
+            DrawInventoryUI(renderer, *ui);
             break;
         }
         for (const auto& up : scene.Objects()) {
             auto* gui = up ? up->GetComponent<GridInventoryUI>() : nullptr;
             if (!gui) continue;
-            DrawGridInventory(renderer, *gui, baseDir, textureCache);
+            DrawGridInventory(renderer, *gui);
             break;
         }
         for (const auto& up : scene.Objects()) {
@@ -2317,7 +2805,7 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {
             auto* ce = up ? up->GetComponent<ChestInventory>() : nullptr;
             if (!ce || !ce->open) continue;
-            DrawChest(renderer, *ce, baseDir, textureCache);
+            DrawChest(renderer, *ce);
             break;
         }
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
@@ -2325,21 +2813,31 @@ int main(int argc, char** argv) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
             if (!ls || !ls->Active()) continue;
             ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));   // same text as the game's UI
-            DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
+            DrawLoadingScreen(renderer, *ls);
             ui2d::SetUIDefaultFont(nullptr);
             break;
         }
-        // Post: screen-space vignette (on top of the scene + UI, under nothing).
-        DrawVignette(renderer, scene.renderSettings.vignette);
-        SDL_RenderPresent(renderer);
+        // Cutscene overlay (letterbox bars, coloured fade, fade to black, subtitle).
+        // Drawn here, after whichever renderer produced the frame, so it matches everywhere.
+        if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
+            int W = 0, H = 0; renderer->OutputSize(&W, &H);
+            ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
+            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H,
+                                                                    !CaptionOverlay::Any(&scene)));
+            ui2d::SetUIDefaultFont(nullptr);
+        }
+        // Post: screen-space vignette (on top of the scene + UI, under nothing),
+        // unless the GPU post chain already drew it into the frame.
+        if (!okay::PostVignetteHandled()) DrawVignette(renderer, scene.renderSettings.vignette);
+        renderer->Present();
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.
         if (cfg.fpsCap > 0) {
             double budget = 1.0 / cfg.fpsCap;
-            double freq = (double)SDL_GetPerformanceFrequency();
-            double elapsed = (SDL_GetPerformanceCounter() - fStart) / freq;
+            double freq = (double)okay::platform::PerfFrequency();
+            double elapsed = (okay::platform::PerfCounter() - fStart) / freq;
             double remain = budget - elapsed;
-            if (remain > 0.0015) SDL_Delay((Uint32)((remain - 0.0005) * 1000.0));
+            if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
         }
     };
 
@@ -2353,37 +2851,38 @@ int main(int argc, char** argv) {
     // Startup splash: show a logo over a solid colour, fading in and
     // out, before the game proper. Skippable with a key/click; closing quits.
     if (running && !cfg.splash.empty()) {
-        if (SDL_Texture* stex = GetTexture(renderer, cfg.splash, baseDir, textureCache)) {
-            Uint64 t0 = SDL_GetPerformanceCounter();
+        if (ui2d::Tex stex = GetTexture(renderer, cfg.splash)) {
+            Uint64 t0 = okay::platform::PerfCounter();
             const double dur = cfg.splashTime > 0.1f ? cfg.splashTime : 2.0;
             const double fade = std::min(0.5, dur * 0.3);
             bool done = false;
             while (running && !done) {
-                double el = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+                double el = (double)(okay::platform::PerfCounter() - t0) / (double)okay::platform::PerfFrequency();
                 if (el >= dur) break;
-                SDL_Event e;
-                while (SDL_PollEvent(&e)) {
-                    if (e.type == SDL_QUIT) { running = false; }
-                    else if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN) done = true;  // skip
+                okay::platform::Event e;
+                while (pb->PollEvent(e)) {
+                    if (e.type == okay::platform::EventType::Quit) { running = false; }
+                    else if (e.type == okay::platform::EventType::KeyDown ||
+                             e.type == okay::platform::EventType::MouseButtonDown) done = true;  // skip
                 }
                 double a = 1.0;
                 if (el < fade) a = el / fade;
                 else if (el > dur - fade) a = (dur - el) / fade;
                 if (a < 0) a = 0; if (a > 1) a = 1;
-                int w = 0, h = 0; SDL_GetRendererOutputSize(renderer, &w, &h);
-                SDL_SetRenderDrawColor(renderer, (Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
-                SDL_RenderClear(renderer);
-                int iw = 0, ih = 0; SDL_QueryTexture(stex, nullptr, nullptr, &iw, &ih);
+                int w = 0, h = 0; renderer->OutputSize(&w, &h);
+                renderer->SetDrawColor((Uint8)cfg.splashBg[0], (Uint8)cfg.splashBg[1], (Uint8)cfg.splashBg[2], 255);
+                renderer->Clear();
+                int iw = 0, ih = 0; renderer->QueryTexture(stex, &iw, &ih);
                 if (iw > 0 && ih > 0) {
                     double fit = std::min((double)w / iw, (double)h / ih) * 0.55;  // 55% of the window
                     int dw = (int)(iw * fit), dh = (int)(ih * fit);
                     SDL_Rect dst{(w - dw) / 2, (h - dh) / 2, dw, dh};
-                    SDL_SetTextureBlendMode(stex, SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureAlphaMod(stex, (Uint8)(a * 255));
-                    SDL_RenderCopy(renderer, stex, nullptr, &dst);
+                    renderer->SetTextureBlendMode(stex, okay::platform::BlendMode::Blend);
+                    renderer->SetTextureAlphaMod(stex, (Uint8)(a * 255));
+                    renderer->Copy(stex, nullptr, (const ui2d::Rect*)&dst);
                 }
-                SDL_RenderPresent(renderer);
-                SDL_Delay(8);
+                renderer->Present();
+                okay::platform::DelayMs(8);
             }
         }
     }
@@ -2399,25 +2898,28 @@ int main(int argc, char** argv) {
         acFileReport(acGuard.Findings().front().check, all);
     }
 
+    AudioMixer::SaveSettings();
+    okay::devlog::Stop();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
-    for (auto& kv : textureCache)
-        if (kv.second) SDL_DestroyTexture(kv.second);
-    if (mesh3DTex) SDL_DestroyTexture(mesh3DTex);
-    if (audioDev) SDL_CloseAudioDevice(audioDev);
+    if (mesh3DTex) renderer->DestroyTexture(mesh3DTex);
+    if (bootTex) renderer->DestroyTexture(bootTex);   // the painter frees the textures it cached itself
+    audioDev.reset();
 #if defined(_WIN32)
     if (d3d12Renderer) { d3d12Renderer->Destroy(); delete d3d12Renderer; }
     if (d3dRenderer) { d3dRenderer->Destroy(); delete d3dRenderer; }
 #endif
     if (glRenderer) {
-        if (glWindow && glCtx) SDL_GL_MakeCurrent(glWindow, glCtx);
+        if (glWindow && glCtx) glWindow->MakeCurrent();
         glRenderer->Destroy(); delete glRenderer;
-        SDL_GL_MakeCurrent(nullptr, nullptr);
+        okay::platform::Default()->ReleaseCurrent();
     }
-    if (glCtx) SDL_GL_DeleteContext(glCtx);
-    if (glWindow) SDL_DestroyWindow(glWindow);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    glWindow.reset();   // destroys its GL context, then the hidden window
+#ifdef OKAY_HAVE_OKAYUI
+    uiFrame.reset();      // it holds a texture of the painter
+#endif
+    painterOwner.reset();
+    windowOwner.reset();
+    pb->Shutdown();
     return 0;
 }

@@ -22,11 +22,16 @@ const ok = await crypto.subtle.verify({ name: "Ed25519" }, kp.publicKey, base64U
                                       new TextEncoder().encode(prefixAndPayload));
 check(ok, "signature verifies with the public key");
 check(!/[=+/]/.test(t), "base64url, no padding");
+const cnf = base64UrlEncode(new Uint8Array(32).fill(7));
+const bound = await signTicket({ sub: "user-1", aud: "arena-1", iat, exp: iat + 600, cnf }, key);
+check(new TextDecoder().decode(base64UrlDecode(bound.slice(TICKET_PREFIX.length, bound.lastIndexOf(".")))).endsWith(`&cnf=${cnf}`),
+      "cnf in the payload");
+check(await throws(() => signTicket({ sub: "a", aud: "x", iat, exp: iat + 10, cnf: "short" }, key)), "malformed cnf refused");
 
 check(await throws(() => signTicket({ sub: "a&aud=*", aud: "x", iat, exp: iat + 10 }, key)), "unsafe sub refused");
 check(await throws(() => signTicket({ sub: "a", aud: "x=y", iat, exp: iat + 10 }, key)), "unsafe aud refused");
 check(await throws(() => signTicket({ sub: "a", aud: "x", iat, exp: iat }, key)), "empty lifetime refused");
-check(await throws(() => signTicket({ sub: "a", aud: "x", iat, exp: iat + 7 * 86400 }, key)), "long lifetime refused");
+check(await throws(() => signTicket({ sub: "a", aud: "x", iat, exp: iat + 2 * 3600 }, key)), "long lifetime refused");
 check(await throws(() => importSigningKey("AAAA", jwk.x!)), "short seed refused");
 for (let n = 0; n < 40; n++) {
   const b = Uint8Array.from({ length: n }, (_, i) => (i * 37 + 11) & 255);

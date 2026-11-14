@@ -5,6 +5,8 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Net/NetDelta.hpp"
+#include "okay/Net/NetChannels.hpp"
 #include "okay/Physics/Physics3D.hpp"   // RaycastHit3D (RewindRaycast)
 #include <map>
 #include "okay/Math/Vec3.hpp"
@@ -23,6 +25,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
+namespace net { class Packet; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -97,16 +100,36 @@ public:
     /// its own (the player sets these from the signed-in OkaySpace account).
     static void SetDefaultIdentity(const std::string& token, const std::string& name);
 
+    // ---- Join gate (session tickets) -------------------------------------
+    /// What a client must do before it joins: called at the start of StartClient / JoinViaRelay (so also for a launcher join, a
+    /// reconnect and a script's net_join), before any socket is opened or key made. The gate may fetch a session ticket
+    /// (TicketBinding(), then SetAuthToken(ticket)); returning false refuses the join: nothing is sent and the call returns false
+    /// with the reason in LastJoinRefusal(). No gate (the default) = every join goes ahead as before. See shared/TicketJoin.hpp.
+    using JoinGate = std::function<bool(NetworkManager& nm, const std::string& host, std::uint16_t port,
+                                        bool relayed, const std::string& relayCode, std::string& why)>;
+    static void SetJoinGate(JoinGate gate);
+    /// Why the gate refused the most recent join ("" = it did not).
+    static std::string LastJoinRefusal();
+
     // ---- Server authority (basic anti-cheat) ----------------------------
     /// Server: the fastest a client's avatar may move (world units per second;
     /// 0 = no check). A faster move is rejected and the client is snapped back to
     /// its last good position. Use ServerTeleport() for legit jumps (respawns).
     float maxMoveSpeed = 0.0f;
     /// Server: custom messages a client may send per second (0 = unlimited);
-    /// extra ones are dropped (reliable ones are still acknowledged).
+    /// extra ones are dropped (reliable ones aren't acknowledged, so they come
+    /// again later).
     int maxMessagesPerSecond = 0;
+    /// Server: the longest custom message a client may send to be applied or
+    /// relayed (channel + data, bytes; 0 = any). A client also gets four times
+    /// this in bytes per second. Chat lines are cut to 512 bytes.
+    int maxRelayedBytes = 16 * 1024;
     /// Server: kick a client after this many rejected moves within a minute (0 = never).
     int kickAfterViolations = 0;
+    /// Server, authoritative movement: the shortest time between two presses of
+    /// Jump, Dash or Fire in a player's inputs (seconds; 0 = off). A quicker
+    /// press is dropped, so a client can't press every tick.
+    float minPressInterval = 0.0f;
     /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
     /// check and pushed to that client.
     void ServerTeleport(std::uint32_t id, const Vec3& pos);
@@ -165,10 +188,12 @@ public:
     /// packet timing. interpolationRate 0 still snaps.
     float interpolationRate = 12.0f;
 
-    /// Spatial interest management: a client is only sent peers within this many
-    /// world units of its own avatar (0 = no culling — send everyone in the room).
-    /// Trims bandwidth in large worlds; an out-of-range peer simply stops updating
-    /// on that client until it comes back into range.
+    /// Spatial interest management: a client is only sent peers, and owned
+    /// objects in the binary snapshot, within this many world units of its own
+    /// avatar (0 = no culling — send everyone in the room). Objects are gathered
+    /// from a grid whose cell is this radius (the client's cell and its
+    /// neighbours) and then kept only inside the sphere. An out-of-range object
+    /// stops updating on that client until it comes back.
     float interestRadius = 0.0f;
 
     /// Round-trip time to the server in milliseconds (clients only; 0 until the
@@ -196,6 +221,11 @@ public:
     /// token). Set it before joining; the server can verify it to bind the peer to
     /// a real account. "" = anonymous.
     void SetAuthToken(const std::string& token) { m_authToken = token; }
+    /// Client: what to send the ticket service as "cnf" so the session ticket
+    /// it signs works only for this player's next connection: base64url SHA-256
+    /// of the key StartClient / JoinViaRelay will use (made now). Call it before
+    /// starting the client, then SetAuthToken(ticket). "" without encryption.
+    std::string TicketBinding();
     const std::string& AuthToken() const { return m_authToken; }
     /// Send the auth token to any host. Off (the default): before joining, the
     /// client asks the host whether it checks sign-ins (the server browser's
@@ -219,6 +249,7 @@ public:
     /// so they never stall the network tick. Return 1 to accept (set `outUserId`),
     /// 0 to reject, or -1 while the answer is still pending: the join is ignored
     /// for now and the client's next join retry (every half second) asks again.
+    /// -2 = too busy to check: the join is refused ("server busy, try again").
     /// Takes precedence over SetTokenVerifier when both are set.
     using JoinCheck = std::function<int(const std::string& token, std::string& outUserId)>;
     void SetJoinCheck(JoinCheck c) { m_joinCheck = std::move(c); }
@@ -231,9 +262,69 @@ public:
     /// Encrypt traffic. When true (and the engine is built with libsodium), peers
     /// exchange public keys during the join handshake and all post-handshake
     /// datagrams are sealed with XChaCha20-Poly1305 (confidentiality + integrity).
-    /// Set it on BOTH ends before host/join. If either end lacks encryption support,
-    /// the session falls back to plaintext, so it's safe to leave on. Default off.
+    /// Set it on BOTH ends before host/join. A client without encryption support
+    /// falls back to plaintext; a host without it refuses to start (no quietly
+    /// unencrypted server). Default off.
     bool encryption = false;
+    /// Relay sessions: seconds to wait for the relay's welcome before giving up
+    /// with RelayError() set ("the relay never answered"). 0 waits forever.
+    float relayTimeoutSeconds = 15.0f;
+    /// Client: a joined session ends (Stop(), ConnectionLost() set) when the host
+    /// sends nothing for this many seconds. The client pings once a second and
+    /// the host answers, so a live host is never this quiet. 0 never gives up.
+    float serverTimeoutSeconds = 10.0f;
+    /// Client: rejoin by itself after ConnectionLost() (the host went silent).
+    /// Off by default. Each try waits reconnectDelaySeconds, doubling per failed
+    /// try up to reconnectMaxDelaySeconds, for at most reconnectMaxAttempts tries
+    /// (a try that gets "wrong password", "authentication failed" or a kick ends
+    /// it at once). Needs a session started with StartClient / JoinViaRelay /
+    /// JoinByLink: the target is remembered. The name, room, password and
+    /// account token are kept; the host hands back the peer id, score, ready flag
+    /// and last position if it still holds them (resumeGraceSeconds), and objects
+    /// this player made with SpawnOwned are announced again. See Resumed().
+    bool autoReconnect = false;
+    int   reconnectMaxAttempts = 5;
+    float reconnectDelaySeconds = 1.0f;
+    float reconnectMaxDelaySeconds = 15.0f;
+    /// Host: how long (seconds) the state of a client that dropped is kept so
+    /// the same client can resume it (matched by a secret token the Welcome
+    /// gave it). At most kMaxParked are kept. 0 = keep nothing.
+    float resumeGraceSeconds = 30.0f;
+    /// What a reconnecting client reports to its handler.
+    enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };
+    /// Client: called on each step; `attempt` is the try number (1-based; 0 for Lost).
+    void SetReconnectHandler(std::function<void(ReconnectEvent, int attempt)> f) { m_reconnectHandler = std::move(f); }
+    /// Client: waiting to retry, or mid-try.
+    bool Reconnecting() const { return m_reconnecting; }
+    int ReconnectAttempt() const { return m_reconnectAttempt; }
+    /// Client: every try failed (ConnectionLost() stays true).
+    bool ReconnectGaveUp() const { return m_reconnectGaveUp; }
+    /// Client: how many times a lost session has been rejoined.
+    int Reconnects() const { return m_reconnectCount; }
+    /// Client: the last rejoin got the old peer id back with score and position.
+    bool Resumed() const { return m_resumed; }
+    /// Client: the secret the host's Welcome gave this session (0 before joining). Whoever
+    /// has it can take this player's place after a drop, so never log or share it. A game
+    /// that wants to resume after its own restart saves it and calls SetResumeToken(token)
+    /// right after StartClient (before the join completes).
+    std::uint64_t ResumeToken() const { return m_resumeToken; }
+    void SetResumeToken(std::uint64_t token) { if (m_mode == Mode::Client && !m_joined) m_resumeToken = token; }
+    /// Host: how many dropped clients' states are being kept (at most kMaxParked).
+    std::size_t ParkedCount() const { return m_parked.size(); }
+    /// Host: a client that rejoined with its old state.
+    struct ResumedPeer { std::uint32_t id = 0; Vec3 position{}; bool hasPosition = false; int score = 0; bool ready = false; };
+    void SetPeerResumedHandler(std::function<void(const ResumedPeer&)> f) { m_peerResumed = std::move(f); }
+    static constexpr std::size_t kMaxParked = 64;
+
+    /// Client: seconds to wait for the host to accept the join before giving up
+    /// (JoinRejected() with the reason "the host did not answer"). A relay
+    /// session counts from when the relay pairs it. 0 waits forever.
+    float joinTimeoutSeconds = 15.0f;
+    /// Relay sessions: a welcome must echo the nonce this peer sent, so one forged
+    /// by someone who can't see our traffic is ignored. Relays older than protocol
+    /// version 4 can't echo it; set this on the peer that has to use one anyway, accepting
+    /// that a forged welcome then can't be told from theirs. Default off.
+    bool allowUnverifiedRelay = false;
     /// True once an encrypted session is established (client: with the server;
     /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
     bool Encrypted() const;
@@ -302,13 +393,19 @@ public:
     /// then send their inputs, not positions: each tick, a client's InputCmd
     /// (move, look, buttons, numbered, the last 3 repeated against loss) drives
     /// its player on the server through the controller's Simulate (IPlayerSim),
-    /// and the server alone decides where it is. Positions and __xform from the
-    /// client for that player are ignored. Runs on the fixed tick (netTickRate,
-    /// 30 Hz if that's 0). The client predicts its own player: every frame it
-    /// runs the same Simulate with the input it last sent (so an input shows
-    /// within a tick) and this frame's look, and reconciles with the position
-    /// the host acks for each input: tiny differences are ignored, small ones
-    /// eased out, large ones snapped.
+    /// and the server alone decides where it is. The server claims that player
+    /// itself — the first object the client spawns under `sp/<its id>/` that
+    /// carries a movement controller — so a client that never calls SetPawn
+    /// still can't move it by sending positions. Until a pawn is claimed, State
+    /// positions and __xform for those controller objects are dropped. An
+    /// InputCmd may claim a different object under the client's prefix only
+    /// while it has no live pawn. Other owned objects (props, projectiles) are
+    /// unchanged. Runs on the fixed tick (netTickRate, 30 Hz if that's 0). The
+    /// client predicts its own player: every frame it runs the same Simulate
+    /// with the input it last sent (so an input shows within a tick) and this
+    /// frame's look, and reconciles with the position the host acks for each
+    /// input: tiny differences are ignored, small ones eased out, large ones
+    /// snapped.
     bool authoritativeMovement = false;
     /// Client prediction: how fast a correction from the host is eased out (per
     /// second, frame-rate independent), and the size above which it snaps
@@ -363,8 +460,11 @@ public:
 
     /// The server's friendly name (clients learn it from the join handshake).
     const std::string& ServerName() const { return m_serverName; }
-    /// True on a client if the last join was refused (server full / bad password).
+    /// True on a client if the last join was refused (server full / bad password /
+    /// the pinned host key didn't match).
     bool JoinRejected() const { return m_joinRejected; }
+    /// Why JoinRejected() is set ("" when it isn't).
+    const std::string& JoinRejectReason() const { return m_joinRejectReason; }
 
     /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
     /// script — add the component, pick Host/Join in the Inspector, press Play.
@@ -459,6 +559,10 @@ public:
     /// True if a transform is currently registered under `id`.
     bool HasSync(const std::string& id) const { return m_syncObjs.count(id) != 0; }
     float syncRate = 15.0f;   ///< networked-transform broadcasts per second (0 = every frame)
+    /// Owned transforms go out as a quantized binary delta from the last
+    /// snapshot the receiver acknowledged. The text "__xform" path stays for
+    /// an explicit Send() and for when this is off.
+    bool binarySnapshots = true;
 
     // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
     /// Like Send(), but resent until the other end acknowledges it and de-duped
@@ -468,6 +572,17 @@ public:
     void SendReliable(const std::string& channel, const std::string& data);
     /// Reliable message to a single peer id (server routes; 0 = the host).
     void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
+    /// Reliable and ordered on one named channel. Each channel has its own
+    /// sequence, so a gap on one name does not hold up another. Resent until
+    /// the other side's cumulative ack covers it. Separate from SendReliable,
+    /// and not used for movement or hit claims.
+    void SendOrdered(const std::string& channel, const std::string& data);
+    void SendOrderedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+    /// Unreliable, but only the newest packet on this channel is applied. An
+    /// older or repeated one is dropped. A broadcast is relayed like Send().
+    void SendSequenced(const std::string& channel, const std::string& data);
+    void SendSequencedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
 
     // ---- Remote procedure calls (named events) -------------------------
     /// A first-class RPC: every peer that registered a handler for `name` runs it
@@ -488,6 +603,13 @@ public:
     }
     /// Remove a previously registered RPC handler.
     void ClearRpc(const std::string& name) { m_rpcHandlers.erase(name); }
+    /// Runs for every arriving RPC, after the named handler (and also when
+    /// none is registered). NetworkObject uses it to route "<netId>/<name>"
+    /// onto the matching object. Cleared by Stop().
+    void SetRpcObserver(std::function<void(const std::string& name, std::uint32_t from, const std::string& data)> f) {
+        m_rpcObserver = std::move(f);
+    }
+    bool HasRpcObserver() const { return static_cast<bool>(m_rpcObserver); }
 
     // ---- Chat ----------------------------------------------------------
     /// One chat line: who said it (peer id + the name they joined with) and the text.
@@ -522,11 +644,14 @@ public:
     /// rewind clamped to 200 ms plus the shooter's round trip.
     void ClaimHit(const std::string& targetNetId, const std::string& weapon, const Vec3& origin, const Vec3& direction);
     /// Server, lag compensation: a 3D raycast against where every synced
-    /// object was at `viewTick` (a client's ViewTick; its pose history keeps
-    /// about a second), then everything is put back. Without a fixed tick, or
-    /// on a client, an ordinary raycast. `ignore` as for Physics3D::Raycast.
+    /// object was at `viewTick` (a client's ViewTick), then everything is put
+    /// back. The rewind uses the same limit as a hit claim: 200 ms, plus
+    /// `shooter`'s round trip when that client id is given (capped by the
+    /// anti-cheat's maxRewindRtt). With no shooter, 200 ms. Pose history is
+    /// still kept for about a second. Without a fixed tick, or on a client,
+    /// an ordinary raycast. `ignore` as for Physics3D::Raycast.
     RaycastHit3D RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance, double viewTick,
-                               GameObject* ignore = nullptr);
+                               GameObject* ignore = nullptr, std::uint32_t shooter = 0);
     /// Client: the moment (in host ticks, with the fraction) it shows other
     /// players at: now minus the interpolation delay. What a hit claim carries.
     double ViewTick() const;
@@ -535,12 +660,24 @@ public:
     /// Game rules for hit claims (server): false refuses one; it may change
     /// claim.damage. The same hook as anticheat.validateHit.
     void ValidateHit(std::function<bool(HitClaim& claim)> rule) { anticheat.validateHit = std::move(rule); }
+    /// Server: `go` (a networked object with a Health Stat) just respawned. Every other peer
+    /// is told ("__respawn": health and position, reliable) so its copy comes back too, the
+    /// movement check lets the owner's next position jump, and lag-compensation history
+    /// before the jump is dropped. Health Stat calls this itself on a respawn or Revive().
+    void NoteRespawn(GameObject* go);
     /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
     /// verified account ("" if anonymous) and its last refusals, oldest first.
     struct AntiCheatKick {
         std::uint32_t peer = 0;
         std::string name, userId;
         std::vector<CheatReport> recent;
+        /// Detection engine (detect.enabled): the peer's risk score, whether the
+        /// kick was a BAN REQUEST (risk past banAt), and its evidence bundle as
+        /// JSON (no account / address; call anticheat.detector.Bundle from the
+        /// handler to add them). Empty / 0 when the engine is off.
+        float risk = 0.0f;
+        bool banRequested = false;
+        std::string evidence;
     };
     /// Server: called for every anti-cheat kick, before the player is dropped.
     /// The dedicated server's --report-kicks files these for admin review.
@@ -551,6 +688,10 @@ public:
     /// Client: true if the server kicked this peer, plus the reason it gave.
     bool WasKicked() const { return m_kicked; }
     const std::string& KickReason() const { return m_kickReason; }
+    /// Client: true if the session ended because the host went silent
+    /// (serverTimeoutSeconds). Stays readable after the disconnect.
+    bool ConnectionLost() const { return m_connectionLost; }
+    const std::string& ConnectionLostReason() const { return m_connectionLostReason; }
 
     /// A connected peer in the session roster.
     struct PeerInfo { std::uint32_t id; std::string name; char glyph; };
@@ -605,6 +746,7 @@ private:
         bool any = false;
         std::vector<std::uint64_t> bits = std::vector<std::uint64_t>(kWidth / 64, 0);
         bool Accept(std::uint32_t seq);   // true the first time a seq is seen
+        bool Seen(std::uint32_t seq) const;   // Accept would say no (nothing changes)
         void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
     };
     struct Client {
@@ -615,6 +757,7 @@ private:
         std::string name;
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
+        std::string ident;    // who it is across reconnects: "u:<account>", else "a:<address>"
         net::SecureChannel secure;   // per-client encrypted session (if negotiated)
         std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
         bool hasState = false;   // true once this client has reported its position
@@ -623,6 +766,8 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
+        int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -631,22 +776,52 @@ private:
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
         SeqWindow relSeen;          // delivered seqs (de-dup)
+        // Binary snapshots: what we have acked to this client, and what it has
+        // acked to us. Independent of relSeq and of the avatar snapshot.
+        net::SnapOut snapOut;
+        net::SnapIn snapIn;
+        // Per-channel reliable-ordered link with this client, plus the filter
+        // for unreliable-sequenced packets it sends. Independent of relSeq.
+        net::ChannelEnd pipes;
         // Authoritative movement: the player object its inputs drive, the
         // inputs waiting (by seq), the newest applied, and the last one (repeated
         // when an input is late).
         std::string pawn;
         std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
-        std::uint32_t lastInputSeq = 0;
+        std::uint32_t lastInputSeq = 0;   // highest seq actually applied (acks and snapshots)
+        float lastPress[3] = {-1e9f, -1e9f, -1e9f};   // server time of its last Jump, Dash, Fire press (minPressInterval)
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
+        // Empty ticks earn one credit, capped. Spent one at a time to apply a
+        // second queued input after a hitch. Zeroed once the queue is shallow,
+        // so a client that keeps it full never buys a second step.
+        int inputCredit = 0;
+        std::uint32_t droppedPressed = 0;   // presses from inputs dropped as newest
+        std::uint32_t droppedSeq[8] = {};   // those seqs, so a resend isn't applied twice
+        std::uint8_t droppedN = 0;
+        Vec3 repeatPos{};           // pose before the current repeat streak
+        Vec3 repeatVel{};
+        bool haveRepeatPose = false;
         bool sealedJoin = false;    // joined through the sealed handshake
+        // Without encryption a client is only its address: the cookie its
+        // Welcome gave it proves a Leave / State / Message / SyncVar is its
+        // own. Required once it has sent one (an older client never does).
+        std::uint64_t cookie = 0;
+        bool cookieSeen = false;
+        std::uint64_t resumeToken = 0;   // secret that lets this client take its state back after a drop
+        bool resumed = false;            // it took its old state back (every Welcome it gets says so, retries included)
+        float teleportUntil = -1.0f;     // server time until which its positions skip the move check (a respawn)
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.
         std::shared_ptr<net::ClockCheck> clock;
         float clockTimer = 0.0f, clockQuiet = 0.0f, clockReported = 1e9f;
         // Round trip, from the heartbeat's pings (-1 until measured): how far
         // a target may have moved while this client's shot was on its way.
+        // The quickest of the last few, so answering pings late doesn't
+        // stretch it unless every one is late.
         float rtt = -1.0f;
+        float rttSamples[8] = {};
+        std::uint8_t rttCount = 0, rttNext = 0;
         std::uint64_t pingNonce = 0;
         double pingSentMs = 0.0;
     };
@@ -660,6 +835,12 @@ private:
 
     void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
                         const net::Endpoint& to, float dt);
+    bool AllowMessage(Client& c, std::size_t bytes);
+    void OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo, std::uint32_t fromId,
+                   Client* sender, net::Packet& p, std::size_t len);
+    void OnOrderedAck(net::ChannelEnd& link, net::Packet& p);
+    void OnSequencedFromClient(Client& from, net::Packet& p, std::size_t len);
+    void OnSequencedFromServer(net::Packet& p);
 
     // Datagram fragmentation: SendDatagram splits an oversized message into
     // MTU-sized pieces; TakeFragment reassembles them on the far side; PruneFragments
@@ -725,6 +906,8 @@ private:
     void HandleHitClaim(Client& c, const std::string& data);
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
+    float m_hitDist = 0.0f, m_hitOff = 0.0f, m_hitAllowed = 0.0f;   // the last CheckHitView's numbers (for the detector)
+    void FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why);
     int m_hitsApplied = 0, m_hitsRefused = 0;
     std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;
@@ -746,7 +929,10 @@ private:
     bool m_relayWelcomed = false;     // relay has assigned our slot / wired the host
     net::Endpoint m_relayEp{};        // the relay's real address
     std::string m_relayCode;          // shared session code
-    std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
+    std::uint64_t m_relayNonce = 0;   // random per attempt; a welcome must echo it (version 4)
+    float m_relayWait = 0.0f;         // seconds spent without a welcome
+    int   m_relayBadWelcomes = 0;     // welcomes dropped for a missing or wrong nonce
+    static constexpr int kMaxRelayFramesPerCall = 64;   // relay datagrams consumed per ReceiveFrom
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
     std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
     bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)
@@ -767,13 +953,52 @@ private:
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room
     std::string m_serverName;    // client: the server's friendly name
-    bool m_joinRejected = false; // client: server refused us (full / password)
+    bool m_joinRejected = false; // client: server refused us (full / password / pin)
+    std::string m_joinRejectReason;
     bool m_kicked = false;       // client: kicked by the server
     std::string m_kickReason;
+    bool m_connectionLost = false;   // client: the host went silent
+    std::string m_connectionLostReason;
+    float m_serverSilence = 0.0f;    // client: seconds since the host last sent anything
+    float m_joinWait = 0.0f;         // client: seconds spent waiting for the join to be accepted
+    // Reconnect (client): where we joined, and the retry schedule.
+    struct ConnTarget { int kind = 0; std::string host; std::uint16_t port = 0; std::string code; };   // 1 direct, 2 relay
+    ConnTarget m_lastConn;
+    bool m_reconnecting = false, m_reconnectGaveUp = false, m_resumed = false, m_keepResume = false;
+    bool m_reconnectTrying = false;      // a try is in flight (joining)
+    int m_reconnectAttempt = 0, m_reconnectCount = 0;
+    float m_reconnectTimer = 0.0f;
+    bool m_wasReady = false;
+    std::uint64_t m_resumeToken = 0;     // client: what the host's Welcome gave us
+    std::map<std::string, std::string> m_ownSpawns;   // SpawnOwned objects of this player: netId -> prefab
+    std::function<void(ReconnectEvent, int)> m_reconnectHandler;
+    void ReconnectTick(float dt);
+    void BeginReconnect();
+    void FailReconnectTry();
+    void ReannounceOwnSpawns();
+    // Host: dropped clients' state, kept for resumeGraceSeconds.
+    struct Parked {
+        std::uint64_t token = 0; std::uint32_t id = 0; std::string userId;
+        Vec3 pos{}; bool hasState = false; char glyph = '@'; int score = 0; bool ready = false; float age = 0.0f;
+    };
+    std::vector<Parked> m_parked;
+    std::function<void(const ResumedPeer&)> m_peerResumed;
     // Client-side reliable channel (to the server).
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
     SeqWindow m_relSeen;
+    // Client: binary snapshots to and from the server. Server uses the per-client
+    // links above; m_relaySnap holds poses a client owns so the host can fold
+    // them into everyone else's snapshot.
+    net::SnapOut m_snapUp;
+    net::SnapIn m_snapDown;
+    struct RelayPose { net::QPose pose; std::string extra; std::string room; };
+    std::unordered_map<std::string, RelayPose> m_relaySnap;
+    // Client: ordered and sequenced link to the server. Server-originated
+    // sequenced numbers live in m_seqOrigin so every client sees one sequence
+    // per channel. Stop() clears both. Not the movement or hit-claim stream.
+    net::ChannelEnd m_toServer;
+    net::SequencedTx m_seqOrigin;
     // Fixed net tick (netTickRate): the tick count, the time not yet stepped,
     // the rate the host announced (client), and the tick hook.
     std::uint32_t m_netTick = 0;
@@ -784,9 +1009,22 @@ private:
     int StepNetTick(float rate, float dt);   // ticks that elapsed this frame (fires OnNetTick)
     float HostTickRate() const { return netTickRate > 0.0f ? netTickRate : (authoritativeMovement ? 30.0f : 0.0f); }
     // Authoritative movement.
-    void ServerMovementTick(float step);   // each fixed tick: run each player one input
+    void ServerMovementTick(float step);   // each fixed tick: one input, or two while catching up
     void ClientInputTick();                // each fixed tick: send this tick's input
-    static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
+    /// Server, authoritative movement: the first controller-carrying object this
+    /// client spawned (`sp/<id>/...`) is its pawn, without waiting for an InputCmd.
+    void NoteSpawnedPawn(const std::string& netId, GameObject* go);
+    /// Server: may this client relay an __xform for `id`? A claimed pawn, or a
+    /// controller object it spawned before claiming one, may not.
+    bool ClientMaySendXform(const Client& from, const std::string& id) const;
+    GameObject* ObjectByNetId(const std::string& id) const;
+    /// The pawn object went away (despawn or scene destroy): drop the claim so
+    /// the next one can be claimed, and forget its lag-comp history.
+    void ReleasePawn(const std::string& id);
+    void ResetPawnPrediction();   // client: prediction history for the pawn
+    void ClearLocalPawn();        // client: pawn id, prediction, and the input stream
+    static constexpr std::size_t kMaxQueuedInputs = 8;   // past this, the newest input is dropped (its press is kept)
+    static constexpr int kTargetQueuedInputs = 2;        // deeper than this, a client that was late may apply one extra
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives
     std::function<PlayerInput()> m_inputSource;
@@ -796,6 +1034,8 @@ private:
     std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, PlayerInput>>> m_sentInputs;   // seq -> (tick, input), last 4
     bool m_hostAuthoritative = false;      // client: the host announced it
     std::uint32_t m_lastAckedSeq = 0;
+    std::uint64_t m_sessionCookie = 0;
+    bool m_protectionsLogged = false;    // server: the "protections off" line, once per start   // client: the host's cookie for an unencrypted session (0 = none)
     // Prediction (client).
     static constexpr float kReconcileEpsilon = 0.02f;   // ignore smaller differences (units)
     static constexpr std::size_t kMaxPredicted = 128;
@@ -822,6 +1062,9 @@ private:
     int  m_joinHellos = 0;
     bool m_keyed = false;
     bool m_legacyJoin = false;
+    net::SecureChannel m_nextSecure;   // client: keys made early for TicketBinding, used by the next session
+    void UseNextSessionKeys();
+    bool m_audienceWarned = false;     // server: "ticketKey without ticketAudience" logged
     bool m_pinWarned = false;
     // Client: asking the host whether it wants the auth token (see authTokenToAnyHost).
     int  m_authQueries = 0;
@@ -839,10 +1082,25 @@ private:
 
     // Smooth remote avatars toward their latest received position.
     std::unordered_map<std::uint32_t, Vec3> m_remoteTarget;
+    std::unordered_map<std::uint32_t, int> m_remoteMissing;   // client: consecutive rosters a remote was absent from
     void InterpolateRemotes(float dt);
 
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
+    // Server: join attempts per address (a refused Join, a new key exchange;
+    // a wrong password counts two): past kJoinAttempts in kJoinWindow seconds
+    // the address is ignored for a while, 10 s doubling to 320 s.
+    struct JoinLimit { float windowStart = 0.0f; int count = 0; float blockedUntil = -1.0f, backoff = 0.0f; bool told = false; };
+    std::unordered_map<std::uint32_t, JoinLimit> m_joinLimits;
+    static constexpr int kJoinAttempts = 5;
+    static constexpr float kJoinWindow = 10.0f;
+    bool JoinBlocked(const net::Endpoint& from) const;
+    void CountJoinAttempt(const net::Endpoint& from, int cost);
+    // Server: accounts and addresses the anti-cheat kicked, refused until `until`
+    // (m_serverTime); each repeat doubles the wait, up to an hour.
+    struct KickBan { float until = 0.0f; int strikes = 0; };
+    std::unordered_map<std::string, KickBan> m_kickBans;
+    float KickBanLeft(const std::string& ident) const;
     int   m_hostScore = 0;
     bool  m_matchOn = false, m_matchEnded = false;
     float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;
@@ -853,6 +1111,8 @@ private:
     std::vector<RosterEntry> m_roster;
     std::uint32_t m_corrections = 0;
     std::unordered_map<net::Endpoint, Client, net::EndpointHash> m_clients;
+    void ParkClient(const Client& c);
+    void ReleaseClient(std::unordered_map<net::Endpoint, Client, net::EndpointHash>::iterator it);
     std::uint32_t m_nextId = 1;
     float m_snapshotTimer = 0.0f;
     float m_snapshotInterval = 0.05f; // 20 Hz
@@ -884,6 +1144,16 @@ private:
     float m_syncTimer = 0.0f;
     std::uint32_t m_spawnCounter = 0;     // unique-id source for SpawnOwned
     void SyncTick(float dt);
+    void ApplyRemoteXform(const std::string& id, const Vec3& p, const Quat& q, double tick,
+                          const std::string& extra, bool hasExtra);
+    void BroadcastBinarySnapshots(double tick);
+    void CullInterest(net::DeltaBase& mine, const Client& c) const;
+    void SendSnap(net::SnapOut& out, const net::DeltaBase& current, double tick,
+                  const net::Endpoint& to, std::uint64_t cookie);
+    void NoteSnapAck(net::SnapOut& out, std::uint32_t id);
+    /// `sender` is set when a client uploaded the snapshot. Null when the server sent it.
+    void OnSnapDelta(net::SnapIn& in, const std::uint8_t* data, std::size_t size,
+                     const net::Endpoint& ackTo, Client* sender);
     // The interpolation buffer (fixed tick).
     static constexpr double kInterpTicks = 3.0;          // how far in the past synced objects are shown, at least
     static constexpr double kInterpRecover = 0.02;       // ticks per tick the need eases back once the network allows
@@ -905,6 +1175,7 @@ private:
     std::vector<Rewound> RewindTo(double tick);          // move everything to `tick`; returns what to put back
     static void Restore(std::vector<Rewound>& saved);
     double ClampRewind(double viewTick, float rttSeconds) const;
+    bool CookieOk(Client& c, net::Packet& p) const;
     float m_lastRewind = 0.0f;
 public:
     /// Synced objects shown from the interpolation buffer (a fixed tick in force).
@@ -917,6 +1188,7 @@ private:
 
     // First-class RPC handlers (by name) + chat log/handler.
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
+    std::function<void(const std::string&, std::uint32_t, const std::string&)> m_rpcObserver;
     std::vector<ChatEntry> m_chatLog;
     std::function<void(const ChatEntry&)> m_chatHandler;
 
@@ -939,7 +1211,12 @@ private:
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 
-    // Server-authoritative synced variables
+    // Server-authoritative synced variables. What a client may write: keys up
+    // to 128 bytes, values up to 4 KB, at most kMaxClientVars new keys each.
+    static constexpr std::size_t kMaxVarKey = 128, kMaxVarValue = 4096;
+    static constexpr int kMaxClientVars = 256;
+    /// Server: a peer left: its SpawnOwned objects ("sp/<id>/...") go, everywhere.
+    void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
 };

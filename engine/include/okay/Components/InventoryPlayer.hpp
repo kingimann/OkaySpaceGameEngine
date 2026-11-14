@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include <string>
 #include <vector>
 
@@ -108,7 +109,18 @@ public:
             open = (Nearest(gameObject ? gameObject->scene() : nullptr, key) == this) ? !open : false;
         }
         if (open && !PlayerInRange()) open = false;   // auto-close when you walk away
+        if (open != m_wasOpen) {   // on_chest_opened / on_chest_closed(name), to the chest and the player
+            m_wasOpen = open;
+            const char* ev = open ? "on_chest_opened" : "on_chest_closed";
+            const std::vector<vs::VsValue> args{vs::VsValue(gameObject ? gameObject->name : std::string())};
+            InventoryEvents::Fire(gameObject, ev, nullptr, args);
+            GameObject* player = FindInventoryPlayer(gameObject ? gameObject->scene() : nullptr, playerName);
+            if (player && player != gameObject) InventoryEvents::Fire(player, ev, nullptr, args);
+        }
     }
+
+private:
+    bool m_wasOpen = false;
 };
 
 } // namespace okay

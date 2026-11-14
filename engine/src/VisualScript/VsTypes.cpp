@@ -1,6 +1,7 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -8,6 +9,7 @@
 
 #include <cctype>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -25,7 +27,7 @@ const Row kRows[] = {
         {"OnUpdate", false, "", ""},
         {"Branch", true, "B", ""},
         {"Sequence", true, "", ""},
-        {"Once", true, "", ""},
+        {"Once", true, "B", ""},
         {"Timer", true, "", ""},
         {"GetVar", false, "", "A"},
         {"SetVar", true, "A", ""},
@@ -52,7 +54,7 @@ const Row kRows[] = {
         {"Translate", true, "NNN", ""},
         {"SetPosition", true, "NNN", ""},
         {"Rotate", true, "N", ""},
-        {"Print", true, "T", ""},
+        {"Print", true, "TA", ""},
         {"PlaySound", true, "", ""},
         {"Spawn", true, "NNN", "O"},
         {"Destroy", true, "O", ""},
@@ -144,6 +146,7 @@ const Row kRows[] = {
         {"LoadScene", true, "", ""},
         {"MouseButton", false, "", "B"},
         {"MouseButtonDown", false, "", "B"},
+        {"MouseGround", false, "", "NNNB"},
         {"Cooldown", true, "", ""},
         {"AnimTrigger", true, "", ""},
         {"AnimSetFloat", true, "N", ""},
@@ -151,11 +154,34 @@ const Row kRows[] = {
         {"AnimState", false, "", "T"},
         {"IkLook", true, "VN", ""},
         {"IkHand", true, "VN", ""},
+        {"SetWeather", true, "N", ""},
+        {"SetFog", true, "BNN", ""},
+        {"SetPostEffect", true, "N", ""},
+        {"NavMoveTo", true, "V", ""},
+        {"NavStop", true, "", ""},
+        {"NavArrived", false, "", "B"},
+        // Story: dialogues, story variables, quests.
+        {"StartDialogue", true, "", ""},
+        {"SetStoryVar", true, "A", ""},
+        {"GetStoryVar", false, "", "A"},
+        {"StartQuest", true, "", ""},
+        {"CompleteObjective", true, "N", ""},
+        {"QuestState", false, "", "T"},
+        {"OnDialogueEvent", false, "", ""},
+        {"OnDialogueEnd", false, "", ""},
+        {"OnQuestStarted", false, "", ""},
+        {"OnQuestCompleted", false, "", ""},
+        {"OnQuestFailed", false, "", ""},
+        {"OnObjectiveCompleted", false, "", ""},
+        {"OnQuestEvent", false, "", ""},
+        {"BtSet", true, "A", ""},
+        {"BtGet", false, "", "A"},
+        {"BtRun", true, "", ""},
         {"ForLoop", true, "NN", "N"},
         {"Repeat", true, "", ""},
         {"FlipFlop", true, "", ""},
         {"Gate", true, "B", ""},
-        {"DoN", true, "", "N"},
+        {"DoN", true, "B", "N"},
         {"SwitchInt", true, "N", ""},
         {"Toggle", true, "", ""},
         {"RandomInt", false, "NN", "N"},
@@ -181,6 +207,26 @@ const Row kRows[] = {
         {"SetRotation3", true, "NNN", ""},
         {"SetColor", true, "NNNN", ""},
         {"PlayClip", true, "", ""},
+        {"PlayAction", true, "N", ""},
+        {"IsInAction", false, "", "B"},
+        {"Die", true, "", ""},
+        {"Revive", true, "", ""},
+        {"Dive", true, "", ""},
+        {"Sit", true, "", ""},
+        {"StandUp", true, "", ""},
+        {"IsSitting", false, "", "B"},
+        {"Interact", true, "", ""},
+        {"SeatPrompt", false, "", "T"},
+        {"HitReact", true, "B", ""},
+        {"Roll", true, "", ""},
+        {"Dodge", true, "", ""},
+        {"Vault", true, "", ""},
+        {"Mantle", true, "", ""},
+        {"LedgeGrab", true, "", ""},
+        {"ClimbUp", true, "", ""},
+        {"LetGo", true, "", ""},
+        {"IsHanging", false, "", "B"},
+        {"Shimmy", true, "N", ""},
         {"SetTimeScale", true, "N", ""},
         {"SetBlendShape", true, "N", ""},
         {"GetBlendShape", false, "", "N"},
@@ -207,6 +253,10 @@ const Row kRows[] = {
         {"NetStartMatch", true, "", ""},
         {"NetMatchStarted", false, "", "B"},
         {"NetAllReady", false, "", "B"},
+        {"NetObjRpc", true, "A", ""},
+        {"SyncVarSet", true, "A", ""},
+        {"SyncVarGet", false, "", "A"},
+        {"OnNetRpc", false, "", "A"},
         {"SteamName", false, "", "T"},
         {"SteamIsUnlocked", false, "", "B"},
         {"SteamUnlock", true, "", ""},
@@ -216,6 +266,15 @@ const Row kRows[] = {
         {"SteamLeaderboard", true, "N", ""},
         {"OnKey", false, "", ""},
         {"OnKeyUp", false, "", ""},
+        {"OnTap", false, "", ""},
+        {"OnDoubleTap", false, "", ""},
+        {"OnLongPress", false, "", ""},
+        {"OnSwipe", false, "", ""},
+        {"OnPinch", false, "", ""},
+        {"OnRotate", false, "", ""},
+        {"GestureSwipeDirection", false, "", "T"},
+        {"GesturePinchScale", false, "", "N"},
+        {"GestureTwist", false, "", "N"},
         {"OnTimer", false, "", ""},
         {"OnEvent", false, "", "A"},
         {"OnCollisionExit", false, "", ""},
@@ -244,7 +303,17 @@ const Row kRows[] = {
         {"SaveValue", true, "A", ""},
         {"LoadValue", false, "A", "A"},
         {"Format", false, "AAA", "T"},
+        {"Localize", false, "AAA", "T"},
+        {"SetLanguage", true, "T", ""},
+        {"GetLanguage", false, "", "T"},
+        {"OnLanguageChanged", false, "", ""},
         {"OnObjectPlaced", false, "", ""},
+        {"OnItemAdded", false, "", ""},
+        {"OnItemRemoved", false, "", ""},
+        {"OnInventoryFull", false, "", ""},
+        {"OnItemUsed", false, "", ""},
+        {"OnEquip", false, "", ""},
+        {"OnCraft", false, "", ""},
         {"OnObjectRemoved", false, "", ""},
         {"OnLogicSignal", false, "", ""},
         {"OnCheatDetected", false, "", ""},
@@ -259,6 +328,14 @@ const Row kRows[] = {
         {"SetBuildPalette", true, "", ""},
         {"SaveCreation", true, "", "B"},
         {"LoadCreation", true, "", "B"},
+        {"AddItem", true, "N", "N"},
+        {"RemoveItem", true, "N", "B"},
+        {"HasItem", false, "N", "B"},
+        {"ItemCount", false, "", "N"},
+        {"EquipItem", true, "T", "B"},
+        {"CraftItem", true, "N", "B"},
+        {"LootRoll", true, "", "N"},
+        {"SpawnPickup", true, "NNNN", "T"},
         {"FunctionStart", false, "", ""},
         {"Return", true, "", ""},
         {"CallFunction", true, "", ""},
@@ -267,6 +344,20 @@ const Row kRows[] = {
         // Loops, lists, scene / global variables, Variable Changed events.
         {"While", true, "B", ""},
         {"ForEach", true, "L", "AN"},
+        {"ForEachMap", true, "M", "TA"},
+        {"NewMap", false, "", "M"},
+        {"MapSet", true, "MTA", ""},
+        {"MapRemove", true, "MT", ""},
+        {"MapGet", false, "MT", "AB"},
+        {"MapHas", false, "MT", "B"},
+        {"MapKeys", false, "M", "L"},
+        {"MapValues", false, "M", "L"},
+        {"SwitchString", true, "A", ""},
+        {"SwitchCases", true, "N", ""},
+        {"LatchGate", true, "BBB", "B"},
+        {"IsValid", false, "A", "B"},
+        {"CallScript", true, "A", "A"},
+        {"RunGraph", true, "", ""},
         {"Break", true, "", ""},
         {"Continue", true, "", ""},
         {"NewList", false, "", "L"},
@@ -275,6 +366,22 @@ const Row kRows[] = {
         {"ListGet", false, "LN", "A"},
         {"ListLength", false, "L", "N"},
         {"ListContains", false, "LA", "B"},
+        {"ListInsert", true, "LNA", ""},
+        {"ListSet", true, "LNA", ""},
+        {"ListFind", false, "LA", "NB"},
+        {"ListRemoveItem", true, "LA", "B"},
+        {"ListSort", true, "LB", ""},
+        {"ListReverse", true, "L", ""},
+        {"ListClear", true, "L", ""},
+        {"ListCopy", false, "LB", "L"},
+        {"MapClear", true, "M", ""},
+        {"MapCount", false, "M", "N"},
+        {"MapCopy", false, "MB", "M"},
+        {"StructNew", false, "", "M"},
+        {"StructGet", false, "M", "A"},
+        {"StructSet", true, "MA", ""},
+        {"MakeColor", false, "NNNN", "C"},
+        {"SplitColor", false, "C", "NNNN"},
         {"AllWithTag", false, "", "L"},
         {"GetSceneVar", false, "", "A"},
         {"SetSceneVar", true, "A", ""},
@@ -316,6 +423,11 @@ const Row kRows[] = {
         {"RaycastAll3D", false, "VVN", "NLO"},
         {"OverlapSphere3D", false, "VN", "NL"},
         {"OverlapBox3D", false, "VV", "NL"},
+        {"BoxCast2D", false, "VVVNN", "BVVNO"},
+        {"CapsuleCast2D", false, "VVNVN", "BVVNO"},
+        {"OverlapBox2D", false, "VVN", "NL"},
+        {"OverlapCapsule2D", false, "VVN", "NL"},
+        {"AddExplosionForce", true, "VNNN", ""},
         {"ContactPoint", false, "", "V"},
         {"ContactNormal", false, "", "V"},
         {"ImpactSpeed", false, "", "N"},
@@ -324,6 +436,172 @@ const Row kRows[] = {
         {"FindObject", false, "", "O"},
         {"GetName", false, "", "T"},
         {"GetTag", false, "", "T"},
+        // Cutscenes (SequencePlayer).
+        {"OnSequenceEvent", false, "", ""},
+        {"PlaySequence", true, "", ""},
+        {"StopSequence", true, "", ""},
+        // Splines, lines and trails.
+        {"GetSplinePoint", false, "N", "V"},
+        {"SplineLength", false, "", "N"},
+        {"SetLinePoints", true, "L", ""},
+        {"ClearTrail", true, "", ""},
+        // Music, camera, particles.
+        {"MusicPlay", true, "", ""},
+        {"MusicStop", true, "N", ""},
+        {"MusicPause", true, "", ""},
+        {"MusicResume", true, "", ""},
+        {"MusicNext", true, "", ""},
+        {"CameraShake", true, "N", ""},
+        {"SetFov", true, "N", ""},
+        {"CameraFollow", true, "TN", ""},
+        {"ParticlePlay", true, "", ""},
+        {"ParticleStop", true, "", ""},
+        {"ParticleBurst", true, "N", ""},
+        // High-level gameplay. These sit on top of the nodes above; they do not replace them.
+        {"RotateTowards", true, "NO", ""},
+        {"OrbitAround", true, "ONN", ""},
+        {"FollowPath", true, "NL", ""},
+        {"Bob", true, "NN", ""},
+        {"Spin", true, "N", ""},
+        {"Knockback", true, "ON", ""},
+        {"SmoothFollow", true, "ON", ""},
+        {"TweenPosition", true, "VN", ""},
+        {"TweenRotation", true, "NN", ""},
+        {"TweenScale", true, "VN", ""},
+        {"TweenColor", true, "NNNNN", ""},
+        {"CrossfadeClip", true, "N", ""},
+        {"StopAnimation", true, "", ""},
+        {"WaitAnimEnd", true, "", ""},
+        {"OnInteract", false, "", ""},
+        {"PickUp", true, "O", ""},
+        {"Drop", true, "O", ""},
+        {"DoorOpen", true, "NN", ""},
+        {"DoorClose", true, "N", ""},
+        {"Lever", true, "", ""},
+        {"Collect", true, "N", ""},
+        {"OnTagEnter", false, "", ""},
+        {"OnTagStay", false, "", ""},
+        {"OnTagExit", false, "", ""},
+        {"Proximity", false, "ON", "B"},
+        {"Damage", true, "NO", ""},
+        {"Heal", true, "NO", ""},
+        {"IsDead", false, "O", "B"},
+        {"OnDeath", false, "", ""},
+        {"OnHealthChanged", false, "", ""},
+        {"Respawn", true, "O", ""},
+        {"SpawnProjectile", true, "N", "O"},
+        {"Shoot", true, "NN", "BO"},
+        {"Ammo", true, "", "N"},
+        {"Patrol", true, "NL", ""},
+        {"Chase", true, "ON", ""},
+        {"Flee", true, "ON", ""},
+        {"Wander", true, "NN", ""},
+        {"CanSee", false, "ONN", "B"},
+        {"SpawnEvery", true, "N", "O"},
+        {"DestroyAfter", true, "NO", ""},
+        {"PoolGet", true, "", "O"},
+        {"PoolRelease", true, "O", ""},
+        {"ScoreAdd", true, "N", ""},
+        {"ScoreSet", true, "N", ""},
+        {"ScoreGet", false, "", "N"},
+        {"Countdown", true, "N", ""},
+        {"Win", true, "", ""},
+        {"Lose", true, "", ""},
+        {"RestartScene", true, "", ""},
+        {"CheckpointSave", true, "", ""},
+        {"CheckpointLoad", true, "", ""},
+        {"SetProgress", true, "NO", ""},
+        {"ShowFloatingText", true, "TO", ""},
+        {"FadeScreen", true, "NO", ""},
+        {"SetCameraTarget", true, "ON", ""},
+        {"Zoom", true, "N", ""},
+        {"SwitchCamera", true, "", ""},
+        {"PlaySoundAt", true, "O", ""},
+        {"StopSound", true, "O", ""},
+        {"OnAction", false, "", ""},
+        {"OnActionUp", false, "", ""},
+        {"OnActionHeld", false, "", ""},
+        {"GetMoveAxis", false, "", "V"},
+        {"RandomPick", false, "L", "A"},
+        {"RandomPoint", false, "VV", "V"},
+        {"ShuffleList", false, "L", "L"},
+        {"ListMin", false, "L", "N"},
+        {"ListMax", false, "L", "N"},
+        {"OnCollisionTag", false, "", ""},
+        {"NotAnd", false, "BB", "B"},
+        {"NotOr", false, "BB", "B"},
+        {"AllTrue", false, "L", "B"},
+        {"AnyTrue", false, "L", "B"},
+        {"IsEven", false, "N", "B"},
+        {"IsOdd", false, "N", "B"},
+        {"PickByIndex", false, "NL", "A"},
+        {"FirstValid", false, "AAAA", "A"},
+        {"BranchInOrder", true, "BBB", ""},
+        {"DoWhile", true, "B", ""},
+        {"ForStep", true, "NNN", "N"},
+        {"WaitUntil", true, "B", ""},
+        {"WaitWhile", true, "B", ""},
+        {"BecameTrue", true, "B", ""},
+        {"BecameFalse", true, "B", ""},
+        {"CountUntil", true, "NB", "N"},
+        {"WeightedBranch", true, "NN", ""},
+        {"WaitSteady", true, "BN", ""},
+        {"StepThrough", true, "", ""},
+        {"WaitLimit", true, "BN", ""},
+        {"SetState", true, "T", ""},
+        {"GetState", false, "", "T"},
+        {"IsInState", false, "T", "B"},
+        {"WhenStateBecomes", true, "T", ""},
+        {"WhenStateLeaves", true, "T", ""},
+        {"HeldLong", false, "BN", "B"},
+        {"HappenedNear", false, "BBN", "B"},
+        {"EveryWhile", true, "BN", ""},
+        {"EaseToward", false, "NNN", "N"},
+        {"BlendTime", true, "NNN", "N"},
+        {"Stopwatch", true, "B", "N"},
+        {"IsSlightly", false, "N", "B"},
+        {"IsMostly", false, "N", "B"},
+        {"IsVery", false, "N", "B"},
+        {"PickBest", false, "NNNN", "N"},
+        {"ShuffleBag", false, "L", "A"},
+        {"ChanceEachSecond", false, "N", "B"},
+        {"TryFirst", true, "", ""},
+        {"AllSucceed", true, "", ""},
+        {"FlipOutcome", true, "", ""},
+        {"AlwaysSucceed", true, "", ""},
+        {"RepeatUntilFail", true, "", ""},
+        {"WaitBetween", true, "N", ""},
+        {"SucceedNow", true, "", ""},
+        {"FailNow", true, "", ""},
+        {"CheckOutcome", true, "B", ""},
+        {"InCone", false, "ON", "B"},
+        {"LineOfSight", false, "O", "B"},
+        {"InsideArea", false, "VV", "B"},
+        {"CountNearby", false, "NT", "N"},
+        {"NearestObject", false, "NT", "O"},
+        {"FarthestObject", false, "NT", "O"},
+        {"SortByDistance", false, "L", "L"},
+        {"WhenChanged", true, "A", ""},
+        {"DoUnless", true, "BB", ""},
+        {"RememberValue", true, "TA", ""},
+        {"RecallValue", false, "T", "A"},
+        {"HealthEmpty", true, "", ""},
+        {"HealthFull", true, "", ""},
+        {"AddBuff", true, "NNNN", "N"},
+        {"AdvanceObjective", true, "NB", "N"},
+        {"AssertThis", true, "BT", ""},
+        {"LogOnce", true, "AB", ""},
+        {"DrawDebugLine", true, "VV", ""},
+#include "okay/VisualScript/library_rows.inc"
+#include "okay/VisualScript/gplib_rows.inc"
+        // Tweens, springs and eases.
+        {"EaseCurve", false, "N", "N"},
+        {"SpringStep", true, "NNN", "NN"},
+        {"TweenMove", true, "NNNNT", ""},
+        {"TweenMoveSpeed", true, "NNNNT", ""},
+        {"TweenKillTag", true, "B", "N"},
+        {"TweenPauseTag", true, "", "N"},
+        {"TweenPlayTag", true, "", "N"},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {
@@ -345,6 +623,10 @@ std::vector<std::string> AllNodeTypes() {
     std::vector<std::string> v;
     for (const Row& r : kRows) v.push_back(r.type);
     for (const VsApiEntry& e : VsApiEntries()) v.push_back(e.type);
+    for (const BuiltinNodeInfo& b : BuiltinNodes()) v.push_back(b.type);
+    for (const char* t : {"GetProperty","SetProperty","CallMethod","GetComponent","AddComponent",
+                          "FindByTag","SendMessage","Broadcast","RunSnippet"})
+        v.push_back(t);
     return v;
 }
 
@@ -358,6 +640,16 @@ const NodeSignature* SignatureFor(const std::string& type) {
         if (it != Table().end()) return &it->second;
     }
     if (const VsApiEntry* e = VsApiFind(type)) return &e->sig;
+    if (IsBuiltinNode(type)) return &BuiltinSignature();
+    if (type == "GetProperty") { static const NodeSignature s{true, "TO", "A"}; return &s; }
+    if (type == "SetProperty") { static const NodeSignature s{true, "ATO", ""}; return &s; }
+    if (type == "CallMethod")  { static const NodeSignature s{true, "AAAAT", "A"}; return &s; }
+    if (type == "GetComponent"){ static const NodeSignature s{true, "OT", "OB"}; return &s; }
+    if (type == "AddComponent"){ static const NodeSignature s{true, "OT", ""}; return &s; }
+    if (type == "FindByTag")   { static const NodeSignature s{false, "T", "O"}; return &s; }
+    if (type == "SendMessage") { static const NodeSignature s{true, "TO", ""}; return &s; }
+    if (type == "Broadcast")   { static const NodeSignature s{true, "T", ""}; return &s; }
+    if (type == "RunSnippet")  { static const NodeSignature s{true, "T", "A"}; return &s; }
     return nullptr;
 }
 
@@ -384,11 +676,43 @@ PinType InputType(const std::string& type, int pin) {
     return (PinType)s->ins[(std::size_t)pin];
 }
 
+namespace {
+bool VarNodeScope(const std::string& type, const char* verb, VarScope& scope) {
+    const std::string v = verb;
+    if (type == v + "Var") { scope = VarScope::Object; return true; }
+    if (type == v + "SceneVar") { scope = VarScope::Scene; return true; }
+    if (type == v + "GlobalVar") { scope = VarScope::Global; return true; }
+    return false;
+}
+const VarDecl* FindDeclIn(const std::vector<VarDecl>& decls, const std::string& name, VarScope scope) {
+    for (const auto& d : decls) if (d.name == name && d.scope == scope && !d.legacy) return &d;
+    return nullptr;
+}
+} // namespace
+
+PinType DeclOutType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls, PinType* elem) {
+    VarScope sc;
+    if (pin != 0 || !VarNodeScope(type, "Get", sc)) return PinType::Any;
+    const VarDecl* d = FindDeclIn(decls, arg, sc);
+    if (!d) return PinType::Any;
+    if (elem) *elem = d->type.elem;
+    return d->type.base;
+}
+
+PinType DeclInType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls) {
+    VarScope sc;
+    if (pin != 0 || !VarNodeScope(type, "Set", sc)) return PinType::Any;
+    const VarDecl* d = FindDeclIn(decls, arg, sc);
+    return d ? d->type.base : PinType::Any;
+}
+
 bool PinCompatible(PinType from, PinType to) {
     if (from == to || from == PinType::Any || to == PinType::Any) return true;
     if (to == PinType::Text) return true;                                   // everything prints
     if ((from == PinType::Number && to == PinType::Bool) || (from == PinType::Bool && to == PinType::Number)) return true;
+    if ((from == PinType::Vec3 && to == PinType::Color) || (from == PinType::Color && to == PinType::Vec3)) return true;   // RGB
     if (from == PinType::Text && to == PinType::Object) return true;        // a name
+    if (from == PinType::Text && to == PinType::Color) return true;         // "#rrggbb"
     if (from == PinType::Object && to == PinType::Bool) return true;        // still exists?
     return false;
 }
@@ -402,17 +726,23 @@ const char* PinTypeName(PinType t) {
         case PinType::Vec3:   return "Vector3";
         case PinType::Object: return "Object";
         case PinType::List:   return "List";
+        case PinType::Map:    return "Map";
+        case PinType::Color:  return "Color";
     }
     return "?";
 }
 
 std::string ConversionHint(PinType from, PinType to) {
+    if (from == PinType::Color && to == PinType::Number) return "use Split Color to get a channel";
+    if (from == PinType::Number && to == PinType::Color) return "use Make Color";
     if (from == PinType::Vec3 && to == PinType::Number) return "use Vec X / Vec Y / Vec Z or Vec3 Length";
     if (from == PinType::Number && to == PinType::Vec3) return "use Make Vec3";
     if (from == PinType::Text && to == PinType::Number) return "use To Number";
     if (from == PinType::Text && to == PinType::Bool) return "compare it with Equals, or check Text Length";
     if (from == PinType::Object && (to == PinType::Vec3)) return "use Object Position (or Get Position with this object as Target)";
     if (from == PinType::Object && to == PinType::Number) return "use Distance To, or Get X / Y / Z with this object as Target";
+    if (from == PinType::Map && to == PinType::List) return "use Map Keys or Map Values";
+    if (from == PinType::List && to == PinType::Map) return "build a map with New Map and Map Set";
     if (from == PinType::List && to == PinType::Number) return "use the Count output";
     if (from == PinType::List && to == PinType::Object) return "use the Nearest output";
     if (to == PinType::Object) return "wire an object (Self, Other Object, Find Object, Spawn...) or type a name";
@@ -438,8 +768,10 @@ bool TypeFromName(std::string t, PinType& out) {
     if (t == "bool" || t == "boolean" || t == "b") { out = PinType::Bool; return true; }
     if (t == "text" || t == "string" || t == "t") { out = PinType::Text; return true; }
     if (t == "vector3" || t == "vec3" || t == "v") { out = PinType::Vec3; return true; }
+    if (t == "color" || t == "colour" || t == "c") { out = PinType::Color; return true; }
     if (t == "object" || t == "gameobject" || t == "o") { out = PinType::Object; return true; }
     if (t == "list" || t == "l") { out = PinType::List; return true; }
+    if (t == "map" || t == "dictionary" || t == "m") { out = PinType::Map; return true; }
     return false;
 }
 bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std::string* err, const char* what) {
@@ -453,7 +785,7 @@ bool ParsePins(const std::string& list, std::vector<FunctionSig::Pin>& out, std:
         const std::string type = colon == std::string::npos ? "" : Trim(item.substr(colon + 1));
         if (!ValidName(p.name)) { if (err) *err = std::string(what) + " name '" + p.name + "' isn't a valid name"; return false; }
         if (!TypeFromName(type, p.type)) {
-            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Object, List or Any)";
+            if (err) *err = "unknown type '" + type + "' (use Number, Bool, Text, Vector3, Color, Object, List, Map or Any)";
             return false;
         }
         for (const auto& q : out) if (q.name == p.name) { if (err) *err = std::string(what) + " '" + p.name + "' is listed twice"; return false; }
@@ -505,10 +837,14 @@ bool IsEventType(const std::string& t) {
 
 std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::string& baseDir) {
     std::vector<VsIssue> issues;
+    std::unique_ptr<NodeGraph> parsedGraph;
     {   // Anything the runtime itself refuses comes first.
         std::string err;
-        if (!NodeGraph::Parse(text, &err)) { issues.push_back({0, -1, "the graph can't be loaded: " + err}); return issues; }
+        parsedGraph = NodeGraph::Parse(text, &err);
+        if (!parsedGraph) { issues.push_back({0, -1, "the graph can't be loaded: " + err}); return issues; }
     }
+    const std::vector<VarDecl>& decls = parsedGraph->Decls();
+    const std::vector<StructDef>& structDefs = parsedGraph->Structs();
     struct N { std::string type, arg; };
     std::map<int, N> nodes;
     struct Data { int consumer, inPin, producer, outPin; };
@@ -517,6 +853,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     struct Exec { int from, pin, to; };
     std::vector<Exec> execList;
     std::set<int> entries, hasExecOut;
+    std::set<std::string> exposed;   // `var name value` lines: a default the Inspector can edit
     std::map<std::pair<int, int>, std::string> typed;   // (node, pin) -> value typed into the pin
     std::istringstream in(text);
     std::string line;
@@ -541,6 +878,8 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 std::string v;
                 for (std::size_t i = 3; i < t.size(); ++i) v += (i > 3 ? " " : "") + t[i];
                 typed[{std::stoi(t[1]), std::stoi(t[2])}] = Unquote(v);
+            } else if ((t[0] == "var" || t[0] == "decl") && t.size() >= 2) {
+                exposed.insert(Unquote(t[1]));
             }
         } catch (...) {}
     }
@@ -563,8 +902,65 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         auto it = fns.find(FunctionNameOf(n.arg));
         return it != fns.end() ? &it->second : nullptr;
     };
+    std::map<std::pair<int, int>, std::pair<int, int>> srcOf;   // (consumer, in pin) -> (producer, out pin)
+    for (const Data& d : datas) srcOf[{d.consumer, d.inPin}] = {d.producer, d.outPin};
+    // The element type of the list / map a node's output pin holds, when the graph says (a typed
+    // variable, a typed New List, a copy of one...). Any = unknown.
+    std::function<PinType(int, int, int)> elemOf = [&](int id, int pin, int depth) -> PinType {
+        auto it = nodes.find(id);
+        if (it == nodes.end() || depth > 8) return PinType::Any;
+        const N& n = it->second;
+        PinType e = PinType::Any;
+        if (DeclOutType(n.type, n.arg, pin, decls, &e) != PinType::Any) return e;
+        auto in0 = srcOf.find({id, 0});
+        if (n.type == "NewList" || n.type == "NewMap") {
+            VarType vt;
+            if (!n.arg.empty() && ParseVarType(n.arg, structDefs, vt) && !vt.IsStruct()) return vt.base;
+            return PinType::Any;
+        }
+        if ((n.type == "ListCopy" || n.type == "MapCopy" || n.type == "MapValues" || n.type == "ShuffleList") && in0 != srcOf.end())
+            return elemOf(in0->second.first, in0->second.second, depth + 1);
+        if (n.type == "MapKeys") return PinType::Text;
+        return PinType::Any;
+    };
+    auto srcElem = [&](int id, int inPin) {
+        auto s2 = srcOf.find({id, inPin});
+        return s2 == srcOf.end() ? PinType::Any : elemOf(s2->second.first, s2->second.second, 0);
+    };
+    // The struct (declared type) a node's output holds, for Struct Get / Set field types.
+    std::function<const StructDef*(int, int, int)> structOfOut = [&](int id, int pin, int depth) -> const StructDef* {
+        auto it = nodes.find(id);
+        if (it == nodes.end() || depth > 8) return nullptr;
+        const N& n = it->second;
+        VarScope sc;
+        for (const char* verb : {"Get"}) {
+            if (VarNodeScope(n.type, verb, sc)) {
+                for (const auto& d : decls) if (d.name == n.arg && d.scope == sc && d.type.IsStruct()) return FindStruct(structDefs, d.type.structName);
+            }
+        }
+        if (n.type == "StructNew") return FindStruct(structDefs, n.arg);
+        (void)pin;
+        return nullptr;
+    };
+    auto fieldType = [&](int id, int inPin0) -> PinType {   // the struct on `id`'s input 0: its field `arg`
+        auto s2 = srcOf.find({id, inPin0});
+        if (s2 == srcOf.end()) return PinType::Any;
+        const StructDef* sd = structOfOut(s2->second.first, s2->second.second, 0);
+        if (!sd) return PinType::Any;
+        for (const auto& f : sd->fields) if (f.name == nodes[id].arg) return f.type.base;
+        return PinType::Any;
+    };
     auto outType = [&](int id, int pin) {
         const N& n = nodes[id];
+        if (const PinType dt = DeclOutType(n.type, n.arg, pin, decls); dt != PinType::Any) return dt;
+        if (n.type == "StructNew") return PinType::Map;
+        if (n.type == "StructGet" && pin == 0) return fieldType(id, 0);
+        if (pin == 0 && (n.type == "ListGet" || n.type == "ForEach")) {
+            const PinType e = srcElem(id, 0);
+            if (e != PinType::Any) return e;
+        }
+        if (n.type == "ForEachMap" && pin == 1) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
+        if (n.type == "MapGet" && pin == 0) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
         if (n.type == "FunctionStart" || n.type == "CallFunction") {
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "FunctionStart" ? f->params : f->returns;
@@ -574,6 +970,15 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     };
     auto inType = [&](int id, int pin) {
         const N& n = nodes[id];
+        if (const PinType dt = DeclInType(n.type, n.arg, pin, decls); dt != PinType::Any) return dt;
+        if (n.type == "StructSet" && pin == 1) { const PinType f = fieldType(id, 0); if (f != PinType::Any) return f; }
+        {   // an item going into a typed list / map
+            int listPin = -1;
+            if (n.type == "ListAdd" || n.type == "ListContains" || n.type == "ListFind" || n.type == "ListRemoveItem") listPin = 1;
+            else if (n.type == "ListInsert" || n.type == "ListSet") listPin = 2;
+            else if (n.type == "MapSet") listPin = 2;
+            if (pin == listPin) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
+        }
         if (n.type == "Return" || n.type == "CallFunction") {
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "Return" ? f->returns : f->params;
@@ -618,7 +1023,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                         " is wired into an input that needs a " + PinTypeName(to);
         const std::string hint = ConversionHint(from, to);
         if (!hint.empty()) m += " - " + hint;
-        issues.push_back({0, d.consumer, m});
+        issues.push_back({0, d.consumer, m, d.inPin, 0});
     }
 
     // 2) Exec nodes no event (or function) reaches never run.
@@ -662,9 +1067,6 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             else if (!owner.empty() && FunctionNameOf(kv.second.arg) != owner)
                 issues.push_back({0, kv.first, "this Return is in function '" + owner + "' but returns from '" + FunctionNameOf(kv.second.arg) + "'"});
         }
-        if ((t == "Delay" || t == "Wait") && !owner.empty())
-            issues.push_back({0, kv.first, "Delay / Wait can't pause inside a function (it runs to the end at once) - "
-                                           "start the delay after the Call Function instead"});
         if (t == "SetLocal" && owner.empty() && fromEvents.count(kv.first))
             issues.push_back({0, kv.first, "Set Local only works inside a function - use Set Var for graph variables"});
     }
@@ -673,7 +1075,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             auto it = nodes.find(id);
             if (it == nodes.end()) return false;
             const std::string& t = it->second.type;
-            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach";
+            return t == "ForLoop" || t == "Repeat" || t == "While" || t == "ForEach" || t == "ForEachMap";
         };
         std::vector<int> bodies;
         std::set<int> hasBody;
@@ -683,9 +1085,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         for (const auto& kv : nodes) {
             const std::string& t = kv.second.type;
             if ((t == "Break" || t == "Continue") && reached.count(kv.first) && !inLoop.count(kv.first))
-                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), "
+                issues.push_back({0, kv.first, t + " isn't inside the Body of a loop (For Loop, Repeat, While, For Each, For Each Map), "
                                                    "so it does nothing"});
-            if ((t == "While" || t == "ForEach") && reached.count(kv.first) && !hasBody.count(kv.first))
+            if ((t == "While" || t == "ForEach" || t == "ForEachMap") && reached.count(kv.first) && !hasBody.count(kv.first))
                 issues.push_back({1, kv.first, "nothing is wired to Body, so the loop does nothing" +
                                                std::string(t == "While" ? " (or never ends, while Cond is true)" : "")});
         }
@@ -721,8 +1123,9 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         }
     }
 
-    // 3) Variables read but never written by this graph.
-    std::set<std::string> written;
+    // 3) Variables read but never written by this graph. A `var` line is a
+    // default (shown in the Inspector), so reading it is not a missing write.
+    std::set<std::string> written = exposed;
     for (const auto& kv : nodes)
         if (kv.second.type == "SetVar" || kv.second.type == "AddVar" || kv.second.type == "Toggle")
             written.insert(kv.second.arg.empty() ? "x" : kv.second.arg);
@@ -768,6 +1171,23 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             const std::string why = VsApiCheckLiteral(kv.second.type, pin, lit);
             if (!why.empty()) issues.push_back({0, kv.first, "input '" + e->ins[(std::size_t)pin].name + "': " + why});
         }
+    }
+
+    // 4c) Required inputs left empty (the node says so in the editor too).
+    auto wired = [&](int id, int pin) {
+        for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) return true;
+        return typed.count({id, pin}) != 0;
+    };
+    for (const auto& kv : nodes) {
+        const std::string& t = kv.second.type;
+        if (t == "PlayClip" && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: clip name. Pick one from the list, or drop a clip file."});
+        if (t == "Branch" && !wired(kv.first, 0))
+            issues.push_back({1, kv.first, "Required: condition. Wire a true/false value into Condition."});
+        if (t == "MoveTowards" && kv.second.arg.empty() && !wired(kv.first, 1))
+            issues.push_back({1, kv.first, "Required: object to move toward. Drop an object on the slot or wire one in."});
+        if ((t == "LoadScene" || t == "GetVar" || t == "SetVar") && kv.second.arg.empty())
+            issues.push_back({1, kv.first, "Required: " + std::string(t == "LoadScene" ? "scene" : "variable name") + "."});
     }
 
     // 5) Prefabs that aren't there.

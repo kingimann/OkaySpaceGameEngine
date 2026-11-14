@@ -9,7 +9,9 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include <cmath>
+#include <functional>
 #include <string>
 
 namespace okay {
@@ -71,6 +73,15 @@ protected:
     static float Frac(float v, float mx) { return mx > 0.0f ? Mathf::Clamp01(v / mx) : 0.0f; }
 };
 
+/// Called with the object whose Health Stat just died, before the body reacts
+/// (the Quest Log counts kills for its objectives here).
+inline std::function<void(GameObject*)>& HealthDeathHook() { static std::function<void(GameObject*)> f; return f; }
+
+/// Multiplayer: tells a hosting NetworkManager that this object just respawned, so it can
+/// send the respawn (health and position) to every other player. Defined in the engine
+/// library; does nothing when no server runs in this object's scene.
+void NetNoteRespawn(GameObject* go);
+
 /// HP with flat armor, optional delayed regen, low/death flags. On death it
 /// broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
 class HealthStat : public StatComponent {
@@ -81,6 +92,7 @@ public:
 
     // ---- Damage mitigation ----
     float armor = 0.0f;            // flat reduction subtracted first
+    float equipArmor = 0.0f;       // runtime: added by worn Equipment (not saved)
     float resistance = 0.0f;       // 0..1 fraction of the remaining damage ignored
     float minDamage = 0.0f;        // a hit always deals at least this (caps mitigation)
     bool  godMode = false;         // ignore all damage
@@ -99,12 +111,17 @@ public:
     bool  respawn = false;         // come back after respawnDelay
     float respawnDelay = 3.0f;
     int   lives = 0;               // respawns allowed (0 = unlimited)
+    bool  playDeathAnim = true;   // play Death and stay active until it settles
+    bool  keepBodyOnDeath = false; // runtime: a Ragdoll shows the death, so the body stays
+    bool  playHitAnim = false;    // light flinch when Damage was given a source. Off so games don't change.
 
     bool  dead = false, lowHealth = false;
 
     float Fraction() const { return Frac(health, maxHealth); }
     bool  IsDead()   const { return dead; }
     bool  IsInvincible() const { return godMode || m_iframes > 0.0f; }
+    /// Where the last hit came from (false when it had no source).
+    bool  LastHitFrom(Vec3& out) const { if (hasLastHit) out = lastHitFrom; return hasLastHit; }
 
     void Start() override {
         health = maxHealth; dead = false; m_timer = 0.0f; m_iframes = 0.0f;
@@ -116,7 +133,13 @@ public:
         if (dt <= 0.0f) return;
         if (m_iframes > 0.0f) m_iframes -= dt;
         if (dead) {
-            if (respawn && m_respawnTimer > 0.0f) {
+            if (m_deathPlayed && !m_settled) {
+                m_deathAge += dt;
+                if (HumanoidActions::DeathPoseSettled(gameObject) || m_deathAge >= 2.5f) FinishDeathPose();
+            }
+            // A copy that died by the server's word waits for the server's respawn (its own
+            // timer would bring it back at its own start point, on its own clock).
+            if (respawn && m_respawnTimer > 0.0f && !m_awaitServerRespawn) {
                 m_respawnTimer -= dt;
                 if (m_respawnTimer <= 0.0f) Respawn();
             }
@@ -130,15 +153,38 @@ public:
         lowHealth = health <= lowThreshold;
         Publish();
     }
-    void Damage(float amount) {
+    void Damage(float amount) { hasLastHit = false; ApplyDamage(amount); }
+    /// `fromWorld` is where the hit came from. Death falls away from it.
+    void Damage(float amount, const Vec3& fromWorld) {
+        lastHitFrom = fromWorld; hasLastHit = true; ApplyDamage(amount);
+    }
+    /// Script die(): kill without another damage calculation. Replays the anim
+    /// if this body is already dead.
+    void KillFromAction(bool hasFrom, const Vec3& from) {
+        if (hasFrom) { lastHitFrom = from; hasLastHit = true; }
+        else hasLastHit = false;
+        if (dead) {
+            if (playDeathAnim) HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
+            return;
+        }
+        OnDeath();
+    }
+    void OnAnimationEvent(const std::string& name) override {
+        if (name == "death_settled") FinishDeathPose();
+    }
+
+    void ApplyDamage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
-        float dmg = Mathf::Max(0.0f, amount - armor);
+        if (HumanoidActions::DodgeIFrames(gameObject)) return;
+        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
         health -= dmg;
         m_timer = regenDelay;
         m_iframes = invincibleTime;
         if (health <= 0.0f) OnDeath();
+        else if (playHitAnim && hasLastHit)
+            HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);
         Publish();
     }
     void Heal(float a) {
@@ -153,7 +199,16 @@ public:
     void SetHealthFromServer(float h) {
         if (dead || !std::isfinite(h)) return;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
-        if (health <= 0.0f) OnDeath();
+        if (health <= 0.0f) { OnDeath(); m_awaitServerRespawn = true; }
+        Publish();
+    }
+    /// Multiplayer: the server respawned this object with `h` health (where it now stands is
+    /// the transform's business). Brings a dead copy back, or just sets the health of a live
+    /// one; a non-finite `h` is ignored and the value is kept within the maximum.
+    void RespawnFromServer(float h) {
+        if (!std::isfinite(h)) return;
+        Respawn(false);
+        health = Mathf::Max(1.0f, Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h));
         Publish();
     }
     void SetGodMode(bool on) { godMode = on; }
@@ -161,33 +216,60 @@ public:
 private:
     void OnDeath() {
         health = 0.0f; dead = true;
+        m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
+        if (auto& hook = HealthDeathHook()) hook(gameObject);
         if (gameObject) { if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play(); }
+        if (playDeathAnim)
+            m_deathPlayed = HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
         bool canRespawn = respawn && (lives <= 0 || m_livesLeft > 0);
         if (canRespawn) {
             if (lives > 0) --m_livesLeft;
             m_respawnTimer = respawnDelay;
             // Stay active (inert) so Update keeps ticking the respawn timer; a
             // deactivated object gets no Update. Hide visuals via the `died` message.
+        } else if (m_deathPlayed || keepBodyOnDeath) {
+            m_waitDeath = true;   // shrink the capsule once the pose settles; stay in DeadHold
         } else if (destroyOnDeath && gameObject && gameObject->scene()) {
             gameObject->scene()->Destroy(gameObject);
         } else if (gameObject) {
             gameObject->active = false;
         }
     }
-    void Respawn() {
+    void FinishDeathPose() {
+        if (m_settled || !dead) return;
+        m_settled = true;
+        HumanoidActions::ShrinkDeadBody(gameObject, m_deathShape);
+        if (!m_waitDeath) return;
+        m_waitDeath = false;
+        // The settled DeadHold stays visible and revive can get up. DeathLocksInput
+        // holds the body. A body with no death clip still deactivates in OnDeath.
+        if (destroyOnDeath && gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+    }
+    void Respawn(bool moveToStart = true) {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;
+        m_awaitServerRespawn = false;
+        m_deathPlayed = false; m_settled = false; m_waitDeath = false; m_deathAge = 0.0f;
+        HumanoidActions::RestoreDeadBody(gameObject, m_deathShape);
+        HumanoidActions::ReviveAnim(gameObject);
         if (gameObject) {
             gameObject->active = true;
-            if (gameObject->transform && respawn) gameObject->transform->SetPosition(m_start);
+            if (moveToStart && gameObject->transform && respawn) gameObject->transform->SetPosition(m_start);
         }
         Broadcast("respawned");
         Publish();
+        if (moveToStart) NetNoteRespawn(gameObject);
     }
+    bool m_awaitServerRespawn = false;   // died by the server's word: only its respawn brings it back
     void Publish() { SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;
     int   m_livesLeft = 0;
     Vec3  m_start{0, 0, 0};
+    Vec3  lastHitFrom{0, 0, 0};
+    bool  hasLastHit = false;
+    bool  m_deathPlayed = false, m_settled = false, m_waitDeath = false;
+    float m_deathAge = 0.0f;
+    HumanoidActions::DeadShape m_deathShape;
 };
 
 /// Hunger that drains over time (faster while sprinting); empty -> `starving`. When
@@ -314,6 +396,13 @@ public:
     bool TryJump() {
         if (stamina < jumpCost) return false;
         stamina -= jumpCost; m_timer = regenDelay; Publish();
+        return true;
+    }
+    /// Spend `cost` stamina, or refuse when there isn't enough. 0 always succeeds.
+    bool TrySpend(float cost) {
+        if (cost <= 0.0f) return true;
+        if (stamina < cost) return false;
+        stamina -= cost; m_timer = regenDelay; Publish();
         return true;
     }
     void SetSprinting(bool on) { sprinting = on; }

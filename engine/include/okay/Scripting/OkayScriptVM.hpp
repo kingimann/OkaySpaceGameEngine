@@ -34,12 +34,18 @@ public:
                               std::string* error = nullptr) override;
     bool HasEvent(const std::string& function) const override;
     vs::VsValue GetGlobal(const std::string& name) const override;
+    std::vector<std::string> GlobalNames() const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
 
     /// Add (or replace) a host-defined builtin callable from this VM's scripts —
     /// how embedders (e.g. editor plugins) expose their own API. Call before Load.
     using Builtin = std::function<vs::VsValue(std::vector<vs::VsValue>&)>;
     void AddBuiltin(const std::string& name, Builtin fn);
+
+    /// Run one builtin by name against this VM's bound host. Unknown names and
+    /// exceptions become `error` and an empty value. Visual-script nodes use this
+    /// so every text-script builtin is reachable from a graph.
+    vs::VsValue CallBuiltin(const std::string& name, std::vector<vs::VsValue> args, std::string* error = nullptr);
 
 private:
     struct Impl;

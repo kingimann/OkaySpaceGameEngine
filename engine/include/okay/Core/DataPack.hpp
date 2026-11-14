@@ -34,10 +34,13 @@ struct DataPack {
     static std::uint64_t DefaultKey() { return 0xA17C0FFEE5EED15Cull; }
 
     static void XorStream(std::string& data, std::uint64_t key, std::uint64_t nonce) {
-        std::uint64_t base = key ^ nonce;
-        for (std::size_t i = 0; i < data.size(); ++i) {
-            std::uint64_t ks = Mix(base + (std::uint64_t)(i / 8));
-            data[i] = (char)((unsigned char)data[i] ^ (unsigned char)(ks >> ((i % 8) * 8)));
+        const std::uint64_t base = key ^ nonce;
+        const std::size_t n = data.size();
+        for (std::size_t i = 0; i < n; i += 8) {
+            const std::uint64_t ks = Mix(base + (std::uint64_t)(i / 8));   // one mix per 8 bytes of body
+            const std::size_t end = i + 8 < n ? i + 8 : n;
+            for (std::size_t j = i; j < end; ++j)
+                data[j] = (char)((unsigned char)data[j] ^ (unsigned char)(ks >> ((j - i) * 8)));
         }
     }
 
@@ -54,21 +57,43 @@ struct DataPack {
         return out;
     }
 
+    /// True for data that starts with the pack magic. A file cut short inside the header (fewer
+    /// than kHeader bytes) still counts: it is a damaged pack, and Decode / Unpack report it as
+    /// one instead of handing the raw bytes on as plain text.
+    // 8 bytes at `off`, little endian (the caller has checked the length).
+    static std::uint64_t Get64(const std::string& d, std::size_t off) {
+        std::uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)d[off + i] << (i * 8);
+        return v;
+    }
+
     static bool IsPacked(const std::string& d) {
-        return d.size() >= kHeader && d.compare(0, 4, Magic()) == 0;
+        return d.size() >= 4 && d.compare(0, 4, Magic()) == 0;
     }
 
     /// Recover the plaintext; returns empty on bad magic or a failed checksum
     /// (corrupt / tampered file).
     static std::string Decode(const std::string& packed, std::uint64_t key) {
-        if (!IsPacked(packed)) return std::string();
-        auto get64 = [&](std::size_t off) { std::uint64_t v = 0;
-            for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
-        std::uint64_t nonce = get64(4), chk = get64(12);
+        if (!IsPacked(packed) || packed.size() < kHeader) return std::string();
+        const std::uint64_t nonce = Get64(packed, 4), chk = Get64(packed, 12);
         std::string body = packed.substr(kHeader);
         XorStream(body, key, nonce);
         if (Fnv(body) != chk) return std::string();   // tampered or wrong key
         return body;
+    }
+
+    /// Like Decode, but says why it failed: false (and `out` empty, `error` set) on bad
+    /// magic or a failed checksum. An empty but valid body returns true.
+    static bool TryDecode(const std::string& packed, std::uint64_t key, std::string& out, std::string* error = nullptr) {
+        out.clear();
+        if (!IsPacked(packed)) { if (error) *error = "not a packed file"; return false; }
+        if (packed.size() < kHeader) { if (error) *error = "truncated pack (the header is cut short)"; return false; }
+        const std::uint64_t nonce = Get64(packed, 4), chk = Get64(packed, 12);
+        std::string body = packed.substr(kHeader);
+        XorStream(body, key, nonce);
+        if (Fnv(body) != chk) { if (error) *error = "checksum mismatch (tampered, corrupt or wrong key)"; return false; }
+        out = std::move(body);
+        return true;
     }
 
     /// Convenience with the default key + a content-derived nonce.
@@ -76,8 +101,18 @@ struct DataPack {
         return Encode(plain, DefaultKey(), Fnv(plain) ^ 0x5DEECE66Dull);
     }
     /// Decode if packed, else return the input unchanged (plaintext back-compat).
+    /// A packed file that fails its checksum gives an empty string; use the overload
+    /// below to tell that from a genuinely empty file.
     static std::string Unpack(const std::string& data) {
         return IsPacked(data) ? Decode(data, DefaultKey()) : data;
+    }
+    /// Same, but `ok` (and `error`, if given) say whether the data was good.
+    static std::string Unpack(const std::string& data, bool* ok, std::string* error = nullptr) {
+        if (ok) *ok = true;
+        if (!IsPacked(data)) return data;
+        std::string out;
+        if (!TryDecode(data, DefaultKey(), out, error) && ok) *ok = false;
+        return out;
     }
 };
 

@@ -13,7 +13,7 @@ class GameObject;
 class Component;
 
 /// The engine-side context a script can see and manipulate. Every script VM
-/// (built-in, Lua, C#) binds against this same surface, so a game can swap
+/// (OkayScript and the typed C#-style language) binds against this same surface, so a game can swap
 /// languages without changing the engine integration.
 struct ScriptHost {
     Transform*  transform  = nullptr;
@@ -38,7 +38,7 @@ class IScriptVM {
 public:
     virtual ~IScriptVM() = default;
 
-    /// The language this backend implements ("okayscript", "lua", "csharp").
+    /// The language this backend implements ("okayscript", "okayscript-next").
     virtual const char* Language() const = 0;
 
     /// The names of every built-in function this backend provides — for editor
@@ -101,13 +101,22 @@ public:
     /// Set a global variable — used to apply a component's serialized public-field
     /// overrides over the script's defaults.
     virtual void SetGlobal(const std::string& /*name*/, const vs::VsValue& /*v*/) {}
+
+    /// The names of the script's own variables (globals, or a component class's
+    /// instance fields), for save games. Empty when the backend can't list them.
+    virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
-/// Names of the script backends compiled into this build (always includes
-/// "okayscript"; "lua"/"csharp" appear when their CMake options are enabled).
+/// Names of the script backends in this build: "okayscript" (our own VM).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
+
+/// Old scenes and projects may still name the removed third-party backends
+/// ("lua", "csharp"/"cs"). Returns a clear "no longer supported" message for those
+/// language names, or an empty string for any other name. Loading such a script
+/// fails with this message instead of failing silently.
+std::string RemovedScriptLanguageMessage(const std::string& language);
 
 } // namespace okay

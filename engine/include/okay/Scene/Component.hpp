@@ -1,6 +1,7 @@
 #pragma once
 #include <unordered_set>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -30,20 +31,47 @@ public:
     // ---- Lifecycle (called by the Scene) -------------------------------
     /// Called once, immediately after the component is created.
     virtual void Awake() {}
-    /// Called once, before the first Update, if the component is enabled.
+    /// Called once, just before the first Update in which the component is enabled
+    /// and its GameObject is active (a component that starts out disabled, or on an
+    /// inactive object, gets it when it is first switched on).
     virtual void Start() {}
     /// Called every frame.
     virtual void Update(float /*deltaTime*/) {}
     /// Called every frame after all Update calls have run.
     virtual void LateUpdate(float /*deltaTime*/) {}
+    /// Called from the scene's physics step: once per fixed step before the physics
+    /// world advances (so `fixedDeltaTime` is Scene::fixedTimeStep and a slow frame runs
+    /// it several times), or once per frame with the frame time when the scene has no
+    /// fixed step. Runs only for a started, enabled component on an object that is
+    /// active in the hierarchy, and only while the scene's physics is enabled.
+    virtual void FixedUpdate(float /*fixedDeltaTime*/) {}
     /// Called every frame during the render pass.
     virtual void OnRender(IRenderer& /*renderer*/) {}
-    /// Called when the component or its GameObject is destroyed.
+    /// Called when the component or its GameObject is destroyed, after Start
+    /// has run. Implementations may assume the running life happened: a
+    /// network manager stops its socket, a script fires on_destroy, a weather
+    /// rig drops a count it took while it was alive. It is not called for a
+    /// component that is still waiting to start.
     virtual void OnDestroy() {}
-    /// The GameObject was switched on / off (its `active` flag changed). Called by
-    /// the Scene at the start of the next frame, once per change.
+    /// Called instead of OnDestroy when the object is destroyed before Start.
+    /// Only components that grabbed something earlier (an IK target previewed
+    /// in edit mode, a weather rig whose count was taken at creation) override
+    /// this. The default does nothing, so a never-started component cannot
+    /// tear down another instance's state.
+    virtual void ReleaseUnstarted() {}
+    /// The component became live (enabled, on an active GameObject) / stopped being
+    /// live: its `enabled` flag or its GameObject's `active` flag flipped. Called by
+    /// the Scene at the start of the next frame, once per change. OnEnable also runs
+    /// once just before the first Start, and OnDisable runs just before OnDestroy
+    /// for a component that is live then. They only ever alternate.
     virtual void OnEnable() {}
     virtual void OnDisable() {}
+    /// An ObjectPool is about to hand this component's object out again after it was released: put the
+    /// runtime state of the previous use back to what a fresh copy of the template has (velocities,
+    /// elapsed timers, accumulated forces). Called once per reuse, after the object's pose was reset
+    /// and before it is switched on, so OnEnable follows with the clean state. Not called for a
+    /// new object, which starts clean anyway. Rigidbody2D, Rigidbody3D and Lifetime reset themselves.
+    virtual void OnPoolReuse() {}
     /// Objects in `dying` are about to be destroyed (this component survives):
     /// drop any pointers to them or their transforms.
     virtual void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& /*dying*/) {}
@@ -82,11 +110,24 @@ public:
     /// pose after every animation driver, crossfade and layer has written it.
     virtual int ExecutionOrder() const { return 0; }
 
+    /// Components that exist only to serve this one (a controller made of
+    /// parts). Removing this component removes them with it.
+    virtual void CollectOwnedParts(std::vector<Component*>& /*out*/) const {}
+
+    /// Player motors return true: a water volume does not also push them.
+    /// Swimming is the controller's job.
+    virtual bool IgnoresBuoyancy() const { return false; }
+
     Scene* GetScene() const;
 
 private:
     friend class Scene;
+    friend class GameObject;
     bool m_started = false;
+    bool m_live = false;   // OnEnable delivered and not yet undone by OnDisable
+    bool m_removing = false;   // GameObject::RemoveComponent is running its callbacks
+    /// OnDisable (if one is owed) ahead of OnDestroy.
+    void DeliverDisableBeforeDestroy();
 };
 
 /// Convenience aliases for user scripts. OkaySpace's scripts subclass

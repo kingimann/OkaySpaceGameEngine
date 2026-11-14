@@ -6,6 +6,7 @@
 #include "okay/Physics/Physics2D.hpp"            // Collision2D (grounded detection)
 #include "okay/Components/SpriteRenderer.hpp"    // face-flipping
 #include "okay/Components/SpriteAnimator.hpp"    // idle / run / jump / fall clips
+#include "okay/Components/StepUp.hpp"            // GroundLatch (apex is not ground)
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
@@ -112,10 +113,12 @@ public:
         }
 
         // ---- Platformer ----
-        // Grounded from real contacts, OR (fallback when no ground collider is set
-        // up) a near-zero vertical speed — the classic heuristic, so a jump still
-        // works in the simplest setups.
-        bool grounded = m_grounded || (rb && Mathf::Abs(rb->velocity.y) < 0.5f);
+        // Real contacts refill the jump. A near-zero vertical speed still counts
+        // as ground until the body has left it (so a scene with no floor collider
+        // can jump once), but not at the apex of a jump already taken — that
+        // speed crosses zero on the way down and used to refill maxJumps forever.
+        bool grounded = m_grounded;
+        if (rb) grounded = ResolveGrounded(m_ground, m_grounded, rb->velocity.y);
 
         // Coyote + jump-buffer timers.
         if (grounded) { m_coyote = coyoteTime; m_jumpsLeft = maxJumps; }
@@ -139,10 +142,12 @@ public:
                     rb->velocity.y = wallJumpForce;
                     rb->velocity.x = -(float)m_wallDir * wallJumpPush;
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_jumpsLeft = maxJumps - 1;
+                    m_ground.left = true; m_ground.fell = false; grounded = false;
                 } else if (canCoyote || m_jumpsLeft > 0) {
                     rb->velocity.y = jumpForce;
                     m_jumpsLeft = (canCoyote ? maxJumps : m_jumpsLeft) - 1;
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_grounded = false;
+                    m_ground.left = true; m_ground.fell = false; grounded = false;
                 }
             }
             // Wall slide: holding toward the wall while falling slows the descent.
@@ -193,20 +198,31 @@ public:
 
 private:
     bool  m_grounded = false;
+    GroundLatch m_ground;      // apex of a jump does not refill jumps
     int   m_wallDir  = 0;      // -1 wall on the left, +1 on the right, 0 none (this frame)
     float m_coyote   = 0.0f;
     float m_jumpBuf  = 0.0f;
     int   m_jumpsLeft = 0;
     bool  m_jumpWasHeld = false;
     bool  m_air = false;       // airborne, for picking the jump / fall clip
+    std::string m_anim;        // clip requested last frame (don't restart it)
     int   m_still = 0;         // airborne frames with ~zero vertical speed
 
     // Play a named clip on a sibling SpriteAnimator when it has one ("fall" falls
     // back to "jump"). No animator / no such clip: leave the animation alone.
+    // The same clip is requested every frame while airborne; asking Play again
+    // restarted a finished one-shot from frame 0 each frame. A jump holds its
+    // last frame instead of cycling for as long as the body is in the air.
     void Animate(const char* clip) {
         auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr;
         if (!sa || sa->clips.empty()) return;
-        if (!sa->Play(clip) && std::string(clip) == "fall") sa->Play("jump");
+        const char* use = clip;
+        if (!sa->HasClip(use) && std::string(use) == "fall") use = "jump";
+        if (!sa->HasClip(use)) return;
+        if (m_anim == use) return;
+        m_anim = use;
+        sa->Play(use);
+        sa->SetHoldAtEnd(std::string(use) == "jump");
     }
 
     // Move `v` toward `target`. With no accel/decel set it snaps (the classic

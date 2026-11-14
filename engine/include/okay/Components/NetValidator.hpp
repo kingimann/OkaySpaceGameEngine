@@ -86,6 +86,20 @@ public:
     /// A peer left: drop its call counter and budget. (Budgets aren't dropped
     /// for going quiet: a full magazine back after a pause would be a free reload.)
     void ForgetPeer(std::uint32_t peer) { m_calls.erase(peer); m_buckets.erase(peer); }
+    /// A peer is leaving: keep its budget and cooldown under `ident` for 5
+    /// minutes, so emptying the magazine and reconnecting isn't a reload.
+    void Park(std::uint32_t peer, const std::string& ident) {
+        for (auto it = m_parked.begin(); it != m_parked.end();)
+            it = m_time - it->second.second > 300.0f ? m_parked.erase(it) : std::next(it);
+        if (auto it = m_buckets.find(peer); it != m_buckets.end()) m_parked[ident] = {it->second, m_time};
+    }
+    /// A peer joined as `ident`: it gets back what that ident parked.
+    void Restore(std::uint32_t peer, const std::string& ident) {
+        auto it = m_parked.find(ident);
+        if (it == m_parked.end()) return;
+        if (m_time - it->second.second <= 300.0f) m_buckets[peer] = it->second.first;
+        m_parked.erase(it);
+    }
     std::size_t TrackedPeers() const { return m_calls.size(); }
 
     /// The enabled rule with a budget for RPC `name` in `scene` (one naming it
@@ -113,6 +127,7 @@ private:
     }
     std::unordered_map<std::uint32_t, Window> m_calls;
     std::unordered_map<std::uint32_t, Bucket> m_buckets;   // cooldown + budget, per peer
+    std::unordered_map<std::string, std::pair<Bucket, float>> m_parked;   // ident -> a peer's bucket when it left, and when
     float m_time = 0.0f;
     float m_sincePrune = 0.0f;
 };

@@ -184,7 +184,7 @@ Usage (C++):
 ```cpp
 // Host: advertise, then heartbeat while running, then remove on quit.
 std::string id = okay::Matchmaking::Host("Bob's game", myPublicAddr, 45000, /*max*/8, "arena");
-// ...each ~15s: okay::Matchmaking::Heartbeat(id, net->PeerCount() + 1);
+// ...each ~30s: okay::Matchmaking::Heartbeat(id, net->PeerCount() + 1);
 // on stop: okay::Matchmaking::Unregister(id);
 
 // Client: browse and join.
@@ -198,7 +198,7 @@ From OkayScript:
 ```javascript
 // Host
 var id = mm_host("My Game", my_addr, 45000, 8, "arena");  // -> session id
-// each ~15s: mm_heartbeat(id, net_peers() + 1);
+// each ~30s: mm_heartbeat(id, net_peers() + 1);
 // on quit:  mm_unregister(id);
 
 // Client: browse then join by index

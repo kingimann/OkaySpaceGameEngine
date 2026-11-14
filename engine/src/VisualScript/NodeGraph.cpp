@@ -1,4 +1,5 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
@@ -7,11 +8,21 @@
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesBuild.hpp"
+#include "okay/VisualScript/NodesInventory.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
+#include "okay/VisualScript/NodesStory.hpp"
+#include "okay/VisualScript/NodesLogic.hpp"
+#include "okay/VisualScript/NodesGameplay.hpp"
+#include "okay/VisualScript/NodesLogicRound.hpp"
+#include "okay/VisualScript/NodesSmart.hpp"
+#include "okay/VisualScript/NodesLibrary.hpp"
+#include "okay/VisualScript/NodesGameplayLib.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -96,27 +107,70 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
-bool NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
-                             const VsNode* caller, VsContext& ctx) {
+NodeGraph::CallResult NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                                                  const VsNode* caller, VsContext& ctx, int* suspendedAt) {
     const int start = FunctionNode(name);
     if (start < 0) {
         ReportError(caller, ctx, name.empty() ? std::string("no function is picked to call")
                                               : "there's no function named '" + name + "' in this graph");
-        return false;
+        return CallResult::Failed;
     }
     if ((int)m_frames.size() >= kMaxCallDepth) {
         ReportError(caller, ctx, "function '" + name + "' was called more than " + std::to_string(kMaxCallDepth) +
                                  " deep (a function calling itself with no way to stop?); the call was skipped");
-        return false;
+        return CallResult::Failed;
     }
     Frame f; f.name = name; f.args = std::move(args);
     m_frames.push_back(std::move(f));
-    // The body runs as a nested chain: it shares the event's step budget, so a
-    // function looping forever is stopped like any other runaway loop.
-    Run(start, ctx);
-    rets = std::move(m_frames.back().rets);
-    m_frames.pop_back();
-    return !m_abort;
+    // Propagate a pause so a Delay in the body waits the caller instead of being refused.
+    const RunStatus st = Run(start, ctx, false, true);
+    if (st == RunStatus::Suspended) {
+        if (suspendedAt) *suspendedAt = TakeSuspendNode();
+        return CallResult::Suspended;
+    }
+    if (!m_frames.empty()) {
+        rets = std::move(m_frames.back().rets);
+        m_frames.pop_back();
+    }
+    return m_abort ? CallResult::Failed : CallResult::Done;
+}
+
+void NodeGraph::StashFrames(int depthBefore, std::vector<VsHeldFrame>& out) {
+    out.clear();
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() <= depthBefore) return;
+    for (int i = depthBefore; i < (int)m_frames.size(); ++i) {
+        Frame& f = m_frames[(std::size_t)i];
+        VsHeldFrame h;
+        h.name = std::move(f.name);
+        h.args = std::move(f.args);
+        h.rets = std::move(f.rets);
+        h.returned = f.returned;
+        h.locals.assign(f.locals.begin(), f.locals.end());
+        std::sort(h.locals.begin(), h.locals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        out.push_back(std::move(h));
+    }
+    m_frames.resize((std::size_t)depthBefore);
+}
+
+void NodeGraph::RestoreFrames(std::vector<VsHeldFrame>& in) {
+    for (VsHeldFrame& h : in) {
+        Frame f;
+        f.name = std::move(h.name);
+        f.args = std::move(h.args);
+        f.rets = std::move(h.rets);
+        f.returned = h.returned;
+        for (auto& kv : h.locals) f.locals.emplace(std::move(kv.first), std::move(kv.second));
+        m_frames.push_back(std::move(f));
+    }
+    in.clear();
+}
+
+void NodeGraph::FinishCall(int depthBefore, std::vector<VsValue>& rets) {
+    if (depthBefore < 0) depthBefore = 0;
+    if ((int)m_frames.size() > depthBefore)
+        rets = std::move(m_frames[(std::size_t)depthBefore].rets);
+    if ((int)m_frames.size() > depthBefore) m_frames.resize((std::size_t)depthBefore);
 }
 
 bool NodeGraph::ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out) {
@@ -138,6 +192,12 @@ std::string VsObjectName(std::uint64_t id) {
 }
 bool VsObjectAlive(std::uint64_t id) { return id && GameObject::FromInstanceId(id) != nullptr; }
 
+namespace {
+VsRuntimeErrorHook g_errorHook = nullptr;
+}
+
+void SetRuntimeErrorHook(VsRuntimeErrorHook hook) { g_errorHook = hook; }
+
 void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& what) {
     const int nodeId = n ? n->fileId : -1;
     ++m_errorCount;
@@ -145,12 +205,56 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
     m_lastError = what;
     m_lastErrorNode = nodeId;
     std::string where;
-    if (n && !n->type.empty()) where = " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
+    if (!debugKey.empty()) where += " (" + debugKey + ")";
+    if (n && !n->type.empty()) where += " at node '" + n->type + "' (#" + std::to_string(n->fileId) + ")";
     const std::string obj = ctx.gameObject ? ctx.gameObject->name : std::string("?");
     Log::Error("Visual Script on '", obj, "'", where, ": ", what);
+    if (g_errorHook) {
+        VsRuntimeError e;
+        e.graphKey = debugKey;
+        e.event = m_event;
+        e.fileId = nodeId;
+        e.nodeType = n ? n->type : std::string();
+        e.objectName = obj;
+        e.message = what;
+        g_errorHook(e);
+    }
 }
 
-void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
+void NodeGraph::CancelSuspended() {
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id)) n->OnSuspendRejected();
+    m_suspended.clear();
+}
+
+void NodeGraph::CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const {
+    flows.clear();
+    suspendedFileIds.clear();
+    for (const auto& n : m_nodes) {
+        if (!n || n->fileId < 0) continue;
+        VsFlowRecord r;
+        r.fileId = n->fileId;
+        r.type = n->type;
+        if (n->SaveFlow(r)) flows.push_back(std::move(r));
+    }
+    for (int id : m_suspended)
+        if (VsNode* n = Node(id))
+            if (n->fileId >= 0) suspendedFileIds.push_back(n->fileId);
+}
+
+void NodeGraph::RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds) {
+    for (const VsFlowRecord& r : flows) {
+        VsNode* n = Node(NodeByFileId(r.fileId));
+        if (!n || n->type != r.type) continue;
+        n->LoadFlow(r, *this);
+    }
+    for (int fid : suspendedFileIds) {
+        const int id = NodeByFileId(fid);
+        if (id >= 0 && !IsSuspended(id)) m_suspended.push_back(id);
+    }
+}
+
+NodeGraph::RunStatus NodeGraph::Run(int entryNode, VsContext& ctx, bool resume, bool propagateSuspend) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
     if (m_runDepth == 0) { m_steps = 0; m_reads = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
@@ -160,11 +264,13 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         ReportError(Node(entryNode), ctx, "loops and sequences are nested more than " + std::to_string(kMaxRunDepth) +
                                           " deep (a loop's Body wired back into the loop itself?); the event stopped");
         m_abort = true;
-        return;
+        return RunStatus::Done;
     }
     ++m_runDepth;
+    m_suspendAt = -1;
     int cur = entryNode;
     bool first = true;
+    RunStatus status = RunStatus::Done;
     while (cur >= 0 && !Aborted()) {
         VsNode* n = Node(cur);
         if (!n) break;
@@ -180,10 +286,10 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
             m_abort = true;
             break;
         }
-        if (Tracing() && !(resume && first)) ++n->execCount;
+        if (Tracing() && !(resume && first) && !n->internal) ++n->execCount;
         // The debugger may stop here, before the node runs (not when a node parked
         // by a Delay is only being picked up again).
-        if (!(resume && first) && VsDebugger::Get().Active()) {
+        if (!(resume && first) && !n->internal && VsDebugger::Get().Active()) {
             VsDebugger::Get().Check(*this, *n, ctx);
             if (m_abort) break;
         }
@@ -207,12 +313,11 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
             m_resuming = false;
         }
         first = false;
-        if (outPin == kSuspend && !m_frames.empty()) {
-            // A function has to finish before its caller carries on: there's no
-            // caller to come back to next frame.
-            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a function runs to the end at once); "
-                                "the function stopped here");
-            m_frames.back().returned = true;
+        // A pause inside a function is a latent call: propagate it so the Call
+        // Function node can park and keep the frame. The caller waits.
+        if (outPin == kSuspend && propagateSuspend) {
+            m_suspendAt = cur;
+            status = RunStatus::Suspended;
             break;
         }
         if (outPin == kSuspend) {   // park here; Resume() continues from this node
@@ -223,6 +328,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         cur = (outPin < (int)n->execOut.size()) ? n->execOut[outPin] : -1;
     }
     --m_runDepth;
+    return status;
 }
 
 int TargetPinFor(const std::string& type) {
@@ -235,6 +341,11 @@ int TargetPinFor(const std::string& type) {
         {"SetColor", 4}, {"SetVisible", 1}, {"PlaySound", 0}, {"PlayClip", 0},
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
+        {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
+        {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
+        {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
+        {"ParticlePlay", 0}, {"ParticleStop", 0}, {"ParticleBurst", 1},
+        {"TweenMove", 5}, {"TweenMoveSpeed", 5},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -271,6 +382,8 @@ int ArgInt(const std::string& a, int def) {
 std::unique_ptr<VsNode> MakeNode(const std::string& type,
                                  const std::vector<std::string>& argsIn,
                                  std::string* err) {
+    if (const std::string canon = CanonicalNodeType(type); canon != type)
+        return MakeNode(canon, argsIn, err);
     // A node whose text field was left blank gets a sensible default instead of
     // failing — one empty "Set Var" used to stop the whole graph from loading.
     std::vector<std::string> args = argsIn;
@@ -279,7 +392,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
             {"Const", "0"}, {"GetVar", "x"}, {"SetVar", "x"}, {"AddVar", "x"}, {"HasVar", "x"},
             {"Key", "space"}, {"KeyDown", "space"}, {"KeyUp", "space"},
             {"Timer", "1"}, {"Wait", "1"}, {"Repeat", "1"}, {"DoN", "1"}, {"Chance", "0.5"}, {"Toggle", "x"}, {"Compare", ">"},
-            {"NetGetVar", "x"}, {"NetSetVar", "x"}, {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
+            {"NetGetVar", "x"}, {"NetSetVar", "x"}, {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
+            {"OnNetRpc", "rpc"}, {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
         auto it = kDefaults.find(type);
         while (args.size() < n) args.push_back(it != kDefaults.end() ? it->second : std::string());
         (void)err;
@@ -290,7 +404,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
-            base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
+            base == "OnSwipe" ||
+            base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
             return MakeNode(base, a, err);
@@ -298,17 +413,26 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     }
     if (type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable")
         return std::make_unique<EventNode>();
+    if (type == "OnLanguageChanged") return std::make_unique<EventNode>();   // Event Name = the new language
     // Engine-API nodes ("Transform.Translate/3"): generated from the script bindings.
     if (auto api = MakeApiNode(type)) return api;
+    // Fn.<builtin> and the property / method / snippet escape hatches.
+    if (auto cov = MakeCoverageNode(type, args)) return cov;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
+        type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnSwipe" ||
+        type == "OnPinch" || type == "OnRotate" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
         type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit")
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
+        type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent" ||
+        type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
+        type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
         return std::make_unique<EventNode>();
-    if (type == "OnEvent") return std::make_unique<CustomEventNode>();
+    if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
     // The editor writes the encoded steps as one quoted arg; hand-written files may
     // split them into tokens, so join everything back up first.
@@ -338,6 +462,15 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         }
         if (type == "SaveCreation")    return std::make_unique<BuildCreationNode>(false, a0("creation"));
         if (type == "LoadCreation")    return std::make_unique<BuildCreationNode>(true, a0("creation"));
+        // Inventory (the node's text is the item, recipe output or loot table).
+        if (type == "AddItem")        return std::make_unique<InvAddNode>(a0("item"));
+        if (type == "RemoveItem")     return std::make_unique<InvRemoveNode>(a0("item"));
+        if (type == "HasItem")        return std::make_unique<InvHasNode>(a0("item"));
+        if (type == "ItemCount")      return std::make_unique<InvCountNode>(a0("item"));
+        if (type == "EquipItem")      return std::make_unique<InvEquipNode>(a0("item"));
+        if (type == "CraftItem")      return std::make_unique<InvCraftNode>(a0("item"));
+        if (type == "LootRoll")       return std::make_unique<InvLootRollNode>(a0("table"));
+        if (type == "SpawnPickup")    return std::make_unique<InvSpawnPickupNode>(a0("item"));
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);
@@ -356,6 +489,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "EndsWith")       return std::make_unique<TextFnNode>(TextFnNode::Op::EndsWith);
         if (type == "Trim")           return std::make_unique<TextFnNode>(TextFnNode::Op::Trim);
         if (type == "IndexOf")        return std::make_unique<TextFnNode>(TextFnNode::Op::IndexOf);
+        if (type == "Localize")       return std::make_unique<LocalizeNode>(a0(""));
+        if (type == "SetLanguage")    return std::make_unique<SetLanguageNode>(a0(""));
+        if (type == "GetLanguage")    return std::make_unique<GetLanguageNode>();
         if (type == "Noise")          return std::make_unique<MathFn4Node>(MathFn4Node::Op::Noise);
         if (type == "Snap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Snap);
         if (type == "Wrap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Wrap);
@@ -442,6 +578,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();
+    if (type == "GestureSwipeDirection") return std::make_unique<GestureSwipeDirectionNode>();
+    if (type == "GesturePinchScale") return std::make_unique<GesturePinchScaleNode>();
+    if (type == "GestureTwist") return std::make_unique<GestureTwistNode>();
     // Transform getters.
     if (type == "GetPosition") return std::make_unique<GetPositionNode>();
     if (type == "GetX") return std::make_unique<GetAxisNode>(0);
@@ -495,6 +634,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetDisconnect") return std::make_unique<NetDisconnectNode>();
     if (type == "NetChat")        return std::make_unique<NetChatNode>();
     if (type == "NetRpc")         { if (!need(1)) return nullptr; return std::make_unique<NetRpcNode>(args[0]); }
+    if (type == "NetObjRpc")      { if (!need(1)) return nullptr; return std::make_unique<NetObjRpcNode>(args[0]); }
+    if (type == "SyncVarSet")     { if (!need(1)) return nullptr; return std::make_unique<SyncVarSetNode>(args[0]); }
+    if (type == "SyncVarGet")     { if (!need(1)) return nullptr; return std::make_unique<SyncVarGetNode>(args[0]); }
     if (type == "NetSpawnOwned")  { if (!need(1)) return nullptr; return std::make_unique<NetSpawnOwnedNode>(args[0]); }
     if (type == "NetDespawn")     return std::make_unique<NetDespawnNode>();
     if (type == "NetReady")       return std::make_unique<NetReadyNode>();
@@ -512,6 +654,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Audio / physics / tween.
     if (type == "PlaySound")   return std::make_unique<PlaySoundNode>();
     if (type == "AddForce")    return std::make_unique<AddForceNode>();
+    if (type == "AddExplosionForce") return std::make_unique<AddExplosionForceNode>();
     if (type == "AddImpulse")  return std::make_unique<AddImpulseNode>();
     if (type == "SetVelocity") return std::make_unique<SetVelocityNode>();
     if (type == "VelX")        return std::make_unique<VelAxisNode>(0);
@@ -526,6 +669,10 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "RaycastAll3D")    return std::make_unique<RaycastAll3DNode>(layers);
         if (type == "OverlapSphere3D") return std::make_unique<Overlap3DNode>(false, layers);
         if (type == "OverlapBox3D")    return std::make_unique<Overlap3DNode>(true, layers);
+        if (type == "BoxCast2D")       return std::make_unique<BoxCast2DNode>(layers);
+        if (type == "CapsuleCast2D")   return std::make_unique<CapsuleCast2DNode>(layers);
+        if (type == "OverlapBox2D")    return std::make_unique<OverlapBox2DNode>(layers);
+        if (type == "OverlapCapsule2D") return std::make_unique<OverlapCapsule2DNode>(layers);
         if (type == "ContactPoint")    return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Point);
         if (type == "ContactNormal")   return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Normal);
         if (type == "ImpactSpeed")     return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Speed);
@@ -581,14 +728,38 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Loops, lists, scene / global variables (NodesLoops.hpp).
     if (type == "While")          return std::make_unique<WhileNode>();
     if (type == "ForEach")        return std::make_unique<ForEachNode>();
+    if (type == "ForEachMap")     return std::make_unique<ForEachMapNode>();
     if (type == "Break")          return std::make_unique<LoopJumpNode>(true);
     if (type == "Continue")       return std::make_unique<LoopJumpNode>(false);
     if (type == "NewList")        return std::make_unique<NewListNode>();
+    if (type == "NewMap")         return std::make_unique<NewMapNode>();
+    if (type == "MapSet")         return std::make_unique<MapSetNode>();
+    if (type == "MapRemove")      return std::make_unique<MapRemoveNode>();
+    if (type == "MapGet")         return std::make_unique<MapGetNode>();
+    if (type == "MapHas")         return std::make_unique<MapHasNode>();
+    if (type == "MapKeys")        return std::make_unique<MapKeysNode>();
+    if (type == "MapValues")      return std::make_unique<MapValuesNode>();
     if (type == "ListAdd")        return std::make_unique<ListAddNode>();
     if (type == "ListRemoveAt")   return std::make_unique<ListRemoveAtNode>();
     if (type == "ListGet")        return std::make_unique<ListGetNode>();
     if (type == "ListLength")     return std::make_unique<ListLengthNode>();
     if (type == "ListContains")   return std::make_unique<ListContainsNode>();
+    if (type == "ListInsert")     return std::make_unique<ListInsertNode>();
+    if (type == "ListSet")        return std::make_unique<ListSetNode>();
+    if (type == "ListFind")       return std::make_unique<ListFindNode>();
+    if (type == "ListRemoveItem") return std::make_unique<ListRemoveItemNode>();
+    if (type == "ListSort")       return std::make_unique<ListSortNode>();
+    if (type == "ListReverse")    return std::make_unique<ListReverseNode>();
+    if (type == "ListClear")      return std::make_unique<ListClearNode>();
+    if (type == "ListCopy")       return std::make_unique<ListCopyNode>();
+    if (type == "MapClear")       return std::make_unique<MapClearNode>();
+    if (type == "MapCount")       return std::make_unique<MapCountNode>();
+    if (type == "MapCopy")        return std::make_unique<MapCopyNode>();
+    if (type == "StructNew")      return std::make_unique<StructNewNode>(argOr(""));
+    if (type == "StructGet")      return std::make_unique<StructGetNode>(argOr(""));
+    if (type == "StructSet")      return std::make_unique<StructSetNode>(argOr(""));
+    if (type == "MakeColor")      return std::make_unique<MakeColorNode>();
+    if (type == "SplitColor")     return std::make_unique<SplitColorNode>();
     if (type == "AllWithTag")     return std::make_unique<AllWithTagNode>(argOr("Enemy"));
     {
         using S = ScopedVarNode::Scope; using O = ScopedVarNode::Op;
@@ -611,6 +782,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
     if (type == "GetName")        return std::make_unique<ObjectInfoNode>(false);
     if (type == "GetTag")         return std::make_unique<ObjectInfoNode>(true);
+    if (type == "MouseGround") return std::make_unique<MouseGroundNode>();
     if (type == "MouseButton" || type == "MouseButtonDown") {
         // 0/1/2 or left/right/middle (what the editor's button picker writes is 0/1/2).
         int b = 0;
@@ -632,15 +804,70 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
     if (type == "AnimState")       return std::make_unique<AnimStateNode>();
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    if (type == "PlaySequence")    return std::make_unique<PlaySequenceNode>(argOr(""));
+    if (type == "StopSequence")    return std::make_unique<StopSequenceNode>();
+    // Story: dialogues, story variables, quests (okay/VisualScript/NodesStory.hpp).
+    if (type == "StartDialogue")     return std::make_unique<StartDialogueNode>(argOr(""));
+    if (type == "SetStoryVar")       return std::make_unique<SetStoryVarNode>(argOr(""));
+    if (type == "GetStoryVar")       return std::make_unique<GetStoryVarNode>(argOr(""));
+    if (type == "StartQuest")        return std::make_unique<StartQuestNode>(argOr(""));
+    if (type == "CompleteObjective") return std::make_unique<CompleteObjectiveNode>(argOr(""));
+    if (type == "QuestState")        return std::make_unique<QuestStateNode>(argOr(""));
+    if (type == "SetWeather")      return std::make_unique<SetWeatherNode>(argOr("rain"));
+    if (type == "SetFog")          return std::make_unique<SetFogNode>();
+    if (type == "SetPostEffect")   return std::make_unique<SetPostEffectNode>(argOr("bloom"));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));
     }
+    if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
+    if (type == "NavStop")         return std::make_unique<NavStopNode>();
+    if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
+    if (type == "BtSet")           return std::make_unique<BtSetNode>(argOr("x"));
+    if (type == "BtGet")           return std::make_unique<BtGetNode>(argOr("x"));
+    if (type == "BtRun")           return std::make_unique<BtRunNode>(argOr(""));
+    if (type == "GetSplinePoint")  return std::make_unique<SplinePointNode>();
+    if (type == "SplineLength")    return std::make_unique<SplineLengthNode>();
+    if (type == "SetLinePoints")   return std::make_unique<SetLinePointsNode>();
+    if (type == "ClearTrail")      return std::make_unique<ClearTrailNode>();
+    if (type == "MusicPlay")       return std::make_unique<MusicPlayNode>(argOr(""));
+    if (type == "MusicStop")       return std::make_unique<MusicStopNode>();
+    if (type == "MusicPause")      return std::make_unique<MusicPauseNode>();
+    if (type == "MusicResume")     return std::make_unique<MusicResumeNode>();
+    if (type == "MusicNext")       return std::make_unique<MusicNextNode>();
+    if (type == "CameraShake")     return std::make_unique<CameraShakeNode>();
+    if (type == "SetFov")          return std::make_unique<SetFovNode>();
+    if (type == "CameraFollow")    return std::make_unique<CameraFollowNode>();
+    if (type == "ParticlePlay")    return std::make_unique<ParticlePlayNode>();
+    if (type == "ParticleStop")    return std::make_unique<ParticleStopNode>();
+    if (type == "ParticleBurst")   return std::make_unique<ParticleBurstNode>();
+    // Tweens, springs and eases.
+    if (type == "EaseCurve") {   // the text may arrive split at its spaces ("cubic-bezier(0.4, 0, 0.2, 1)")
+        std::string text;
+        for (const auto& a : args) text += a;
+        return std::make_unique<EaseCurveNode>(text);
+    }
+    if (type == "SpringStep")      return std::make_unique<SpringStepNode>(argOr(""));
+    if (type == "TweenMove")       return std::make_unique<TweenMoveNode>(false, argOr(""));
+    if (type == "TweenMoveSpeed")  return std::make_unique<TweenMoveNode>(true, argOr(""));
+    if (type == "TweenKillTag")    return std::make_unique<TweenTagNode>(TweenTagNode::Op::Kill, argOr(""));
+    if (type == "TweenPauseTag")   return std::make_unique<TweenTagNode>(TweenTagNode::Op::Pause, argOr(""));
+    if (type == "TweenPlayTag")    return std::make_unique<TweenTagNode>(TweenTagNode::Op::Play, argOr(""));
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();
     if (type == "DoN")        return std::make_unique<DoNNode>(args.empty() ? 1 : ArgInt(args[0], 1));
     if (type == "SwitchInt")  return std::make_unique<SwitchIntNode>();
+    if (type == "SwitchString" || type == "SwitchCases" || type == "LatchGate" || type == "CallScript" || type == "RunGraph") {
+        std::string text;
+        for (const auto& a : args) { if (!text.empty()) text += ' '; text += a; }
+        if (type == "SwitchString") return std::make_unique<SwitchStringNode>(text);
+        if (type == "SwitchCases")  return std::make_unique<SwitchCasesNode>(text);
+        if (type == "LatchGate")    return std::make_unique<LatchGateNode>(text);
+        if (type == "CallScript")   return std::make_unique<CallScriptNode>(text.empty() ? std::string("main") : text);
+        return std::make_unique<RunGraphNode>(text);
+    }
+    if (type == "IsValid")      return std::make_unique<IsValidNode>();
     if (type == "RandomInt")  return std::make_unique<RandomIntNode>();
     using M3 = MathFn3Node::Op;
     if (type == "Ceil")       return std::make_unique<MathFn3Node>(M3::Ceil);
@@ -667,9 +894,34 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SetRotation3")   return std::make_unique<Transform3Node>(T3::SetRotation);
     if (type == "SetColor")       return std::make_unique<SetColorNode>();
     if (type == "PlayClip")       return std::make_unique<PlayClipNode>(argOr(""));
+    if (type == "PlayAction")     return std::make_unique<PlayActionNode>(argOr("Death"));
+    if (type == "IsInAction")     return std::make_unique<IsInActionNode>();
+    if (type == "Die")            return std::make_unique<DieNode>(argOr("forward"));
+    if (type == "Revive")         return std::make_unique<ReviveNode>();
+    if (type == "Dive")           return std::make_unique<DiveNode>();
+    if (type == "Sit")            return std::make_unique<SitNode>(argOr(""));
+    if (type == "StandUp")        return std::make_unique<StandUpNode>();
+    if (type == "IsSitting")      return std::make_unique<IsSittingNode>();
+    if (type == "Interact")       return std::make_unique<InteractNode>();
+    if (type == "SeatPrompt")     return std::make_unique<SeatPromptNode>();
+    if (type == "HitReact")       return std::make_unique<HitReactNode>(argOr("forward"));
+    if (type == "Roll")           return std::make_unique<RollNode>(argOr("forward"));
+    if (type == "Dodge")          return std::make_unique<DodgeNode>(argOr("forward"));
+    if (type == "Vault")          return std::make_unique<VaultNode>();
+    if (type == "Mantle")         return std::make_unique<MantleNode>();
+    if (type == "LedgeGrab")      return std::make_unique<LedgeGrabNode>();
+    if (type == "ClimbUp")        return std::make_unique<ClimbUpNode>();
+    if (type == "LetGo")          return std::make_unique<LetGoNode>();
+    if (type == "IsHanging")      return std::make_unique<IsHangingNode>();
+    if (type == "Shimmy")         return std::make_unique<ShimmyNode>();
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);
+    if (auto play = MakeGameplayNode(type, args)) return play;
+    if (auto logic = MakeLogicRoundNode(type, args)) return logic;
+    if (auto smart = MakeSmartNode(type, args)) return smart;
+    if (auto lib = MakeLibraryNode(type)) return lib;
+    if (auto gl = MakeGameplayLibNode(type)) return gl;
     if (type == "MouseWheel")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::MouseWheel);
     if (type == "TimeScale")   return std::make_unique<EngineReadNode>(EngineReadNode::Op::TimeScale);
     if (type == "FrameCount")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::FrameCount);
@@ -773,6 +1025,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
     std::vector<PendingEntry> entries;
     struct PendingDefault { int node, pin; VsValue v; };
     std::vector<PendingDefault> defaults;
+    struct PendingStruct { int line; std::string name; std::vector<std::string> fields; };
+    std::vector<PendingStruct> pendingStructs;
+    struct PendingDecl { int line; VarDecl d; std::string type, lit; bool hasLit; };
+    std::vector<PendingDecl> pendingDecls;
 
     std::istringstream in(text);
     std::string line;
@@ -851,12 +1107,85 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (!pinOk(x.pin)) return fail("default " + pinRange);
             x.v = ParseValue(tok[3]);
             defaults.push_back(x);
+        } else if (kind == "var") {
+            // var <name> <value>: a starting value, shown in the Inspector.
+            if (tok.size() < 3) return fail("var needs <name> <value>");
+            graph->AddExposedVar(tok[1], ParseValue(tok[2]));
+        } else if (kind == "struct") {
+            // struct <Name> <field>:<Type>[=<literal>] ...: a record type (a map with these fields).
+            if (tok.size() < 2) return fail("struct needs a name");
+            StructDef sd;
+            sd.name = tok[1];
+            if (sd.name.size() >= 2 && sd.name.front() == '"') sd.name = sd.name.substr(1, sd.name.size() - 2);
+            if (!VsValidIdent(sd.name)) return fail("'" + sd.name + "' isn't a valid struct name (letters, digits and _)");
+            if (FindStruct(graph->Structs(), sd.name)) return fail("there's already a struct named '" + sd.name + "'");
+            if (tok.size() > 65) return fail("a struct can have at most 64 fields");
+            pendingStructs.push_back({lineNo, sd.name, std::vector<std::string>(tok.begin() + 2, tok.end())});
+            graph->AddStruct(sd);   // name first, so fields and decls can refer to it
+        } else if (kind == "decl") {
+            // decl <name> <Type> <object|scene|global> [<literal>]: a typed variable and its default.
+            if (tok.size() < 4) return fail("decl needs <name> <Type> <scope>");
+            std::string name = tok[1], type = tok[2], scope = tok[3], lit = tok.size() > 4 ? tok[4] : "";
+            auto unq = [](std::string& t) { if (t.size() >= 2 && t.front() == '"' && t.back() == '"') t = t.substr(1, t.size() - 2); };
+            unq(name); unq(type); unq(scope); unq(lit);
+            if (!VsValidIdent(name)) return fail("'" + name + "' isn't a valid variable name (letters, digits and _)");
+            VarDecl d; d.name = name;
+            if (!VarScopeFromName(scope, d.scope)) return fail("variable scope '" + scope + "' isn't object, scene or global");
+            if (tok.size() > 5) return fail("decl takes one default value (quote it if it has spaces)");
+            for (const auto& other : graph->Decls())
+                if (other.name == name && other.scope == d.scope) return fail("variable '" + name + "' is declared twice");
+            for (const auto& other : pendingDecls)
+                if (other.d.name == name && other.d.scope == d.scope) return fail("variable '" + name + "' is declared twice");
+            if (pendingDecls.size() >= 2000) return fail("a graph can declare at most 2000 variables");
+            pendingDecls.push_back({lineNo, d, type, lit, tok.size() > 4 && !lit.empty()});   // a blank default = the type's default
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
             // A directive from a newer editor: skip it rather than refusing the
             // whole graph.
             OKAY_WARN("VisualScript: ignoring unknown line ", lineNo, " ('", kind, "')");
+        }
+    }
+
+    // Struct fields, in file order: a field may use an earlier struct, never itself or a later one
+    // (so a struct can't contain itself).
+    {
+        std::vector<StructDef> built;
+        for (const auto& ps : pendingStructs) {
+            lineNo = ps.line;
+            std::vector<StructField> fields;
+            for (std::string f : ps.fields) {
+                if (f.size() >= 2 && f.front() == '"' && f.back() == '"') f = f.substr(1, f.size() - 2);
+                const auto colon = f.find(':');
+                if (colon == std::string::npos) return fail("struct " + ps.name + ": field '" + f + "' needs a type (name:Type)");
+                StructField sf;
+                sf.name = f.substr(0, colon);
+                std::string typeText = f.substr(colon + 1), lit;
+                const auto eq = typeText.find('=');
+                const bool hasLit = eq != std::string::npos;
+                if (hasLit) { lit = typeText.substr(eq + 1); typeText = typeText.substr(0, eq); }
+                if (!VsValidIdent(sf.name)) return fail("struct " + ps.name + ": '" + sf.name + "' isn't a valid field name");
+                for (const auto& o : fields) if (o.name == sf.name) return fail("struct " + ps.name + ": field '" + sf.name + "' is listed twice");
+                std::string terr;
+                if (!ParseVarType(typeText, built, sf.type, &terr)) return fail("struct " + ps.name + ", field " + sf.name + ": " + terr);
+                if (hasLit) {
+                    if (!VsParseTyped(sf.type, lit, built, sf.def, &terr)) return fail("struct " + ps.name + ", field " + sf.name + ": " + terr);
+                } else sf.def = VsDefaultFor(sf.type, built);
+                fields.push_back(std::move(sf));
+            }
+            StructDef sd; sd.name = ps.name; sd.fields = fields;
+            built.push_back(sd);
+            graph->SetStructFields(ps.name, std::move(fields));
+        }
+        for (auto& pd : pendingDecls) {
+            lineNo = pd.line;
+            std::string terr;
+            if (!ParseVarType(pd.type, graph->Structs(), pd.d.type, &terr)) return fail("variable " + pd.d.name + ": " + terr);
+            if (pd.hasLit) {
+                if (!VsParseTyped(pd.d.type, pd.lit, graph->Structs(), pd.d.value, &terr))
+                    return fail("variable " + pd.d.name + ": default " + terr);
+            } else pd.d.value = VsDefaultFor(pd.d.type, graph->Structs());
+            graph->AddDecl(pd.d);
         }
     }
 
@@ -867,10 +1196,25 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         return it->second;
     };
     bool ok = true;
+    std::vector<std::pair<std::pair<int, int>, std::vector<int>>> fan;   // (from, pin) -> targets, in file order
     for (auto& e : execs) {
         int f = resolve(e.from, ok); int t = resolve(e.to, ok);
         if (!ok) return fail("exec references unknown node");
-        graph->ConnectExec(f, e.pin, t);
+        auto key = std::make_pair(f, e.pin);
+        auto slot = std::find_if(fan.begin(), fan.end(), [&](const auto& kv) { return kv.first == key; });
+        if (slot == fan.end()) { fan.push_back({key, {t}}); continue; }
+        if (std::find(slot->second.begin(), slot->second.end(), t) == slot->second.end()) slot->second.push_back(t);
+    }
+    // An exec pin with several wires runs them in the order the file lists them:
+    // an internal Sequence (not in the file) sits behind the pin, so every node
+    // that follows a pin (loops, Branch, Sequence, events) fans out the same way.
+    for (auto& kv : fan) {
+        if (kv.second.size() == 1) { graph->ConnectExec(kv.first.first, kv.first.second, kv.second[0]); continue; }
+        auto* seq = graph->Add<SequenceNode>((int)kv.second.size());
+        seq->internal = true;
+        seq->type = "Sequence";
+        for (std::size_t i = 0; i < kv.second.size(); ++i) graph->ConnectExec(seq->id, (int)i, kv.second[i]);
+        graph->ConnectExec(kv.first.first, kv.first.second, seq->id);
     }
     for (auto& d : datas) {
         int c = resolve(d.consumer, ok); int p = resolve(d.producer, ok);
@@ -886,6 +1230,19 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         int n = resolve(en.fileId, ok);
         if (!ok) return fail("entry references unknown node");
         graph->SetEntry(en.name, n);
+    }
+    // Old Switch (name) / Switch (cases) files put Default on pin 4. Fewer than
+    // four cases now put Default on the pin just after the last case.
+    for (const auto& node : graph->m_nodes) {
+        int ncases = -1;
+        if (auto* s = dynamic_cast<SwitchStringNode*>(node.get())) ncases = s->CaseCount();
+        else if (auto* s = dynamic_cast<SwitchCasesNode*>(node.get())) ncases = s->CaseCount();
+        if (ncases < 0 || ncases >= kLegacySwitchDefault) continue;
+        if (kLegacySwitchDefault >= (int)node->execOut.size() || node->execOut[kLegacySwitchDefault] < 0) continue;
+        if (ncases < (int)node->execOut.size() && node->execOut[ncases] >= 0) continue;
+        const int to = node->execOut[kLegacySwitchDefault];
+        node->execOut[kLegacySwitchDefault] = -1;
+        graph->ConnectExec(node->id, ncases, to);
     }
     return graph;
 }

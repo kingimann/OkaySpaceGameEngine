@@ -128,13 +128,15 @@ int main() {
         CHECK(co2->Inv() == inv);
     }
 
-    // ---- The drop key never deletes an item when nothing handles the drop ----
+    // ---- The drop key never deletes an item when nothing handles the drop: it lands in the world ----
     {
         Scene s("d"); GameObject* p = s.CreateGameObject("P");
         auto* inv = p->AddComponent<Inventory>(); inv->Add("sword", 1);
         auto* ui = p->AddComponent<InventoryUI>(); ui->selected = 0;
-        CHECK(!ui->DropSelectedToScript());
-        CHECK(inv->Count("sword") == 1);
+        CHECK(ui->DropSelectedItem());
+        CHECK(inv->Count("sword") == 0);
+        auto pickups = s.FindObjectsOfType<ItemPickup>();
+        CHECK(pickups.size() == 1 && pickups[0]->item == "sword" && pickups[0]->count == 1);
     }
 
     // ---- Every UI move fires on_inventory_changed; a handled drop removes the item ----
@@ -161,8 +163,9 @@ int main() {
         ui->Sort();                        CHECK(changes() == c0 + 5);
         inv->slots = {{"sword", 1}};
         ui->selected = 0;
-        CHECK(ui->DropSelectedToScript());
+        CHECK(ui->DropSelectedItem());
         CHECK(inv->Count("sword") == 0);
+        CHECK(s.FindObjectsOfType<ItemPickup>().empty());   // the script handled it: no extra pickup
         CHECK(sc->VM()->GetGlobal("dropped").AsString() == "sword");
     }
 

@@ -1,9 +1,11 @@
 #pragma once
 #include <algorithm>
 #include "okay/VisualScript/VsValue.hpp"
+#include "okay/VisualScript/VsDecl.hpp"
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -40,6 +42,33 @@ struct VsContext {
 
 class NodeGraph;
 
+/// One paused function call: arguments, locals and whether Return already ran.
+/// Kept on the Call Function node while the call is waiting, so other events
+/// don't run "inside" it.
+struct VsHeldFrame {
+    std::string name;
+    std::vector<VsValue> args, rets;
+    std::vector<std::pair<std::string, VsValue>> locals;
+    bool returned = false;
+};
+
+/// One node-local bit of state worth keeping when the graph text is reloaded
+/// during Play (Once, a timer, a loop parked on a Delay, a called graph's Delay).
+/// Keyed by file id. `children` / `parked` / `text` are a called graph's own state.
+struct VsFlowRecord {
+    int fileId = -1;
+    std::string type;
+    float f0 = 0, f1 = 0;
+    int i0 = 0, i1 = 0, i2 = -1, i3 = 0;
+    bool b0 = false, b1 = false, b2 = false;
+    std::vector<VsValue> values;
+    std::vector<std::string> texts;
+    std::string text;
+    std::vector<VsHeldFrame> frames;
+    std::vector<VsFlowRecord> children;
+    std::vector<int> parked;
+};
+
 /// Which data input of a node type is its optional "Target" object input (the
 /// object it acts on instead of the graph's own), or -1 when it has none. The
 /// editor appends a "Target" pin to these node types from this same table.
@@ -55,6 +84,10 @@ public:
     int id = -1;
     int fileId = -1;            ///< the node's id in the .okayvs file / editor (-1 = built in code)
     std::string type;           ///< the node's type name from the file ("ForLoop"); empty when built in code
+    /// A node the loader added itself (the Sequence behind an exec pin that has
+    /// several wires). It is not in the file, so the debugger never stops on it
+    /// and it is not counted as a step the user can see.
+    bool internal = false;
     /// The optional "Target" data input of a node that acts on an object
     /// (Translate, Get Position, Add Force...): when something feeds it, the node
     /// acts on that object instead of the graph's own (-1 = no such input).
@@ -64,6 +97,8 @@ public:
     // turns it on so a running graph can light up and show live values).
     unsigned execCount = 0;                  ///< times this node has run
     std::vector<VsValue> lastOut;            ///< last value produced per data output pin
+    /// Behaviour result for the tree nodes: 0 succeeded, 1 failed, -1 not a behaviour node.
+    int outcome = -1;
 
     /// Number of execution output pins (0 means this is a pure data node).
     virtual int ExecOutCount() const { return 0; }
@@ -71,6 +106,13 @@ public:
     virtual VsValue Eval(int /*outPin*/, NodeGraph& /*g*/, VsContext& /*ctx*/) { return {}; }
     /// Run side effects; return which exec out pin to follow next (or -1 to stop).
     virtual int Exec(NodeGraph& /*g*/, VsContext& /*ctx*/) { return 0; }
+    /// A pause inside a function was refused. Drop any "I'm waiting" flag so the
+    /// next call starts clean (a Delay that already set its flag, a loop that
+    /// parked itself).
+    virtual void OnSuspendRejected() {}
+    /// True (and fills `r`) when this node has state a reload should keep.
+    virtual bool SaveFlow(VsFlowRecord& /*r*/) const { return false; }
+    virtual void LoadFlow(const VsFlowRecord& /*r*/, NodeGraph& /*g*/) {}
 
     /// Wiring, indexed by pin. Filled in by NodeGraph::Connect*.
     struct DataLink { int node = -1; int pin = 0; };
@@ -147,9 +189,20 @@ public:
 
     /// Evaluate a data node's output pin.
     VsValue Pull(int nodeId, int outPin, VsContext& ctx);
+    /// How a Run finished. `Suspended` is only returned when `propagateSuspend`
+    /// was set: the chain parked at `TakeSuspendNode()` and the caller (a loop)
+    /// owns continuing it. Otherwise a pause is parked on the graph and Run
+    /// returns Done so a Sequence can keep firing its other outputs.
+    enum class RunStatus { Done, Suspended };
     /// Execute an exec chain starting at `entryNode`. With `resume`, the first node
     /// is a suspended one being picked up again (it sees Resuming() == true).
-    void Run(int entryNode, VsContext& ctx, bool resume = false);
+    RunStatus Run(int entryNode, VsContext& ctx, bool resume = false, bool propagateSuspend = false);
+    /// The node a propagated pause stopped on (-1 if the last Run didn't pause).
+    int TakeSuspendNode() { const int n = m_suspendAt; m_suspendAt = -1; return n; }
+    /// True when a chain is parked (Delay, Wait, a loop whose body paused).
+    bool HasSuspended() const { return !m_suspended.empty(); }
+    /// Drop parked chains and tell each of them the pause was refused.
+    void CancelSuspended();
 
     /// An Exec() result meaning "not done yet - park this chain and call me again
     /// next frame" (Delay, Action blocks with a Wait inside). Resume() picks every
@@ -201,6 +254,38 @@ public:
     /// All registered event names (for timers / key events that need polling).
     const std::unordered_map<std::string, std::vector<int>>& AllEntries() const { return m_entries; }
 
+    /// Declared variables: `decl name Type scope literal` lines and old `var name value`
+    /// lines (object scope, type taken from the value). The Inspector edits the defaults.
+    using ExposedVar = VarDecl;
+    const std::vector<VarDecl>& ExposedVars() const { return m_exposed; }
+    const std::vector<VarDecl>& Decls() const { return m_exposed; }
+    void AddExposedVar(std::string name, VsValue value) {
+        VarDecl d; d.name = std::move(name); d.legacy = true;
+        d.type.base = value.IsNumber() ? PinType::Number : value.IsBool() ? PinType::Bool : value.IsString() ? PinType::Text
+                    : value.IsVec3() ? PinType::Vec3 : value.IsColor() ? PinType::Color : PinType::Any;
+        d.value = std::move(value);
+        m_exposed.push_back(std::move(d));
+    }
+    void AddDecl(VarDecl d) { m_exposed.push_back(std::move(d)); }
+    /// `struct` lines: record types (a struct value is a map with these fields).
+    const std::vector<StructDef>& Structs() const { return m_structs; }
+    void AddStruct(StructDef d) { m_structs.push_back(std::move(d)); }
+    void SetStructFields(const std::string& name, std::vector<StructField> f) {
+        for (auto& s : m_structs) if (s.name == name) s.fields = std::move(f);
+    }
+    /// The declaration of variable `name` in `scope` (nullptr = undeclared, any value goes).
+    const VarDecl* FindDecl(const std::string& name, VarScope scope) const {
+        for (const auto& d : m_exposed) if (d.name == name && d.scope == scope) return &d;
+        return nullptr;
+    }
+    /// Fit `v` to variable `name`'s declared type before it is stored. True when there is
+    /// no declaration or it fits (v may be converted); false with `err` otherwise.
+    bool CoerceForStore(const std::string& name, VarScope scope, VsValue& v, std::string* err) const {
+        const VarDecl* d = FindDecl(name, scope);
+        if (!d || d->legacy) return true;
+        return VsCoerce(d->type, v, m_structs, err);
+    }
+
     /// Record execution counts + last data values on the nodes (editor debugging).
     static bool& Tracing() { static bool on = false; return on; }
     // ---- Runaway protection ---------------------------------------------
@@ -241,10 +326,18 @@ public:
         auto it = m_functions.find(name);
         return it != m_functions.end() ? it->second : -1;
     }
-    /// Run function `name` with `args`; its Return values land in `rets` (one per
-    /// return value; unset ones stay empty). False (and reported) when it can't run.
-    bool CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
-                      const VsNode* caller, VsContext& ctx);
+    enum class CallResult { Failed, Done, Suspended };
+    /// Run function `name` with `args`. Done: Return values are in `rets` and the
+    /// frame is gone. Suspended: the body paused (a Delay); the frame stays on the
+    /// stack and `suspendedAt` is the node to resume. The caller stashes that frame.
+    CallResult CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                            const VsNode* caller, VsContext& ctx, int* suspendedAt = nullptr);
+    /// Lift the frames pushed after `depthBefore` onto `out` and leave the stack
+    /// as it was before the call. Restore puts them back, in the same order.
+    void StashFrames(int depthBefore, std::vector<VsHeldFrame>& out);
+    void RestoreFrames(std::vector<VsHeldFrame>& in);
+    /// Pop the call that started at `depthBefore` and write its return values.
+    void FinishCall(int depthBefore, std::vector<VsValue>& rets);
     /// Inside a running function: its arguments / where Return writes / its locals.
     bool InFunction() const { return !m_frames.empty(); }
     const VsValue* Arg(int i) const {
@@ -286,6 +379,11 @@ public:
     int LastErrorNode() const { return m_lastErrorNode; }
     int ErrorCount() const { return m_errorCount; }
 
+    /// Snapshot / restore node state and which chains are parked. Matched by
+    /// file id and node type, so an edit that keeps those keeps the running state.
+    void CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const;
+    void RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds);
+
     /// Look a node up by its file / editor id (-1 when absent).
     int NodeByFileId(int fileId) const {
         for (const auto& n : m_nodes) if (n && n->fileId == fileId) return n->id;
@@ -298,6 +396,8 @@ public:
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;
     std::unordered_map<std::string, std::vector<int>> m_entries;
+    std::vector<VarDecl> m_exposed;
+    std::vector<StructDef> m_structs;
     int m_execGuard = 0;     // current data-pull depth (cycle guard)
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
@@ -328,6 +428,62 @@ private:
     bool ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out);
     std::vector<int> m_suspended;   // parked chains (node ids), resumed next frame
     bool m_resuming = false;
+    int m_suspendAt = -1;   // node a propagated pause stopped on
+};
+
+/// Where a runtime error happened. `SetRuntimeErrorHook` receives one of these
+/// for every distinct error (the same message at the same node is not repeated).
+/// The log line is still written. A Diagnostics panel can subscribe here.
+struct VsRuntimeError {
+    std::string graphKey;
+    std::string event;
+    int fileId = -1;
+    std::string nodeType;
+    std::string objectName;
+    std::string message;
+};
+using VsRuntimeErrorHook = void (*)(const VsRuntimeError&);
+void SetRuntimeErrorHook(VsRuntimeErrorHook hook);
+
+/// Bookkeeping a loop keeps so a Delay inside its body pauses the loop and the
+/// next frame continues that same iteration.
+struct VsLoopLatch {
+    bool busy = false;
+    bool inBody = false;
+    int resumeAt = -1;
+    int resumeFileId = -1;
+    /// False when a new exec arrived while this loop is already parked.
+    bool Begin(NodeGraph& g) {
+        if (!g.Resuming()) {
+            if (busy) return false;
+            inBody = false;
+        }
+        return true;
+    }
+    /// Run the body (or the paused node inside it). Returns kSuspend, or 0 when
+    /// the body finished.
+    int Step(NodeGraph& g, VsContext& ctx, int body) {
+        const int target = inBody ? resumeAt : body;
+        if (target < 0) { inBody = false; return 0; }
+        const NodeGraph::RunStatus st = g.Run(target, ctx, inBody, true);
+        if (st == NodeGraph::RunStatus::Suspended) {
+            resumeAt = g.TakeSuspendNode();
+            if (VsNode* n = g.Node(resumeAt)) resumeFileId = n->fileId;
+            inBody = true;
+            busy = true;
+            return NodeGraph::kSuspend;
+        }
+        inBody = false;
+        return 0;
+    }
+    void Finish() { busy = false; inBody = false; resumeAt = -1; }
+    void Save(VsFlowRecord& r) const {
+        r.b0 = busy; r.b1 = inBody; r.i2 = resumeFileId;
+    }
+    void Load(const VsFlowRecord& r, NodeGraph& g) {
+        busy = r.b0; inBody = r.b1; resumeFileId = r.i2;
+        resumeAt = r.i2 >= 0 ? g.NodeByFileId(r.i2) : -1;
+    }
 };
 
 } // namespace okay::vs

@@ -14,7 +14,7 @@ void UITooltip::Update(float dt) {
     // the Canvas scale), else its anchor against the whole canvas.
     Vec2 o, sz;
     if (!(UIWorld().rectOf && UIWorld().rectOf(gameObject, o, sz))) {
-        o = ResolveAnchor(r.anchor, r.position ? *r.position : Vec2{}, r.size);
+        o = r.OriginWith(r.position ? *r.position : Vec2{}, r.size, UICanvas::Width(), UICanvas::Height());
         sz = r.size;
     }
     Vec2 m = Input::MousePosition();

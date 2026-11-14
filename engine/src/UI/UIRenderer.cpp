@@ -1,11 +1,18 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIFrameTransform.hpp"
+#include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
+#include "okay/Core/Utf8.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -13,6 +20,75 @@ namespace okay {
 namespace ui2d {
 
 namespace {
+// The player's text size (Accessibility), for the widgets whose text can grow without a fixed slot.
+inline float UITextScale() { return Accessibility::Get().textScale; }
+
+// ---- Accessibility: colour vision filter and high-contrast text ----------------------------------
+// The most recent large solid fill, as drawn (before any colour filter): what high-contrast text is
+// measured against. Thin pieces (borders, text pixels) don't count.
+Color g_backdrop{0.06f, 0.06f, 0.08f, 1.0f};
+bool g_inText = false;
+
+// Wraps the frame's painter so every flat colour and vertex colour the UI pass sets is shifted for the
+// player's colour vision (Accessibility::FilterColor). Images are drawn as they are.
+class A11yPainter final : public Painter {
+public:
+    explicit A11yPainter(Painter& in) : m_in(in) {}
+    void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override {
+        m_c = Color::FromBytes(r, g, b, 255); m_a = a;
+        std::uint8_t fr, fg, fb; Filter(r, g, b, fr, fg, fb);
+        m_in.SetDrawColor(fr, fg, fb, a);
+    }
+    void FillRect(const Rect* r) override {
+        if (r && !g_inText && m_a >= 128 && std::min(r->w, r->h) >= 8) g_backdrop = m_c;
+        m_in.FillRect(r);
+    }
+    void DrawRect(const Rect* r) override { m_in.DrawRect(r); }
+    void DrawLine(int x0, int y0, int x1, int y1) override { m_in.DrawLine(x0, y0, x1, y1); }
+    void DrawPoint(int x, int y) override { m_in.DrawPoint(x, y); }
+    void SetClipRect(const Rect* r) override { m_in.SetClipRect(r); }
+    void GetClipRect(Rect* r) override { m_in.GetClipRect(r); }
+    bool IsClipEnabled() override { return m_in.IsClipEnabled(); }
+    void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
+    Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
+    void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
+    void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override {
+        std::uint8_t fr, fg, fb; Filter(r, g, b, fr, fg, fb);
+        m_in.SetTextureColorMod(t, fr, fg, fb);
+    }
+    void SetTextureAlphaMod(Tex t, std::uint8_t a) override { m_in.SetTextureAlphaMod(t, a); }
+    void Copy(Tex t, const Rect* s, const Rect* d) override { m_in.Copy(t, s, d); }
+    void CopyF(Tex t, const Rect* s, const FRect* d) override { m_in.CopyF(t, s, d); }
+    void CopyEx(Tex t, const Rect* s, const Rect* d, double a, const Point* c, int f) override { m_in.CopyEx(t, s, d, a, c, f); }
+    void CopyExF(Tex t, const Rect* s, const FRect* d, double a, const FPoint* c, int f) override { m_in.CopyExF(t, s, d, a, c, f); }
+    void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override {
+        m_verts.assign(v, v + nv);
+        for (Vertex& x : m_verts) Filter(x.color.r, x.color.g, x.color.b, x.color.r, x.color.g, x.color.b);
+        m_in.Geometry(t, m_verts.data(), nv, idx, ni);
+    }
+    void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
+
+private:
+    void Filter(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t& orr, std::uint8_t& og, std::uint8_t& ob) {
+        const std::uint32_t key = ((std::uint32_t)r << 16) | ((std::uint32_t)g << 8) | b;
+        if (!m_have || key != m_key) {   // the same colour is set many times in a row
+            const Color f = Accessibility::FilterColor(Color::FromBytes(r, g, b, 255));
+            m_key = key; m_have = true;
+            m_out[0] = (std::uint8_t)(f.r * 255.0f + 0.5f); m_out[1] = (std::uint8_t)(f.g * 255.0f + 0.5f); m_out[2] = (std::uint8_t)(f.b * 255.0f + 0.5f);
+        }
+        orr = m_out[0]; og = m_out[1]; ob = m_out[2];
+    }
+    Painter& m_in;
+    Color m_c{0, 0, 0, 1};
+    std::uint8_t m_a = 255;
+    std::uint32_t m_key = 0;
+    bool m_have = false;
+    std::uint8_t m_out[3] = {0, 0, 0};
+    std::vector<Vertex> m_verts;
+};
+
 // Collects one-pixel-tall spans and draws runs of identical rows (same x, width and
 // colour) as one rect: a rounded panel is a handful of rects instead of one per row.
 struct RowRuns {
@@ -209,23 +285,47 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
-                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp) {
+                 float ox, float oy, float px, RGBA col, float letterSp, float lineSp,
+                 bool italic, float boldOffset) {
+    f->Prepare(text);   // bake new characters before the atlas is uploaded
     Tex tex = r.FontAtlas(f);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
     r.SetTextureAlphaMod(tex, col.a);
+    int atlasW = 0, atlasH = 0;
+    if (italic) r.QueryTexture(tex, &atlasW, &atlasH);
+    const bool shear = italic && atlasW > 0 && atlasH > 0;
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
+    const float kSlant = 0.22f;                       // how far the top of a glyph leans, per unit of height
+    const int taps = boldOffset > 0.0f ? 3 : 1;
     float penX = ox, penY = oy;
-    for (char ch : text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const std::uint32_t ch = okay::utf8::Next(text, i);
         if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->Get(ch);
-        if (!g) { penX += px * 4.0f; continue; }
+        const okay::TtfFont::Glyph* g = f->GlyphFor(ch);
+        if (!g) { if (ch >= ' ') penX += px * 4.0f; continue; }
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};
-            FRect dst{penX + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
-            r.CopyF(tex, &src, &dst);
+            for (int t = 0; t < taps; ++t) {
+                const float dx = taps > 1 ? boldOffset * 0.5f * (float)t : 0.0f;
+                FRect dst{penX + dx + g->xoff * s, penY + baseline + g->yoff * s, gw * s, gh * s};
+                if (!shear) { r.CopyF(tex, &src, &dst); continue; }
+                // Shear about the baseline: points higher above it lean further right.
+                const float base = penY + baseline;
+                const float topLean = (base - dst.y) * kSlant, botLean = (base - (dst.y + dst.h)) * kSlant;
+                const float u0 = (float)g->x0 / (float)atlasW, u1 = (float)g->x1 / (float)atlasW;
+                const float v0 = (float)g->y0 / (float)atlasH, v1 = (float)g->y1 / (float)atlasH;
+                const RGBA white{255, 255, 255, 255};
+                Vertex v[4] = {
+                    {FPoint{dst.x + topLean, dst.y}, white, FPoint{u0, v0}},
+                    {FPoint{dst.x + dst.w + topLean, dst.y}, white, FPoint{u1, v0}},
+                    {FPoint{dst.x + dst.w + botLean, dst.y + dst.h}, white, FPoint{u1, v1}},
+                    {FPoint{dst.x + botLean, dst.y + dst.h}, white, FPoint{u0, v1}}};
+                const int idx[6] = {0, 1, 2, 0, 2, 3};
+                r.Geometry(tex, v, 4, idx, 6);
+            }
         }
         penX += g->xadvance * s + letterSp * px;
     }
@@ -240,24 +340,31 @@ TtfFont* UIDefaultFont() { return g_uiDefaultFont; }
 // Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 // use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
 float UITextW(const std::string& text, float px) {
-    if (g_uiDefaultFont && g_uiDefaultFont->Valid()) return g_uiDefaultFont->Measure(text.c_str(), (float)Font8x8::Height) * px;
-    return (float)text.size() * (Font8x8::Width + 1) * px;
+    TtfFont* f = FontForText(g_uiDefaultFont, text);
+    if (f && f->Valid()) return f->Measure(text.c_str(), (float)Font8x8::Height) * px;
+    return (float)okay::utf8::Length(text) * (Font8x8::Width + 1) * px;
 }
 
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
 // the TTF atlas is used instead (same sizing space).
-void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
-                float px, RGBA col, float letterSp, float lineSp,
-                bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
+static void DrawUITextImpl(Painter& r, const std::string& text, float ox, float oy,
+                           float px, RGBA col, float letterSp, float lineSp,
+                           bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    ttf = FontForText(ttf, text);      // a font with the text's characters (other languages)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
-    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
+    if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp, italic, bold ? (px * 8.0f >= 30.0f ? 1.5f : 1.0f) : 0.0f); return; }
     if (px < 1.0f) px = 1.0f;
+    if (bold) {   // the 8x8 font has one weight: draw it again one font pixel to the right
+        DrawUITextImpl(r, text, ox + px, oy, px, col, letterSp, lineSp, italic, gradient, col2, nullptr, false);
+    }
     if (!gradient) r.SetDrawColor(col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
-    for (char ch : text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const std::uint32_t cp = okay::utf8::Next(text, i);
+        const char ch = cp < 0x80 ? (char)cp : '\0';   // the 8x8 font has ASCII only
         if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
         for (int y = 0; y < Font8x8::Height; ++y) {
             if (gradient) {   // top row uses col, bottom row uses col2
@@ -279,6 +386,66 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
     }
 }
 
+void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
+                float px, RGBA col, float letterSp, float lineSp,
+                bool italic, bool gradient, RGBA col2, TtfFont* ttf, bool bold) {
+    if (Accessibility::Get().highContrast) {   // text pushed to 7:1 against what is behind it
+        auto fix = [](RGBA c) {
+            const Color f = Accessibility::TextColor(Color::FromBytes(c.r, c.g, c.b, 255), g_backdrop);
+            return RGBA{(std::uint8_t)(f.r * 255.0f + 0.5f), (std::uint8_t)(f.g * 255.0f + 0.5f), (std::uint8_t)(f.b * 255.0f + 0.5f), c.a};
+        };
+        col = fix(col);
+        if (gradient) col2 = fix(col2);
+    }
+    const bool was = g_inText;
+    g_inText = true;
+    DrawUITextImpl(r, text, ox, oy, px, col, letterSp, lineSp, italic, gradient, col2, ttf, bold);
+    g_inText = was;
+}
+
+// Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
+// carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
+// it on its line, so any font lines up; the lines advance like DrawUIText's.
+void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
+                  float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
+                  bool bold, float boldOff, TtfFont* ttf) {
+    TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
+    const float adv = (f && f->Valid()) ? f->LineHeight((float)Font8x8::Height) * px + lineSp * px
+                                        : (Font8x8::Height + 1 + lineSp) * px;
+    std::size_t glyph = 0, lineStart = 0;
+    float y = oy;
+    while (lineStart <= disp.size()) {
+        std::size_t lineEnd = disp.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = disp.size();
+        const std::string line = disp.substr(lineStart, lineEnd - lineStart);
+        std::size_t runStart = 0;
+        okay::RichStyle runStyle;
+        bool haveRun = false;
+        auto flush = [&](std::size_t end) {
+            if (!haveRun || end <= runStart) return;
+            const std::string run = line.substr(runStart, end - runStart);
+            const std::string before = line.substr(0, runStart);
+            const float x = ox + UITextW(before, px) + letterSp * px * (float)okay::utf8::Length(before);
+            RGBA col = base;
+            if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
+            const bool it = italic || runStyle.italic;
+            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+        };
+        for (std::size_t i = 0; i < line.size();) {
+            const std::size_t at = i;
+            const std::uint32_t cp = okay::utf8::Next(line, i);
+            if (cp == ' ' || cp == '\t') continue;       // a space joins the run it sits in
+            const okay::RichStyle st = glyph < styles.size() ? styles[glyph] : okay::RichStyle();
+            ++glyph;
+            if (!haveRun) { runStart = at; runStyle = st; haveRun = true; }
+            else if (!(st == runStyle)) { flush(at); runStart = at; runStyle = st; }
+        }
+        flush(line.size());
+        y += adv;
+        if (lineEnd >= disp.size()) break;
+        lineStart = lineEnd + 1;
+    }
+}
 
 namespace {
 // What the UI pass keeps between frames for one scene, so a steady frame neither
@@ -292,6 +459,7 @@ struct UISlot {
     std::size_t index = 0;    // into scene.Objects()
     Canvas* canvas = nullptr; // owning canvas this frame
     float opacity = 1.0f;     // canvas + UI-animation fade this frame
+    int overlay = 0;          // open-order of the UIModal it is shown in this frame (0 = none)
 };
 struct UIItem {
     int slot = 0, kind = 0, layer = 0;
@@ -357,12 +525,25 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
         GameObject* go = objs[sl.index].get();
         sl.canvas = OwningCanvas(go);
         sl.opacity = UIOpacity(go);
+        sl.overlay = 0;
+        for (Transform* t = go->transform; t && sl.overlay == 0; t = t->Parent())
+            if (t->gameObject)
+                if (const UIModal* m = t->gameObject->GetComponent<UIModal>(); m && m->IsOpen())
+                    sl.overlay = (int)(m->OpenOrder() & 0xFFFFF);
     }
+    // Overlays: an open modal's subtree draws above all other UI, newest modal on
+    // top, its backdrop first; an open context menu draws above everything.
+    constexpr int kModalBase = 1 << 24;
     for (UIItem& it : c.items) {
         const UISlot& sl = c.slots[it.slot];
         it.canvasOrder = sl.canvas ? sl.canvas->sortOrder : 0;
         const int o = objs[sl.index]->uiDrawOrder;
         it.eff = o != 0 ? o : it.layer;
+        if (it.kind == uilayers::K_ContextMenu) it.canvasOrder = std::numeric_limits<int>::max();
+        else if (sl.overlay != 0) {
+            it.canvasOrder = kModalBase + sl.overlay;
+            if (it.kind == uilayers::K_ModalDim) it.eff = std::numeric_limits<int>::min();
+        }
     }
     // Stable insertion sort: same order as SortUIDrawItems, no allocation, O(n)
     // when nothing moved since last frame.
@@ -375,7 +556,203 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
 }
 } // namespace
 
+// Draws a turned or scaled frame by mapping the layout-space calls the rest of
+// this pass already makes. With no turn and a scale of 1, 1 every call is handed
+// on unchanged, so an old scene's pixels stay the same.
+class FrameXformPainter final : public Painter {
+public:
+    explicit FrameXformPainter(Painter& in) : m_in(in) {}
+
+    void Begin(GameObject* go, float sw, float sh) {
+        m_on = false;
+        m_clip = false;
+        if (!go || !UIFrameTransformed(go)) return;
+        UIFrameAffine xf;
+        if (!UIFrameLayoutToScreen(go, sw, sh, xf)) return;
+        m_xf = xf;
+        m_on = true;
+        m_in.SetClipRect(nullptr);
+    }
+
+    void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override {
+        m_r = r; m_g = g; m_b = b; m_a = a;
+        m_in.SetDrawColor(r, g, b, a);
+    }
+    void FillRect(const Rect* r) override {
+        if (!m_on || !r) { m_in.FillRect(r); return; }
+        float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;
+        if (!ClipRect(x, y, w, h)) return;
+        Quad(nullptr, x, y, w, h, 0, 0, 1, 1, false);
+    }
+    void DrawRect(const Rect* r) override {
+        if (!m_on || !r) { m_in.DrawRect(r); return; }
+        const float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;
+        DrawLine((int)x, (int)y, (int)(x + w), (int)y);
+        DrawLine((int)(x + w), (int)y, (int)(x + w), (int)(y + h));
+        DrawLine((int)(x + w), (int)(y + h), (int)x, (int)(y + h));
+        DrawLine((int)x, (int)(y + h), (int)x, (int)y);
+    }
+    void DrawLine(int x0, int y0, int x1, int y1) override {
+        if (!m_on) { m_in.DrawLine(x0, y0, x1, y1); return; }
+        float ax = (float)x0, ay = (float)y0, bx = (float)x1, by = (float)y1;
+        if (m_clip && !ClipSeg(ax, ay, bx, by)) return;
+        const Vec2 p0 = m_xf.Apply({ax, ay}), p1 = m_xf.Apply({bx, by});
+        m_in.DrawLine((int)std::lround(p0.x), (int)std::lround(p0.y), (int)std::lround(p1.x), (int)std::lround(p1.y));
+    }
+    void DrawPoint(int x, int y) override {
+        if (!m_on) { m_in.DrawPoint(x, y); return; }
+        if (m_clip && ((float)x < m_cx || (float)y < m_cy || (float)x >= m_cx + m_cw || (float)y >= m_cy + m_ch)) return;
+        const Vec2 p = m_xf.Apply({(float)x, (float)y});
+        m_in.DrawPoint((int)std::lround(p.x), (int)std::lround(p.y));
+    }
+    void SetClipRect(const Rect* r) override {
+        if (!m_on) { m_in.SetClipRect(r); return; }
+        if (!r) { m_clip = false; m_in.SetClipRect(nullptr); return; }
+        m_clip = true;
+        m_cx = (float)r->x; m_cy = (float)r->y; m_cw = (float)r->w; m_ch = (float)r->h;
+        m_in.SetClipRect(nullptr);
+    }
+    void GetClipRect(Rect* r) override {
+        if (!m_on) { m_in.GetClipRect(r); return; }
+        if (r) *r = m_clip ? Rect{(int)m_cx, (int)m_cy, (int)m_cw, (int)m_ch} : Rect{0, 0, 0, 0};
+    }
+    bool IsClipEnabled() override { return m_on ? m_clip : m_in.IsClipEnabled(); }
+    void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
+    Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
+    void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
+    void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override { m_in.SetTextureColorMod(t, r, g, b); }
+    void SetTextureAlphaMod(Tex t, std::uint8_t a) override { m_in.SetTextureAlphaMod(t, a); }
+    void Copy(Tex t, const Rect* s, const Rect* d) override {
+        if (!m_on || !d) { m_in.Copy(t, s, d); return; }
+        Blit(t, s, (float)d->x, (float)d->y, (float)d->w, (float)d->h, 0.0, d->w * 0.5f, d->h * 0.5f, 0);
+    }
+    void CopyF(Tex t, const Rect* s, const FRect* d) override {
+        if (!m_on || !d) { m_in.CopyF(t, s, d); return; }
+        Blit(t, s, d->x, d->y, d->w, d->h, 0.0, d->w * 0.5f, d->h * 0.5f, 0);
+    }
+    void CopyEx(Tex t, const Rect* s, const Rect* d, double ang, const Point* c, int flip) override {
+        if (!m_on || !d) { m_in.CopyEx(t, s, d, ang, c, flip); return; }
+        const float cx = c ? (float)c->x : d->w * 0.5f, cy = c ? (float)c->y : d->h * 0.5f;
+        Blit(t, s, (float)d->x, (float)d->y, (float)d->w, (float)d->h, ang, cx, cy, flip);
+    }
+    void CopyExF(Tex t, const Rect* s, const FRect* d, double ang, const FPoint* c, int flip) override {
+        if (!m_on || !d) { m_in.CopyExF(t, s, d, ang, c, flip); return; }
+        const float cx = c ? c->x : d->w * 0.5f, cy = c ? c->y : d->h * 0.5f;
+        Blit(t, s, d->x, d->y, d->w, d->h, ang, cx, cy, flip);
+    }
+    void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override {
+        if (!m_on || !v) { m_in.Geometry(t, v, nv, idx, ni); return; }
+        m_verts.assign(v, v + nv);
+        for (Vertex& q : m_verts) {
+            const Vec2 p = m_xf.Apply({q.position.x, q.position.y});
+            q.position = {p.x, p.y};
+        }
+        m_in.Geometry(t, m_verts.data(), nv, idx, ni);
+    }
+    void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
+
+private:
+    bool ClipRect(float& x, float& y, float& w, float& h) const {
+        if (w == 0.0f || h == 0.0f) return false;
+        if (!m_clip) return w > 0.0f && h > 0.0f;
+        if (m_cw <= 0.0f || m_ch <= 0.0f) return false;
+        const float x1 = std::max(x, m_cx), y1 = std::max(y, m_cy);
+        const float x2 = std::min(x + w, m_cx + m_cw), y2 = std::min(y + h, m_cy + m_ch);
+        x = x1; y = y1; w = x2 - x1; h = y2 - y1;
+        return w > 0.0f && h > 0.0f;
+    }
+    bool ClipSeg(float& x0, float& y0, float& x1, float& y1) const {
+        auto code = [&](float x, float y) {
+            int bits = 0;
+            if (x < m_cx) bits |= 1;
+            if (x > m_cx + m_cw) bits |= 2;
+            if (y < m_cy) bits |= 4;
+            if (y > m_cy + m_ch) bits |= 8;
+            return bits;
+        };
+        for (int i = 0; i < 8; ++i) {
+            const int c0 = code(x0, y0), c1 = code(x1, y1);
+            if ((c0 | c1) == 0) return true;
+            if (c0 & c1) return false;
+            const int out = c0 ? c0 : c1;
+            float x = x0, y = y0;
+            const float dx = x1 - x0, dy = y1 - y0;
+            if (out & 8) { if (dy == 0.0f) return false; x = x0 + dx * ((m_cy + m_ch) - y0) / dy; y = m_cy + m_ch; }
+            else if (out & 4) { if (dy == 0.0f) return false; x = x0 + dx * (m_cy - y0) / dy; y = m_cy; }
+            else if (out & 2) { if (dx == 0.0f) return false; y = y0 + dy * ((m_cx + m_cw) - x0) / dx; x = m_cx + m_cw; }
+            else { if (dx == 0.0f) return false; y = y0 + dy * (m_cx - x0) / dx; x = m_cx; }
+            if (c0) { x0 = x; y0 = y; } else { x1 = x; y1 = y; }
+        }
+        return false;
+    }
+    void Quad(Tex tex, float x, float y, float w, float h, float u0, float v0, float u1, float v1, bool white) {
+        Vec2 p[4] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+        Vertex v[4];
+        const RGBA col = white ? RGBA{255, 255, 255, 255} : RGBA{m_r, m_g, m_b, m_a};
+        const float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
+        for (int i = 0; i < 4; ++i) {
+            const Vec2 s = m_xf.Apply(p[i]);
+            v[i] = Vertex{FPoint{s.x, s.y}, col, FPoint{us[i], vs[i]}};
+        }
+        const int idx[6] = {0, 1, 2, 0, 2, 3};
+        m_in.Geometry(tex, v, 4, idx, 6);
+    }
+    void Blit(Tex t, const Rect* src, float x, float y, float w, float h, double ang, float cx, float cy, int flip) {
+        if (!t || w == 0.0f || h == 0.0f) return;
+        if (ang == 0.0 && !ClipRect(x, y, w, h)) return;
+        int tw = 0, th = 0;
+        m_in.QueryTexture(t, &tw, &th);
+        if (tw <= 0 || th <= 0) return;
+        float u0 = src ? (float)src->x / (float)tw : 0.0f;
+        float v0 = src ? (float)src->y / (float)th : 0.0f;
+        float u1 = src ? (float)(src->x + src->w) / (float)tw : 1.0f;
+        float v1 = src ? (float)(src->y + src->h) / (float)th : 1.0f;
+        if (flip & FlipH) std::swap(u0, u1);
+        if (flip & FlipV) std::swap(v0, v1);
+        Vec2 p[4] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+        if (ang != 0.0) {
+            constexpr float kDeg = 0.017453292519943295f;
+            const float rad = (float)ang * kDeg, co = std::cos(rad), si = std::sin(rad);
+            const float ox = x + cx, oy = y + cy;
+            for (Vec2& q : p) {
+                const float dx = q.x - ox, dy = q.y - oy;
+                q = {ox + co * dx - si * dy, oy + si * dx + co * dy};
+            }
+        }
+        Vertex v[4];
+        const float us[4] = {u0, u1, u1, u0}, vs[4] = {v0, v0, v1, v1};
+        for (int i = 0; i < 4; ++i) {
+            const Vec2 s = m_xf.Apply(p[i]);
+            v[i] = Vertex{FPoint{s.x, s.y}, RGBA{255, 255, 255, 255}, FPoint{us[i], vs[i]}};
+        }
+        const int idx[6] = {0, 1, 2, 0, 2, 3};
+        m_in.Geometry(t, v, 4, idx, 6);
+    }
+
+    Painter& m_in;
+    UIFrameAffine m_xf{};
+    bool m_on = false;
+    bool m_clip = false;
+    float m_cx = 0, m_cy = 0, m_cw = 0, m_ch = 0;
+    std::uint8_t m_r = 255, m_g = 255, m_b = 255, m_a = 255;
+    std::vector<Vertex> m_verts;
+};
+
+static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt);
+
 void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
+    const AccessibilitySettings& a = Accessibility::Get();
+    g_backdrop = Color{0.06f, 0.06f, 0.08f, 1.0f};
+    if (a.colorblind == ColorblindMode::None && !a.highContrast) { RenderSceneUIImpl(scene, p, w, h, opt); return; }   // untouched
+    A11yPainter filtered(p);
+    RenderSceneUIImpl(scene, filtered, w, h, opt);
+}
+
+static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const UIRenderOptions& opt) {
+    FrameXformPainter xp(target);
+    Painter& p = xp;
     // Scroll / mask membership: offset a widget's origin by the scroll views it
     // sits in and clip drawing to every enclosing viewport and mask, so
     // scrollable and masked content shows and hides correctly in the built game.
@@ -419,7 +796,30 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const UISlot& _slot = cache.slots[_it.slot];
         const auto& up = scene.Objects()[_slot.index];
         // Every UI object carries a focus-ring item; skip it outright unless focused.
-        if (_it.kind == K_FocusRing && (!up->active || !IsUIFocused(up.get()))) continue;
+        if (_it.kind == K_FocusRing && !UIShowsFocusRing(up.get())) continue;
+        if (_it.kind == K_Caption) {   // subtitle and sound-caption lines
+            auto* cap = up->GetComponent<CaptionOverlay>();
+            if (!cap || !up->active || UIHidden(up.get())) continue;
+            std::vector<CaptionOverlay::Mark> marks;
+            cap->Layout((float)w, (float)h, marks);
+            const float op = _slot.opacity;
+            for (const CaptionOverlay::Mark& m : marks) {
+                const float a = m.color.a * op;
+                if (a < 0.01f) continue;
+                if (m.box) {
+                    if (m.w < 1.0f || m.h < 1.0f) continue;
+                    p.SetDrawColor((std::uint8_t)(m.color.r * 255), (std::uint8_t)(m.color.g * 255),
+                                   (std::uint8_t)(m.color.b * 255), (std::uint8_t)(a * 255));
+                    Rect box{(int)m.x, (int)m.y, (int)m.w, (int)m.h};
+                    if (box.w > 0 && box.h > 0) p.FillRect(&box);
+                } else if (!m.text.empty()) {
+                    RGBA col{(std::uint8_t)(m.color.r * 255), (std::uint8_t)(m.color.g * 255),
+                             (std::uint8_t)(m.color.b * 255), (std::uint8_t)(a * 255)};
+                    DrawUIText(p, m.text, m.x, m.y, m.pixel, col, 0.0f, 0.0f, m.italic);
+                }
+            }
+            continue;
+        }
         // A mask with its graphic hidden only clips: its own widget doesn't draw.
         if (const UIMask* mk = up->GetComponent<UIMask>(); mk && !mk->showGraphic && _it.kind != K_FocusRing) continue;
         {
@@ -430,6 +830,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                 want = ucv->ScaleFactor((float)uiFullW, (float)uiFullH);
             uiUseScale(want > 0.05f ? want : 1.0f);
         }
+        xp.Begin(up.get(), (float)w, (float)h);
         if (_it.kind == K_DropBg) {   // drop-target slot backgrounds (behind items)
         auto* dt = up->GetComponent<UIDropTarget>();
         if (!dt || !up->active || !dt->drawBackground || UIHidden(up.get())) continue;
@@ -675,7 +1076,29 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                                    (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
             p.FillRect(&thumb);
         };
-        if (sv) {
+        if (sv && sv->barStyle != 0) {
+            // grok/ui-controls: thin, or hidden until the view is scrolling.
+            if (sv->BarVisible()) {
+                auto drawThin = [&](bool vertical, float frac, float t) {
+                    const int barW = sv->barStyle == 1 ? 3 : 4;
+                    Rect track = vertical ? Rect{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4}
+                                          : Rect{box.x + 2, box.y + box.h - barW - 2, box.w - 4, barW};
+                    p.SetDrawColor(255, 255, 255, 22);
+                    p.FillRect(&track);
+                    const int len = vertical ? track.h : track.w;
+                    const int thumbL = (int)(len * (frac < 1.0f ? frac : 1.0f));
+                    const int at = (int)((len - thumbL) * Mathf::Clamp01(t));
+                    Rect thumb = vertical ? Rect{track.x, track.y + at, barW, thumbL} : Rect{track.x + at, track.y, thumbL, barW};
+                    p.SetDrawColor((std::uint8_t)(bar.r * 255), (std::uint8_t)(bar.g * 255),
+                                           (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
+                    p.FillRect(&thumb);
+                };
+                if (sv->ScrollMax() > 0.0f)
+                    drawThin(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
+                if (sv->ScrollMaxX() > 0.0f)
+                    drawThin(false, sv->size.x / (sv->contentWidth > 1.0f ? sv->contentWidth : 1.0f), sv->FractionX());
+            }
+        } else if (sv) {
             if (sv->ScrollMax() > 0.0f)
                 drawBar(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
             if (sv->ScrollMaxX() > 0.0f)
@@ -694,14 +1117,68 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
         FillUIShape(p, bg, pb->shape, pb->cornerRadius,
                     pb->background, pb->background, false, false, op);
-        float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
-        Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
         bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
                      pb->fillDir == UIProgressBar::FillDir::RightLeft;
-        FillUIShape(p, fl, pb->shape, pb->cornerRadius,
-                    pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
-        if (pb->showPercent) {
-            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+        // grok/ui-options: segments, a delayed damage trail, and a color that follows the value.
+        // All three off is the historical single fill (pixels unchanged).
+        auto paintFill = [&](float frac, const Color& c0, const Color& c1, bool grad) {
+            if (pb->segments < 2) {
+                float pfox, pfoy, pfw, pfh;
+                pb->FillRectAt(frac, pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+                Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+                FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+                return;
+            }
+            int n = pb->segments; if (n > 40) n = 40;
+            float gap = pb->segmentGap < 0.0f ? 0.0f : pb->segmentGap;
+            float span = horiz ? pb->size.x : pb->size.y;
+            float cell = (span - gap * (float)(n - 1)) / (float)n;
+            if (cell < 1.0f) cell = 1.0f;
+            const bool fromEnd = pb->fillDir == UIProgressBar::FillDir::RightLeft ||
+                                 pb->fillDir == UIProgressBar::FillDir::TopBottom;
+            for (int i = 0; i < n; ++i) {
+                float a = (float)i / (float)n, b = (float)(i + 1) / (float)n;
+                float sf = frac <= a ? 0.0f : (frac >= b ? 1.0f : (frac - a) / (b - a));
+                if (sf <= 0.0f) continue;
+                int slot = fromEnd ? (n - 1 - i) : i;
+                float along = slot * (cell + gap);
+                Rect fl;
+                if (horiz) {
+                    float fw = cell * sf;
+                    float x = pb->fillDir == UIProgressBar::FillDir::RightLeft ? (along + cell - fw) : along;
+                    fl = {(int)(o.x + x), (int)o.y, (int)fw, (int)pb->size.y};
+                } else if (pb->fillDir == UIProgressBar::FillDir::BottomTop) {
+                    float fh = cell * sf;
+                    float base = pb->size.y - along - cell;
+                    fl = {(int)o.x, (int)(o.y + base + cell - fh), (int)pb->size.x, (int)fh};
+                } else {
+                    float fh = cell * sf;
+                    fl = {(int)o.x, (int)(o.y + along), (int)pb->size.x, (int)fh};
+                }
+                if (fl.w > 0 && fl.h > 0)
+                    FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+            }
+        };
+        if (pb->segments < 2 && pb->trailDelay <= 0.0f && !pb->colorByValue) {
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+            FillUIShape(p, fl, pb->shape, pb->cornerRadius,
+                        pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
+        } else {
+            if (pb->trailDelay > 0.0f && pb->TrailFraction() > pb->Fraction() + 0.001f)
+                paintFill(pb->TrailFraction(), pb->trailColor, pb->trailColor, false);
+            Color c0 = pb->colorByValue ? pb->ValueColor() : pb->fill;
+            Color c1 = (pb->gradientFill && !pb->colorByValue) ? pb->fillEnd : c0;
+            paintFill(pb->Fraction(), c0, c1, pb->gradientFill && !pb->colorByValue);
+        }
+        if (pb->showPercent || !pb->textFormat.empty()) {
+            char pct[48];
+            if (pb->textFormat.empty())
+                std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+            else {
+                std::string shown = pb->FormatText();
+                std::snprintf(pct, sizeof(pct), "%s", shown.c_str());
+            }
             float px = 2.0f;
             float tw = UITextW(pct, px);
             RGBA tc{(std::uint8_t)(pb->textColor.r * 255), (std::uint8_t)(pb->textColor.g * 255),
@@ -1088,18 +1565,27 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             int kw = (int)(sl->size.y * sl->knobSize);
             kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
         }
+        // grok/ui-options: a fill gradient only when asked; otherwise the old solid fill.
         FillUIShape(p, fl, sl->trackShape, sl->cornerRadius,
-                    sl->fill, sl->fill, false, false, op);
-        // The handle: a circle when roundKnob, else a rounded tab.
-        FillUIShape(p, kn, sl->roundKnob ? UIShape::Circle : UIShape::Rounded,
+                    sl->fill, sl->fillGradient ? sl->fillEnd : sl->fill,
+                    sl->fillGradient, sl->fillGradient && !sl->vertical, op);
+        // The handle: a circle when roundKnob, else a rounded tab. knobShape overrides that.
+        UIShape ks = sl->roundKnob ? UIShape::Circle : UIShape::Rounded;
+        if (sl->knobShape >= 0 && sl->knobShape < kUIShapeCount) ks = (UIShape)sl->knobShape;
+        FillUIShape(p, kn, ks,
                     sl->cornerRadius, sl->knob, sl->knob, false, false, op);
         if (sl->showValue) {
-            char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            char vbuf[32];
+            if (sl->valueFormat.empty()) std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            else std::snprintf(vbuf, sizeof(vbuf), "%s", sl->FormatValue().c_str());
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
-            DrawUIText(p, vbuf, o.x + sl->size.x + 8.0f,
-                     o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            // Inside the track. Drawing past the right edge hung "0.80" off the card.
+            const float tw = UITextW(vbuf, px);
+            float tx = o.x + sl->size.x - tw - 4.0f;
+            if (tx < o.x + 2.0f) tx = o.x + 2.0f;
+            DrawUIText(p, vbuf, tx, o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
         if (!sl->interactable) { Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             p.SetDrawColor(30, 30, 35, 150); p.FillRect(&dr); }
@@ -1183,6 +1669,20 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             Rect knob{kx, box.y + 2, kd, kd};
             FillUIShape(p, knob, UIShape::Circle, 0.0f,
                         tg->knobColor, tg->knobColor, false, false, op);
+        } else if (tg->style == UIToggle::Style::Radio) {   // round button, dot when picked
+            const int d = std::min(box.w, box.h);
+            Rect rb{box.x, box.y, d, d};
+            FillUIShape(p, rb, UIShape::Circle, 0.0f, tg->boxColor, tg->boxColor, false, false, op);
+            Color ring = tg->checkColor; ring.a *= (0.35f + 0.65f * t);
+            const int rw = std::max(2, d / 12);
+            Rect inner{rb.x + rw, rb.y + rw, d - 2 * rw, d - 2 * rw};
+            FillUIShape(p, rb, UIShape::Circle, 0.0f, ring, ring, false, false, op);
+            FillUIShape(p, inner, UIShape::Circle, 0.0f, tg->boxColor, tg->boxColor, false, false, op);
+            if (t > 0.01f) {
+                const int dd = std::max(2, (int)(d * 0.5f * t));
+                Rect dot{rb.x + (d - dd) / 2, rb.y + (d - dd) / 2, dd, dd};
+                FillUIShape(p, dot, UIShape::Circle, 0.0f, tg->checkColor, tg->checkColor, false, false, op);
+            }
         } else {
             FillUIShape(p, box, UIShape::Rounded, tg->cornerRadius,
                         tg->boxColor, tg->boxColor, false, false, op);
@@ -1196,7 +1696,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                 MMThickLine(p, box.x + bw * 0.43f, box.y + bh * 0.70f, box.x + bw * 0.77f, box.y + bh * 0.32f, lw, wc);
             }
         }
-        float px = 2.0f;
+        float px = 2.0f * UITextScale();
         float tx = o.x + tg->size.x + 8.0f;
         float ty = o.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(tg->textColor.r * 255), (std::uint8_t)(tg->textColor.g * 255),
@@ -1275,9 +1775,10 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         enterScroll(up.get(), o);
         Rect r{(int)o.x, (int)o.y, (int)bsz.x, (int)bsz.y};
-        if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
-            int gx = (int)(bsz.x * (btn->hoverScale - 1.0f) * 0.5f);
-            int gy = (int)(bsz.y * (btn->hoverScale - 1.0f) * 0.5f);
+        float sc = btn->DisplayScale();
+        if (sc != 1.0f) {
+            int gx = (int)(bsz.x * (sc - 1.0f) * 0.5f);
+            int gy = (int)(bsz.y * (sc - 1.0f) * 0.5f);
             r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
         }
         if (btn->shadow) {                              // drop shadow behind (same shape)
@@ -1308,8 +1809,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         // the icon. Skip the built-in label when a child Text object provides it
         // — that child draws itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
-            float px = btn->fontScale * bk;
-            okay::TtfFont* fnt = btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath);
+            float px = btn->fontScale * bk * UITextScale();   // accessibility text size
+            okay::TtfFont* fnt = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
             float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
                            : UITextW(btn->label, px);
             float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
@@ -1344,8 +1845,11 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             if (tk <= 0.0f) continue;   // canvas behind the camera
             ps *= tk;
         }
+        // Text inside a Scroll View / List View / Mask scrolls with it and is clipped to it, like every other widget.
+        { Vec2 clipOnly{0.0f, 0.0f}; if (!tWorld) enterScroll(up.get(), clipOnly); }
         if (tr->background) {                       // label background box
             Vec2 b = UIResolveOrigin(up.get(), (float)w, (float)h);   // parent-relative box
+            if (!tWorld) b = b - UIScrollTotal(up.get());
             Rect br{(int)b.x, (int)b.y, (int)(tr->size.x * tk), (int)(tr->size.y * tk)};
             p.SetDrawColor((std::uint8_t)(tr->backgroundColor.r * 255),
                                    (std::uint8_t)(tr->backgroundColor.g * 255), (std::uint8_t)(tr->backgroundColor.b * 255),
@@ -1354,6 +1858,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                         : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
+        if (!tWorld) o = o - UIScrollTotal(up.get());
         thread_local std::string dispScratch;
         const std::string& disp = tr->DisplayText(dispScratch);
         bool it = tr->italic;
@@ -1372,8 +1877,12 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             DrawUIText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
             DrawUIText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         }
-        DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
-        if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->richText && tr->screenSpace && RichTextHasTags(tr->text)) {
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
+        } else {
+            DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt, tr->bold);
+        }
     }
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
         auto* wu = up->GetComponent<WorldUI>();
@@ -1428,14 +1937,61 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         DrawUIText(p, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
         if (dd->open) {
             float top = o.y + dd->size.y;
-            for (int i = 0; i < (int)dd->options.size(); ++i) {
-                Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
-                const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
-                p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
-                                       (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
-                p.FillRect(&orow);
-                DrawUIText(p, dd->options[i], o.x + 8.0f,
-                         orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            if (!dd->ListExtras()) {
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    DrawUIText(p, dd->options[i], o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+                }
+            } else {
+                // grok/ui-controls: optional search row, a cap on visible rows, and a glyph per option.
+                int row = 0;
+                auto rowBox = [&](int r) {
+                    return Rect{(int)o.x, (int)(top + r * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                };
+                if (dd->searchable) {
+                    Rect orow = rowBox(row++);
+                    const Color& rc = (dd->HoveredOption() == UIDropdown::kSearchRow) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    const std::string& q = dd->Filter();
+                    RGBA sc = q.empty() ? RGBA{150, 152, 158, 255} : tc;
+                    DrawUIText(p, q.empty() ? std::string("Search...") : q, o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, sc);
+                }
+                const int firstRow = row;
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    if (dd->ShownSlot(i) < 0) continue;
+                    Rect orow = rowBox(row++);
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    const std::string& glyph = dd->IconOf(i);
+                    float tx = o.x + 8.0f;
+                    float ty = orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
+                    if (!glyph.empty()) {
+                        DrawUIText(p, glyph, tx, ty, px, tc);
+                        tx += UITextW(glyph, px) + 6.0f;
+                    }
+                    DrawUIText(p, dd->options[i], tx, ty, px, tc);
+                }
+                if (dd->Scrolls()) {   // a scrollbar on the right edge: the thumb shows where the visible rows sit
+                    const int matches = dd->MatchCount(), vis = dd->maxVisible;
+                    const int trackY = (int)(top + firstRow * dd->size.y), trackH = (int)(vis * dd->size.y);
+                    const int barW = 6, barX = (int)(o.x + dd->size.x) - barW - 3;
+                    Rect track{barX, trackY + 2, barW, trackH - 4};
+                    p.SetDrawColor(255, 255, 255, 38); p.FillRect(&track);
+                    const int thumbH = std::max(14, (int)((float)track.h * (float)vis / (float)matches));
+                    const int span = track.h - thumbH, steps = matches - vis;
+                    Rect thumb{barX, track.y + (steps > 0 ? span * dd->ScrollOffset() / steps : 0), barW, thumbH};
+                    p.SetDrawColor(tc.r, tc.g, tc.b, 190); p.FillRect(&thumb);
+                }
             }
         }
         if (!dd->interactable) { Rect dr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
@@ -1458,42 +2014,237 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         float px = 2.0f, pad = 6.0f;
         bool empty = in->text.empty();
-        std::string full = empty ? in->placeholder : in->DisplayText();
         const Color& txc = empty ? in->placeholderColor : in->textColor;
-        // Horizontal scroll: show the tail that fits so the caret stays visible.
-        // Horizontal scroll: drop leading characters until the tail fits.
-        std::string shown = full;
-        while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
-        float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(txc.r * 255), (std::uint8_t)(txc.g * 255), (std::uint8_t)(txc.b * 255), (std::uint8_t)(txc.a * 255)};
-        DrawUIText(p, shown, o.x + pad, ty, px, tc);
-        if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
-            int cx = (int)(o.x + pad + UITextW(shown, px));
-            p.SetDrawColor(255, 255, 255, 220);
-            p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
+        if (!in->multiline) {
+            std::string full = empty ? in->placeholder : in->DisplayText();
+            // Horizontal scroll: show the tail that fits so the caret stays visible.
+            // Horizontal scroll: drop leading characters until the tail fits.
+            std::string shown = full;
+            while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
+            float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
+            DrawUIText(p, shown, o.x + pad, ty, px, tc);
+            if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
+                int cx = (int)(o.x + pad + UITextW(shown, px));
+                p.SetDrawColor(255, 255, 255, 220);
+                p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
+            }
+        } else {
+            // grok/ui-controls: stack lines. Enter inserted the newlines.
+            const std::string src = empty ? in->placeholder : in->DisplayText();
+            const float lineH = Font8x8::Height * px;
+            float y = o.y + pad;
+            std::string line;
+            float lastW = 0.0f, lastY = y;
+            auto emit = [&]() {
+                std::string shown = line;
+                while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
+                if (y + lineH <= o.y + in->size.y + 1.0f)
+                    DrawUIText(p, shown, o.x + pad, y, px, tc);
+                lastW = UITextW(shown, px);
+                lastY = y;
+                y += lineH;
+            };
+            for (char c : src) {
+                if (c == '\n') { emit(); line.clear(); }
+                else line.push_back(c);
+            }
+            emit();
+            if (in->focused && in->CaretVisible()) {
+                int cx = (int)(o.x + pad + lastW);
+                p.SetDrawColor(255, 255, 255, 220);
+                p.DrawLine(cx, (int)lastY, cx, (int)(lastY + lineH));
+            }
         }
     }
-        else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
-        if (!up->active || !IsUIFocused(up.get())) continue;
+        else if (_it.kind == K_TouchStick) {   // virtual joystick
+        auto* js = up->GetComponent<VirtualJoystick>();
+        if (!js || !up->active || UIHidden(up.get()) || !js->Shows()) continue;
+        float op = _slot.opacity * ((js->tracking || !js->fadeWhenIdle) ? 1.0f : 0.45f);
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        if (js->floating && js->tracking) o = js->floatCenter - js->size * 0.5f;
+        enterScroll(up.get(), o);
+        const int cx = (int)(o.x + js->size.x * 0.5f), cy = (int)(o.y + js->size.y * 0.5f);
+        int rad = (int)(std::min(js->size.x, js->size.y) * 0.5f); if (rad < 4) rad = 4;
+        auto bytes = [op](const Color& c) {
+            return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255),
+                        (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * op)};
+        };
+        MMFillCircle(p, cx, cy, rad, bytes(js->baseColor));
+        int kr = (int)(rad * js->knobScale); if (kr < 6) kr = 6;
+        MMFillCircle(p, cx + (int)js->knob.x, cy + (int)js->knob.y, kr, bytes(js->knobColor));
+        MMDrawRing(p, cx, cy, rad - 1, 2, bytes(js->knobColor));
+    }
+        else if (_it.kind == K_TouchPad) {   // directional pad
+        auto* dp = up->GetComponent<TouchDPad>();
+        if (!dp || !up->active || UIHidden(up.get()) || !dp->Shows()) continue;
+        float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        Rect box{(int)o.x, (int)o.y, (int)dp->size.x, (int)dp->size.y};
+        FillUIShape(p, box, UIShape::Rounded, 18.0f, dp->color, dp->color, false, false, op);
+        const int arm = std::max(8, (int)(std::min(dp->size.x, dp->size.y) * 0.28f));
+        const int cx = (int)(o.x + dp->size.x * 0.5f), cy = (int)(o.y + dp->size.y * 0.5f);
+        auto armRect = [&](int dir) {
+            // 0 up, 1 down, 2 left, 3 right
+            if (dir == 0) return Rect{cx - arm / 2, (int)o.y + 6, arm, (int)(dp->size.y * 0.5f) - arm / 2};
+            if (dir == 1) return Rect{cx - arm / 2, cy, arm, (int)(dp->size.y * 0.5f) - 6};
+            if (dir == 2) return Rect{(int)o.x + 6, cy - arm / 2, (int)(dp->size.x * 0.5f) - arm / 2, arm};
+            return Rect{cx, cy - arm / 2, (int)(dp->size.x * 0.5f) - 6, arm};
+        };
+        const bool on[4] = {dp->value.y > 0.5f, dp->value.y < -0.5f, dp->value.x < -0.5f, dp->value.x > 0.5f};
+        for (int dir = 0; dir < 4; ++dir) {
+            const Color& c = on[dir] ? dp->pressedColor : dp->color;
+            Color brighter{std::min(1.0f, c.r + 0.25f), std::min(1.0f, c.g + 0.25f), std::min(1.0f, c.b + 0.25f), c.a};
+            FillUIShape(p, armRect(dir), UIShape::Rounded, 8.0f, on[dir] ? dp->pressedColor : brighter,
+                        on[dir] ? dp->pressedColor : brighter, false, false, op);
+        }
+    }
+        else if (_it.kind == K_TouchButton) {   // touch action button
+        auto* tb = up->GetComponent<TouchButton>();
+        if (!tb || !up->active || UIHidden(up.get()) || !tb->Shows()) continue;
+        float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        const Color& fill = tb->pressed ? tb->pressedColor : tb->color;
+        Rect box{(int)o.x, (int)o.y, (int)tb->size.x, (int)tb->size.y};
+        FillUIShape(p, box, UIShape::Circle, 0.0f, fill, fill, false, false, op);
+        if (!tb->label.empty()) {
+            const float px = 2.0f;
+            const float tw = UITextW(tb->label, px);
+            RGBA tc{(std::uint8_t)(tb->textColor.r * 255), (std::uint8_t)(tb->textColor.g * 255),
+                    (std::uint8_t)(tb->textColor.b * 255), (std::uint8_t)(tb->textColor.a * 255 * op)};
+            DrawUIText(p, tb->label, o.x + (tb->size.x - tw) * 0.5f,
+                       o.y + (tb->size.y - 8.0f * px) * 0.5f, px, tc);
+        }
+    }
+        else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring (hidden after a click)
+        if (!UIShowsFocusRing(up.get())) continue;
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         UIRect r = GetUIRect(up.get());
         if (!r.valid || !r.position) continue;
         Vec2 o, sz;   // where the widget actually is (parents, canvases, world space)
         if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) { o = UIResolveOrigin(up.get(), (float)w, (float)h); sz = r.size; }
-        const float x0 = o.x - 3.0f, y0 = o.y - 3.0f, x1 = o.x + sz.x + 3.0f, y1 = o.y + sz.y + 3.0f;
-        const RGBA fc{120, 182, 255, 230};   // launcher accent, lightened
-        MMThickLine(p, x0, y0, x1, y0, 2.0f, fc); MMThickLine(p, x1, y0, x1, y1, 2.0f, fc);
-        MMThickLine(p, x1, y1, x0, y1, 2.0f, fc); MMThickLine(p, x0, y1, x0, y0, 2.0f, fc);
+        const UIFocusStyle st = ResolveUIFocusStyle(up.get());
+        const float fade = UIFocusPulseAlpha(st);
+        auto toRgba = [fade](const Color& c) {
+            return RGBA{(std::uint8_t)(c.r * 255.0f + 0.5f), (std::uint8_t)(c.g * 255.0f + 0.5f),
+                        (std::uint8_t)(c.b * 255.0f + 0.5f),
+                        (std::uint8_t)std::min(255.0f, c.a * fade * 255.0f + 0.5f)};
+        };
+        auto stroke = [&](float pad, float width, RGBA col) {
+            if (width < 0.5f) return;
+            const float x0 = o.x - pad, y0 = o.y - pad, x1 = o.x + sz.x + pad, y1 = o.y + sz.y + pad;
+            MMThickLine(p, x0, y0, x1, y0, width, col);
+            MMThickLine(p, x1, y0, x1, y1, width, col);
+            MMThickLine(p, x1, y1, x0, y1, width, col);
+            MMThickLine(p, x0, y1, x0, y0, width, col);
+        };
+        if (st.highVisibility)
+            stroke(st.padding + st.thickness * 0.5f + 2.0f, std::max(3.0f, st.thickness * 0.55f), RGBA{0, 0, 0, 230});
+        stroke(st.padding, st.thickness, toRgba(st.color));
+    }
+        else if (_it.kind == K_ModalDim) {   // an open modal's backdrop: dims the whole screen
+        auto* md = up->GetComponent<UIModal>();
+        if (!md || !md->IsOpen() || !md->dimBackground) continue;
+        uiUseScale(1.0f);
+        p.SetClipRect(nullptr);
+        Rect all{0, 0, uiFullW, uiFullH};
+        p.SetDrawColor((std::uint8_t)(md->dimColor.r * 255), (std::uint8_t)(md->dimColor.g * 255),
+                       (std::uint8_t)(md->dimColor.b * 255), (std::uint8_t)(md->dimColor.a * 255 * _slot.opacity));
+        p.FillRect(&all);
+    }
+        else if (_it.kind == K_ContextMenu) {   // an open right-click menu, in screen pixels
+        auto* cm = up->GetComponent<UIContextMenu>();
+        if (!cm || !cm->IsOpen() || cm->items.empty()) continue;
+        uiUseScale(1.0f);
+        p.SetClipRect(nullptr);
+        const Vec2 mo = cm->Origin(), ms = cm->Size();
+        Rect box{(int)mo.x, (int)mo.y, (int)ms.x, (int)ms.y};
+        auto col = [](const Color& c) { return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255),
+                                                    (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255)}; };
+        const RGBA bg = col(cm->background), hv = col(cm->hoverColor), tx = col(cm->textColor), bd = col(cm->borderColor);
+        p.SetDrawColor(bg.r, bg.g, bg.b, bg.a);
+        p.FillRect(&box);
+        for (int i = 0; i < (int)cm->items.size(); ++i) {
+            const int iy = (int)(mo.y + i * cm->itemHeight);
+            if (cm->items[i] == "-") {   // separator
+                Rect sep{box.x + 6, iy + (int)(cm->itemHeight * 0.5f), box.w - 12, 1};
+                p.SetDrawColor(bd.r, bd.g, bd.b, bd.a);
+                p.FillRect(&sep);
+                continue;
+            }
+            if (i == cm->Hover()) {
+                Rect row{box.x + 2, iy + 1, box.w - 4, (int)cm->itemHeight - 2};
+                p.SetDrawColor(hv.r, hv.g, hv.b, hv.a);
+                p.FillRect(&row);
+            }
+            DrawUIText(p, cm->items[i], mo.x + 10.0f, iy + (cm->itemHeight - Font8x8::Height * cm->textSize * UITextScale()) * 0.5f,
+                       cm->textSize * UITextScale(), tx);
+        }
+        p.SetDrawColor(bd.r, bd.g, bd.b, bd.a);
+        p.DrawRect(&box);
+    }
+        else if (_it.kind == K_Keybind) {   // keybind fields: action name + bound key
+        auto* kb = up->GetComponent<UIKeybindField>();
+        if (!kb || !up->active || UIHidden(up.get())) continue;
+        const float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        auto col = [op](const Color& c, float k = 1.0f) {
+            return RGBA{(std::uint8_t)(c.r * 255 * k), (std::uint8_t)(c.g * 255 * k), (std::uint8_t)(c.b * 255 * k),
+                        (std::uint8_t)(c.a * 255 * op)};
+        };
+        const float shade = !kb->interactable ? 0.6f : (kb->IsHovered() ? 1.15f : 1.0f);
+        Color bgc = kb->background; bgc.r = std::min(1.0f, bgc.r * shade); bgc.g = std::min(1.0f, bgc.g * shade); bgc.b = std::min(1.0f, bgc.b * shade);
+        Rect box{(int)o.x, (int)o.y, (int)kb->size.x, (int)kb->size.y};
+        const RGBA b = col(bgc);
+        p.SetDrawColor(b.r, b.g, b.b, b.a);
+        p.FillRect(&box);
+        const float px = kb->textSize * UITextScale(), ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
+        DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
+        const std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
+        const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
+        DrawUIText(p, keyText, o.x + kb->size.x - 8.0f - UITextW(keyText, px), ty, px, kc);
+        if (kb->IsListening()) {
+            p.SetDrawColor(kc.r, kc.g, kc.b, kc.a);
+            p.DrawRect(&box);
+        }
     }
         else if (_it.kind == K_Tooltip) {   // tooltips (hover hints)
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         auto* tt = up->GetComponent<UITooltip>();
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = uiMouse();
-        float px = 2.0f;
-        float tw = UITextW(tt->text, px);
+        float px = 2.0f * UITextScale();
+        const float ox = tt->offset.x, oy = tt->offset.y;
+        auto plain = [&](const std::string& s) {
+            std::string out;
+            for (std::size_t i = 0; i < s.size();) {
+                if (s.compare(i, 3, "<b>") == 0) { i += 3; continue; }
+                if (s.compare(i, 4, "</b>") == 0) { i += 4; continue; }
+                if (s[i] == '#' && i + 7 <= s.size()) {
+                    bool hex = true;
+                    for (int k = 1; k <= 6; ++k) {
+                        char c = s[i + k];
+                        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) { hex = false; break; }
+                    }
+                    if (hex) { i += 7; continue; }
+                }
+                out.push_back(s[i++]);
+            }
+            return out;
+        };
+        const std::string visible = tt->richText ? plain(tt->text) : tt->text;
+        float tw = UITextW(visible, px);
         float th = Font8x8::Height * px;
-        Rect box{(int)(m.x + 14), (int)(m.y + 14), (int)(tw + 12), (int)(th + 10)};
+        const TooltipBox placed = PlaceTooltip(m.x, m.y, tw + 12, th + 10, 0.0f, 0.0f, (float)w, (float)h);
+        float bw = placed.w, bh = placed.h, bx = placed.x + ox, by = placed.y + oy;
+        if (bx < 4) bx = 4;
+        if (by < 4) by = 4;
+        if (bx + bw > w - 4) bx = std::max(4.0f, (float)w - 4 - bw);
+        if (by + bh > h - 4) by = std::max(4.0f, (float)h - 4 - bh);
+        Rect box{(int)bx, (int)by, (int)bw, (int)bh};
         p.SetDrawColor((std::uint8_t)(tt->background.r * 255), (std::uint8_t)(tt->background.g * 255),
                                (std::uint8_t)(tt->background.b * 255), (std::uint8_t)(tt->background.a * 255));
         p.FillRect(&box);
@@ -1502,7 +2253,42 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         p.DrawRect(&box);
         RGBA tc{(std::uint8_t)(tt->textColor.r * 255), (std::uint8_t)(tt->textColor.g * 255),
                      (std::uint8_t)(tt->textColor.b * 255), (std::uint8_t)(tt->textColor.a * 255)};
-        DrawUIText(p, tt->text, m.x + 20, m.y + 19, px, tc);
+        if (!tt->richText) {
+            DrawUIText(p, tt->text, bx + 6.0f, by + 5.0f, px, tc);
+        } else {
+            auto nib = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            float x = bx + 6.0f;
+            const float y = by + 5.0f;
+            RGBA cur = tc;
+            bool bold = false;
+            const std::string& s = tt->text;
+            for (std::size_t i = 0; i < s.size();) {
+                if (s.compare(i, 3, "<b>") == 0) { bold = true; i += 3; continue; }
+                if (s.compare(i, 4, "</b>") == 0) { bold = false; i += 4; continue; }
+                if (s[i] == '#' && i + 7 <= s.size()) {
+                    int h[6]; bool hex = true;
+                    for (int k = 0; k < 6; ++k) { h[k] = nib(s[i + 1 + k]); if (h[k] < 0) hex = false; }
+                    if (hex) {
+                        cur = RGBA{(std::uint8_t)(h[0] * 16 + h[1]), (std::uint8_t)(h[2] * 16 + h[3]),
+                                   (std::uint8_t)(h[4] * 16 + h[5]), tc.a};
+                        i += 7; continue;
+                    }
+                }
+                std::size_t j = i;
+                while (j < s.size() && s.compare(j, 3, "<b>") != 0 && s.compare(j, 4, "</b>") != 0 && s[j] != '#') ++j;
+                if (j == i) ++j;   // a '#' that is not a colour is ordinary text
+                std::string run = s.substr(i, j - i);
+                DrawUIText(p, run, x, y, px, cur);
+                if (bold) DrawUIText(p, run, x + 1.0f, y, px, cur);
+                x += UITextW(run, px);
+                i = j;
+            }
+        }
         }
     }   // end single UI draw pass
     uiUseScale(1.0f);

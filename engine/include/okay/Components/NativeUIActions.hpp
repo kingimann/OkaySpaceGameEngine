@@ -5,6 +5,9 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/Crafting.hpp"   // Crafting has no NativeUIActions dependency
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
+#include "okay/Components/UIDamageNumbers.hpp"
 #include <string>
 #include <vector>
 
@@ -20,6 +23,11 @@ namespace okay {
 inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float arg) {
     if (!go) return false;
     bool on = arg != 0.0f;
+
+    // Any object: a button can hide, show or flip a window / panel / page with no script.
+    if (fn == "HideObject")   { go->active = false; return true; }
+    if (fn == "ShowObject")   { go->active = true;  return true; }
+    if (fn == "ToggleObject") { go->active = !go->active; return true; }
 
     if (auto* s = go->GetComponent<SurvivalStats>()) {
         if (fn == "Damage")       { s->Damage(arg);   return true; }
@@ -100,6 +108,19 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
     if (auto* c = go->GetComponent<Crafting>()) {
         if (fn == "Craft") { c->CraftIndex((int)arg); return true; }   // Amount = recipe index
     }
+    if (auto* c = go->GetComponent<UIModal>()) {   // a dialog's own buttons open / close it
+        if (fn == "Open")  { c->Open();  return true; }
+        if (fn == "Close") { c->Close(); return true; }
+    }
+    if (auto* c = go->GetComponent<UIDialogueBox>()) {   // a dialogue box's own buttons
+        if (fn == "Choose")  { c->Choose((int)arg); return true; }   // Amount = choice index
+        if (fn == "Advance") { c->Advance();        return true; }
+        if (fn == "Restart") { return c->Restart(); }              // show the last line again (a Talk button)
+        if (fn == "Close")   { c->Close();          return true; }
+    }
+    if (auto* c = go->GetComponent<UIDamageNumbers>()) {   // floating combat text from a button, no script
+        if (c->RunAction(fn, arg)) return true;
+    }
     // Consumables::UseItem is dispatched by UIButton (Consumables depends on this
     // header, so it can't be referenced here without a cycle).
     return false;
@@ -131,6 +152,9 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<CarryWeightStat>()) add({"AddLoad", "RemoveLoad", "SetLoad"});
     if (go->GetComponent<SurvivalSave>())    add({"Save", "Load"});
     if (go->GetComponent<Crafting>())        add({"Craft"});
+    if (go->GetComponent<UIModal>())         add({"Open", "Close"});
+    if (go->GetComponent<UIDialogueBox>())   add({"Choose", "Advance", "Restart", "Close"});
+    if (go->GetComponent<UIDamageNumbers>()) add({"Hit", "Crit", "Heal", "Miss", "Info"});
     return out;
 }
 

@@ -9,6 +9,8 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/DeathLock.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Input/Input.hpp"
@@ -82,6 +84,9 @@ public:
     /// The resized body; saving a scene writes the standing collider.
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved crouched / prone loads that way). Applied in Start().
+    /// Ask for a stance from a script / an NPC / a cutscene (as if pressed): kept
+    /// until changed, so a stand-up blocked by a low ceiling happens once there's room.
+    void SetStance(Stance s) { m_wantStance = m_padWant = s; }
     void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = s; m_stanceLevel = (float)s; }
     /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
     float stanceLevel() const { return m_stanceLevel; }
@@ -176,6 +181,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
         Scene* sc = gameObject->scene();
         const bool ui = Input::UICaptured();
         auto* rb = gameObject->GetComponent<Rigidbody3D>();
@@ -551,6 +557,7 @@ private:
         m_climbTo = to;
         m_climbT = 0.0f;
         m_hanging = false;   // gravity stays off until the climb ends
+        HumanoidActions::SetHanging(gameObject, false);
         if (rb) rb->velocity = Vec3{0, 0, 0};
         CallScript("on_climb");
         return true;
@@ -621,6 +628,7 @@ private:
             RaycastHit3D floor = Ray(sc, Vec3{hangX, hangY + bodyH * 0.5f, o.z}, Vec3{0, -1, 0}, bodyH * 0.5f + 0.08f);
             if (floor.hit && Solid(floor)) return;
             m_hanging = true;
+            HumanoidActions::SetHanging(gameObject, true);
             m_ledgeY = ledgeY;
             m_savedGravity = rb->gravityScale;
             rb->gravityScale = 0.0f;
@@ -645,6 +653,7 @@ private:
         m_climbT = -1.0f;
         const bool had = m_grabbed || m_hanging;
         m_grabbed = nullptr; m_hanging = false;
+        HumanoidActions::SetHanging(gameObject, false);
         if (had) CallScript("on_release");
     }
 

@@ -40,6 +40,7 @@ int main() {
         {"Vehicle2D", Templates::Vehicle2D}, {"Multiplayer", Templates::Multiplayer},
         {"CoinCollector", Templates::CoinCollector}, {"MainMenu", Templates::MainMenu},
         {"Inventory", Templates::Inventory}, {"Snake", Templates::Snake},
+        {"BrickBreaker", Templates::BrickBreaker},
         {"TerrainSandbox", Templates::TerrainSandbox}, {"VoxelSandbox", Templates::VoxelSandbox},
     };
     for (const T& t : templates) {

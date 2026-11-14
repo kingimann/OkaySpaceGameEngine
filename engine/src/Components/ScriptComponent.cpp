@@ -1,4 +1,6 @@
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Debug/ConsoleModel.hpp"
+#include "okay/Testing/ObjectPath.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
 #include <algorithm>
@@ -13,6 +15,19 @@
 #include <cstdlib>
 
 namespace okay {
+
+namespace {
+// So a runtime error logged while this script runs names the object it belongs to.
+ConsoleSource ScriptLogSource(GameObject* go, const std::string& path) {
+    ConsoleSource s;
+    if (!go) return s;
+    s.guid = go->Guid();
+    s.component = "ScriptComponent";
+    s.path = path.empty() ? testing::ObjectPath(go) : path;
+    s.kind = path.empty() ? ConsoleSource::Kind::Object : ConsoleSource::Kind::Script;
+    return s;
+}
+}
 
 // Parse an inspector value string into a VsValue: true/false -> bool, a number
 // -> float, new Vector3(x,y,z) -> Vec3, otherwise a string (quotes stripped).
@@ -58,7 +73,8 @@ bool ScriptComponent::LoadSource(const std::string& source, std::string* error) 
     m_source = source;
     m_vm = CreateScriptVM(m_language);
     if (!m_vm) {
-        std::string e = "scripting backend '" + m_language + "' is not available in this build";
+        std::string e = RemovedScriptLanguageMessage(m_language);
+        if (e.empty()) e = "scripting backend '" + m_language + "' is not available in this build";
         if (error) *error = e;
         OKAY_ERROR(e);
         return false;
@@ -85,6 +101,7 @@ void ScriptComponent::Start() {
     m_host.transform  = transform;
     m_host.component  = this;
     m_vm->Bind(&m_host);
+    ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
     m_vm->CallStart();
     m_started = true;
 }
@@ -92,6 +109,7 @@ void ScriptComponent::Start() {
 void ScriptComponent::Update(float dt) {
     if (!m_vm || !ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
+    ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
     m_host.transform = transform;
     // FixedUpdate(): whole fixed steps for the time that passed (at most 5 per frame
     // so a long hitch can't snowball), before this frame's Update.
@@ -105,7 +123,10 @@ void ScriptComponent::Update(float dt) {
 }
 
 void ScriptComponent::LateUpdate(float) {
-    if (m_vm && !m_startDeferred && ScriptsRun(gameObject)) m_vm->CallEvent("on_late_update");
+    if (m_vm && !m_startDeferred && ScriptsRun(gameObject)) {
+        ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
+        m_vm->CallEvent("on_late_update");
+    }
 }
 
 void ScriptComponent::OnDestroy() {
@@ -117,6 +138,16 @@ void ScriptComponent::OnDestroy() {
 
 void ScriptComponent::OnEnable() {
     if (m_vm && m_started && ScriptsRun(gameObject)) m_vm->CallEvent("on_enable");
+}
+
+void ScriptComponent::OnPoolReuse() {
+    if (!m_vm || !m_started) return;
+    const std::string source = m_source;   // LoadSource replaces m_source with its argument
+    std::string error;
+    if (!LoadSource(source, &error)) return;   // it compiled before, so this does not fail
+    m_started = false;
+    m_startDeferred = true;   // start() runs before the next update()
+    m_fixedAcc = 0.0f;
 }
 
 void ScriptComponent::OnDisable() {

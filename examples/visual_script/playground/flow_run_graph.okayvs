@@ -1,0 +1,23 @@
+# Run Another Graph: the called graph sets from_sub on this object, then this graph shows it.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 RunGraph flow_run_graph_sub.okayvs
+pos 2 320 40
+node 6 Const 0
+pos 6 40 240
+node 7 SetVar from_sub
+pos 7 180 40
+exec 1 0 7
+data 7 0 6 0
+exec 7 0 2
+node 3 GetVar from_sub
+pos 3 320 240
+node 4 Concat
+pos 4 600 240
+default 4 0 "Run Another Graph: "
+data 4 1 3 0
+node 5 SetText Readout
+pos 5 880 40
+exec 2 0 5
+data 5 0 4 0

@@ -1,4 +1,5 @@
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/NetSim.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
@@ -20,6 +21,7 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
@@ -68,6 +70,9 @@ namespace {
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
     constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
+    // The start of the refusal an encryption-only host sends a plaintext join;
+    // a client that can encrypt joins again, sealed.
+    constexpr const char* kNeedsEncryption = "encryption required (update the game)";
     constexpr int kHitClaimsPerSecond = 20;    // a client's hit claims without the anti-cheat on
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
@@ -125,6 +130,12 @@ bool NetworkManager::SeqWindow::Accept(std::uint32_t seq) {
     return true;
 }
 
+bool NetworkManager::SeqWindow::Seen(std::uint32_t seq) const {
+    if (!any || seq > newest) return false;
+    const std::uint32_t back = newest - seq;
+    return back >= kWidth || ((bits[back / 64] >> (back % 64)) & 1u);
+}
+
 bool NetworkManager::SetHostIdentity(const std::string& seedB64) {
     if (seedB64.empty()) { m_hostSeed.clear(); return true; }
     std::vector<std::uint8_t> seed;
@@ -142,8 +153,17 @@ std::string NetworkManager::HostIdentityPublicKey() const {
     return net::SessionTicket::Base64UrlEncode(std::vector<std::uint8_t>(pk.begin(), pk.end()));
 }
 
+// Encryption asked for but not built in: no host rather than a quietly
+// unencrypted one.
+static bool EncryptionBuiltIn(bool wanted) {
+    if (!wanted || net::SecureChannel::Available()) return true;
+    OKAY_ERROR("net: encryption is on, but this build has no libsodium: not hosting (turn encryption off to host unencrypted)");
+    return false;
+}
+
 bool NetworkManager::StartServer(std::uint16_t port) {
     Stop();
+    if (!EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
     if (!m_socket.Open() || !m_socket.Bind(port)) {
@@ -170,6 +190,7 @@ void NetworkManager::InitServerState() {
     m_localId = 0;
     m_kicked = false; m_kickReason.clear();
     m_serverTime = 0.0f; m_hostScore = 0; m_rosterTimer = 0.0f;
+    m_protectionsLogged = false;
     { std::random_device rd; m_querySecret = rd() | 1u; }
     anticheat.Reset();
     // Objects this server drives itself are the server's: no client may move them.
@@ -178,6 +199,11 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.positionOf = [this](std::uint32_t peer, Vec3& at) {
+        for (const auto& [ep, c] : m_clients)
+            if (c.id == peer && c.hasState) { at = Vec3(c.state.x, c.state.y, c.state.z); return true; }
+        return false;
+    };
     anticheat.claimable = [this](const std::string& id) {
         auto it = m_syncObjs.find(id);
         if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
@@ -189,6 +215,41 @@ void NetworkManager::InitServerState() {
         if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
         recent.push_back(r);
         if (m_cheatHandler) m_cheatHandler(r);
+    };
+    anticheat.rttOf = [this](std::uint32_t peer) {
+        for (const auto& [ep, c] : m_clients) if (c.id == peer) return c.rtt;
+        return -1.0f;
+    };
+    // The detection engine's view of the world (static solids and the ground), from the scene's physics.
+    anticheat.detector.hooks.groundAt = [this](const Vec3& pos, float& groundY) {
+        Scene* sc = GetScene();
+        if (!sc) return false;
+        const Vec3 from(pos.x, pos.y + 0.5f, pos.z);
+        for (const auto& h : sc->physics3D().RaycastAll(*sc, from, Vec3(0, -1, 0), 2000.0f, nullptr, Physics3D::kAllLayers, false)) {
+            if (!h.gameObject || h.gameObject->GetComponent<NetworkSync>()) continue;   // players and their objects are not the ground
+            groundY = h.point.y;
+            return true;
+        }
+        return false;
+    };
+    anticheat.detector.hooks.staticBlocked = [this](const Vec3& a, const Vec3& b) {
+        Scene* sc = GetScene();
+        if (!sc) return false;
+        const float len = (b - a).Magnitude();
+        if (len < 1e-4f) return false;
+        // Both ways: a ray that starts inside a solid doesn't see the face it leaves through, so the step that
+        // comes out of a wall is found by the ray from the far end.
+        auto solidBetween = [&](const Vec3& from, const Vec3& to) {
+            const Vec3 dir = (to - from) * (1.0f / len);
+            for (const auto& h : sc->physics3D().RaycastAll(*sc, from, dir, len, nullptr, Physics3D::kAllLayers, false)) {
+                if (!h.gameObject || h.distance < 0.01f || h.distance > len - 0.01f) continue;
+                if (h.gameObject->GetComponent<NetworkSync>()) continue;   // players and their objects are not walls
+                if (const auto* rb = h.gameObject->GetComponent<Rigidbody3D>(); rb && rb->bodyType != Rigidbody3D::BodyType::Static) continue;
+                return true;
+            }
+            return false;
+        };
+        return solidBetween(a, b) || solidBetween(b, a);
     };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
 }
@@ -205,7 +266,36 @@ std::string NetworkManager::RelayAddress() const {
     return m_relay ? m_relayEp.ToString() : std::string();
 }
 
+std::string NetworkManager::TicketBinding() {
+    if (!encryption || !net::SecureChannel::Available()) return {};
+    if (!m_nextSecure.HasKeys()) m_nextSecure.GenerateKeys();
+    return net::SessionTicket::KeyBinding(m_nextSecure.PublicKey());
+}
+
+void NetworkManager::UseNextSessionKeys() {
+    if (!encryption || !net::SecureChannel::Available()) return;
+    if (m_nextSecure.HasKeys()) m_secure = m_nextSecure;   // the keys a ticket was bound to (TicketBinding)
+    else m_secure.GenerateKeys();
+    m_nextSecure = net::SecureChannel{};                   // used once: the next session makes new ones
+}
+
+namespace {
+    NetworkManager::JoinGate g_joinGate;
+    std::string g_joinRefusal;
+}
+void NetworkManager::SetJoinGate(JoinGate gate) { g_joinGate = std::move(gate); g_joinRefusal.clear(); }
+std::string NetworkManager::LastJoinRefusal() { return g_joinRefusal; }
+
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
+    g_joinRefusal.clear();
+    if (g_joinGate) {
+        std::string why;
+        if (!g_joinGate(*this, host, port, false, std::string(), why)) {
+            g_joinRefusal = why.empty() ? std::string("join refused") : why;
+            OKAY_WARN("net: not joining ", host, ":", port, ": ", g_joinRefusal);
+            return false;
+        }
+    }
     Stop();
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
@@ -218,15 +308,34 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_mode = Mode::Client;
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
+    if (!m_keepResume) {   // a new session of the game's own, not one of our retries
+        m_connectionLost = false; m_connectionLostReason.clear();
+        m_lastConn = ConnTarget{1, host, port, std::string()};
+        m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
+        m_ownSpawns.clear();
+    }
+    m_serverSilence = 0.0f; m_joinWait = 0.0f;
     m_localUserId.clear();
-    if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+    UseNextSessionKeys();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
     return true;
 }
 
 bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t relayPort,
                                 const std::string& code, bool asHost) {
+    if (!asHost) {
+        g_joinRefusal.clear();
+        if (g_joinGate) {
+            std::string why;
+            if (!g_joinGate(*this, relayHost, relayPort, true, code, why)) {
+                g_joinRefusal = why.empty() ? std::string("join refused") : why;
+                OKAY_WARN("net: not joining through the relay: ", g_joinRefusal);
+                return false;
+            }
+        }
+    }
     Stop();
+    if (asHost && !EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
     if (!m_socket.Open()) { OKAY_ERROR("net: failed to open relay socket"); Stop(); return false; }
@@ -238,10 +347,15 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relay = true;
     m_relayWelcomed = false;
     m_relayCode = code;
-    m_relaySlot = 0;
     m_relayHostKey = 0;
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayHelloTimer = 0.0f;
+    m_relayWait = 0.0f;
+    m_relayBadWelcomes = 0;
+    {   // The welcome must echo this back (see RelayProtocol.hpp, version 4).
+        std::random_device rd;
+        do { m_relayNonce = (static_cast<std::uint64_t>(rd()) << 32) | rd(); } while (m_relayNonce == 0);
+    }
     m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
     if (asHost) {
@@ -251,8 +365,15 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     } else {
         m_mode = Mode::Client;
         m_joined = false;
+        if (!m_keepResume) {
+            m_connectionLost = false; m_connectionLostReason.clear();
+            m_lastConn = ConnTarget{2, relayHost, relayPort, code};
+            m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
+            m_ownSpawns.clear();
+        }
+        m_serverSilence = 0.0f; m_joinWait = 0.0f;
         m_localUserId.clear();
-        if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+        UseNextSessionKeys();
         OKAY_INFO("net: joining session '", code, "' via relay ", m_relayEp.ToString());
     }
     return true;
@@ -271,7 +392,18 @@ bool NetworkManager::JoinViaRelay(const std::string& relayHost, std::uint16_t re
 // Announce ourselves to the relay on connect and ~once a second after, so it can
 // pair us and so the NAT mapping the relay talks back through stays open.
 void NetworkManager::RelayKeepAlive(float dt) {
-    if (!m_relay) return;
+    if (!m_relay || m_relayLost) return;
+    // A relay that never answers (dead, wrong port, or no host for a client's code)
+    // ends the attempt with an error instead of leaving the player waiting forever.
+    if (!m_relayWelcomed && relayTimeoutSeconds > 0.0f && (m_relayWait += dt) >= relayTimeoutSeconds) {
+        m_relayError = m_relayBadWelcomes > 0
+            ? "the relay's welcome could not be verified (an older relay? see allowUnverifiedRelay)"
+            : "the relay never answered (it is unreachable, or no host is registered for session code '" +
+              m_relayCode + "')";
+        OKAY_WARN("net: ", m_relayError);
+        m_relayLost = true;
+        return;
+    }
     m_relayHelloTimer -= dt;
     if (m_relayHelloTimer > 0.0f) return;
     m_relayHelloTimer = 1.0f;
@@ -282,6 +414,8 @@ void NetworkManager::RelayKeepAlive(float dt) {
     h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
     h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
     for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
+    h.Write(static_cast<std::uint32_t>(m_relayNonce));           // version 4: the welcome echoes it
+    h.Write(static_cast<std::uint32_t>(m_relayNonce >> 32));
     while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
@@ -290,6 +424,7 @@ void NetworkManager::Stop() {
     if (m_mode == Mode::Client && m_joined && m_socket.IsOpen()) {
         net::Packet p(Leave);
         p.Write(m_localId);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
     if (m_relay && m_socket.IsOpen()) {            // free our slot on the relay
@@ -298,30 +433,40 @@ void NetworkManager::Stop() {
     }
     m_relay = false;
     m_relayWelcomed = false;
-    m_relaySlot = 0;
     m_relayHostKey = 0;
+    m_relayNonce = 0;
     std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
+    net::ResetSimulator(m_socket);
     m_socket.Close();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
     m_remoteTarget.clear();
+    m_remoteMissing.clear();
     m_inbox.clear();
+    m_rpcObserver = nullptr;
     m_syncVars.clear();
     m_rtt = 0.0f;
     m_ready = false;
     m_matchStarted = false;
     m_serverName.clear();
     m_joinRejected = false;
+    m_joinRejectReason.clear();
     m_relOut.clear();
     m_relSeen.Clear();
+    m_snapUp.Clear();
+    m_snapDown.Clear();
+    m_relaySnap.clear();
+    m_toServer.Clear();
+    m_seqOrigin.Clear();
     m_netTick = 0;
     m_tickAccum = 0.0f;
     m_hostTickRate = 0.0f;
     m_hostAuthoritative = false;
     m_lastAckedSeq = 0;
+    m_sessionCookie = 0;
     m_hostAcksPawn = false;
     m_predicting = false;
     m_predicted.clear();
@@ -343,7 +488,11 @@ void NetworkManager::Stop() {
     m_statesSent = 0;
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
+    m_parked.clear();
+    if (!m_keepResume) { m_reconnecting = false; m_reconnectTrying = false; m_resumeToken = 0; }
     m_pendingJoins.clear();
+    m_joinLimits.clear();
+    m_kickBans.clear();
     m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
     m_joinHellos = 0;
     m_authQueries = 0;
@@ -360,6 +509,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.positionOf = nullptr;
     anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
@@ -412,9 +562,13 @@ void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owne
     SyncObj o; o.t = t; o.owned = owned;
     if (t) { o.targetPos = t->localPosition; o.targetRot = t->localRotation; }
     m_syncObjs[id] = o;
+    if (t) NoteSpawnedPawn(id, t->gameObject);
 }
 
-void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
+void NetworkManager::UnregisterSync(const std::string& id) {
+    ReleasePawn(id);   // scene destroy: the component is going, and so is the claim
+    m_syncObjs.erase(id);
+}
 
 void NetworkManager::SetSyncOwned(const std::string& id, bool owned) {
     auto it = m_syncObjs.find(id);
@@ -427,6 +581,213 @@ void NetworkManager::SetSyncExtra(const std::string& id, std::function<std::stri
     if (it == m_syncObjs.end()) return;
     it->second.getExtra = std::move(get);
     it->second.setExtra = std::move(set);
+}
+
+void NetworkManager::ApplyRemoteXform(const std::string& id, const Vec3& p, const Quat& q, double tick,
+                                      const std::string& extra, bool hasExtra) {
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.owned) return;
+    it->second.targetPos = p;
+    it->second.targetRot = q;
+    if (TickRateInForce() > 0.0f) {
+        auto& buf = it->second.samples;
+        const double now = m_smoothTick;
+        // A sender's clock that's far off ours (or none) is stamped with when
+        // it arrived instead.
+        if (tick < 0.0 || std::fabs(tick - now) > 2.0 * TickRateInForce()) tick = now;
+        auto at = buf.end();
+        while (at != buf.begin() && (at - 1)->tick > tick) --at;
+        const bool newest = at == buf.end();
+        double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
+        // An unchanged state isn't sent again, so a gap well past the send
+        // spacing is the object holding still, not the network: it stays where
+        // it was until one spacing before this state (instead of creeping
+        // toward it across the whole pause), and the pause doesn't grow the
+        // delay (it read as a full second of jitter and the buffer settled
+        // near that, ~860 ms behind).
+        const double spacing = syncRate > 0.0f ? (double)TickRateInForce() / (double)syncRate : 1.0;
+        if (gap > 2.5 * spacing) {
+            SyncObj::Sample hold = buf.back();
+            hold.tick = tick - spacing;
+            buf.push_back(hold);
+            at = buf.end();
+            gap = spacing;
+        }
+        if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
+        if (buf.size() > kMaxSamples) buf.erase(buf.begin());
+        if (newest) {
+            const double need = std::min((now - tick) + gap + 1.0, (double)TickRateInForce());
+            if (need > m_interpNeed) m_interpNeed = need;
+        }
+    }
+    // Snap on the first sample so a freshly seen object doesn't slide in.
+    if (!it->second.hasTarget && it->second.t) {
+        it->second.t->localPosition = p;
+        it->second.t->localRotation = q;
+    }
+    it->second.hasTarget = true;
+    if (it->second.setExtra && hasExtra) it->second.setExtra(extra);
+}
+
+void NetworkManager::SendSnap(net::SnapOut& out, const net::DeltaBase& current, double tick,
+                              const net::Endpoint& to, std::uint64_t cookie) {
+    auto stamp = [&](std::vector<std::uint8_t>& bytes) {
+        if (!cookie) return;
+        const std::uint32_t lo = static_cast<std::uint32_t>(cookie);
+        const std::uint32_t hi = static_cast<std::uint32_t>(cookie >> 32);
+        bytes.push_back(static_cast<std::uint8_t>(lo));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 24));
+        bytes.push_back(static_cast<std::uint8_t>(hi));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 24));
+    };
+    if (net::SameBase(out.acked, current)) {
+        if (out.waiting && !out.bytes.empty()) SendDatagram(to, out.bytes.data(), out.bytes.size());
+        return;
+    }
+    const std::uint32_t id = out.next++;
+    auto blob = net::EncodeSnapshot(out.acked, current, id, tick);
+    if (blob.empty()) { --out.next; return; }
+    stamp(blob);
+    out.pending = current;
+    out.pending.id = id;
+    out.bytes = std::move(blob);
+    out.waiting = true;
+    SendDatagram(to, out.bytes.data(), out.bytes.size());
+}
+
+void NetworkManager::NoteSnapAck(net::SnapOut& out, std::uint32_t id) {
+    if (out.waiting && id == out.pending.id) {
+        out.acked = out.pending;
+        out.waiting = false;
+    }
+}
+
+void NetworkManager::CullInterest(net::DeltaBase& mine, const Client& c) const {
+    if (interestRadius <= 0.0f) return;
+    // Same hold as the avatar snapshot: no position yet, so send no objects.
+    if (!c.hasState) { mine.pose.clear(); mine.extra.clear(); return; }
+    const float cell = interestRadius;
+    const float r2 = cell * cell;
+    const int cx = static_cast<int>(std::floor(c.state.x / cell));
+    const int cy = static_cast<int>(std::floor(c.state.y / cell));
+    const int cz = static_cast<int>(std::floor(c.state.z / cell));
+    for (auto it = mine.pose.begin(); it != mine.pose.end();) {
+        Vec3 p; Quat q;
+        net::DequantizePose(it->second, p, q);
+        const int ox = static_cast<int>(std::floor(p.x / cell));
+        const int oy = static_cast<int>(std::floor(p.y / cell));
+        const int oz = static_cast<int>(std::floor(p.z / cell));
+        const int cheb = std::max(std::abs(ox - cx), std::max(std::abs(oy - cy), std::abs(oz - cz)));
+        const float dx = p.x - c.state.x, dy = p.y - c.state.y, dz = p.z - c.state.z;
+        if (cheb > 1 || dx * dx + dy * dy + dz * dz > r2) {
+            mine.extra.erase(it->first);
+            it = mine.pose.erase(it);
+        } else ++it;
+    }
+}
+
+
+void NetworkManager::BroadcastBinarySnapshots(double tick) {
+    net::DeltaBase owned;
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.owned || !o.t || id.empty() || id.size() > 64) continue;
+        owned.pose[id] = net::QuantizePose(o.t->localPosition, o.t->localRotation);
+        if (o.getExtra) {
+            std::string extra = o.getExtra();
+            if (!extra.empty()) owned.extra[id] = std::move(extra);
+        }
+    }
+    if (m_mode == Mode::Server) {
+        for (auto it = m_relaySnap.begin(); it != m_relaySnap.end();)
+            it = m_syncObjs.count(it->first) ? std::next(it) : m_relaySnap.erase(it);
+        for (auto& [ep, c] : m_clients) {
+            if (c.room != m_localRoom) continue;
+            net::DeltaBase mine = owned;
+            for (const auto& [id, rel] : m_relaySnap) {
+                if (rel.room != c.room || mine.pose.count(id)) continue;
+                mine.pose[id] = rel.pose;
+                if (!rel.extra.empty()) mine.extra[id] = rel.extra;
+            }
+            CullInterest(mine, c);
+            SendSnap(c.snapOut, mine, tick, c.endpoint, 0);
+        }
+    } else if (m_mode == Mode::Client && m_joined) {
+        SendSnap(m_snapUp, owned, tick, m_serverEp, m_sessionCookie);
+    }
+}
+
+void NetworkManager::OnSnapDelta(net::SnapIn& in, const std::uint8_t* data, std::size_t size,
+                                 const net::Endpoint& ackTo, Client* sender) {
+    std::uint32_t baselineId = 0, snapId = 0;
+    if (!net::PeekSnapshot(data, size, baselineId, snapId)) return;
+    auto ack = [&](std::uint32_t id) {
+        if (!id) return;
+        auto bytes = net::EncodeSnapAck(id);
+        // A client acks the server with the session cookie. The server's ack does not.
+        if (!sender && m_sessionCookie) {
+            const std::uint32_t lo = static_cast<std::uint32_t>(m_sessionCookie);
+            const std::uint32_t hi = static_cast<std::uint32_t>(m_sessionCookie >> 32);
+            bytes.push_back(static_cast<std::uint8_t>(lo));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 8));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 16));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 24));
+            bytes.push_back(static_cast<std::uint8_t>(hi));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 8));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 16));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 24));
+        }
+        SendDatagram(ackTo, bytes.data(), bytes.size());
+    };
+    // The cookie, if any, sits after a well-formed snapshot. Checked by the caller
+    // before we get here when the packet came from a client.
+    if (in.haveLatest && baselineId == in.latestId && baselineId != in.have.id) {
+        in.have = in.latest;
+    }
+    if (baselineId != in.have.id) {
+        if (in.haveLatest) ack(in.latestId);
+        return;
+    }
+    if (in.haveLatest && static_cast<std::int32_t>(snapId - in.latestId) <= 0) {
+        ack(in.latestId);
+        return;
+    }
+    double tick = -1.0;
+    std::vector<net::SnapChange> changes;
+    if (!net::DecodeSnapshot(data, size, in.have, baselineId, snapId, tick, changes)) return;
+    const net::Endpoint fromEp = sender ? sender->endpoint : net::Endpoint{};
+    bool refused = false;
+    net::DeltaBase merged = in.have;
+    merged.id = snapId;
+    for (const net::SnapChange& c : changes) {
+        Vec3 p; Quat q;
+        net::DequantizePose(c.pose, p, q);
+        if (sender) {
+            if (!ClientMaySendXform(*sender, c.id)) { refused = true; continue; }
+            std::ostringstream os;
+            os << c.id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
+               << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+            const std::string wire = os.str();
+            if (!AntiCheatAllows(sender->id, "__xform", wire)) {
+                refused = true;
+                if (m_clients.find(fromEp) == m_clients.end()) return;   // a kick erased it
+                continue;
+            }
+        }
+        merged.pose[c.id] = c.pose;
+        if (c.hasExtra) merged.extra[c.id] = c.extra;
+        else if (auto old = in.have.extra.find(c.id); old != in.have.extra.end()) merged.extra[c.id] = old->second;
+        ApplyRemoteXform(c.id, p, q, tick, c.extra, c.hasExtra);
+        if (sender) m_relaySnap[c.id] = RelayPose{c.pose, c.hasExtra ? c.extra : merged.extra[c.id], sender->room};
+    }
+    if (refused) return;
+    in.latest = std::move(merged);
+    in.latestId = snapId;
+    in.haveLatest = true;
+    ack(snapId);
 }
 
 void NetworkManager::SyncTick(float dt) {
@@ -470,6 +831,10 @@ void NetworkManager::SyncTick(float dt) {
     m_syncTimer += dt;
     if (m_syncTimer < interval) return;
     m_syncTimer = 0.0f;
+    if (binarySnapshots) {
+        BroadcastBinarySnapshots(TickRateInForce() > 0.0f ? m_smoothTick : -1.0);
+        return;
+    }
     for (auto& [id, o] : m_syncObjs) {
         if (!o.owned || !o.t) continue;
         const Vec3& p = o.t->localPosition;
@@ -521,12 +886,40 @@ void NetworkManager::PoseAt(const std::vector<SyncObj::Sample>& b, double tick, 
     pos = b.back().pos; rot = b.back().rot;
 }
 
+namespace {
+// "__xform" after the id: "px py pz qx qy qz qw", an optional tick, then an
+// optional "|extra". All 7 pose floats must parse and be finite, and the
+// quaternion must have a length, before it is stored as a unit quaternion.
+bool ParseXformPose(const std::string& data, std::string& id, Vec3& p, Quat& q,
+                    std::string& extra, double& tick) {
+    const auto bar = data.find('|');
+    if (bar == std::string::npos) return false;
+    id = data.substr(0, bar);
+    std::string rest = data.substr(bar + 1);
+    extra.clear();
+    const auto bar2 = rest.find('|');
+    if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
+    std::stringstream ss(rest);
+    if (!(ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w)) return false;
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return false;
+    if (!std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w)) return false;
+    const float len = q.Magnitude();
+    if (!(len > 1e-6f)) return false;
+    q.x /= len; q.y /= len; q.z /= len; q.w /= len;
+    tick = -1.0;
+    if (!(ss >> tick) || !std::isfinite(tick)) tick = -1.0;
+    return true;
+}
+} // namespace
+
 // ---- Lag compensation (server) ------------------------------------------------
 
 void NetworkManager::RecordHistory() {
     const std::size_t keep = (std::size_t)std::ceil(HostTickRate()) + 2;   // ~1 s
     for (auto& [id, o] : m_syncObjs) {
-        if (!o.t) continue;
+        // A despawned pawn is released (and its history cleared) before the sync
+        // entry is erased. An entry whose object is already gone is not a target.
+        if (!o.t || !o.t->gameObject) { o.history.clear(); continue; }
         o.history.push_back(SyncObj::Sample{(double)m_netTick, o.t->localPosition, o.t->localRotation});
         if (o.history.size() > keep) o.history.erase(o.history.begin(), o.history.end() - (std::ptrdiff_t)keep);
     }
@@ -558,13 +951,33 @@ double NetworkManager::ClampRewind(double viewTick, float rttSeconds) const {
     return std::max(now - most, std::min(now, viewTick));
 }
 
+// The cookie at the end of a plaintext client's Leave / State / Message /
+// SyncVar. A client that has sent it once must always send it; one that never
+// has (an older client) is still believed.
+bool NetworkManager::CookieOk(Client& c, net::Packet& p) const {
+    if (c.cookie == 0) return true;
+    const std::uint64_t got = ReadU64(p);
+    if (!p.Ok()) return !c.cookieSeen;
+    if (got != c.cookie) return false;
+    c.cookieSeen = true;
+    return true;
+}
+
 RaycastHit3D NetworkManager::RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance,
-                                           double viewTick, GameObject* ignore) {
+                                           double viewTick, GameObject* ignore, std::uint32_t shooter) {
     Scene* sc = GetScene();
     if (!sc) return RaycastHit3D{};
     if (m_mode != Mode::Server || HostTickRate() <= 0.0f)
         return sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
-    const double at = std::max(TickTime() - (double)HostTickRate(), std::min(TickTime(), std::isfinite(viewTick) ? viewTick : TickTime()));
+    // Same window as a hit claim. No shooter: 200 ms, not the history's second.
+    float rtt = 0.0f;
+    if (shooter != 0)
+        for (const auto& [ep, c] : m_clients)
+            if (c.id == shooter) {
+                rtt = std::min(c.rtt >= 0.0f ? c.rtt : 0.25f, std::max(0.0f, anticheat.settings.maxRewindRtt));
+                break;
+            }
+    const double at = ClampRewind(viewTick, rtt);
     std::vector<Rewound> saved = RewindTo(at);
     RaycastHit3D hit = sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
     Restore(saved);
@@ -578,14 +991,18 @@ double NetworkManager::ViewTick() const {
 }
 
 void NetworkManager::Update(float dt) {
+    net::PumpSimulator(m_socket);
+    net::ProfileAdvance(dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
+    else if (m_reconnecting) ReconnectTick(dt);
     InterpolateRemotes(dt);
     SyncTick(dt);
 }
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
+    net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), true);
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
     if (channel == "__match_start") {   // lobby: the match has begun for this room
@@ -609,6 +1026,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                 auto* ns = g->GetComponent<NetworkSync>();
                 if (!ns) ns = g->AddComponent<NetworkSync>();
                 ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
+                // Claim before this object's NetworkSync starts, so a transform the
+                // client sends in the same breath as the spawn is already too late.
+                NoteSpawnedPawn(netId, g);
             }
         }
         return;
@@ -623,6 +1043,37 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
             hs->SetHealthFromServer(std::strtof(data.c_str() + a + 1, nullptr));
         return;
     }
+    if (channel == "__respawn") {   // "<health>|<x>|<y>|<z>|<netId>": the server respawned an object
+        if (m_mode != Mode::Client || from != 0) return;
+        float v[4] = {0, 0, 0, 0};
+        std::size_t at = 0;
+        for (int i = 0; i < 4; ++i) {
+            const std::size_t bar = data.find('|', at);
+            if (bar == std::string::npos) return;
+            const std::string num = data.substr(at, bar - at);
+            char* end = nullptr;
+            v[i] = std::strtof(num.c_str(), &end);
+            if (num.empty() || end != num.c_str() + num.size() || !std::isfinite(v[i])) return;
+            at = bar + 1;
+        }
+        const std::string netId = data.substr(at);
+        auto obj = m_syncObjs.find(netId);
+        if (netId.empty() || obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+        // Positions far outside any world are not a respawn point (the same bound as a snapshot's).
+        for (int i = 1; i < 4; ++i) if (std::fabs(v[i]) > 1.0e7f) return;
+        const Vec3 pos(v[1], v[2], v[3]);
+        SyncObj& o = obj->second;
+        GameObject* go = o.t->gameObject;
+        if (auto* hs = go->GetComponent<HealthStat>()) hs->RespawnFromServer(v[0]);
+        // Stand there now: no glide from where it died, nothing older in the interpolation buffer.
+        o.t->SetPosition(pos);
+        o.targetPos = pos;
+        o.samples.clear();
+        o.history.clear();
+        if (netId == m_pawnId) ResetPawnPrediction();   // our own pawn: what was predicted is void
+        else if (o.owned && o.t == m_localAvatar) m_predPending = Vec3(0.0f, 0.0f, 0.0f);
+        return;
+    }
     if (channel == "__despawn") {   // remove a SpawnOwned object on this peer
         DestroyLocalSync(data);
         return;
@@ -633,50 +1084,13 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     if (channel == "__xform") {
         std::string::size_type bar = data.find('|');
         if (bar != std::string::npos) {
-            std::string id = data.substr(0, bar);
+            std::string id, extra;
+            Vec3 p; Quat q; double tick = -1.0;
+            if (!ParseXformPose(data, id, p, q, extra, tick)) return;
             auto it = m_syncObjs.find(id);
             if (it != m_syncObjs.end() && !it->second.owned) {
-                // "<floats>[|<extra>]" — the optional extra payload follows a second '|'.
-                std::string rest = data.substr(bar + 1);
-                std::string extra;
-                std::string::size_type bar2 = rest.find('|');
-                if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
-                std::stringstream ss(rest);
-                Vec3 p; Quat q;
-                ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
-                double tick = -1.0;
-                if (!(ss >> tick) || !std::isfinite(tick)) tick = -1.0;   // an older sender: stamp it on arrival
-                it->second.targetPos = p;
-                it->second.targetRot = q;
-                if (TickRateInForce() > 0.0f) {
-                    auto& buf = it->second.samples;
-                    const double now = m_smoothTick;
-                    // A sender's clock that's far off ours (or none) is stamped
-                    // with when it arrived instead.
-                    if (tick < 0.0 || std::fabs(tick - now) > 2.0 * TickRateInForce()) tick = now;
-                    // Kept in tick order (datagrams can arrive out of order).
-                    auto at = buf.end();
-                    while (at != buf.begin() && (at - 1)->tick > tick) --at;
-                    const bool newest = at == buf.end();
-                    const double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
-                    if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
-                    if (buf.size() > kMaxSamples) buf.erase(buf.begin());
-                    // Show far enough back that the next state is (nearly) always
-                    // here in time: how late this one came, plus the gap to the one
-                    // after it. Rises at once, eases back down (SyncTick).
-                    if (newest) {
-                        const double need = std::min((now - tick) + gap + 1.0, (double)TickRateInForce());
-                        if (need > m_interpNeed) m_interpNeed = need;
-                    }
-                }
-                // Snap on the first sample so a freshly seen object doesn't slide
-                // in from wherever it happened to spawn.
-                if (!it->second.hasTarget && it->second.t) {
-                    it->second.t->localPosition = p;
-                    it->second.t->localRotation = q;
-                }
-                it->second.hasTarget = true;
-                if (it->second.setExtra && bar2 != std::string::npos) it->second.setExtra(extra);
+                const bool hasExtra = data.find('|', bar + 1) != std::string::npos;
+                ApplyRemoteXform(id, p, q, tick, extra, hasExtra);
             }
         }
         return;
@@ -684,8 +1098,10 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
-        auto it = m_rpcHandlers.find(channel.substr(6));
+        const std::string rpcName = channel.substr(6);
+        auto it = m_rpcHandlers.find(rpcName);
         if (it != m_rpcHandlers.end() && it->second) it->second(from, data);
+        if (m_rpcObserver) m_rpcObserver(rpcName, from, data);
         return;
     }
     // Chat: "__chat" carries "<name>\n<text>"; logged + handed to the chat handler.
@@ -741,6 +1157,7 @@ GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3
             auto* ns = g->GetComponent<NetworkSync>();
             if (!ns) ns = g->AddComponent<NetworkSync>();
             ns->netId = id; ns->authority = NetworkSync::Authority::Manual; ns->owned = true;
+            m_ownSpawns[id] = prefabPath;
         }
     }
     std::ostringstream os;
@@ -749,7 +1166,19 @@ GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3
     return g;
 }
 
+void NetworkManager::DespawnPeerObjects(std::uint32_t id) {
+    const std::string prefix = "sp/" + std::to_string(id) + "/";
+    std::vector<std::string> ids;
+    for (const auto& [netId, o] : m_syncObjs) if (netId.compare(0, prefix.size(), prefix) == 0) ids.push_back(netId);
+    for (const auto& netId : ids) {
+        DestroyLocalSync(netId);
+        Send("__despawn", netId);   // and on every client still here
+    }
+}
+
 void NetworkManager::DestroyLocalSync(const std::string& id) {
+    m_ownSpawns.erase(id);
+    ReleasePawn(id);   // before the sync entry (and its history) goes
     auto it = m_syncObjs.find(id);
     if (it != m_syncObjs.end()) {
         GameObject* go = it->second.t ? it->second.t->gameObject : nullptr;
@@ -852,12 +1281,14 @@ std::string NetworkManager::GetVar(const std::string& key) const {
 }
 
 void NetworkManager::SetVar(const std::string& key, const std::string& value) {
+    net::NoteObject(key, key.size() + value.size(), false);
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
         for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
@@ -870,10 +1301,12 @@ void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
             if (c.id == targetId) {
                 net::Packet p(Message);
                 p.Write(m_localId); p.Write(channel); p.Write(data);
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, p.Data(), p.Size());
                 return;
             }
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(DirectMessage);
         p.Write(m_localId); p.Write(targetId); p.Write(channel); p.Write(data);
         SendDatagram(m_serverEp, p.Data(), p.Size());
@@ -888,6 +1321,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
                 std::uint32_t seq = c.relSeq++;
                 auto bytes = BuildReliable(seq, channel, data);
                 c.relOut[seq] = {bytes, 0.0f};
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, bytes.data(), bytes.size());
                 return;
             }
@@ -896,6 +1330,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
         std::uint32_t seq = m_relSeq++;
         auto bytes = BuildReliable(seq, channel, data);
         m_relOut[seq] = {bytes, 0.0f};
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         SendDatagram(m_serverEp, bytes.data(), bytes.size());
     }
 }
@@ -906,6 +1341,150 @@ void NetworkManager::SendReliable(const std::string& channel, const std::string&
     } else {
         SendReliableTo(0, channel, data);
     }
+}
+
+void NetworkManager::SendOrderedTo(std::uint32_t targetId, const std::string& channel,
+                                   const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients)
+            if (c.id == targetId) {
+                auto bytes = c.pipes.ordered.Push(channel, data, 0);
+                if (!bytes.empty()) SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                return;
+            }
+    } else if (m_mode == Mode::Client && m_joined && targetId == 0) {
+        auto bytes = m_toServer.ordered.Push(channel, data, m_sessionCookie);
+        if (!bytes.empty()) SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+void NetworkManager::SendOrdered(const std::string& channel, const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients) SendOrderedTo(c.id, channel, data);
+    } else {
+        SendOrderedTo(0, channel, data);
+    }
+}
+
+void NetworkManager::SendSequencedTo(std::uint32_t targetId, const std::string& channel,
+                                     const std::string& data) {
+    if (!net::ChannelNameOk(channel) || data.size() > net::kChannelPayloadMax) return;
+    if (m_mode == Mode::Server) {
+        const std::uint32_t seq = m_seqOrigin.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, targetId, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id == targetId) {
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                return;
+            }
+    } else if (m_mode == Mode::Client && m_joined) {
+        // The server routes a directed packet (target 0 is the host), same as SendTo.
+        const std::uint32_t seq = m_toServer.sequencedTx.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, targetId, channel, data, m_sessionCookie);
+        SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+void NetworkManager::SendSequenced(const std::string& channel, const std::string& data) {
+    if (!net::ChannelNameOk(channel) || data.size() > net::kChannelPayloadMax) return;
+    if (m_mode == Mode::Server) {
+        const std::uint32_t seq = m_seqOrigin.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, net::kChanBroadcast, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.room == m_localRoom)
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    } else if (m_mode == Mode::Client && m_joined) {
+        const std::uint32_t seq = m_toServer.sequencedTx.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, net::kChanBroadcast, channel, data, m_sessionCookie);
+        SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+bool NetworkManager::AllowMessage(Client& c, std::size_t bytes) {
+    if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
+    return maxRelayedBytes <= 0 || (c.msgBytes += bytes) <= 4 * (std::size_t)maxRelayedBytes;
+}
+
+void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo, std::uint32_t fromId,
+                               Client* sender, net::Packet& p, std::size_t len) {
+    const std::uint32_t seq = p.ReadU32();
+    std::string channel = p.ReadString();
+    std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (sender && !CookieOk(*sender, p)) return;
+    const bool seen = link.ordered.Seen(channel, seq);
+    if (sender && !seen && !AllowMessage(*sender, len)) return;
+    bool deliver = sender == nullptr;
+    if (sender && !seen) {
+        if (channel == "__hit") {
+            HandleHitClaim(*sender, data);
+        } else {
+            deliver = ClientMessageOk(*sender, channel, data) && AntiCheatAllows(sender->id, channel, data);
+        }
+    }
+    std::vector<net::ChanMsg> got;
+    std::uint32_t ack = 0;
+    if (!link.ordered.Receive(channel, seq, std::move(data), deliver, fromId, got, ack)) return;
+    if (ack) {
+        auto bytes = net::BuildChanRelAck(channel, ack);
+        SendDatagram(ackTo, bytes.data(), bytes.size());
+    }
+    for (const net::ChanMsg& m : got) Deliver(m.from, m.channel, m.data);
+}
+
+void NetworkManager::OnOrderedAck(net::ChannelEnd& link, net::Packet& p) {
+    const std::string channel = p.ReadString();
+    const std::uint32_t ack = p.ReadU32();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    link.ordered.Ack(channel, ack);
+}
+
+void NetworkManager::OnSequencedFromClient(Client& from, net::Packet& p, std::size_t len) {
+    p.ReadU32();   // sender-reported id (the endpoint is the source of truth)
+    const std::uint32_t seq = p.ReadU32();
+    const std::uint32_t target = p.ReadU32();
+    std::string channel = p.ReadString();
+    std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (!CookieOk(from, p)) return;
+    if (!from.pipes.sequencedRx.IsStale(from.id, channel, seq) && !AllowMessage(from, len)) return;
+    if (!from.pipes.sequencedRx.Accept(from.id, channel, seq)) return;
+    if (channel == "__hit") { HandleHitClaim(from, data); return; }
+    if (!ClientMessageOk(from, channel, data)) return;
+    if (!AntiCheatAllows(from.id, channel, data)) return;
+    const std::uint32_t sender = from.id;
+    const bool toHost = target == net::kChanBroadcast || target == m_localId;
+    if (toHost && (dedicated || m_localRoom == from.room)) Deliver(sender, channel, data);
+    if (target == net::kChanBroadcast) {
+        auto bytes = net::BuildChanSeq(sender, seq, net::kChanBroadcast, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id != sender && c.room == from.room)
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    } else if (target != m_localId) {
+        auto bytes = net::BuildChanSeq(sender, seq, target, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id == target) {
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                break;
+            }
+    }
+}
+
+void NetworkManager::OnSequencedFromServer(net::Packet& p) {
+    const std::uint32_t sender = p.ReadU32();
+    const std::uint32_t seq = p.ReadU32();
+    const std::uint32_t target = p.ReadU32();
+    const std::string channel = p.ReadString();
+    const std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (sender == m_localId) return;
+    if (target != net::kChanBroadcast && target != m_localId) return;
+    if (!m_toServer.sequencedRx.Accept(sender, channel, seq)) return;
+    Deliver(sender, channel, data);
 }
 
 void NetworkManager::ResendReliable(
@@ -972,12 +1551,19 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
 // wraps it in a RelayData frame addressed by the peer's slot (carried in `to`'s
 // address) and sends it to the relay, which forwards it on.
 void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
-    if (!m_relay) { m_socket.SendTo(to, data, size); return; }
+    if (!m_relay) {
+        if (!net::HoldDatagram(m_socket, to, data, size)) {
+            if (m_socket.SendTo(to, data, size)) net::NoteWire(size, false);
+        }
+        return;
+    }
     net::Packet h(net::RelayData);
     h.Write(to.address);                       // destination slot
     std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
     dg.insert(dg.end(), data, data + size);
-    m_socket.SendTo(m_relayEp, dg.data(), dg.size());
+    if (!net::HoldDatagram(m_socket, m_relayEp, dg.data(), dg.size())) {
+        if (m_socket.SendTo(m_relayEp, dg.data(), dg.size())) net::NoteWire(dg.size(), false);
+    }
 }
 
 // One physical datagram in. Direct mode is a pass-through. Relay mode peels the
@@ -985,8 +1571,12 @@ void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data,
 // quietly handles RelayWelcome control frames, looping until it has an actual
 // application payload to return (or nothing is pending).
 int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from) {
+    // Control frames and stray datagrams are consumed without returning, so a flood of
+    // them is only drained a bounded amount per call; the rest waits for the next.
+    int consumed = 0;
     for (;;) {
-        int n = m_socket.RecvFrom(buffer, capacity, from);
+        if (m_relay && consumed++ >= kMaxRelayFramesPerCall) return 0;
+        int n = net::TakeDatagram(m_socket, buffer, capacity, from);
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
@@ -994,15 +1584,34 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
         if (tag == net::RelayWelcome) {
             net::Packet p(b, static_cast<std::size_t>(n));
             p.ReadU8();
-            std::uint32_t yourSlot = p.ReadU32();
+            p.ReadU32();   // our slot: the relay routes by it, we never need it
             std::uint32_t hostSlot = p.ReadU32();
             if (!p.Ok()) continue;
             // Version 2 relays add [u8 version][u64 host key]; the key comes
             // only to the host, which sends it back in every hello so only it
-            // can host this code (from this address or a new one).
+            // can host this code (from this address or a new one). Version 4
+            // adds the u64 nonce our hello carried.
             p.ReadU8();
             const std::uint32_t keyLo = p.ReadU32(), keyHi = p.ReadU32();
-            if (p.Ok() && m_mode == Mode::Server && (keyLo | keyHi))
+            const bool haveKey = p.Ok();
+            bool haveNonce = false;
+            std::uint64_t echoed = 0;
+            if (haveKey && p.Remaining() >= 8) {
+                const std::uint32_t nLo = p.ReadU32(), nHi = p.ReadU32();
+                echoed = (static_cast<std::uint64_t>(nHi) << 32) | nLo;
+                haveNonce = true;
+            }
+            // Anyone can forge a UDP source address, so a welcome counts only if it
+            // proves the sender saw our hello: it echoes our nonce. A wrong echo is
+            // never accepted; a missing one only from an older relay when allowed.
+            if ((haveNonce && echoed != m_relayNonce) || (!haveNonce && !allowUnverifiedRelay)) {
+                ++m_relayBadWelcomes;
+                continue;
+            }
+            // A host needs the key fields: without them it would hello with key 0
+            // and be refused as if the code were taken.
+            if (m_mode == Mode::Server && !haveKey) continue;
+            if (m_mode == Mode::Server && (keyLo | keyHi))
                 m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
             if (m_mode == Mode::Client) {
                 // The host we were paired with is the only server we talk to.
@@ -1017,7 +1626,6 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
                 if (hostSlot == 0) continue;   // no host yet
                 m_serverEp = SlotEndpoint(hostSlot);
             }
-            m_relaySlot = yourSlot;
             m_relayWelcomed = true;
             continue;
         }
@@ -1040,11 +1648,15 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             const std::uint8_t why = p.ReadU8();
             const std::uint8_t relayVersion = p.ReadU8();
             if (!p.Ok()) continue;
-            m_relayError = why == net::RelayRefusedHosted
-                ? "session code '" + m_relayCode + "' is already hosted"
-                : "the relay needs protocol version " + std::to_string(relayVersion) +
-                  " (this game speaks " + std::to_string(net::kRelayProtocolVersion) + ")";
-            OKAY_WARN("net: relay refused us: ", m_relayError);
+            if (why == net::RelayRefusedHosted)
+                m_relayError = "session code '" + m_relayCode + "' is already hosted";
+            else if (why == net::RelayRefusedVersion)
+                m_relayError = "the relay needs protocol version " + std::to_string(relayVersion) +
+                               " (this game speaks " + std::to_string(net::kRelayProtocolVersion) + ")";
+            else
+                m_relayError = "the relay refused us for an unknown reason (code " +
+                               std::to_string(why) + ")";
+            OKAY_WARN("net: relay: ", m_relayError);
             m_relayLost = true;
             return 0;
         }
@@ -1184,13 +1796,41 @@ void NetworkManager::ClaimHit(const std::string& targetNetId, const std::string&
     SendReliable("__hit", targetNetId + "|" + weapon + buf);
 }
 
+// What the detection engine learns from a hit claim: its outcome and the
+// numbers the server's own checks measured.
+void NetworkManager::FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why) {
+    if (!anticheat.DetectOn()) return;
+    ShotEvent e;
+    e.t = anticheat.Clock();
+    e.weapon = claim.weapon;
+    e.hit = hit;
+    e.damage = claim.damage;
+    e.distance = m_hitDist;
+    e.offRay = m_hitOff; e.allowedOffRay = m_hitAllowed;
+    e.blockedByWall = why == "through a wall";
+    e.badOrigin = why.rfind("shot from where", 0) == 0;
+    e.outOfRange = why == "out of range";
+    if (!hit && why.rfind("missed", 0) != 0) { e.offRay = 0.0f; e.allowedOffRay = 0.0f; }   // only a miss is about where the target was
+    e.detail = why;
+    anticheat.detector.OnShot(shooter, e);
+}
+
 // "<targetNetId>|<weapon>|<clientTick>|ox oy oz|dx dy dz" from client `c`. The
 // server believes its own view: where it last saw the shooter, where the
 // target is, what's in between.
 void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     const std::uint32_t shooter = c.id;
+    HitClaim fed;   // what the detection engine is told (set once the claim is parsed)
+    fed.shooter = shooter;
+    m_hitDist = m_hitOff = m_hitAllowed = 0.0f;
     auto refuse = [&](const std::string& why) {
         ++m_hitsRefused;
+        if (anticheat.DetectOn()) {
+            if (why.rfind("malformed", 0) == 0) anticheat.detector.OnMalformed(shooter, why, anticheat.Clock());
+            else if (why == "through a wall" || why.rfind("missed", 0) == 0 || why.rfind("shot from where", 0) == 0 ||
+                     why == "out of range" || why.rfind("fire rate", 0) == 0)
+                FeedShot(shooter, fed, false, why);
+        }
         anticheat.Report(shooter, CheatKind::HitRejected, why);
         AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
     };
@@ -1217,9 +1857,10 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.weapon = part[1];
     claim.clientTick = static_cast<std::uint32_t>(std::strtoul(part[2].c_str(), &end, 10));
     double viewTick = -1.0;   // lag compensation: the moment the shooter saw
-    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); if (!std::isfinite(viewTick) || viewTick < 0.0) viewTick = -1.0; }
+    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); viewTick = std::isfinite(viewTick) ? std::max(0.0, viewTick) : -1.0; }
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
+    fed = claim;
     const AntiCheatSettings& s = anticheat.settings;
     if (s.enabled) {
         // Only a weapon the game knows (a Net Validator for "hit/<weapon>", or
@@ -1240,9 +1881,12 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
     }
 
-    // The shooter is alive (when its avatar has health).
+    // The shooter is alive (when its avatar, or the pawn the server moves for it, has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
         if (auto* hs = r->second->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
+    if (!c.pawn.empty())
+        if (auto p = m_syncObjs.find(c.pawn); p != m_syncObjs.end() && p->second.t && p->second.t->gameObject)
+            if (auto* hs = p->second.t->gameObject->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
     // The weapon's fire rate and ammo: its Net Validator ("hit/<weapon>"), as for an RPC.
     if (anticheat.validateRpc && !anticheat.validateRpc(shooter, "hit/" + claim.weapon, data)) {
         refuse("fire rate or ammo: " + claim.weapon);
@@ -1258,7 +1902,11 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
-    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    // With a fixed tick, a claim must say when the shooter looked: without
+    // it, the check would fall back to the target's speed x the ping as
+    // slack. Older clients don't say, so not a violation.
+    if (viewTick < 0.0 && HostTickRate() > 0.0f) { ++m_hitsRefused; return; }
+    const float rtt = std::min(c.rtt >= 0.0f ? c.rtt : 0.25f, std::max(0.0f, s.maxRewindRtt));
     // Lag compensation: with a fixed tick and the moment the shooter saw,
     // everything goes back to where it was then (clamped to 200 ms + its round
     // trip) for the checks below, and is put back after. The target then
@@ -1286,6 +1934,12 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     if (!why.empty()) { refuse(why); return; }
     // The game's own rules (Validate Hit / on_validate_hit / NetworkManager::ValidateHit).
     if (anticheat.validateHit && !anticheat.validateHit(claim)) { refuse("refused by the game: " + claim.weapon); return; }
+    if (anticheat.DetectOn()) {
+        fed = claim;
+        FeedShot(shooter, claim, true, std::string());
+        if (anticheat.detector.KickRequested(shooter)) { AntiCheatAfterRefusal(shooter); return; }   // (c may be gone)
+        if (anticheat.detector.ShadowRestricted(shooter)) { ++m_hitsRefused; return; }              // no damage, and no sign of it
+    }
     ApplyHit(claim);
 }
 
@@ -1298,6 +1952,9 @@ std::string NetworkManager::CheckHitView(const HitClaim& claim, std::uint32_t sh
     const Vec3 tp = targetT->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
     const Vec3 to = tp - claim.origin;
     const float along = Vec3::Dot(to, claim.direction);
+    m_hitDist = std::max(0.0f, along);
+    m_hitOff = (to - claim.direction * along).Magnitude();
+    m_hitAllowed = s.hitTolerance + (s.maxSyncSpeed > 0.0f ? s.maxSyncSpeed : 8.0f) * slack;
     if (along < 0.0f) return "target behind the shot";
     if (s.maxHitRange > 0.0f && along > s.maxHitRange) return "out of range";
     // Off the ray by no more than the tolerance plus how far the target can
@@ -1345,21 +2002,155 @@ void NetworkManager::ApplyHit(HitClaim& claim) {
     SendReliable("__dmg", claim.target + buf);
 }
 
+void NetworkManager::NoteRespawn(GameObject* go) {
+    if (m_mode != Mode::Server || !go || !go->transform || go->scene() != GetScene()) return;
+    NetworkSync* ns = go->GetComponent<NetworkSync>();
+    if (!ns) return;
+    const std::string id = ns->netId.empty() ? go->name : ns->netId;
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.t != go->transform) return;
+    const Vec3 pos = go->transform->Position();
+    auto* hs = go->GetComponent<HealthStat>();
+    anticheat.AllowTeleport(id);
+    it->second.history.clear();   // lag compensation must not rewind across the jump
+    it->second.samples.clear();
+    // A player's own object: the position it reports next is far from the last one, once.
+    std::uint32_t owner = anticheat.OwnerOf(id);
+    if (auto po = m_pawnOwner.find(id); po != m_pawnOwner.end()) owner = po->second;
+    if (id.compare(0, 3, "sp/") == 0) {   // a SpawnOwned id names the peer that made it
+        const std::size_t slash = id.find('/', 3);
+        if (slash != std::string::npos && slash > 3 && slash <= 13 &&
+            id.find_first_not_of("0123456789", 3) == slash)
+            owner = static_cast<std::uint32_t>(std::strtoull(id.c_str() + 3, nullptr, 10));
+    }
+    if (owner != 0)
+        for (auto& [ep, c] : m_clients)
+            if (c.id == owner) c.teleportUntil = m_serverTime + 1.0f;
+    if (owner != 0 && anticheat.DetectOn()) anticheat.detector.NoteRespawn(owner, anticheat.Clock());   // grace: its next positions and shots
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
+    SendReliable("__respawn", std::string(buf) + id);
+}
+
+void NetNoteRespawn(GameObject* go) {
+    std::vector<NetworkManager*> live;
+    {
+        std::lock_guard<std::mutex> l(g_liveMutex);
+        for (const NetworkManager* nm : LiveManagers()) live.push_back(const_cast<NetworkManager*>(nm));
+    }
+    for (NetworkManager* nm : live) nm->NoteRespawn(go);
+}
+
+// A client leaves the table (Leave, timeout, kick, or taken over by its own
+// reconnect): its objects go, and its state is kept for a while so the same
+// client can resume it.
+void NetworkManager::ReleaseClient(std::unordered_map<net::Endpoint, Client, net::EndpointHash>::iterator it) {
+    const std::uint32_t id = it->second.id;
+    if (auto r = m_remotes.find(id); r != m_remotes.end()) {
+        if (GetScene() && r->second) GetScene()->Destroy(r->second);
+        m_remotes.erase(r);
+    }
+    anticheat.ParkPeer(id, it->second.ident);
+    ParkClient(it->second);
+    m_clients.erase(it);
+    anticheat.ForgetPeer(id);
+    DespawnPeerObjects(id);
+    m_recentCheats.erase(id);
+    for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
+    if (m_peerLeft) m_peerLeft(id);
+}
+
+void NetworkManager::ParkClient(const Client& c) {
+    if (resumeGraceSeconds <= 0.0f || c.resumeToken == 0) return;
+    for (auto it = m_parked.begin(); it != m_parked.end();)
+        it = (it->token == c.resumeToken || it->id == c.id) ? m_parked.erase(it) : std::next(it);
+    if (m_parked.size() >= kMaxParked) m_parked.erase(m_parked.begin());   // the oldest
+    Parked p;
+    p.token = c.resumeToken; p.id = c.id; p.userId = c.userId;
+    p.pos = Vec3{c.state.x, c.state.y, c.state.z}; p.hasState = c.hasState; p.glyph = c.state.glyph;
+    p.score = c.score; p.ready = c.ready;
+    m_parked.push_back(p);
+}
+
+// The host went silent (or the relay session ended) and autoReconnect is on:
+// keep what the game owns, drop what only the session knew, and start retrying.
+void NetworkManager::BeginReconnect() {
+    m_wasReady = m_ready;
+    // Other players' proxies describe a session that is gone; the new one makes
+    // them again from its snapshots.
+    for (auto& [id, go] : m_remotes)
+        if (GetScene() && go) GetScene()->Destroy(go);
+    m_remotes.clear();
+    m_keepResume = true;
+    Stop();
+    m_keepResume = false;
+    m_reconnecting = true; m_reconnectTrying = false; m_reconnectGaveUp = false;
+    m_reconnectAttempt = 0;
+    m_reconnectTimer = std::max(0.0f, reconnectDelaySeconds);
+    if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Lost, 0);
+}
+
+void NetworkManager::ReconnectTick(float dt) {
+    if (!m_reconnecting || m_reconnectTrying) return;
+    if ((m_reconnectTimer -= dt) > 0.0f) return;
+    ++m_reconnectAttempt;
+    m_reconnectTrying = true;
+    OKAY_INFO("net: reconnect try ", m_reconnectAttempt, " of ", reconnectMaxAttempts);
+    m_keepResume = true;
+    const bool ok = m_lastConn.kind == 2
+        ? StartRelay(m_lastConn.host, m_lastConn.port, m_lastConn.code, /*asHost=*/false)
+        : StartClient(m_lastConn.host, m_lastConn.port);
+    m_keepResume = false;
+    if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Attempt, m_reconnectAttempt);
+    if (!ok) FailReconnectTry();
+}
+
+// A try ended without a session (refused, no answer, relay gone): back off and
+// try again, or give up.
+void NetworkManager::FailReconnectTry() {
+    const std::string why = m_joinRejectReason;
+    bool final = m_reconnectAttempt >= reconnectMaxAttempts;
+    for (const char* hard : {"wrong password", "authentication failed", "kicked by", "session ticket refused", "encryption required"})
+        if (why.find(hard) != std::string::npos) final = true;
+    if (m_kicked) final = true;
+    m_keepResume = true;
+    Stop();
+    m_keepResume = false;
+    m_reconnectTrying = false;
+    if (final) {
+        m_reconnecting = false; m_reconnectGaveUp = true; m_resumeToken = 0;
+        OKAY_WARN("net: giving up on reconnecting after ", m_reconnectAttempt, " tries");
+        if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::GaveUp, m_reconnectAttempt);
+        return;
+    }
+    float d = std::max(0.0f, reconnectDelaySeconds);
+    for (int i = 0; i < m_reconnectAttempt && d < reconnectMaxDelaySeconds; ++i) d *= 2.0f;
+    m_reconnectTimer = std::min(d, std::max(reconnectMaxDelaySeconds, reconnectDelaySeconds));
+}
+
+// After a rejoin that got its old peer id back, tell the host about the
+// objects this player had made (it removed them when the connection dropped).
+void NetworkManager::ReannounceOwnSpawns() {
+    if (!m_resumed) { return; }   // a new peer id: the old netIds are not ours; the game respawns
+    for (auto it = m_ownSpawns.begin(); it != m_ownSpawns.end();) {
+        GameObject* g = ObjectByNetId(it->first);
+        if (!g || !g->transform) { it = m_ownSpawns.erase(it); continue; }
+        const Vec3 pos = g->transform->localPosition;
+        std::ostringstream os;
+        os << it->second << '|' << pos.x << '|' << pos.y << '|' << pos.z << '|' << it->first;
+        Send("__spawn", os.str());
+        ++it;
+    }
+}
+
 void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
     if (m_mode != Mode::Server) return;
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         if (it->second.id != id) continue;
         net::Packet p(Kicked); p.Write(reason);
         SendDatagram(it->second.endpoint, p.Data(), p.Size());
-        if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-            if (GetScene() && r->second) GetScene()->Destroy(r->second);
-            m_remotes.erase(r);
-        }
-        m_clients.erase(it);
-        anticheat.ForgetPeer(id);
-        m_recentCheats.erase(id);
-        for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-        if (m_peerLeft) m_peerLeft(id);
+        it->second.resumeToken = 0;   // a kicked player does not get its state back
+        ReleaseClient(it);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
         return;
     }
@@ -1391,6 +2182,7 @@ void NetworkManager::ServerTeleport(std::uint32_t id, const Vec3& pos) {
         if (c.id != id) continue;
         c.state.x = pos.x; c.state.y = pos.y; c.state.z = pos.z;
         c.hasState = true; c.stateAge = 0.0f;
+        if (anticheat.DetectOn()) anticheat.detector.NoteTeleport(id, anticheat.Clock());
         net::Packet cp(Correct); cp.Write(pos.x); cp.Write(pos.y); cp.Write(pos.z);
         SendDatagram(c.endpoint, cp.Data(), cp.Size());
         ApplyPeer(c.state);
@@ -1453,6 +2245,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
     if (m_mode == Mode::Server) {
         // Server originates a message: stamp it with our id (0) and fan out to
         // the clients in the host's room.
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
@@ -1461,26 +2254,46 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
             if (c.room == m_localRoom)
                 SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
         p.Write(data);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
 
 bool NetworkManager::ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const {
+    // Nothing big enough to choke every peer it's relayed to.
+    if (maxRelayedBytes > 0 && channel.size() + data.size() > (std::size_t)maxRelayedBytes) return false;
     if (channel.size() < 2 || channel[0] != '_' || channel[1] != '_') return true;   // a game channel
     if (channel == "__chat") {
-        // "<name>\n<text>": the name is the server's, not the sender's choice.
+        // "<name>\n<text>": the name is the server's, not the sender's choice;
+        // the text is cut to 512 bytes (on a UTF-8 character boundary).
         const std::size_t nl = data.find('\n');
-        data = from.name + "\n" + (nl == std::string::npos ? data : data.substr(nl + 1));
+        std::string text = nl == std::string::npos ? data : data.substr(nl + 1);
+        if (text.size() > 512) {
+            std::size_t cut = 512;
+            while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+            text.resize(cut);
+        }
+        data = from.name + "\n" + text;
         return true;
     }
-    if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
-        return false;   // a player the server moves: its position is the server's, never the client's
-    if (channel == "__spawn") return SpawnPathOk(from.id, ParseSpawnMessage(data).path, true);
-    if (channel == "__despawn" || channel == "__xform") return true;
+    if (channel == "__xform") {
+        // A player the server moves: its position is the server's, never the client's.
+        if (!ClientMaySendXform(from, data.substr(0, data.find('|')))) return false;
+        // The same pose check as Deliver: a bad sample is not relayed.
+        std::string id, extra; Vec3 p; Quat q; double tick = -1.0;
+        return ParseXformPose(data, id, p, q, extra, tick);
+    }
+    if (channel == "__spawn") {
+        const SpawnMessage m = ParseSpawnMessage(data);
+        if (!std::isfinite(m.pos.x) || !std::isfinite(m.pos.y) || !std::isfinite(m.pos.z)) return false;
+        return SpawnPathOk(from.id, m.path, true);
+    }
+    if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
 }
@@ -1552,17 +2365,67 @@ bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::strin
     return false;
 }
 
+bool NetworkManager::JoinBlocked(const net::Endpoint& from) const {
+    auto it = m_joinLimits.find(from.address);
+    return it != m_joinLimits.end() && m_serverTime < it->second.blockedUntil;
+}
+
+void NetworkManager::CountJoinAttempt(const net::Endpoint& from, int cost) {
+    if (m_joinLimits.size() > 4096)   // addresses long quiet go (the map can't grow without end)
+        for (auto it = m_joinLimits.begin(); it != m_joinLimits.end();)
+            it = m_serverTime - it->second.windowStart > 600.0f && m_serverTime > it->second.blockedUntil ? m_joinLimits.erase(it) : std::next(it);
+    JoinLimit& l = m_joinLimits[from.address];
+    if (m_serverTime - l.windowStart >= kJoinWindow) {
+        l.windowStart = m_serverTime; l.count = 0;
+        if (m_serverTime > l.blockedUntil + 60.0f) l.backoff = 0.0f;   // a quiet minute after a block forgives it
+    }
+    l.count += cost;
+    if (l.count > kJoinAttempts) {
+        l.backoff = l.backoff > 0.0f ? std::min(l.backoff * 2.0f, 320.0f) : 10.0f;
+        l.blockedUntil = m_serverTime + l.backoff;
+        l.count = 0; l.windowStart = m_serverTime; l.told = false;
+        OKAY_WARN("net: too many join attempts from ", from.ToString(), "; ignoring it for ", (int)l.backoff, " s");
+    }
+}
+
+float NetworkManager::KickBanLeft(const std::string& ident) const {
+    auto it = m_kickBans.find(ident);
+    return it == m_kickBans.end() ? 0.0f : std::max(0.0f, it->second.until - m_serverTime);
+}
+
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
-    if (limit > 0 && anticheat.Violations(peer) >= limit) {
+    const bool detectKick = anticheat.DetectOn() && anticheat.detector.KickRequested(peer);
+    if ((limit > 0 && anticheat.Violations(peer) >= limit) || detectKick) {
         if (m_acKickHandler) {
             AntiCheatKick k;
             k.peer = peer;
+            if (anticheat.DetectOn()) {
+                k.risk = anticheat.detector.Risk(peer);
+                k.banRequested = anticheat.detector.BanRequested(peer);
+                k.evidence = anticheat.detector.Bundle(peer, BundleOptions{}).ToJson(12 * 1024);
+            }
             for (auto& [ep, c] : m_clients) if (c.id == peer) { k.name = c.name; k.userId = c.userId; }
             if (auto r = m_recentCheats.find(peer); r != m_recentCheats.end()) k.recent = r->second;
             m_acKickHandler(k);
         }
-        Kick(peer, "anti-cheat");   // (forgets its anti-cheat state too)
+        // Kicked: not back for a minute (account and address), doubling on
+        // each repeat up to an hour; so a kick isn't just a reconnect.
+        for (auto it = m_kickBans.begin(); it != m_kickBans.end();)
+            it = m_serverTime > it->second.until + 3600.0f ? m_kickBans.erase(it) : std::next(it);
+        for (auto& [ep, c] : m_clients) {
+            if (c.id != peer) continue;
+            std::vector<std::string> keys{c.ident};
+            const std::string addr = "a:" + std::to_string(ep.address);
+            if (addr != c.ident) keys.push_back(addr);
+            for (const auto& key : keys) {
+                KickBan& b = m_kickBans[key];
+                b.strikes = std::min(b.strikes + 1, 7);
+                b.until = m_serverTime + std::min(3600.0f, 60.0f * float(1 << (b.strikes - 1)));
+            }
+            break;
+        }
+        Kick(peer, "anti-cheat");   // (parks and forgets its anti-cheat state too)
     }
 }
 
@@ -1585,10 +2448,68 @@ int NetworkManager::StepNetTick(float rate, float dt) {
     return ticks;
 }
 
-void NetworkManager::SetPawn(GameObject* pawn) {
+void NetworkManager::ResetPawnPrediction() {
+    m_predicted.clear();
+    m_predPending = Vec3(0.0f, 0.0f, 0.0f);
+    m_predSeq = 0;
+    m_earlyAckSeq = 0;
+    m_earlyAck = Vec3(0.0f, 0.0f, 0.0f);
+    m_lastPawnAck = 0;
+    m_predPressOnce = 0;
+    m_predicting = false;
+}
+
+void NetworkManager::ClearLocalPawn() {
+    ResetPawnPrediction();
     m_pawnId.clear();
-    if (!pawn) return;
-    if (auto* ns = pawn->GetComponent<NetworkSync>()) m_pawnId = ns->netId.empty() ? pawn->name : ns->netId;
+    m_lastAckedSeq = 0;
+    m_sentInputs.clear();
+    m_inputSeq = 0;          // the server forgot lastInputSeq; the next claim starts at 1
+    m_pressedAccum = 0;
+    m_heldInput = PlayerInput{};
+    m_predCmd = PlayerInput{};
+}
+
+// Local despawn, a relayed __despawn, or the object's own OnDestroy. The claim
+// has to die with the object or the next pawn is refused (pawn != c.pawn) and
+// never acked.
+void NetworkManager::ReleasePawn(const std::string& id) {
+    if (id.empty()) return;
+    if (id == m_pawnId) ClearLocalPawn();
+    if (auto it = m_syncObjs.find(id); it != m_syncObjs.end()) it->second.history.clear();
+    auto own = m_pawnOwner.find(id);
+    if (own == m_pawnOwner.end()) return;
+    const std::uint32_t peer = own->second;
+    m_pawnOwner.erase(own);
+    if (m_mode != Mode::Server) return;
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != peer || c.pawn != id) continue;
+        c.pawn.clear();
+        c.inputs.clear();
+        c.lastInputSeq = 0;
+        c.lastInput = PlayerInput{};
+        c.repeats = 0;
+        c.inputCredit = 0;
+        c.droppedPressed = 0;
+        c.droppedN = 0;
+        c.haveRepeatPose = false;
+        break;
+    }
+}
+
+void NetworkManager::SetPawn(GameObject* pawn) {
+    std::string id;
+    if (pawn)
+        if (auto* ns = pawn->GetComponent<NetworkSync>())
+            id = ns->netId.empty() ? pawn->name : ns->netId;
+    if (id == m_pawnId) return;
+    // A different object: don't reconcile the previous pawn's acks against it.
+    // The sequence counter stays, unless a despawn already cleared it — the
+    // server only forgets lastInputSeq when the old pawn is destroyed.
+    ResetPawnPrediction();
+    m_sentInputs.clear();
+    m_lastAckedSeq = 0;
+    m_pawnId = id;
 }
 
 int NetworkManager::MovementAuthority(const std::string& netId) const {
@@ -1601,40 +2522,160 @@ bool NetworkManager::InputDriven(const std::string& netId) const {
     return m_mode == Mode::Server && authoritativeMovement && m_pawnOwner.count(netId) != 0;
 }
 
-// Each fixed tick on the server: every player moves by one input (the next
-// one it sent, or its last one again if that's late), through its controller.
+namespace {
+// A movement controller on this object or anything under it (a player prefab
+// sometimes parents the body to an empty root).
+IPlayerSim* FindSimInTree(GameObject* go) {
+    if (!go) return nullptr;
+    if (IPlayerSim* s = FindPlayerSim(go)) return s;
+    if (!go->transform) return nullptr;
+    for (Transform* c : go->transform->Children())
+        if (c) if (IPlayerSim* s = FindSimInTree(c->gameObject)) return s;
+    return nullptr;
+}
+} // namespace
+
+GameObject* NetworkManager::ObjectByNetId(const std::string& id) const {
+    if (auto it = m_syncObjs.find(id); it != m_syncObjs.end() && it->second.t)
+        return it->second.t->gameObject;
+    Scene* sc = GetScene();
+    if (!sc) return nullptr;
+    for (const auto& go : sc->Objects()) {
+        if (!go) continue;
+        if (auto* ns = go->GetComponent<NetworkSync>()) {
+            const std::string& nid = ns->netId.empty() ? go->name : ns->netId;
+            if (nid == id) return go.get();
+        }
+    }
+    return nullptr;
+}
+
+// The pawn is whichever object the server says, not whichever one the client
+// names in an InputCmd. The first controller-carrying spawn under sp/<id>/ wins;
+// a later InputCmd can still claim a different one, but only while this is empty.
+void NetworkManager::NoteSpawnedPawn(const std::string& netId, GameObject* go) {
+    if (m_mode != Mode::Server || !authoritativeMovement || netId.empty() || !go) return;
+    if (netId.compare(0, 3, "sp/") != 0) return;
+    const std::size_t slash = netId.find('/', 3);
+    if (slash == std::string::npos || slash == 3) return;
+    std::uint32_t cid = 0;
+    for (std::size_t i = 3; i < slash; ++i) {
+        if (netId[i] < '0' || netId[i] > '9') return;
+        cid = cid * 10u + static_cast<std::uint32_t>(netId[i] - '0');
+    }
+    if (!FindSimInTree(go)) return;
+    if (m_pawnOwner.count(netId)) return;
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != cid) continue;
+        if (!c.pawn.empty()) return;   // a live pawn stays until it's released
+        c.pawn = netId;
+        m_pawnOwner[netId] = c.id;
+        c.lastSeen = 0.0f;
+        return;
+    }
+}
+
+bool NetworkManager::ClientMaySendXform(const Client& from, const std::string& id) const {
+    if (!authoritativeMovement) return true;
+    if (id.empty() || m_pawnOwner.count(id)) return false;
+    const std::string prefix = "sp/" + std::to_string(from.id) + "/";
+    if (id.compare(0, prefix.size(), prefix) != 0) return true;   // not one of its spawns
+    // Until this client has a pawn, a controller object it spawned is not trusted
+    // (it may be the player, and it may not be claimed yet). Props and projectiles
+    // have no movement controller, so they keep today's transforms. Once a pawn is
+    // live, only that pawn is refused — m_pawnOwner above — and a second owned
+    // object is left alone.
+    if (!from.pawn.empty()) return true;
+    if (GameObject* go = ObjectByNetId(id))
+        return FindSimInTree(go) == nullptr;
+    // Not in the world yet: don't relay a transform we can't classify.
+    return false;
+}
+
+// Each fixed tick on the server. One queued input is applied (or the last one
+// again, for a few ticks, when none has arrived). A hitch delivers several at
+// once: while the queue is deeper than kTargetQueuedInputs and this client was
+// actually late (inputCredit, earned only while the queue was empty), a second
+// input is applied the same tick, so the depth falls back within a few ticks.
+// A client that keeps the queue full never earns credit, and never more than
+// two inputs are applied, so sending faster than the tick still only fills the
+// queue.
+//
+// Repeats are not an extra step. The pose from before the streak is put back
+// when a real input arrives, and that input is the movement for this tick.
 void NetworkManager::ServerMovementTick(float step) {
     for (auto& [ep, c] : m_clients) {
         if (c.pawn.empty()) continue;
         auto obj = m_syncObjs.find(c.pawn);
         if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) continue;
-        // A late input is covered by the last one for a few ticks (a lost
-        // packet); after that the player stands still rather than keep going.
-        PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
-        in.pressed = 0;   // a held button stays held; a press isn't repeated
-        ++c.repeats;
-        const bool fresh = !c.inputs.empty();
-        if (fresh) {
+        Transform* tr = obj->second.t;
+        GameObject* go = tr->gameObject;
+        auto saveRepeat = [&]() {
+            c.repeatPos = tr->localPosition;
+            c.repeatVel = Vec3(0.0f, 0.0f, 0.0f);
+            if (auto* rb = go->GetComponent<Rigidbody3D>()) c.repeatVel = rb->velocity;
+            c.haveRepeatPose = true;
+        };
+        auto restoreRepeat = [&]() {
+            if (!c.haveRepeatPose) return;
+            tr->localPosition = c.repeatPos;
+            if (auto* rb = go->GetComponent<Rigidbody3D>()) rb->velocity = c.repeatVel;
+            c.haveRepeatPose = false;
+            c.repeats = 0;
+        };
+        auto publish = [&]() {
+            const Vec3 at = tr->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+            c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;
+            c.hasState = true;
+        };
+        if (c.inputs.empty()) {
+            // A late input is covered by the last one for a few ticks (a lost
+            // packet); after that the player stands still rather than keep going.
+            if (!c.haveRepeatPose) saveRepeat();
+            PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
+            in.pressed = 0;   // a held button stays held; a press isn't repeated
+            ++c.repeats;
+            c.inputCredit = std::min(c.inputCredit + 1, static_cast<int>(kMaxQueuedInputs));
+            c.lastInput = in;
+            if (IPlayerSim* sim = FindSimInTree(go)) sim->Simulate(in, step);
+            publish();
+            continue;
+        }
+        // Shallow again: the earlier gap is paid. A full queue from here on is
+        // a client sending faster than the tick, not one catching up.
+        if (static_cast<int>(c.inputs.size()) <= kTargetQueuedInputs) c.inputCredit = 0;
+        if (c.repeats > 0) restoreRepeat();
+        int budget = 1;
+        if (static_cast<int>(c.inputs.size()) > kTargetQueuedInputs && c.inputCredit > 0) {
+            budget = 2;
+            --c.inputCredit;
+        }
+        for (int n = 0; n < budget && !c.inputs.empty(); ++n) {
             auto next = c.inputs.begin();
-            in = next->second.second;
-            c.lastInputSeq = next->first;
+            PlayerInput in = next->second.second;
+            if (c.droppedPressed) { in.pressed |= c.droppedPressed; c.droppedPressed = 0; }
+            c.lastInputSeq = std::max(c.lastInputSeq, next->first);
             c.inputs.erase(next);
             c.repeats = 0;
-        }
-        c.lastInput = in;
-        if (IPlayerSim* sim = FindPlayerSim(obj->second.t->gameObject)) sim->Simulate(in, step);
-        const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
-        c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
-        c.hasState = true;
-        // Tell the player where this input left it, for its prediction (only
-        // for a new input: a repeat has no number of its own).
-        if (fresh) {
-            const Vec3 lp = obj->second.t->localPosition;
+            c.haveRepeatPose = false;
+            if (minPressInterval > 0.0f) {   // presses closer together than that are dropped
+                const std::uint32_t limited[3] = {PlayerInput::Jump, PlayerInput::Dash, PlayerInput::Fire};
+                for (int b = 0; b < 3; ++b) {
+                    if (!(in.pressed & limited[b])) continue;
+                    if (m_serverTime - c.lastPress[b] < minPressInterval) in.pressed &= ~limited[b];
+                    else c.lastPress[b] = m_serverTime;
+                }
+            }
+            c.lastInput = in;
+            if (IPlayerSim* sim = FindSimInTree(go)) sim->Simulate(in, step);
+            // One ack per seq, at the pose that input left. Prediction compares each.
+            const Vec3 lp = tr->localPosition;
             net::Packet a(PawnAck);
             a.Write(c.pawn); a.Write(c.lastInputSeq);
             a.Write(lp.x); a.Write(lp.y); a.Write(lp.z);
             SendDatagram(c.endpoint, a.Data(), a.Size());
         }
+        publish();
     }
 }
 
@@ -1710,12 +2751,25 @@ void NetworkManager::ClientInputTick() {
 }
 
 void NetworkManager::ServerTick(float dt) {
+    if (!m_protectionsLogged) {   // on the first tick: the scene's AntiCheatConfig has applied by then
+        m_protectionsLogged = true;
+        std::string off;
+        auto add = [&off](const char* what) { off += off.empty() ? what : std::string(", ") + what; };
+        if (!anticheat.settings.enabled) add("anti-cheat");
+        if (!encryption && !(anticheat.settings.enabled && anticheat.settings.requireEncryption)) add("encryption (players are known by address and a session cookie)");
+        if (maxMoveSpeed <= 0.0f && !authoritativeMovement) add("move check");
+        if (maxMessagesPerSecond <= 0) add("message rate limit");
+        if (!off.empty()) OKAY_WARN("net: protections off: ", off);
+    }
     m_serverTime += dt;
     m_acClockMs += static_cast<double>(dt) * 1000.0;
     ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
-    auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
+    auto rateOk = [this](Client& c, std::size_t bytes) {
+        if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
+        return maxRelayedBytes <= 0 || (c.msgBytes += bytes) <= 4 * (std::size_t)maxRelayedBytes;
+    };
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
@@ -1736,7 +2790,16 @@ void NetworkManager::ServerTick(float dt) {
         const bool sealed = len >= 1 && data[0] == kEncEnvelope;
         if (sealed) {
             net::SecureChannel* s = SessionFor(from);
-            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;  // can't open (or a replay) -> drop
+            const std::uint64_t replaysBefore = s ? s->Replays() : 0;
+            if (!s || !s->Open(data + 1, len - 1, decrypted)) {   // can't open (or a replay) -> drop
+                if (s && anticheat.DetectOn()) {
+                    if (auto cl = m_clients.find(from); cl != m_clients.end()) {   // evidence, from a joined peer's address
+                        if (s->Replays() > replaysBefore) anticheat.detector.OnReplay(cl->second.id, anticheat.Clock());
+                        else anticheat.detector.OnMalformed(cl->second.id, "packet would not open", anticheat.Clock());
+                    }
+                }
+                continue;
+            }
             data = decrypted.data(); len = decrypted.size();
         }
         net::Packet p(data, len);
@@ -1756,6 +2819,7 @@ void NetworkManager::ServerTick(float dt) {
             // A sealed join starts: trade keys, then the client sends its Join
             // encrypted. The hello is padded to at least the answer's size.
             if (len < kJoinHelloSize || m_clients.count(from)) continue;
+            if (JoinBlocked(from)) continue;   // too many attempts from this address: its key exchange waits
             const std::uint8_t version = p.ReadU8();
             const std::string clientPk = p.ReadString();
             if (!p.Ok() || version < kJoinVersion) continue;
@@ -1782,6 +2846,7 @@ void NetworkManager::ServerTick(float dt) {
             PendingJoin& pending = pj->second;
             const std::vector<std::uint8_t> pkBytes(clientPk.begin(), clientPk.end());
             if (pending.clientPk != pkBytes || !pending.secure.Ready()) {
+                CountJoinAttempt(from, 1);   // new keys (and a signature): an attempt
                 pending.secure = net::SecureChannel{};
                 pending.secure.GenerateKeys();
                 if (!pending.secure.Establish(pkBytes, /*asServer=*/true)) { m_pendingJoins.erase(pj); continue; }
@@ -1858,55 +2923,147 @@ void NetworkManager::ServerTick(float dt) {
             // A sealed join arrives encrypted under its key exchange's session.
             auto pendingIt = (!existed && sealed) ? m_pendingJoins.find(from) : m_pendingJoins.end();
             const bool viaPending = pendingIt != m_pendingJoins.end();
+            // Trailing: the join version byte (sealed joins only), then, from a client
+            // that is rejoining, the resume token its last Welcome gave it.
+            std::uint64_t resumeToken = 0;
+            if (!existed && p.Ok()) {
+                if (viaPending) p.ReadU8();
+                if (p.Remaining() >= 8) { const std::uint64_t t = ReadU64(p); if (p.Ok()) resumeToken = t; }
+            }
             std::string userId;
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
-            if (needCrypto) encryption = true;   // the rules ask for it
+            if (needCrypto && net::SecureChannel::Available()) encryption = true;   // the rules ask for it
+            if (!existed && JoinBlocked(from)) {
+                // Too many attempts from this address: say so once, then ignore.
+                JoinLimit& l = m_joinLimits[from.address];
+                if (!l.told) {
+                    l.told = true;
+                    net::Packet r(Reject);
+                    r.Write("too many join attempts; try again in " + std::to_string((int)std::ceil(l.blockedUntil - m_serverTime)) + " s");
+                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
+                }
+                continue;
+            }
             if (!existed) {
-                // Gate new joins on capacity, password and (if a verifier is set)
-                // identity; refuse politely.
+                // Gate new joins on capacity, then encryption (nothing secret is
+                // checked in the clear), then the password, then identity;
+                // refuse politely.
                 const char* why = nullptr;
-                std::string ticketWhy;
-                if ((int)m_clients.size() >= maxPlayers) why = "server is full";
-                else if (!password.empty() && pass != password) why = "wrong password";
+                std::string ticketWhy, banWhy;
+                const std::string addrIdent = "a:" + std::to_string(from.address);
+                auto kickedRecently = [&](const std::string& ident) {
+                    const float left = KickBanLeft(ident);
+                    if (left <= 0.0f) return false;
+                    banWhy = "kicked by the anti-cheat; try again in " + std::to_string((int)std::ceil(left)) + " s";
+                    return true;
+                };
+                // A rejoin that replaces a connection the host still holds needs no free slot.
+                auto holdsToken = [&](std::uint64_t t) {
+                    if (t == 0 || resumeGraceSeconds <= 0.0f) return false;
+                    for (const auto& [ep2, other] : m_clients) if (other.resumeToken == t) return true;
+                    return false;
+                };
+                if (!anticheat.configError.empty()) why = "server misconfigured (its anti-cheat rules didn't load)";
+                else if ((int)m_clients.size() >= maxPlayers && !holdsToken(resumeToken)) why = "server is full";
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
-                    why = net::SecureChannel::Available() ? "encryption required (update the game)"
+                    why = net::SecureChannel::Available() ? kNeedsEncryption
                                                           : "encryption required, but this server was built without libsodium";
+                else if (!password.empty() && pass != password) why = "wrong password";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
                     // A signed session ticket names the account; it takes the
-                    // place of the token verifiers.
+                    // place of the token verifiers. It must be for this server
+                    // (not any: "*" only when the rules allow it) and, when it
+                    // names a session key (cnf), for this very connection.
+                    const AntiCheatSettings& s = anticheat.settings;
                     std::vector<std::uint8_t> key;
-                    net::SessionTicket::Base64UrlDecode(anticheat.settings.ticketKey, key);
+                    net::SessionTicket::Base64UrlDecode(s.ticketKey, key);
                     net::SessionTicketClaims claims;
                     std::string err;
-                    if (net::SessionTicket::Verify(token, key, anticheat.settings.ticketAudience,
-                                                   (std::int64_t)std::time(nullptr), claims, &err))
-                        userId = claims.userId;
-                    else { ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str(); }
+                    if (s.ticketAudience.empty()) {
+                        if (!m_audienceWarned) OKAY_ERROR("anti-cheat: a ticketKey needs a ticketAudience (this server's id); refusing joins");
+                        m_audienceWarned = true;
+                        why = "server misconfigured (no ticket audience)";
+                    } else if (!net::SessionTicket::Verify(token, key, s.ticketAudience, (std::int64_t)std::time(nullptr), claims, &err)) {
+                        ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str();
+                    } else if (claims.audience == "*" && !s.ticketAnyAudience) {
+                        why = "session ticket refused: ticket is for another server";
+                    } else if (!claims.keyBinding.empty()) {
+                        const std::vector<std::uint8_t> pk = viaPending ? pendingIt->second.clientPk
+                                                                        : std::vector<std::uint8_t>(clientPk.begin(), clientPk.end());
+                        if (net::SessionTicket::KeyBinding(pk) != claims.keyBinding)
+                            why = "session ticket refused: ticket is for another connection";
+                    }
+                    if (!why) userId = claims.userId;
                 }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
-                    if (r < 0) continue;                       // still checking: the client retries
-                    if (r == 0) why = "authentication failed";
+                    if (r == -2) why = "server busy, try again";
+                    else if (r < 0) continue;                  // still checking: the client retries
+                    else if (r == 0) why = "authentication failed";
                 }
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
+                // Kicked by the anti-cheat a moment ago: the account, or for an
+                // anonymous join the address (other signed-in players behind
+                // the same address aren't locked out).
+                if (!why && kickedRecently(userId.empty() ? addrIdent : "u:" + userId)) why = banWhy.c_str();
                 if (why) {
+                    // A refusal is an attempt; a wrong password counts double
+                    // (guessing it is what the limit is for).
+                    CountJoinAttempt(from, std::string(why) == "wrong password" ? 2 : 1);
                     net::Packet r(Reject); r.Write(std::string(why));
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
                 }
+                // One connection per account: a new sign-in replaces the old one.
+                if (!userId.empty())
+                    for (auto& [ep, other] : m_clients)
+                        if (!(ep == from) && other.userId == userId && !(resumeToken != 0 && other.resumeToken == resumeToken)) { Kick(other.id, "signed in elsewhere"); break; }
+            }
+            // A client that is rejoining after a drop takes its state back: the
+            // token must match, and (for a signed-in account) so must the account.
+            // If the host has not noticed the drop yet, the old connection is
+            // released first (same cleanup as a timeout).
+            Parked resumed; bool haveResumed = false;
+            if (!existed && resumeToken != 0 && resumeGraceSeconds > 0.0f) {
+                for (auto old = m_clients.begin(); old != m_clients.end(); ++old)
+                    if (old->second.resumeToken == resumeToken && old->second.userId == userId) { ReleaseClient(old); break; }
+                for (auto pk = m_parked.begin(); pk != m_parked.end(); ++pk)
+                    if (pk->token == resumeToken) {
+                        if (pk->userId == userId && pk->age <= resumeGraceSeconds) { resumed = *pk; haveResumed = true; }
+                        m_parked.erase(pk);   // one use: a token that failed is dead too
+                        break;
+                    }
             }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
             if (isNew) {
                 c.endpoint = from;
-                c.id = m_nextId++;
+                c.id = haveResumed ? resumed.id : m_nextId++;
                 c.state = {c.id, 0, 0, 0, '@'};
+                if (haveResumed) {
+                    c.state = {c.id, resumed.pos.x, resumed.pos.y, resumed.pos.z, resumed.glyph};
+                    c.hasState = resumed.hasState;
+                    c.stateAge = resumed.age;   // the move check allows for the time away
+                    c.score = resumed.score;
+                    c.ready = resumed.ready;
+                    c.resumed = true;
+                }
+                if (resumeGraceSeconds > 0.0f) {
+                    std::random_device rdt;
+                    do { c.resumeToken = (static_cast<std::uint64_t>(rdt()) << 32) | rdt(); } while (c.resumeToken == 0);
+                }
                 c.name = name.empty() ? ("Player" + std::to_string(c.id)) : name;
                 c.room = room;
                 c.joinedAt = m_serverTime;
                 c.userId = userId;
+                // A join that got in costs this address nothing (its key
+                // exchange is given back): players behind one address still
+                // all get in, a flood that never finishes doesn't.
+                if (auto jl = m_joinLimits.find(from.address); jl != m_joinLimits.end() && jl->second.count > 0) --jl->second.count;
+                c.ident = userId.empty() ? "a:" + std::to_string(from.address) : "u:" + userId;
+                anticheat.RestorePeer(c.id, c.ident);   // what it had if it left a moment ago
                 if (viaPending) {
                     // The key exchange's session becomes the client's (numbered,
                     // with the version authenticated).
@@ -1924,6 +3081,10 @@ void NetworkManager::ServerTick(float dt) {
                     if (needCrypto) c.secure.SetSequenced(true);
                 }
             }
+            if (isNew && !c.secure.Ready()) {
+                std::random_device rd;
+                c.cookie = ((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) | 1u;
+            }
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
             w.Write(c.id);
@@ -1940,13 +3101,23 @@ void NetworkManager::ServerTick(float dt) {
             std::uint8_t welcomeFlags = c.secure.Sequenced() ? 1 : 0;
             if (HostTickRate() > 0.0f) welcomeFlags |= 2;
             if (authoritativeMovement) welcomeFlags |= 4 | 8;   // bit 2: send inputs, not positions; bit 3: PawnAcks (predict)
+            if (c.cookie) welcomeFlags |= 16;                    // bit 4: a session cookie (u64) follows
+            if (c.resumeToken) welcomeFlags |= 32;               // bit 5: a resume token (u64) follows
+            if (c.resumed) welcomeFlags |= 64;                   // bit 6: your old state was restored (also on a resent Welcome)
             if (welcomeFlags) w.Write(welcomeFlags);
             if (welcomeFlags & 2) w.Write(HostTickRate());
+            if (welcomeFlags & 16) WriteU64(w, c.cookie);
+            if (welcomeFlags & 32) WriteU64(w, c.resumeToken);
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
+                if (haveResumed && m_peerResumed) {
+                    ResumedPeer rp; rp.id = c.id; rp.position = resumed.pos; rp.hasPosition = resumed.hasState;
+                    rp.score = c.score; rp.ready = c.ready;
+                    m_peerResumed(rp);
+                }
                 // Full sync: send every current synced variable to the newcomer.
                 for (auto& [k, v] : m_syncVars) {
                     net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
@@ -1957,9 +3128,16 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            std::string senderRoom;
             {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
-                if (cl == m_clients.end()) continue;
+                if (cl == m_clients.end() || !CookieOk(cl->second, p) || !rateOk(cl->second, len)) continue;
+                senderRoom = cl->second.room;
+                // Sized like a variable, and not a key factory: a client makes
+                // at most kMaxClientVars keys of its own.
+                const bool isNew = !m_syncVars.count(key);
+                if (key.empty() || key.size() > kMaxVarKey || value.size() > kMaxVarValue ||
+                    (isNew && cl->second.varsCreated >= kMaxClientVars)) continue;
                 if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) {
                     // Put the sender's copy back to the server's value (it set it locally first).
                     if (m_clients.count(from)) {
@@ -1969,10 +3147,22 @@ void NetworkManager::ServerTick(float dt) {
                     }
                     continue;
                 }
+                // A counter the rules name (detect.economy): the detector checks the claimed value against what the server expects.
+                if (anticheat.DetectOn() && anticheat.detector.settings.FindEconomy(key)) {
+                    char* end = nullptr;
+                    const float v = std::strtof(value.c_str(), &end);
+                    if (end && end != value.c_str() && *end == '\0') anticheat.detector.OnClaimedValue(cl->second.id, key, v, anticheat.Clock());
+                    else anticheat.detector.OnMalformed(cl->second.id, "economy value unreadable", anticheat.Clock());
+                    if (anticheat.detector.KickRequested(cl->second.id)) { AntiCheatAfterRefusal(cl->second.id); continue; }
+                }
             }
+            if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
+            // A client's write goes to its own room (the host applies every one).
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
-            for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
+            for (auto& [ep, c] : m_clients)
+                if (c.room == senderRoom) SendDatagram(c.endpoint, out.Data(), out.Size());
         } else if (type == ClockPong) {
             // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
             auto it = m_clients.find(from);
@@ -1985,7 +3175,10 @@ void NetworkManager::ServerTick(float dt) {
             Client& c = it->second;
             if (nonce == c.pingNonce && c.pingNonce != 0) {   // its round trip, for hit claims
                 const float rtt = static_cast<float>((m_acClockMs - c.pingSentMs) / 1000.0);
-                c.rtt = c.rtt < 0.0f ? rtt : c.rtt * 0.75f + rtt * 0.25f;
+                c.rttSamples[c.rttNext] = rtt;
+                c.rttNext = (c.rttNext + 1) % 8;
+                if (c.rttCount < 8) ++c.rttCount;
+                c.rtt = *std::min_element(c.rttSamples, c.rttSamples + c.rttCount);
                 c.pingNonce = 0;
             }
             if (!c.clock) continue;
@@ -2002,8 +3195,8 @@ void NetworkManager::ServerTick(float dt) {
                 AntiCheatAfterRefusal(id);   // (may kick: c is gone after this)
             }
         } else if (type == InputCmd) {
-            // A player's inputs (authoritative movement): queued by number, one
-            // applied per tick (ServerMovementTick).
+            // A player's inputs (authoritative movement): queued by number.
+            // ServerMovementTick applies one a tick, or two while a hitch drains.
             auto it = m_clients.find(from);
             if (it == m_clients.end() || !authoritativeMovement) continue;
             Client& c = it->second;
@@ -2028,21 +3221,39 @@ void NetworkManager::ServerTick(float dt) {
                 in.yaw = p.ReadF32(); in.pitch = p.ReadF32();
                 in.held = p.ReadU32(); in.pressed = p.ReadU32();
                 if (!p.Ok()) break;
-                if (seq <= c.lastInputSeq || c.inputs.count(seq)) continue;   // applied, or a repeat
+                bool seenDrop = false;
+                for (std::uint8_t d = 0; d < c.droppedN; ++d) if (c.droppedSeq[d] == seq) { seenDrop = true; break; }
+                if (seq <= c.lastInputSeq || c.inputs.count(seq) || seenDrop) continue;   // applied, queued, or a dropped newest
                 // Commands for ticks too far ahead of or behind the server's are refused.
                 if (std::fabs((double)tick - (double)m_netTick) > rate) { ++m_inputsDropped; continue; }
                 in.Clamp();
+                if (anticheat.DetectOn()) {   // what the player asked for: ghost movement, aim snaps, jump spam
+                    const double now = anticheat.Clock();
+                    anticheat.detector.OnInput(c.id, in.move.x, in.move.y, now);
+                    anticheat.detector.OnAim(c.id, in.yaw, in.pitch, now);
+                    if (in.Pressed(PlayerInput::Jump)) anticheat.detector.OnJump(c.id, now);
+                }
                 c.inputs[seq] = {tick, in};
             }
-            // The tick budget: one input a tick; a client sending faster (a speed
-            // hack) only fills the queue, and the oldest beyond it are dropped.
+            // Past the budget, drop the newest input, not the oldest unapplied one
+            // (that one may be a jump still waiting). Its press is kept and applied
+            // with the next input that does run; the seq is remembered so the
+            // client's resend of it doesn't run twice.
             while (c.inputs.size() > kMaxQueuedInputs) {
-                c.lastInputSeq = std::max(c.lastInputSeq, c.inputs.begin()->first);
-                c.inputs.erase(c.inputs.begin());
+                auto last = std::prev(c.inputs.end());
+                c.droppedPressed |= last->second.second.pressed;
+                if (c.droppedN < 8) c.droppedSeq[c.droppedN++] = last->first;
+                else {
+                    for (int d = 1; d < 8; ++d) c.droppedSeq[d - 1] = c.droppedSeq[d];
+                    c.droppedSeq[7] = last->first;
+                }
+                c.inputs.erase(last);
                 ++m_inputsDropped;
             }
         } else if (type == Ping) {
-            // Echo the client's timestamp straight back so it can measure RTT.
+            // Echo the client's timestamp straight back so it can measure RTT
+            // (a joined client's, or one mid-join: not a stranger's).
+            if (!m_clients.count(from) && !m_pendingJoins.count(from)) continue;
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
             SendDatagram(from, pong.Data(), pong.Size());
@@ -2056,9 +3267,11 @@ void NetworkManager::ServerTick(float dt) {
                 std::uint32_t seq = p.ReadU32();
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                // Over the rate: not acked either, so the client sends it again later.
+                if (!it->second.relSeen.Seen(seq) && !rateOk(it->second, len)) continue;
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second)) continue;   // a repeat, or spam
+                if (!it->second.relSeen.Accept(seq)) continue;   // a repeat (the rate was charged before the ack)
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
@@ -2066,9 +3279,31 @@ void NetworkManager::ServerTick(float dt) {
         } else if (type == ReliableAck) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
+        } else if (type == net::kSnapDelta || type == net::kSnapAck) {
+            auto it = m_clients.find(from);
+            if (it == m_clients.end() || !rateOk(it->second, len)) continue;
+            std::size_t body = len;
+            if (it->second.cookie) {
+                if (len < 8) continue;
+                net::Packet ck(data + len - 8, 8);
+                if (!CookieOk(it->second, ck)) continue;
+                body = len - 8;
+            }
+            if (type == net::kSnapAck) {
+                std::uint32_t id = 0;
+                if (net::DecodeSnapAck(data, body, id)) NoteSnapAck(it->second.snapOut, id);
+            } else {
+                OnSnapDelta(it->second.snapIn, data, body, from, &it->second);
+            }
+        } else if (type == net::kChanRel || type == net::kChanRelAck || type == net::kChanSeq) {
+            auto it = m_clients.find(from);
+            if (it == m_clients.end()) continue;
+            if (type == net::kChanRel) OnOrdered(it->second.pipes, from, it->second.id, &it->second, p, len);
+            else if (type == net::kChanRelAck) OnOrderedAck(it->second.pipes, p);
+            else OnSequencedFromClient(it->second, p, len);
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;
                 p.ReadU32();                              // sender-reported id (ignored)
                 std::uint32_t target = p.ReadU32();
@@ -2097,14 +3332,21 @@ void NetworkManager::ServerTick(float dt) {
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
                 Client& c = it->second;
-                if (!c.pawn.empty()) {   // authoritative movement: where it is is the server's call
+                if (p.Remaining() == 4 || p.Remaining() == 12) p.ReadU32();   // its net tick
+                if (!CookieOk(c, p)) continue;
+                if (authoritativeMovement) {   // where a player is is the server's call, claimed or not
                     c.state.glyph = s.glyph;
                     c.lastSeen = 0.0f;
                     continue;
                 }
                 c.lastSeen = 0.0f;
-                if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
-                if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
+                if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) {   // garbage
+                    if (anticheat.DetectOn()) anticheat.detector.OnMalformed(c.id, "state: not finite", anticheat.Clock());
+                    continue;
+                }
+                if (anticheat.DetectOn() && m_serverTime >= c.teleportUntil)
+                    anticheat.detector.OnMove(c.id, "@avatar", Vec3(s.x, s.y, s.z), anticheat.Clock());
+                if (maxMoveSpeed > 0.0f && c.hasState && m_serverTime >= c.teleportUntil) {   // too fast? keep the last good spot
                     const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
                     // At most a quarter second of travel, however long it was quiet:
                     // going silent mustn't bank a long jump (a bigger gap is
@@ -2112,6 +3354,7 @@ void NetworkManager::ServerTick(float dt) {
                     const float allowed = maxMoveSpeed * std::min(std::max(c.stateAge, m_snapshotInterval), 0.25f) * 1.25f + 0.25f;
                     if (dx * dx + dy * dy + dz * dz > allowed * allowed) {
                         ++c.violations;
+                        if (anticheat.DetectOn()) anticheat.detector.OnCorrection(c.id, anticheat.Clock());
                         net::Packet cp(Correct); cp.Write(c.state.x); cp.Write(c.state.y); cp.Write(c.state.z);
                         SendDatagram(c.endpoint, cp.Data(), cp.Size());
                         if (kickAfterViolations > 0 && c.violations >= kickAfterViolations)
@@ -2126,26 +3369,19 @@ void NetworkManager::ServerTick(float dt) {
             }
         } else if (type == Leave) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end()) {
-                std::uint32_t id = it->second.id;
-                if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-                    if (GetScene() && r->second) GetScene()->Destroy(r->second);
-                    m_remotes.erase(r);
-                }
-                m_clients.erase(it);
-                anticheat.ForgetPeer(id);
-                m_recentCheats.erase(id);
-                for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-                if (m_peerLeft) m_peerLeft(id);
+            p.ReadU32();   // sender-reported id (ignored)
+            if (it != m_clients.end() && CookieOk(it->second, p)) {
+                ReleaseClient(it);
             }
         } else if (type == Message) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;   // endpoint is the source of truth
                 const std::string senderRoom = it->second.room;
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!CookieOk(it->second, p)) continue;
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // never relayed
                 if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
@@ -2166,23 +3402,18 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_pendingJoins.begin(); it != m_pendingJoins.end();)   // key exchanges never finished
         it = (it->second.age += dt) > kPendingJoinTtl ? m_pendingJoins.erase(it) : std::next(it);
 
+    for (auto pk = m_parked.begin(); pk != m_parked.end();)
+        pk = (pk->age += dt) > resumeGraceSeconds ? m_parked.erase(pk) : std::next(pk);
+
     // Time out silent clients (and age the move-check / rate-limit windows).
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
-            std::uint32_t id = it->second.id;
-            if (auto r = m_remotes.find(id); r != m_remotes.end()) {
-                if (GetScene() && r->second) GetScene()->Destroy(r->second);
-                m_remotes.erase(r);
-            }
-            it = m_clients.erase(it);
-            anticheat.ForgetPeer(id);
-            m_recentCheats.erase(id);
-            for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
-            if (m_peerLeft) m_peerLeft(id);
+            auto dead = it++;
+            ReleaseClient(dead);
         } else {
             ++it;
         }
@@ -2306,7 +3537,12 @@ void NetworkManager::ServerTick(float dt) {
     }
 
     // Resend any unacked reliable messages to each client.
-    for (auto& [ep, c] : m_clients) ResendReliable(c.relOut, c.endpoint, dt);
+    for (auto& [ep, c] : m_clients) {
+        ResendReliable(c.relOut, c.endpoint, dt);
+        std::vector<std::vector<std::uint8_t>> due;
+        c.pipes.ordered.CollectResend(dt, due);
+        for (const auto& bytes : due) SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    }
 }
 
 void NetworkManager::ClientTick(float dt) {
@@ -2377,6 +3613,7 @@ void NetworkManager::ClientTick(float dt) {
                 p.Write(std::string(pk.begin(), pk.end()));
             }
             if (m_keyed) p.Write(kJoinVersion);
+            if (m_resumeToken) WriteU64(p, m_resumeToken);   // rejoining: take our old state back
             // Step 2 of the sealed join goes encrypted; the plaintext Join is pre-handshake.
             SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/m_keyed);
             m_joinTimer = 0.5f;
@@ -2390,14 +3627,21 @@ void NetworkManager::ClientTick(float dt) {
             m_pingTimer = 1.0f;
         }
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
+        {
+            std::vector<std::vector<std::uint8_t>> due;
+            m_toServer.ordered.CollectResend(dt, due);
+            for (const auto& bytes : due) SendDatagram(m_serverEp, bytes.data(), bytes.size());
+        }
     }
 
     PruneFragments(dt);
     static thread_local std::vector<std::uint8_t> buf(net::kMaxDatagram);
     net::Endpoint from;
     int n;
+    bool heard = false;   // any datagram from our server this tick
     while ((n = ReceiveFrom(buf.data(), buf.size(), from)) > 0) {
         if (!(from == m_serverEp)) continue;   // only our server talks to us
+        heard = true;
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;
@@ -2447,6 +3691,9 @@ void NetworkManager::ClientTick(float dt) {
                 if (!pinnedHostKey.empty()) {
                     if (!m_pinWarned) OKAY_ERROR("net: the server has encryption off, so its pinned key can't be checked; not joining");
                     m_pinWarned = true;
+                    m_joinRejected = true;
+                    m_joinRejectReason = "the server has encryption off, so its pinned key can't be checked";
+                    m_joinTimer = 1e9f;   // stop retrying
                     continue;
                 }
                 m_legacyJoin = true;
@@ -2462,9 +3709,12 @@ void NetworkManager::ClientTick(float dt) {
                                     sig.size() == sg.size();
                 if (shaped) { std::copy(pin.begin(), pin.end(), pk.begin()); std::copy(sig.begin(), sig.end(), sg.begin()); }
                 if (!shaped || !okayac::ed25519::Verify(JoinKeyMessage(serverPk, std::string(mine.begin(), mine.end())), sg, pk)) {
-                    // Not the pinned host (or a forgery): ignore it, the real one may still answer.
-                    if (!m_pinWarned) OKAY_WARN("net: ", m_serverEp.ToString(), " didn't prove the pinned host key; ignoring it");
+                    // Not the pinned host. Stop: waiting forever looks like a hang.
+                    if (!m_pinWarned) OKAY_WARN("net: ", m_serverEp.ToString(), " didn't prove the pinned host key");
                     m_pinWarned = true;
+                    m_joinRejected = true;
+                    m_joinRejectReason = "server identity doesn't match the pinned key";
+                    m_joinTimer = 1e9f;
                     continue;
                 }
             }
@@ -2492,21 +3742,42 @@ void NetworkManager::ClientTick(float dt) {
                 const float rate = p.ReadF32();
                 if (p.Ok() && std::isfinite(rate) && rate >= 1.0f && rate <= 240.0f) m_hostTickRate = rate;
             }
+            if (p.Ok() && (welcomeFlags & 16)) {   // an unencrypted session's cookie, for what we send
+                const std::uint64_t cookie = ReadU64(p);
+                if (p.Ok()) m_sessionCookie = cookie;
+            }
+            if (p.Ok() && (welcomeFlags & 32)) {   // a token to resume with if we drop
+                const std::uint64_t t = ReadU64(p);
+                if (p.Ok()) m_resumeToken = t;
+            }
+            m_resumed = p.Ok() && (welcomeFlags & 64) != 0;
             if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
             m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
             m_joined = true;
             m_joinRejected = false;
+            m_joinRejectReason.clear();
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
         } else if (type == Reject) {
             std::string why = p.ReadString();
+            if (!m_joined && !encryption && net::SecureChannel::Available() && why.rfind(kNeedsEncryption, 0) == 0) {
+                // The host only takes encrypted players: join again, sealed.
+                encryption = true;
+                m_secure.GenerateKeys();
+                m_joinTimer = 0.0f;
+                OKAY_INFO("net: ", m_serverEp.ToString(), " requires encryption; joining encrypted");
+                continue;
+            }
             m_joinRejected = true;
+            m_joinRejectReason = why;
             m_joinTimer = 1e9f;      // stop retrying
             OKAY_WARN("net: join refused: ", why);
         } else if (type == Kicked) {
             m_kickReason = p.ReadString();
             m_kicked = true;
             OKAY_WARN("net: kicked by server: ", m_kickReason);
+            const bool wasTrying = m_reconnecting;
             Stop();
+            if (wasTrying) { m_reconnectGaveUp = true; if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::GaveUp, m_reconnectAttempt); }
             return;
         } else if (type == ReliableMsg) {
             std::uint32_t seq = p.ReadU32();
@@ -2517,6 +3788,17 @@ void NetworkManager::ClientTick(float dt) {
             if (m_relSeen.Accept(seq)) Deliver(0, channel, data);
         } else if (type == ReliableAck) {
             m_relOut.erase(p.ReadU32());
+        } else if (type == net::kSnapDelta) {
+            OnSnapDelta(m_snapDown, data, len, m_serverEp, nullptr);
+        } else if (type == net::kSnapAck) {
+            std::uint32_t id = 0;
+            if (net::DecodeSnapAck(data, len, id)) NoteSnapAck(m_snapUp, id);
+        } else if (type == net::kChanRel) {
+            OnOrdered(m_toServer, m_serverEp, 0, nullptr, p, len);
+        } else if (type == net::kChanRelAck) {
+            OnOrderedAck(m_toServer, p);
+        } else if (type == net::kChanSeq) {
+            OnSequencedFromServer(p);
         } else if (type == Snapshot) {
             std::uint32_t count = p.ReadU32();
             for (std::uint32_t i = 0; i < count && p.Ok(); ++i) {
@@ -2532,7 +3814,12 @@ void NetworkManager::ClientTick(float dt) {
                 // Forward only (snapshots arrive out of order), unless we're more
                 // than a second ahead of the host: then start again from its tick.
                 if (p.Ok() && (tick > m_netTick || (double)m_netTick - (double)tick > m_hostTickRate)) {
-                    m_netTick = tick; m_tickAccum = 0.0f;
+                    // Moving forward keeps the fraction of the tick already
+                    // accumulated, so a snapshot doesn't reset the send phase.
+                    // More than a second ahead of the host: start again from its tick.
+                    const bool resync = (double)m_netTick - (double)tick > (double)m_hostTickRate;
+                    m_netTick = tick;
+                    if (resync) m_tickAccum = 0.0f;
                 }
                 if (m_hostAuthoritative) {   // the newest input the host applied for us
                     const std::uint32_t acked = p.ReadU32();
@@ -2547,6 +3834,7 @@ void NetworkManager::ClientTick(float dt) {
         } else if (type == SyncVar) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
         } else if (type == Correct) {
             // The server rejected a move (or teleported us): go where it says.
@@ -2566,7 +3854,22 @@ void NetworkManager::ClientTick(float dt) {
                 e.score = p.ReadI32(); e.seconds = p.ReadF32();
                 list.push_back(e);
             }
-            if (p.Ok()) m_roster = std::move(list);
+            if (p.Ok()) {
+                m_roster = std::move(list);
+                // A player who left is no longer in the roster the host sends every second:
+                // its stand-in goes too (after two rosters without it, so one that arrives
+                // late and out of order can't remove somebody who just joined).
+                for (auto r = m_remotes.begin(); r != m_remotes.end();) {
+                    bool listed = false;
+                    for (const auto& e : m_roster) if (e.id == r->first) { listed = true; break; }
+                    if (listed) { m_remoteMissing.erase(r->first); ++r; continue; }
+                    if (++m_remoteMissing[r->first] < 2) { ++r; continue; }
+                    if (GetScene() && r->second) GetScene()->Destroy(r->second);
+                    m_remoteTarget.erase(r->first);
+                    m_remoteMissing.erase(r->first);
+                    r = m_remotes.erase(r);
+                }
+            }
         } else if (type == ClockPing) {
             // The server's clock heartbeat: answer with our game clock.
             const std::uint64_t nonce = ReadU64(p);
@@ -2584,7 +3887,58 @@ void NetworkManager::ClientTick(float dt) {
             if (m_rtt < 0.0f) m_rtt = 0.0f;
         }
     }
-    if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
+    if (m_relayLost) {   // host gone or changed, or refused (RelayError())
+        if (m_reconnectTrying) { FailReconnectTry(); return; }
+        if (m_joined && autoReconnect && m_lastConn.kind) {
+            m_connectionLost = true;
+            m_connectionLostReason = m_relayError.empty() ? "the relay session ended" : m_relayError;
+            BeginReconnect();
+            return;
+        }
+        Stop();
+        return;
+    }
+
+    // A server that stops answering ends the session instead of leaving a
+    // frozen world; the join gives up the same way. A hitch on this machine
+    // doesn't count: datagrams queued meanwhile are read above first.
+    if (heard) {
+        m_serverSilence = 0.0f;
+        m_joinWait = 0.0f;
+    } else if (m_joined) {
+        m_serverSilence += dt;
+        if (serverTimeoutSeconds > 0.0f && m_serverSilence >= serverTimeoutSeconds) {
+            m_connectionLost = true;
+            m_connectionLostReason = "the host stopped responding";
+            OKAY_WARN("net: no word from ", m_serverEp.ToString(), " for ", serverTimeoutSeconds, " s; leaving the session");
+            if (autoReconnect && m_lastConn.kind) BeginReconnect();
+            else Stop();
+            return;
+        }
+    } else if (!awaitingRelay && !m_joinRejected) {
+        m_joinWait += dt;
+        if (joinTimeoutSeconds > 0.0f && m_joinWait >= joinTimeoutSeconds) {
+            m_joinRejected = true;
+            m_joinRejectReason = "the host did not answer";
+            m_joinTimer = 1e9f;   // stop retrying
+            OKAY_WARN("net: no answer from ", m_serverEp.ToString(), " after ", joinTimeoutSeconds, " s");
+        }
+    }
+
+    if (m_reconnectTrying) {
+        if (m_joined) {
+            m_reconnecting = false; m_reconnectTrying = false;
+            m_connectionLost = false; m_connectionLostReason.clear();
+            ++m_reconnectCount;
+            OKAY_INFO("net: rejoined '", m_serverName, "' as peer ", m_localId, m_resumed ? " (state resumed)" : "");
+            if (m_wasReady) SetReady(true);
+            ReannounceOwnSpawns();
+            if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Restored, m_reconnectAttempt);
+        } else if (m_joinRejected) {
+            FailReconnectTry();
+            return;
+        }
+    }
 
     // Authoritative movement: sample this frame's input for the next tick's
     // command (a press between ticks still counts).
@@ -2628,6 +3982,7 @@ void NetworkManager::ClientTick(float dt) {
         p.Write(lp.x); p.Write(lp.y); p.Write(lp.z);
         p.Write(std::uint8_t(m_localGlyph));
         if (m_hostTickRate > 0.0f) p.Write(m_netTick);   // trailing: an older host stops reading before it
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
         ++m_statesSent;
     }

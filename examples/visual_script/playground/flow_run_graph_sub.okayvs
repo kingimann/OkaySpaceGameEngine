@@ -1,0 +1,10 @@
+# Called by flow_run_graph.okayvs through Run Another Graph. It writes from_sub on the caller's object.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Const 7
+pos 2 40 220
+node 3 SetVar from_sub
+pos 3 320 40
+exec 1 0 3
+data 3 0 2 0

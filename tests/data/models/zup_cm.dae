@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- Hand-written test fixture: Z_UP and centimetres, one polygon (a pentagon) without normals or UVs. -->
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><unit name="centimeter" meter="0.01"/><up_axis>Z_UP</up_axis></asset>
+  <library_geometries>
+    <geometry id="pent" name="Pent">
+      <mesh>
+        <source id="pent-pos">
+          <float_array id="pent-pos-a" count="15">0 0 0  100 0 0  150 100 0  50 180 100  -50 100 0</float_array>
+          <technique_common><accessor source="#pent-pos-a" count="5" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common>
+        </source>
+        <vertices id="pent-vtx"><input semantic="POSITION" source="#pent-pos"/></vertices>
+        <polygons count="1">
+          <input semantic="VERTEX" source="#pent-vtx" offset="0"/>
+          <p>0 1 2 3 4</p>
+        </polygons>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="S"><node id="N" name="N"><instance_geometry url="#pent"/></node></visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#S"/></scene>
+</COLLADA>

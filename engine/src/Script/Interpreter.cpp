@@ -34,6 +34,8 @@ std::string ValueToString(const Value& v) {
         std::string operator()(const ArrayRef& a) const { return a ? a->typeName : "null"; }
         std::string operator()(const ObjPtr& o) const { return o ? o->className : "null"; }
         std::string operator()(const DictRef& d) const { return d ? d->typeName : "null"; }
+        std::string operator()(const FuncRef& f) const { return f ? f->typeName : "null"; }
+        std::string operator()(const CellRef& c) const { return c ? std::visit(*this, c->v) : "null"; }
     };
     return std::visit(V{}, v);
 }
@@ -122,6 +124,43 @@ constexpr std::int64_t kMaxArrayLength = 1'000'000;
 // Wrapping int arithmetic (like C#), done in unsigned to stay well-defined.
 std::int32_t Wrap(std::int64_t v) { return (std::int32_t)(std::uint32_t)(std::uint64_t)v; }
 
+// How deeply script calls are nested right now, across every script (a lambda can
+// call into the script that made it), so endless recursion stops with an error.
+thread_local int g_depth = 0;
+constexpr int kMaxDepth = 200;
+struct DepthGuard {
+    DepthGuard(const std::string& what, SrcLoc loc) {
+        if (g_depth >= kMaxDepth) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", loc);
+        ++g_depth;
+    }
+    ~DepthGuard() { --g_depth; }
+};
+
+// A stable merge sort of 0..n-1 by `less`. Unlike std::sort it stays in bounds
+// whatever `less` answers (a script's comparison can be inconsistent).
+template <typename Less>
+std::vector<std::size_t> SafeOrder(std::size_t n, Less less) {
+    std::vector<std::size_t> a(n), b(n);
+    for (std::size_t i = 0; i < n; ++i) a[i] = i;
+    for (std::size_t w = 1; w < n; w *= 2) {
+        for (std::size_t lo = 0; lo < n; lo += 2 * w) {
+            const std::size_t mid = std::min(lo + w, n), hi = std::min(lo + 2 * w, n);
+            std::size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi) b[k++] = less(a[j], a[i]) ? a[j++] : a[i++];
+            while (i < mid) b[k++] = a[i++];
+            while (j < hi) b[k++] = a[j++];
+        }
+        std::swap(a, b);
+    }
+    return a;
+}
+std::vector<Value> Reorder(const std::vector<Value>& items, const std::vector<std::size_t>& order) {
+    std::vector<Value> out;
+    out.reserve(order.size());
+    for (std::size_t i : order) out.push_back(items[i]);
+    return out;
+}
+
 class Exec {
 public:
     Exec(const Program& p, std::vector<Value>& fields, CallContext& ctx, Instance& inst)
@@ -129,19 +168,32 @@ public:
 
     Value CallMethod(int index, std::vector<Value>& args) {
         const MethodDecl& m = prog_.classes[(std::size_t)cls_].methods[(std::size_t)index];
-        if (++depth_ > 200) { --depth_; throw RuntimeError(m.name + "() calls itself too deeply (endless recursion?)", m.loc); }
+        DepthGuard depth(m.name + "()", m.loc);
         std::vector<Value> frame((std::size_t)std::max(m.localCount, (int)m.params.size()));
         for (std::size_t i = 0; i < m.params.size() && i < args.size(); ++i) frame[i] = args[i];
         std::vector<Value>* saved = locals_;
+        const FuncObj* savedFn = fn_;
         locals_ = &frame;
+        fn_ = nullptr;
         Value ret;
         try {
             Flow f = Run(*m.body);
             if (f == Flow::Return) ret = std::move(retVal_);
-        } catch (...) { locals_ = saved; --depth_; throw; }
+        } catch (...) { locals_ = saved; fn_ = savedFn; throw; }
         locals_ = saved;
-        --depth_;
+        fn_ = savedFn;
         return ret;
+    }
+
+    // Call a lambda value. It runs as code of the object that made it, which may
+    // be another script object running the same program.
+    Value Invoke(const FuncRef& f, std::vector<Value>& args, SrcLoc loc) {
+        if (f->alive.expired()) throw RuntimeError("This function belongs to a script that was destroyed", loc);
+        if (f->inst != &inst_ || f->prog.get() != &prog_) {
+            Exec other(*f->prog, f->inst->Fields(), f->inst->Context(), *f->inst);
+            return other.RunFunc(*f, args, loc);
+        }
+        return RunFunc(*f, args, loc);
     }
 
     Value EvalStandalone(const Expr& e) { return Eval(e); }
@@ -157,8 +209,59 @@ private:
     Instance& inst_;
     const EngineApi& api_;
     std::vector<Value>* locals_ = nullptr;
+    const FuncObj* fn_ = nullptr;   ///< the lambda running now (its captures)
     Value retVal_;
-    int depth_ = 0;
+
+    Value RunFunc(const FuncObj& f, std::vector<Value>& args, SrcLoc loc) {
+        const LambdaDecl& L = *f.decl;
+        DepthGuard depth("This lambda", loc);
+        std::vector<Value> frame((std::size_t)std::max(L.localCount, (int)L.params.size()));
+        for (std::size_t i = 0; i < L.params.size() && i < args.size(); ++i) frame[i] = args[i];
+        std::vector<Value>* self = self_;
+        std::vector<Value>* locals = locals_;
+        const FuncObj* fn = fn_;
+        const int cls = cls_;
+        ObjPtr savedThis = std::move(this_);
+        self_ = f.self ? &f.self->fields : &inst_.Fields();
+        cls_ = f.cls;
+        this_ = f.self;
+        locals_ = &frame;
+        fn_ = &f;
+        auto restore = [&] { self_ = self; locals_ = locals; fn_ = fn; cls_ = cls; this_ = std::move(savedThis); };
+        Value ret;
+        try {
+            if (L.value) {
+                ret = Eval(*L.value);
+                if (L.ret.kind == TK::Void) ret = Value{};
+            } else if (Run(*L.body) == Flow::Return) {
+                ret = std::move(retVal_);
+            }
+        } catch (...) { restore(); throw; }
+        restore();
+        return ret;
+    }
+    Value Call1(const FuncRef& f, const Value& x, SrcLoc loc) { std::vector<Value> a{x}; return Invoke(f, a, loc); }
+
+    // A lambda value: what it captures is shared with the code that made it.
+    Value MakeLambda(const Expr& e) {
+        const LambdaDecl& L = *e.lambda;
+        auto f = std::make_shared<FuncObj>();
+        f->decl = &L;
+        f->prog = inst_.programPtr();
+        f->inst = &inst_;
+        f->alive = inst_.AliveToken();
+        if (L.usesSelf) f->self = this_;
+        f->cls = cls_;
+        f->typeName = prog_.NameOf(e.type);
+        f->captures.reserve(L.captureFrom.size());
+        for (int from : L.captureFrom) {
+            if (from < 0) { f->captures.push_back(fn_->captures[(std::size_t)(-1 - from)]); continue; }
+            Value& slot = (*locals_)[(std::size_t)from];   // the local moves into a cell both share from now on
+            if (!std::holds_alternative<CellRef>(slot)) slot = Value{std::make_shared<Cell>(Cell{std::move(slot)})};
+            f->captures.push_back(std::get<CellRef>(slot));
+        }
+        return Value{std::move(f)};
+    }
 
     void Step(SrcLoc loc) {
         if (++inst_.steps > inst_.stepLimit)
@@ -360,6 +463,7 @@ private:
             }
         }
         ArrayObj& l = *std::get<ArrayRef>(c);
+        if (op >= CollOp::Where) return Linq(e, l, a);
         auto find = [&](const Value& v) -> std::int64_t {
             for (std::size_t i = 0; i < l.items.size(); ++i) if (Equal(l.items[i], v)) return (std::int64_t)i;
             return -1;
@@ -400,12 +504,7 @@ private:
             case CollOp::ListContains: return Value{find(a[0]) >= 0};
             case CollOp::ListIndexOf: return Value{(std::int32_t)find(a[0])};
             case CollOp::ListSort:   // numbers, text or enums (the checker allows nothing else)
-                std::stable_sort(l.items.begin(), l.items.end(), [](const Value& x, const Value& y) {
-                    if (auto* s = std::get_if<std::string>(&x)) return *s < std::get<std::string>(y);
-                    if (std::holds_alternative<std::int32_t>(x) && std::holds_alternative<std::int32_t>(y))
-                        return std::get<std::int32_t>(x) < std::get<std::int32_t>(y);
-                    return AsF(x) < AsF(y);
-                });
+                l.items = Reorder(l.items, SafeOrder(l.items.size(), [&](std::size_t i, std::size_t j) { return KeyCompare(l.items[i], l.items[j]) < 0; }));
                 ++l.version;
                 return Value{};
             case CollOp::ListReverse: std::reverse(l.items.begin(), l.items.end()); ++l.version; return Value{};
@@ -414,6 +513,137 @@ private:
                 out->typeName = prog_.NameOf(e.type);
                 out->items = l.items;
                 return Value{std::move(out)};
+            }
+            default: return Value{};
+        }
+    }
+
+    // Sorting order of numbers, text and enums; NaN comes first, as in C#.
+    static int KeyCompare(const Value& x, const Value& y) {
+        if (auto* s = std::get_if<std::string>(&x)) { const std::string& t = std::get<std::string>(y); return *s < t ? -1 : t < *s ? 1 : 0; }
+        if (std::holds_alternative<std::int32_t>(x) && std::holds_alternative<std::int32_t>(y)) {
+            const std::int32_t a = std::get<std::int32_t>(x), b = std::get<std::int32_t>(y);
+            return a < b ? -1 : b < a ? 1 : 0;
+        }
+        const float a = AsF(x), b = AsF(y);
+        if (std::isnan(a) || std::isnan(b)) return std::isnan(a) ? (std::isnan(b) ? 0 : -1) : 1;
+        return a < b ? -1 : b < a ? 1 : 0;
+    }
+
+    // The LINQ-style methods and the List methods that take a lambda. They work on
+    // a copy of the items, so a lambda that changes the list can't upset them.
+    Value Linq(const Expr& e, ArrayObj& l, std::vector<Value>& a) {
+        const CollOp op = (CollOp)e.member;
+        const std::vector<Value> items = l.items;
+        FuncRef fn;
+        if (!a.empty()) {
+            if (auto* f = std::get_if<FuncRef>(&a[0])) fn = *f;
+            else throw RuntimeError("The function given to " + e.name + "() is null", e.args[0]->loc);
+        }
+        auto test = [&](const Value& x) { return AsB(Call1(fn, x, e.loc)); };
+        auto newList = [&](std::vector<Value> v) {
+            auto out = std::make_shared<ArrayObj>();
+            out->typeName = prog_.NameOf(e.type);
+            out->items = std::move(v);
+            return Value{std::move(out)};
+        };
+        const Type& ct = e.object->type;
+        const Type elem = ct.kind == TK::List ? prog_.generics[(std::size_t)ct.id].a : prog_.arrays[(std::size_t)ct.id];
+        switch (op) {
+            case CollOp::Where: case CollOp::FindAll: {
+                std::vector<Value> out;
+                for (const Value& x : items) if (test(x)) out.push_back(x);
+                return newList(std::move(out));
+            }
+            case CollOp::Select: {
+                std::vector<Value> out;
+                out.reserve(items.size());
+                for (const Value& x : items) out.push_back(Call1(fn, x, e.loc));
+                return newList(std::move(out));
+            }
+            case CollOp::OrderBy: case CollOp::OrderByDescending: {
+                std::vector<Value> keys;
+                keys.reserve(items.size());
+                for (const Value& x : items) keys.push_back(Call1(fn, x, e.loc));
+                const bool desc = op == CollOp::OrderByDescending;
+                return newList(Reorder(items, SafeOrder(items.size(), [&](std::size_t i, std::size_t j) {
+                    const int c = KeyCompare(keys[i], keys[j]);
+                    return desc ? c > 0 : c < 0;
+                })));
+            }
+            case CollOp::First: case CollOp::FirstOrDefault: case CollOp::Last: case CollOp::LastOrDefault: {
+                const bool last = op == CollOp::Last || op == CollOp::LastOrDefault;
+                for (std::size_t k = 0; k < items.size(); ++k) {
+                    const Value& x = items[last ? items.size() - 1 - k : k];
+                    if (!fn || test(x)) return x;
+                }
+                if (op == CollOp::FirstOrDefault || op == CollOp::LastOrDefault) return DefaultFor(elem);
+                throw RuntimeError(std::string(last ? "Last()" : "First()") + " found nothing" + (fn ? " that matches" : "") + " in this " + l.typeName, e.loc);
+            }
+            case CollOp::Any:
+                for (const Value& x : items) if (!fn || test(x)) return Value{true};
+                return Value{false};
+            case CollOp::All:
+                for (const Value& x : items) if (!test(x)) return Value{false};
+                return Value{true};
+            case CollOp::Count: {
+                if (!fn) return Value{(std::int32_t)items.size()};
+                std::int32_t n = 0;
+                for (const Value& x : items) if (test(x)) ++n;
+                return Value{n};
+            }
+            case CollOp::Sum: case CollOp::Min: case CollOp::Max: case CollOp::Average: {
+                std::vector<Value> v;
+                if (fn) for (const Value& x : items) v.push_back(Call1(fn, x, e.loc));
+                else v = items;
+                const char* name = op == CollOp::Sum ? "Sum()" : op == CollOp::Min ? "Min()" : op == CollOp::Max ? "Max()" : "Average()";
+                if (v.empty() && op != CollOp::Sum) throw RuntimeError(std::string(name) + " of an empty " + l.typeName, e.loc);
+                const bool ints = e.type.kind == TK::Int;
+                if (op == CollOp::Min || op == CollOp::Max) {
+                    std::size_t best = 0;
+                    for (std::size_t i = 1; i < v.size(); ++i) {
+                        const int c = KeyCompare(v[i], v[best]);
+                        if (op == CollOp::Min ? c < 0 : c > 0) best = i;
+                    }
+                    return ints ? Value{AsI(v[best])} : Value{AsF(v[best])};
+                }
+                if (ints && op == CollOp::Sum) {   // like C#: a sum too big for an int is an error, not a wrong number
+                    std::int64_t sum = 0;
+                    for (const Value& x : v) {
+                        sum += AsI(x);
+                        if (sum > INT32_MAX || sum < INT32_MIN) throw RuntimeError("Sum() is too big for an int", e.loc);
+                    }
+                    return Value{(std::int32_t)sum};
+                }
+                double sum = 0;
+                for (const Value& x : v) sum += std::holds_alternative<std::int32_t>(x) ? (double)std::get<std::int32_t>(x) : (double)AsF(x);
+                if (op == CollOp::Average) sum /= (double)v.size();
+                return Value{(float)sum};
+            }
+            case CollOp::ToList: return newList(items);
+            case CollOp::Find:
+                for (const Value& x : items) if (test(x)) return x;
+                return DefaultFor(elem);
+            case CollOp::FindIndex:
+                for (std::size_t i = 0; i < items.size(); ++i) if (test(items[i])) return Value{(std::int32_t)i};
+                return Value{std::int32_t{-1}};
+            case CollOp::RemoveAll: {
+                std::vector<Value> keep;
+                for (const Value& x : items) if (!test(x)) keep.push_back(x);
+                const std::int32_t removed = (std::int32_t)(items.size() - keep.size());
+                if (removed > 0) { l.items = std::move(keep); ++l.version; }
+                return Value{removed};
+            }
+            case CollOp::ForEach:
+                for (const Value& x : items) Call1(fn, x, e.loc);
+                return Value{};
+            case CollOp::SortBy: {
+                l.items = Reorder(items, SafeOrder(items.size(), [&](std::size_t i, std::size_t j) {
+                    std::vector<Value> xy{items[i], items[j]};
+                    return AsI(Invoke(fn, xy, e.loc)) < 0;
+                }));
+                ++l.version;
+                return Value{};
             }
             default: return Value{};
         }
@@ -440,9 +670,8 @@ private:
         for (auto& a : e.args) args.push_back(Eval(*a));
         const ClassDecl& k = prog_.classes[(std::size_t)e.slot];
         // A field that starts as `new` of its own class would recurse in here forever.
-        if (depth_ >= 200) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc);
-        ++depth_;
-        struct Leave { int& d; ~Leave() { --d; } } leave{depth_};
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc);
+        DepthGuard depth(k.name, e.loc);
         auto o = std::make_shared<ScriptObj>();
         o->cls = e.slot;
         o->className = k.name;
@@ -572,6 +801,7 @@ private:
             case EK::NullCond:
                 try { return Eval(*e.lhs); } catch (const NullSkip&) { return Value{}; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
+            case EK::Lambda: return MakeLambda(e);
             case EK::Interp: {
                 std::string s;
                 for (auto& a : e.args) s += ValueToString(Eval(*a));
@@ -616,7 +846,12 @@ private:
             }
             case Bind::PairKey: case Bind::PairValue:
                 return std::get<ArrayRef>(Receiver(*e.object, e.nullCond))->items[e.bind == Bind::PairKey ? 0 : 1];
-            case Bind::Local: return (*locals_)[(std::size_t)e.slot];
+            case Bind::Local: {
+                const Value& v = (*locals_)[(std::size_t)e.slot];
+                if (auto* c = std::get_if<CellRef>(&v)) return (*c)->v;
+                return v;
+            }
+            case Bind::Captured: return fn_->captures[(std::size_t)e.slot]->v;
             case Bind::Field: return (*self_)[(std::size_t)e.slot];
             case Bind::StaticField: return inst_.Statics()[(std::size_t)e.slot];
             case Bind::SelfMember:
@@ -642,7 +877,13 @@ private:
     void Store(const Expr& e, const Value& v) {
         if (IsPlace(e)) { *PlaceOf(e).v = v; return; }
         switch (e.bind) {
-            case Bind::Local: (*locals_)[(std::size_t)e.slot] = v; return;
+            case Bind::Local: {
+                Value& slot = (*locals_)[(std::size_t)e.slot];
+                if (auto* c = std::get_if<CellRef>(&slot)) (*c)->v = v;
+                else slot = v;
+                return;
+            }
+            case Bind::Captured: fn_->captures[(std::size_t)e.slot]->v = v; return;
             case Bind::Field: (*self_)[(std::size_t)e.slot] = v; return;
             case Bind::StaticField: inst_.Statics()[(std::size_t)e.slot] = v; return;
             case Bind::SelfMember:
@@ -807,6 +1048,13 @@ private:
                 return CallMethod(e.slot, args);
             }
             case Bind::CollMethod: return CollCall(e);
+            case Bind::Invoke: {
+                const Value f = Receiver(*e.object, e.nullCond);   // held while it runs
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                return Invoke(std::get<FuncRef>(f), args, e.loc);
+            }
             case Bind::ObjMethod: {
                 ObjPtr o = std::get<ObjPtr>(Receiver(*e.object, e.nullCond));
                 std::vector<Value> args;

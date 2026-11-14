@@ -640,25 +640,29 @@ int main(int argc, char** argv) {
     // --- ColorPicker3: hue bar and SV square edit the color. ---
     {
         float rgb[3] = {1.0f, 0.0f, 0.0f};   // start red
-        auto click = [&](float mx, float my) {
-            release();
-            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
-            OkayUI::BeginFrame(a);
-            OkayUI::Begin("CPW", 10, 10, 260, 230);
-            OkayUI::ColorPicker3("##c", rgb);
-            OkayUI::End(); OkayUI::EndFrame(r);
-            a.mouseDown = false;
-            OkayUI::BeginFrame(a);
-            OkayUI::Begin("CPW", 10, 10, 260, 230);
+        float svx = 0, svy = 0, side = 0;     // the square's top-left and side, read from the layout as the picker lays it out
+        auto picker = [&]() {
+            OkayUI::Begin("CPW", 10, 10, 260, 400);
+            const OkayUI::Vec2 cp = OkayUI::GetCursorScreenPos();
+            svx = cp.x; svy = cp.y;
+            side = std::max(48.0f, std::min(OkayUI::GetContentRegionAvail().x - 26.0f, OkayUI::GetFrameHeight() * 7.0f));
             OkayUI::ColorPicker3("##c", rgb);
             OkayUI::End(); OkayUI::EndFrame(r);
         };
-        // Hue bar (right strip, x~205) about a third down -> green range.
-        click(205.0f, 103.0f);
+        auto click = [&](float mx, float my) {
+            release();
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
+            OkayUI::BeginFrame(a); picker();
+            a.mouseDown = false;
+            OkayUI::BeginFrame(a); picker();
+        };
+        { OkayUI::Input a; OkayUI::BeginFrame(a); picker(); }   // lay out once to learn the geometry
+        // Hue bar (right of the square, 18 px wide) about a third down -> green range.
+        click(svx + side + 8.0f + 9.0f, svy + side * 0.33f);
         CHECK(rgb[1] > rgb[0]);
         CHECK(rgb[1] > rgb[2]);
         // SV square top-left (low saturation, high value) -> desaturated/bright: blue rises.
-        click(24.0f, 50.0f);
+        click(svx + side * 0.1f, svy + side * 0.1f);
         CHECK(rgb[2] > 0.4f);
     }
 
@@ -902,6 +906,41 @@ int main(int argc, char** argv) {
         OkayUI::UseLauncherLook(false);
         CHECK(!OkayUI::LauncherLook() && OkayUI::Style().textScale == classicScale && OkayUI::Style().panel[0] == 40);
         SDL_DestroyRenderer(lr); SDL_FreeSurface(ls);
+    }
+
+    // ---- The backend-neutral draw list (GetDrawData): commands cover the index buffer in order, with
+    // the clip rectangle of a scrolling child and the launcher atlas, and match what EndFrame draws ----
+    {
+        for (int look = 0; look < 2; ++look) {
+            OkayUI::UseLauncherLook(look != 0);
+            OkayUI::Input in;
+            OkayUI::BeginFrame(in);
+            if (OkayUI::Begin("dl", 5, 5, 200, 150)) {
+                OkayUI::Text("x");
+                if (OkayUI::BeginChild("kid", 0, 60)) { for (int i = 0; i < 6; ++i) OkayUI::Text("row"); OkayUI::EndChild(); }
+            }
+            OkayUI::End();
+            OkayUI::EndFrameData();
+            const OkayUI::DrawData d = OkayUI::GetDrawData();
+            CHECK(d.vertexCount > 0 && d.indexCount > 0 && d.indexCount % 3 == 0);
+            CHECK(d.vertexStride == (int)sizeof(OkayUI::DrawVertex));
+            CHECK(d.cmdCount >= 2 && d.cmds != nullptr);
+            int next = 0; bool sawClip = false, sawFlat = false, sawAtlas = false;
+            for (int i = 0; i < d.cmdCount; ++i) {
+                const OkayUI::DrawCmd& c = d.cmds[i];
+                CHECK(c.idxOffset == next && c.idxCount > 0 && c.idxCount % 3 == 0);
+                next = c.idxOffset + c.idxCount;
+                if (c.clipOn) { sawClip = true; CHECK(c.clipW > 0 && c.clipH > 0); }
+                if (!c.texture) sawFlat = true;
+                if (c.texture && c.texture == d.atlasTexture) sawAtlas = true;
+            }
+            CHECK(next == d.indexCount);                 // every index belongs to exactly one command
+            CHECK(sawClip);                              // the child is clipped
+            for (int i = 0; i < d.indexCount; ++i) CHECK(d.indices[i] >= 0 && d.indices[i] < d.vertexCount);
+            if (look == 0) { CHECK(sawFlat && !sawAtlas && d.atlasRgba == nullptr); }
+            else if (d.atlasRgba) { CHECK(sawAtlas && d.atlasW > 0 && d.atlasH > 0); }
+        }
+        OkayUI::UseLauncherLook(false);
     }
 
     SDL_DestroyRenderer(r);

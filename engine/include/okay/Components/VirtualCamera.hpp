@@ -9,6 +9,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/DollyPath.hpp"
+#include "okay/Components/Spline.hpp"
 #include <cmath>
 #include <string>
 
@@ -91,8 +92,9 @@ public:
     /// Tracked Dolly (Cinemachine): constrain the body to a DollyPath rail. The aim
     /// still uses LookAt/Follow, so the camera can glide along a track while framing a
     /// subject. autoDolly slides to the path point nearest the Follow target.
+    /// A Spline works as the rail too (dollyPosition is then a fraction of its length).
     bool dolly = false;
-    std::string dollyPath;       ///< name of the GameObject holding a DollyPath
+    std::string dollyPath;       ///< name of the GameObject holding a DollyPath or a Spline
     float dollyPosition = 0.0f;  ///< normalized position along the path (0..1)
     bool  autoDolly = false;     ///< track the Follow target's nearest path point
 
@@ -130,10 +132,16 @@ public:
             // Tracked Dolly: constrain the body to a rail; aim is handled below.
             GameObject* pg = dollyPath.empty() ? nullptr : s->Find(dollyPath);
             DollyPath* dp = pg ? pg->GetComponent<DollyPath>() : nullptr;
+            const Spline* sp = (!dp && pg) ? pg->GetComponent<Spline>() : nullptr;
             if (dp) {
                 if (autoDolly && f && f->transform)
                     dollyPosition = dp->NearestPosition(f->transform->Position());
                 desiredPos = dp->EvaluatePosition(dollyPosition);
+            } else if (sp && sp->Count() > 0) {
+                const float len = sp->Length();
+                if (autoDolly && f && f->transform && len > 0.0f)
+                    dollyPosition = sp->NearestDistance(f->transform->Position()) / len;
+                desiredPos = sp->SampleAtDistance(dollyPosition * len).position;
             } else if (f && f->transform) {
                 desiredPos = f->transform->Position() + followOffset;
             }

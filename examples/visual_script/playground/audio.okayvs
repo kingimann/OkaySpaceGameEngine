@@ -1,0 +1,17 @@
+# Audio. Play starts the source and stops it. E plays it again.
+node 1 OnStart
+pos 1 40 80
+entry OnStart 1
+node 2 PlaySoundAt
+pos 2 340 80
+node 3 StopSound
+pos 3 640 80
+node 4 OnAction interact
+pos 4 40 280
+entry OnAction:interact 4
+node 5 PlaySoundAt
+pos 5 360 280
+exec 1 0 2
+exec 2 0 3
+exec 4 0 5
+comment 20 460 1100 90 5 "Put a clip on the Speaker Audio Source if you want to hear it. The nodes still run with none."

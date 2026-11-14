@@ -5,6 +5,10 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/Core/Localization.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/Utf8.hpp"
+#include "okay/UI/RichText.hpp"
 #include <string>
 #include <cmath>
 #include <cctype>
@@ -18,6 +22,9 @@ namespace okay {
 class TextRenderer final : public Component {
 public:
     std::string text = "Text";
+    /// Localized: a string-table key whose text, in the current language, is shown
+    /// instead of the literal `text` (refreshed when the language changes).
+    LocalizedText loc;
     /// Optional path to an imported TrueType/OpenType font (e.g. "Assets/MyFont.ttf").
     /// Empty = the built-in 8x8 bitmap font. When set and loadable, hosts draw the
     /// text with the TTF glyph atlas; metrics fall back to the bitmap if it can't load.
@@ -79,6 +86,12 @@ public:
     bool  uppercase = false;
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
+    /// Read [color=#rrggbb]...[/color], [b]...[/b] and [i]...[/i] in the text (screen space; see
+    /// okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
+    /// plain text. Bold thickens the strokes (the font has no bold weight); italic slants every glyph.
+    /// Screen-space text only: 3D (world) text is drawn by the scene renderers, which do not read tags, so
+    /// the switch has no effect there (and the editor disables it).
+    bool  richText = false;
 
     /// Best Fit: auto-scale the text so it fills its `size` box — big
     /// when there's room, shrinking to fit when the string is long. Overrides
@@ -91,7 +104,7 @@ public:
     /// The pixel size actually used to draw: the best-fit size when `autoSize` is on,
     /// else `pixelSize`. Hosts call this instead of reading `pixelSize` directly.
     float EffectivePixelSize() const {
-        if (!autoSize || wrap || size.x <= 0.0f || size.y <= 0.0f) return pixelSize;
+        if (!autoSize || wrap || size.x <= 0.0f || size.y <= 0.0f) return pixelSize * A11yScale();
         float w = (float)PixelWidth(), h = (float)PixelHeight();   // font px (pixelSize-independent when !wrap)
         if (w <= 0.0f || h <= 0.0f) return pixelSize;
         float fit = std::min(size.x / w, size.y / h);
@@ -99,6 +112,10 @@ public:
         if (fit > autoSizeMax) fit = autoSizeMax;
         return fit;
     }
+
+    /// The player's text size (Accessibility) for screen-space text; world text keeps its size.
+    /// Best Fit text already fills its box, so it is not scaled again.
+    float A11yScale() const { return screenSpace ? Accessibility::Get().textScale : 1.0f; }
 
     /// Horizontal advance per glyph / vertical advance per line, in font pixels.
     float Advance() const { return (float)Font8x8::Width + 1.0f + letterSpacing; }
@@ -126,15 +143,26 @@ public:
     /// Same, without a copy per frame: returns `text` itself when nothing changes it,
     /// else builds the result in `scratch` (reused, so its capacity carries over).
     const std::string& DisplayText(std::string& scratch) const {
+        thread_local std::string plainTags;   // the text without its tags (rich text only)
+        const std::string* srcp = &text;
+        if (richText && screenSpace && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
+        const std::string& src = *srcp;
         int vis = EffectiveVisible();
-        const bool cut = vis >= 0 && vis < (int)text.size();
+        const std::size_t cutAt = vis >= 0 ? utf8::Offset(src, (std::size_t)vis) : src.size();   // whole characters
+        const bool cut = cutAt < src.size();
         int maxChars = 0;
-        if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
-            float glyphW = Advance() * pixelSize;
-            maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
+        float boxW = size.x;
+        if (screenSpace) {
+            Vec2 o, sz;
+            ResolveAnchorRect(anchor, screenPos, size, UICanvas::Width(), UICanvas::Height(), o, sz);
+            boxW = sz.x;
         }
-        if (!cut && !uppercase && maxChars < 1) return text;
-        scratch.assign(text, 0, cut ? (std::size_t)vis : text.size());
+        if (wrap && boxW > 0.0f && pixelSize > 0.0f) {
+            float glyphW = Advance() * pixelSize * A11yScale();
+            maxChars = glyphW > 0.0f ? (int)(boxW / glyphW) : 0;
+        }
+        if (!cut && !uppercase && maxChars < 1) { if (srcp == &text) return text; scratch = src; return scratch; }
+        scratch.assign(src, 0, cutAt);
         if (uppercase)
             for (char& c : scratch) c = (char)std::toupper((unsigned char)c);
         if (maxChars >= 1) scratch = WrapTo(scratch, maxChars);
@@ -145,7 +173,10 @@ public:
     /// All measurement/draw use the SAME "font pixel" space (Font8x8::Height tall),
     /// so a host can scale either font by `pixelSize` identically.
     /// Screen-space text without its own font uses the scene's UI font (ActiveUIFont).
-    TtfFont* Font() const { return fontPath.empty() ? (screenSpace ? ActiveUIFont() : nullptr) : GetFont(fontPath); }
+    /// A font with the text's characters stands in when this one lacks them (FontForText).
+    TtfFont* Font() const {
+        return FontForText(fontPath.empty() ? (screenSpace ? ActiveUIFont() : nullptr) : GetFont(fontPath), text);
+    }
 
     /// Width of the widest line in font pixels (honors letter spacing + wrap).
     int PixelWidth() const {
@@ -154,9 +185,10 @@ public:
         if (TtfFont* tf = Font()) {
             float best = 0.0f, cur = 0.0f;
             float adv = letterSpacing; // extra spacing per glyph, in font pixels
-            for (char ch : s) {
+            for (std::size_t i = 0; i < s.size();) {
+                const std::uint32_t ch = utf8::Next(s, i);
                 if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; continue; }
-                const TtfFont::Glyph* g = tf->Get(ch);
+                const TtfFont::Glyph* g = tf->GlyphFor(ch);
                 cur += (g ? g->xadvance * tf->ScaleFor((float)Font8x8::Height) : 0.0f) + adv;
             }
             return (int)std::ceil(std::max(best, cur));
@@ -165,8 +197,8 @@ public:
         auto lineW = [this](int glyphs) {
             return glyphs > 0 ? (int)((glyphs - 1) * Advance() + Font8x8::Width) : 0;
         };
-        for (char ch : s) {
-            if (ch == '\n') { best = std::max(best, lineW(cur)); cur = 0; }
+        for (std::size_t i = 0; i < s.size();) {
+            if (utf8::Next(s, i) == '\n') { best = std::max(best, lineW(cur)); cur = 0; }
             else ++cur;
         }
         return std::max(best, lineW(cur));
@@ -190,9 +222,10 @@ public:
         std::string out, word; int lineLen = 0;
         auto flush = [&]() {
             if (word.empty()) return;
-            if (lineLen > 0 && lineLen + 1 + (int)word.size() > maxChars) { out += '\n'; lineLen = 0; }
+            const int wl = (int)utf8::Length(word);   // characters, not bytes
+            if (lineLen > 0 && lineLen + 1 + wl > maxChars) { out += '\n'; lineLen = 0; }
             else if (lineLen > 0) { out += ' '; ++lineLen; }
-            out += word; lineLen += (int)word.size(); word.clear();
+            out += word; lineLen += wl; word.clear();
         };
         for (char c : s) {
             if (c == '\n') { flush(); out += '\n'; lineLen = 0; }
@@ -203,23 +236,41 @@ public:
         return out;
     }
 
+    /// The text box after stretch anchors (margins, not a 0-wide box) and, when
+    /// `wrap` is on, pulled fully onto the canvas so a long help line can't clip.
+    void ResolveBox(float canvasW, float canvasH, float scale, Vec2& origin, Vec2& extent) const {
+        ResolveAnchorRect(anchor, screenPos * scale, size * scale, canvasW, canvasH, origin, extent);
+        if (!wrap || canvasW < 16.0f) return;
+        const float m = 8.0f * (scale > 0.0f ? scale : 1.0f);
+        if (extent.x > canvasW - 2.0f * m) extent.x = canvasW - 2.0f * m;
+        if (extent.x < 16.0f) extent.x = 16.0f;
+        if (origin.x < m) origin.x = m;
+        if (origin.x + extent.x > canvasW - m) origin.x = std::max(m, canvasW - m - extent.x);
+        if (origin.y < 0.0f) origin.y = 0.0f;
+        if (extent.y > 0.0f && origin.y + extent.y > canvasH)
+            origin.y = std::max(0.0f, canvasH - extent.y);
+    }
+
     /// Top-left pixel of the text BOX (screen space), anchored and sized by `size`.
     Vec2 BoxTopLeft(float canvasW, float canvasH, float scale = 1.0f) const {
-        return ResolveAnchor(anchor, screenPos * scale, size * scale, canvasW, canvasH);
+        Vec2 o, sz;
+        ResolveBox(canvasW, canvasH, scale, o, sz);
+        return o;
     }
 
     /// Resolve the top-left draw pixel for screen-space text inside its box,
     /// honoring horizontal `align` and vertical centering. `scale` is the canvas
     /// scale; the returned point is in canvas pixels (relative to the canvas).
     Vec2 ResolvedScreenPos(float canvasW, float canvasH, float scale = 1.0f) const {
-        Vec2 box = BoxTopLeft(canvasW, canvasH, scale);
+        Vec2 box, sz;
+        ResolveBox(canvasW, canvasH, scale, box, sz);
         float eps = EffectivePixelSize();
         float tw = PixelWidth() * eps * scale, th = PixelHeight() * eps * scale;
         float x = box.x;
-        if (align == 1)      x += (size.x * scale - tw) * 0.5f;
-        else if (align == 2) x +=  size.x * scale - tw;
-        float y = box.y + (alignBottom ? (size.y * scale - th)
-                                       : vcenter ? (size.y * scale - th) * 0.5f : 0.0f);
+        if (align == 1)      x += (sz.x - tw) * 0.5f;
+        else if (align == 2) x +=  sz.x - tw;
+        float y = box.y + (alignBottom ? (sz.y - th)
+                                       : vcenter ? (sz.y - th) * 0.5f : 0.0f);
         return {x, y};
     }
 

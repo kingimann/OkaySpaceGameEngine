@@ -938,12 +938,243 @@ static void Collections() {
             "    }\n"));
         CHECK(Has(d, 0, "is string but needs int", 4, 16));
         CHECK(Has(d, 0, "A Dictionary key must be an int, string, bool, enum or object, not float", 5, 32));
-        CHECK(Has(d, 0, "Only List<T> and Dictionary<K, V> are generic here", 6, 9));
+        CHECK(Has(d, 0, "Only List<T>, Dictionary<K, V>, Func<...> and Action<...> are generic here", 6, 9));
         CHECK(Has(d, 0, "List takes one type: List<int>", 7, 9));
         CHECK(Has(d, 0, "List<int> has no method 'Push'", 8, 12));
         CHECK(Has(d, 0, "Fill a Dictionary with Add or d[key] = value", 9, 17));
         CHECK(Has(d, 0, "The while condition must be true/false, not int", 10, 23));
         CHECK(Has(d, 0, "List<int> has no 'Length'. Did you mean 'Count'?", 11, 22));
+    }
+}
+
+static void Lambdas() {
+    {   // Func / Action, closures that see later changes and outlive their method, Invoke and ?.Invoke
+        World w(
+            "class Button { public Action onClick; }\n"
+            "class T : Behaviour {\n"
+            "    public int a, b, total, c1, c2, clicks;\n"
+            "    Func<int, int> twice = x => x * 2;\n"
+            "    Func<int> MakeCounter() { int n = 0; return () => { n++; return n; }; }\n"
+            "    void Start() {\n"
+            "        a = twice(4);\n"
+            "        int k = 10;\n"
+            "        Func<int, int> addK = x => x + k;\n"
+            "        k = 20;\n"
+            "        b = addK(1);\n"
+            "        Action<int> add = x => { total += x; };\n"
+            "        add(5); add.Invoke(2);\n"
+            "        Func<int> counter = MakeCounter();\n"
+            "        counter(); c1 = counter();\n"
+            "        c2 = MakeCounter()();\n"
+            "        Button btn = new Button();\n"
+            "        btn.onClick?.Invoke();\n"
+            "        btn.onClick = () => clicks++;\n"
+            "        btn.onClick?.Invoke();\n"
+            "        btn.onClick();\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("a"), 8.0f, 1e-6f);
+        CHECK_NEAR(w.F("b"), 21.0f, 1e-6f);            // captured by reference, as in C#
+        CHECK_NEAR(w.F("total"), 7.0f, 1e-6f);
+        CHECK_NEAR(w.F("c1"), 2.0f, 1e-6f);            // the counter keeps its own n
+        CHECK_NEAR(w.F("c2"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("clicks"), 2.0f, 1e-6f);
+    }
+    {   // LINQ-style methods on List<T> and arrays
+        World w(Wrap(
+            "    public int big, tens, first, fod, odd, sum, sum2, min, maxNeg, found, foundAt, removed, total, sorted, arrCount, arrFirst, top;\n"
+            "    public bool any, all;\n"
+            "    public string names;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int> { 5, 1, 9, 3 };\n"
+            "        big = xs.Where(x => x > 2).Count();\n"
+            "        tens = xs.Select(x => x * 10).First();\n"
+            "        names = xs.Select(x => \"n\" + x).ToList()[1];\n"
+            "        top = xs.OrderByDescending(x => x).First() + xs.OrderBy(x => -x).ToList()[1] * 100;\n"
+            "        first = xs.First(x => x > 4);\n"
+            "        fod = xs.FirstOrDefault(x => x > 100);\n"
+            "        any = xs.Any(x => x == 9);\n"
+            "        all = xs.All(x => x > 0);\n"
+            "        odd = xs.Count(x => x % 2 == 1);\n"
+            "        sum = xs.Sum(); sum2 = xs.Sum(x => x * 2);\n"
+            "        min = xs.Min(); maxNeg = xs.Max(x => -x);\n"
+            "        found = xs.Find(x => x > 8); foundAt = xs.FindIndex(x => x == 3);\n"
+            "        xs.ForEach(x => total += x);\n"
+            "        removed = xs.RemoveAll(x => x < 3);\n"
+            "        xs.Sort((p, q) => q - p);\n"
+            "        sorted = xs[0];\n"
+            "        int[] arr = { 3, 1, 2 };\n"
+            "        arrCount = arr.Where(x => x > 1).ToList().Count;\n"
+            "        arrFirst = arr.OrderBy(x => x).First();\n"
+            "    }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("big"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("tens"), 50.0f, 1e-6f);
+        CHECK(w.S("names") == "n1");
+        CHECK_NEAR(w.F("top"), 9.0f + 5.0f * 100.0f, 1e-6f);
+        CHECK_NEAR(w.F("first"), 5.0f, 1e-6f);
+        CHECK_NEAR(w.F("fod"), 0.0f, 1e-6f);
+        CHECK(w.sc->VM()->GetGlobal("any").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("all").AsBool());
+        CHECK_NEAR(w.F("odd"), 4.0f, 1e-6f);
+        CHECK_NEAR(w.F("sum"), 18.0f, 1e-6f);
+        CHECK_NEAR(w.F("sum2"), 36.0f, 1e-6f);
+        CHECK_NEAR(w.F("min"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("maxNeg"), -1.0f, 1e-6f);
+        CHECK_NEAR(w.F("found"), 9.0f, 1e-6f);
+        CHECK_NEAR(w.F("foundAt"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("total"), 18.0f, 1e-6f);
+        CHECK_NEAR(w.F("removed"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("sorted"), 9.0f, 1e-6f);
+        CHECK_NEAR(w.F("arrCount"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("arrFirst"), 1.0f, 1e-6f);
+    }
+    {   // C#'s capture rules: a variable declared in a loop is new each time round; a for
+        // loop's own variable is one variable; nested lambdas share what they capture
+        World w(Wrap(
+            "    public int a0, a2, f0, sum, inner, total;\n"
+            "    void Start() {\n"
+            "        var each = new List<Func<int>>();\n"
+            "        for (int i = 0; i < 3; i++) { int j = i * 10; each.Add(() => j); }\n"
+            "        a0 = each[0](); a2 = each[2]();\n"
+            "        var shared = new List<Func<int>>();\n"
+            "        for (int i = 0; i < 3; i++) shared.Add(() => i);\n"
+            "        f0 = shared[0]();\n"
+            "        foreach (int v in new int[] { 1, 2, 3 }) each.Add(() => v);\n"
+            "        sum = each[3]() + each[4]() + each[5]();\n"
+            "        int n = 1;\n"
+            "        Func<Func<int>> outer = () => () => n * 100;\n"
+            "        Func<int> got = outer();\n"
+            "        n = 4;\n"
+            "        inner = got();\n"
+            "        Action<int> addTo = x => { Action bump = () => total += x + n; bump(); };\n"
+            "        addTo(1); addTo(2);\n"
+            "    }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("a0"), 0.0f, 1e-6f);
+        CHECK_NEAR(w.F("a2"), 20.0f, 1e-6f);
+        CHECK_NEAR(w.F("f0"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("sum"), 6.0f, 1e-6f);
+        CHECK_NEAR(w.F("inner"), 400.0f, 1e-6f);
+        CHECK_NEAR(w.F("total"), 11.0f, 1e-6f);
+    }
+    {   // a lambda made in a plain class's method runs for that object; one stored in an
+        // object keeps the variables it captured; a comparison that makes no sense doesn't crash
+        World w(
+            "class Counter {\n"
+            "    public int hits;\n"
+            "    public Action Hook() { return () => hits++; }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int hits, first, lambdaDepth;\n"
+            "    Func<int, int> fact;\n"
+            "    void Start() {\n"
+            "        Counter c = new Counter();\n"
+            "        Action a = c.Hook();\n"
+            "        a(); a();\n"
+            "        hits = c.hits;\n"
+            "        var xs = new List<int> { 4, 2, 7, 1, 9, 3, 8, 5, 6, 0 };\n"
+            "        xs.Sort((p, q) => -1);\n"
+            "        xs.Sort((p, q) => p - q);\n"
+            "        first = xs[0];\n"
+            "        fact = n => n <= 1 ? 1 : n * fact(n - 1);\n"
+            "        lambdaDepth = fact(5);\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("hits"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("first"), 0.0f, 1e-6f);
+        CHECK_NEAR(w.F("lambdaDepth"), 120.0f, 1e-6f);
+        g_errs.clear();
+        World r(Wrap("    Func<int, int> f;\n    void Start() { f = n => f(n + 1); f(0); }\n"));
+        CHECK(ErrHas("This lambda calls itself too deeply (endless recursion?)"));
+    }
+    {   // a lambda kept in a static field runs for the object that made it, and says so once that object is gone
+        const std::string src = Wrap(
+            "    static Func<int> shared;\n"
+            "    public int n, got;\n"
+            "    void Start() { n = gameObject.name == \"A\" ? 7 : 1; if (shared == null) shared = () => n; }\n"
+            "    void Update() { if (gameObject.name == \"B\") got = shared(); }\n");
+        Scene scene{"S"};
+        GameObject* a = scene.CreateGameObject("A");
+        GameObject* b = scene.CreateGameObject("B");
+        std::string err;
+        CHECK(a->AddComponent<ScriptComponent>(NextScriptVM::kLanguage)->LoadSource(src, &err));
+        auto* sb = b->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sb->LoadSource(src, &err));
+        scene.Start();
+        scene.Update(kDt);
+        CHECK_NEAR(sb->VM()->GetGlobal("got").AsFloat(), 7.0f, 1e-6f);
+        g_errs.clear();
+        scene.Destroy(a);
+        scene.Update(kDt);
+        scene.Update(kDt);
+        CHECK(ErrHas("Update() line 5: This function belongs to a script that was destroyed"));
+    }
+    {   // the same LINQ-style code on the old runtime
+        const std::string src = Wrap(
+            "    public int big, sum, odd;\n"
+            "    public bool any;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int>();\n"
+            "        xs.Add(5); xs.Add(1); xs.Add(9); xs.Add(3);\n"
+            "        big = xs.Where(x => x > 2).Count();\n"
+            "        sum = xs.Sum();\n"
+            "        odd = xs.Count(x => x % 2 == 1);\n"
+            "        any = xs.Any(x => x == 9);\n"
+            "    }\n");
+        World next(src), old(src, "okayscript");
+        for (const char* f : {"big", "sum", "odd"}) CHECK_NEAR(next.F(f), old.F(f), 1e-6f);
+        CHECK(next.sc->VM()->GetGlobal("any").AsBool() == old.sc->VM()->GetGlobal("any").AsBool());
+    }
+    {   // runtime errors with their line
+        g_errs.clear();
+        World a(Wrap("    void Start() { var xs = new List<int>(); Debug.Log(xs.First()); }\n"));
+        CHECK(ErrHas("Start() line 2: First() found nothing in this List<int>"));
+        World b(Wrap("    void Start() { var xs = new List<int>(); Debug.Log(xs.Max()); }\n"));
+        CHECK(ErrHas("Start() line 2: Max() of an empty List<int>"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                              // 2
+            "        var f = x => x;\n"                                         // 3
+            "        Func<int, int> g = (a, b) => a;\n"                         // 4
+            "        Func<int, bool> h = x => x + 1;\n"                         // 5
+            "        var xs = new List<int>();\n"                               // 6
+            "        var ys = xs.Select(x => { Debug.Log(x); });\n"             // 7
+            "        Debug.Log(x => x);\n"                                      // 8
+            "        int n = 3; n(2);\n"                                        // 9
+            "        for (int i = 0; i < 3; i++) { Action a = () => { break; }; a(); }\n"   // 10
+            "        Func<int, int> k = x => { if (x > 0) return 1; };\n"       // 11
+            "        Debug.Log(g(1) + h(1) + ys.Count + k(1));\n"
+            "    }\n"));
+        CHECK(Has(d, 0, "`var` can't tell a lambda's type: write Func<...> or Action<...>", 3, 13));
+        CHECK(Has(d, 0, "This lambda takes 2 values but Func<int, int> gives it 1", 4, 28));
+        CHECK(Has(d, 0, "is int but needs bool", 5, 36));
+        CHECK(Has(d, 0, "Select needs a lambda that gives a value, like x => x * 2", 7, 28));
+        CHECK(Has(d, 0, "A lambda only works where a Func or Action is expected", 8, 19));
+        CHECK(Has(d, 0, "'n' is int, not a function", 9, 20));
+        CHECK(Has(d, 0, "break only works inside a loop or a switch", 10, 58));
+        CHECK(Has(d, 0, "This lambda must return an int on every path", 11, 28));
+        auto e = Diags(Wrap(
+            "    void Start() {\n"                                                         // 2
+            "        Func<int, int> f = true ? (x => x) : (x => 2);\n"                       // 3
+            "        Action a = () => 5;\n"                                                // 4
+            "        var xs = new List<int>();\n"                                          // 5
+            "        Debug.Log(f(1) + xs.OrderBy(x => xs).Count() + xs.Sum(x => \"a\"));\n"   // 6
+            "        a(); a.Run();\n"                                                      // 7
+            "    }\n"));
+        CHECK(Has(e, 0, "A lambda only works where a Func or Action is expected", 3, 36));
+        CHECK(Has(e, 0, "This lambda works out a value but an Action doesn't use it", 4, 26));
+        CHECK(Has(e, 0, "OrderBy needs a key it can sort (a number, text or an enum), like x => x.distance, not List<int>", 6, 37));
+        CHECK(Has(e, 0, "Sum() works on numbers, not string", 6, 59));
+        CHECK(Has(e, 0, "A function has no 'Run': call it with Invoke(...) or (...)", 7, 16));
+    }
+    {   // a null function given to a LINQ-style method is a script error
+        g_errs.clear();
+        World w(Wrap("    Func<int, bool> keep;\n    void Start() { var xs = new List<int> { 1 }; Debug.Log(xs.Where(keep).Count()); }\n"));
+        CHECK(ErrHas("Start() line 3: The function given to Where() is null"));
     }
 }
 
@@ -1068,6 +1299,7 @@ int main() {
     NullOperators();
     Classes();
     Collections();
+    Lambdas();
     Parity();
     Followups();
     BackCompat();

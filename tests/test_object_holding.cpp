@@ -2,9 +2,12 @@
 #include "rig_harness.hpp"
 #include <Okay.hpp>
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include <cmath>
+#include <cstdio>
+#include <string>
 
 using namespace okay;
 
@@ -136,7 +139,7 @@ int main() {
         Ground(s);
         GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
         auto* hold = player->AddComponent<ProceduralObjectHolding>();
-        GameObject* pole = Crate(s, "Pole", {0, 0.5f, -1.0f}, {1, 1, 1}, 2.0f);
+        GameObject* pole = Crate(s, "Pole", {0, 0.5f, -1.0f}, {1.0f, 0.05f, 0.05f}, 2.0f);
         auto* h = pole->AddComponent<HoldableObject>();
         h->style = HoldableObject::Style::Custom;
         h->holdOffset = {0, 0, 2.0f};                       // asks for 2 m out in front
@@ -278,8 +281,9 @@ int main() {
         CHECK(WristError(hold->IK(), 1, a.hand) < 0.01f);
     }
 
-    // ---- A rig with finger bones (no Character; bones found by name): fingers
-    // close around a sword's hilt and open again after the drop.
+    // ---- A rig that still has finger bones (no Character; bones found by
+    // name). The wrist reaches the hilt. The finger joints are not posed:
+    // they stay at rest while the sword is held and after it is dropped.
     {
         Scene s("Fingers");
         GameObject* root = s.CreateGameObject("Rig");
@@ -315,12 +319,148 @@ int main() {
         Step(s, 90);
         CHECK(hold->HandInUse(false));
         CHECK(WristError(hold->IK(), 1, hand) < 0.01f);
-        const float closed = Dist(tip->Position(), hand->Position());
-        CHECK(closed < open0 * 0.85f);
+        CHECK_NEAR(Dist(tip->Position(), hand->Position()), open0, 1e-3f);
+        CHECK(std::fabs(Quat::Dot(tip->localRotation, rest)) > 0.99999f);
         hold->Drop();
         Step(s, 90);
         CHECK_NEAR(Dist(tip->Position(), hand->Position()), open0, 1e-3f);
         CHECK(std::fabs(Quat::Dot(tip->localRotation, rest)) > 0.99999f);
+    }
+
+    // ---- Body adjustment: a heavy load leans the torso back (through the
+    // character's additive layer), slows the walk and tells the Animator; a light
+    // one changes nothing; it all eases back after the drop.
+    {
+        Scene s("Body");
+        Ground(s);
+        GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+        auto* sm = player->GetComponent<AnimStateMachine>();   // built-in players come with an Animator
+        if (!sm) sm = player->AddComponent<AnimStateMachine>();
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* heavy = Crate(s, "Load", {0, 0.3f, -0.8f}, {0.4f, 0.3f, 0.3f}, 30.0f);
+        GameObject* cup = Crate(s, "Cup", {0.5f, 0.3f, -0.8f}, {0.08f, 0.1f, 0.08f}, 0.3f);
+        s.Start();
+        Step(s, 5);
+        auto* ch = player->GetComponent<Character>();
+        const float headZ0 = ch->Part(2)->transform->Position().z;
+        CHECK(hold->Pickup(heavy));
+        Step(s, 120);
+        CHECK(hold->Heaviness() > 0.95f);
+        CHECK_NEAR(hold->SpeedMultiplier(), 0.55f, 0.03f);
+        CHECK(ch->LayerClip() == "Holding Lean" && ch->LayerWeight() > 0.9f);
+        CHECK(ch->Part(2)->transform->Position().z > headZ0 + 0.03f);   // leaning back (facing -Z)
+        CHECK(sm->GetBool("holding"));
+        CHECK_NEAR(sm->GetFloat("carryWeight"), 30.0f, 1e-4f);
+        CHECK((int)sm->GetFloat("carryStyle") == (int)HoldableObject::Style::Heavy);
+        // Still on the grips with the lean.
+        for (int l = 0; l < 2; ++l) CHECK(WristError(hold->IK(), l, ArmOf(hold->IK(), l).hand) < 0.01f);
+        hold->Drop();
+        Step(s, 120);
+        CHECK(!ch->IsLayering());
+        CHECK(!sm->GetBool("holding"));
+        CHECK_NEAR(hold->SpeedMultiplier(), 1.0f, 1e-6f);
+        CHECK(hold->Pickup(cup));
+        Step(s, 60);
+        CHECK(hold->Heaviness() == 0.0f && !ch->IsLayering());
+        CHECK_NEAR(hold->SpeedMultiplier(), 1.0f, 1e-6f);
+        hold->Drop();
+        // Body adjustment off, or Custom carry animations: no built-in lean.
+        hold->bodyAdjustment = false;
+        CHECK(hold->Pickup(heavy));
+        Step(s, 60);
+        CHECK(!ch->IsLayering());
+        CHECK_NEAR(hold->SpeedMultiplier(), 1.0f, 1e-6f);
+        hold->Drop(); Step(s, 2);
+        hold->bodyAdjustment = true;
+        hold->carryAnimations = ProceduralObjectHolding::CarryAnim::Custom;
+        CHECK(hold->Pickup(heavy));
+        Step(s, 60);
+        CHECK(!ch->IsLayering() && sm->GetBool("holding"));
+        CHECK(hold->SpeedMultiplier() < 0.6f);
+        hold->Drop(); Step(s, 2);
+        // A layer a script is playing is left alone.
+        hold->carryAnimations = ProceduralObjectHolding::CarryAnim::Automatic;
+        AnimClip wave; wave.name = "Wave"; AnimKey k; k.pose.assign(Character::BoneCount(), Vec3{0, 0, 0}); wave.keys.push_back(k);
+        ch->AddClip(wave);
+        ch->PlayLayer("Wave", Character::BoneBit(6), false, 1.0f);
+        CHECK(hold->Pickup(heavy));
+        Step(s, 30);
+        CHECK(ch->LayerClip() == "Wave");
+    }
+
+    // ---- A heavy load slows the player controllers down (MoveSpeedScale).
+    {
+        auto walked = [](bool carry) {
+            Scene s("Walk");
+            Ground(s);
+            GameObject* player = Templates::AddThirdPersonPlayer(s, {0, 0, 0});
+            auto* hold = player->AddComponent<ProceduralObjectHolding>();
+            GameObject* load = Crate(s, "Load", {0, 0.3f, -0.8f}, {0.4f, 0.3f, 0.3f}, 30.0f);
+            s.Start();
+            for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
+            if (carry) hold->Pickup(load);
+            for (int i = 0; i < 10; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
+            const Vec3 a = player->transform->Position();
+            for (int i = 0; i < 90; ++i) { Input::FeedKeys({'w'}); s.Update(1.0f / 60.0f); }
+            Input::FeedKeys({});
+            const Vec3 d = player->transform->Position() - a;
+            return std::sqrt(d.x * d.x + d.z * d.z);
+        };
+        const float free = walked(false), loaded = walked(true);
+        CHECK(free > 3.0f);
+        CHECK(loaded < free * 0.7f && loaded > free * 0.45f);   // ~0.55x
+        CHECK_NEAR(MoveSpeedScale(nullptr), 1.0f, 1e-6f);
+    }
+
+    // ---- Crouched and prone (the stance core): the load is still in the hands,
+    // the lean layer stacks on the stance pose, and the slow-down multiplies the
+    // stance's own speed.
+    for (auto st : {ThirdPersonController::Stance::Crouch, ThirdPersonController::Stance::Prone}) {
+        Scene s("Stance");
+        Ground(s);
+        GameObject* player = Templates::AddThirdPersonPlayer(s, {0, 0, 0});
+        auto* tpc = player->GetComponent<ThirdPersonController>();
+        tpc->RestoreStance(st);
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* load = Crate(s, "Load", {0, 0.3f, -0.8f}, {0.4f, 0.3f, 0.3f}, 30.0f);
+        s.Start();
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
+        CHECK(tpc->stance() == st);
+        CHECK(hold->Pickup(load));
+        for (int i = 0; i < 120; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
+        auto* ch = player->GetComponent<Character>();
+        CHECK(ch->LayerClip() == "Holding Lean" && ch->LayerWeight() > 0.9f);
+        for (int l = 0; l < 2; ++l) {
+            Arm a = ArmOf(hold->IK(), l);
+            const float err = WristError(hold->IK(), l, a.hand);
+            CHECK(std::isfinite(err) && err < 0.01f);
+        }
+        const Vec3 p = load->transform->Position();
+        CHECK(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+        CHECK(p.y < (st == ThirdPersonController::Stance::Prone ? 0.9f : 1.2f));   // lower with the body
+        CHECK_NEAR(hold->SpeedMultiplier(), 0.55f, 0.03f);
+    }
+
+    // ---- Kept out of the body: a box asked to sit in the chest ends up in front.
+    {
+        Scene s("Clip");
+        Ground(s);
+        GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* box = Crate(s, "Parcel", {0, 0.3f, -0.8f}, {0.3f, 0.3f, 0.3f}, 2.0f);
+        auto* h = box->AddComponent<HoldableObject>();
+        h->style = HoldableObject::Style::Custom;
+        h->holdOffset = {0, -0.2f, 0};   // right inside the chest
+        h->leftGrip = {true, {-0.5f, 0, 0}, {0, 0, -90}, 0.2f};
+        h->rightGrip = {true, {0.5f, 0, 0}, {0, 0, 90}, 0.2f};
+        s.Start();
+        Step(s, 2);
+        CHECK(hold->Pickup(box));
+        Step(s, 60);
+        auto* ch = player->GetComponent<Character>();
+        const float chestZ = (ch->Part(3)->transform->Position().z + ch->Part(6)->transform->Position().z) * 0.5f;
+        // The box's back face (toward the body, +Z) is in front of the torso front.
+        CHECK(box->transform->Position().z + 0.15f < chestZ - 0.12f);
     }
 
     // ---- Scripts: hold_nearest only takes holdable objects in range; hold_drop lets go.
@@ -354,6 +494,7 @@ int main() {
         hold->primaryHand = ProceduralObjectHolding::Hand::Both;
         hold->holdingStyle = ProceduralObjectHolding::StyleMode::Custom;
         hold->armIK = false; hold->transitionTime = 0.5f;
+        hold->bodyAdjustment = false; hold->carryAnimations = ProceduralObjectHolding::CarryAnim::Custom;
         GameObject* o = s.CreateGameObject("O");
         auto* h = o->AddComponent<HoldableObject>();
         h->style = HoldableObject::Style::Custom;
@@ -371,12 +512,126 @@ int main() {
             CHECK(ph->primaryHand == ProceduralObjectHolding::Hand::Both);
             CHECK(ph->holdingStyle == ProceduralObjectHolding::StyleMode::Custom);
             CHECK(!ph->armIK); CHECK_NEAR(ph->transitionTime, 0.5f, 1e-5f);
+            CHECK(!ph->bodyAdjustment); CHECK(ph->carryAnimations == ProceduralObjectHolding::CarryAnim::Custom);
             CHECK(oh->style == HoldableObject::Style::Custom);
             CHECK(oh->leftGrip.enabled && oh->rightGrip.enabled);
             CHECK_NEAR(oh->leftGrip.position.z, 0.3f, 1e-5f); CHECK_NEAR(oh->rightGrip.rotation.z, -30.0f, 1e-4f);
             CHECK_NEAR(oh->holdOffset.y, -0.2f, 1e-5f); CHECK_NEAR(oh->holdRotation.y, 90.0f, 1e-4f);
             CHECK_NEAR(oh->weight, 12.5f, 1e-5f); CHECK(oh->socket == "Back Slot");
             CHECK(oh->supportHand); CHECK_NEAR(oh->leftGrip.curl, 0.25f, 1e-5f); CHECK_NEAR(oh->rightGrip.curl, 0.6f, 1e-5f);
+        }
+    }
+
+    // ---- Carry in front sits at the hands, below the head. One hand right uses one palm.
+    {
+        Scene s("Pose");
+        Ground(s);
+        GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* crate = Crate(s, "Carry Crate", {0, 0.3f, -1.0f}, {0.62f, 0.48f, 0.48f}, 3.0f);
+        crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+        s.Start();
+        Step(s, 2);
+        CHECK(hold->Pickup(crate));
+        Step(s, 90);
+        FullBodyIK* ik = hold->IK();
+        CHECK(hold->HandInUse(true) && hold->HandInUse(false));
+        const float headY = ik->bones[FullBodyIK::Head] ? ik->bones[FullBodyIK::Head]->Position().y : 1.6f;
+        const float gripY = (hold->GripPoint(true).y + hold->GripPoint(false).y) * 0.5f;
+        CHECK(gripY < headY - 0.35f);
+        for (int l = 0; l < 2; ++l) {
+            Arm a = ArmOf(ik, l);
+            CHECK(WristError(ik, l, a.hand) < 0.08f);
+            CHECK(Dist(hold->GripPoint(l == 0), a.hand->Position()) < 0.2f);
+        }
+        hold->Drop();
+        GameObject* block = Crate(s, "Block", {0.4f, 0.3f, -0.8f}, {0.28f, 0.28f, 0.28f}, 0.3f);
+        block->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::OneHandRight);
+        CHECK(hold->Pickup(block));
+        Step(s, 90);
+        CHECK(!hold->HandInUse(true) && hold->HandInUse(false));
+        Arm right = ArmOf(ik, 1);
+        CHECK(Dist(hold->GripPoint(false), right.hand->Position()) < 0.2f);
+        CHECK(hold->GripPoint(false).y < headY - 0.25f);
+    }
+
+    // ---- A Mixamo-named rig: grips land on the hands, not the head.
+    {
+        Scene s("Mixamo");
+        GameObject* root = s.CreateGameObject("Soldier");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = s.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* hips = mk("mixamorig:Hips", root, {0, 1.0f, 0});
+        GameObject* spine = mk("mixamorig:Spine", hips, {0, 0.1f, 0});
+        GameObject* chest = mk("mixamorig:Spine2", spine, {0, 0.2f, 0});
+        mk("mixamorig:Neck", chest, {0, 0.15f, 0});
+        GameObject* head = mk("mixamorig:Head", chest, {0, 0.25f, 0});
+        GameObject* lhand = nullptr;
+        GameObject* rhand = nullptr;
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const char* side = sd < 0 ? "Left" : "Right";
+            GameObject* arm = mk((std::string("mixamorig:") + side + "Arm").c_str(), chest, {sd * 0.18f, 0.05f, 0});
+            GameObject* fore = mk((std::string("mixamorig:") + side + "ForeArm").c_str(), arm, {sd * 0.05f, -0.28f, 0.02f});
+            GameObject* hand = mk((std::string("mixamorig:") + side + "Hand").c_str(), fore, {0, -0.25f, 0.02f});
+            mk((std::string("mixamorig:") + side + "HandIndex1").c_str(), hand, {0, -0.04f, 0.04f});
+            if (sd < 0) lhand = hand; else rhand = hand;
+        }
+        auto* ik = root->AddComponent<FullBodyIK>();
+        auto* hold = root->AddComponent<ProceduralObjectHolding>();
+        hold->transitionTime = 0.0f;
+        s.Start();
+        CHECK(ik->bones[FullBodyIK::LHand] == lhand->transform);
+        CHECK(ik->bones[FullBodyIK::RHand] == rhand->transform);
+        CHECK(ik->bones[FullBodyIK::Head] == head->transform);
+        CHECK(ik->bones[FullBodyIK::LUpperArm] != nullptr);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftHandMiddle1") == -1);
+        GameObject* crate = Crate(s, "Carry Crate", {0, 1.0f, -0.4f}, {0.4f, 0.3f, 0.3f}, 2.0f);
+        crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+        CHECK(hold->Pickup(crate));
+        Step(s, 30);
+        CHECK(hold->HandInUse(true) && hold->HandInUse(false));
+        CHECK(Dist(hold->GripPoint(true), lhand->transform->Position()) < 0.18f);
+        CHECK(Dist(hold->GripPoint(false), rhand->transform->Position()) < 0.18f);
+        CHECK(Dist(crate->transform->Position(), head->transform->Position()) > 0.35f);
+    }
+
+    // A real Mixamo glTF (three.js examples). Skipped when the file is not on disk.
+    {
+        const char* path = "/tmp/mixamo/Soldier.glb";
+        FILE* f = std::fopen(path, "rb");
+        if (!f) {
+            std::printf("  mixamo file not present, synthetic rig covered the names\n");
+        } else {
+            std::fclose(f);
+            Scene s("Soldier");
+            bool ok = false;
+            GameObject* root = ImportModelScene(s, path, &ok);
+            CHECK(ok && root);
+            if (root) {
+                auto* ik = root->AddComponent<FullBodyIK>();
+                s.Start();
+                CHECK(ik->bones[FullBodyIK::LHand] != nullptr);
+                CHECK(ik->bones[FullBodyIK::RHand] != nullptr);
+                CHECK(ik->bones[FullBodyIK::LUpperArm] != nullptr);
+                CHECK(ik->bones[FullBodyIK::Head] != nullptr);
+                CHECK(ik->bones[FullBodyIK::LHand]->gameObject->name.find("Hand") != std::string::npos);
+                CHECK(ik->bones[FullBodyIK::LHand]->gameObject->name.find("Index") == std::string::npos);
+                auto* hold = root->AddComponent<ProceduralObjectHolding>();
+                hold->transitionTime = 0.0f;
+                GameObject* crate = Crate(s, "Carry Crate", root->transform->Position() + Vec3{0, 1, -0.5f},
+                                          {0.35f, 0.28f, 0.28f}, 2.0f);
+                crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+                CHECK(hold->Pickup(crate));
+                Step(s, 20);
+                const Vec3 lh = ik->bones[FullBodyIK::LHand]->Position();
+                const Vec3 head = ik->bones[FullBodyIK::Head]->Position();
+                CHECK(Dist(hold->GripPoint(true), lh) < Dist(hold->GripPoint(true), head));
+                CHECK(Dist(crate->transform->Position(), head) > 0.2f);
+            }
         }
     }
 

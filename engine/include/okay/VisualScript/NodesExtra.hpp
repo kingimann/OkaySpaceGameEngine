@@ -6,20 +6,42 @@
 // the end of Nodes.hpp; MakeNode (NodeGraph.cpp) builds them by type name.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsRefs.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/UIAnchor.hpp"   // UICanvas size for the mouse-to-ground ray
+#include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
+#include "okay/Render/Atmosphere.hpp"   // weather / fog / post-processing nodes
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Tween.hpp"
+#include "okay/Math/Easing.hpp"
+#include "okay/Math/Spring.hpp"
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -27,10 +49,17 @@
 namespace okay::vs {
 
 inline GameObject* VsFindObject(VsContext& ctx, const std::string& name) {
-    if (!ctx.gameObject || !ctx.gameObject->scene()) return nullptr;
-    if (name.empty() || name == "self") return ctx.gameObject;
-    if (name == "other") return ctx.other;
-    return ctx.gameObject->scene()->Find(name);
+    Scene* scene = (ctx.gameObject && ctx.gameObject->scene()) ? ctx.gameObject->scene() : nullptr;
+    if (!scene) return nullptr;
+    // @guid: stays valid after the object is renamed. self / other / a plain
+    // name are the older graphs, and still work.
+    if (VsStartsWith(name, "@guid:")) return scene->FindByGuid(name.substr(6));
+    if (name.empty() || name == "self" || name == "@self") return ctx.gameObject;
+    if (name == "other" || name == "@other") return ctx.other;
+    if (GameObject* o = scene->Find(name)) return o;
+    for (const auto& up : scene->Objects())
+        if (up && up->name == name) return up.get();
+    return nullptr;
 }
 
 /// An object input: an object reference (Self, Other, Spawn's object, Find,
@@ -193,6 +222,32 @@ struct OtherTagNode : VsNode {
 };
 
 // ---- Mouse buttons ----------------------------------------------------------
+// The point where the cursor's ray crosses the floor at this object's height.
+// out0 x, out1 y, out2 z, out3 hit. Needs the scene's main camera.
+struct MouseGroundNode : VsNode {
+    VsValue Eval(int pin, NodeGraph&, VsContext& ctx) override {
+        const float y = ctx.transform ? ctx.transform->Position().y : 0.0f;
+        Vec3 point{0, y, 0};
+        bool hit = false;
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        Camera* cam = scene ? scene->mainCamera : nullptr;
+        const float w = UICanvas::Width(), h = UICanvas::Height();
+        if (cam && w >= 1.0f && h >= 1.0f) {
+            Vec3 origin, dir;
+            const Vec2 mp = Input::MousePosition();
+            cam->ScreenPointToRay(mp.x, mp.y, w, h, origin, dir);
+            if (std::fabs(dir.y) > 1e-5f) {
+                const float t = (y - origin.y) / dir.y;
+                if (t >= 0.0f) { point = origin + dir * t; point.y = y; hit = true; }
+            }
+        }
+        if (pin == 0) return point.x;
+        if (pin == 1) return point.y;
+        if (pin == 2) return point.z;
+        return hit;
+    }
+};
+
 struct MouseButtonNode : VsNode {   // arg 0 left, 1 right, 2 middle
     int button; bool pressedOnly;
     MouseButtonNode(int b, bool p) : button(b), pressedOnly(p) {}
@@ -248,17 +303,8 @@ struct SetActiveNode : VsNode {   // in0 = on/off, in1 = object (wins over the n
         if (HasInput(1)) {
             const VsValue t = In(1, g, ctx);
             if (t.IsObject()) o = t.AsObjectId() ? GameObject::FromInstanceId(t.AsObjectId()) : nullptr;
-            else {
-                const std::string nm = t.AsString();
-                if (nm.empty() || nm == "self") o = ctx.gameObject;
-                else if (nm == "other") o = ctx.other;
-                else if (ctx.gameObject && ctx.gameObject->scene())
-                    for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == nm) { o = up.get(); break; }
-            }
-        } else if (name.empty() || name == "self") o = ctx.gameObject;
-        else if (name == "other") o = ctx.other;
-        else if (ctx.gameObject && ctx.gameObject->scene())
-            for (const auto& up : ctx.gameObject->scene()->Objects()) if (up && up->name == name) { o = up.get(); break; }
+            else o = VsFindObject(ctx, t.AsString());
+        } else o = VsFindObject(ctx, name);
         if (o) o->active = In(0, g, ctx, VsValue{true}).AsBool();
         return 0;
     }
@@ -279,13 +325,14 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
-        if (!s || scene.empty()) return 0;
-        if (!Save::IsSafeRelative(scene)) {   // graphs are game content: stay in the game's folders
-            OKAY_ERROR("[visual script] Load Scene: refusing '", scene, "' (absolute paths and '..' aren't allowed)");
+        const std::string scenePath = VsBareAsset(scene);
+        if (!s || scenePath.empty()) return 0;
+        if (!Save::IsSafeRelative(scenePath)) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] Load Scene: refusing '", scenePath, "' (absolute paths and '..' aren't allowed)");
             return 0;
         }
-        if (scene.find(".okayscene") != std::string::npos) s->RequestLoad(scene);
-        else if (!SceneManager::LoadSceneByName(*s, scene)) s->RequestLoad(scene + ".okayscene");
+        if (scenePath.find(".okayscene") != std::string::npos) s->RequestLoad(scenePath);
+        else if (!SceneManager::LoadSceneByName(*s, scenePath)) s->RequestLoad(scenePath + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain
     }
 };
@@ -293,6 +340,8 @@ struct CooldownNode : VsNode {   // passes at most once every `seconds`
     float seconds; float last = -1e9f;
     explicit CooldownNode(float s) : seconds(s) {}
     int ExecOutCount() const override { return 1; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (last < -1e8f) return false; r.f0 = last; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { last = r.f0; }
     int Exec(NodeGraph&, VsContext&) override {
         float now = Time::ElapsedTime();
         if (now - last < seconds) return -1;
@@ -332,6 +381,363 @@ struct IkLookNode : VsNode {   // in0 = Vec3 point (Full Body IK look-at), in1 =
         return 0;
     }
 };
+struct PlaySequenceNode : VsNode {   // arg = the sequence (a Sequence Player's file, or Assets/<name>.okayseq)
+    std::string name;
+    explicit PlaySequenceNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::PlayByName(*ctx.gameObject->scene(), ctx.gameObject, name);
+        return 0;
+    }
+};
+struct StopSequenceNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
+        return 0;
+    }
+};
+// Localization: text in the player's language from the project's string table.
+struct LocalizeNode : VsNode {   // arg = the key; in0..in2 fill {0}..{2} (a number also picks the plural form)
+    std::string key;
+    explicit LocalizeNode(std::string k) : key(std::move(k)) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        int last = -1;
+        for (int i = 0; i < 3; ++i) if (HasInput(i)) last = i;
+        std::vector<LocArg> args;
+        for (int i = 0; i <= last; ++i) {
+            const VsValue v = In(i, g, ctx);
+            args.push_back(v.IsNumber() ? LocArg((double)v.AsFloat()) : LocArg(v.AsString()));
+        }
+        return VsValue(Localization::LocalizeArgs(key, args));
+    }
+};
+struct SetLanguageNode : VsNode {   // in0 = the language code, else the arg; the choice is remembered
+    std::string code;
+    explicit SetLanguageNode(std::string c) : code(std::move(c)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const std::string c = HasInput(0) ? In(0, g, ctx).AsString() : code;
+        if (Localization::SetLanguage(c)) Localization::SaveSettings();
+        else g.Error(this, ctx, "the string table has no language \"" + c + "\"");
+        return 0;
+    }
+};
+struct GetLanguageNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue(Localization::Language()); }
+};
+// ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
+struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = intensity (unwired: keep)
+    std::string preset;
+    explicit SetWeatherNode(std::string p) : preset(std::move(p)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& w = s->renderSettings.weather;
+            w.preset = WeatherPresetFromName(preset);
+            const float in = In(0, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (in >= 0.0f) w.intensity = Mathf::Clamp01(in);
+        }
+        return 0;
+    }
+};
+struct SetFogNode : VsNode {   // in0 = on, in1 = start, in2 = end (unwired: keep the scene's)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& rs = s->renderSettings;
+            rs.fog = In(0, g, ctx, VsValue{true}).AsBool();
+            const float start = In(1, g, ctx, VsValue{-1.0f}).AsFloat(), end = In(2, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (start >= 0.0f) rs.fogStart = start;
+            if (end >= 0.0f) rs.fogEnd = end;
+        }
+        return 0;
+    }
+};
+struct SetPostEffectNode : VsNode {   // arg = the setting's name (PostSet); in0 = value
+    std::string name;
+    explicit SetPostEffectNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr)
+            PostSet(s->renderSettings, name, In(0, g, ctx, VsValue{1.0f}).AsFloat());
+        return 0;
+    }
+};
+// Navigation: the NavMeshAgent on this object (or the Target) walks the navmesh.
+struct NavMoveToNode : VsNode {   // in0 = Vec3 destination
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->SetDestination(In(0, g, ctx).AsVec3());
+        return 0;
+    }
+};
+struct NavStopNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->Stop();
+        return 0;
+    }
+};
+struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was reached
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
+        return a != nullptr && a->Arrived();
+    }
+};
+// Behavior trees: the Behavior Tree Runner on this object (or the Target).
+struct BtSetNode : VsNode {   // arg = blackboard key; in0 = the value
+    std::string key;
+    explicit BtSetNode(std::string k) : key(std::move(k)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>()) r->blackboard.Set(key, BtValue::FromVs(In(0, g, ctx)));
+        return 0;
+    }
+};
+struct BtGetNode : VsNode {   // arg = blackboard key; out0 = the value
+    std::string key;
+    explicit BtGetNode(std::string k) : key(std::move(k)) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* r = ctx.gameObject ? ctx.gameObject->GetComponent<BehaviorTreeRunner>() : nullptr;
+        const BtValue* v = r ? r->blackboard.Find(key) : nullptr;
+        return v ? v->ToVs() : VsValue{};
+    }
+};
+struct BtRunNode : VsNode {   // arg = the .okaybt file ("" = start the current tree over)
+    std::string tree;
+    explicit BtRunNode(std::string t) : tree(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>();
+        if (!r) r = ctx.gameObject->AddComponent<BehaviorTreeRunner>();
+        if (!tree.empty()) {
+            std::string err;
+            if (!r->LoadTree(tree, &err)) { Log::Warning("Run Tree: ", err); return 0; }
+        }
+        r->Run();
+        return 0;
+    }
+};
+// Splines, lines and trails: the component on this object (or the Target).
+struct SplinePointNode : VsNode {   // in0 = t, a fraction (0..1) of the length; out0 = the world point
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const Spline* sp = ctx.gameObject ? ctx.gameObject->GetComponent<Spline>() : nullptr;
+        if (!sp) return Vec3::Zero;
+        return sp->SampleAtDistance(In(0, g, ctx).AsFloat() * sp->Length()).position;
+    }
+};
+struct SplineLengthNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        const Spline* sp = ctx.gameObject ? ctx.gameObject->GetComponent<Spline>() : nullptr;
+        return sp ? sp->Length() : 0.0f;
+    }
+};
+struct SetLinePointsNode : VsNode {   // in0 = a list of points
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* lr = ctx.gameObject ? ctx.gameObject->GetComponent<LineRenderer>() : nullptr) {
+            std::vector<Vec3> pts;
+            if (auto list = In(0, g, ctx).AsArray()) for (const VsValue& p : *list) pts.push_back(p.AsVec3());
+            lr->positions = std::move(pts);
+        }
+        return 0;
+    }
+};
+struct ClearTrailNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* tr = ctx.gameObject ? ctx.gameObject->GetComponent<TrailRenderer>() : nullptr) tr->Clear();
+        return 0;
+    }
+};
+// Music: the scene's Music Player (the first one found), like the music_* script calls.
+inline MusicPlayer* VsMusicPlayer(VsContext& ctx) {
+    Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+    if (!s) return nullptr;
+    auto all = s->FindObjectsOfType<MusicPlayer>();
+    return all.empty() ? nullptr : all.front();
+}
+struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = the current track, or the first)
+    std::string track;
+    explicit MusicPlayNode(std::string t) : track(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        MusicPlayer* m = VsMusicPlayer(ctx);
+        if (!m) return 0;
+        const std::string file = VsBareAsset(track);
+        if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
+        else if (std::all_of(file.begin(), file.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(file.c_str()));
+        else m->Play(file);
+        return 0;
+    }
+};
+struct MusicStopNode : VsNode {   // in0 = fade seconds (unwired: 1)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Stop(In(0, g, ctx, VsValue{1.0f}).AsFloat());
+        return 0;
+    }
+};
+struct MusicPauseNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Pause(); return 0; }
+};
+struct MusicResumeNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Resume(); return 0; }
+};
+struct MusicNextNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Next(); return 0; }
+};
+// Camera: the scene's main camera.
+inline Camera* VsMainCamera(VsContext& ctx) {
+    Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+    return s ? s->mainCamera : nullptr;
+}
+struct CameraShakeNode : VsNode {   // in0 = strength 0..1 (unwired: 0.5), stacks
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Camera* c = VsMainCamera(ctx)) c->Shake(In(0, g, ctx, VsValue{0.5f}).AsFloat());
+        return 0;
+    }
+};
+struct SetFovNode : VsNode {   // in0 = field of view in degrees (clamped 1..179)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Camera* c = VsMainCamera(ctx)) c->fieldOfView = Mathf::Clamp(In(0, g, ctx, VsValue{60.0f}).AsFloat(), 1.0f, 179.0f);
+        return 0;
+    }
+};
+struct CameraFollowNode : VsNode {   // in0 = object name, in1 = smoothing (unwired: keep; <= 0 snaps)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Camera* c = VsMainCamera(ctx);
+        if (!c || !c->gameObject) return 0;
+        auto* f = c->gameObject->GetComponent<CameraFollow>();
+        if (!f) f = c->gameObject->AddComponent<CameraFollow>();
+        const VsValue t = In(0, g, ctx);
+        f->targetName = t.IsString() ? t.AsString() : std::string{};
+        if (HasInput(1)) f->smoothing = In(1, g, ctx).AsFloat();
+        return 0;
+    }
+};
+// Particles: the Particle System on this object (or the Target).
+struct ParticlePlayNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = true;
+        return 0;
+    }
+};
+struct ParticleStopNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = false;
+        return 0;
+    }
+};
+struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
+            ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
+        return 0;
+    }
+};
+// ---- Tweens, springs and eases (Core/Tween.hpp, Math/Spring.hpp, Math/Easing.hpp) ----
+// Ease With Curve: in0 = time 0..1 (NaN is 0, the rest is clamped). The text field is an ease by name or curve
+// ("OutBack", "cubic-bezier(0.4,0,0.2,1)", "steps(4)", the CSS names); text it does not know leaves the value as it is,
+// like the script ease_curve. A curve may overshoot 0..1 (Back, Elastic and a bezier with y outside it do).
+struct EaseCurveNode : VsNode {
+    EaseCurve curve;
+    bool known = false;
+    explicit EaseCurveNode(const std::string& text) { known = EaseCurve::Parse(text, curve); }
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const float t = In(0, g, ctx).AsFloat();
+        const float u = t == t ? Mathf::Clamp01(t) : 0.0f;
+        return known ? curve.Evaluate(u) : u;
+    }
+};
+// Spring Step: moves a value toward in0 the way a spring would (Spring::Step), once each time it runs, by the frame
+// time. in1 = stiffness (unwired: 120), in2 = damping (unwired: 14); damping = 2 * sqrt(stiffness) never overshoots.
+// Out0 = the value, out1 = its velocity. The text field is where the value starts (empty: at the first target, so it does
+// not swing in). Run it once a frame (under On Update); a step of zero or less, or NaN, changes nothing.
+struct SpringStepNode : VsNode {
+    float pos = 0.0f, vel = 0.0f;
+    bool started = false, hasStart = false;
+    float start = 0.0f;
+    explicit SpringStepNode(const std::string& startText) {
+        if (!startText.empty()) {
+            char* end = nullptr;
+            const float f = std::strtof(startText.c_str(), &end);
+            if (end != startText.c_str() && std::isfinite(f)) { hasStart = true; start = f; }
+        }
+    }
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int outPin, NodeGraph&, VsContext&) override { return outPin == 1 ? vel : pos; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float target = In(0, g, ctx).AsFloat();
+        if (!started) {
+            started = true;
+            pos = hasStart ? start : (std::isfinite(target) ? target : 0.0f);
+            vel = 0.0f;
+        }
+        Spring::Step(pos, vel, target, In(1, g, ctx, VsValue{120.0f}).AsFloat(), In(2, g, ctx, VsValue{14.0f}).AsFloat(), ctx.deltaTime);
+        return 0;
+    }
+};
+// Tween Move / Tween Move By Speed: this object's (or the Target's) local position goes to (x, y, z). An axis nobody
+// feeds stays where it is. in3 = seconds (By Speed: units a second, so the move lasts distance / speed; zero or less
+// is at once), in4 = the ease as text ("OutBack", "cubic-bezier(0.4,0,0.2,1)"; unwired or unknown: Out Quad). The text field
+// is a tag for Kill / Pause / Play Tweens With Tag. The tween starts on the next frame, like the tween_* script calls.
+struct TweenMoveNode : VsNode {
+    bool bySpeed;
+    std::string tag;
+    TweenMoveNode(bool speed, std::string t) : bySpeed(speed), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        GameObject* go = ctx.gameObject;
+        if (!go || !go->transform || !go->scene()) return 0;
+        Vec3 to = go->transform->localPosition;
+        if (HasInput(0)) to.x = In(0, g, ctx).AsFloat();
+        if (HasInput(1)) to.y = In(1, g, ctx).AsFloat();
+        if (HasInput(2)) to.z = In(2, g, ctx).AsFloat();
+        const float amount = HasInput(3) ? In(3, g, ctx).AsFloat() : (bySpeed ? 5.0f : 1.0f);
+        auto t = DOTween::LocalMove(go, to, amount);
+        if (!t) return 0;
+        if (bySpeed) t->SetSpeedBased();
+        if (HasInput(4)) { const VsValue e = In(4, g, ctx); if (e.IsString()) t->SetEaseSpec(e.AsString()); }
+        if (!tag.empty()) t->SetTag(tag);
+        return 0;
+    }
+};
+// Kill / Pause / Play Tweens With Tag: every tween of the scene with the text field's tag (Tweener::SetTag, the
+// script tween_tag). Out0 = how many it touched. Kill: in0 = jump them to their end first (unwired: no).
+struct TweenTagNode : VsNode {
+    enum class Op { Kill, Pause, Play } op;
+    std::string tag;
+    int count = 0;
+    TweenTagNode(Op o, std::string t) : op(o), tag(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Scene* scene = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        count = 0;
+        if (!scene || tag.empty()) return 0;
+        switch (op) {
+            case Op::Kill:  count = scene->tweens().KillByTag(tag, HasInput(0) && In(0, g, ctx).AsBool()); break;
+            case Op::Pause: count = scene->tweens().PauseByTag(tag); break;
+            case Op::Play:  count = scene->tweens().PlayByTag(tag); break;
+        }
+        return 0;
+    }
+};
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)
     bool left;
     explicit IkHandNode(bool l) : left(l) {}
@@ -352,20 +758,40 @@ struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = we
 // Last < First), then "Done". The Index output reads the current index.
 struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
     int index = 0;
+    int first = 0, last = 0, step = 1;
+    VsLoopLatch latch;
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)index; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = index; r.i1 = first; r.i3 = last;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        index = r.i0; first = r.i1; last = r.i3;
+        step = last >= first ? 1 : -1;
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int first = (int)std::lround(In(0, g, ctx, VsValue{0.0f}).AsFloat());
-        const int last  = (int)std::lround(In(1, g, ctx, VsValue{9.0f}).AsFloat());
-        const int step = last >= first ? 1 : -1;
+        if (!latch.Begin(g)) return -1;
         const int body = Next(0);
+        if (!g.Resuming()) {
+            first = VsWhole(In(0, g, ctx, VsValue{0.0f}).AsFloat(), 0);
+            last  = VsWhole(In(1, g, ctx, VsValue{9.0f}).AsFloat(), 0);
+            step = last >= first ? 1 : -1;
+            index = first;
+        }
         // No iteration cap of its own: every body run spends the event's step
         // budget, so a huge loop is stopped (and reported) by the graph.
         g.EnterLoop();
-        for (index = first; body >= 0; index += step) {
-            g.Run(body, ctx);
+        while (body >= 0 && !g.Aborted()) {
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
             if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted() || index == last) break;
+            index += step;
         }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -373,7 +799,11 @@ struct ForLoopNode : VsNode {   // in0 = first, in1 = last; out0 = index
 // Only lets the flow through while Open is true.
 struct GateNode : VsNode {   // in0 = open
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { return In(0, g, ctx, VsValue{true}).AsBool() ? 0 : -1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const VsValue v = In(0, g, ctx, VsValue{true});
+        if (v.IsNumber() && !std::isfinite(v.AsFloat())) return -1;   // NaN is not "open"
+        return v.AsBool() ? 0 : -1;
+    }
 };
 // Passes the first N times only; Count reads how many times it has passed.
 struct DoNNode : VsNode {
@@ -381,13 +811,22 @@ struct DoNNode : VsNode {
     explicit DoNNode(int c) : n(c < 0 ? 0 : c) {}
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
-    int Exec(NodeGraph&, VsContext&) override { if (count >= n) return -1; ++count; return 0; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (count <= 0) return false; r.i0 = count; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { count = r.i0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (In(0, g, ctx, VsValue{false}).AsBool()) { count = 0; return -1; }   // Reset
+        if (count >= n) return -1;
+        ++count;
+        return 0;
+    }
 };
 // Pick an exec output by a whole number: 0, 1, 2, or Default for anything else.
 struct SwitchIntNode : VsNode {   // in0 = value
     int ExecOutCount() const override { return 4; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int v = (int)std::lround(In(0, g, ctx).AsFloat());
+        const float f = In(0, g, ctx).AsFloat();
+        if (!std::isfinite(f)) return 3;
+        const int v = VsWhole(f, 3);
         return (v >= 0 && v <= 2) ? v : 3;
     }
 };
@@ -481,13 +920,160 @@ struct SetColorNode : VsNode {
 // Play a clip by name the same way a script's play_clip does (AnimControl.hpp):
 // a Character's clip, the imported model's clip or a built-in animation, held
 // until a script's stop_clip.
+struct PlayActionNode : VsNode {
+    std::string action;
+    explicit PlayActionNode(std::string a) : action(std::move(a)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float blend = In(0, g, ctx, VsValue{0.2f}).AsFloat();
+        HumanoidActions::Play(ctx.gameObject, action, blend);
+        return 0;
+    }
+};
+struct IsInActionNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsInAction(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct DieNode : VsNode {
+    std::string dir;
+    explicit DieNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        const int d = HumanoidActions::DirFromName(dir.empty() ? "forward" : dir);
+        HumanoidActions::RequestDeath(ctx.gameObject, d, nullptr);
+        return 0;
+    }
+};
+struct DiveNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDive(ctx.gameObject);
+        return 0;
+    }
+};
+struct HitReactNode : VsNode {
+    std::string dir;
+    explicit HitReactNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const int d = HumanoidActions::DirFromName(dir.empty() ? "forward" : dir);
+        const bool heavy = In(0, g, ctx, VsValue{0.0f}).AsFloat() != 0.0f;
+        HumanoidActions::HitReact(ctx.gameObject, d, heavy);
+        return 0;
+    }
+};
+struct RollNode : VsNode {
+    std::string dir;
+    explicit RollNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestRoll(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
+struct DodgeNode : VsNode {
+    std::string dir;
+    explicit DodgeNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDodge(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
+struct ReviveNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestRevive(ctx.gameObject);
+        return 0;
+    }
+};
+// arg: a Seat's name, or ground / knees / chair. Empty sits on a flat floor.
+struct SitNode : VsNode {
+    std::string which;
+    explicit SitNode(std::string w) : which(std::move(w)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        GameObject* seat = nullptr;
+        int type = 1;
+        if (!which.empty()) {
+            seat = VsFindObject(ctx, which);
+            if (!seat || !seat->GetComponent<Seat>()) {
+                seat = nullptr;
+                std::string k = which;
+                for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                if (k == "chair" || k == "bench") type = 0;
+                else if (k == "knees") type = 2;
+            }
+        }
+        HumanoidActions::RequestSit(ctx.gameObject, seat, type);
+        return 0;
+    }
+};
+struct StandUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestStandUp(ctx.gameObject);
+        return 0;
+    }
+};
+struct IsSittingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsSitting(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct InteractNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::Interact(ctx.gameObject);
+        return 0;
+    }
+};
+struct SeatPromptNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::SeatPrompt(ctx.gameObject);
+    }
+};
+struct VaultNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestVault(ctx.gameObject); return 0; }
+};
+struct MantleNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestMantle(ctx.gameObject); return 0; }
+};
+struct LedgeGrabNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLedgeGrab(ctx.gameObject); return 0; }
+};
+struct ClimbUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestClimbUp(ctx.gameObject); return 0; }
+};
+struct LetGoNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLetGo(ctx.gameObject); return 0; }
+};
+struct IsHangingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsHanging(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct ShimmyNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        HumanoidActions::SetShimmy(ctx.gameObject, In(0, g, ctx, VsValue{0.0f}).AsFloat());
+        return 0;
+    }
+};
 struct PlayClipNode : VsNode {
     std::string clip;
     bool warned = false;   // "no animator" is logged once per node
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        PlayClipFrom(ctx.gameObject, clip, warned);
+        PlayClipFrom(ctx.gameObject, VsClipToken(clip), warned);
         return 0;
     }
 };

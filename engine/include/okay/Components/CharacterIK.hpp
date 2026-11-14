@@ -40,6 +40,8 @@ inline FootIK* AttachCharacterFootIK(GameObject* owner) {
     fik->useRaycast = true; fik->weight = 1.0f;
     fik->pelvis = T(0); fik->adjustPelvis = true; fik->plantDown = true;
     fik->alignToGround = true; fik->maxKneeBend = 178.0f;
+    fik->orient = true;   // the part rig isn't a parented chain: turn the thigh and shin parts too
+    fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
     return fik;
 }
 

@@ -4,9 +4,13 @@
 // each frame with OkayUI::BeginFrame()/EndFrame() around the scene update.
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/Graphics/Image.hpp"
+#include "okay/Platform/Painter.hpp"
 
+#include <SDL.h>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,6 +18,7 @@ namespace okay {
 
 struct OkayUIScriptBridge : ScriptUIBridge {
     void  Begin(const char* t, float x, float y, float w, float h) override { OkayUI::Begin(t ? t : "", x, y, w, h); }
+    void  BeginAt(const char* t, float x, float y, float w, float h) override { OkayUI::PinNextWindow(); OkayUI::Begin(t ? t : "", x, y, w, h); }
     void  End() override { OkayUI::End(); }
     void  Text(const char* s) override { OkayUI::Text(s); }
     bool  Button(const char* l) override { return OkayUI::Button(l); }
@@ -57,7 +62,23 @@ struct OkayUIScriptBridge : ScriptUIBridge {
     }
     void  Spacing(float h) override { OkayUI::Spacing(h); }
     void  Style(const char* name) override { OkayUI::UseLauncherLook(!(name && std::strcmp(name, "classic") == 0)); }
+    /// Image files (dialogue portraits) as textures, loaded once per path. Needs the host's painter;
+    /// without one this reports false and the caller draws a stand-in.
+    bool  Image(const char* path, float w, float h) override {
+        if (!painter || !path || !*path) return false;
+        okay::ui2d::Tex tex = painter->LoadTexture(path);   // cached by the painter; a failed load is remembered too
+        if (!tex) return false;
+        OkayUI::Image((SDL_Texture*)tex, w, h);   // OkayUI keeps the texture as an opaque handle
+        return true;
+    }
+    okay::platform::Painter* painter = nullptr;   ///< set by the host; lets Image() make textures
+    /// For a host that only has an SDL_Renderer (the editor): the sdl2 painter over it, owned here.
+    void SetRenderer(SDL_Renderer* r) {
+        m_wrapped = okay::platform::WrapSdl2Renderer(r);
+        painter = m_wrapped.get();
+    }
 private:
+    std::unique_ptr<okay::platform::Painter> m_wrapped;
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;
 };

@@ -2,9 +2,21 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Graphics/Image.hpp"
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace okay {
+
+/// One paintable ground layer of a Terrain (grass, dirt, rock...): a picture tiled across
+/// the terrain and a tint, blended with the other layers by a painted weight map.
+struct TerrainLayer {
+    std::string name = "Layer";
+    std::string texture;           ///< picture file (empty = just the tint colour)
+    Color       tint{1, 1, 1, 1};  ///< multiplies the picture (or is the colour when there is none)
+    float       tiling = 8.0f;     ///< how many times the picture repeats across the whole terrain
+};
 
 /// A heightmap terrain like Terrain: a square grid of height samples you
 /// sculpt with brushes (raise/lower/smooth/flatten) or generate (random / hills),
@@ -45,7 +57,54 @@ public:
     float snowLevel  = 12.0f;   // world-Y above which terrain reads as snow
     float rockSlope  = 0.55f;   // face steepness (0 flat .. 1 vertical) -> rock
 
-    Terrain() { Resize(resolution); }
+    // ---- Texture layers (splat painting) --------------------------------
+    // Up to kMaxLayers ground layers, each with its own picture, blended by a
+    // weight map painted per height-grid vertex (layer 0 is the base: it starts
+    // at full weight everywhere). With one or more layers the terrain is drawn
+    // from ONE baked ground picture (`splatResolution` pixels a side) that the
+    // layers are composited into, so every renderer shows it without a special
+    // shader; the single Ground Texture and the auto-colours are not used while
+    // layers exist. The weights are saved with the terrain (`terrainlayers`).
+    static constexpr int kMaxLayers = 4;
+    std::vector<TerrainLayer> layers;
+    int splatResolution = 512;           ///< size of the baked ground picture (64..4096)
+
+    /// Add a layer (at most kMaxLayers). The first is the base and covers everything.
+    /// Returns its index, or -1 when full.
+    int  AddLayer(const TerrainLayer& l);
+    /// Remove layer `i`; its weight goes to the layers that stay. Removing the last one
+    /// returns the terrain to its single texture / auto-colour look.
+    bool RemoveLayer(int i);
+    /// Weight of layer `i` at height-grid vertex (x, z), 0..1 (0 when out of range).
+    float LayerWeight(int i, int x, int z) const;
+    /// Weight of layer `i` at a local XZ point, bilinear.
+    float LayerWeightAt(int i, float localX, float localZ) const;
+    /// Paint layer `i` within `radius`: its weight moves toward 1 (the others shrink to
+    /// make room) by `amount` (0..1) at the brush centre, falling off like the sculpt
+    /// brushes. A negative `amount` takes the layer away again (the base layer gets it).
+    /// Re-bakes only the touched part of the ground picture; call PublishSplat()
+    /// when a stroke ends (or now and then while it goes on).
+    void PaintLayerAt(int i, float localX, float localZ, float radius, float amount, float hardness = 0.4f);
+    /// Give layer `i` full weight everywhere.
+    void FillLayer(int i);
+    /// A layer's picture, tint or tiling (or splatResolution) changed: the next Apply() re-bakes.
+    void MarkSplatDirty() { splatSized_ = 0; }
+    /// Weights for the current layers: the base at full weight, the others at 0 (the scene loader uses it).
+    void ResetSplatPublic() { ResetSplat(); }
+    /// Rebuild the whole ground picture from the layers and weights.
+    void BakeSplat();
+    /// Tell the renderers the ground picture changed (they re-read it).
+    void PublishSplat();
+    /// Name the baked picture is registered under (empty without layers).
+    const std::string& SplatName() const { return splatName_; }
+    /// The baked picture (null without layers or before the first bake).
+    const Image* SplatImage() const;
+    /// The layers' weights as text (run-length) and back; what the scene file stores.
+    std::string EncodeSplat() const;
+    bool DecodeSplat(const std::string& text);
+    std::vector<std::uint8_t> splat;     ///< layer-major weights: splat[i * Dim()^2 + z * Dim() + x]
+
+    Terrain();
 
     int   Dim() const { return resolution + 1; }
     float CellSize() const { return resolution > 0 ? size / resolution : size; }
@@ -132,12 +191,24 @@ public:
     /// gully / weather a patch right under the cursor. `amount` scales the effect.
     void ErodeAt(float localX, float localZ, float radius, float amount);
 
+    /// How far below the lowest height (sampled on the first brush stroke after a
+    /// generate, flatten, import, or other whole-map edit) a dig may carve.
+    /// A held dig stops at that floor instead of lowering the heightmap without
+    /// limit and dropping the player out of the world. Negative disables it.
+    /// Not stored in the scene file — the default applies to loaded terrains.
+    float digDepth = 48.0f;
+
     /// Surface normal at a local XZ point, from the height gradient (bilinear).
     /// Used by physics for slope-aware terrain collision and by tools.
     Vec3 NormalAt(float localX, float localZ) const;
     /// Sample the terrain height at a point in local XZ (bilinear) — handy for the
     /// Flatten brush to pick up the height under the cursor.
     float SampleHeight(float localX, float localZ) const;
+
+    /// Cast a world-space ray (origin, unit direction) at the height field: the first point where it
+    /// passes below the surface within `maxDistance`. Works on a hill (unlike a flat plane), and on a
+    /// moved terrain. Returns false when the ray misses or never comes down to the surface.
+    bool Raycast(const Vec3& origin, const Vec3& dir, float maxDistance, Vec3& hitWorld) const;
 
     // ---- Rendering -----------------------------------------------------
     /// Build a Mesh (vertices + triangles + UVs) from the heightmap.
@@ -147,6 +218,19 @@ public:
     void Apply();
 
     void Start() override { Apply(); }
+
+private:
+    std::string splatName_;
+    int  splatSized_ = 0;                ///< resolution the baked picture was made at
+    void ResetSplat();                   ///< weights for the current layers: base = full
+    void BakeRect(int x0, int y0, int x1, int y1);
+    float floorY_ = 0.0f;
+    bool  floorCaptured_ = false;
+    /// Drop the remembered floor so the next brush samples the map as it is now.
+    void ForgetFloor();
+    /// Remember a floor from the current lowest height, once per edit session.
+    void CaptureFloor();
+    void ClampFloor(float& h) const;
 };
 
 } // namespace okay

@@ -1,0 +1,45 @@
+# Gameplay library: saving. Every node below is declared here; the first chain runs in Play.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 GlSavePosition
+pos 2 300 40
+default 2 0 pgspot
+exec 1 0 2
+node 3 GlHasSavedPosition
+pos 3 560 240
+default 3 0 pgspot
+node 4 SetVar saved
+pos 4 560 40
+exec 2 0 4
+data 4 0 3 0
+node 5 GlForgetSavedPosition
+pos 5 820 40
+default 5 0 pgspot
+exec 4 0 5
+node 99 OnEvent specimens
+pos 99 40 440
+entry OnEvent:specimens 99
+exec 99 0 100
+exec 100 0 101
+exec 101 0 103
+exec 103 0 104
+exec 104 0 105
+node 100 GlSavePosition
+pos 100 40 520
+default 100 0 "spot"
+node 101 GlLoadPosition
+pos 101 300 520
+default 101 0 "back"
+node 102 GlHasSavedPosition
+pos 102 560 520
+default 102 0 "known"
+node 103 GlForgetSavedPosition
+pos 103 820 520
+default 103 0 "gone"
+node 104 GlSaveHealth
+pos 104 1080 520
+default 104 0 "hero"
+node 105 GlLoadHealth
+pos 105 1340 520
+default 105 0 "back"

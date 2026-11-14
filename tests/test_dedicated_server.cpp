@@ -155,7 +155,9 @@ int main() {
         Scene server("Arena");
         DedicatedServerOptions o;
         o.port = 47391; o.tickRate = 50.0f; o.maxRuntime = 3.0f; o.statusEvery = 0.0f; o.name = "Test Arena";
+        o.encryption = okay::net::SecureChannel::Available();   // without libsodium the server won't start encrypted
         std::atomic<int> rc{-1};
+        Time::SetTimeScale(0.25f);   // left over from an earlier run in this process: a new server session starts at 1
         std::thread run([&] { rc = RunDedicatedServer(server, o); });   // adds a NetworkManager itself
 
         Scene cs("Player");
@@ -170,6 +172,7 @@ int main() {
         RequestDedicatedServerStop();
         run.join();
         CHECK(rc == 0);
+        CHECK(Time::BaseTimeScale() == 1.0f);   // Game::BeginSession, not Reset: the stale scale did not slow the world
     }
 
     TEST_MAIN_RESULT();

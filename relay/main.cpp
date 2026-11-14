@@ -3,10 +3,11 @@
 // public IP; point games at it with NetworkManager::HostViaRelay / JoinViaRelay
 // (or the net_host_relay / net_join_relay script builtins) using a shared code.
 //
-//   okayspace-relay [port] [--legacy-hello=on|off]    (default 45100, on)
+//   okayspace-relay [port] [--legacy-hello=on|off]    (default 45100, off)
 //
-// --legacy-hello=off refuses version-1 and -2 hellos, which carry no address
-// cookie; leave it on until the log's legacy hello count stays at zero.
+// Version-1 and -2 hellos carry no address cookie, so anyone can register a peer
+// from a forged source address. They are refused by default; --legacy-hello=on
+// accepts them again (only for old games that cannot be updated).
 //
 // It forwards datagrams only — it never inspects or decrypts game traffic, so
 // end-to-end encryption still holds through it.
@@ -19,12 +20,20 @@
 
 int main(int argc, char** argv) {
     std::uint16_t port = 45100;
-    bool legacyHello = true;
+    bool legacyHello = false;   // opt in with --legacy-hello=on (#733)
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--legacy-hello") || !std::strcmp(argv[i], "--legacy-hello=on")) legacyHello = true;
         else if (!std::strcmp(argv[i], "--legacy-hello=off") || !std::strcmp(argv[i], "--no-legacy-hello")) legacyHello = false;
         else if (argv[i][0] == '-') { std::cerr << "relay: unknown option " << argv[i] << "\n"; return 2; }
-        else port = static_cast<std::uint16_t>(std::atoi(argv[i]));
+        else {
+            char* end = nullptr;
+            const long v = std::strtol(argv[i], &end, 10);
+            if (end == argv[i] || *end != '\0' || v < 1 || v > 65535) {
+                std::cerr << "relay: invalid port '" << argv[i] << "' (want 1-65535)\n";
+                return 2;
+            }
+            port = static_cast<std::uint16_t>(v);
+        }
     }
 
     okay::net::RelayServer relay;

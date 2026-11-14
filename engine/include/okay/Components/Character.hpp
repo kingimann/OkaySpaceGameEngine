@@ -6,6 +6,7 @@
 #include "okay/Components/AnimClip.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include <cctype>
+#include <cmath>
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -82,9 +83,27 @@ public:
     float moveSpeed = -1.0f;
     float moveAngle = 0.0f;
     /// How quickly the stride follows a change of speed (seconds to close ~63%).
+    /// The measured ground speed is smoothed once, by this. Serialized.
     float gaitSpeedSmoothing = 0.05f;
+    /// Visual takeoff crouch. The jump is not delayed: the knees dip for this
+    /// long as the body leaves the ground.
+    float jumpCrouchTime = 0.12f;
+    float jumpCrouchBend = 28.0f;    ///< deepest knee bend of that dip, degrees
+    /// Standing still, body yaw past this (degrees) takes one foot step.
+    float turnStepAngle = 50.0f;
+    float turnStepTime = 0.22f;      ///< how long that step lasts
+    float turnStepLift = 32.0f;      ///< how far the stepping thigh lifts, degrees
+    float turnStillSpeed = 0.45f;    ///< ground speed below which turning twists the feet
+    /// Lean into speeding up and turning (0 = off), the same idea as an imported
+    /// rig's lean. motionLeanMax is the cap in degrees.
+    float motionLean = 1.0f;
+    float motionLeanMax = 5.0f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
+    /// True while the body is in the run pose, including the short blend back to a walk.
+    bool SprintingPose() const;
+    /// Hide or show the held item on the owner's camera only. Others still see it.
+    void SetHeldHiddenFromOwner(bool hide);
 
     /// What a movement controller knows about the body this frame.
     struct Locomotion {
@@ -96,7 +115,10 @@ public:
         float stance = -1.0f;      ///< the eased stance level, 0 stand .. 1 crouch .. 2 prone (< 0 = from crouch / prone)
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
+        float runSpeed = 8.0f;     ///< the controller's run speed (walk/run style blend)
         float dt = 0.0f;
+        bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
+        float yawRate = 0.0f;      ///< body yaw change, degrees per second (+ = turning right)
         /// Movement along this axis isn't walking (2.5D: the hop between depth
         /// layers slides along Z); zero = count every direction.
         Vec3  ignoreAxis{0, 0, 0};
@@ -107,6 +129,34 @@ public:
     /// while dropping — and report speed + direction so the stride matches the ground.
     /// The first- and third-person and 2.5D controllers call this every frame.
     void DriveLocomotion(const Locomotion& l);
+    /// The stance the last DriveLocomotion reported (0 stand, 1 crouch, 2 prone)
+    /// and its eased level: an imported model's own clips follow it.
+    int   StanceTarget() const { return m_stanceTarget; }
+    float StanceLevel() const { return m_stanceLevel; }
+    /// 0..1 weight of the takeoff crouch (peaks in the middle of jumpCrouchTime).
+    float JumpCrouchWeight() const { return m_jumpCrouchW; }
+    /// True while a turn-in-place foot step is playing.
+    bool  TurnStepping() const { return m_stepT >= 0.0f; }
+    /// Which leg is stepping (0 left, 1 right).
+    int   TurnStepLeg() const { return m_stepLeg; }
+    /// Twist still stored in the feet, degrees, before the next step.
+    float BodyTwist() const { return m_twist; }
+    /// Smoothed lean from speeding up (pitch) and turning (roll), degrees.
+    float MotionPitch() const { return m_motionPitch; }
+    float MotionRoll() const { return m_motionRoll; }
+    /// Body heading change since the last sample, in degrees per second.
+    static float YawRateOf(float bodyYawDeg, float& prev, bool& have, float dt) {
+        float rate = 0.0f;
+        if (have && dt > 1e-5f) {
+            float d = std::fmod(bodyYawDeg - prev + 540.0f, 360.0f) - 180.0f;
+            rate = d / dt;
+        }
+        prev = bodyYawDeg;
+        have = true;
+        return rate;
+    }
+    /// True while the last DriveLocomotion said the body was swimming.
+    bool  Swimming() const { return m_swimming; }
 
     // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
     // Trigger a one-shot punch with Punch(); the right arm swings forward and back
@@ -117,31 +167,74 @@ public:
     void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
-    // ---- First-person arm (driven by FirstPersonHand) ----
-    // When firstPersonArm is on, the body is frozen (so walking never brings your
-    // torso/legs into view) and your own arm is raised into the first-person camera —
-    // it's literally your character's arm, not a separate viewmodel. fpArmUp eases
-    // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
-    // FirstPersonHand inspector tune where the hand sits.
+    // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
+    // firstPersonArm shows a COPY of the character's hand brick on the owner's
+    // camera only. Nothing is drawn until the player is holding an item, unless
+    // FirstPersonHands asks for empty hands. A hold can show one hand or both.
+    // The pose lives in the camera, so a look down keeps it in the corner. A run
+    // eases it off unless FirstPersonHands says otherwise. The real arm bones
+    // stay on the animation. fpArmUp eases 0 (copy hidden) .. 1 (copy shown).
+    // Nothing here is replicated.
     bool  firstPersonArm = false;
+    /// 0 at the orbit, 1 at the eyes, while a Player View blend owns the viewmodel.
+    /// Negative: the copy eases on its own timer (a run, a punch, no view toggle).
+    float fpViewWeight = -1.0f;
+    /// Runtime only (not saved). Kept so older scenes load. It does not remove
+    /// the head: a first-person camera skips the head and neck parts, and the
+    /// mesh itself stays whole for shadows and every other camera.
+    bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
-    float fpRaise = -96.0f;   // raised upper-arm forward angle
-    float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
-    /// Which 3-bone arm the first-person view raises into frame (the base bone index,
-    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
-    /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
-    /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
+    float fpRaise = -96.0f;   // -96 = natural corner hang; the slider nudges the hand up
+    float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
+    /// Which 3-bone arm the owner's copy is taken from (the base bone index,
+    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand.
+    /// The copy is posed from these bones. The bones themselves are not. Not serialized.
     int   fpArmBase = -1;
-    /// Camera pitch (degrees) fed in by FirstPersonHand so the first-person arm tilts
-    /// up/down with your view (Minecraft-style). 0 = level. Not serialized.
+    /// Camera pitch (degrees) fed in so the owner's arm copy tilts with the view.
+    /// 0 = level. Applied only to the copy. Not serialized.
     float fpPitch = 0.0f;
     /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
     /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
     bool  fpArmBob = true;
-    /// Fully decouple the first-person arm from the body: ignore lean, crouch and prone
-    /// (zero the hips/torso the arm hangs from and skip the stance height drop) so the
-    /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
+    /// Keep the owner's arm copy off the hips and torso, so a crouch or a lean
+    /// does not drag it. The shared hips and torso are never zeroed for this.
+    /// Set by FirstPersonHand.
     bool  fpSteady = false;
+
+    /// True while this character is holding an object, so the real hands (the
+    /// ones the hold poses) stay the hands everyone sees, including the owner.
+    bool HandsOnAHold() const;
+
+    /// A run pumps the arms up into the owner's camera. Sprint and the run
+    /// style (including the blend into it) keep the first-person hands off
+    /// screen. Walk, idle and a raised hold do not.
+    bool HideFirstPersonHands() const {
+        if (anim == 3) return true;
+        return RunWeight(anim) > 0.35f;
+    }
+
+    /// What the owner's first-person camera may draw of the REAL rig. The head
+    /// is never in that view. The shirt is: the eye sits in front of it, and
+    /// the lid has to be there or a look down sees through the open top. While
+    /// the raised-arm copy is up, the real arms are not — the owner sees the
+    /// copy, and every other camera sees the real arms on the animation. A run
+    /// drops both. A hold keeps the real hands, because that pose is the grip.
+    /// Empty hands draw no copy: the real arms would be stubs with no hands,
+    /// so they stay off this camera too and the torso reads as a solid shoulder.
+    /// The neck is not a bone — it is a child of the torso, and the owner
+    /// camera skips that child on its own.
+    bool ShowsToOwnerCamera(int bone) const {
+        if (bone == HumanoidMotion::B_HEAD) return false;
+        if (bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND) {
+            if (HideFirstPersonHands()) return false;
+            // The owner sees the viewmodel, including while a hold puts the
+            // item in that hand. The real arms stay on the animation.
+            if (firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.05f) return false;
+            if (firstPersonArm && fpArmUp <= 0.05f) return false;
+            return true;
+        }
+        return true;
+    }
 
     // ---- External rig (retargeting) ----
     /// Compute the animation pose but render NOTHING — no baked mesh, no part
@@ -155,8 +248,9 @@ public:
     // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,
     // recolour, attach things to (a sword in the Hand), and animate part-by-part.
     // The built-in animations still play (they drive the part transforms) unless you
-    // turn `animateParts` off to author your own. The first-person hand just hides
-    // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
+    // turn `animateParts` off to author your own. The owner's first-person camera
+    // skips the head and the neck and draws the rest from the outside.
+    // Call BuildParts() (or the editor's "Separate Into Parts").
     bool separateParts = false;   ///< serialized: rebuild the part rig on load
     bool animateParts  = true;    ///< let the built-in animation drive the parts
     /// Create the part rig as REAL child objects (a "Rig" node with one object per
@@ -166,6 +260,19 @@ public:
     /// new ones at Play. Call from the editor's "Separate Into Parts" so the parts are
     /// in the scene to customize, not spawned when you press Play.
     void BuildParts();
+    /// Pose the part rig from the animation that is already playing. A view switch
+    /// calls this the frame the rig is built, so that frame is not a bind pose.
+    void PoseBuiltParts();
+    /// `weight` < 0 releases the viewmodel to its own ease. 0..1 follows the
+    /// camera blend (0 hidden at the orbit, 1 the first-person placement).
+    void SetViewmodelBlend(float weight);
+    /// Empty child the owner's viewmodel hangs from. A blend can point the
+    /// camera at it so the copy draws without hiding the body.
+    GameObject* EnsureViewAnchor();
+    /// True once the copy is far enough along the blend to be worth drawing.
+    bool OwnerCopyVisible() const {
+        return firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.02f;
+    }
     /// Tear the rig back down (destroy the "Rig" child) and show the baked mesh again.
     void RemoveParts();
     /// Edit-time: ensure the rig exists and push the current/preview pose onto it, so
@@ -173,6 +280,29 @@ public:
     void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+    /// The owner's first-person arm copy (the upper arm). Only the camera that
+    /// hides this player draws it. Null until first person has built it.
+    GameObject* OwnerViewArm() const { return m_ownerArm; }
+    /// The other hand's copy, when a two-handed hold (or hold mode) shows both.
+    GameObject* OwnerViewArm2() const { return m_ownerArm2; }
+    /// Hide the copy unless this character is holding something. FirstPersonHands
+    /// on the player can show empty hands, pick the hand, and keep them while running.
+    /// `showLeftArm` is the fallback when that component is absent.
+    /// `showWhileRunning` is the same fallback for a legacy First Person Hand.
+    void ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning = false);
+    /// Place that copy for the camera as it stands right now. The view and the
+    /// first-person controller call this after they have moved the lens.
+    void RefreshOwnerArm();
+    /// Flag the rig for one camera. `firstPerson` draws every part the owner
+    /// should see and leaves the head and neck active but unflagged, so this
+    /// camera skips them while shadows and every other camera still get them.
+    void ApplyOwnerVisibility(bool firstPerson);
+    /// Pull the neck box out of the torso mesh into a child named "Neck", once.
+    void SplitNeckFromTorso();
+    /// If `eye` (world space) sits inside a body part the owner can see, step it
+    /// forward and up until it is outside. Head, neck and arms are not walls:
+    /// the first two are hidden from this camera and the arms sit near the view.
+    Vec3 ClearFirstPersonEye(Vec3 eye) const;
 
     // ---- Animation authoring (the editor's Animation window uses these) ----
     std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
@@ -222,12 +352,12 @@ public:
     std::string clipJump;   ///< plays while jumping   (anim == 5)
     std::string clipFall;   ///< plays while falling   (anim == 18)
     std::string clipCrouch; ///< plays while crouching (anim == 6)
+    std::string clipDive;   ///< plays for the dolphin dive (Animator state Dive) when set
     /// True while a state binding (not a manual PlayClip) is driving the current clip.
     bool StateDriven() const { return m_stateDriven; }
 
-    /// Crossfade time (seconds) when switching clips — the character eases from its
-    /// current pose into the new clip instead of snapping. So idle↔walk↔run (and any
-    /// PlayClip) blend smoothly. 0 = instant. Serialized.
+    /// Crossfade time (seconds) for a clip switch, and for a built-in state change
+    /// the Animator's crossfade table doesn't name. 0 = instant. Serialized.
     float blendTime = 0.15f;
     /// True while a crossfade is in progress (0..1 weight not yet at 1).
     bool Blending() const { return m_blendT < 1.0f; }
@@ -252,11 +382,20 @@ public:
             float stance = 0.0f;           ///< eased stance level, 0 stand .. 1 crouch .. 2 prone
             float airTime = 0.0f;          ///< seconds off the ground
             float verticalSpeed = 0.0f;    ///< m/s, + = rising
+            bool  swim = false;            ///< water is holding the body. The graph's "swim" bool.
         };
         virtual void Move(const Movement& m) = 0;
         /// The stride, every frame: direction of travel as a point (x = right,
         /// z = forward, rig units/s) and the speed it plays at.
         virtual void Gait(float x, float z, float speed) = 0;
+        /// The Animator component is switched on. False before it has attached,
+        /// and while its component is disabled.
+        virtual bool AnimatorOn() const { return false; }
+        /// The Animator was turned back on. Show `pose` (body offset `root`, in
+        /// rig units) this frame, then ease into the clip over `seconds`.
+        virtual void ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) {
+            (void)pose; (void)root; (void)seconds;
+        }
     };
     void SetPoseSource(PoseSource* src) { m_poseSource = src; }
     PoseSource* GetPoseSource() const { return m_poseSource; }
@@ -292,6 +431,21 @@ public:
     // them (headTurnSpeed) so it moves smoothly instead of snapping.
     float lookYaw   = 0.0f;       // + turns the head to its right
     float lookPitch = 0.0f;       // + lifts the gaze up
+    /// Replicated action (0 none, 1 death, 2 roll, 3 sit, 4 swim). `netActionSeq`
+    /// bumps each time it changes so a proxy can replay it. Not saved.
+    /// `netActionParam` is that action's direction or swim speed (sit: 10 + type
+    /// while standing up). An older peer that stops before this field still
+    /// reads the look.
+    int netActionId = 0;
+    int netActionSeq = 0;
+    float netActionParam = 0.0f;
+    /// Replicated one-shots: the owner bumps `netEventSeq` each time one starts and
+    /// sets `netEventId` (5 dive, 6 hit, 7 traverse, 8 emote) and `netEventParam`
+    /// (hit: direction 0..3 plus 4 when heavy; traverse: HumanoidActions::TraverseClip;
+    /// emote: which). A proxy plays each new sequence once. Not saved.
+    int netEventId = 0;
+    int netEventSeq = 0;
+    float netEventParam = 0.0f;
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }
@@ -322,8 +476,14 @@ public:
         const float lim = 72.0f;                 // comfortable neck turn
         float m = relDeg < 0.0f ? -relDeg : relDeg;
         if (m <= lim) return relDeg;
-        float t = (180.0f - m) / (180.0f - lim); // 1 at the limit, 0 when fully behind
-        return (relDeg < 0.0f ? -1.0f : 1.0f) * lim * t;
+        // A strafe puts the camera near 90°. Folding that back toward 0 made the
+        // head look past the camera. Hold the neck limit until the target is
+        // behind the shoulder, then ease to neutral as it comes round the front.
+        const float hold = 105.0f;
+        const float sign = relDeg < 0.0f ? -1.0f : 1.0f;
+        if (m <= hold) return sign * lim;
+        float t = (180.0f - m) / (180.0f - hold); // 1 at the shoulder, 0 when fully behind
+        return sign * lim * t;
     }
 
     // ---- Manual pose: per-bone local rotation (euler deg). Applied when
@@ -373,6 +533,13 @@ public:
         for (int i = 1; i < (int)(sizeof(names) / sizeof(names[0])); ++i) if (key == names[i]) return i;
         return -1;
     }
+    /// Drop a registered clip. It stops if it is playing or layering, and the
+    /// state bindings and start clip that named it are cleared. False if none.
+    bool RemoveClip(const std::string& name);
+    /// Rename a registered clip; the state bindings, the start clip, the blend
+    /// tree and a playing clip follow it. False if `from` is missing, `to` is
+    /// empty or `to` is already a clip.
+    bool RenameClip(const std::string& from, const std::string& to);
     /// Names of every registered clip (for editor dropdowns), sorted.
     std::vector<std::string> ClipNames() const;
     /// Is a clip with this name registered?
@@ -460,6 +627,11 @@ public:
     /// The short token BoneIndex reads back ("hips", "l_uparm", ...), as clip files use.
     static const char* BoneToken(int i);
     std::vector<Bone> Skeleton() const;
+    /// Where the rig's joints are under a per-bone Euler pose, in rig space
+    /// (before the height scale and the body's turn to face -Z): the rest joints
+    /// moved by their parents' rotations. The Animation window's onion skin draws
+    /// these for the keys around the playhead.
+    std::vector<Vec3> PosedJoints(const std::vector<Vec3>& pose) const;
 
     Mesh BuildRig(std::vector<int>& bone) const;
     Mesh Build() const { std::vector<int> b; return BuildRig(b); }
@@ -524,31 +696,75 @@ private:
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
     float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
+    bool  m_swimming = false;      // the last DriveLocomotion was a swim
+    int   m_stanceTarget = 0;      // the stance DriveLocomotion last reported ...
+    float m_stanceLevel = 0.0f;    // ... and its eased level
     struct MoveSample { Vec3 p; float t; };
     static constexpr int kMoveHist = 16;
-    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.08 s)
+    MoveSample m_hist[kMoveHist]{};  // the previous position (one sample; a teleport restarts it)
     float m_measured = 0.0f;         // last accepted ground speed (DriveLocomotion)
     bool  m_spike = false;           // last frame's reading was set aside as a spike
     int   m_histN = 0;
     float m_moveClock = 0.0f;
+    bool  m_gaitFromDrive = false;   // DriveLocomotion already smoothed the speed this step
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
+    float m_runWant = 0.0f;        // the style DriveLocomotion asked for this step
+    bool  m_haveRunWant = false;
     float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
     float RunWeight(int state) const;                  // walk/run style weight for a state
     HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs
     void  AdvanceAnimClock(float dt);                  // animTime + the gait phase at the real cadence
     float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
+    float m_anticipation = 0.0f;   // seconds of takeoff crouch still to play
+    float m_jumpCrouchW = 0.0f;    // 0..1 visual weight this frame
+    float m_twist = 0.0f;          // degrees the body has turned ahead of the feet
+    float m_stepT = -1.0f;         // turn-in-place step progress 0..1 (<0 = none)
+    int   m_stepLeg = 0;
+    float m_motionPitch = 0.0f, m_motionRoll = 0.0f;
+    Vec3  m_leanPos{0, 0, 0}, m_leanVel{0, 0, 0}, m_leanAcc{0, 0, 0};
+    bool  m_haveMotionLean = false;
+    void  TickFeel(float dt);
+    void  UpdateMotionLean(float dt);
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
     bool m_fpArmReady = false;
+    float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
+    void EaseFirstPersonArm(float dt);
+    void BlendHeldTowardGrip();
+    GameObject* OwnerHideTarget() const;
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
     std::vector<Vec3> m_partRest;        // each part's joint offset from its parent
+    GameObject* m_ownerArm = nullptr;    // raised-arm copy, owner camera only
+    GameObject* m_ownerFore = nullptr;
+    GameObject* m_ownerHand = nullptr;
+    GameObject* m_ownerItem = nullptr;   // viewmodel copy of a held prop
+    GameObject* m_fpHiddenHeld = nullptr;
+    GameObject* m_viewAnchor = nullptr;  // FP_ViewAnchor, parent of the owner copies
+    int m_ownerArmBase = -2;
+    GameObject* m_ownerArm2 = nullptr;   // the other hand, two-handed holds only
+    GameObject* m_ownerFore2 = nullptr;
+    GameObject* m_ownerHand2 = nullptr;
+    int m_ownerArmBase2 = -2;
+    bool m_fpSecond = false;
+    float m_fpDt = 0.016f;
+    float m_fpPrevYaw = 0.0f, m_fpPrevPitch = 0.0f;
+    float m_fpTrailYaw = 0.0f, m_fpTrailPitch = 0.0f;
+    bool  m_fpTrailInit = false;
     void RememberPartRest();
+    void ReleaseOwnerArm();
+    void ReleaseOwnerArm2();
+    void EnsureOwnerArm(int base);
+    void EnsureOwnerArm2(int base);
+    void DeactivateOwnerArm2();
+    void PoseOwnerArm(const std::vector<Vec3>& animPose);
+    void FinishTwoHands(class Camera* cam, float depth, float snap, float bobS, float bobC);
+    void SetOwnerArmActive(bool on);
     GameObject* FindRig() const;         // an existing "Rig" child, or null
     bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
     void DriveParts();                   // pose the part transforms from the animation
@@ -577,11 +793,17 @@ private:
     std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
     void NoteStateChange();              // `anim` changed: landing dip, gait phase, crossfade
+    float CrossfadeSeconds(int from, int to) const;   // the Animator's table, else the defaults
+    void CaptureLeavingPose();           // freeze the pose on screen, for a blend that reverses
     int m_syncAnim = -1;                 // `anim` at the last SyncStateClips (-1 = none yet)
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
+    float m_blendDur = 0.15f;            // seconds the current crossfade takes
     float m_blendFromY = 0.0f;           // hip height at the last switch (eased with the crossfade)
     int   m_blendFromAnim = -1;          // built-in state being crossfaded from, played live (-1 = m_blendFrom)
+    bool  m_animSeen = false;            // the Animator has been observed once (play start stays instant)
+    bool  m_animOn = false;              // it was on last frame
+    bool  m_resumeAnim = false;          // turned back on: ease in from the built-in pose
     Vec3  RawStanceOffset(float t) const;   // StanceOffset at clock time t, without the crossfade
     Vec3  RawStanceOffsetFor(int state, float t) const;
     Vec3  m_editorOffset{0, 0, 0};       // body offset that goes with the previewed pose

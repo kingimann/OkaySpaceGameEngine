@@ -33,6 +33,12 @@ public:
 
     float Fraction() const { return Mathf::Clamp01(value); }
     void SetValue(float v) { value = Mathf::Clamp01(v); }
+    // grok/ui-hud — real setters so scripts and visual-script nodes can drive the options that already exist.
+    void SetThickness(float px) { thickness = px < 0.0f ? 0.0f : px; }
+    void SetStartAngle(float deg) { startAngle = deg; }
+    void SetClockwise(bool on) { clockwise = on; }
+    void SetSpin(bool on) { spin = on; }
+    void SetShowPercent(bool on) { showPercent = on; }
 
     void Update(float dt) override {
         if (spin) { m_spin += spinSpeed * dt; m_spin = std::fmod(m_spin, 360.0f); }

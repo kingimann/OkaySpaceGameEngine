@@ -5,6 +5,8 @@
 #include "okay/Platform/Account/AccountService.hpp"
 
 #include <filesystem>
+#include <fstream>
+#include <set>
 
 namespace fs = std::filesystem;
 namespace acct = okay::account;
@@ -30,6 +32,68 @@ int main() {
         // Known SHA-256 vector ("abc").
         CHECK(acct::detail::Sha256Hex("abc") ==
               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
+    // ---- PBKDF2-HMAC-SHA256 (the local password hash) ----
+    {
+        auto hex = [](const std::array<std::uint8_t, 32>& d) { return acct::detail::ToHex(d.data(), d.size()); };
+        const std::vector<std::uint8_t> salt = {'s', 'a', 'l', 't'};
+        // Vectors that match Python's hashlib.pbkdf2_hmac('sha256', ...) and RFC 7914 section 11's HMAC-SHA-256 PBKDF2 tests.
+        CHECK(hex(acct::detail::Pbkdf2Sha256("password", salt, 1)) == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+        CHECK(hex(acct::detail::Pbkdf2Sha256("password", salt, 2)) == "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+        CHECK(hex(acct::detail::Pbkdf2Sha256("password", salt, 4096)) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
+        // A key longer than the block size (hashed first) and a binary salt.
+        CHECK(hex(acct::detail::Pbkdf2Sha256(std::string(100, 'p'), {0x00, 0xff, 0x10}, 50)) == "ac61021deea2dc2110ec112f9315718f71d4d250066873eac4fc93f7a3dcffc5");
+        // The stored form is versioned, salted, and never holds the password.
+        const std::string saltHex = acct::detail::RandomHex(16);
+        const std::string v2 = acct::detail::HashPasswordV2("hunter2", saltHex, 1000);
+        CHECK(v2.rfind("$pbkdf2-sha256$1000$", 0) == 0 && v2.size() == 20 + 64 && v2.find("hunter2") == std::string::npos);
+        CHECK(v2 == acct::detail::HashPasswordV2("hunter2", saltHex, 1000));
+        CHECK(v2 != acct::detail::HashPasswordV2("hunter2", acct::detail::RandomHex(16), 1000));   // another salt
+        CHECK(v2 != acct::detail::HashPasswordV2("hunter3", saltHex, 1000));
+        std::uint32_t rounds = 0;
+        CHECK(acct::detail::StoredRounds(v2, rounds) && rounds == 1000);
+        CHECK(!acct::detail::StoredRounds("$pbkdf2-sha256$5$00", rounds));                      // too few rounds claimed
+        CHECK(!acct::detail::StoredRounds("$pbkdf2-sha256$99999999999$00", rounds));            // absurd
+        CHECK(!acct::detail::StoredRounds("$pbkdf2-sha256$12x$00", rounds));
+        CHECK(!acct::detail::StoredRounds(std::string(64, 'a'), rounds));                       // the old chain is not v2
+        // Salts and tokens come from the OS CSPRNG: distinct, right length, not a seeded sequence.
+        std::set<std::string> seen;
+        for (int i = 0; i < 64; ++i) seen.insert(acct::detail::RandomHex(16));
+        CHECK(seen.size() == 64 && seen.begin()->size() == 32);
+        std::uint8_t rb[32] = {0};
+        CHECK(acct::detail::OsRandom(rb, sizeof(rb)));
+        int nonzero = 0; for (std::uint8_t b : rb) nonzero += b != 0;
+        CHECK(nonzero > 8);
+    }
+    // ---- an account made by an older version (SHA-256 chain) signs in and is upgraded on that sign-in ----
+    {
+        fs::path odir = fs::temp_directory_path() / ("okay_acct_legacy_" + acct::detail::RandomHex(8));
+        fs::remove_all(odir);
+        fs::create_directories(odir);
+        const std::string salt = acct::detail::RandomHex(16), legacy = acct::detail::HashPassword("oldpass1", salt);
+        { std::ofstream(odir / "accounts.db") << "olduser\t" << salt << "\t" << legacy << "\n"; }
+        acct::AccountService svc(odir);
+        CHECK(!svc.Login("olduser", "wrongpass").ok);
+        { std::ifstream f(odir / "accounts.db"); std::string l; std::getline(f, l); CHECK(l.find(legacy) != std::string::npos); }   // a failed login changes nothing
+        CHECK(svc.Login("olduser", "oldpass1").ok);
+        std::string line;
+        { std::ifstream f(odir / "accounts.db"); std::getline(f, line); }
+        CHECK(line.find("$pbkdf2-sha256$600000$") != std::string::npos && line.find(legacy) == std::string::npos && line.find(salt) == std::string::npos);
+        svc.Logout();
+        CHECK(svc.Login("olduser", "oldpass1").ok && !svc.Login("olduser", "oldpass2").ok);   // the upgraded record works
+        // A record made when the cost was lower is raised on the next sign-in.
+        const std::string s2 = acct::detail::RandomHex(16);
+        { std::ofstream(odir / "accounts.db") << "weak\t" << s2 << "\t" << acct::detail::HashPasswordV2("weakpass1", s2, 2000) << "\n"; }
+        acct::AccountService svc2(odir);
+        CHECK(svc2.Login("weak", "weakpass1").ok);
+        { std::ifstream f(odir / "accounts.db"); std::getline(f, line); }
+        CHECK(line.find("$pbkdf2-sha256$600000$") != std::string::npos);
+        // A damaged v2 record never signs anyone in.
+        { std::ofstream(odir / "accounts.db") << "bad\t" << s2 << "\t$pbkdf2-sha256$zz$00\n"; }
+        acct::AccountService svc3(odir);
+        CHECK(!svc3.Login("bad", "anything").ok);
+        fs::remove_all(odir);
     }
 
     // ---- register + login (local backend) ----
@@ -138,6 +202,19 @@ int main() {
         CHECK(svc.Login("alice", "newpass1").ok);   // new password works
         // Password reset is a Supabase-only feature.
         CHECK(!svc.RequestPasswordReset("a@b.com").ok);
+        // Reset email: the recover URL carries the (percent-encoded) landing page.
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co/", "") ==
+              "https://x.supabase.co/auth/v1/recover");
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co", "https://a.io/reset/?v=1") ==
+              "https://x.supabase.co/auth/v1/recover?redirect_to=https%3A%2F%2Fa.io%2Freset%2F%3Fv%3D1");
+        CHECK(acct::AccountService::RecoverUrl("https://x.supabase.co", "javascript:alert(1)") ==
+              "https://x.supabase.co/auth/v1/recover");   // non-http(s) redirects are dropped
+        {
+            acct::AccountService r2(dir);
+            CHECK(!r2.HasResetRedirect());
+            r2.SetResetRedirect("https://a.io/reset/");
+            CHECK(r2.HasResetRedirect());
+        }
         // 3-arg register (username is ignored on the local backend).
         CHECK(svc.Register("bob", "passbob", "Bobby").ok);
 

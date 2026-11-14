@@ -5,9 +5,10 @@ minutes. It uses only what ships in the box — no plugins, no external tools.
 
 ## 1. Open the engine
 
-Run **`dist/OkayEngine.exe`** (Windows). That single self-contained `.exe`
-*is* the editor: docked Hierarchy, Scene, Inspector, Console, Project, Services,
-and Script Editor panels around a 2D/3D viewport.
+Run **`OkaySpace.exe`** (Windows), the launcher. Creating or opening a project
+there starts the editor (`Tools/OkayEngine.exe`): docked Hierarchy, Scene,
+Inspector, Console, Project, Services, and Script Editor panels around a 2D/3D
+viewport. The folder layout is in [packaging.md](packaging.md).
 
 ## 2. Start a project
 
@@ -19,6 +20,8 @@ starting scene already created. Templates include:
 - **Platformer** / **Top-Down** — playable, component-wired starters.
 - **Coin Collector (full game)** — a complete game you can dissect: a WASD
   player, a follow camera, spinning coins that score on pickup, and a HUD.
+- **Snake** and **Brick Breaker** — two more complete games written in
+  OkayScript (a tilemap snake, and a paddle that clears a wall of bricks).
 
 Pick **Coin Collector** to see everything working, or **2D Scene** to build from
 scratch. Press the green **▶ Play** in the toolbar to run it; **■ Stop** restores
@@ -61,11 +64,29 @@ Full reference: [`scripting.md`](scripting.md).
 ## 5. Play, then ship
 
 - **▶ Play** runs the real lifecycle — scripts, physics, audio, particles.
-- **File → Build Game** (Ctrl+B): pick a name and folder. The editor writes
+- **File → Build Settings…** (Ctrl+B): pick a name and folder. The editor writes
   `game.okayscene`, copies the player runtime as `<YourGame>.exe`, and copies
   every texture / sound / animation frame the scene uses.
 - The output folder is a self-contained game: double-click `<YourGame>.exe`.
   Move with WASD or the arrow keys; press **Esc** to quit.
+
+## Time and the loop
+
+A frame never steps by more than a clamp (a breakpoint or an alt-tab does not become one giant step), pausing is by reason so a pause menu and a cutscene do not un-pause each other, and the same loop gives you slow motion, hit stop, frame stepping, fixed-rate capture for screenshots and video, and a recording of a session's frame times you can replay in a test:
+
+```cpp
+GameLoop loop;
+loop.OnUpdate = [&](float dt) { scene.Update(dt); };
+while (loop.BeginFrame(MeasureFrameSeconds())) Draw(loop.Alpha());
+
+Time::HitStop(0.08f);                    // a freeze frame on impact
+Game::PushPause("menu");                 // ... Game::PopPause("menu")
+Game::RequestQuit("level cleared", 0);   // an exit code for the shell
+loop.RequestStep();                      // while paused: one frame at a time
+loop.SetCapture(60.0f, 600);             // exactly 600 frames at 60 fps, whatever the machine does
+```
+
+See [`loop_and_time.md`](loop_and_time.md) for every call, the clocks (`Clock::Get("ui")` keeps animating while the game is paused), recording and replaying frame times, frame statistics, and how to move the player onto `GameLoop`.
 
 ## Where to go next
 
@@ -74,9 +95,53 @@ Full reference: [`scripting.md`](scripting.md).
 - [`visual_scripting.md`](visual_scripting.md) — node-graph scripting.
 - [`steam_release.md`](steam_release.md) — shipping on Steam.
 
+## The Player Controller
+
+A first- or third-person character has exactly one controller component:
+**Player Controller** (*Add Component > Gameplay > Player Controller (first /
+third person)*). The **View** setting at the top of its Inspector panel says
+which views the player has:
+
+- **First Person only**: the eye camera. No toggle.
+- **Third Person only**: the orbit camera. No toggle.
+- **Both (toggle between them)**: a key (V by default, or the gamepad Back
+  button) switches, and the camera blends. The Both section holds the start
+  view, whether the toggle is allowed, the key, **Switch Blend Time**, easing,
+  **Snap**, **Eye Offset**, **Third Person Distance** and **Shoulder Offset**.
+
+Disabling a view is that one choice: there is no second component to remove.
+A view that is off has no settings in the panel and nothing of it is saved, so
+switching back to Both gives that view its defaults again (Undo, Ctrl+Z, brings
+the old ones back). Everything else lives in sections of the same panel:
+movement, jump, sprint, crouch, prone, lean, slide, dodge, vault and mantle,
+foot IK, the first-person eye, bob and zoom, the third-person orbit, aim and
+spring arm, and **Set Character Model...**. Under that button the panel
+shows how many humanoid bones the model has, and whether Foot IK, Look-At
+and an Animator are on the player. **Wire animation and IK** adds only the
+ones that are missing, and matches empty animation slots by name. Press it
+again and it leaves a graph, a clip choice, and any IK weight you already
+set. **Open Animator** opens the state graph. Clip slots stay in the
+Character Model panel above the controller. A model with fewer than 8
+humanoid bones is told so, and the button does not invent foot or look IK
+for it. Right-click that model and choose **Map Humanoid Bones** or **Rig
+Model (Humanoid)**. First Person Hands, head hiding,
+ragdolls, multiplayer ownership and the scripting calls work as before.
+
+Scripts: `set_view(0 or 1)` and `get_view()` (and the Player Controller type's
+`SetView`, `GetView`, `SetViewMode(0 first only, 1 third only, 2 both)`).
+`set_view` only switches when the View is Both.
+
+**Older scenes.** A scene saved with the separate First Person Controller,
+Third Person Controller and Player View components loads into one Player
+Controller with the same settings. One controller gives that view only; both
+give Both, with the Player View's start view, key and toggle setting. A player
+with one controller and the toggle on becomes Both. Saving writes only the new
+`playercontroller` record, and its `pcfirst...` and `pcthird...` sections, so a
+build from before this change cannot open that scene.
+
 ## Controller movement extras
 
-All three controllers (First-Person, Third-Person, Character Controller 3D)
+The Player Controller and Character Controller 3D
 share these movement niceties:
 
 - **Step Offset** (default 0.35): stairs and curbs up to this height are
@@ -87,7 +152,7 @@ share these movement niceties:
 - **Fall Reset Y** (default -100): falling below this world height teleports
   the player back to spawn (with a console hint about missing colliders).
 
-## Crouch and prone (First- and Third-Person)
+## Crouch and prone
 
 - **Crouch Key** (default Ctrl) and **Prone Key** (default Z) — tap to toggle
   (**Toggle Stance** on) or hold.
@@ -106,5 +171,35 @@ share these movement niceties:
   crouch, 0.5 s between crouch and prone, 0.8 s to get up from prone. The
   collider, the camera and the speed limit all follow the body through the
   change, and changing your mind halfway carries on from where the body is.
-  Set the times under **Stance changes** on the player's Animator. Applies to
-  First-Person, Third-Person and 2.5D Platformer.
+  Set the times under **Stance changes** on the player's Animator.
+- The other movement controllers — Character Controller 3D, Third Person
+  Shooter, Top Down, Click To Move and NPC — have the same options under
+  their **Crouch / prone** fold (keys, toggle or hold, Allow Prone, Resize
+  Body, speeds, heights). Top Down starts with prone off; Click To Move and
+  NPC have no keys by default. A script, a cutscene or an AI sets the stance
+  with `SetStance(0 stand / 1 crouch / 2 prone)` on any of the controllers.
+
+## Mover, Spinner, Lifetime and spawning
+
+The no-code motion components take a **Space**:
+
+- **Mover** (default Local): *Local* moves in the parent's frame (the world frame for an object with
+  no parent), *World* moves in world units per second whatever the parent does, *Self* flies along the
+  object's own axes (a bullet that moves where it points).
+- **Spinner** (default Self): the vector is the axis of spin and its length the degrees per second.
+  *Self* spins around the object's own axes, *Local* around the parent's, *World* around the scene's.
+  A spin about several axes comes out the same at 30 and 240 FPS.
+- **Lifetime** destroys the object (and its children) after **Seconds**. Zero or less ends it on the
+  first frame, a very large number is as good as forever. Disabling the component pauses the timer,
+  and a saved game keeps the seconds already lived.
+
+From C++ (a script component, a spawner):
+
+```cpp
+GameObject* b = scene.Instantiate(*bulletTemplate, muzzle->Position(), muzzle->Rotation());
+GameObject* c = scene.Duplicate(*crate);                  // "Crate (1)", same parent, next to the original
+scene.Destroy(b, 2.0f);                                   // in two seconds; DestroyImmediate(b) for tools and tests
+```
+
+See `scene_hierarchy_search.md` for the full list (Transform helpers, queries, bounds) and
+`layers_tags_cameras.md` for tags, layer names and the collision matrix.

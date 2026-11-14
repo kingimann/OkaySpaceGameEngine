@@ -1,0 +1,13 @@
+# A Delay here pauses the Run Graph node that called this, then sets from_sub.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Delay 0.25
+pos 2 320 40
+exec 1 0 2
+node 3 Const 9
+pos 3 320 200
+node 4 SetVar from_sub
+pos 4 620 40
+exec 2 0 4
+data 4 0 3 0

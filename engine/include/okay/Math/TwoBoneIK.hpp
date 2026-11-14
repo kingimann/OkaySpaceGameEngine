@@ -25,6 +25,7 @@ inline void SolveTwoBoneIK(const Vec3& root, float upperLen, float lowerLen,
                            float minBendDeg = 0.0f, float maxBendDeg = 180.0f) {
     Vec3 toTarget = target - root;
     float dist = toTarget.Magnitude();
+    if (!std::isfinite(dist)) { toTarget = Vec3{0, -1, 0}; dist = 1.0f; }   // a broken target: hang down, don't spread NaN
     float maxReach = upperLen + lowerLen;
     float minReach = Mathf::Abs(upperLen - lowerLen);
     // Bend-angle limits map to a reachable-distance window (law of cosines: a larger

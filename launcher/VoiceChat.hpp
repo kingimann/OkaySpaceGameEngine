@@ -15,8 +15,10 @@
 // No echo cancellation: headphones are recommended.
 #pragma once
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -212,6 +214,13 @@ private:
 
 struct PeerView { std::uint32_t slot = 0; std::string uid, name; bool speaking = false, muted = false, deafened = false; };
 
+// Open a named device through okay::platform (empty name = the system default).
+inline std::unique_ptr<okay::platform::AudioDevice> OpenDevice(const std::string& name, bool capture,
+                                                               const okay::platform::AudioSpec& spec) {
+    okay::platform::Backend* b = okay::platform::Default();
+    return b ? b->OpenAudio(spec, capture, name.empty() ? nullptr : name.c_str(), nullptr) : nullptr;
+}
+
 // ---- One voice room session ------------------------------------------------------
 class Session {
 public:
@@ -227,23 +236,24 @@ public:
         m_room = room; m_uid = myUid; m_name = myName;
         m_key = Sha256("okayspace-voice-v1|" + keyText);
         std::random_device rd; m_sid = ((std::uint32_t)rd() << 1) | 1u; m_seq = 0;
-        m_state = Connecting; m_error.clear(); m_since = 0; m_startTicks = SDL_GetTicks();
+        SetError(std::string()); m_state = Connecting; m_since = 0; m_startTicks = okay::platform::TicksMs32();
         m_mySlot = m_hubSlot = 0;
-        if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { m_state = Failed; m_error = "Can't reach the voice server " + relayHost; m_udp.Close(); return false; }
-        // Audio devices (SDL converts to/from our 16 kHz mono s16).
-        SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = kFrame;
-        want.callback = &Session::CaptureCb; want.userdata = this;
-        m_cap = SDL_OpenAudioDevice(m_inDev.empty() ? nullptr : m_inDev.c_str(), 1, &want, nullptr, 0);
-        if (!m_cap && !m_inDev.empty()) m_cap = SDL_OpenAudioDevice(nullptr, 1, &want, nullptr, 0);   // unplugged: default
-        SDL_AudioSpec pw = want; pw.callback = &Session::PlayCb;
-        m_play = SDL_OpenAudioDevice(m_outDev.empty() ? nullptr : m_outDev.c_str(), 0, &pw, nullptr, 0);
-        if (!m_play && !m_outDev.empty()) m_play = SDL_OpenAudioDevice(nullptr, 0, &pw, nullptr, 0);
-        if (!m_play) { m_state = Failed; m_error = "No audio output device"; Stop(); return false; }
-        if (!m_cap) m_error = "No microphone found \xE2\x80\x94 you can listen but not talk";
+        m_cookie.fill(0); m_v1Hello = m_relayAnswered = false; m_unanswered = 0;
+        if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { Fail("Can't reach the voice server " + relayHost); m_udp.Close(); return false; }
+        // Audio devices (the platform layer converts to/from our 16 kHz mono s16).
+        okay::platform::AudioSpec want; want.freq = kRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = kFrame;
+        want.callback = &Session::CaptureCb; want.user = this;
+        m_cap = OpenDevice(m_inDev, true, want);
+        if (!m_cap && !m_inDev.empty()) m_cap = OpenDevice(std::string(), true, want);   // unplugged: default
+        okay::platform::AudioSpec pw = want; pw.callback = &Session::PlayCb;
+        m_play = OpenDevice(m_outDev, false, pw);
+        if (!m_play && !m_outDev.empty()) m_play = OpenDevice(std::string(), false, pw);
+        if (!m_play) { Fail("No audio output device"); Stop(); return false; }
+        if (!m_cap) SetError("No microphone found \xE2\x80\x94 you can listen but not talk");
         m_run = true;
         m_thread = SDL_CreateThread(&Session::NetThread, "okay-voice", this);
-        if (m_cap) SDL_PauseAudioDevice(m_cap, 0);
-        SDL_PauseAudioDevice(m_play, 0);
+        if (m_cap) m_cap->Pause(false);
+        m_play->Pause(false);
         return true;
     }
     void Stop() {
@@ -251,8 +261,8 @@ public:
             m_run = false;
             if (m_thread) { SDL_WaitThread(m_thread, nullptr); m_thread = nullptr; }
         }
-        if (m_cap) { SDL_CloseAudioDevice(m_cap); m_cap = 0; }
-        if (m_play) { SDL_CloseAudioDevice(m_play); m_play = 0; }
+        m_cap.reset();
+        m_play.reset();
         m_udp.Close();
         if (m_mx) { SDL_LockMutex(m_mx); m_peers.clear(); m_capQ.clear(); SDL_UnlockMutex(m_mx); }
         if (m_state != Failed) m_state = Idle;
@@ -260,7 +270,7 @@ public:
     }
     bool Active() const { return m_state == Connecting || m_state == Connected; }
     int StateNow() const { return m_state; }
-    const std::string& Error() const { return m_error; }
+    std::string Error() const { Guard g(m_mx); return m_error; }   // a copy: the net thread rewrites it
     const std::string& Room() const { return m_room; }
     Uint32 ConnectedSince() const { return m_since; }
     void SetMuted(bool m) { m_muted = m; }
@@ -279,7 +289,7 @@ public:
         std::vector<PeerView> out;
         if (!m_mx) return out;
         SDL_LockMutex(m_mx);
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) {
             if (now - p.lastHeard > 5000) continue;
             PeerView v; v.slot = slot; v.uid = p.uid; v.name = p.name.empty() ? "Connecting\xE2\x80\xA6" : p.name;
@@ -291,6 +301,12 @@ public:
     }
 
 private:
+    struct Guard {
+        SDL_mutex* m; explicit Guard(SDL_mutex* mx) : m(mx) { if (m) SDL_LockMutex(m); }
+        ~Guard() { if (m) SDL_UnlockMutex(m); }
+    };
+    void SetError(const std::string& e) { Guard g(m_mx); m_error = e; }
+    void Fail(const std::string& e) { Guard g(m_mx); m_error = e; m_state = Failed; }   // the text is visible before the state flips
     struct Peer {
         std::string uid, name; bool muted = false, deaf = false;
         Uint32 lastHeard = 0, lastVoice = 0;
@@ -298,7 +314,7 @@ private:
         std::deque<std::array<std::int16_t, kFrame>> jitter; bool primed = false; int readPos = 0;
         std::uint32_t sid = 0;
     };
-    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93 };
+    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93, kCookie = 0x95 };
     enum : std::uint8_t { kAudio = 1, kInfo = 2, kLeave = 3 };
 
     static void Put32(std::vector<std::uint8_t>& v, std::uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((std::uint8_t)(x >> (i * 8))); }
@@ -371,15 +387,26 @@ private:
         // I'm the hub: send to every member I've heard from.
         std::vector<std::uint32_t> dests;
         SDL_LockMutex(m_mx);
-        const Uint32 now = SDL_GetTicks();
+        const Uint32 now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) if (now - p.lastHeard < 5000) dests.push_back(slot);
         SDL_UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
     }
+    // Relay protocol v3 (engine/include/okay/Net/RelayProtocol.hpp): the hub role
+    // (first one in is the hub, the next takes over when it leaves), the relay's
+    // cookie for our address, zero-padded to 32 bytes. A relay older than v3
+    // ignores the hub role, so after 3 unanswered hellos we fall back to v1.
     void SendHello() {
-        std::vector<std::uint8_t> pk = {kHello, 0 /* host role: first one in is the hub */};
+        std::vector<std::uint8_t> pk = {kHello, (std::uint8_t)(m_v1Hello ? 0 : 2)};
         Put32(pk, (std::uint32_t)m_room.size());
         pk.insert(pk.end(), m_room.begin(), m_room.end());
+        if (!m_v1Hello) {
+            pk.push_back(3);
+            Put32(pk, 0); Put32(pk, 0);   // no host key: a hub session is never protected
+            pk.insert(pk.end(), m_cookie.begin(), m_cookie.end());
+            while (pk.size() < 32) pk.push_back(0);
+            if (!m_relayAnswered && ++m_unanswered > 3) m_v1Hello = true;
+        }
         m_udp.Send(pk.data(), pk.size());
     }
     void HandleApp(std::uint32_t src, const std::uint8_t* app, std::size_t n) {
@@ -393,7 +420,7 @@ private:
         if (amHub && src != m_mySlot) {   // relay it to everyone else in the room
             std::vector<std::uint32_t> dests;
             SDL_LockMutex(m_mx);
-            const Uint32 now = SDL_GetTicks();
+            const Uint32 now = okay::platform::TicksMs32();
             m_peers[src].lastHeard = now;
             for (auto& [slot, p] : m_peers) if (slot != src && now - p.lastHeard < 5000) dests.push_back(slot);
             SDL_UnlockMutex(m_mx);
@@ -406,7 +433,7 @@ private:
         const std::uint8_t* b = body.data() + 4; const std::size_t bl = body.size() - 4;
         SDL_LockMutex(m_mx);
         Peer& p = m_peers[origin];
-        p.lastHeard = SDL_GetTicks();
+        p.lastHeard = okay::platform::TicksMs32();
         if (p.sid != sid) { p.sid = sid; p.dec = AdpcmState{}; p.lastSeq = 0; p.jitter.clear(); p.primed = false; }
         if (kind == kInfo && bl >= 3) {
             p.muted = b[0] & 1; p.deaf = (b[0] & 2) != 0;
@@ -422,7 +449,7 @@ private:
                 p.dec.pred = (std::int16_t)(b[1] | (b[2] << 8)); p.dec.index = std::min<int>(b[3], 88);
                 std::array<std::int16_t, kFrame> pcm{};
                 AdpcmDecode(b + 4, kFrame, p.dec, pcm.data());
-                if (b[0] > 0) p.lastVoice = SDL_GetTicks();
+                if (b[0] > 0) p.lastVoice = okay::platform::TicksMs32();
                 p.jitter.push_back(pcm);
                 while (p.jitter.size() > 12) { p.jitter.pop_front(); p.readPos = 0; }   // cap latency
             }
@@ -438,11 +465,16 @@ private:
         Uint32 nextHello = 0, nextInfo = 0, lastWelcome = 0, voiceUntil = 0;
         AdpcmState enc;
         while (s->m_run) {
-            const Uint32 now = SDL_GetTicks();
+            const Uint32 now = okay::platform::TicksMs32();
             if (now >= nextHello) { s->SendHello(); nextHello = now + 1000; }
             int n;
             while ((n = s->m_udp.Recv(buf.data(), buf.size())) > 0) {
-                if (buf[0] == kWelcome && n >= 9) {
+                if (buf[0] == kCookie && n >= 2 + 16) {   // prove our address, then hello again now
+                    std::memcpy(s->m_cookie.data(), &buf[2], 16);
+                    s->m_relayAnswered = true;
+                    nextHello = now;
+                } else if (buf[0] == kWelcome && n >= 9) {
+                    s->m_relayAnswered = true;
                     const std::uint32_t mine = Get32(&buf[1]), hub = Get32(&buf[5]);
                     if (hub != s->m_hubSlot) { SDL_LockMutex(s->m_mx); s->m_peers.clear(); SDL_UnlockMutex(s->m_mx); }
                     s->m_mySlot = mine; s->m_hubSlot = hub; lastWelcome = now;
@@ -452,7 +484,7 @@ private:
                 }
             }
             if (s->m_state == Connecting && now - s->m_startTicks > 8000 && lastWelcome == 0) {
-                s->m_error = "The voice server isn't answering"; s->m_state = Failed;
+                s->Fail("The voice server isn't answering");
             }
             if (s->m_state == Connected && now >= nextInfo) {   // who I am + mute state, every 2 s
                 std::vector<std::uint8_t> b;
@@ -475,8 +507,8 @@ private:
                 const float rms = (float)std::sqrt(e / kFrame);
                 const float db = 20.0f * std::log10(std::max(1.0f, rms) / 32768.0f);
                 s->m_selfLevel = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
-                if (db > s->m_gateDb) voiceUntil = SDL_GetTicks() + 350;
-                const bool talk = SDL_GetTicks() < voiceUntil;
+                if (db > s->m_gateDb) voiceUntil = okay::platform::TicksMs32() + 350;
+                const bool talk = okay::platform::TicksMs32() < voiceUntil;
                 s->m_selfSpeaking = talk;
                 if (!talk || s->m_muted || s->m_deaf || s->m_state != Connected) continue;
                 std::vector<std::uint8_t> b(4 + kFrame / 2, 0);
@@ -485,7 +517,7 @@ private:
                 AdpcmEncode(fr.data(), kFrame, enc, b.data() + 4);
                 s->Broadcast(kAudio, b);
             }
-            SDL_Delay(4);
+            okay::platform::DelayMs(4);
         }
         if (s->m_mySlot) { s->Broadcast(kLeave, {}); std::uint8_t bye = kBye; s->m_udp.Send(&bye, 1); }
         return 0;
@@ -494,19 +526,23 @@ private:
     Udp m_udp;
     SDL_mutex* m_mx = nullptr;
     SDL_Thread* m_thread = nullptr;
-    volatile bool m_run = false;
-    SDL_AudioDeviceID m_cap = 0, m_play = 0;
+    std::atomic<bool> m_run{false};
+    std::unique_ptr<okay::platform::AudioDevice> m_cap, m_play;
     std::array<std::uint8_t, 32> m_key{};
-    std::string m_room, m_uid, m_name, m_error;
+    std::string m_room, m_uid, m_name;
+    std::string m_error;   // (m_mx) written by the net thread, read by the UI every frame
     std::uint32_t m_sid = 0, m_seq = 0;
-    volatile std::uint32_t m_mySlot = 0, m_hubSlot = 0;
-    volatile int m_state = Idle;
-    Uint32 m_since = 0, m_startTicks = SDL_GetTicks();
-    volatile bool m_muted = false, m_deaf = false, m_selfSpeaking = false;
-    volatile float m_selfLevel = 0.0f, m_gateDb = -46.0f;
+    std::atomic<std::uint32_t> m_mySlot{0}, m_hubSlot{0};
+    std::atomic<int> m_state{Idle};   // (m_error changes with it, under m_mx)
+    std::atomic<Uint32> m_since{0};
+    Uint32 m_startTicks = okay::platform::TicksMs32();
+    std::atomic<bool> m_muted{false}, m_deaf{false}, m_selfSpeaking{false};
+    std::atomic<float> m_selfLevel{0.0f}, m_gateDb{-46.0f};
     int m_badKey = 0;
+    std::array<std::uint8_t, 16> m_cookie{};    // (net thread) the relay's cookie for our address
+    bool m_v1Hello = false, m_relayAnswered = false; int m_unanswered = 0;   // (net thread)
     std::string m_inDev, m_outDev;
-    volatile float m_inGain = 1.0f, m_outVol = 1.0f;
+    std::atomic<float> m_inGain{1.0f}, m_outVol{1.0f};
     float m_hp = 0.0f, m_hpPrev = 0.0f;   // capture high-pass state (audio thread)
     std::map<std::uint32_t, Peer> m_peers;                    // (m_mx) by relay slot
     std::deque<std::array<std::int16_t, kFrame>> m_capQ;      // (m_mx) mic frames to send
@@ -520,24 +556,24 @@ public:
     bool Start(const std::string& inDev, const std::string& outDev, bool loopback, float gain) {
         Stop();
         m_gain = gain;
-        SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = 512;
-        want.callback = &MicTest::Cb; want.userdata = this;
-        m_cap = SDL_OpenAudioDevice(inDev.empty() ? nullptr : inDev.c_str(), 1, &want, nullptr, 0);
+        okay::platform::AudioSpec want; want.freq = kRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = 512;
+        want.callback = &MicTest::Cb; want.user = this;
+        m_cap = OpenDevice(inDev, true, want);
         if (!m_cap) return false;
         if (loopback) {
-            SDL_AudioSpec pw = want; pw.callback = nullptr; pw.userdata = nullptr;
-            m_out = SDL_OpenAudioDevice(outDev.empty() ? nullptr : outDev.c_str(), 0, &pw, nullptr, 0);
-            if (m_out) SDL_PauseAudioDevice(m_out, 0);
+            okay::platform::AudioSpec pw = want; pw.callback = nullptr; pw.user = nullptr;
+            m_out = OpenDevice(outDev, false, pw);
+            if (m_out) m_out->Pause(false);
         }
-        SDL_PauseAudioDevice(m_cap, 0);
+        m_cap->Pause(false);
         return true;
     }
     void Stop() {
-        if (m_cap) { SDL_CloseAudioDevice(m_cap); m_cap = 0; }
-        if (m_out) { SDL_CloseAudioDevice(m_out); m_out = 0; }
+        m_cap.reset();
+        m_out.reset();
         m_level = 0.0f;
     }
-    bool Running() const { return m_cap != 0; }
+    bool Running() const { return m_cap != nullptr; }
     float Level() const { return m_level; }   // 0..1 (-60..0 dBFS)
     float Db() const { return m_db; }
     void SetGain(float g) { m_gain = g; }
@@ -554,10 +590,10 @@ private:
         const float rms = (float)std::sqrt(e / std::max(1, n));
         t->m_db = 20.0f * std::log10(std::max(1.0f, rms) / 32768.0f);
         t->m_level = std::clamp((t->m_db + 60.0f) / 60.0f, 0.0f, 1.0f);
-        if (t->m_out && SDL_GetQueuedAudioSize(t->m_out) < 16000) SDL_QueueAudio(t->m_out, stream, (Uint32)len);   // hear yourself
+        if (t->m_out && t->m_out->QueuedBytes() < 16000) t->m_out->Queue(stream, (std::uint32_t)len);   // hear yourself
     }
-    SDL_AudioDeviceID m_cap = 0, m_out = 0;
-    volatile float m_level = 0.0f, m_db = -90.0f, m_gain = 1.0f;
+    std::unique_ptr<okay::platform::AudioDevice> m_cap, m_out;
+    std::atomic<float> m_level{0.0f}, m_db{-90.0f}, m_gain{1.0f};
 };
 
 } // namespace okay::voice

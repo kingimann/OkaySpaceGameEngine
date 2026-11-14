@@ -1,13 +1,17 @@
 #pragma once
+#include "okay/Core/ImportSidecar.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec4.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/Atmosphere.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/Visibility.hpp"
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
@@ -138,6 +142,12 @@ inline Vec3 SampleEnvSky(const Vec3& dir) {
 /// triangles occlude correctly (unlike a painter's-algorithm sort). It fills an
 /// ABGR8888 pixel buffer that both the player (SDL texture) and the editor
 /// (ImGui image) display. Flat-shaded; this is the engine's reference 3D path.
+// A texture's mip levels plus how it is sampled (from the asset's import settings: Filter and Wrap).
+struct MipChain : std::vector<Image> {
+    int filter = TextureSampling::Trilinear;
+    int wrap = TextureSampling::Repeat;
+};
+
 class Raster {
 public:
     int width = 0, height = 0;
@@ -308,11 +318,28 @@ public:
     /// Textured triangle: perspective-correct UVs (pass u/w, v/w and 1/w per
     /// vertex). Samples `img` (wrapped), multiplies by `tint` and lighting
     /// `shade`, adds `spec` + emissive `(er,eg,eb)`. Depth-tested per pixel.
+    // Texture address modes (the texture's "Wrap" import setting).
+    static int WrapIndex(int a, int n, int mode) {
+        if (mode == TextureSampling::Clamp) return a < 0 ? 0 : (a >= n ? n - 1 : a);
+        if (mode == TextureSampling::Mirror) {
+            const int period = 2 * n;
+            int m = a % period; if (m < 0) m += period;
+            return m < n ? m : period - 1 - m;
+        }
+        a %= n; return a < 0 ? a + n : a;
+    }
+    // Nearest-texel lookup (the "Point" filter), one mip level.
+    static Color NearestWrap(const Image& img, float u, float v, int wrap) {
+        const int tw = img.Width(), th = img.Height();
+        if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
+        Color c = img.GetPixel(WrapIndex((int)std::floor(u * tw), tw, wrap), WrapIndex((int)std::floor(v * th), th, wrap));
+        return Color(c.r, c.g, c.b, 1.0f);
+    }
     // Bilinear texture lookup with wrapping (one mip level).
-    static Color BilerpWrap(const Image& img, float u, float v) {
+    static Color BilerpWrap(const Image& img, float u, float v, int wrap = TextureSampling::Repeat) {
         int tw = img.Width(), th = img.Height();
         if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
-        auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
+        auto wr = [wrap](int a, int n) { return WrapIndex(a, n, wrap); };
         // v = 0 is the image's top row, as on the GPU renderers and in glTF.
         float fu = u * tw - 0.5f, fv = v * th - 0.5f;
         int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
@@ -324,17 +351,23 @@ public:
         float b0 = c00.b + (c10.b - c00.b) * ax, b1 = c01.b + (c11.b - c01.b) * ax;
         return Color(r0 + (r1 - r0) * ay, g0 + (g1 - g0) * ay, b0 + (b1 - b0) * ay, 1.0f);
     }
-    // Trilinear mipmap sample: bilinear within the two nearest mip levels, blended.
-    static Color SampleMips(const std::vector<Image>& mips, float u, float v, float lod) {
+    // Sample a mip chain the way its texture's import settings say: Trilinear blends the two nearest levels,
+    // Bilinear smooths within the nearest level, Point takes the nearest texel of the nearest level.
+    // `wrap` is Repeat / Clamp / Mirror. A chain with one level (mipmaps off) always reads the full picture.
+    static Color SampleMips(const MipChain& mips, float u, float v, float lod) {
         int n = (int)mips.size();
         if (n == 0) return Color(1, 1, 1, 1);
         float maxl = (float)(n - 1);
         lod = lod < 0 ? 0 : (lod > maxl ? maxl : lod);
+        if (mips.filter != TextureSampling::Trilinear) {
+            const Image& lv = mips[(int)(lod + 0.5f)];
+            return mips.filter == TextureSampling::Point ? NearestWrap(lv, u, v, mips.wrap) : BilerpWrap(lv, u, v, mips.wrap);
+        }
         int l0 = (int)lod, l1 = l0 + 1 < n ? l0 + 1 : l0;
         float f = lod - l0;
-        Color a = BilerpWrap(mips[l0], u, v);
+        Color a = BilerpWrap(mips[l0], u, v, mips.wrap);
         if (f <= 0.001f || l1 == l0) return a;
-        Color b = BilerpWrap(mips[l1], u, v);
+        Color b = BilerpWrap(mips[l1], u, v, mips.wrap);
         return Color(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f, 1.0f);
     }
     // Per-vertex screen-space gradients of the (perspective) barycentric-weighted
@@ -365,7 +398,7 @@ public:
 
     void TriangleTex(const float* X, const float* Y, const float* D,
                      const float* IW, const float* U, const float* V,
-                     const std::vector<Image>& mips, const Color& tint,
+                     const MipChain& mips, const Color& tint,
                      const float* LR, const float* LG, const float* LB, const float* SP,
                      float er, float eg, float eb,
                      const float* FOG, float fr, float fg, float fb,
@@ -436,13 +469,13 @@ public:
                        const float* U, const float* V,
                        const float* NXa, const float* NYa, const float* NZa,
                        const float* WXa, const float* WYa, const float* WZa,
-                       const std::vector<Image>* mips, const Color& base, const Color& tint, const Vec3& eye,
+                       const MipChain* mips, const Color& base, const Color& tint, const Vec3& eye,
                        float shininess, float specularK, float er, float eg, float eb,
                        const float* FOG, float fr, float fg, float fb,
-                       const std::vector<Image>* normalMips = nullptr,
+                       const MipChain* normalMips = nullptr,
                        const Vec3& tangent = Vec3{1, 0, 0}, float normalStrength = 1.0f,
                        float reflectivity = 0.0f,
-                       const std::vector<Image>* specMips = nullptr,
+                       const MipChain* specMips = nullptr,
                        float metallic = 0.0f,
                        int toonBands = 0,
                        float matRimStr = 0.0f, float matRimPow = 3.0f,
@@ -450,7 +483,7 @@ public:
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
-                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f,
+                       const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
                        bool receiveShadows = true) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
@@ -758,6 +791,9 @@ inline std::unordered_map<std::string, Image>& TextureCacheMap() {
     return cache;
 }
 
+// Bumped whenever a cached picture is dropped, so GPU renderers that keep their own copy re-upload it.
+inline unsigned& TextureCacheGeneration() { static unsigned g = 0; return g; }
+
 // Register an in-memory image under a name so it can be used without a file on
 // disk (e.g. an embedded/procedural matcap that ships inside the exe). Names
 // conventionally start with '@' to avoid colliding with real file paths.
@@ -774,10 +810,15 @@ inline Image* GetCachedTexture(const std::string& path) {
             img = GenerateProcTexture(path);   // built-in procedural (no file)
         else
             img.Load(path);                    // leaves the image empty on failure
+        ApplyTextureImportSettings(path, img);   // the asset's own "largest side", if it has one
         it = cache.emplace(path, std::move(img)).first;
     }
     return it->second.Width() > 0 ? &it->second : nullptr;
 }
+
+// Forget a picture's cached pixels and mip chain so the next draw reads the file and its import settings again
+// (the editor calls this after Apply on the Import Settings box or a reimport).
+inline void InvalidateTextureCache(const std::string& path);
 
 // Build the mipmap pyramid for `levels` (which already holds the base at [0]):
 // box-downsample by 2 until 1x1. Mip levels let the renderer pick a smaller,
@@ -805,20 +846,37 @@ inline void BuildMips(std::vector<Image>& levels) {
     }
 }
 
-inline std::unordered_map<std::string, std::vector<Image>>& MipCacheMap() {
-    static std::unordered_map<std::string, std::vector<Image>> cache;
+inline std::unordered_map<std::string, MipChain>& MipCacheMap() {
+    static std::unordered_map<std::string, MipChain> cache;
     return cache;
 }
 
 // A texture's mip chain (built lazily from the base image). Returns null if the
 // texture failed to load / is empty.
-inline const std::vector<Image>* GetCachedMips(const std::string& path) {
+inline void InvalidateTextureCache(const std::string& path) {
+    TextureCacheMap().erase(path);
+    MipCacheMap().erase(path);
+    ++TextureCacheGeneration();
+}
+
+// Drop every picture loaded from a file (pictures registered by name, "@...", are kept: they have no file to
+// read again). For when the caller does not know which cache key a file went in under.
+inline void InvalidateAllTextureCaches() {
+    auto& tex = TextureCacheMap();
+    for (auto it = tex.begin(); it != tex.end();) { if (!it->first.empty() && it->first[0] == '@') ++it; else it = tex.erase(it); }
+    MipCacheMap().clear();
+    ++TextureCacheGeneration();
+}
+
+inline const MipChain* GetCachedMips(const std::string& path) {
     auto& cache = MipCacheMap();
     auto it = cache.find(path);
     if (it == cache.end()) {
-        std::vector<Image> levels;
+        MipChain levels;
         Image* base = GetCachedTexture(path);
-        if (base && base->Width() > 0) { levels.push_back(*base); BuildMips(levels); }
+        const TextureSampling ts = TextureImportSampling(path);   // the asset's Filter / Wrap / Mipmaps
+        levels.filter = ts.filter; levels.wrap = ts.wrap;
+        if (base && base->Width() > 0) { levels.push_back(*base); if (ts.mipmaps) BuildMips(levels); }
         it = cache.emplace(path, std::move(levels)).first;
     }
     return (!it->second.empty() && it->second[0].Width() > 0) ? &it->second : nullptr;
@@ -855,8 +913,11 @@ namespace detail {
 inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull) {
     const int S = cas.size;
     auto visible = [](const GameObject& go) {
+        // The raised-arm copy is for one camera. It never casts, even into a
+        // shadow map another view would sample.
+        if (go.firstPersonOnly) return static_cast<MeshRenderer*>(nullptr);
         auto* mr = go.GetComponent<MeshRenderer>();
-        return mr && go.active && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
+        return mr && go.ActiveInHierarchy() && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
     };
     const float cr = cas.radius * 1.05f, cr2 = cr * cr;
     for (const auto& go : scene.Objects()) {
@@ -878,7 +939,9 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
             if (qx * qx + qy * qy + qz * qz > cr2) continue;
         }
         Mat4 mvp = cas.viewProj * model;
-        const auto& V = mr->DisplayMesh().vertices; const auto& T = mr->DisplayMesh().triangles;
+        const Mesh* shMesh = visibility::Current().ShadowMesh(go.get(), mr);
+        if (!shMesh) continue;
+        const auto& V = shMesh->vertices; const auto& T = shMesh->triangles;
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             float sxv[3], syv[3], szv[3]; bool ok = true;
             for (int k = 0; k < 3; ++k) {
@@ -954,7 +1017,7 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     bool any = false;
     auto visible = [](const GameObject& go) {
         auto* mr = go.GetComponent<MeshRenderer>();
-        return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
+        return mr && go.ActiveInHierarchy() && mr->enabled && !mr->wireframe ? mr : nullptr;
     };
     for (const auto& go : scene.Objects()) {
         auto* mr = visible(*go); if (!mr) continue;
@@ -1028,7 +1091,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     for (const auto& go : scene.Objects()) {
         if (!go) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
-        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
+        if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
         Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         for (int c = 0; c < 8; ++c) {
@@ -1097,9 +1160,9 @@ inline void SceneAmbientColors(const Scene::RenderSettings& rs, const Vec3& amb,
     if (rs.ambientMode != Scene::RenderSettings::AmbientSky) {
         sky = amb * 1.15f; ground = amb * 0.55f; return;
     }
-    Vec3 skyC{(rs.skyTop.r + rs.skyHorizon.r) * 0.5f, (rs.skyTop.g + rs.skyHorizon.g) * 0.5f,
-              (rs.skyTop.b + rs.skyHorizon.b) * 0.5f};
-    Vec3 grdC{rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    Vec3 top, hor, grdC;
+    EffectiveSkyColors(rs, top, hor, grdC);   // the gradient, or the sun's palette (Procedural sky)
+    Vec3 skyC = (top + hor) * 0.5f;
     Vec3 mid = (skyC + grdC) * 0.5f;
     float k = rs.ambientSkyTint;
     sky    = {cl(amb.x + (skyC.x - mid.x) * k), cl(amb.y + (skyC.y - mid.y) * k), cl(amb.z + (skyC.z - mid.z) * k)};
@@ -1499,19 +1562,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                          const GameObject* ignore = nullptr) {
     const float W = (float)r.width, H = (float)r.height;
     const auto& rs = scene.renderSettings;
-    const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
-    const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
-    // Refresh the environment sky (for reflective materials) from the scene.
+    const bool  fogOn = FogActive(rs);
+    const Vec3  fogC = EffectiveFogColor(rs);   // authored, or the sky's horizon (Match Sky)
+    const float fogR = fogC.x, fogG = fogC.y, fogB = fogC.z;
+    // Refresh the environment sky (for reflective materials) from the scene: the
+    // authored gradient, or the sun's palette when the sky is Procedural.
     EnvSky().enabled = rs.skybox;
-    EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
-    EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
-    EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);
     // Hemisphere ambient: split the flat ambient into a sky-tinted (up) and
     // ground-tinted (down) term, keeping the midpoint equal to the current
     // ambient so the overall level is unchanged — only its direction is added.
     // The scene's Ambient Mode (shared with the GPU shaders).
     SceneLights::Hemisphere() = rs.ambientMode != Scene::RenderSettings::AmbientFlat;
     SceneAmbientColors(rs, SceneLights::AmbientColor(), SceneLights::SkyAmbient(), SceneLights::GroundAmbient());
+    const visibility::Frame& vis = visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore);
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
@@ -1526,15 +1590,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Frustum culling is decided here too (its bounds cache isn't thread-safe);
     // the bands only read the result.
     const Frustum viewFrustum = Frustum::FromVP(vp);
+    (void)viewFrustum;
     std::unordered_set<const GameObject*> swCulled;
+    int swDrawn = 0;
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
-        if (CulledByFrustum(viewFrustum, go.get(), mr)) { swCulled.insert(go.get()); continue; }
+        if (!vis.Visible(go.get())) { swCulled.insert(go.get()); continue; }
+        ++swDrawn;
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
         if (!mr->specularMap.empty()) GetCachedMips(mr->specularMap);
         if (!mr->aoMap.empty())       GetCachedMips(mr->aoMap);
+        if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
+        if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
@@ -1543,10 +1612,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
-        if (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel) continue;   // skip the owner's subtree (1st-person body) — except viewmodel parts (the arm)
+        if (go->HiddenFromCamera(ignore)) continue;   // owner's body, except the parts that camera is meant to see (shirt, raised-arm copy)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
+        if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines
         // The Unlit shader is equivalent to the unlit flag for the renderer.
         const bool unlit = mr->unlit || mr->shader == MeshRenderer::Shader::Unlit;
         // Scrolling-UV offset (animated textures): advance the texture coordinates by
@@ -1554,17 +1623,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
         const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
-        const auto& v = mr->DisplayMesh().vertices;
-        const auto& t = mr->DisplayMesh().triangles;
-        const bool hasUV = mr->DisplayMesh().uvs.size() == v.size();
-        const bool faceCols = mr->DisplayMesh().HasFaceColors();   // per-triangle colors?
-        const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
-        const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
-        const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
-        const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
+        const Mesh* lodMesh = vis.MeshFor(go.get());
+        if (!lodMesh) { continue; }
+        const Mesh& drawMesh = *lodMesh;
+        const auto& v = drawMesh.vertices;
+        const auto& t = drawMesh.triangles;
+        const bool hasUV = drawMesh.uvs.size() == v.size();
+        const bool faceCols = drawMesh.HasFaceColors();   // per-triangle colors?
+        const MipChain* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
+        const MipChain* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
+        const MipChain* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
+        const MipChain* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
-        const bool useMatcap = mcap && mr->DisplayMesh().HasNormals();
+        const bool useMatcap = mcap && drawMesh.HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
         // isn't textured/unlit — interpolated lighting across each face. Matcap
         // also rides the smooth path (it interpolates a per-vertex sampled color).
@@ -1634,6 +1706,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // clipping. Clipping in homogeneous space before the /w divide is what
         // prevents triangles from exploding/vanishing when you zoom in close.
         struct CV { float x, y, z, w, u, v, lr, lg, lb, nx, ny, nz, wx, wy, wz, fo, sp; };
+        // Once per mesh. Doing this inside the triangle loop made a plain scene
+        // about twice as slow (every band, every triangle, a component lookup).
+        float lodR = 1, lodG = 1, lodB = 1;
+        if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
+        Color shaded = mr->color;
+        shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -1654,12 +1732,46 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // carries its own UVs).
             Vec3 ln = Vec3::Cross(v[idx[1]] - v[idx[0]], v[idx[2]] - v[idx[0]]);
             float ax = std::fabs(ln.x), ay = std::fabs(ln.y), az = std::fabs(ln.z);
+            float faceMetal = mr->metallic, faceShine = mr->shininess, faceSpec = mr->specular;
+            float faceEr = mr->emissive.r, faceEg = mr->emissive.g, faceEb = mr->emissive.b;
+            if (!mr->metallicRoughnessMap.empty() || !mr->emissiveMap.empty()) {
+                float su = 0.0f, sv = 0.0f;
+                for (int k = 0; k < 3; ++k) {
+                    float uu, vt;
+                    if (hasUV) { uu = drawMesh.uvs[idx[k]].x; vt = drawMesh.uvs[idx[k]].y; }
+                    else {
+                        const Vec3& p = v[idx[k]];
+                        if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
+                        else if (ay >= ax && ay >= az) { uu = p.x + 0.5f; vt = p.z + 0.5f; }
+                        else { uu = p.x + 0.5f; vt = p.y + 0.5f; }
+                    }
+                    su += uu; sv += vt;
+                }
+                su = su / 3.0f * mr->tiling.x + mr->texOffset.x + scrollU;
+                sv = sv / 3.0f * mr->tiling.y + mr->texOffset.y + scrollV;
+                if (!mr->metallicRoughnessMap.empty())
+                    if (const auto* mm = GetCachedMips(mr->metallicRoughnessMap); mm && !mm->empty()) {
+                        const Color c = (*mm)[0].Sample(su, sv);
+                        faceMetal *= c.b;
+                        float rough0 = 1.0f - (faceShine - 4.0f) / 124.0f;
+                        if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+                        float rough = rough0 * c.g; if (rough < 0.0f) rough = 0.0f; if (rough > 1.0f) rough = 1.0f;
+                        faceShine = 4.0f + (1.0f - rough) * 124.0f;
+                        float specScale = 1.0f - rough; if (specScale < 0.04f) specScale = 0.04f;
+                        faceSpec *= specScale;
+                    }
+                if (!mr->emissiveMap.empty())
+                    if (const auto* em = GetCachedMips(mr->emissiveMap); em && !em->empty()) {
+                        const Color c = (*em)[0].Sample(su, sv);
+                        faceEr *= c.r; faceEg *= c.g; faceEb *= c.b;
+                    }
+            }
             CV in[3];
             float uvx[3], uvy[3];
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
                 float uu, vt;
-                if (hasUV) { uu = mr->DisplayMesh().uvs[idx[k]].x; vt = mr->DisplayMesh().uvs[idx[k]].y; }
+                if (hasUV) { uu = drawMesh.uvs[idx[k]].x; vt = drawMesh.uvs[idx[k]].y; }
                 else {
                     const Vec3& p = v[idx[k]];
                     if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
@@ -1669,8 +1781,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 uvx[k] = uu; uvy[k] = vt;
                 // Per-vertex world normal (smoothed if the mesh has normals, else
                 // the face normal), flipped to match a culled back face.
-                Vec3 nk = mr->DisplayMesh().HasNormals()
-                              ? xformNormal(mr->DisplayMesh().normals[idx[k]]).Normalized()
+                Vec3 nk = drawMesh.HasNormals()
+                              ? xformNormal(drawMesh.normals[idx[k]]).Normalized()
                               : normal;
                 if (facing < 0.0f) nk = nk * -1.0f;
 
@@ -1701,11 +1813,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // the triangle by the rasterizer. A single per-triangle factor made a
                 // hard diagonal seam on big quads (e.g. the ground) when fog was on.
                 float fok = 0.0f;
-                if (fogOn) {
-                    float dd = (wp[k] - eye).Magnitude();
-                    fok = (dd - rs.fogStart) / (rs.fogEnd - rs.fogStart);
-                    fok = fok < 0.0f ? 0.0f : (fok > 1.0f ? 1.0f : fok);
-                }
+                if (fogOn) fok = FogFactor(rs, (wp[k] - eye).Magnitude(), eye.y, wp[k].y);   // linear / exponential / height
                 // Per-vertex Blinn-Phong specular, interpolated by the rasterizer. A
                 // single per-triangle value (from the centroid) made a hard diagonal
                 // highlight seam on big quads like a shiny ground.
@@ -1715,7 +1823,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     Vec3 toE = (eye - wp[k]).Normalized();
                     Vec3 hv = (toL.Normalized() + toE).Normalized();
                     float nh = Vec3::Dot(nk, hv);
-                    if (nh > 0.0f) spk = std::pow(nh, mr->shininess) * mr->specular;
+                    if (nh > 0.0f) spk = std::pow(nh, faceShine) * faceSpec;
                 }
                 in[k] = {c.x, c.y, c.z, c.w, uu * mr->tiling.x + scrollU, vt * mr->tiling.y + scrollV,
                          lk.x, lk.y, lk.z, nk.x, nk.y, nk.z, wp[k].x, wp[k].y, wp[k].z, fok, spk};
@@ -1776,21 +1884,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 Vec3 toEye = (eye - centroid).Normalized();
                 Vec3 h = (toLight.Normalized() + toEye).Normalized();
                 float nh = Vec3::Dot(normal, h);
-                if (nh > 0.0f) spec = std::pow(nh, mr->shininess) * mr->specular;
+                if (nh > 0.0f) spec = std::pow(nh, faceShine) * faceSpec;
             }
             // Per-face color when the mesh carries one (e.g. character skin /
-            // outfit / hair); otherwise the renderer's single albedo color.
-            const Color& base = faceCols ? mr->DisplayMesh().triColors[i / 3] : mr->color;
-            float cr = base.r * lit.x + spec + mr->emissive.r;
-            float cg = base.g * lit.y + spec + mr->emissive.g;
-            float cb = base.b * lit.z + spec + mr->emissive.b;
+            // outfit / hair); otherwise the renderer's albedo, including LOD tint.
+            const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
+            const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
+            float cr = base.r * lit.x * metalK + spec + faceEr;
+            float cg = base.g * lit.y * metalK + spec + faceEg;
+            float cb = base.b * lit.z * metalK + spec + faceEb;
             // Distance fog: blend the color toward the fog color by how far the
             // triangle is, between fogStart and fogEnd (per-tri factor).
             float fogF = 0.0f;
             if (fogOn) {
-                float dist = (centroid - eye).Magnitude();
-                fogF = (dist - rs.fogStart) / (rs.fogEnd - rs.fogStart);
-                fogF = fogF < 0.0f ? 0.0f : (fogF > 1.0f ? 1.0f : fogF);
+                fogF = FogFactor(rs, (centroid - eye).Magnitude(), eye.y, centroid.y);
                 cr = cr * (1.0f - fogF) + fogR * fogF;
                 cg = cg * (1.0f - fogF) + fogG * fogF;
                 cb = cb * (1.0f - fogF) + fogB * fogF;
@@ -1843,11 +1950,11 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float wy[3] = {tri[0]->wy, tri[1]->wy, tri[2]->wy};
                     float wz[3] = {tri[0]->wz, tri[1]->wz, tri[2]->wz};
                     r.TrianglePhong(sx, sy, sd, iw, uu, vv, nx, ny, nz, wx, wy, wz,
-                                    tex, base, mr->color, eye, mr->shininess, mr->specular,
-                                    mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                    tex, base, shaded, eye, faceShine, faceSpec,
+                                    faceEr, faceEg, faceEb,
                                     fo, fogR, fogG, fogB,
                                     normalMips, triTangent, mr->normalStrength,
-                                    mr->reflectivity, specMips, mr->metallic,
+                                    mr->reflectivity, specMips, faceMetal,
                                     (mr->shader == MeshRenderer::Shader::Toon ? mr->toonBands : 0),
                                     mr->rimStrength, mr->rimPower,
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
@@ -1858,15 +1965,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
-                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, mr->color, lr, lg, lb, sp3,
-                                  mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                    r.TriangleTex(sx, sy, sd, iw, uu, vv, *tex, shaded, lr, lg, lb, sp3,
+                                  faceEr, faceEg, faceEb,
                                   fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else if (smooth) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};
                     float lb[3] = {tri[0]->lb, tri[1]->lb, tri[2]->lb};
                     r.TriangleSmooth(sx, sy, sd, lr, lg, lb, base, sp3,
-                                     mr->emissive.r, mr->emissive.g, mr->emissive.b,
+                                     faceEr, faceEg, faceEb,
                                      fo, fogR, fogG, fogB, bandY0, bandY1);
                 } else
                     r.Triangle(sx[0], sy[0], sd[0], sx[1], sy[1], sd[1],
@@ -1882,6 +1989,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     ApplyToneMap(r);                                                 // filmic highlight rolloff
     ApplyColorGrade(r);                                              // brightness/contrast/sat/vignette/gamma
     ApplyFXAA(r);                                                    // edge anti-aliasing
+    LastCullCounters().drawn = swDrawn;
 }
 
 /// Supersampled render for smoother (anti-aliased) edges: draw the scene at `ss`x
@@ -1893,6 +2001,7 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
                                            int w, int h, int ss, const GameObject* ignore = nullptr) {
     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
     while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
+    PostVignetteHandled() = false;   // the host paints the vignette over a software frame
     const int iw = w * ss, ih = h * ss;
     work.Resize(iw, ih);
     work.Clear(0u);
@@ -1932,6 +2041,17 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
                 ((std::uint32_t)(b / n) << 16) | ((std::uint32_t)(a / n) << 24);
         }
     return out.data();
+}
+
+/// A second software pass that only exists to publish SceneOcclusionDepth.
+/// Restores the cull counters from the real frame so a stats read still
+/// describes the picture, not this cheaper depth pass.
+inline void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
+                               const Scene& scene, const Mat4& vp, const Vec3& eye,
+                               int w, int h, const GameObject* ignore = nullptr) {
+    const CullCounters saved = LastCullCounters();
+    RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
+    LastCullCounters() = saved;
 }
 
 } // namespace okay

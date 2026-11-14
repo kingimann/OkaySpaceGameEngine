@@ -1,24 +1,37 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include <cmath>
 
 namespace okay {
 
 void Camera::Awake() {
-    if (main) {
-        if (Scene* s = GetScene()) s->mainCamera = this;
-    }
+    if (!main) return;
+    Scene* s = GetScene();
+    if (!s) return;
+    // A main camera taking over must outrank the current one: a lower-depth camera
+    // waking up later doesn't steal the view (Scene::ResolveMainCamera agrees).
+    Camera* cur = s->mainCamera;
+    const bool takeOver = !cur || cur == this || !CameraUsable(cur) || !cur->main ||
+                          (CameraUsable(this) && depth >= cur->depth);
+    if (takeOver) s->mainCamera = this;
 }
 
 void Camera::ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,
                               Vec3& outOrigin, Vec3& outDir) const {
     // Unproject through the same view * projection the renderers use, so picking
-    // stays exact with zoom, dutch, lens shift and shake.
-    float aspect = screenH > 0.0f ? screenW / screenH : 1.0f;
-    float ndcX = screenW > 0.0f ? (2.0f * screenX / screenW - 1.0f) : 0.0f;
-    float ndcY = screenH > 0.0f ? (1.0f - 2.0f * screenY / screenH) : 0.0f;   // +Y up
+    // stays exact with zoom, dutch, lens shift and shake. Pixels are mapped
+    // through the viewport rect; a full-screen rect is the whole window.
+    float rx, ry, rw, rh;
+    ScreenRect(screenW, screenH, rx, ry, rw, rh);
+    float aspect = rh > 0.0f ? rw / rh : 1.0f;
+    const float lx = rw > 0.0f ? (screenX - rx) / rw : 0.5f;
+    const float ly = rh > 0.0f ? (screenY - ry) / rh : 0.5f;
+    float ndcX = 2.0f * lx - 1.0f;
+    float ndcY = 1.0f - 2.0f * ly;   // +Y up
     const Mat4 inv = (ProjectionMatrix(aspect) * ViewMatrix()).Inverse();
     auto unproject = [&](float z) {
         Vec4 p = inv * Vec4{ndcX, ndcY, z, 1.0f};
@@ -54,9 +67,13 @@ Vec3 Camera::ScreenToWorldPoint(float screenX, float screenY, float viewDepth,
 Mat4 Camera::EyeMatrix() const {
     if (!transform) return Mat4{};
     Mat4 m = transform->LocalToWorldMatrix();
-    const bool rolled = std::fabs(dutch) > 1e-4f || m_trauma > 0.0f;
+    const Vec3 shakePos = m_shakePos + m_cutPos;
+    const Vec3 shakeRot = m_shakeRot + m_cutRot;
+    const bool moved = std::fabs(shakePos.x) + std::fabs(shakePos.y) + std::fabs(shakePos.z)
+                     + std::fabs(shakeRot.x) + std::fabs(shakeRot.y) + std::fabs(shakeRot.z) > 1e-5f;
+    const bool rolled = std::fabs(dutch) > 1e-4f || moved;
     if (rolled)
-        m = m * Mat4::Translate(m_shakePos) * Mat4::Rotate(Quat::Euler(m_shakeRot.x, m_shakeRot.y, m_shakeRot.z + dutch));
+        m = m * Mat4::Translate(shakePos) * Mat4::Rotate(Quat::Euler(shakeRot.x, shakeRot.y, shakeRot.z + dutch));
     if (pixelPerfect && projection == Projection::Orthographic && pixelsPerUnit > 0.0f) {
         m.at(3, 0) = std::round(m.at(3, 0) * pixelsPerUnit) / pixelsPerUnit;
         m.at(3, 1) = std::round(m.at(3, 1) * pixelsPerUnit) / pixelsPerUnit;
@@ -81,8 +98,12 @@ Mat4 Camera::ViewMatrix() const {
 }
 
 void Camera::Shake(float strength) {
+    if (Accessibility::MotionScale() <= 0.0f) return;   // the player turned off screen shake
     m_trauma = Mathf::Clamp(m_trauma + strength, 0.0f, 1.0f);
 }
+
+void Camera::SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg) { m_cutPos = pos; m_cutRot = rotDeg; }
+void Camera::ClearCutsceneShake() { m_cutPos = {0, 0, 0}; m_cutRot = {0, 0, 0}; }
 
 void Camera::ZoomTo(float target, float seconds) {
     target = target > 0.01f ? target : 0.01f;
@@ -98,6 +119,7 @@ void Camera::LateUpdate(float dt) {
         zoom = m_zoomFrom + (m_zoomTarget - m_zoomFrom) * t;
         if (m_zoomTime >= m_zoomDur) { zoom = m_zoomTarget; m_zoomDur = 0.0f; }
     }
+    if (Accessibility::MotionScale() <= 0.0f) m_trauma = 0.0f;   // reduced motion switched on mid-shake: stop at once
     if (m_trauma <= 0.0f) { m_shakePos = {0, 0, 0}; m_shakeRot = {0, 0, 0}; return; }
     m_shakeTime += dt;
     // Smooth pseudo-noise: two incommensurate sines per channel.
@@ -129,8 +151,15 @@ float Camera::VerticalFovDegrees(float aspect) const {
 }
 
 Mat4 Camera::ProjectionMatrix(float aspect) const {
+    // A minimised window (0 wide or high), a NaN or a negative size must not turn
+    // the matrix into inf / NaN: reuse the last good aspect instead.
+    if (!(aspect > 1e-4f) || !std::isfinite(aspect)) aspect = viewportAspect > 1e-4f ? viewportAspect : 1.0f;
+    if (aspect > 0.05f) viewportAspect = aspect;
+    // Clip planes typed into the inspector: near must be positive and far beyond it.
+    const float nearP = nearClip > 1e-3f ? nearClip : 1e-3f;
+    const float farP  = farClip > nearP + 0.01f ? farClip : nearP + 0.01f;
     if (projection == Projection::Perspective) {
-        Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearClip, farClip);
+        Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearP, farP);
         p.at(2, 0) = lensShiftX * 2.0f;   // off-axis lens shift
         p.at(2, 1) = lensShiftY * 2.0f;
         return p;
@@ -140,7 +169,7 @@ Mat4 Camera::ProjectionMatrix(float aspect) const {
     // An orthographic (2D) camera sees its whole rectangle whatever the depth:
     // a camera added to an object at z = 0 used to clip away every sprite at
     // z = 0 behind its 0.3 near plane. Depth sorting is unaffected.
-    Mat4 p = Mat4::Ortho(-w, w, -h, h, -farClip, farClip);
+    Mat4 p = Mat4::Ortho(-w, w, -h, h, -farP, farP);
     p.at(3, 0) -= lensShiftX * 2.0f;
     p.at(3, 1) -= lensShiftY * 2.0f;
     return p;

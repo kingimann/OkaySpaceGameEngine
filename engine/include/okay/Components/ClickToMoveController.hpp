@@ -3,15 +3,18 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
-#include "okay/AI/NavGrid3D.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -49,8 +52,9 @@ public:
     bool  showCursor = true;        // keep the mouse pointer visible (you click to move!)
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
-    /// Route around obstacles with grid A* (walls, props, holes) — clicks
-    /// behind a wall walk AROUND it, Diablo/RuneScape style.
+    /// Route around obstacles (walls, props, holes) — clicks behind a wall walk
+    /// AROUND it, Diablo/RuneScape style: over the scene's baked NavMesh when it
+    /// has one, else grid A*.
     bool  usePathfinding = true;
     float repathInterval = 0.6f;
     /// Spawn a brief expanding ring at the clicked point (in-game feedback).
@@ -76,9 +80,15 @@ public:
     /// Send the player to a world point directly (for scripts / waypoints).
     void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; }
 
+    /// Crouch and prone from scripts (SetStance; no keys by default): a smaller,
+    /// slower body that eases between stances.
+    StanceControl stanceControl{0, 0, true};
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
         if (showCursor) Cursor::Capture(false);   // a point-and-click game needs the pointer
+        stanceControl.Start(gameObject);
     }
 
     void Update(float dt) override {
@@ -88,11 +98,13 @@ public:
         // previously-active FPS controller) may have captured it; you click to move.
         if (showCursor && Cursor::IsLocked()) Cursor::Capture(false);
         Scene& scene = *gameObject->scene();
+        stanceControl.ReadKeys();
+        stanceControl.Step(gameObject, dt);
 
         // ---- Set a destination from a click on the ground plane ----
         bool clicked = holdToMove ? Input::GetMouseButton(mouseButton)
                                   : Input::GetMouseButtonDown(mouseButton);
-        if (clicked) {
+        if (clicked && !GameInputBlocked(&scene)) {
             Vec3 hit;
             if (GroundPick(scene, hit)) {
                 m_dest = hit; m_hasDest = true;
@@ -119,7 +131,7 @@ public:
             float gm = std::sqrt((m_dest.x - m_pathGoal.x) * (m_dest.x - m_pathGoal.x) +
                                  (m_dest.z - m_pathGoal.z) * (m_dest.z - m_pathGoal.z));
             if (m_repath <= 0.0f || m_path.empty() || gm > 0.5f) {
-                m_path = NavGrid3D::FindPath(scene, pos, m_dest, gameObject);
+                m_path = Navigation::FindPath(scene, pos, m_dest, 0.4f, gameObject);
                 m_pathIdx = 0; m_pathGoal = m_dest; m_repath = repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() &&
@@ -132,8 +144,8 @@ public:
         float wd = std::sqrt(toW.x * toW.x + toW.z * toW.z);
         Vec3 dir = wd > 1e-4f ? Vec3{toW.x / wd, 0.0f, toW.z / wd}
                               : Vec3{to.x / dist, 0.0f, to.z / dist};
-        bool running = runKey && Input::GetKey(runKey);
-        float speed = running ? runSpeed : walkSpeed;
+        bool running = stanceControl.Stance() == 0 && runKey && Input::GetKey(runKey);
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
         // Ease to a stop over the last `arriveRadius` metres so arrivals don't jolt.
         if (arriveRadius > 0.0f && dist < arriveRadius)
             speed *= Mathf::Max(0.3f, dist / arriveRadius);
@@ -270,6 +282,9 @@ private:
             lo.facing    = transform->localRotation * Vec3{0, 0, -1};
             lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
             lo.sprint    = running;
+            lo.crouch    = stanceControl.Stance() == 1;
+            lo.prone     = stanceControl.Stance() == 2;
+            lo.stance    = stanceControl.Level();
             lo.walkSpeed = walkSpeed;
             lo.dt = dt;
             ch->DriveLocomotion(lo);

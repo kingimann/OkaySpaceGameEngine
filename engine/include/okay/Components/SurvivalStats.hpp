@@ -30,6 +30,7 @@ public:
     // ---- Health ----
     float maxHealth = 100.0f, health = 100.0f;
     float armor = 0.0f;
+    float equipArmor = 0.0f;       // runtime: added by worn Equipment (not saved)
     float resistance = 0.0f;       // 0..1 fraction of post-armor damage ignored
     bool  godMode = false;         // ignore all damage
     float invincibleTime = 0.0f;   // i-frames after a hit (seconds, 0 = off)
@@ -127,7 +128,7 @@ public:
     // ---- Actions (callable from On Click / Action List / code) ----
     void Damage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
-        float dmg = Mathf::Max(0.0f, amount - armor) * (1.0f - Mathf::Clamp01(resistance));
+        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor)) * (1.0f - Mathf::Clamp01(resistance));
         health -= dmg;
         m_regenTimer = regenDelay;
         m_iframes = invincibleTime;

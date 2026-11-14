@@ -11,6 +11,7 @@ namespace okay {
 
 class Scene;
 class Collider3D;
+class Terrain;
 class Rigidbody3D;
 class GameObject;
 
@@ -77,9 +78,11 @@ public:
         else { m_layerMask[a] &= ~(1u << b); m_layerMask[b] &= ~(1u << a); }
     }
     bool LayersCollide(int a, int b) const {
-        if (a < 0 || a > 31 || b < 0 || b > 31) return true;
-        return (m_layerMask[a] >> b) & 1u;
+        return (m_layerMask[a & 31] >> (b & 31)) & 1u;   // wraps like the query masks do
     }
+    /// Bit b set = layer b collides with `layer` (usable as a query layerMask).
+    std::uint32_t CollisionMask(int layer) const { return m_layerMask[layer & 31]; }
+    void ResetLayerCollisions() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
 
     // ---- Scene queries -------------------------------------------------
     /// While one of these is alive, scene queries (raycasts, sweeps, overlaps)
@@ -155,7 +158,7 @@ public:
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
 
-    void Clear() { m_contacts.clear(); }
+    void Clear() { m_contacts.clear(); m_meshContacts.clear(); }
 
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
@@ -163,7 +166,7 @@ public:
 
     // ---- Debug view ----------------------------------------------------
     /// Forget last frame's debug rays / contacts (Scene::Update calls this).
-    void BeginDebugFrame() { m_debugRays.clear(); m_debugContacts.clear(); }
+    void BeginDebugFrame();
     /// Record a query ray for the debug overlay. A no-op unless the debug view is
     /// collecting with "rays from scripts" on; scripts, visual scripts and Actions
     /// call it after their casts. `radius` > 0 marks a sphere-style cast.
@@ -175,12 +178,22 @@ public:
 private:
     using Pair = std::pair<Collider3D*, Collider3D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
+    std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay3D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact3D> m_debugContacts;
     /// Continuous collision for one fast body: sweep it along this step's motion
     /// and stop it at the first solid it would otherwise pass through.
     void SweepBody(Scene& scene, Rigidbody3D* rb, float dt);
+    /// The colliders and terrains ray queries test, gathered once and reused
+    /// until the scene's objects or components change (not per ray).
+    struct QueryCache {
+        std::uint64_t scene = 0, structure = 0, components = 0;
+        std::vector<Collider3D*> colliders;
+        std::vector<Terrain*> terrains;
+    };
+    QueryCache m_query;
+    const QueryCache& QueryLists(Scene& scene);
 };
 
 } // namespace okay

@@ -9,7 +9,6 @@
 
 using namespace okay;
 
-static bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
 // Evaluate every object's world pose; a cyclic hierarchy overflows the stack here.
 static void TouchWorld(Scene& s) {

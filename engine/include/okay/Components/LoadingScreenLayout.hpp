@@ -100,8 +100,9 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
     const float subH   = std::max(8.0f, H * 0.024f * ls.tipScale);
     const float pctH   = std::max(8.0f, H * 0.024f);
     const std::string pct = std::to_string((int)(Mathf::Clamp01(p) * 100.0f + 0.5f)) + "%";
-    const std::string& tip = !preview || ls.tips.empty() ? ls.CurrentTip()
-        : ls.tips[(std::size_t)(previewTime / std::max(ls.tipInterval > 0 ? ls.tipInterval : 3.0f, 0.5f)) % ls.tips.size()];
+    const std::string tip = ls.Shown(!preview || ls.tips.empty() ? ls.CurrentTip()
+        : ls.tips[(std::size_t)(previewTime / std::max(ls.tipInterval > 0 ? ls.tipInterval : 3.0f, 0.5f)) % ls.tips.size()]);
+    const std::string titleText = ls.Shown(ls.title), subText = ls.Shown(ls.subtitle);   // in the player's language
 
     auto bar = [&](float x, float y, float w, float h, float rad) {
         if (!ls.showBar || w <= 0 || h <= 0) return;
@@ -183,7 +184,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         out.push_back(d);
     };
     auto title = [&](float x, float y, float h, int align) {
-        if (ls.showTitle) text(ls.title, x, y, h, ls.titleColor, align);
+        if (ls.showTitle) text(titleText, x, y, h, ls.titleColor, align);
     };
 
     switch ((L)layout) {
@@ -193,7 +194,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         spinner(W * 0.5f, cy, r);
         const float th = std::max(12.0f, H * 0.028f * ls.titleScale);
         title(W * 0.5f, cy + r + H * 0.035f, th, 1);
-        text(ls.subtitle, W * 0.5f, cy + r + H * 0.035f + th * 1.5f, subH, ls.tipColor, 1);
+        text(subText, W * 0.5f, cy + r + H * 0.035f + th * 1.5f, subH, ls.tipColor, 1);
         const float bw = W * 0.2f, bh = std::max(3.0f, H * 0.005f), by = H * 0.64f;
         bar((W - bw) * 0.5f, by, bw, bh, bh * 0.5f);
         if (ls.showPercent) text(pct, W * 0.5f, by + bh + H * 0.012f, pctH * 0.85f, ls.textColor, 1);
@@ -208,7 +209,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         const float mx = W * 0.06f;
         const float th = titleH * 1.1f, ty = H - lb - th - H * 0.035f;
         title(mx, ty, th, 0);
-        text(ls.subtitle, mx, ty - subH - H * 0.014f, subH, ls.tipColor, 0);
+        text(subText, mx, ty - subH - H * 0.014f, subH, ls.tipColor, 0);
         text(tip, mx, H - lb + (lb - tipH) * 0.5f, tipH, ls.tipColor, 0);
         const float bh = std::max(2.0f, H * 0.004f);
         bar(0, H - lb - bh, W, bh, 0);
@@ -224,7 +225,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         const float th = ls.logoImage.empty() ? titleH * 1.25f : std::max(14.0f, H * 0.03f * ls.titleScale);
         const float ty = ls.logoImage.empty() ? cy - th * 0.5f : below + H * 0.03f;
         title(W * 0.5f, ty, th, 1);
-        text(ls.subtitle, W * 0.5f, ty + th * 1.4f, subH, ls.tipColor, 1);
+        text(subText, W * 0.5f, ty + th * 1.4f, subH, ls.tipColor, 1);
         const float bw = W * 0.18f, bh = std::max(3.0f, H * 0.005f), by = ty + th * 1.4f + subH * 2.2f;
         bar((W - bw) * 0.5f, by, bw, bh, bh * 0.5f);
         if (ls.showPercent) text(pct, W * 0.5f, by + bh + H * 0.012f, pctH * 0.85f, ls.textColor, 1);
@@ -241,7 +242,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         rect(x0, y0, cw, ch, ls.cardColor, rad);
         const float th = std::max(14.0f, H * 0.04f * ls.titleScale);
         title(x0 + pad, y0 + pad, th, 0);
-        text(ls.subtitle, x0 + pad, y0 + pad + th * 1.35f, subH, ls.tipColor, 0);
+        text(subText, x0 + pad, y0 + pad + th * 1.35f, subH, ls.tipColor, 0);
         const float r = H * 0.02f;
         spinner(x0 + cw - pad - r, y0 + pad + r, r);
         // The percent sits at the end of the bar's row, so a long tip can't run into it.
@@ -256,7 +257,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         const float mx = W * 0.05f, th = std::max(14.0f, H * 0.04f * ls.titleScale), ty = H * 0.82f;
         logo(mx + H * ls.logoSize * 0.25f, H * 0.1f, H * ls.logoSize * 0.5f);
         title(mx, ty, th, 0);
-        text(ls.subtitle, mx, ty - subH - H * 0.012f, subH, ls.tipColor, 0);
+        text(subText, mx, ty - subH - H * 0.012f, subH, ls.tipColor, 0);
         text(tip, mx, ty + th + H * 0.018f, tipH, ls.tipColor, 0);
         const float r = H * 0.028f, scx = W - mx - r, scy = ty + th * 0.6f;
         spinner(scx, scy, r);
@@ -280,7 +281,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
         if (ls.showPercent) text(pct, cx, cy - H * 0.022f, H * 0.044f, ls.textColor, 1);
         else spinner(cx, cy, r * 0.4f);
         title(cx, cy - r - H * 0.06f - titleH * 0.8f, titleH * 0.8f, 1);
-        text(ls.subtitle, cx, cy + r + H * 0.045f, subH, ls.tipColor, 1);
+        text(subText, cx, cy + r + H * 0.045f, subH, ls.tipColor, 1);
         text(tip, cx, H * 0.88f, tipH, ls.tipColor, 1);
         break;
     }
@@ -290,7 +291,7 @@ inline std::vector<LoadingDrawCmd> BuildLoadingScreen(const LoadingScreen& ls, f
             logo(W * 0.5f, std::max(size * 0.5f, H * ls.titleY - H * 0.03f - size * 0.5f), size);
         }
         title(W * 0.5f, H * ls.titleY, titleH, 1);
-        text(ls.subtitle, W * 0.5f, H * ls.titleY + titleH * 1.4f, subH, ls.tipColor, 1);
+        text(subText, W * 0.5f, H * ls.titleY + titleH * 1.4f, subH, ls.tipColor, 1);
         text(tip, W * 0.5f, H * ls.tipY, tipH, ls.tipColor, 1);
         const float bw = W * ls.barWidth, bh = std::max(4.0f, H * ls.barHeight);
         const float bx = (W - bw) * 0.5f, by = H * ls.barY;

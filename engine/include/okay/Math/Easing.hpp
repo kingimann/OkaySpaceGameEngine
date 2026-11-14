@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -123,8 +126,20 @@ inline float BounceInOut(float t) {
     return t < 0.5f ? 0.5f * (1.0f - BounceOut(1.0f - 2.0f * t)) : 0.5f * (1.0f + BounceOut(2.0f * t - 1.0f));
 }
 
-/// Evaluate an easing by enum (handy for serialization and editor dropdowns).
-inline float Evaluate(Ease e, float t) {
+/// A falloff for punches and shakes: 1 at t = 0, 0 at t = 1. `rate` <= 0 (or NaN) is a straight line;
+/// a larger rate drops exponentially (the motion is quiet sooner and the tail is short; the loudest part is
+/// always the very start), reaching exactly 0 at t = 1.
+inline float Decay(float t, float rate) {
+    if (!(t > 0.0f)) return 1.0f;
+    if (t >= 1.0f) return 0.0f;
+    if (!(rate > 1e-4f) || !std::isfinite(rate)) return 1.0f - t;
+    const double r = rate > 60.0f ? 60.0 : (double)rate;
+    const double e1 = std::exp(-r);
+    return (float)((std::exp(-r * (double)t) - e1) / (1.0 - e1));
+}
+
+namespace detail {
+inline float EvaluateRaw(Ease e, float t) {
     switch (e) {
         case Ease::Linear:     return Linear(t);
         case Ease::QuadIn:     return QuadIn(t);
@@ -161,6 +176,17 @@ inline float Evaluate(Ease e, float t) {
     }
     return t;
 }
+} // namespace detail
+
+/// Evaluate an easing by enum (handy for serialization and editor dropdowns). Input outside 0..1
+/// extrapolates (Back and Elastic keep swinging); NaN counts as 0 and infinity as the nearer end,
+/// and a result that overflows (ExpoIn far past 1) stops at +-1e30, so the answer is always a number.
+inline float Evaluate(Ease e, float t) {
+    if (!std::isfinite(t)) t = t > 0.0f ? 1.0f : 0.0f;
+    const float r = detail::EvaluateRaw(e, t);
+    if (std::isfinite(r)) return r;
+    return std::isnan(r) ? (t > 0.0f ? 1.0f : 0.0f) : (r > 0.0f ? 1.0e30f : -1.0e30f);
+}
 
 /// Display names, in enum order ("Out Quad"...), for dropdowns.
 inline const char* Name(Ease e) {
@@ -196,7 +222,166 @@ inline Ease FromName(const std::string& name, Ease fallback = Ease::Linear) {
     return fallback;
 }
 
+/// The compact name of an ease ("OutQuad", "InOutBack"): the display name without
+/// spaces. FromName reads it back, so it is a stable key for data files.
+inline std::string ToName(Ease e) {
+    std::string s;
+    for (const char* p = Name(e); *p; ++p) if (*p != ' ') s += *p;
+    return s;
+}
+
+/// A CSS-style cubic bezier curve from (0,0) to (1,1) with control points (x1,y1)
+/// and (x2,y2): `t` is the time 0..1, the result the eased progress (y may leave
+/// 0..1 to overshoot). x1 and x2 are limited to 0..1 so the curve is a function of
+/// time. Deterministic (solved in double with Newton steps and bisection).
+inline float CubicBezier(float x1, float y1, float x2, float y2, float t) {
+    if (!(t > 0.0f)) return 0.0f;     // also NaN
+    if (t >= 1.0f) return 1.0f;
+    const double ax = x1 > 0.0f ? (x1 < 1.0f ? (double)x1 : 1.0) : 0.0;   // NaN counts as 0
+    const double bx = x2 > 0.0f ? (x2 < 1.0f ? (double)x2 : 1.0) : 0.0;
+    const double ay = std::isfinite(y1) ? (double)y1 : 0.0;
+    const double by = std::isfinite(y2) ? (double)y2 : 1.0;
+    auto X = [&](double s) { const double u = 1.0 - s; return 3.0 * u * u * s * ax + 3.0 * u * s * s * bx + s * s * s; };
+    auto dX = [&](double s) { const double u = 1.0 - s; return 3.0 * u * u * ax + 6.0 * u * s * (bx - ax) + 3.0 * s * s * (1.0 - bx); };
+    auto Y = [&](double s) { const double u = 1.0 - s; return 3.0 * u * u * s * ay + 3.0 * u * s * s * by + s * s * s; };
+    const double target = (double)t;
+    double s = target;
+    bool solved = false;
+    for (int i = 0; i < 8; ++i) {
+        const double err = X(s) - target;
+        if (std::fabs(err) < 1e-9) { solved = true; break; }
+        const double d = dX(s);
+        if (std::fabs(d) < 1e-7) break;
+        s -= err / d;
+        if (!(s >= 0.0 && s <= 1.0)) break;
+    }
+    if (!solved) {   // flat or wild slope: bisect, which always converges (X is monotonic)
+        double lo = 0.0, hi = 1.0;
+        s = target;
+        for (int i = 0; i < 60; ++i) {
+            if (X(s) < target) lo = s; else hi = s;
+            s = 0.5 * (lo + hi);
+        }
+    }
+    return (float)Y(s);
+}
+
+/// A staircase of `steps` equal jumps. By default the value holds at 0 first and
+/// reaches 1 only at the end (CSS "jump-end"); `jumpStart` jumps at once instead.
+inline float Steps(int steps, float t, bool jumpStart = false) {
+    if (steps < 1) steps = 1;
+    if (!(t > 0.0f)) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    const double n = (double)steps;
+    const double x = (double)t * n;
+    const double k = jumpStart ? std::ceil(x - 1e-9) : std::floor(x + 1e-9);
+    const double v = k / n;
+    return (float)(v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v);
+}
+
 } // namespace Easing
+
+/// An ease described as plain data: one of the presets, a CSS-style cubic bezier or a
+/// staircase. It reads and writes a text form, so a data file or a script can name it:
+/// "OutQuad" (any spelling FromName takes), "cubic-bezier(0.4, 0, 0.2, 1)", "steps(4)",
+/// "steps(4, start)", and the CSS names "ease", "ease-in", "ease-out", "ease-in-out".
+struct EaseCurve {
+    enum class Kind { Preset, Bezier, Steps };
+    Kind  kind = Kind::Preset;
+    Ease  ease = Ease::Linear;           ///< Preset
+    float x1 = 0.0f, y1 = 0.0f, x2 = 1.0f, y2 = 1.0f;   ///< Bezier
+    int   steps = 1;                     ///< Steps
+    bool  jumpStart = false;             ///< Steps
+
+    static EaseCurve OfPreset(Ease e) { EaseCurve c; c.ease = e; return c; }
+    static EaseCurve OfBezier(float x1, float y1, float x2, float y2) {
+        EaseCurve c; c.kind = Kind::Bezier; c.x1 = x1; c.y1 = y1; c.x2 = x2; c.y2 = y2; return c;
+    }
+    static EaseCurve OfSteps(int count, bool jumpStart = false) {
+        EaseCurve c; c.kind = Kind::Steps; c.steps = count < 1 ? 1 : count; c.jumpStart = jumpStart; return c;
+    }
+
+    float Evaluate(float t) const {
+        switch (kind) {
+            case Kind::Bezier: return Easing::CubicBezier(x1, y1, x2, y2, t);
+            case Kind::Steps:  return Easing::Steps(steps, t, jumpStart);
+            default:           return Easing::Evaluate(ease, t);
+        }
+    }
+
+    /// The text form Parse reads back exactly.
+    std::string ToString() const {
+        auto num = [](float v) {   // the shortest text that reads back to the same float
+            char buf[40];
+            for (int prec = 1; prec <= 9; ++prec) {
+                std::snprintf(buf, sizeof(buf), "%.*g", prec, (double)v);
+                if (std::strtof(buf, nullptr) == v) break;
+            }
+            return std::string(buf);
+        };
+        switch (kind) {
+            case Kind::Bezier:
+                return "cubic-bezier(" + num(x1) + "," + num(y1) + "," + num(x2) + "," + num(y2) + ")";
+            case Kind::Steps:
+                return "steps(" + std::to_string(steps) + (jumpStart ? ",start)" : ")");
+            default:
+                return Easing::ToName(ease);
+        }
+    }
+
+    /// Read the text form. False (and `out` untouched) for text it does not know.
+    static bool Parse(const std::string& text, EaseCurve& out) {
+        std::string k;
+        for (char c : text) if (c != ' ' && c != '\t') k += (char)std::tolower((unsigned char)c);
+        if (k.empty()) return false;
+        struct Css { const char* name; float x1, y1, x2, y2; };
+        static const Css css[] = {{"ease", 0.25f, 0.1f, 0.25f, 1.0f}, {"ease-in", 0.42f, 0.0f, 1.0f, 1.0f},
+                                  {"ease-out", 0.0f, 0.0f, 0.58f, 1.0f}, {"ease-in-out", 0.42f, 0.0f, 0.58f, 1.0f}};
+        for (const Css& c : css)
+            if (k == c.name) { out = OfBezier(c.x1, c.y1, c.x2, c.y2); return true; }
+        auto args = [&](const char* head, std::vector<std::string>& parts) {
+            const std::string h = head;
+            if (k.compare(0, h.size(), h) != 0 || k.back() != ')') return false;
+            const std::string inner = k.substr(h.size(), k.size() - h.size() - 1);
+            std::string cur;
+            for (char c : inner) { if (c == ',') { parts.push_back(cur); cur.clear(); } else cur += c; }
+            parts.push_back(cur);
+            return true;
+        };
+        auto number = [](const std::string& s, float& v) {
+            if (s.empty()) return false;
+            char* end = nullptr;
+            const float f = std::strtof(s.c_str(), &end);
+            if (end != s.c_str() + s.size() || !std::isfinite(f)) return false;
+            v = f;
+            return true;
+        };
+        std::vector<std::string> p;
+        if (args("cubic-bezier(", p)) {
+            float v[4];
+            if (p.size() != 4) return false;
+            for (int i = 0; i < 4; ++i) if (!number(p[(std::size_t)i], v[i])) return false;
+            out = OfBezier(v[0], v[1], v[2], v[3]);
+            return true;
+        }
+        p.clear();
+        if (args("steps(", p)) {
+            float n = 0.0f;
+            if (p.empty() || p.size() > 2 || !number(p[0], n) || n < 1.0f || n > 10000.0f || n != std::floor(n)) return false;
+            bool start = false;
+            if (p.size() == 2) {
+                if (p[1] == "start" || p[1] == "jump-start") start = true;
+                else if (p[1] != "end" && p[1] != "jump-end") return false;
+            }
+            out = OfSteps((int)n, start);
+            return true;
+        }
+        const Ease e = Easing::FromName(text, Ease::Count);
+        if (e == Ease::Count) return false;
+        out = OfPreset(e);
+        return true;
+    }
+};
 
 /// A one-shot float tween: animates from `from` to `to` over `duration` seconds
 /// using an easing curve. Advance it with Update(dt) and read Value().
@@ -211,20 +396,20 @@ struct Tween {
         : from(from), to(to), duration(duration), ease(ease) {}
 
     /// Advance time and return the current value.
-    float Update(float dt) { m_elapsed += dt; return Value(); }
+    /// A step that is NaN, negative or infinite counts as 0 (it must not poison the tween for good).
+    float Update(float dt) { if (dt > 0.0f && std::isfinite(dt)) m_elapsed += (double)dt; return Value(); }
 
     /// Current interpolated value (clamped to the [from, to] endpoints).
     float Value() const {
-        float t = duration > 0.0f ? Mathf::Clamp01(m_elapsed / duration) : 1.0f;
-        return from + (to - from) * Easing::Evaluate(ease, t);
+        return from + (to - from) * Easing::Evaluate(ease, Progress());
     }
 
-    bool  Done() const { return m_elapsed >= duration; }
-    float Progress() const { return duration > 0.0f ? Mathf::Clamp01(m_elapsed / duration) : 1.0f; }
-    void  Reset() { m_elapsed = 0.0f; }
+    bool  Done() const { return !(duration > 0.0f) || m_elapsed >= (double)duration; }
+    float Progress() const { return duration > 0.0f ? Mathf::Clamp01((float)(m_elapsed / (double)duration)) : 1.0f; }
+    void  Reset() { m_elapsed = 0.0; }
 
 private:
-    float m_elapsed = 0.0f;
+    double m_elapsed = 0.0;   // double: a long tween (an hour-long countdown) keeps its precision
 };
 
 } // namespace okay

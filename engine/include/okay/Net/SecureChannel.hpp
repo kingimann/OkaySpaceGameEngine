@@ -4,13 +4,13 @@
 #include <string>
 #include <vector>
 
-#ifdef OKAY_HAVE_SODIUM
-#include <sodium.h>
-#endif
+#include <okay/Net/NetCrypto.hpp>   // OKAY_NET_CRYPTO: libsodium, or (opt-in) okay::crypto
 
 namespace okay::net {
 
-/// Authenticated encryption for the UDP transport, built on libsodium.
+/// Authenticated encryption for the UDP transport, built on libsodium (default) or,
+/// when the engine is configured with OKAY_OWN_CRYPTO=ON, on our own UNREVIEWED
+/// okay::crypto (same wire format either way: a sealed message from one opens on the other).
 ///
 /// Each peer generates an X25519 key pair (PublicKey()) and exchanges public keys
 /// during the join handshake. From the two public keys plus its own secret key,
@@ -31,7 +31,7 @@ namespace okay::net {
 /// authenticated with every message, so a packet sealed under a different
 /// version or header doesn't open. Empty (the default) is the old format.
 ///
-/// When the engine is built WITHOUT libsodium (OKAY_HAVE_SODIUM undefined), this
+/// When the engine is built with no crypto backend (OKAY_NET_CRYPTO undefined), this
 /// compiles to a stub: Available() is false and the seal/open calls fail, so the
 /// transport simply runs unencrypted.
 class SecureChannel {
@@ -40,7 +40,7 @@ public:
 
     /// True when the engine was built with libsodium, so encryption is possible.
     static bool Available() {
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_NET_CRYPTO
         return true;
 #else
         return false;
@@ -49,9 +49,9 @@ public:
 
     /// One-time libsodium init (safe to call repeatedly; returns false if unavailable).
     static bool Init() {
-#ifdef OKAY_HAVE_SODIUM
-        static int s = sodium_init();   // 0 = ok, 1 = already initialized, -1 = fail
-        return s >= 0;
+#ifdef OKAY_NET_CRYPTO
+        static const bool s = netcrypto::Init();
+        return s;
 #else
         return false;
 #endif
@@ -59,17 +59,19 @@ public:
 
     /// Generate this peer's ephemeral key pair. Call once before the handshake.
     void GenerateKeys() {
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_NET_CRYPTO
         Init();
-        crypto_kx_keypair(m_pk, m_sk);
+        netcrypto::KxKeypair(m_pk, m_sk);
         m_haveKeys = true;
 #endif
     }
 
+    bool HasKeys() const { return m_haveKeys; }
+
     /// This peer's public key to send to the other side (kPublicKeyBytes bytes).
     std::vector<std::uint8_t> PublicKey() const {
-#ifdef OKAY_HAVE_SODIUM
-        return std::vector<std::uint8_t>(m_pk, m_pk + crypto_kx_PUBLICKEYBYTES);
+#ifdef OKAY_NET_CRYPTO
+        return std::vector<std::uint8_t>(m_pk, m_pk + netcrypto::kKxPublicBytes);
 #else
         return {};
 #endif
@@ -79,12 +81,11 @@ public:
     /// the two ends (the listening peer is the server). Returns false on failure
     /// (no libsodium, no local keys, or a malformed/short peer key).
     bool Establish(const std::vector<std::uint8_t>& peerPublicKey, bool asServer) {
-#ifdef OKAY_HAVE_SODIUM
-        if (!m_haveKeys || peerPublicKey.size() != crypto_kx_PUBLICKEYBYTES) return false;
-        int rc = asServer
-            ? crypto_kx_server_session_keys(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data())
-            : crypto_kx_client_session_keys(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data());
-        m_ready = (rc == 0);
+#ifdef OKAY_NET_CRYPTO
+        if (!m_haveKeys || peerPublicKey.size() != netcrypto::kKxPublicBytes) return false;
+        m_ready = asServer
+            ? netcrypto::KxServer(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data())
+            : netcrypto::KxClient(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data());
         return m_ready;
 #else
         (void)peerPublicKey; (void)asServer; return false;
@@ -106,9 +107,9 @@ public:
     /// Encrypt+authenticate `plain` for the peer. Output is nonce || ciphertext.
     /// Returns false (leaving `out` empty) if the channel isn't ready.
     bool Seal(const std::uint8_t* plain, std::size_t len, std::vector<std::uint8_t>& out) const {
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_NET_CRYPTO
         if (!m_ready) return false;
-        const std::size_t N = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+        const std::size_t N = netcrypto::kNonceBytes;
         std::vector<std::uint8_t> numbered;
         if (m_sequenced) {   // seq (little-endian u64) || plain, all inside the ciphertext
             const std::uint64_t seq = ++m_txSeq;
@@ -117,13 +118,10 @@ public:
             if (len) std::memcpy(numbered.data() + 8, plain, len);
             plain = numbered.data(); len = numbered.size();
         }
-        out.resize(N + len + crypto_aead_xchacha20poly1305_ietf_ABYTES);
-        randombytes_buf(out.data(), N);                  // fresh random nonce up front
-        unsigned long long clen = 0;
-        crypto_aead_xchacha20poly1305_ietf_encrypt(
-            out.data() + N, &clen, plain, len, m_ad.empty() ? nullptr : m_ad.data(),
-            static_cast<unsigned long long>(m_ad.size()), nullptr, out.data(), m_tx);
-        out.resize(N + static_cast<std::size_t>(clen));
+        out.resize(N + len + netcrypto::kTagBytes);
+        netcrypto::Random(out.data(), N);                // fresh random nonce up front
+        netcrypto::AeadSeal(out.data() + N, plain, len, m_ad.empty() ? nullptr : m_ad.data(),
+                            m_ad.size(), out.data(), m_tx);
         return true;
 #else
         (void)plain; (void)len; (void)out; return false;
@@ -134,18 +132,15 @@ public:
     /// if the channel isn't ready, the blob is too short, or authentication fails
     /// (tampered/forged) — in which case the data must be dropped.
     bool Open(const std::uint8_t* data, std::size_t len, std::vector<std::uint8_t>& out) const {
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_NET_CRYPTO
         if (!m_ready) return false;
-        const std::size_t N = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
-        const std::size_t A = crypto_aead_xchacha20poly1305_ietf_ABYTES;
+        const std::size_t N = netcrypto::kNonceBytes;
+        const std::size_t A = netcrypto::kTagBytes;
         if (len < N + A) return false;
         out.resize(len - N - A);
-        unsigned long long mlen = 0;
-        if (crypto_aead_xchacha20poly1305_ietf_decrypt(
-                out.data(), &mlen, nullptr, data + N, len - N, m_ad.empty() ? nullptr : m_ad.data(),
-                static_cast<unsigned long long>(m_ad.size()), data, m_rx) != 0)
+        if (!netcrypto::AeadOpen(out.data(), data + N, len - N, m_ad.empty() ? nullptr : m_ad.data(),
+                                 m_ad.size(), data, m_rx))
             return false;                                // authentication failed -> reject
-        out.resize(static_cast<std::size_t>(mlen));
         if (m_sequenced) {
             if (out.size() < 8) return false;
             std::uint64_t seq = 0;
@@ -182,13 +177,13 @@ private:
     std::vector<std::uint8_t> m_ad;
     mutable std::uint64_t m_txSeq = 0;
     mutable std::uint64_t m_rxMax = 0, m_window = 0, m_replays = 0;
-#ifdef OKAY_HAVE_SODIUM
-    unsigned char m_pk[crypto_kx_PUBLICKEYBYTES];
-    unsigned char m_sk[crypto_kx_SECRETKEYBYTES];
-    unsigned char m_rx[crypto_kx_SESSIONKEYBYTES];   // key for data we receive
-    unsigned char m_tx[crypto_kx_SESSIONKEYBYTES];   // key for data we send
-    bool m_haveKeys = false;
+#ifdef OKAY_NET_CRYPTO
+    unsigned char m_pk[netcrypto::kKxPublicBytes];
+    unsigned char m_sk[netcrypto::kKxSecretBytes];
+    unsigned char m_rx[netcrypto::kKxSessionBytes];   // key for data we receive
+    unsigned char m_tx[netcrypto::kKxSessionBytes];   // key for data we send
 #endif
+    bool m_haveKeys = false;   // (never set without libsodium)
     bool m_ready = false;
 };
 

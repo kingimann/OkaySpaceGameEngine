@@ -7,7 +7,9 @@
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 
 namespace okay::vs {
@@ -16,18 +18,31 @@ namespace okay::vs {
 // each run - then continues from Done (out1). A condition that never turns
 // false is stopped by the event's step budget, like any runaway loop.
 struct WhileNode : VsNode {
+    VsLoopLatch latch;
     int ExecOutCount() const override { return 2; }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override { latch.Load(r, g); }
     int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!latch.Begin(g)) return -1;   // already parked; Resume owns the rest
         const int body = Next(0);
         g.EnterLoop();
-        while (!g.Aborted() && In(0, g, ctx).AsBool()) {
-            if (body < 0) {
-                g.Error(this, ctx, "Cond is true but nothing is wired to Body, so it would loop forever; the loop was skipped");
-                break;
+        while (!g.Aborted()) {
+            if (!latch.inBody) {
+                if (!In(0, g, ctx).AsBool()) break;
+                if (body < 0) {
+                    g.Error(this, ctx, "Cond is true but nothing is wired to Body, so it would loop forever; the loop was skipped");
+                    break;
+                }
             }
-            g.Run(body, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak) break;
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
         }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -39,24 +54,51 @@ struct WhileNode : VsNode {
 struct ForEachNode : VsNode {
     VsValue item;
     int index = -1;
+    VsLoopLatch latch;
+    std::vector<VsValue> items;   // kept so the next For Each reuses the buffer
     int ExecOutCount() const override { return 2; }
     VsValue Eval(int pin, NodeGraph&, VsContext&) override { return pin == 0 ? item : VsValue((float)index); }
+    void OnSuspendRejected() override { latch.Finish(); }
+    bool SaveFlow(VsFlowRecord& r) const override {
+        if (!latch.busy) return false;
+        latch.Save(r);
+        r.i0 = index;
+        r.values = items;
+        return true;
+    }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph& g) override {
+        latch.Load(r, g);
+        index = r.i0;
+        items = r.values;
+        if (index >= 0 && index < (int)items.size()) item = items[(std::size_t)index];
+    }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const VsValue list = In(0, g, ctx);
-        const auto arr = list.AsArray();
-        if (!arr) {
-            if (HasInput(0)) g.Error(this, ctx, "its List input isn't a list (wire in New List, All With Tag, an Overlap's Objects...)");
-            return 1;
-        }
-        const VsValue::Array items = *arr;
+        if (!latch.Begin(g)) return -1;
         const int body = Next(0);
-        g.EnterLoop();
-        for (std::size_t i = 0; i < items.size() && body >= 0; ++i) {
-            item = items[i];
-            index = (int)i;
-            g.Run(body, ctx);
-            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+        if (!g.Resuming()) {
+            items.clear();
+            const VsValue list = In(0, g, ctx);
+            const auto arr = list.AsArray();
+            if (!arr) {
+                if (HasInput(0)) {
+                    const char* extra = list.IsMap() ? " (a map needs For Each Map)" : "";
+                    g.Error(this, ctx, std::string("its List input isn't a list (wire in New List, All With Tag, an Overlap's Objects...)") + extra);
+                }
+                latch.Finish();
+                return 1;
+            }
+            items.assign(arr->begin(), arr->end());
+            index = items.empty() ? -1 : 0;
         }
+        g.EnterLoop();
+        while (body >= 0 && index >= 0 && index < (int)items.size() && !g.Aborted()) {
+            item = items[(std::size_t)index];
+            if (latch.Step(g, ctx, body) == NodeGraph::kSuspend) { g.LeaveLoop(); return NodeGraph::kSuspend; }
+            if (g.TakeLoopSignal() == NodeGraph::kLoopBreak || g.Aborted()) break;
+            if (index + 1 >= (int)items.size()) break;
+            ++index;
+        }
+        latch.Finish();
         g.LeaveLoop();
         return 1;
     }
@@ -71,7 +113,7 @@ struct LoopJumpNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!g.InLoop()) {
             g.Error(this, ctx, std::string(isBreak ? "Break" : "Continue") +
-                               " isn't inside the Body of a loop (For Loop, Repeat, While, For Each), so there's nothing to " +
+                               " isn't inside the Body of a loop (For Loop, Repeat, While, For Each, For Each Map), so there's nothing to " +
                                (isBreak ? "leave" : "skip"));
             return -1;
         }
@@ -88,6 +130,16 @@ inline VsValue::ArrayRef VsListIn(VsNode* n, const VsValue& v, NodeGraph& g, VsC
     if (!a) g.Error(n, ctx, "its List input isn't a list (wire in New List, a variable holding one, All With Tag...)");
     return a;
 }
+
+/// An index pin as a whole number. False for NaN / inf / absurdly large values (the caller
+/// reports them), so a hostile index never reaches a float -> long cast it can't hold.
+inline bool VsIndexFrom(const VsValue& v, long& out) {
+    const float f = v.AsFloat();
+    if (!std::isfinite(f) || std::fabs(f) > 1.0e9f) return false;
+    out = std::lround(f);
+    return true;
+}
+inline std::string VsIndexText(const VsValue& v) { return VsValue::FormatNumber(v.AsFloat()); }
 
 struct NewListNode : VsNode {   // out0 = a new, empty list
     VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue::MakeArray(); }
@@ -106,9 +158,10 @@ struct ListRemoveAtNode : VsNode {   // in0 = list, in1 = index
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto a = VsListIn(this, In(0, g, ctx), g, ctx);
         if (!a) return 0;
-        const long i = std::lround(In(1, g, ctx).AsFloat());
-        if (i < 0 || i >= (long)a->size())
-            g.Error(this, ctx, "index " + std::to_string(i) + " is outside the list (it has " + std::to_string(a->size()) +
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size())
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
                                " item(s), numbered from 0); nothing was removed");
         else
             a->erase(a->begin() + i);
@@ -120,9 +173,10 @@ struct ListGetNode : VsNode {   // in0 = list, in1 = index -> item
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
         auto a = VsListIn(this, In(0, g, ctx), g, ctx);
         if (!a) return {};
-        const long i = std::lround(In(1, g, ctx).AsFloat());
-        if (i < 0 || i >= (long)a->size()) {
-            g.Error(this, ctx, "index " + std::to_string(i) + " is outside the list (it has " + std::to_string(a->size()) +
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
                                " item(s), numbered from 0)");
             return {};
         }
@@ -148,6 +202,136 @@ struct ListContainsNode : VsNode {   // in0 = list, in1 = item -> bool
             if (v.IsObject() && want.IsString() && v.AsString() == want.AsString()) return true;
         }
         return false;
+    }
+};
+
+
+// ---- More list nodes: insert, set, find, remove, sort, reverse, clear, copy ----
+// A list or map is a reference: every variable and pin holding it sees a change.
+// Copy List / Copy Map make an independent one. Every node reports a bad index or a
+// non-list input through the graph's error hook (with the node's id) and changes nothing.
+struct ListInsertNode : VsNode {   // in0 = list, in1 = index (0..length), in2 = item
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i > (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s); you can insert at 0 to " + std::to_string(a->size()) + "); nothing was inserted");
+            return 0;
+        }
+        a->insert(a->begin() + i, In(2, g, ctx));
+        return 0;
+    }
+};
+
+struct ListSetNode : VsNode {   // in0 = list, in1 = index, in2 = item
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue iv = In(1, g, ctx);
+        long i = 0;
+        if (!VsIndexFrom(iv, i) || i < 0 || i >= (long)a->size()) {
+            g.Error(this, ctx, "index " + VsIndexText(iv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s), numbered from 0); nothing was changed");
+            return 0;
+        }
+        (*a)[(std::size_t)i] = In(2, g, ctx);
+        return 0;
+    }
+};
+
+struct ListFindNode : VsNode {   // in0 = list, in1 = item -> out0 index (-1 = not there), out1 found
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        long at = -1;
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) {
+            const VsValue want = In(1, g, ctx);
+            for (std::size_t i = 0; i < a->size(); ++i) {
+                const VsValue& v = (*a)[i];
+                if (VsSameValue(v, want) || (v.IsObject() && want.IsString() && v.AsString() == want.AsString())) { at = (long)i; break; }
+            }
+        }
+        return pin == 1 ? VsValue(at >= 0) : VsValue((float)at);
+    }
+};
+
+struct ListRemoveItemNode : VsNode {   // in0 = list, in1 = item -> out0 removed? (the first match goes)
+    bool removed = false;
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return removed; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        removed = false;
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue want = In(1, g, ctx);
+        for (std::size_t i = 0; i < a->size(); ++i) {
+            const VsValue& v = (*a)[i];
+            if (VsSameValue(v, want) || (v.IsObject() && want.IsString() && v.AsString() == want.AsString())) {
+                a->erase(a->begin() + (long)i);
+                removed = true;
+                break;
+            }
+        }
+        return 0;
+    }
+};
+
+struct ListSortNode : VsNode {   // in0 = list, in1 = descending?
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const bool desc = In(1, g, ctx).AsBool();
+        std::stable_sort(a->begin(), a->end(), [desc](const VsValue& x, const VsValue& y) {
+            return desc ? VsCompare(y, x) < 0 : VsCompare(x, y) < 0;
+        });
+        return 0;
+    }
+};
+
+struct ListReverseNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) std::reverse(a->begin(), a->end());
+        return 0;
+    }
+};
+
+struct ListClearNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto a = VsListIn(this, In(0, g, ctx), g, ctx)) a->clear();
+        return 0;
+    }
+};
+
+struct ListCopyNode : VsNode {   // in0 = list, in1 = deep? -> a new list
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return VsValue::MakeArray();
+        if (In(1, g, ctx).AsBool()) return VsDeepCopy(VsValue(a));
+        return VsValue(std::make_shared<VsValue::Array>(*a));
+    }
+};
+
+// ---- Colors --------------------------------------------------------------------
+struct MakeColorNode : VsNode {   // in0..in3 = r, g, b, a (0..1; a defaults to 1)
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto ch = [&](int i, float d) {
+            const float f = In(i, g, ctx, d).AsFloat();
+            return std::isnan(f) ? 0.0f : std::fmin(std::fmax(f, 0.0f), 1.0f);
+        };
+        return VsValue::Color(ch(0, 0.0f), ch(1, 0.0f), ch(2, 0.0f), ch(3, 1.0f));
+    }
+};
+
+struct SplitColorNode : VsNode {   // in0 = colour -> r, g, b, a
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        const VsColor c = In(0, g, ctx).AsColor();
+        return pin == 0 ? c.r : pin == 1 ? c.g : pin == 2 ? c.b : c.a;
     }
 };
 
@@ -182,14 +366,20 @@ struct ScopedVarNode : VsNode {
         return it != m.end() ? it->second : VsValue{};
     }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const VsValue v = In(0, g, ctx);
+        VsValue v = In(0, g, ctx);
         VarMap& m = Store(ctx);
-        if (op == Op::Set) m[name] = v;
-        else {
-            float cur = 0.0f;
-            if (auto it = m.find(name); it != m.end()) cur = it->second.AsFloat();
-            m[name] = cur + v.AsFloat();
+        if (op == Op::Add) {
+            VsValue cur;
+            if (auto it = m.find(name); it != m.end()) cur = it->second;
+            v = (cur.IsVec3() || v.IsVec3()) ? VsValue(cur.AsVec3() + v.AsVec3()) : VsValue(cur.AsFloat() + v.AsFloat());
         }
+        std::string err;
+        if (!g.CoerceForStore(name, scope == Scope::Global ? VarScope::Global : VarScope::Scene, v, &err)) {
+            g.Error(this, ctx, std::string(op == Op::Set ? "Set " : "Add ") + (scope == Scope::Global ? "Global" : "Scene") +
+                               " Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        m[name] = std::move(v);
         return 0;
     }
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -73,6 +74,8 @@ public:
     /// Physics3D; `hasPrevPos` is false until the first step records it.
     Vec3     prevPos = Vec3::Zero;
     bool     hasPrevPos = false;
+    /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
+    PoseHistory poseHistory;
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }
@@ -115,6 +118,19 @@ public:
         Vec3 dir = dist > 1e-5f ? Vec3{d.x / dist, d.y / dist, d.z / dist} : Vec3{0.0f, 1.0f, 0.0f};
         dir.y += upModifier;
         AddImpulse(dir * (force * falloff));
+    }
+
+    /// Back to rest, as a fresh body starts: no velocity, no spin, no force or torque waiting for the next
+    /// step, awake, not on terrain, and no render-interpolation or swept-collision history (so a reused body
+    /// is not drawn sliding in from where it was last). Called by an ObjectPool when it hands the object
+    /// out again.
+    void OnPoolReuse() override {
+        velocity = Vec3::Zero; angularVelocity = Vec3::Zero;
+        m_forceAccum = Vec3::Zero; m_torqueAccum = Vec3::Zero;
+        WakeUp();
+        groundedOnTerrain = false; groundNormal = Vec3{0.0f, 1.0f, 0.0f};
+        prevPos = Vec3::Zero; hasPrevPos = false;
+        poseHistory = PoseHistory{};
     }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).

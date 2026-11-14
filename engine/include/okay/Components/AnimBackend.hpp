@@ -46,15 +46,21 @@ public:
     /// The blend trees' shared normalized phase (0..1).
     virtual float BlendPhase() const = 0;
     virtual void  ResetBlendPhase(float p = 0.0f) = 0;
+    /// One-shots start at phase 0. Looping trees keep ResetBlendPhase, which may
+    /// carry the previous cycle so the feet stay in step.
+    virtual void  RestartBlendPhase() { ResetBlendPhase(0.0f); }
     /// Pose a mix of clips A and B (w = weight of B) at one shared phase, or of
     /// any number of clips by `weights`. False if none of the clips exists.
     virtual bool  BlendClips(float dt, int A, int B, float w) = 0;
     virtual bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) = 0;
 
     /// Mix (clip, time) samples by `weights` over the current pose by `amount`,
-    /// on `maskBone` and the bones under it ("" = the whole body). Layers.
+    /// on `maskBone` and its children, plus `moreBones` (each a subtree). An
+    /// empty mask is the whole body. `additive` adds the clip on top of the
+    /// pose already there (a recoil or aim offset) instead of replacing it.
     virtual void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                            const std::string& maskBone, float amount) = 0;
+                            const std::string& maskBone, float amount, bool additive = false,
+                            const std::vector<std::string>* moreBones = nullptr) = 0;
     /// Run `fn` every frame after the base pose (layers register here); the
     /// owner calls RemovePostPose from its OnDestroy.
     virtual void  AddPostPose(const void* owner, std::function<void(float)> fn) = 0;
@@ -71,6 +77,10 @@ public:
     /// whose body has its own idea of the state (the Character's `anim`) syncs
     /// the machine with it here.
     virtual void  BeginFrame(AnimStateMachine& sm) { (void)sm; }
+    /// Mirror the pose this backend is about to show (a state played on the other side).
+    virtual void  SetMirror(bool) {}
+    /// Per-state root motion: -1 leaves the component's own toggle, 0 off, 1 on.
+    virtual void  SetRootMotion(int) {}
 };
 
 } // namespace okay

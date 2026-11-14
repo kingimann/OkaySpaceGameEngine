@@ -1,6 +1,7 @@
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/AccessibilitySettings.hpp"
 #include <cmath>
 
 namespace okay {
@@ -33,12 +34,12 @@ void UIAnimation::Apply(float dx, float dy, float scale, float alpha) {
     if (!r.valid || !r.position || !m_captured) return;
     const float W = UICanvas::Width(), H = UICanvas::Height();
     Vec2 size = m_baseSize;
-    if (r.sizePtr && !AnchorIsStretch(r.anchor)) { size = m_baseSize * scale; *r.sizePtr = size; }
+    if (r.sizePtr && !r.Stretches()) { size = m_baseSize * scale; *r.sizePtr = size; }
     Vec2 o0, s0, oX, sX, oY, sY, o1, s1;
-    ResolveAnchorRect(r.anchor, m_basePos, m_baseSize, W, H, o0, s0);
-    ResolveAnchorRect(r.anchor, m_basePos + Vec2{1.0f, 0.0f}, m_baseSize, W, H, oX, sX);
-    ResolveAnchorRect(r.anchor, m_basePos + Vec2{0.0f, 1.0f}, m_baseSize, W, H, oY, sY);
-    ResolveAnchorRect(r.anchor, m_basePos, size, W, H, o1, s1);
+    r.ResolveWith(m_basePos, m_baseSize, W, H, o0, s0);
+    r.ResolveWith(m_basePos + Vec2{1.0f, 0.0f}, m_baseSize, W, H, oX, sX);
+    r.ResolveWith(m_basePos + Vec2{0.0f, 1.0f}, m_baseSize, W, H, oY, sY);
+    r.ResolveWith(m_basePos, size, W, H, o1, s1);
     const float sx = (oX.x - o0.x) < 0.0f ? -1.0f : 1.0f, sy = (oY.y - o0.y) < 0.0f ? -1.0f : 1.0f;
     // Where the (scaled) rect must sit so its centre stays put, plus the offset.
     const float wantX = (o0.x + s0.x * 0.5f) - (o1.x + s1.x * 0.5f) + dx;
@@ -80,21 +81,26 @@ void UIAnimation::Update(float dt) {
     if (!m_captured) Capture();
     if (!m_captured) return;
 
-    const float dur = duration > 0.001f ? duration : 0.001f;
+    // Reduced motion: intros and outros become a short fade (no slide, pop or scale) and loops
+    // hold still. Reduced flashing: the Blink loop holds still too.
+    const bool calm = Accessibility::MotionScale() <= 0.0f;
+    const Intro introNow = calm && intro != Intro::None ? Intro::FadeIn : intro;
+    const Outro outroNow = calm ? Outro::FadeOut : outro;
+    const float dur = Accessibility::TransitionSeconds(duration > 0.001f ? duration : 0.001f);
     switch (m_phase) {
         case Phase::Idle: return;
         case Phase::Waiting: {
             m_t += dt;
             // Hold the intro's first frame while waiting (so nothing pops in early).
             if (m_t < delay) { float save = m_t; m_t = 0.0f; m_phase = Phase::Intro; Update(0.0f); m_phase = Phase::Waiting; m_t = save; return; }
-            m_t = 0.0f; m_phase = intro == Intro::None ? Phase::Loop : Phase::Intro;
+            m_t = 0.0f; m_phase = introNow == Intro::None ? Phase::Loop : Phase::Intro;
             return;
         }
         case Phase::Intro: {
             m_t += dt;
             float k = m_t / dur; if (k > 1.0f) k = 1.0f;
             float e = Easing::Evaluate(ease, k), inv = 1.0f - e;
-            switch (intro) {
+            switch (introNow) {
                 case Intro::FadeIn:      Apply(0, 0, 1.0f, e); break;
                 case Intro::SlideLeft:   Apply(-distance * inv, 0, 1.0f, e); break;
                 case Intro::SlideRight:  Apply( distance * inv, 0, 1.0f, e); break;
@@ -110,6 +116,7 @@ void UIAnimation::Update(float dt) {
         }
         case Phase::Loop: {
             if (loop == Loop::None) return;
+            if (calm || (loop == Loop::Blink && Accessibility::FlashScale() <= 0.0f)) { Apply(0, 0, 1.0f, 1.0f); return; }
             m_loopT += dt * (loopSpeed > 0.0f ? loopSpeed : 1.0f);
             const float s = std::sin(m_loopT * 6.2831853f);
             switch (loop) {
@@ -126,7 +133,7 @@ void UIAnimation::Update(float dt) {
             m_t += dt;
             float k = m_t / dur; if (k > 1.0f) k = 1.0f;
             float e = Easing::Evaluate(Ease::CubicIn, k), inv = 1.0f - e;
-            switch (outro) {
+            switch (outroNow) {
                 case Outro::FadeOut:     Apply(0, 0, 1.0f, inv); break;
                 case Outro::SlideLeft:   Apply(-distance * e, 0, 1.0f, inv); break;
                 case Outro::SlideRight:  Apply( distance * e, 0, 1.0f, inv); break;

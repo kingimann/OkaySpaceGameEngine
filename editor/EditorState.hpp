@@ -1,6 +1,12 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <Okay.hpp>
+#include "okay/Core/Game.hpp"
+#include "okay/Core/GameLoop.hpp"
+#include "okay/Core/Undo.hpp"
+#include "SceneUndo.hpp"
+#include <memory>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -64,8 +70,15 @@ public:
     /// ("Cube"/"Pyramid"/"Plane"/"Sphere"/"Cylinder").
     GameObject* CreateMesh(const std::string& meshName);
     void DeleteSelected();
+    /// Hierarchy "Delete Children": destroy every child (and what is below them) of the selected object(s) and
+    /// keep the objects themselves selected; one undo step. Returns how many direct children were removed
+    /// (0, and no undo step, when nothing selected has a child).
+    int DeleteChildrenOfSelected();
     /// Clone the selected object(s) (and their children); selects the clones.
     GameObject* DuplicateSelected();
+    /// Move a just-created object onto open ground near the scene-view focus.
+    /// Call it in the same undo step that created the object.
+    GameObject* SettleSpawn(GameObject* go);
     /// Wrap the current selection in a new empty parent,
     /// keeping each object's world position. Returns the new group (selected), or null
     /// if nothing is selected. Only top-level selected objects are reparented.
@@ -92,30 +105,93 @@ public:
     void NewCoinCollector();
     void NewMainMenu();
     void NewSnake();
+    void NewBrickBreaker();
     void NewInventory();
     void NewTerrainSandbox();
     void NewVoxelSandbox();
 
     // ---- Files ---------------------------------------------------------
-    bool Save(const std::string& path);
+    /// Write the scene to `path` (atomically: see SceneSerializer::SaveToFile). Refused while Play is
+    /// running: the scene then is the running game, not what you authored. On success the scene counts
+    /// as saved; on failure nothing changes and `error` says why.
+    bool Save(const std::string& path, std::string* error = nullptr);
     /// Write meshes edited since they were loaded from a .okaymesh file back to
     /// that file (Save does this first). Returns how many files were written.
     int SaveEditedMeshAssets(std::string* report = nullptr);
     /// Called for an object whose mesh was replaced by its re-saved asset (same
     /// vertices, triangles possibly re-ordered): mesh edit mode drops face/edge selections.
     static inline std::function<void(GameObject*)> onMeshTrianglesReordered;
+    /// Open a scene file. All or nothing: a missing or damaged file leaves the open scene, its undo
+    /// history and its saved state exactly as they were (`error` says why). A loaded scene starts a
+    /// fresh undo history, so Undo can never put the old scene's objects into the new file.
     bool Load(const std::string& path, std::string* error = nullptr);
+    /// Load scene text recovered from an autosave. The scene's path stays `keepPath`
+    /// and the scene is left unsaved, so the real file is not overwritten.
+    bool LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error = nullptr);
     const std::string& path() const { return m_path; }
+    /// The open scene's file was renamed or moved: keep editing it under the new path.
+    void FollowMovedFile(const std::string& newPath) { m_path = newPath; }
+    /// An asset the scene uses was renamed or moved: pass the scene's text (live scene, undo and redo history
+    /// and the saved copy) through `rewrite`. A scene that had no unsaved changes still has none. Returns
+    /// true when the live scene changed.
+    bool RewriteAssetPaths(const std::function<std::string(const std::string&)>& rewrite);
+
+    // ---- Unsaved changes --------------------------------------------------------
+    /// The scene as it is now counts as saved: clears `dirty` and remembers what the scene looks like.
+    void MarkClean();
+    /// True when the open scene differs from what was last saved, loaded or created. `dirty` says so
+    /// cheaply, but an edit that forgot to raise it would be lost silently, so this also compares the
+    /// scene's saved text with the text at the last save (it serializes the scene: call it when a
+    /// decision depends on it, such as quitting or opening another scene, not every frame). While Play
+    /// is running it answers for the scene you are editing: changes made to the running game are
+    /// thrown away on Stop and never count.
+    bool HasUnsavedChanges();
+    /// Same as HasUnsavedChanges, and raises `dirty` when the text differs (so the title bar and the
+    /// autosave catch up with an edit that did not mark it). Cheap enough to call every few seconds.
+    bool SyncDirty();
+
+    // ---- A new project: all or nothing -------------------------------------------
+    struct NewProjectResult {
+        bool ok = false;
+        std::string root;    ///< the project folder
+        std::string scene;   ///< its first scene file
+        std::string error;   ///< why it failed; the open scene, project and files are as before
+    };
+    /// Make a project at `root`: its folders, then `writeFiles(root, err)` (the caller's own settings files),
+    /// then the template scene (`tpl`) saved as <root>/Assets/<sceneName>.okayscene, and open it. If any step
+    /// fails everything made is removed and the scene, path, project and undo history are put back, so a
+    /// failed Create never costs the open scene. `writeFiles` may be empty.
+    NewProjectResult CreateProject(const std::string& root, const std::string& sceneName, void (EditorState::*tpl)(),
+                                   const std::function<bool(const std::string& root, std::string& error)>& writeFiles = {});
+    /// Called when the project folder changes (open, create, close): the old folder, then the new one.
+    /// The editor uses it to save the old project's settings and load the new one's.
+    static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
+    /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
+    static inline std::function<void()> onSceneLoaded;
+    /// Asked before Load touches anything: return false (with the reason in `why`) to refuse the file. The editor puts
+    /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
+    /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
+    static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }
+    /// Make `d` the open project. Only a real change does anything: the item definitions and the string
+    /// table are that project's own and are read again, and onProjectChanged runs. Setting the folder
+    /// that is already open leaves everything (including unsaved edits to those tables) alone.
     void setProjectDir(const std::string& d) {
+        if (d == m_projectDir) return;
+        const std::string old = m_projectDir;
         m_projectDir = d;
+        if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());
+        okay::Localization::Reset();         // ... and its own string table
+        if (!d.empty()) okay::Localization::LoadTable(StringTablePath());
     }
     /// The project's item definitions file (<project>/items.okayitems).
     std::string ItemDatabasePath() const { return m_projectDir.empty() ? std::string() : m_projectDir + "/items.okayitems"; }
+    /// The project's string table (<project>/strings.okayloc; the Localization window).
+    std::string StringTablePath() const { return m_projectDir.empty() ? std::string() : m_projectDir + "/strings.okayloc"; }
 
     // ---- Online services (built into the engine) ----------------------
     ISteamService*   steam()   { return m_steam.get(); }
@@ -132,17 +208,137 @@ public:
     /// Unlock a Steam achievement (no-op if Steam is unavailable).
     void Achievement(const std::string& id);
 
-    // ---- Undo / Redo (snapshot based) ---------------------------------
-    /// Capture the current scene as an undo checkpoint (call before a change).
-    void PushUndo();
+    // ---- Undo / Redo (okay::UndoStack of SceneDeltaCommands, see SceneUndo.hpp) ------------------
+    // Every editor action that changes the scene calls PushUndo() BEFORE it changes anything (the old
+    // contract, so existing call sites are unchanged). The step is closed lazily, at the next boundary: the
+    // next PushUndo, Undo / Redo, a Save, or CommitUndo() (the editor calls that between frames once the
+    // mouse is up). Closing compares the scene text with the text at the previous boundary and records only
+    // the part that differs, named after what changed ("Delete Cube", "Move Cube", "Scene Settings"). So a
+    // drag, however many frames it lasts, is one step; PushUndo before a change that did not happen records
+    // nothing; and a change nobody announced is caught at the next boundary as its own step, so the
+    // history never drifts from the scene.
+    // Play mode: nothing is recorded and Undo / Redo are unavailable while it runs (the running game is
+    // thrown away on Stop). The history made before Play is untouched and works again after Stop.
+    // A new, opened or recovered scene starts an empty history (a different document).
+    /// An edit is about to change the scene. `name` labels the step ("" = worked out from the change).
+    void PushUndo(const std::string& name = "");
+    /// Same, and `alsoUndo` (an edit of something that is not in the scene text, such as an animation
+    /// draft; already applied or about to be) joins the step: one Undo reverts both, the step exists even when
+    /// the scene itself does not change.
+    void PushUndo(const std::string& name, std::unique_ptr<ICommand> alsoUndo);
+    /// Record an edit that is already done: `before` is the scene text taken before it (see EditUndo.hpp).
+    /// Steps with the same non-zero `mergeKey` that follow each other within a second (the same field
+    /// nudged again) and touch the same place become one step.
+    void PushUndoText(std::string before, const std::string& name = "", std::uint64_t mergeKey = 0);
+    /// One asset file an undoable edit wrote (a prefab Apply rewrites the .okayprefab, not just the scene). Undo puts `before` back
+    /// (or deletes the file when `hadBefore` is false), Redo writes `after` again.
+    struct FileEdit {
+        std::string path;
+        bool hadBefore = true;
+        std::string before;
+        bool hasAfter = true;
+        std::string after;
+    };
+    /// The undo command that carries file edits (an ICommand for PushUndo(name, alsoUndo); the edits are already written when it is recorded).
+    static std::unique_ptr<ICommand> MakeFileUndo(std::vector<FileEdit> edits, const std::string& name = "Edit Prefab");
+    /// Tie file edits that are already written to the step the last PushUndo opened (opens one if none is), through the same
+    /// PushUndo(name, command) path: one Undo / Redo moves the files and the scene together. No-op (false) while undo is suppressed or Play runs.
+    bool AttachUndoFiles(std::vector<FileEdit> edits);
+    /// Drop the step the last PushUndo opened when the edit it was opened for failed and changed nothing.
+    void DiscardLastUndo();
+    /// Read a whole file ("" and false when it cannot be read). Helper for building FileEdit.
+    static bool ReadTextFile(const std::string& path, std::string& out);
+    /// Goes up on every PushUndo, PushUndoText, Undo and Redo: an unchanged value means "nothing touched the undo stack".
+    std::uint64_t UndoSerial() const { return m_undoSerial; }
+    /// Close the open step now (a no-op when none is open). The editor calls it between frames while no
+    /// mouse button is down, so the Edit menu shows the real name of the last action.
+    void CommitUndo();
+    /// Also record changes nobody announced with PushUndo (a window without undo calls, a script). Costs one
+    /// scene serialisation, so the editor calls it only when the Edit menu opens; Undo, Redo and Save do it themselves.
+    void CaptureUnannouncedEdits() { SyncHistory(); }
     bool Undo();
     bool Redo();
-    /// Load a scene snapshot, keeping the same objects selected afterwards.
+    /// Load a scene text, keeping the same objects selected (by GUID) afterwards.
     void RestoreKeepingSelection(const std::string& snapshot);
-    bool CanUndo() const { return !m_undo.empty(); }
-    bool CanRedo() const { return !m_redo.empty(); }
-    int  UndoDepth() const { return (int)m_undo.size(); }   ///< steps available behind
-    int  RedoDepth() const { return (int)m_redo.size(); }   ///< steps available ahead
+    bool CanUndo() const { return !m_playing && (m_pending.open || m_stack->CanUndo()); }
+    bool CanRedo() const { return !m_playing && !m_pending.open && m_stack->CanRedo(); }
+    int  UndoDepth() const { return (int)m_stack->UndoCount() + (m_pending.open ? 1 : 0); }   ///< steps available behind
+    int  RedoDepth() const { return m_pending.open ? 0 : (int)m_stack->RedoCount(); }          ///< steps available ahead
+    /// What Undo / Redo would do ("Delete Cube"); empty when nothing can be undone / redone.
+    std::string UndoName() const { return !CanUndo() ? std::string() : m_pending.open ? (m_pending.name.empty() ? std::string("Edit") : m_pending.name) : m_stack->NextUndoName(); }
+    std::string RedoName() const { return CanRedo() ? m_stack->NextRedoName() : std::string(); }
+    /// Step names, newest first (what Undo would undo first).
+    std::vector<std::string> UndoNames(std::size_t max = 0) const;
+    std::vector<std::string> RedoNames(std::size_t max = 0) const;
+    /// The history itself (limits, memory, listeners, dirty tracking); edit through the methods above.
+    UndoStack& undoStack() { return *m_stack; }
+    const UndoStack& undoStack() const { return *m_stack; }
+    /// Why the last Undo / Redo failed ("" when it did not).
+    const std::string& UndoError() const { return m_stack->LastError(); }
+
+    // ---- Prefab mode (see docs/prefab_mode.md) ---------------------------------------------------
+    // Open a .okayprefab in isolation: its contents become the scene being edited, the scene you were in
+    // is put aside (text, selection, camera, undo history, unsaved mark) and comes back, as it was, on
+    // ClosePrefab. Opening a prefab while one is open (a nested instance, or any other prefab) stacks
+    // another level: Scene > Enemy > Weapon. Each level has its own undo history and unsaved mark.
+    // Save writes the prefab file (PrefabTools::SavePrefab: nested instances stay linked); closing a level
+    // whose prefab was saved rebuilds the instances of it in the level below (PrefabTools::Reapply), as one
+    // undo step there. Play is refused while any prefab is open. Variants are not opened (see the doc).
+    struct PrefabCrumb {
+        std::string label;       ///< scene name, or the prefab file's name without its extension
+        std::string path;        ///< "" for the scene, else the prefab file
+        bool unsaved = false;    ///< this level has unsaved changes
+    };
+    bool InPrefabMode() const { return !m_levels.empty(); }
+    /// 0 = editing the scene, 1 = a prefab, 2 = a prefab opened from that prefab, ...
+    int PrefabDepth() const { return (int)m_levels.size(); }
+    /// The prefab file being edited ("" outside prefab mode).
+    const std::string& PrefabPath() const { return m_ses.path; }
+    /// The prefab's root object (null outside prefab mode, or if it was deleted: Save then refuses).
+    GameObject* PrefabRootObject() const;
+    /// Scene > Prefab > Nested, outermost first; the last one is what is open now.
+    std::vector<PrefabCrumb> PrefabCrumbs() const;
+    /// Why Play is unavailable ("" when it is available). Play() itself does nothing while this is non-empty.
+    std::string PlayBlockedReason() const;
+    /// True when a level other than the open one has unsaved changes (the scene you left, or an outer prefab).
+    bool PrefabOuterUnsaved() const;
+    /// True when any level from `depth` up to the open one has unsaved changes.
+    bool PrefabUnsavedFrom(int depth);
+    /// What the last ClosePrefab did to the instances ("Updated 3 instances of Enemy"), "" if nothing.
+    const std::string& PrefabNote() const { return m_prefabNote; }
+    /// Can this file be opened? False, with the reason, for a missing file, a variant, a prefab that is
+    /// already open further out, or a file that does not load.
+    bool CanOpenPrefab(const std::string& path, std::string* why = nullptr) const;
+    /// Open `path` (all or nothing: on failure nothing changes and `error` says why). Selects the root and
+    /// centres the view on it.
+    bool OpenPrefab(const std::string& path, std::string* error = nullptr);
+    /// Open the prefab `go` is an instance of (its nearest instance root's file; also works on a nested
+    /// instance inside the prefab being edited).
+    bool OpenPrefabOf(GameObject* go, std::string* error = nullptr);
+    /// Write the open prefab to its file. Objects outside the prefab's root are not part of it; `warning`
+    /// says so when there are some. Marks the level saved. False (file untouched, `error` says why) on failure.
+    bool SavePrefab(std::string* error = nullptr, std::string* warning = nullptr);
+    /// True when the open prefab's file is not what Open / the last Save / Revert read or wrote (changed or removed
+    /// by something else). Save then refuses once, saying so; saving again overwrites the file with your version.
+    bool PrefabChangedOnDisk() const;
+    static std::uint64_t PrefabDiskPrint(const std::string& path);
+    /// Throw the open level's edits away and read the file again (one undo step; the level counts as saved).
+    bool RevertPrefab(std::string* error = nullptr);
+    /// Leave the open prefab and go back one level. `save` writes it first (leaving is cancelled if that
+    /// fails); without it, unsaved changes of this level are discarded. A prefab saved earlier in the
+    /// session still updates its instances below. False outside prefab mode.
+    bool ClosePrefab(bool save, std::string* error = nullptr);
+    /// Go back to `depth` (0 = the scene) one level at a time. Stops, with `error`, at the first failure.
+    bool ClosePrefabTo(int depth, bool save, std::string* error = nullptr);
+    /// Write every level that has unsaved changes (the open prefab, outer prefabs, and the scene you left
+    /// to its file; `fromDepth`: only levels at that depth or deeper, 0 = all). False, `error` names the first failure; levels already written stay written.
+    bool SaveAllPrefabLevels(std::string* error = nullptr, int fromDepth = 0);
+    /// Rebuild every instance of `path` (and instances that contain it as a nested prefab) in the open
+    /// scene from the file, keeping what each one overrides; one undo step. Returns how many instances were
+    /// rebuilt. ClosePrefab calls this (for every prefab saved since); it is public so a tool can refresh
+    /// after writing a prefab itself. Overrides are read from what the instances store: OpenPrefab records
+    /// them (as an undo step, "Record Prefab Overrides") before it puts the scene aside.
+    int RefreshPrefabInstances(const std::string& path, std::string* report = nullptr);
 
     // ---- Play mode -----------------------------------------------------
     bool isPlaying() const { return m_playing; }
@@ -156,6 +352,72 @@ public:
     static inline std::function<void()> finishFrozenTick;
     /// Advance the simulation by dt (only has effect while playing).
     void Tick(float dt);
+
+    // ---- The Play loop (okay/Core/GameLoop.hpp) ------------------------
+    // Play frames go through one GameLoop, as in the built player, so Time::DeltaTime(),
+    // ElapsedTime(), Time.timeScale, hit stops, time-scale ramps and the Clock channels all
+    // work during Play. Editing never steps Time: PlayFrame does nothing outside Play.
+    /// Run one frame of Play for `realSeconds` of real time: clamp it to 0.1 s (a compile or a
+    /// window drag is not one huge step), optionally even it out (Time::SmoothDelta, snapped to
+    /// `refreshHz` with vsync), step Time and the clocks, then run playTick with the scaled
+    /// delta. False when nothing ran (not playing) or the game asked to quit.
+    bool PlayFrame(double realSeconds, bool smooth = true, float refreshHz = 0.0f);
+    /// What a Play frame runs with Time::DeltaTime(). Empty means Tick(dt); the editor sets it
+    /// so the visual-script debugger can run the tick on its own fiber.
+    std::function<void(float)> playTick;
+    /// The editor's Pause button, held as Game::PushPause("editor") so the loop, the clocks and
+    /// the game's own pause menu agree. Paused, Time::DeltaTime() is 0 and the scene is not
+    /// updated (as before). Ignored outside Play; Play() and Stop() clear it.
+    void SetPaused(bool paused);
+    bool paused() const { return Game::IsPausedBy(kPauseReason); }
+    /// The Step button: pause, then advance exactly one frame of `seconds` at the next
+    /// PlayFrame. The scene sees a running game for that frame (Game::Paused() reads false for the
+    /// editor's own pause, so controllers that skip a paused game still move); the time scale and
+    /// hit stops apply. False when not playing.
+    bool StepFrame(float seconds = 1.0f / 60.0f);
+    /// The loop itself (statistics, debug time scale, capture mode, frame recording).
+    GameLoop& playLoop() { return m_loop; }
+    const GameLoop& playLoop() const { return m_loop; }
+    static constexpr const char* kPauseReason = "editor";
+
+    // ---- Debug controls on the Play loop (the toolbar's slow-motion and "run N frames" buttons) --------
+    /// The slow-motion / fast-forward factor of the Play loop (1 = normal). It is a debugging aid, not a
+    /// game setting: only the editor's frame time is scaled, the game's own Time.timeScale is untouched.
+    float debugTimeScale() const { return m_loop.DebugTimeScale(); }
+    /// The "Slower" (`direction` < 0) and "Faster" (> 0) buttons: move to the next preset
+    /// (GameLoop::kDebugScalePresets: 0.05 ... 1 ... 32). Returns the scale now in force. Does nothing
+    /// outside Play (the buttons are greyed out then).
+    float StepDebugTimeScale(int direction);
+    /// The "1x" button.
+    void ResetDebugTimeScale();
+    /// "Run N frames, then pause": runs exactly `frames` more frames of `frameSeconds` each (the same
+    /// frame length every time, so a bug reproduces), then holds the editor's own pause. Paused already,
+    /// it steps `frames` frames and stays paused. The pause button follows through `onRunFramesDone`.
+    /// False, nothing changed, outside Play or for `frames` < 1.
+    bool RunFrames(int frames, float frameSeconds = 1.0f / 60.0f);
+    /// Called (main thread, end of the frame) when a run started by RunFrames has paused the game: the
+    /// editor sets its Pause button flag here so the button and the loop agree.
+    std::function<void()> onRunFramesDone;
+    /// Frames still queued by Step or RunFrames (0 = none): the Pause button shows the number.
+    int PendingFrames() const { return m_loop.StepsRemaining() + m_loop.RunFramesRemaining(); }
+
+    // ---- Text for the Game view's overlays (ImGui-free, so it can be tested) --------------------------
+    /// The Stats overlay: while playing, the performance lines of the Play loop (FrameOverlay::Lines: fps,
+    /// frame times, 1% low, hitches, time scale, pause reasons) followed by the scene's counts
+    /// (Scene::Stats().Lines(maxComponentTypes)); in edit mode only the counts (nothing is running).
+    std::vector<std::string> StatsLines(int maxComponentTypes = 3) const;
+    /// The two halves of StatsLines, for a UI that draws something between them (the fps graph) or leaves one
+    /// out: the loop's performance lines (empty outside Play) and the scene's counts.
+    std::vector<std::string> PerfLines() const;
+    std::vector<std::string> SceneLines(int maxComponentTypes = 3) const;
+    /// One line for the Game view's corner, beside the PLAYING pill (FrameOverlay::FpsLabel: the real frame times of
+    /// the last 30 frames, so a stall reads as a stall; "FPS --" before the first frame).
+    std::string FpsLabel() const;
+    /// The recent frame rate for the overlay's graph, `count` points, oldest first (all 0 until frames ran).
+    std::vector<float> RecentFps(std::size_t count) const;
+    /// The Timers overlay: what the scene's scheduler and tweens are doing (TimerDebug::BuildLines), plus
+    /// the process-wide scheduler when it holds anything. Long lines are shortened to `maxChars`.
+    std::vector<std::string> TimerLines(std::size_t maxChars = 78);
 
     // ---- 2D editor camera (world units) -------------------------------
     Vec2  cameraPos{0, 0};
@@ -182,9 +444,52 @@ private:
     std::unique_ptr<ISteamService>   m_steam;
     NetworkManager* m_net = nullptr; // component on a scene GameObject
 
-    std::vector<std::string> m_undo, m_redo;
+    GameLoop m_loop;   // the Play loop (set up in the constructor)
+
+    // Undo: the history, the scene text at the last boundary, and the step that is open (see PushUndo).
+    std::unique_ptr<UndoStack> m_stack = std::make_unique<UndoStack>();
+    std::shared_ptr<SceneAccess> m_access;
+    std::string m_known;
+    struct Pending {
+        bool open = false;
+        std::string name;
+        SelectionRef sel;
+        std::vector<std::unique_ptr<ICommand>> extras;   // already-applied edits of editor-side state that belong to the same step
+    } m_pending;
+    // Prefab mode: the documents put aside under the open one (see OpenPrefab).
+    struct PrefabSession { std::string path; std::string rootGuid; std::vector<std::string> saved; std::uint64_t disk = 0; bool overwriteArmed = false; };   ///< what the open document is (path "" = the scene) and the prefab files saved in it or in levels opened from it
+    struct Level {
+        std::string text, path, name;     // the scene text, file and name of the document put aside
+        PrefabSession ses;                // what it is (a scene, or a prefab at some depth)
+        SelectionRef sel;
+        Vec2 cameraPos; float cameraZoom = 18.0f; bool view3D = false;
+        float camYaw = 35.0f, camPitch = 22.0f, camDist = 14.0f; Vec3 camTarget = Vec3::Zero;
+        std::unique_ptr<UndoStack> stack;
+        std::string known;
+        std::uint64_t savedPrint = 0;
+        bool unsaved = false;
+    };
+    std::vector<Level> m_levels;          // empty = editing the scene; back() is the document right below the open one
+    PrefabSession m_ses;                  // the open document, when m_levels is not empty
+    std::string m_prefabNote;
+    bool BuildPrefabText(const std::string& path, std::string& text, std::string& rootGuid, std::string* error) const;
+    void SelectByRef(const SelectionRef& sel);
+    void CaptureInstanceOverrides();
+    int RefreshInstancesOf(const std::vector<std::string>& paths, std::string* report);
+    static std::string StemOf(const std::string& path);
+    SelectionRef CaptureSelection() const;
+    bool ApplySceneText(const std::string& text, const SelectionRef& sel);
+    bool SyncHistory();
+    void RecordStep(const std::string& before, const std::string& after, const std::string& name,
+                    const SelectionRef& selBefore, std::uint64_t key);
+    void StartDocument();   // a new / opened scene: empty history, this text is the baseline and counts as saved
+    std::uint64_t m_savedPrint = 0;       // fingerprint of the scene text at the last save / load / new
+    std::uint64_t m_playPrint = 0;        // fingerprint of the edit scene Play() put aside
+    bool m_dirtyAtPlay = false;           // `dirty` when Play started (Play-time edits are thrown away)
+    static std::uint64_t Fingerprint(const std::string& sceneText);
     bool m_suppressUndo = false;
-    static constexpr std::size_t kMaxUndo = 100;
+    std::uint64_t m_undoSerial = 0;
+    static constexpr std::size_t kMaxUndo = 100;   // steps kept
 };
 
 } // namespace okay::editor

@@ -57,7 +57,7 @@ int main() {
 
     struct Screen { const char* name; GameObject* (*fn)(Scene&); };
     const Screen screens[] = {
-        {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings},
+        {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings}, {"Save Slots", &AddSaveSlots},
         {"HUD", &AddHUD}, {"Dialog Box", &AddDialogBox}, {"Health Bar", &AddHealthBar},
         {"Lobby", &AddLobby}, {"Scoreboard", &AddScoreboard}, {"Game Over", &AddGameOver},
         {"Loading Screen", &AddLoadingScreen}, {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog},
@@ -170,8 +170,8 @@ int main() {
         GameObject* music = nullptr;
         for (Transform* c : settings->transform->Children()) if (c->gameObject->name == "MusicSlider") music = c->gameObject;
         CHECK(music != nullptr);
-        settings->active = false;   // under the pause card: click one screen at a time
         s.Start();
+        settings->active = false;   // under the pause card: click one screen at a time
         if (resume) {
             Vec2 o, sz;
             CHECK(GetUIScreenRect(resume, sw, sh, o, sz));

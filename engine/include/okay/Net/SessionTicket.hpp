@@ -8,7 +8,7 @@
 // call, and a client can't mint or edit a ticket.
 //
 //   okt1.<payload>.<signature>        (both parts base64url, no padding)
-//   payload = "sub=<user id>&aud=<server id or *>&iat=<unix s>&exp=<unix s>"
+//   payload = "sub=<user id>&aud=<server id or *>&iat=<unix s>&exp=<unix s>[&cnf=<key binding>]"
 //   signature = ed25519 over the ASCII text "okt1.<payload part>"
 //
 // Without libsodium nothing verifies (Verify fails with a reason).
@@ -23,6 +23,9 @@ struct SessionTicketClaims {
     std::string userId;      ///< sub
     std::string audience;    ///< aud: the server id it's for ("*" = any server)
     std::int64_t issuedAt = 0, expiresAt = 0;   ///< unix seconds
+    /// cnf: KeyBinding() of the client's session key, so only that connection
+    /// can use the ticket ("" = not bound).
+    std::string keyBinding;
 };
 
 class SessionTicket {
@@ -31,7 +34,7 @@ public:
     /// Seconds of clock difference tolerated between ticket service and server.
     static constexpr std::int64_t kClockSkew = 60;
     /// Longest validity a ticket may claim (exp - iat), seconds.
-    static constexpr std::int64_t kMaxLifetime = 24 * 3600;
+    static constexpr std::int64_t kMaxLifetime = 3600;
 
     /// Check `ticket` against the service's public key. `audience` is this
     /// server's id ("" = accept any). `now` = unix seconds. On success fills
@@ -43,6 +46,10 @@ public:
     /// Make a ticket (what the ticket service does). For tests and tools: the
     /// secret key never belongs in a game build.
     static std::string Sign(const SessionTicketClaims& claims, const std::vector<std::uint8_t>& secretKey);
+
+    /// A ticket's cnf for a connection: base64url SHA-256 of its session's
+    /// public key. "" without libsodium.
+    static std::string KeyBinding(const std::vector<std::uint8_t>& publicKey);
 
     /// A fresh ed25519 key pair (tests / local tools). False without libsodium.
     static bool GenerateKeyPair(std::vector<std::uint8_t>& publicKey, std::vector<std::uint8_t>& secretKey);

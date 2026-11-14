@@ -7,6 +7,8 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Components/ParticleSystem.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Game.hpp"
 #include <cmath>
@@ -69,23 +71,23 @@ public:
         Vec3 rd = ct->Forward() * -1.0f;
         { float m = std::sqrt(rd.x * rd.x + rd.y * rd.y + rd.z * rd.z); if (m > 1e-6f) rd = rd * (1.0f / m); }
         Transform* tt = terr->gameObject->transform;
-        Vec3 tp = tt->Position();
+        // Same local space the heightfield and the physics ground-follow use, so a
+        // moved, rotated, or scaled terrain is dug where the surface actually is.
+        Mat4 w2l = tt->LocalToWorldMatrix().Inverse();
         const float half = terr->size * 0.5f;
         float step = radius * 0.25f; if (step < 0.25f) step = 0.25f;
         for (float d = 0.0f; d <= range; d += step) {
-            Vec3 p = ro + rd * d;
-            float lx = p.x - tp.x, lz = p.z - tp.z;   // terrain assumed axis-aligned (no rotation)
-            if (lx < -half || lx > half || lz < -half || lz > half) continue;
-            float surfY = tp.y + terr->SampleHeight(lx, lz);
-            if (p.y <= surfY) { outLX = lx; outLZ = lz; return true; }
+            Vec3 lp = w2l.MultiplyPoint(ro + rd * d);
+            if (lp.x < -half || lp.x > half || lp.z < -half || lp.z > half) continue;
+            if (lp.y <= terr->SampleHeight(lp.x, lp.z)) { outLX = lp.x; outLZ = lp.z; return true; }
         }
         return false;
     }
 
     void Update(float dt) override {
-        if (Game::Paused()) { HideBrush(); return; }   // no aim marker / sculpting while paused
+        if (Game::Paused()) { HideBrush(); DigSound(false); return; }   // no aim marker / sculpting while paused
         Terrain* terr = FindTerrain();
-        if (!terr) { HideBrush(); return; }
+        if (!terr) { HideBrush(); DigSound(false); return; }
 
         // Always aim (even when not acting) so the brush marker tracks the cursor.
         float lx = 0.0f, lz = 0.0f;
@@ -95,7 +97,7 @@ public:
 
         bool primary = (button >= 0 && Input::GetMouseButton(button)) || (key && Input::GetKey(key));
         bool raise = (raiseButton >= 0 && Input::GetMouseButton(raiseButton));
-        if ((!primary && !raise) || dt <= 0.0f || !aiming) return;
+        if ((!primary && !raise) || dt <= 0.0f || !aiming) { DigSound(false); return; }
 
         const float amt = strength * dt;
         const float rate = std::min(1.0f, relax * dt);
@@ -109,14 +111,36 @@ public:
         }
         terr->Apply();   // rebuild the live mesh so the dig shows immediately
         if (brush_) ShowBrushAt(*terr, lx, lz);   // re-seat the marker on the new surface
+        Vec3 hit = HitWorld(*terr, lx, lz);
+        KickDebris(hit);
+        DigSound(true);
     }
 
     void OnDestroy() override {
-        if (brush_) { if (Scene* s = GetScene()) s->Destroy(brush_); brush_ = nullptr; }
+        if (Scene* s = GetScene()) {
+            if (brush_) s->Destroy(brush_);
+            if (debris_) s->Destroy(debris_);
+        }
+        brush_ = nullptr;
+        debris_ = nullptr;
     }
 
 private:
     GameObject* brush_ = nullptr;   ///< runtime-only ring marker (not saved/removable)
+    GameObject* debris_ = nullptr;  ///< runtime dirt burst at the brush
+    bool soundHeld_ = false;
+    bool soundStarted_ = false;     ///< we called Play(); don't Stop a clip we didn't start
+
+    Vec3 HitWorld(Terrain& terr, float lx, float lz) const {
+        if (!terr.gameObject || !terr.gameObject->transform)
+            return {lx, terr.SampleHeight(lx, lz), lz};
+        Mat4 l2w = terr.gameObject->transform->LocalToWorldMatrix();
+        Vec3 world = l2w.MultiplyPoint({lx, terr.SampleHeight(lx, lz), lz});
+        Vec3 up = l2w.MultiplyVector({0.0f, 1.0f, 0.0f});
+        float m = std::sqrt(up.x * up.x + up.y * up.y + up.z * up.z);
+        if (m > 1e-6f) up = up * (1.0f / m);
+        return world + up * 0.05f;
+    }
 
     /// A flat ring laid on the ground at the aim point, scaled to the brush radius.
     void ShowBrushAt(Terrain& terr, float lx, float lz) {
@@ -124,12 +148,14 @@ private:
         if (!s || !terr.gameObject || !terr.gameObject->transform) return;
         GameObject* b = EnsureBrush(*s);
         if (!b || !b->transform) return;
-        Vec3 tp = terr.gameObject->transform->Position();
-        float surf = terr.SampleHeight(lx, lz);
+        Transform* tt = terr.gameObject->transform;
         b->active = true;
-        b->transform->localPosition = {tp.x + lx, tp.y + surf + 0.05f, tp.z + lz};
+        b->transform->localPosition = HitWorld(terr, lx, lz);
+        b->transform->localRotation = tt->Rotation();
+        Vec3 ls = tt->LossyScale();
         // Tube mesh has outer radius 0.5, so scale by 2*radius to span the brush.
-        b->transform->localScale = {radius * 2.0f, 1.0f, radius * 2.0f};
+        // XZ follow the terrain's scale; Y stays 1 so the ring stays a thin washer.
+        b->transform->localScale = {radius * 2.0f * std::fabs(ls.x), 1.0f, radius * 2.0f * std::fabs(ls.z)};
         if (auto* mr = b->GetComponent<MeshRenderer>()) mr->color = brushColor;
     }
     void HideBrush() { if (brush_) brush_->active = false; }
@@ -148,6 +174,58 @@ private:
         // No collider: it never blocks the aim ray or counts as terrain.
         brush_ = b;
         return b;
+    }
+
+    /// Dirt kicked up at the brush. A runtime object, same idea as the ring.
+    void KickDebris(const Vec3& world) {
+        Scene* s = GetScene();
+        if (!s) return;
+        if (!debris_) {
+            debris_ = s->CreateGameObject("TerrainDebris");
+            if (!debris_) return;
+            debris_->tag = "TerrainDebris";
+            auto* ps = debris_->AddComponent<ParticleSystem>();
+            ps->playing = false;
+            ps->emissionRate = 0.0f;
+            ps->maxParticles = 48;
+            ps->startLifetime = 0.5f;
+            ps->startLifetimeRandom = 0.15f;
+            ps->startSize = 0.16f;
+            ps->startSizeRandom = 0.07f;
+            ps->startVelocity = {0.0f, 2.4f, 0.0f};
+            ps->shape = ParticleSystem::Shape::Sphere;
+            ps->gravity = {0.0f, -12.0f, 0.0f};
+            ps->startColor = Color::FromBytes(150, 116, 72);
+            ps->fadeOverLife = true;
+            ps->sizeOverLife = true;
+            ps->endSize = 0.04f;
+        }
+        if (!debris_->transform) return;
+        debris_->active = true;
+        debris_->transform->localPosition = world;
+        if (auto* ps = debris_->GetComponent<ParticleSystem>()) {
+            ps->shapeRadius = std::max(0.25f, radius * 0.35f);
+            ps->Emit(4);
+        }
+    }
+
+    /// Dig sound hook: an AudioSource on this object (clip or clipPath) plays
+    /// while the brush is held and stops on release. No clip is bundled.
+    void DigSound(bool acting) {
+        AudioSource* au = gameObject ? gameObject->GetComponent<AudioSource>() : nullptr;
+        if (!au) { soundHeld_ = false; return; }
+        if (acting) {
+            if (!soundHeld_) {
+                soundStarted_ = !au->IsPlaying();
+                if (soundStarted_) au->Play();
+                soundHeld_ = true;
+            } else if (soundStarted_ && !au->IsPlaying()) {
+                au->Play();   // a one-shot ended; retrigger while still held
+            }
+        } else if (soundHeld_) {
+            if (soundStarted_) au->Stop();
+            soundHeld_ = false;
+        }
     }
 };
 

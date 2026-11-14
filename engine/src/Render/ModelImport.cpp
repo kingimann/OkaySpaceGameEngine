@@ -1,5 +1,10 @@
 #include <set>
+#include <type_traits>
+#include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Core/Log.hpp"
+#include <cstdlib>
+#include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -13,7 +18,10 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -28,6 +36,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
+#include "okay/Render/FbxReader.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -36,16 +45,23 @@
 #include <cmath>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
-#ifdef OKAY_HAVE_ASSIMP
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-#include <assimp/config.h>
-#endif
+#include <atomic>
+#include "ModelImportInternal.hpp"
 
 namespace okay {
+// Validate a freshly built skin's joint indices against its joint list (the one
+// place every importer funnels through) and say so when the file had bad ones.
+static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
+    const int bad = sm.SanitizeJoints(sm.joints.size());
+    if (bad > 0)
+        Log::Warning("model import '", path, "': ", bad, " joint index(es) outside the ", sm.joints.size(),
+                     "-joint list were dropped (weight zeroed)");
+}
+
+static std::string Lower(std::string s);
 
 bool AssimpAvailable() {
 #ifdef OKAY_HAVE_ASSIMP
@@ -56,27 +72,27 @@ bool AssimpAvailable() {
 }
 
 std::string ImportableExtensions() {
-#ifdef OKAY_HAVE_ASSIMP
-    // Built-in (.obj .gltf .glb .fbx) + everything this Assimp build can read.
+    // Built in: OBJ, glTF, FBX (ufbx) and our own STL / PLY readers, plus everything
+    // the Assimp build can read. .dae is added when our own Collada reader is switched on
+    // (it is off by default, so this part is worked out per call, not cached).
     static const std::string list = [] {
-        std::string out = ".obj .gltf .glb .fbx";
-        Assimp::Importer imp; aiString exts; imp.GetExtensionList(exts);   // "*.3ds;*.dae;..."
-        std::string e = exts.C_Str(), cur;
-        auto flush = [&]() {
-            if (cur.size() > 1 && cur[0] == '.' && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
-            cur.clear();
-        };
+        std::string out = ".obj .gltf .glb .fbx .stl .ply";
+#ifdef OKAY_HAVE_ASSIMP
+        std::string e = assimp_backend::Extensions(), cur;
+        e += ' ';
         for (char c : e) {
-            if (c == ';') flush();
-            else if (c != '*') cur += (char)std::tolower((unsigned char)c);
+            if (c != ' ') { cur += c; continue; }
+            if (!cur.empty() && (" " + out + " ").find(" " + cur + " ") == std::string::npos) out += " " + cur;
+            cur.clear();
         }
-        flush();
+#endif
         return out;
     }();
-    return list;
-#else
-    return ".obj .gltf .glb .fbx";   // FBX is built in (ufbx)
-#endif
+    std::string res = list;
+    for (const char* opt : {".dae", ".3ds", ".bvh"})
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    return res;
 }
 
 static std::string Lower(std::string s) {
@@ -88,6 +104,8 @@ static bool EndsWith(const std::string& s, const char* suf) {
     return s.size() >= t.size() && s.compare(s.size() - t.size(), t.size(), t) == 0;
 }
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture);   // (FBX section below)
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture);   // our own reader (okay::fbx)
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err);
 // Imported clips: every node track spans the whole clip (see ModelAnimator::NormalizeClip).
 static void NormalizeImportedClips(GameObject* root) {
     if (!root) return;
@@ -100,150 +118,29 @@ static void NormalizeImportedClips(GameObject* root) {
     }
 }
 
-#ifdef OKAY_HAVE_ASSIMP
-// Resolve a material texture of the given TYPE to a file the renderer can load:
-// an external reference resolves next to the model; an embedded texture (the
-// common case for FBX) is written out as a "<model>_<tag><mi>.<ext>" sidecar —
-// the same convention the glTF importer uses ("tex" keeps the legacy name).
-static std::string AssimpTexByType(const aiScene* sc, unsigned mi, const std::string& modelPath,
-                                   aiTextureType type, const char* tag) {
-    if (mi >= sc->mNumMaterials) return std::string();
-    aiString texPath;
-    if (sc->mMaterials[mi]->GetTexture(type, 0, &texPath) != AI_SUCCESS)
-        return std::string();
-    std::string tp = texPath.C_Str();
-    if (tp.empty()) return std::string();
-    if (const aiTexture* emb = sc->GetEmbeddedTexture(tp.c_str())) {
-        // mHeight == 0 -> compressed blob (png/jpg per achFormatHint); mWidth is
-        // then the byte size. Raw-BGRA embeds (mHeight > 0) are rare; skipped.
-        if (emb->mHeight == 0 && emb->pcData && emb->mWidth > 0) {
-            std::string ext = emb->achFormatHint[0] ? emb->achFormatHint : "png";
-            std::string base = modelPath;
-            std::size_t dot = base.find_last_of('.');
-            if (dot != std::string::npos) base = base.substr(0, dot);
-            std::string out = base + "_" + tag + std::to_string(mi) + "." + ext;
-            if (std::FILE* f = std::fopen(out.c_str(), "wb")) {
-                std::fwrite(emb->pcData, 1, emb->mWidth, f);
-                std::fclose(f);
-                return out;
-            }
-        }
-        return std::string();
-    }
-    for (char& c : tp) if (c == '\\') c = '/';
-    bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    std::string dir;
-    { std::size_t s = modelPath.find_last_of("/\\"); if (s != std::string::npos) dir = modelPath.substr(0, s + 1); }
-    return abs ? tp : dir + tp;
-}
-
-static std::string AssimpMaterialTexture(const aiScene* sc, unsigned mi, const std::string& modelPath) {
-    std::string t = AssimpTexByType(sc, mi, modelPath, aiTextureType_DIFFUSE, "tex");
-    if (t.empty()) t = AssimpTexByType(sc, mi, modelPath, aiTextureType_BASE_COLOR, "tex");  // PBR exports
-    return t;
-}
-
-// Pull the WHOLE material onto a MeshRenderer — albedo, normal, specular/gloss
-// and AO maps, plus diffuse/emissive colors and shininess/metallic/roughness
-// factors — so a downloaded FBX lights like it does in other engines instead of
-// arriving as flat white. Mirrors ApplyGltfMaterial for the Assimp formats.
-static void ApplyAssimpMaterial(const aiScene* sc, unsigned mi, const std::string& modelPath,
-                                MeshRenderer* mr) {
-    if (!sc || mi >= sc->mNumMaterials || !mr) return;
-    const aiMaterial* mat = sc->mMaterials[mi];
-    std::string t = AssimpMaterialTexture(sc, mi, modelPath);
-    if (!t.empty()) mr->texture = t;
-    std::string n = AssimpTexByType(sc, mi, modelPath, aiTextureType_NORMALS, "nrm");
-    if (n.empty()) n = AssimpTexByType(sc, mi, modelPath, aiTextureType_HEIGHT, "nrm");   // OBJ/FBX "bump" slot
-    if (!n.empty()) mr->normalMap = n;
-    std::string s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SPECULAR, "spec");
-    if (s.empty()) s = AssimpTexByType(sc, mi, modelPath, aiTextureType_SHININESS, "spec");
-    if (!s.empty()) mr->specularMap = s;
-    std::string a = AssimpTexByType(sc, mi, modelPath, aiTextureType_LIGHTMAP, "ao");     // assimp's AO slot
-    if (a.empty()) a = AssimpTexByType(sc, mi, modelPath, aiTextureType_AMBIENT_OCCLUSION, "ao");
-    if (!a.empty()) mr->aoMap = a;
-    // Scalar factors. The diffuse COLOR only applies when there's no albedo texture
-    // (textured FBX materials often carry a black/grey diffuse that would tint the
-    // texture to mud).
-    aiColor4D dc;
-    if (mr->texture.empty() && mat->Get(AI_MATKEY_COLOR_DIFFUSE, dc) == AI_SUCCESS)
-        if (dc.r + dc.g + dc.b > 0.02f)
-            mr->color = Color(dc.r, dc.g, dc.b, mr->color.a);
-    aiColor4D ec;
-    if (mat->Get(AI_MATKEY_COLOR_EMISSIVE, ec) == AI_SUCCESS)
-        if (ec.r + ec.g + ec.b > 0.02f)
-            mr->emissive = Color(ec.r, ec.g, ec.b, 1.0f);
-    float shin = 0.0f;
-    if (mat->Get(AI_MATKEY_SHININESS, shin) == AI_SUCCESS && shin > 1.0f) {
-        mr->shininess = shin > 128.0f ? 128.0f : shin;
-        if (mr->specular <= 0.0f) mr->specular = 0.4f;
-    }
-    float metal = 0.0f;
-    if (mat->Get(AI_MATKEY_METALLIC_FACTOR, metal) == AI_SUCCESS && metal > 0.0f)
-        mr->metallic = metal > 1.0f ? 1.0f : metal;
-    float rough = -1.0f;
-    if (mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, rough) == AI_SUCCESS && rough >= 0.0f) {
-        float smooth = 1.0f - (rough > 1.0f ? 1.0f : rough);   // same mapping as glTF
-        mr->shininess = 4.0f + smooth * 124.0f;
-        mr->specular  = 0.15f + smooth * 0.85f;
-    }
-}
-
-static std::string AssimpDiffuseTexture(const aiScene* sc, const std::string& modelPath) {
-    for (unsigned mi = 0; mi < sc->mNumMaterials; ++mi) {
-        std::string t = AssimpMaterialTexture(sc, mi, modelPath);
-        if (!t.empty()) return t;
-    }
-    return std::string();
-}
-
-static Mesh ViaAssimp(const std::string& path, bool* ok, std::string* outTexture = nullptr) {
-    Assimp::Importer imp;
-    const aiScene* sc = imp.ReadFile(path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs | aiProcess_PreTransformVertices);
-    Mesh m;
-    if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return m; }
-    if (outTexture) *outTexture = AssimpDiffuseTexture(sc, path);
-    for (unsigned mi = 0; mi < sc->mNumMeshes; ++mi) {
-        const aiMesh* am = sc->mMeshes[mi];
-        int base = (int)m.vertices.size();
-        for (unsigned v = 0; v < am->mNumVertices; ++v) {
-            m.vertices.push_back(Vec3{am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z});
-            if (am->HasNormals())
-                m.normals.push_back(Vec3{am->mNormals[v].x, am->mNormals[v].y, am->mNormals[v].z});
-            if (am->HasTextureCoords(0))
-                m.uvs.push_back(Vec2{am->mTextureCoords[0][v].x, am->mTextureCoords[0][v].y});
-        }
-        for (unsigned fi = 0; fi < am->mNumFaces; ++fi) {
-            const aiFace& f = am->mFaces[fi];
-            if (f.mNumIndices == 3)
-                for (int k = 0; k < 3; ++k) m.triangles.push_back(base + (int)f.mIndices[k]);
-        }
-    }
-    if (m.normals.size() != m.vertices.size()) m.normals.clear();
-    if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
-    Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
-    if (ok) *ok = !m.vertices.empty();
-    return m;
-}
-#endif
 
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
-    if (EndsWith(p, ".obj"))                          return Mesh::LoadOBJ(path, ok, outTexture);
+    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp)
+        return Mesh::LoadOBJ(path, ok, outTexture);
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
     if (EndsWith(p, ".fbx")) {
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
     }
-#ifdef OKAY_HAVE_ASSIMP
-    return ViaAssimp(path, ok, outTexture);
-#else
-    if (ok) *ok = false;
-    return Mesh{};   // format needs Assimp, which this build wasn't compiled with
-#endif
+    // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
+    // STL / PLY readers, or Assimp when the build has it. One static mesh.
+    ImportedModel im;
+    Mesh m;
+    if (!ImportModelData(path, im, ImportBackend::Default, /*flatten=*/true, nullptr)) {
+        if (ok) *ok = false;
+        return m;
+    }
+    m = MergeModelMeshes(im, outTexture);
+    Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
+    if (ok) *ok = !m.vertices.empty();
+    return m;
 }
 
 static std::string BaseName(const std::string& path) {
@@ -307,13 +204,7 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (g.indexed) {
-            for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-        } else {
-            for (int i = 0; i + 2 < pn; i += 3) {
-                mesh.triangles.push_back(base + i); mesh.triangles.push_back(base + i + 1); mesh.triangles.push_back(base + i + 2);
-            }
-        }
+        for (int v : g.tri) mesh.triangles.push_back(base + v);
     }
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
@@ -397,6 +288,8 @@ static void ApplyGltfMaterial(MeshRenderer& mr, const gltf_detail::GltfMat& gm) 
     if (!gm.baseColorTex.empty()) mr.texture   = gm.baseColorTex;
     if (!gm.normalTex.empty())    mr.normalMap = gm.normalTex;
     if (!gm.aoTex.empty())        mr.aoMap     = gm.aoTex;
+    if (!gm.metallicRoughnessTex.empty()) mr.metallicRoughnessMap = gm.metallicRoughnessTex;
+    if (!gm.emissiveTex.empty())  mr.emissiveMap = gm.emissiveTex;
     if (gm.hasBaseColorFactor)    mr.color     = Color(gm.baseColor[0], gm.baseColor[1], gm.baseColor[2], gm.baseColor[3]);
     if (gm.hasEmissiveFactor)     mr.emissive  = Color(gm.emissive[0], gm.emissive[1], gm.emissive[2], 1.0f);
     if (gm.hasMetalRough) {
@@ -453,159 +346,359 @@ static void AutoNormalizeImportScale(Scene& scene, GameObject* root) {
         root->transform->localScale = root->transform->localScale * s;
 }
 
+// ============================================================================
+// The model-import seam (okay/Render/ModelData.hpp): backend choice, the merged
+// mesh, and the scene builder. Nothing below touches a third-party type.
+// ============================================================================
+
+ModelCounts CountModel(const ImportedModel& m) {
+    ModelCounts c;
+    c.nodes = (int)m.nodes.size();
+    c.parts = (int)m.parts.size();
+    std::set<std::string> bones;
+    for (const ImportedPart& p : m.parts) {
+        c.vertices += (int)p.mesh.vertices.size();
+        c.triangles += p.mesh.TriangleCount();
+        if (!p.bones.empty()) ++c.skinnedParts;
+        for (const ImportedBone& b : p.bones) bones.insert(b.name);
+    }
+    c.bones = (int)bones.size();
+    c.clips = (int)m.clips.size();
+    for (const ImportedClip& cl : m.clips) {
+        c.channels += (int)cl.channels.size();
+        for (const ImportedChannel& ch : cl.channels) c.keys += ch.position.size() + ch.rotation.size() + ch.scale.size();
+    }
+    return c;
+}
+
+namespace {
+
+#ifdef OKAY_PREFER_OWN_READERS_DEFAULT
+constexpr bool kPreferOwnDefault = true;
+#else
+constexpr bool kPreferOwnDefault = false;
+#endif
+
+#ifdef OKAY_OWN_COLLADA_DEFAULT
+constexpr bool kOwnColladaDefault = true;
+#else
+constexpr bool kOwnColladaDefault = false;
+#endif
+#ifdef OKAY_OWN_3DS_DEFAULT
+constexpr bool kOwn3dsDefault = true;
+#else
+constexpr bool kOwn3dsDefault = false;
+#endif
+#ifdef OKAY_OWN_BVH_DEFAULT
+constexpr bool kOwnBvhDefault = true;
+#else
+constexpr bool kOwnBvhDefault = false;
+#endif
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
+int OwnSlot(const std::string& ext) {
+    const std::string e = Lower(ext);
+    if (e == ".obj") return 0;
+    if (e == ".stl") return 1;
+    if (e == ".ply") return 2;
+    if (e == ".dae") return 3;
+    if (e == ".3ds") return 4;
+    if (e == ".bvh") return 5;
+    return -1;
+}
+std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+
+// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
+// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+bool OwnOptedIn(int slot) {
+    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
+    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+    if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    return v;
+}
+
+std::string ExtensionOf(const std::string& path) {
+    std::size_t sl = path.find_last_of("/\\"), dot = path.find_last_of('.');
+    if (dot == std::string::npos || (sl != std::string::npos && dot < sl)) return std::string();
+    return Lower(path.substr(dot));
+}
+
+bool AssimpReadsExt(const std::string& ext) {
 #ifdef OKAY_HAVE_ASSIMP
-// Convert assimp's row-major matrix to the engine's column-major Mat4.
-static Mat4 AiToMat4(const aiMatrix4x4& a) {
-    Mat4 r;
-    for (int row = 0; row < 4; ++row)
-        for (int col = 0; col < 4; ++col)
-            r.at(col, row) = a[row][col];
-    return r;
+    return (" " + assimp_backend::Extensions() + " ").find(" " + Lower(ext) + " ") != std::string::npos;
+#else
+    (void)ext; return false;
+#endif
 }
 
-// Geometry of one aiMesh, untransformed (the node hierarchy carries the transforms).
-static Mesh MeshFromAi(const aiMesh* am) {
-    Mesh m;
-    for (unsigned v = 0; v < am->mNumVertices; ++v) {
-        m.vertices.push_back(Vec3{am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z});
-        if (am->HasNormals())
-            m.normals.push_back(Vec3{am->mNormals[v].x, am->mNormals[v].y, am->mNormals[v].z});
-        if (am->HasTextureCoords(0))
-            m.uvs.push_back(Vec2{am->mTextureCoords[0][v].x, am->mTextureCoords[0][v].y});
-    }
-    for (unsigned fi = 0; fi < am->mNumFaces; ++fi) {
-        const aiFace& f = am->mFaces[fi];
-        if (f.mNumIndices == 3)
-            for (int k = 0; k < 3; ++k) m.triangles.push_back((int)f.mIndices[k]);
-    }
-    if (m.normals.size() != m.vertices.size()) m.normals.clear();
-    if (m.uvs.size()     != m.vertices.size()) m.uvs.clear();
-    return m;
+} // namespace
+
+bool HasOwnReader(const std::string& ext) { return OwnSlot(ext) >= 0; }
+
+bool SetImportBackend(const std::string& ext, ImportBackend which) {
+    if (ext == "*") { for (auto& c : g_backendChoice) c = (int)which; return true; }
+    int s = OwnSlot(ext);
+    if (s < 0) return false;
+    g_backendChoice[s] = (int)which;
+    return true;
 }
 
-// Import via Assimp PRESERVING the node hierarchy, skins and animations — so FBX
-// (Mixamo / Meshy AI rigs), Collada etc. come in animated, mirroring the glTF branch:
-// one GameObject per node, SkinnedMesh from bones, ModelAnimator clips from channels.
-// Returns nullptr when the file can't be loaded (caller falls back / reports).
-static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path, bool* ok) {
-    Assimp::Importer imp;
-    // Fold FBX pivot helper nodes into the real nodes — otherwise every joint
-    // explodes into $AssimpFbx$_Translation/_Rotation/... chains.
-    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    const aiScene* sc = imp.ReadFile(path,
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_JoinIdenticalVertices | aiProcess_FlipUVs |
-        aiProcess_LimitBoneWeights);   // ≤4 weights per vertex (SkinnedMesh blends 4)
-    if (!sc || !sc->mRootNode || sc->mNumMeshes == 0) { if (ok) *ok = false; return nullptr; }
+ImportBackend EffectiveImportBackend(const std::string& ext) {
+    const int s = OwnSlot(ext);
+    if (s < 0) return AssimpReadsExt(ext) ? ImportBackend::Assimp : ImportBackend::Default;
+    ImportBackend c = (ImportBackend)g_backendChoice[s].load();
+    if (c == ImportBackend::Own) return ImportBackend::Own;
+    if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
+    // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
+    // build has it (as before our readers existed), unless CMake asked for ours first.
+    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+        if (OwnOptedIn(s)) return ImportBackend::Own;
+        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+    }
+    if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
+    return ImportBackend::Assimp;
+}
 
+bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
+    out = ImportedModel{};
+    // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
+    const std::string ext = ExtensionOf(path);
+    // Our reader rejects a second `element vertex`. Assimp still loads that file,
+    // and the default choice would hand it to Assimp after our reader said no.
+    // The two blocks then contribute normals and UVs that do not line up with
+    // positions. Refuse the file before either backend runs.
+    if (ext == ".ply" && PlyFileDeclaresDuplicateVertex(path)) {
+        if (err) *err = "PLY declares more than one vertex element";
+        return false;
+    }
+    ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
+    if (use == ImportBackend::Assimp) {
+#ifdef OKAY_HAVE_ASSIMP
+        return assimp_backend::Read(path, flatten, out, err);
+#else
+        if (err) *err = "this build was compiled without Assimp";
+        return false;
+#endif
+    }
+    if (use == ImportBackend::Own) {
+        const int s = OwnSlot(ext);
+        if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
+        std::string e1;
+        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
+                  : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
+                  : ReadBvhFile(path, out, &e1);
+        if (good) {
+            for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+            return true;
+        }
+        // Our reader said no. With the default choice, give Assimp a go when the build has it.
+        if (which == ImportBackend::Default && AssimpAvailable()) {
+#ifdef OKAY_HAVE_ASSIMP
+            if (assimp_backend::Read(path, flatten, out, nullptr)) return true;
+#endif
+        }
+        out = ImportedModel{};
+        if (err) *err = e1;
+        return false;
+    }
+    if (err) {
+        const std::string x = ExtensionOf(path);
+        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
+        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        if (nm)
+            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+        else *err = "no reader for this format in this build";
+    }
+    return false;
+}
+
+Mesh MergeModelMeshes(const ImportedModel& m, std::string* outTexture) {
+    Mesh out;
+    for (const ImportedPart& p : m.parts) {
+        const int base = (int)out.vertices.size();
+        out.vertices.insert(out.vertices.end(), p.mesh.vertices.begin(), p.mesh.vertices.end());
+        out.normals.insert(out.normals.end(), p.mesh.normals.begin(), p.mesh.normals.end());
+        out.uvs.insert(out.uvs.end(), p.mesh.uvs.begin(), p.mesh.uvs.end());
+        for (int t : p.mesh.triangles) out.triangles.push_back(base + t);
+    }
+    if (out.normals.size() != out.vertices.size()) out.normals.clear();
+    if (out.uvs.size()     != out.vertices.size()) out.uvs.clear();
+    if (outTexture)
+        for (const ImportedMaterial& mat : m.materials)
+            if (!mat.texture.empty()) { *outTexture = mat.texture; break; }
+    return out;
+}
+
+namespace {
+
+// Pull the WHOLE material onto a MeshRenderer — albedo, normal, specular/gloss
+// and AO maps, plus diffuse/emissive colors and shininess/metallic/roughness
+// factors — so a downloaded model lights like it does in other engines instead
+// of arriving as flat white. Mirrors ApplyGltfMaterial.
+void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
+    if (mi < 0 || mi >= (int)m.materials.size() || !mr) return;
+    const ImportedMaterial& mat = m.materials[(std::size_t)mi];
+    if (!mat.texture.empty())     mr->texture = mat.texture;
+    if (!mat.normalMap.empty())   mr->normalMap = mat.normalMap;
+    if (!mat.specularMap.empty()) mr->specularMap = mat.specularMap;
+    if (!mat.aoMap.empty())       mr->aoMap = mat.aoMap;
+    // The diffuse COLOR only applies when there's no albedo texture (textured
+    // materials often carry a black/grey diffuse that would tint the texture to mud).
+    if (mr->texture.empty() && mat.hasDiffuse && mat.diffuse.r + mat.diffuse.g + mat.diffuse.b > 0.02f)
+        mr->color = Color(mat.diffuse.r, mat.diffuse.g, mat.diffuse.b, mr->color.a);
+    if (mat.hasEmissive && mat.emissive.r + mat.emissive.g + mat.emissive.b > 0.02f)
+        mr->emissive = Color(mat.emissive.r, mat.emissive.g, mat.emissive.b, 1.0f);
+    if (mat.shininess > 1.0f) {
+        mr->shininess = mat.shininess > 128.0f ? 128.0f : mat.shininess;
+        if (mr->specular <= 0.0f) mr->specular = 0.4f;
+    }
+    if (mat.metallic > 0.0f) mr->metallic = mat.metallic > 1.0f ? 1.0f : mat.metallic;
+    if (mat.roughness >= 0.0f) {
+        float smooth = 1.0f - (mat.roughness > 1.0f ? 1.0f : mat.roughness);   // same mapping as glTF
+        mr->shininess = 4.0f + smooth * 124.0f;
+        mr->specular  = 0.15f + smooth * 0.85f;
+    }
+}
+
+} // namespace
+
+GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
+    // A skeleton-only model (BVH motion capture) has nodes and clips but no mesh.
+    if (model.parts.empty() && (model.nodes.empty() || model.clips.empty())) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
-    std::unordered_map<std::string, GameObject*> byName;
-    struct MeshSite { GameObject* go; const aiMesh* am; };
-    std::vector<MeshSite> sites;
 
+    if (model.nodes.empty()) {
+        // Flat result (our own OBJ / STL / PLY readers): the parts hang straight off
+        // the root. Exporters disagree on units (Meshy etc. emit cm/mm), so scale all
+        // parts together to a usable size — the same rule as Mesh::NormalizeImportScale.
+        std::vector<Mesh> meshes;
+        for (const ImportedPart& p : model.parts) meshes.push_back(p.mesh);
+        {
+            Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+            bool any = false;
+            for (const Mesh& mm : meshes) {
+                if (mm.vertices.empty()) continue;
+                Vec3 a, b; mm.Bounds(a, b);
+                lo = Vec3{std::fmin(lo.x, a.x), std::fmin(lo.y, a.y), std::fmin(lo.z, a.z)};
+                hi = Vec3{std::fmax(hi.x, b.x), std::fmax(hi.y, b.y), std::fmax(hi.z, b.z)};
+                any = true;
+            }
+            if (any) {
+                Vec3 sz = hi - lo;
+                float d = sz.x > sz.y ? (sz.x > sz.z ? sz.x : sz.z) : (sz.y > sz.z ? sz.y : sz.z);
+                if (d > 0.0f && (d > 20.0f || d < 0.02f)) {
+                    float s = 2.0f / d;
+                    for (Mesh& mm : meshes) for (Vec3& v : mm.vertices) v = v * s;
+                }
+            }
+        }
+        int made = 0;
+        for (std::size_t i = 0; i < model.parts.size(); ++i) {
+            if (meshes[i].vertices.empty()) continue;
+            GameObject* host = root;
+            if (model.parts.size() > 1) {
+                std::string nm = meshes[i].name.empty() ? "part" + std::to_string(i) : meshes[i].name;
+                host = scene.CreateGameObject(nm);
+                host->transform->SetParent(root->transform, false);
+            }
+            auto* mr = host->AddComponent<MeshRenderer>();
+            mr->mesh = meshes[i]; mr->doubleSided = true;
+            ApplyImportedMaterial(model, model.parts[i].material, mr);
+            ++made;
+        }
+        if (made == 0) { scene.Destroy(root); return nullptr; }
+        AutoNormalizeImportScale(scene, root);
+        return root;
+    }
+
+    std::unordered_map<std::string, GameObject*> byName;
+    struct MeshSite { GameObject* go; const ImportedPart* part; };
+    std::vector<MeshSite> sites;
+    std::vector<GameObject*> goOf(model.nodes.size(), nullptr);
+    std::vector<int> partsOnNode(model.nodes.size(), 0);
     std::unordered_map<std::string, int> nameUse;   // later duplicates get a suffix (first keeps the name bones/channels use)
-    std::function<void(const aiNode*, Transform*)> build = [&](const aiNode* n, Transform* parent) {
-        std::string nm = n->mName.C_Str();
-        std::string objName = nm.empty() ? "node" : nm;
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const ImportedNode& n = model.nodes[i];
+        std::string objName = n.name.empty() ? "node" : n.name;
         if (int c = nameUse[objName]++) objName += "_" + std::to_string(c);
         GameObject* g = scene.CreateGameObject(objName);
-        aiVector3D s, t; aiQuaternion r;
-        n->mTransformation.Decompose(s, r, t);
-        g->transform->localPosition = Vec3{t.x, t.y, t.z};
-        g->transform->localRotation = Quat{r.x, r.y, r.z, r.w};
-        g->transform->localScale    = Vec3{s.x, s.y, s.z};
+        g->transform->localPosition = n.position;
+        g->transform->localRotation = n.rotation;
+        g->transform->localScale    = n.scale;
+        Transform* parent = (n.parent >= 0 && n.parent < (int)i && goOf[(std::size_t)n.parent]) ? goOf[(std::size_t)n.parent]->transform : root->transform;
         g->transform->SetParent(parent, false);
-        if (!nm.empty() && !byName.count(nm)) byName[nm] = g;
-        for (unsigned i = 0; i < n->mNumMeshes; ++i) {
+        goOf[i] = g;
+        if (!n.name.empty() && !byName.count(n.name)) byName[n.name] = g;
+        for (const ImportedPart& part : model.parts) {
+            if (part.node != (int)i) continue;
             GameObject* host = g;
-            if (i > 0) {   // extra meshes on this node get child objects
-                host = scene.CreateGameObject(g->name + "_m" + std::to_string(i));
+            int k = partsOnNode[i]++;
+            if (k > 0) {   // extra meshes on this node get child objects
+                host = scene.CreateGameObject(g->name + "_m" + std::to_string(k));
                 host->transform->SetParent(g->transform, false);
             }
-            sites.push_back({host, sc->mMeshes[n->mMeshes[i]]});
+            sites.push_back({host, &part});
         }
-        for (unsigned c = 0; c < n->mNumChildren; ++c) build(n->mChildren[c], g->transform);
-    };
-    build(sc->mRootNode, root->transform);
+    }
 
     for (const MeshSite& site : sites) {
-        Mesh bind = MeshFromAi(site.am);
-        if (bind.vertices.empty()) continue;
+        const ImportedPart& part = *site.part;
+        if (part.mesh.vertices.empty()) continue;
         auto* mr = site.go->AddComponent<MeshRenderer>();
-        mr->mesh = bind; mr->doubleSided = true;
-        ApplyAssimpMaterial(sc, site.am->mMaterialIndex, path, mr);   // full material, not just albedo
+        mr->mesh = part.mesh; mr->doubleSided = true;
+        ApplyImportedMaterial(model, part.material, mr);   // full material, not just albedo
 
-        if (site.am->mNumBones == 0) continue;
+        if (part.bones.empty()) continue;
         auto* sm = site.go->AddComponent<SkinnedMesh>();
-        sm->bind = bind;
-        sm->jointIdx.assign(bind.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
-        sm->jointWt.assign(bind.vertices.size(), std::array<float, 4>{0, 0, 0, 0});
-        for (unsigned b = 0; b < site.am->mNumBones; ++b) {
-            const aiBone* bone = site.am->mBones[b];
-            std::string bn = bone->mName.C_Str();
-            auto it = byName.find(bn);
+        sm->bind = part.mesh;
+        sm->jointIdx = part.jointIdx;
+        sm->jointWt = part.jointWt;
+        sm->jointIdx.resize(part.mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+        sm->jointWt.resize(part.mesh.vertices.size(), std::array<float, 4>{0, 0, 0, 0});
+        for (const ImportedBone& b : part.bones) {
+            auto it = byName.find(b.name);
             sm->joints.push_back(it != byName.end() ? it->second->transform : nullptr);
-            sm->jointNames.push_back(bn);
-            sm->inverseBind.push_back(AiToMat4(bone->mOffsetMatrix));
-            for (unsigned w = 0; w < bone->mNumWeights; ++w) {
-                unsigned v = bone->mWeights[w].mVertexId;
-                float   wt = bone->mWeights[w].mWeight;
-                if (v >= sm->jointWt.size() || wt <= 0.0f) continue;
-                // Keep the 4 strongest influences (assimp already limits to 4).
-                auto& ws = sm->jointWt[v]; auto& is = sm->jointIdx[v];
-                int slot = 0;
-                for (int k = 1; k < 4; ++k) if (ws[k] < ws[slot]) slot = k;
-                if (wt > ws[slot]) { ws[slot] = wt; is[slot] = (int)b; }
-            }
+            sm->jointNames.push_back(b.name);
+            sm->inverseBind.push_back(b.inverseBind);
         }
+        ValidateSkinJoints(*sm, path);
     }
 
     // Animations -> a ModelAnimator clip library on the root (same as the glTF path).
-    if (sc->mNumAnimations > 0) {
+    if (!model.clips.empty()) {
         auto* ma = root->AddComponent<ModelAnimator>();
-        for (unsigned a = 0; a < sc->mNumAnimations; ++a) {
-            const aiAnimation* an = sc->mAnimations[a];
-            double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 25.0;
+        for (const ImportedClip& ic : model.clips) {
             ModelAnimator::Clip clip;
-            std::string cn = an->mName.C_Str();
-            // FBX tools often emit "Armature|Walk" style names — keep the last segment.
-            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
-            clip.name = cn.empty() ? ("clip" + std::to_string(a)) : cn;
-            for (unsigned c = 0; c < an->mNumChannels; ++c) {
-                const aiNodeAnim* ch = an->mChannels[c];
-                std::string nodeName = ch->mNodeName.C_Str();
-                if (nodeName.empty() || !byName.count(nodeName)) continue;
-                clip.nodes.push_back({nodeName, AnimationClip{}});
+            clip.name = ic.name;
+            for (const ImportedChannel& ch : ic.channels) {
+                if (ch.node.empty() || !byName.count(ch.node)) continue;
+                clip.nodes.push_back({ch.node, AnimationClip{}});
                 AnimationClip& ac = clip.nodes.back().clip;
                 ac.smoothKeys = false;   // sampled data: play back linearly, as authored
-                for (unsigned k = 0; k < ch->mNumPositionKeys; ++k) {
-                    float t = (float)(ch->mPositionKeys[k].mTime / tps);
-                    const aiVector3D& v = ch->mPositionKeys[k].mValue;
-                    ac.AddKey("position.x", t, v.x);
-                    ac.AddKey("position.y", t, v.y);
-                    ac.AddKey("position.z", t, v.z);
+                for (const ImportedKeyV3& k : ch.position) {
+                    ac.AddKey("position.x", k.time, k.value.x);
+                    ac.AddKey("position.y", k.time, k.value.y);
+                    ac.AddKey("position.z", k.time, k.value.z);
                 }
                 // Keep quaternion keys on one hemisphere: the Animator lerps the raw
                 // components, and a sign flip between neighbours reads as a wild spin.
-                aiQuaternion prev; bool hasPrev = false;
-                for (unsigned k = 0; k < ch->mNumRotationKeys; ++k) {
-                    float t = (float)(ch->mRotationKeys[k].mTime / tps);
-                    aiQuaternion q = ch->mRotationKeys[k].mValue;
+                Quat prev; bool hasPrev = false;
+                for (const ImportedKeyQ& k : ch.rotation) {
+                    Quat q = k.value;
                     if (hasPrev && (q.x*prev.x + q.y*prev.y + q.z*prev.z + q.w*prev.w) < 0.0f) {
                         q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w;
                     }
                     prev = q; hasPrev = true;
-                    ac.AddKey("rotation.qx", t, q.x);
-                    ac.AddKey("rotation.qy", t, q.y);
-                    ac.AddKey("rotation.qz", t, q.z);
-                    ac.AddKey("rotation.qw", t, q.w);
+                    ac.AddKey("rotation.qx", k.time, q.x);
+                    ac.AddKey("rotation.qy", k.time, q.y);
+                    ac.AddKey("rotation.qz", k.time, q.z);
+                    ac.AddKey("rotation.qw", k.time, q.w);
                 }
-                for (unsigned k = 0; k < ch->mNumScalingKeys; ++k) {
-                    float t = (float)(ch->mScalingKeys[k].mTime / tps);
-                    const aiVector3D& v = ch->mScalingKeys[k].mValue;
-                    ac.AddKey("scale.x", t, v.x);
-                    ac.AddKey("scale.y", t, v.y);
-                    ac.AddKey("scale.z", t, v.z);
+                for (const ImportedKeyV3& k : ch.scale) {
+                    ac.AddKey("scale.x", k.time, k.value.x);
+                    ac.AddKey("scale.y", k.time, k.value.y);
+                    ac.AddKey("scale.z", k.time, k.value.z);
                 }
                 if (ac.Tracks().empty()) clip.nodes.pop_back();
             }
@@ -616,10 +709,8 @@ static GameObject* ImportAssimpSceneGraph(Scene& scene, const std::string& path,
 
     NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
-    if (ok) *ok = true;
     return root;
 }
-#endif // OKAY_HAVE_ASSIMP
 
 // ============================================================================
 // FBX (built in, via the vendored ufbx — no Assimp needed). Mixamo characters,
@@ -640,7 +731,13 @@ Mat4 UfbxToMat4(const ufbx_matrix& a) {
 }
 std::string UfbxStr(const ufbx_string& s) { return std::string(s.data, s.length); }
 
-ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
+// Hardening: the ufbx path enforces the same numbers as okay::fbx::Limits (one source of truth).
+// The node hierarchy depth is capped inside ufbx itself (node_depth_limit; its default of 0 lets a
+// flat file declare an arbitrarily deep Model chain), and the node / animation counts are checked
+// right after loading, before anything is built from them. `limitHit` is set when the file was
+// refused for size or shape rather than because it could not be read.
+ufbx_scene* LoadFbx(const std::string& path, std::string* err, bool* limitHit = nullptr) {
+    const fbx::Limits lim;
     ufbx_load_opts opts{};
     opts.target_axes = ufbx_axes_right_handed_y_up;
     opts.target_unit_meters = 1.0f;
@@ -651,9 +748,30 @@ ufbx_scene* LoadFbx(const std::string& path, std::string* err) {
     opts.generate_missing_normals = true;
     opts.ignore_missing_external_files = true;
     opts.evaluate_skinning = false;
+    opts.node_depth_limit = (uint32_t)lim.maxNodeDepth;
+    if (limitHit) *limitHit = false;
     ufbx_error e{};
     ufbx_scene* sc = ufbx_load_file(path.c_str(), &opts, &e);
-    if (!sc && err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+    if (!sc) {
+        if (err) { char buf[512]; ufbx_format_error(buf, sizeof(buf), &e); *err = buf; }
+        if (limitHit && (e.type == UFBX_ERROR_NODE_DEPTH_LIMIT || e.type == UFBX_ERROR_MEMORY_LIMIT || e.type == UFBX_ERROR_ALLOCATION_LIMIT)) *limitHit = true;
+        return nullptr;
+    }
+    std::string why;
+    if (sc->nodes.count > lim.maxNodes) why = "too many nodes";
+    else if (sc->anim_stacks.count > lim.maxAnimStacks) why = "too many animation stacks";
+    else if (sc->anim_layers.count > lim.maxAnimLayers) why = "too many animation layers";
+    else if (sc->anim_curves.count > lim.maxAnimCurves) why = "too many animation curves";
+    else {
+        std::size_t keys = 0;
+        for (const ufbx_anim_curve* c : sc->anim_curves) { keys += c->keyframes.count; if (keys > lim.maxAnimKeys) { why = "too many animation keys"; break; } }
+    }
+    if (!why.empty()) {
+        ufbx_free_scene(sc);
+        if (err) *err = "FBX rejected: " + why;
+        if (limitHit) *limitHit = true;
+        return nullptr;
+    }
     return sc;
 }
 
@@ -664,14 +782,14 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
         if (!s->length) continue;
-        fs::path p(UfbxStr(*s));
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
-        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
-        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).string();
+        const fs::path p = fs::u8path(UfbxStr(*s));
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).u8string();
+        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).u8string();
     }
     if (tex->content.size > 0 && tex->content.data) {
         std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
@@ -679,13 +797,13 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
             const unsigned char* d = (const unsigned char*)tex->content.data;
             ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
         }
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -863,6 +981,11 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
+    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+        bool ownOk = false;
+        Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+        if (ownOk) { if (ok) *ok = true; return m; }
+    }
     ufbx_scene* sc = LoadFbx(path, nullptr);
     if (!sc) { if (ok) *ok = false; return merged; }
     for (const ufbx_node* node : sc->nodes) {
@@ -888,8 +1011,13 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
     return merged;
 }
 
-static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err) {
-    ufbx_scene* sc = LoadFbx(path, err);
+// `rejected` is set when the file was refused for going past a size/shape limit (fbx::Limits): the
+// caller must then fail the import instead of falling back to another reader that would take the
+// same hostile file.
+static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
+    if (fbx::OwnReaderEnabled())
+        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
+    ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
     GameObject* root = scene.CreateGameObject(BaseName(path));
@@ -898,21 +1026,26 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     int texSerial = 0;
 
     // Hierarchy: one GameObject per FBX node (names made unique: clips and
-    // skins refer to nodes by name).
-    std::function<void(const ufbx_node*, Transform*)> build = [&](const ufbx_node* n, Transform* parent) {
-        std::string nm = UfbxStr(n->name);
-        if (nm.empty()) nm = n->mesh ? "mesh" : "node";
-        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
-        GameObject* g = scene.CreateGameObject(nm);
-        goOf[n->typed_id] = g;
-        const ufbx_transform& t = n->local_transform;
-        g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
-        g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
-        g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
-        g->transform->SetParent(parent, false);
-        for (const ufbx_node* c : n->children) build(c, g->transform);
-    };
-    for (const ufbx_node* c : sc->root_node->children) build(c, root->transform);
+    // skins refer to nodes by name). Iterative (explicit stack, depth-first in child order),
+    // so the depth of the file never becomes call depth.
+    {
+        std::vector<std::pair<const ufbx_node*, Transform*>> todo;
+        for (std::size_t i = sc->root_node->children.count; i-- > 0;) todo.push_back({sc->root_node->children.data[i], root->transform});
+        while (!todo.empty()) {
+            const ufbx_node* n = todo.back().first; Transform* parent = todo.back().second; todo.pop_back();
+            std::string nm = UfbxStr(n->name);
+            if (nm.empty()) nm = n->mesh ? "mesh" : "node";
+            if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+            GameObject* g = scene.CreateGameObject(nm);
+            goOf[n->typed_id] = g;
+            const ufbx_transform& t = n->local_transform;
+            g->transform->localPosition = Vec3{(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
+            g->transform->localRotation = Quat{(float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w};
+            g->transform->localScale    = Vec3{(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
+            g->transform->SetParent(parent, false);
+            for (std::size_t i = n->children.count; i-- > 0;) todo.push_back({n->children.data[i], g->transform});
+        }
+    }
 
     // Meshes (after the hierarchy, so skins can find every bone).
     for (const ufbx_node* node : sc->nodes) {
@@ -962,6 +1095,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
                 // which may sit under a child object) into bone space.
                 sm->inverseBind.push_back(UfbxToMat4(cl->geometry_to_bone));
             }
+            ValidateSkinJoints(*sm, path);
             if (g != host) {   // the part's object is a child of the mesh node: same space
                 g->transform->localPosition = Vec3{0, 0, 0};
             }
@@ -981,18 +1115,45 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     }
     if (sc->anim_stacks.count > 0) {
         auto* ma = root->AddComponent<ModelAnimator>();
+        // Whole-file bake budget (a hostile file can point any number of stacks at the same curves):
+        // baked keys over all stacks, and each bake may not allocate more than what is left.
+        const std::size_t bakeKeyBudget = fbx::Limits().maxTotalBakedSamples;
+        const std::size_t kBakedKeyBytes = 40;   // sizeof(ufbx_baked_quat), the largest baked key
+        std::size_t bakedKeys = 0;
         for (const ufbx_anim_stack* st : sc->anim_stacks) {
             ufbx_bake_opts bo{};
             bo.trim_start_time = true;
             bo.resample_rate = 30.0;
+            bo.result_allocator.memory_limit = std::max<std::size_t>(1, (bakeKeyBudget - bakedKeys) * kBakedKeyBytes);   // 0 would mean unlimited
             ufbx_error be{};
             ufbx_baked_anim* bake = ufbx_bake_anim(sc, st->anim, &bo, &be);
-            if (!bake) continue;
+            if (!bake) {
+                if (be.type == UFBX_ERROR_MEMORY_LIMIT || be.type == UFBX_ERROR_ALLOCATION_LIMIT) {
+                    if (err) *err = "FBX rejected: animation bake budget exceeded";
+                    if (rejected) *rejected = true;
+                    ufbx_free_scene(sc);
+                    scene.Destroy(root);
+                    if (ok) *ok = false;
+                    return nullptr;
+                }
+                continue;
+            }
+            for (const ufbx_baked_node& bn : bake->nodes) bakedKeys += bn.translation_keys.count + bn.rotation_keys.count + bn.scale_keys.count;
+            for (const ufbx_baked_element& be3 : bake->elements) for (const ufbx_baked_prop& bp : be3.props) bakedKeys += bp.keys.count;
+            if (bakedKeys > bakeKeyBudget) {
+                ufbx_free_baked_anim(bake);
+                if (err) *err = "FBX rejected: animation bake budget exceeded";
+                if (rejected) *rejected = true;
+                ufbx_free_scene(sc);
+                scene.Destroy(root);
+                if (ok) *ok = false;
+                return nullptr;
+            }
             ModelAnimator::Clip clip;
             std::string cn = UfbxStr(st->name);
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();   // Mixamo: the file name says what it is
+                cn = std::filesystem::u8path(path).stem().u8string();   // Mixamo: the file name says what it is
                 if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;
@@ -1047,7 +1208,336 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     return root;
 }
 
-GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+// ============================================================================
+// FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx
+// path above and OFF by default: selected by -DOKAY_OWN_FBX=ON, the OKAY_OWN_FBX
+// environment variable, or okay::fbx::SetOwnReaderEnabled(true). It produces the
+// same scene data (hierarchy, per-material meshes, skins, blend shapes, baked
+// clips) so the rest of the engine does not care which reader ran. On failure
+// the ufbx path runs instead.
+// ============================================================================
+namespace {
+
+Mat4 OwnToMat4(const fbx::Mat& a) {
+    Mat4 r = Mat4::Identity();
+    for (int row = 0; row < 4; ++row) for (int col = 0; col < 4; ++col) r.at(col, row) = (float)a.m[row * 4 + col];
+    return r;
+}
+
+std::string OwnTexturePath(const fbx::Texture* tex, const std::string& modelPath, int serial) {
+    if (!tex) return {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir = fs::u8path(modelPath).parent_path();
+    for (const std::string* s : {&tex->fileName, &tex->relativeFileName}) {
+        if (s->empty()) continue;
+        const fs::path p = fs::u8path(*s);
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        // Windows paths in the file ("C:\art\x.png") on a POSIX host: use the part after the last separator.
+        std::string base = *s; const std::size_t sl = base.find_last_of("/\\"); if (sl != std::string::npos) base = base.substr(sl + 1);
+        if (!base.empty()) {
+            if (fs::exists(dir / fs::u8path(base), ec)) return (dir / fs::u8path(base)).u8string();
+            if (fs::exists(dir / "textures" / fs::u8path(base), ec)) return (dir / "textures" / fs::u8path(base)).u8string();
+        }
+    }
+    if (!tex->content.empty()) {
+        std::string ext = fs::path(tex->fileName).extension().string();
+        if (ext.empty()) ext = (tex->content.size() > 2 && tex->content[0] == 0xFF && tex->content[1] == 0xD8) ? ".jpg" : ".png";
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
+        if (!fs::exists(out, ec)) {
+            std::ofstream of(out, std::ios::binary);
+            if (!of) return {};
+            of.write((const char*)tex->content.data(), (std::streamsize)tex->content.size());
+        }
+        return out.u8string();
+    }
+    return {};
+}
+
+void ApplyOwnMaterial(MeshRenderer& mr, const fbx::Scene& sc, int matIdx, const std::string& modelPath, int serial) {
+    if (matIdx < 0 || matIdx >= (int)sc.materials.size()) return;
+    const fbx::Material& m = sc.materials[(std::size_t)matIdx];
+    if (m.diffuseTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.diffuseTexture], modelPath, serial);
+        if (!p.empty()) mr.texture = p;
+    }
+    if (m.hasDiffuse && mr.texture.empty())   // with a texture the factor would only darken it (see ApplyFbxMaterial)
+        mr.color = Color((float)m.diffuse[0], (float)m.diffuse[1], (float)m.diffuse[2], 1.0f);
+    if (m.normalTexture >= 0) {
+        std::string p = OwnTexturePath(&sc.textures[(std::size_t)m.normalTexture], modelPath, serial + 1000);
+        if (!p.empty()) mr.normalMap = p;
+    }
+    if (m.hasEmissive) {
+        const float f = m.hasEmissiveFactor ? (float)m.emissiveFactor : 1.0f;
+        if (m.emissive[0] + m.emissive[1] + m.emissive[2] > 0.0) mr.emissive = Color((float)m.emissive[0] * f, (float)m.emissive[1] * f, (float)m.emissive[2] * f, 1.0f);
+    }
+    if (m.hasRoughness || m.hasMetalness) {
+        const float rough = m.hasRoughness ? (float)m.roughness : 0.6f;
+        const float metal = m.hasMetalness ? (float)m.metalness : 0.0f;
+        const float smooth = 1.0f - std::fmin(1.0f, std::fmax(0.0f, rough));
+        mr.metallic = metal;
+        mr.shininess = 4.0f + smooth * 124.0f;
+        mr.specular = 0.15f + smooth * 0.85f;
+        mr.reflectivity = metal * smooth;
+    }
+}
+
+int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
+    return slot >= 0 && slot < (int)m.materials.size() ? m.materials[(std::size_t)slot] : -1;
+}
+
+// One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
+                  std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
+                  std::vector<uint32_t>* outVi) {
+    Mesh out;
+    std::vector<FbxVert> verts;
+    verts.reserve(part.corners.size());
+    for (const fbx::Corner& c : part.corners) {
+        FbxVert fv{};
+        fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
+        fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
+        fv.u = c.uv[0]; fv.v = 1.0f - c.uv[1];   // FBX UVs are bottom-up
+        fv.w[0] = 1.0f;
+        fv.vi = c.cp;
+        if (skinned && c.cp < mesh.skinWeights.size()) {
+            const auto& inf = mesh.skinWeights[c.cp];
+            float sum = 0.0f;
+            fv.w[0] = 0.0f;
+            const std::size_t nw = inf.size() < 4 ? inf.size() : 4;
+            for (std::size_t wi = 0; wi < nw; ++wi) { fv.j[wi] = (int)inf[wi].cluster; fv.w[wi] = inf[wi].weight; sum += fv.w[wi]; }
+            if (sum > 1e-6f) for (float& w : fv.w) w /= sum;
+        }
+        verts.push_back(fv);
+    }
+    if (verts.empty()) return out;
+    std::unordered_map<std::string, uint32_t> seen;
+    seen.reserve(verts.size());
+    std::vector<uint32_t> indices(verts.size());
+    std::vector<uint32_t> unique;
+    for (std::size_t i = 0; i < verts.size(); ++i) {
+        auto ins = seen.emplace(std::string((const char*)&verts[i], sizeof(FbxVert)), (uint32_t)unique.size());
+        if (ins.second) unique.push_back((uint32_t)i);
+        indices[i] = ins.first->second;
+    }
+    const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
+    for (uint32_t u : unique) {
+        const FbxVert& v = verts[u];
+        out.vertices.push_back(Vec3{v.px, v.py, v.pz});
+        if (hasN) out.normals.push_back(Vec3{v.nx, v.ny, v.nz});
+        if (hasUV) out.uvs.push_back(Vec2{v.u, v.v});
+        if (jIdx) { jIdx->push_back({v.j[0], v.j[1], v.j[2], v.j[3]}); jWt->push_back({v.w[0], v.w[1], v.w[2], v.w[3]}); }
+        if (outVi) outVi->push_back(v.vi);
+    }
+    for (uint32_t ix : indices) out.triangles.push_back((int)ix);
+    return out;
+}
+
+void AddOwnBlendShapes(const fbx::Mesh& mesh, const std::vector<uint32_t>& vi, GameObject* g, const Mat4* lin) {
+    if (!g || mesh.channels.empty()) return;
+    BlendShapes* bs = nullptr;
+    for (const fbx::BlendChannel& ch : mesh.channels) {
+        std::vector<Vec3> dp(vi.size(), Vec3{0, 0, 0}), dn;
+        const bool hasN = !ch.dn.empty() && ch.dn.size() == ch.dp.size();
+        if (hasN) dn.assign(vi.size(), Vec3{0, 0, 0});
+        std::unordered_map<uint32_t, uint32_t> slot;
+        for (std::size_t k = 0; k < ch.indices.size(); ++k) slot[ch.indices[k]] = (uint32_t)k;
+        for (std::size_t v = 0; v < vi.size(); ++v) {
+            auto it = slot.find(vi[v]);
+            if (it == slot.end()) continue;
+            const std::size_t k = it->second;
+            Vec3 d{ch.dp[k * 3], ch.dp[k * 3 + 1], ch.dp[k * 3 + 2]};
+            dp[v] = lin ? lin->MultiplyVector(d) : d;
+            if (hasN) { Vec3 n{ch.dn[k * 3], ch.dn[k * 3 + 1], ch.dn[k * 3 + 2]}; dn[v] = lin ? lin->MultiplyVector(n) : n; }
+        }
+        if (!bs) bs = g->AddComponent<BlendShapes>();
+        std::string nm = ch.name;
+        if (std::size_t dot = nm.find_last_of('.'); dot != std::string::npos && dot + 1 < nm.size()) nm = nm.substr(dot + 1);
+        if (nm.empty()) nm = "shape" + std::to_string(bs->shapes.size());
+        bs->AddShape(nm, dp, dn, (float)ch.weight);
+    }
+    if (!bs) return;
+    if (!g->GetComponent<SkinnedMesh>())
+        if (auto* mr = g->GetComponent<MeshRenderer>()) {
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = mr->mesh;
+            sm->jointIdx.assign(mr->mesh.vertices.size(), std::array<int, 4>{0, 0, 0, 0});
+            sm->jointWt.assign(mr->mesh.vertices.size(), std::array<float, 4>{1, 0, 0, 0});
+            sm->joints = {g->transform}; sm->jointNames = {g->name};
+            sm->inverseBind = {Mat4::Identity()};
+        }
+    bs->Apply(true);
+}
+
+bool OwnIsIdentity(const fbx::Mat& m) {
+    static const double id[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    for (int i = 0; i < 12; ++i) if (std::fabs(m.m[i] - id[i]) > 1e-6) return false;
+    return true;
+}
+
+} // namespace
+
+static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
+    Mesh merged;
+    fbx::Scene sc; std::string err;
+    if (!fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
+    for (const fbx::SceneNode& node : sc.nodes) {
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
+        const Mat4 g2w = OwnToMat4(node.geometryToWorld);
+        for (const fbx::Part& part : fm.parts) {
+            Mesh m = TransformedMesh(BuildOwnPart(fm, part, false, nullptr, nullptr, nullptr), g2w);
+            const int base = (int)merged.vertices.size();
+            const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
+            const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
+            merged.vertices.insert(merged.vertices.end(), m.vertices.begin(), m.vertices.end());
+            if (keepN) merged.normals.insert(merged.normals.end(), m.normals.begin(), m.normals.end()); else merged.normals.clear();
+            if (keepUV) merged.uvs.insert(merged.uvs.end(), m.uvs.begin(), m.uvs.end()); else merged.uvs.clear();
+            for (int t : m.triangles) merged.triangles.push_back(base + t);
+            if (outTexture && outTexture->empty()) {
+                MeshRenderer tmp; ApplyOwnMaterial(tmp, sc, OwnMaterialOfSlot(fm, part.slot), path, 0);
+                *outTexture = tmp.texture;
+            }
+        }
+    }
+    if (ok) *ok = !merged.vertices.empty();
+    return merged;
+}
+
+static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
+    fbx::Scene sc;
+    if (!fbx::LoadFile(path, sc, err)) { if (ok) *ok = false; return nullptr; }
+    GameObject* root = scene.CreateGameObject(BaseName(path));
+    std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
+    std::unordered_map<std::string, int> nameUse;
+    int texSerial = 0;
+
+    for (std::size_t i = 0; i < sc.nodes.size(); ++i) {   // parents come before children
+        const fbx::SceneNode& n = sc.nodes[i];
+        std::string nm = n.name;
+        if (nm.empty()) nm = n.mesh >= 0 ? "mesh" : "node";
+        if (int c = nameUse[nm]++) nm += "_" + std::to_string(c);
+        GameObject* g = scene.CreateGameObject(nm);
+        goOf[i] = g;
+        g->transform->localPosition = Vec3{(float)n.translation[0], (float)n.translation[1], (float)n.translation[2]};
+        g->transform->localRotation = Quat{(float)n.rotation[0], (float)n.rotation[1], (float)n.rotation[2], (float)n.rotation[3]};
+        g->transform->localScale    = Vec3{(float)n.scale[0], (float)n.scale[1], (float)n.scale[2]};
+        g->transform->SetParent(n.parent >= 0 ? goOf[(std::size_t)n.parent]->transform : root->transform, false);
+    }
+
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        const fbx::SceneNode& node = sc.nodes[ni];
+        if (node.mesh < 0) continue;
+        const fbx::Mesh& mesh = sc.meshes[(std::size_t)node.mesh];
+        GameObject* host = goOf[ni];
+        const bool skinned = !mesh.clusters.empty();
+        const bool geomOffset = !OwnIsIdentity(node.geometryToNode);
+        const Mat4 g2n = OwnToMat4(node.geometryToNode);
+        const std::size_t parts = mesh.parts.size();
+        int made = 0;
+        for (std::size_t pi = 0; pi < parts; ++pi) {
+            const fbx::Part& part = mesh.parts[pi];
+            std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
+            std::vector<uint32_t> vi;
+            Mesh bind = BuildOwnPart(mesh, part, skinned, skinned ? &jIdx : nullptr, skinned ? &jWt : nullptr, mesh.channels.empty() ? nullptr : &vi);
+            if (bind.vertices.empty()) continue;
+            GameObject* g = host;
+            const int matIdx = OwnMaterialOfSlot(mesh, part.slot);
+            if (made++ > 0 || parts > 1) {
+                g = scene.CreateGameObject(host->name + "_" + (matIdx >= 0 ? sc.materials[(std::size_t)matIdx].name : ("mat" + std::to_string(pi))));
+                g->transform->SetParent(host->transform, false);
+            }
+            auto* mr = g->AddComponent<MeshRenderer>();
+            mr->doubleSided = true;
+            ApplyOwnMaterial(*mr, sc, matIdx, path, texSerial);
+            texSerial += 2;
+            if (!skinned) {
+                mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+                AddOwnBlendShapes(mesh, vi, g, geomOffset ? &g2n : nullptr);
+                continue;
+            }
+            mr->mesh = geomOffset ? TransformedMesh(bind, g2n) : bind;
+            auto* sm = g->AddComponent<SkinnedMesh>();
+            sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
+            for (const fbx::Cluster& cl : mesh.clusters) {
+                GameObject* bg = cl.boneNode >= 0 ? goOf[(std::size_t)cl.boneNode] : nullptr;
+                sm->joints.push_back(bg ? bg->transform : nullptr);
+                sm->jointNames.push_back(bg ? bg->name : std::string());
+                sm->inverseBind.push_back(OwnToMat4(cl.geometryToBone));
+            }
+            ValidateSkinJoints(*sm, path);
+            if (g != host) g->transform->localPosition = Vec3{0, 0, 0};
+            AddOwnBlendShapes(mesh, vi, g, nullptr);
+        }
+    }
+
+    // Baked clips -> ModelAnimator
+    std::unordered_map<long long, std::pair<std::string, int>> chanOf;   // (mesh, channel) -> (node name, shape index)
+    for (std::size_t ni = 0; ni < sc.nodes.size(); ++ni) {
+        if (sc.nodes[ni].mesh < 0) continue;
+        const int mi = sc.nodes[ni].mesh;
+        for (std::size_t c = 0; c < sc.meshes[(std::size_t)mi].channels.size(); ++c)
+            chanOf.emplace((long long)mi * 100000 + (long long)c, std::make_pair(goOf[ni]->name, (int)c));
+    }
+    if (!sc.clips.empty()) {
+        auto* ma = root->AddComponent<ModelAnimator>();
+        for (const fbx::Clip& fc : sc.clips) {
+            ModelAnimator::Clip clip;
+            std::string cn = fc.name;
+            { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
+            if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
+                cn = std::filesystem::u8path(path).stem().u8string();
+                if (sc.clips.size() > 1) cn += "_" + std::to_string(ma->clips.size());
+            }
+            clip.name = cn;
+            for (const fbx::NodeAnim& bn : fc.nodes) {
+                if (bn.node < 0 || (std::size_t)bn.node >= goOf.size() || !goOf[(std::size_t)bn.node]) continue;
+                clip.nodes.push_back({goOf[(std::size_t)bn.node]->name, AnimationClip{}});
+                AnimationClip& ac = clip.nodes.back().clip;
+                ac.smoothKeys = false;
+                for (const fbx::Key3& k : bn.translation) {
+                    const float t = (float)k.time;
+                    ac.AddKey("position.x", t, (float)k.v[0]); ac.AddKey("position.y", t, (float)k.v[1]); ac.AddKey("position.z", t, (float)k.v[2]);
+                }
+                double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
+                for (const fbx::Key4& k : bn.rotation) {
+                    double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
+                    if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
+                    for (int a = 0; a < 4; ++a) prev[a] = q[a];
+                    hasPrev = true;
+                    const float t = (float)k.time;
+                    ac.AddKey("rotation.qx", t, (float)q[0]); ac.AddKey("rotation.qy", t, (float)q[1]);
+                    ac.AddKey("rotation.qz", t, (float)q[2]); ac.AddKey("rotation.qw", t, (float)q[3]);
+                }
+                for (const fbx::Key3& k : bn.scale) {
+                    const float t = (float)k.time;
+                    ac.AddKey("scale.x", t, (float)k.v[0]); ac.AddKey("scale.y", t, (float)k.v[1]); ac.AddKey("scale.z", t, (float)k.v[2]);
+                }
+                if (ac.Tracks().empty()) clip.nodes.pop_back();
+            }
+            for (const fbx::BlendAnim& ba : fc.blends) {
+                auto it = chanOf.find((long long)ba.mesh * 100000 + ba.channel);
+                if (it == chanOf.end() || ba.percent.empty()) continue;
+                ModelAnimator::NodeClip* ncp = nullptr;
+                for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
+                if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
+                const std::string track = "weights." + std::to_string(it->second.second);
+                for (const fbx::Key3& k : ba.percent) ncp->clip.AddKey(track, (float)k.time, (float)k.v[0] * 0.01f);
+            }
+            if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
+        }
+        if (ma->clips.empty()) root->RemoveComponent<ModelAnimator>();
+        else { ma->active = 0; ma->autoPlay = true; }
+    }
+
+    NormalizeImportedClips(root);
+    AutoNormalizeImportScale(scene, root);
+    if (ok) *ok = true;
+    return root;
+}
+
+static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bool* ok) {
     using namespace gltf_detail;
     std::string p = Lower(path);
     bool isGltf = EndsWith(p, ".gltf") || EndsWith(p, ".glb");
@@ -1055,18 +1545,23 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     // FBX: built in (ufbx), full hierarchy + skins + animations. Assimp (when
     // compiled in) is the fallback for files ufbx can't read.
     if (EndsWith(p, ".fbx")) {
-        std::string ferr;
-        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr)) return r;
+        std::string ferr; bool rejected = false;
+        if (GameObject* r = ImportFbxSceneGraph(scene, path, ok, &ferr, &rejected)) return r;
+        if (rejected) {   // past a size/shape limit: fail the import (no fallback reader gets the hostile file)
+            Log::Error("model import '", path, "': ", ferr);
+            if (ok) *ok = false;
+            return nullptr;
+        }
     }
-    // Non-glTF (OBJ / Assimp): bring it in as one mesh object.
+    // Non-glTF (OBJ / STL / PLY / Assimp formats): read through the seam, as a node
+    // hierarchy with skins + animations where the format has them (FBX rigs etc.).
+    // Falls through to the flattened single-mesh path on failure.
     if (!isGltf) {
-#ifdef OKAY_HAVE_ASSIMP
-        // Assimp formats: import as a node hierarchy with skins + animations (FBX
-        // rigs etc.). Falls through to the flattened single-mesh path on failure.
-        if (!EndsWith(p, ".obj"))
-            if (GameObject* r = ImportAssimpSceneGraph(scene, path, ok))
-                return r;
-#endif
+        {
+            ImportedModel im;
+            if (ImportModelData(path, im, ImportBackend::Default, /*flatten=*/false, nullptr))
+                if (GameObject* r = BuildSceneFromModel(scene, im, path)) { if (ok) *ok = true; return r; }
+        }
         bool okm = false; std::string tex;
         Mesh m = ImportModel(path, &okm, &tex);
         if (!okm || m.vertices.empty()) { if (ok) *ok = false; return nullptr; }
@@ -1081,6 +1576,22 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
+    if (const JVal* asset = doc.root.Find("asset"))
+        if (const JVal* ver = asset->Find("version"))
+            if (ver->type == JVal::Str && !ver->str.empty() && ver->str[0] == '1') {
+                Log::Error("model import '", path, "': glTF ", ver->str, " is not supported (only glTF 2.0); re-export the model as glTF 2.0");
+                if (ok) *ok = false;
+                return nullptr;
+            }
+    // A file that cannot be read without an extension we do not have would import as an empty scene: say so instead.
+    if (const JVal* req = doc.root.Find("extensionsRequired"))
+        for (const JVal& e : req->arr)
+            if (e.type == JVal::Str && (e.str == "KHR_draco_mesh_compression" || e.str == "EXT_meshopt_compression")) {
+                Log::Error("model import '", path, "': the glTF needs the extension ", e.str, ", which is not supported");
+                if (ok) *ok = false;
+                return nullptr;
+            }
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
@@ -1258,6 +1769,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             auto* sm = host->AddComponent<SkinnedMesh>();
             sm->bind = bind; sm->jointIdx = std::move(jIdx); sm->jointWt = std::move(jWt);
             sm->joints = jointTs; sm->jointNames = jointNs; sm->inverseBind = invBind;
+            ValidateSkinJoints(*sm, path);
             AddGltfMorphTargets(doc, meshIdx, pi, host);
         }
     }
@@ -1414,9 +1926,54 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
             ma->active = 0; ma->autoPlay = true;
         }
     }
+    // Nodes that name a mesh but nothing came out (the .bin file is missing, the data is malformed, only points or lines):
+    // the import failed, it did not produce an empty model.
+    {
+        bool wantsMesh = false;
+        for (int i = 0; i < nodeCount && !wantsMesh; ++i) wantsMesh = nodes->arr[i].Find("mesh") != nullptr;
+        bool anyTriangles = false;
+        for (const auto& up : scene.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (mr->mesh.TriangleCount() > 0) { anyTriangles = true; break; } }
+            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (sm->bind.TriangleCount() > 0) { anyTriangles = true; break; } }
+        }
+        if (wantsMesh && !anyTriangles) {
+            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file, malformed accessors, or only points and lines)");
+            scene.Destroy(root);
+            if (ok) *ok = false;
+            return nullptr;
+        }
+    }
     NormalizeImportedClips(root);
     AutoNormalizeImportScale(scene, root);
     if (ok) *ok = true;
+    return root;
+}
+
+// The model's own import settings (`<model>.okaymeta`): Normals / Smoothing angle / Import animations.
+// Rigged (skinned) parts and meshes with blend shapes keep the file's normals: their vertices are shared with the
+// skin weights and the shapes, so they are not rebuilt.
+GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+    GameObject* root = ImportModelSceneRaw(scene, path, ok);
+    if (!root) return root;
+    const ModelImportOptions opt = ReadModelImportOptions(path);
+    if (opt.normals != ModelImportOptions::Import) {
+        for (MeshRenderer* mr : root->GetComponentsInChildren<MeshRenderer>(true)) {
+            GameObject* host = mr->gameObject;
+            if (!host || host->GetComponent<SkinnedMesh>() || host->GetComponent<BlendShapes>()) continue;
+            if (opt.normals == ModelImportOptions::Calculate) mr->mesh.ComputeAutoSmoothNormals(opt.smoothingAngle);
+            else { mr->mesh.normals.clear(); mr->mesh.autoSmoothAngle = 0.0f; }   // flat: one normal per face
+        }
+    }
+    if (!opt.importAnimations) {
+        std::vector<GameObject*> all{root};
+        root->ForEachDescendant([&](GameObject& g) { all.push_back(&g); });
+        for (GameObject* g : all) {
+            if (auto* ma = g->GetComponent<ModelAnimator>()) g->RemoveComponent(ma);
+            if (auto* an = g->GetComponent<Animator>()) g->RemoveComponent(an);
+        }
+    }
     return root;
 }
 
@@ -1541,8 +2098,9 @@ static std::vector<std::string> ClipNameWords(const std::string& raw) {
     return out;
 }
 
-// Map idle/walk/run/jump/fall/land from the clip names, where not set yet.
-static void AutoMapLocomotion(ModelAnimator* ma) {
+// Map idle/walk/run/jump/fall/land and the crouch / prone clips from the clip
+// names, where not set yet.
+void AutoMapLocomotion(ModelAnimator* ma) {
     if (!ma) return;
     // By whole words of the clip name, an exact name first ("Walk" before
     // "Walk Back"): "Stairs" isn't "air", and a "Running Jump" is a jump.
@@ -1551,15 +2109,37 @@ static void AutoMapLocomotion(ModelAnimator* ma) {
         {"run", "running", "sprint", "sprinting", "jog", "jogging"},
         {"jump", "jumping", "leap"}, {"fall", "falling", "air", "inair", "drop"}, {"land", "landing"}};
     std::string* slot[6] = {&ma->idleClip, &ma->walkClip, &ma->runClip, &ma->jumpClip, &ma->fallClip, &ma->landClip};
+    std::string* stanceSlot[5] = {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip};
+    std::string* dirSlot[4] = {&ma->strafeLeftClip, &ma->strafeRightClip, &ma->walkBackClip, &ma->runBackClip};
     auto is = [&](int role, const std::string& w) {
         for (const std::string& k : kWords[role]) if (k == w) return true;
+        return false;
+    };
+    auto any = [](const std::vector<std::string>& ws, std::initializer_list<const char*> ks) {
+        for (const std::string& w : ws) for (const char* k : ks) if (w == k) return true;
         return false;
     };
     std::vector<std::vector<std::string>> words;
     for (const auto& c : ma->clips) words.push_back(ClipNameWords(c.name));
     std::vector<bool> used(ma->clips.size(), false);
-    for (std::size_t ci = 0; ci < ma->clips.size(); ++ci)   // clips already given a state
+    for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {   // clips already given a state
         for (const std::string* sl : slot) if (*sl == ma->clips[ci].name) used[ci] = true;
+        for (const std::string* sl : stanceSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
+        for (const std::string* sl : dirSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
+    }
+    // Crouch / prone clips, and changes between stances ("Crouch To Stand", "Get Up").
+    auto crouchy = [&](std::size_t ci) { return any(words[ci], {"crouch", "crouched", "crouching", "sneak", "sneaking", "squat", "squatting"}); };
+    auto proney  = [&](std::size_t ci) { return any(words[ci], {"prone", "lying", "crawl", "crawling"}); };
+    auto change  = [&](std::size_t ci) { return any(words[ci], {"to", "up", "down"}); };
+    auto moving  = [&](std::size_t ci) { return any(words[ci], {"walk", "walking", "move", "moving", "forward", "run", "running"}); };
+    auto crawl   = [&](std::size_t ci) { return any(words[ci], {"crawl", "crawling"}); };
+    auto getUp   = [&](std::size_t ci) {
+        return (any(words[ci], {"up"}) && any(words[ci], {"get", "getting", "stand", "standing"})) ||
+               (proney(ci) && any(words[ci], {"to"}) && any(words[ci], {"stand", "standing", "idle"}));
+    };
+    // Back / left / right clips are kept out of the forward slots, unless the model turns
+    // out to have no directional clips: then it maps exactly as it did before they existed.
+    auto mapForward = [&](bool skipDir) {
     for (int pass = 0; pass < 2; ++pass)
         for (int role = 0; role < 6; ++role)
             for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
@@ -1575,8 +2155,99 @@ static void AutoMapLocomotion(ModelAnimator* ma) {
                         air = air || is(3, w) || is(4, w) || is(5, w);
                     }
                 }
-                if (hit && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                // A crouch walk, a drop to prone or a get-up is a stance clip (below).
+                const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
+                const bool backward = any(words[ci], {"back", "backward", "backwards"});
+                const bool sideways = any(words[ci], {"left", "right", "strafe", "strafing"});
+                if (hit && !stance && !(skipDir && (backward || sideways)) && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
+    };
+    mapForward(true);
+    const std::function<bool(std::size_t)> roles[5] = {
+        [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
+        [&](std::size_t ci) { return crouchy(ci) && !change(ci) && (moving(ci) || any(words[ci], {"sneak", "sneaking"})); },
+        [&](std::size_t ci) { return proney(ci) && !change(ci) && !crawl(ci) && !moving(ci); },
+        [&](std::size_t ci) { return (crawl(ci) || (proney(ci) && moving(ci))) && !change(ci); },
+        getUp};
+    for (int role = 0; role < 5; ++role)
+        for (std::size_t ci = 0; ci < ma->clips.size() && stanceSlot[role]->empty(); ++ci)
+            if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    // "Walk Back" / "Run Back" are locomotion. "Back Flip" and similar tricks are not.
+    auto locomotes = [&](std::size_t ci) { return any(words[ci], {"walk", "walking", "run", "running", "strafe", "strafing", "move", "moving"}); };
+    auto trick = [&](std::size_t ci) { return any(words[ci], {"flip", "flipping", "dodge", "roll", "rolling", "attack", "kick", "punch"}); };
+    auto back = [&](std::size_t ci) {
+        return any(words[ci], {"back", "backward", "backwards"}) && locomotes(ci) && !trick(ci);
+    };
+    auto left = [&](std::size_t ci) { return any(words[ci], {"left"}); };
+    auto right = [&](std::size_t ci) { return any(words[ci], {"right"}); };
+    auto runny = [&](std::size_t ci) { return any(words[ci], {"run", "running", "sprint", "sprinting"}); };
+    auto side = [&](std::size_t ci) { return any(words[ci], {"strafe", "strafing", "sidestep", "side", "walk", "walking"}); };
+    const std::function<bool(std::size_t)> dirRoles[4] = {
+        [&](std::size_t ci) { return left(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return right(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return back(ci) && !runny(ci); },
+        [&](std::size_t ci) { return back(ci) && runny(ci); },
+    };
+    for (int role = 0; role < 4; ++role)
+        for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
+            if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    if (!ma->HasDirectionalClips()) mapForward(false);
+}
+
+std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot) {
+    if (slot < 0 || slot >= ModelAnimator::SlotCount) return {};
+    if (!ma.SlotClip(slot).empty()) return {};
+    ModelAnimator scratch;
+    scratch.clips.resize(ma.clips.size());
+    for (std::size_t i = 0; i < ma.clips.size(); ++i) scratch.clips[i].name = ma.clips[i].name;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) scratch.SlotClip(s) = ma.SlotClip(s);
+    AutoMapLocomotion(&scratch);
+    return scratch.SlotClip(slot);
+}
+
+// Switch a retargeted model's locomotion between its clips and the built-in
+// animation to match which slots have a clip: none = pure built-in (the
+// HumanoidRetarget owns every frame), any = clips drive the slots they fill and
+// the built-in animation covers the rest. Inert for a model that isn't retargeted.
+void SettleCharacterLocomotion(ModelAnimator* ma) {
+    if (!ma || !ma->BuiltinRigPresent()) return;
+    bool any = false;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) any = any || ma->SlotFilled(s);
+    if (any && !ma->driveByMovement) ma->smoothLocomotion = true;
+    ma->driveByMovement = any;
+    ma->inPlace = true;     // the controller moves the capsule: clips only cycle the limbs
+    ma->autoPlay = false;   // the slots decide what plays (a clip 0 on the first frame would show the wrong pose)
+}
+
+// "idle='Idle' walk='Walking'" - the clip names in the slots a model's clips fill.
+static std::string SlotSummary(const ModelAnimator* ma) {
+    std::string out;
+    if (!ma) return out;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) {
+        if (!ma->SlotFilled(s)) continue;
+        std::string label = ModelAnimator::SlotName(s);
+        for (char& c : label) c = (char)std::tolower((unsigned char)c);
+        out += (out.empty() ? "" : " ") + label + "='" + ma->SlotClip(s) + "'";
+    }
+    return out;
+}
+
+// Put the built-in animation on the model under `root` (the player's Character in
+// drive-external mode + a HumanoidRetarget wired to the bones). Returns how many
+// of the 15 bones matched, or -1 when the player has no Character.
+static int EnableBuiltinFallback(Scene& scene, GameObject* player, GameObject* root) {
+    auto* ch = player->GetComponent<Character>();
+    if (!ch) return -1;
+    HumanoidRetarget* rt = player->GetComponent<HumanoidRetarget>();
+    if (!rt) rt = player->AddComponent<HumanoidRetarget>();
+    rt->Rewire();
+    const int found = rt->DetectAndWire(scene, root);
+    ch->driveExternal = true;
+    ch->enabled = true;
+    if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
+    for (const auto& up : scene.Objects())   // the blocky part rig
+        if (up->name == "Rig" && up->transform && up->transform->Parent() == player->transform) up->active = false;
+    return found;
 }
 
 // One clip through the rest poses (see "Rest poses" in AddAnimationsFromFile):
@@ -1707,6 +2378,34 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         if (std::fabs(Quat::Dot(g->transform->localRotation, it->second->transform->localRotation)) < 0.9998f)
             sameRest = false;
     }
+    // Avatar slots: when the names don't line up (a Mixamo clip on a mannequin
+    // rig), a humanoid's bones pair up by what they are instead: hips with hips,
+    // left forearm with left forearm, the spine chains link for link from the
+    // hips (the shorter chain's extra links keep their rest), the necks. Only
+    // when both skeletons are humanoids (Animation/HumanoidBones.hpp), and
+    // always through the rest poses below: different rigs, different rests.
+    int bySlot = 0;
+    {
+        const humanoid::BoneMap tm = humanoid::MapHumanoidBones(modelRoot), sm = humanoid::MapHumanoidBones(src);
+        if (tm.humanoid && sm.humanoid) {
+            std::unordered_set<GameObject*> taken;
+            for (const auto& kv : srcOf) taken.insert(kv.second);
+            auto link = [&](GameObject* t, GameObject* sb) {
+                if (!t || !sb || t == modelRoot || srcOf.count(t) || taken.count(sb)) return;
+                srcOf[t] = sb; taken.insert(sb); ++bySlot;
+            };
+            for (int b = 0; b < humanoid::BoneCount; ++b) if (b != humanoid::Torso) link(tm.bone[b], sm.bone[b]);
+            for (std::size_t i = 0; i < tm.spine.size() && i < sm.spine.size(); ++i) link(tm.spine[i], sm.spine[i]);
+            link(tm.neck, sm.neck);
+            if (!tHips) tHips = tm.bone[humanoid::Hips];
+            if (!sHips) sHips = sm.bone[humanoid::Hips];
+        }
+        if (bySlot) {
+            sameRest = false;
+            mapped.clear();   // scene order again
+            for (GameObject* g : tsub) if (srcOf.count(g)) mapped.push_back(g);
+        }
+    }
     auto rootRot = [](GameObject* g, GameObject* root) {
         Quat r = Quat::Identity;
         for (Transform* t = g->transform; t && t != root->transform; t = t->Parent()) r = t->localRotation * r;
@@ -1737,6 +2436,8 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         for (const auto& pr : srcOf)
             conv[pr.first] = rootRot(pr.second, src).Inverse() * Aim(pr.first) * rootRot(pr.first, modelRoot);
 
+    std::unordered_set<std::string> srcNames;   // source bones that drive a bone of this model
+    for (const auto& kv : srcOf) srcNames.insert(kv.second->name);
     int added = 0, matched = 0, total = 0;
     std::string names;
     for (const ModelAnimator::Clip& c : sma->clips) {
@@ -1750,7 +2451,7 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         }
         out.events = c.events;
         if (!sameRest) {   // see "Rest poses" above
-            for (const ModelAnimator::NodeClip& nc : c.nodes) { ++total; matched += (int)tName.count(NormBoneName(nc.node)); }
+            for (const ModelAnimator::NodeClip& nc : c.nodes) { ++total; matched += (int)srcNames.count(nc.node); }
             RetargetByRest(c, out, src, modelRoot, mapped, srcOf, conv, sHips, tHips, ratio);
         } else for (const ModelAnimator::NodeClip& nc : c.nodes) {
             ++total;
@@ -1776,27 +2477,22 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     }
     if (!added) { say("None of the bones in " + BaseName(path) + " match this model's skeleton."); return 0; }
     AutoMapLocomotion(ma);
-    char buf[160];
+    SettleCharacterLocomotion(ma);   // a retargeted player starts using the new clips in their slots
+    char buf[200];
     std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total,
+                  bySlot ? ", paired by humanoid bone and converted to this model's rest pose" :
                   !sameRest ? ", converted to this model's rest pose" : retarget ? ", retargeted to this model's proportions" : "");
     say("Added " + std::to_string(added) + " clip" + (added == 1 ? "" : "s") + ": " + names + buf);
     return added;
 }
 
-int CountHumanoidBones(Scene& scene, GameObject* modelRoot) {
-    if (!modelRoot) return 0;
-    int n = 0, sc = 0;
-    std::vector<bool> seen(15, false);
-    for (const auto& up : scene.Objects()) {
-        GameObject* g = up.get();
-        if (!g || g == modelRoot || !g->IsSelfOrDescendantOf(modelRoot)) continue;
-        int b = HumanoidRetarget::ClassifyBone(g->name, sc);
-        if (b >= 0 && b < 15 && !seen[b]) { seen[b] = true; ++n; }
-    }
-    return n;
+int CountHumanoidBones(Scene&, GameObject* modelRoot, std::string* why, const std::string* byHand) {
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(modelRoot, byHand);
+    if (!m.humanoid) { if (why) *why = m.why; return 0; }
+    return m.found;
 }
 
-int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog) {
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog, const std::string* byHand) {
     auto say = [&](const std::string& m) { if (outLog) *outLog = m; };
     if (!modelRoot || !modelRoot->transform) { say("Select an imported model first."); return 0; }
     if (auto* mr = modelRoot->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() &&
@@ -1804,10 +2500,12 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
         say("'" + modelRoot->name + "' is a single merged mesh with no skeleton - use Rig Model (Humanoid) instead.");
         return 0;
     }
-    const int bones = CountHumanoidBones(scene, modelRoot);
+    std::string why;
+    const int bones = CountHumanoidBones(scene, modelRoot, &why, byHand);
     if (bones < 8) {
-        say("'" + modelRoot->name + "' doesn't look like a humanoid skeleton (" + std::to_string(bones) +
-            "/15 bones recognised). Rig Model (Humanoid) can bind its mesh to the built-in skeleton instead.");
+        say("'" + modelRoot->name + "' isn't a humanoid skeleton" +
+            (why.empty() ? " (" + std::to_string(bones) + "/15 bones recognised)" : ": " + why) +
+            ". Rig Model (Humanoid) can bind its mesh to the built-in skeleton instead.");
         return bones;
     }
     auto* ch = modelRoot->GetComponent<Character>();
@@ -1819,6 +2517,7 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
     auto* rt = modelRoot->GetComponent<HumanoidRetarget>();
     if (!rt) rt = modelRoot->AddComponent<HumanoidRetarget>();
     rt->Rewire();
+    for (int b = 0; b < humanoid::BoneCount; ++b) rt->boneMap[b] = byHand ? byHand[b] : std::string();
     const int found = rt->DetectAndWire(scene, modelRoot);
     if (found < 8) {
         if (addedCh) ch->enabled = false;
@@ -1941,21 +2640,35 @@ bool ModelBounds(Scene& scene, GameObject* root, Vec3& lo, Vec3& hi) {
 
 GameObject* FindCharacterModelRoot(Scene& scene, GameObject* player) {
     if (!player || !player->transform) return nullptr;
-    auto hasModel = [&](GameObject* root) {
+    // How much `root` looks like the character model, or -1 when it isn't one.
+    // A held hat is often the first mesh child; a skinned rig or a real
+    // hierarchy outranks that prop so a model swap removes the old model.
+    auto scoreModel = [&](GameObject* root) {
+        int score = 0, nodes = 0;
+        bool mesh = false;
         for (const auto& up : scene.Objects()) {
             GameObject* g = up.get();
             if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-            if (g->GetComponent<Camera>()) return false;
-            if (g->GetComponent<SkinnedMesh>() || g->GetComponent<ModelAnimator>()) return true;
-            if (g != player) if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) return true;
+            if (g->GetComponent<Camera>()) return -1;
+            ++nodes;
+            if (g->GetComponent<SkinnedMesh>()) score += 100;
+            if (g->GetComponent<ModelAnimator>()) score += 40;
+            if (g != player) if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) mesh = true;
         }
-        return false;
+        if (!mesh && score == 0) return -1;
+        if (mesh) score += 1;
+        if (nodes > 1) score += std::min(nodes, 30);   // a rig beats a single prop
+        return score;
     };
+    GameObject* best = nullptr;
+    int bestScore = -1;
     for (Transform* c : player->transform->Children()) {
         GameObject* g = c ? c->gameObject : nullptr;
         if (!g || g->name == "Rig" || !g->active) continue;
-        if (hasModel(g)) return g;
+        const int sc = scoreModel(g);
+        if (sc > bestScore) { bestScore = sc; best = g; }
     }
+    if (best) return best;
     // A controller put straight onto an imported model: the player IS the model.
     if (!player->GetComponent<Character>())
         for (const auto& up : scene.Objects())
@@ -2076,29 +2789,24 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             if (up->IsSelfOrDescendantOf(root))
                 if ((ma = up->GetComponent<ModelAnimator>())) break;
     std::string mapped;
-    bool genuineIdle = false, genuineWalk = false;
-    if (ma && !ma->clips.empty()) {
-        AutoMapLocomotion(ma);
-        genuineIdle = !ma->idleClip.empty();
-        genuineWalk = !ma->walkClip.empty();
+    if (ma && !ma->clips.empty()) AutoMapLocomotion(ma);
+    // A humanoid skeleton (enough recognisable bones, on a player with a Character)
+    // gets the BUILT-IN animations on every locomotion slot its clips don't fill:
+    // the Character stays ON in drive-external mode and a HumanoidRetarget plays
+    // the engine's walk, run, jump, crouch... on the imported bones, while the
+    // clips the file does carry (a Mixamo walk, an idle) play in their own slots.
+    // A file with no usable clips at all is the plain built-in case. Without a
+    // humanoid skeleton the clips drive locomotion alone. Decided HERE so the clip
+    // path below (including its animated re-grounding) runs when it should.
+    bool wantRetarget = false;
+    if (player->GetComponent<Character>()) {
+        HumanoidRetarget probe;
+        probe.gameObject = player;
+        wantRetarget = probe.DetectAndWire(scene, root) >= 8;
     }
-    // Retarget instead of clips when the file doesn't carry a usable locomotion
-    // set (a single Mixamo dance, a rigged model with no takes at all...): the
-    // Character stays ON in drive-external mode and a HumanoidRetarget plays
-    // the BUILT-IN animations on the imported skeleton — so the model walks,
-    // runs, jumps, crouches and gestures out of the box. Only when enough
-    // humanoid bones are recognizable (decided HERE so the clip path below —
-    // including its animated re-grounding — runs whenever retarget doesn't).
-    bool wantRetarget = !(ma && !ma->clips.empty() && genuineIdle && genuineWalk);
-    if (wantRetarget) {
-        wantRetarget = false;
-        if (player->GetComponent<Character>()) {
-            HumanoidRetarget probe;
-            probe.gameObject = player;
-            wantRetarget = probe.DetectAndWire(scene, root) >= 8;
-        }
-    }
-    if (ma && !ma->clips.empty() && !wantRetarget) {
+    const bool hasIdleClip = ma && ma->SlotFilled(ModelAnimator::SlotIdle);
+    if (ma && !ma->clips.empty() && (!wantRetarget || hasIdleClip)) {
+      if (!wantRetarget) {
         if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;  // something is better than T-pose
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
         ma->driveByMovement = true;
@@ -2114,6 +2822,11 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         ma->inPlace = true;
         mapped = "idle='" + ma->idleClip + "' walk='" + ma->walkClip + "'" +
                  (ma->runClip.empty() ? "" : " run='" + ma->runClip + "'");
+        for (const auto& [label, clip] : {std::pair<const char*, const std::string*>{"crouch", &ma->crouchClip},
+                                          {"crouch walk", &ma->crouchWalkClip}, {"prone", &ma->proneClip},
+                                          {"crawl", &ma->crawlClip}, {"get up", &ma->getUpClip}})
+            if (!clip->empty()) mapped += std::string(" ") + label + "='" + *clip + "'";
+      }
 
         // Re-ground and re-center on the ANIMATED pose. Some rigs' clips sit at
         // a constant offset from the bind pose (glTF CesiumMan-style skeleton
@@ -2168,19 +2881,12 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     // and the feet plant on top of it.
     bool retargeted = false;
     if (wantRetarget) {
-        if (auto* ch = player->GetComponent<Character>()) {
-            HumanoidRetarget* rt = player->GetComponent<HumanoidRetarget>();
-            if (!rt) rt = player->AddComponent<HumanoidRetarget>();
-            rt->Rewire();
-            int found = rt->DetectAndWire(scene, root);
-            retargeted = true;
-            ch->driveExternal = true;
-            // The retarget owns the pose: no locomotion switching and no
-            // auto-play (the import turns clip 0 on for the T-pose fix; here
-            // it would fight the retarget every frame). One-shots still work.
-            if (ma) { ma->driveByMovement = false; ma->inPlace = true; ma->autoPlay = false; }
-            mapped += (mapped.empty() ? "" : ", ") + std::string("built-in animations retargeted (") +
-                      std::to_string(found) + "/15 bones)";
+        const int found = EnableBuiltinFallback(scene, player, root);
+        retargeted = found >= 0;
+        if (retargeted) {
+            SettleCharacterLocomotion(ma);
+            mapped = SlotSummary(ma) + (mapped.empty() ? "" : ", ") + "built-in animations retargeted (" +
+                     std::to_string(found) + "/15 bones)";
         }
     }
 
@@ -2204,14 +2910,18 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             fik->DetectHumanoidBones(scene, root);
             if (!fresh) fik->Start();   // resolve the new names now: it may be running already
             fik->orient = true;   // turn the thigh and shin with the joints, or the skinned leg tears at the knee
-            // The sole's normal in the foot bone's own axes, off the bind pose: a
+            fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
+            // Each sole's normal in its own foot bone's axes, off the bind pose: a
             // Blender / glTF foot points its Y down the foot, so tilting a fixed
-            // local +Y onto the slope stood those feet on their toes.
-            for (const auto& up : scene.Objects())
-                if (up->name == fik->leftFootName && up->IsSelfOrDescendantOf(root)) {
+            // local +Y onto the slope stood those feet on their toes; and a
+            // mirrored rig's right foot isn't the left one's axis.
+            for (const auto& up : scene.Objects()) {
+                if (!up->IsSelfOrDescendantOf(root)) continue;
+                if (up->name == fik->leftFootName)
                     fik->footUpAxis = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
-                    break;
-                }
+                else if (up->name == fik->rightFootName)
+                    fik->footUpAxisR = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
+            }
             mapped += mapped.empty() ? "foot IK wired" : ", foot IK wired";
         } else if (fik) {
             player->RemoveComponent<FootIK>();   // no legs to plant on this model
@@ -2235,6 +2945,72 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     // Fit (or add) the collider + rigidbody around the model actually shown.
     std::string phys = FitCharacterCollider(scene, player, root);
 
+    // Look-At IK is on for every imported player: the head (and spine, when
+    // one was found) is wired, and it waits until a script gives it something
+    // to look at, so the head does not stare at the world origin.
+    {
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(root, nullptr);
+        GameObject* head = bm.bone[humanoid::Head];
+        GameObject* torso = bm.bone[humanoid::Torso];
+        if (head) {
+            LookAtIK* look = player->GetComponent<LookAtIK>();
+            if (!look) look = player->AddComponent<LookAtIK>();
+            look->weight = 1.0f;
+            look->ikActive = true;
+            look->aimAtPoint = false;
+            look->chainNames.clear();
+            if (torso) look->chainNames.push_back(torso->name);
+            look->chainNames.push_back(head->name);
+            look->chain.clear();
+            mapped += mapped.empty() ? "look-at IK on" : ", look-at IK on";
+        }
+    }
+
+    // The controllers' default 4.5 m/s "walk" is a jog: a downloaded walk clip is
+    // made for about 1.4 m/s, so at 4.5 the stride match picks the RUN clip for
+    // plain W and Shift plays it at its fastest. Bring a default speed down to
+    // the pace the file's clip can show (its playback rate stays inside the
+    // 0.6x-1.6x stride limits); speeds the user has already changed are kept.
+    // The fitted values are remembered per player: a later swap refits a speed
+    // still at them, and one the user set back to the default since is left alone.
+    if (ma && ma->strideMatch && !ma->rootMotion) {
+        static std::unordered_map<std::uint64_t, std::array<float, 2>> sFitted;  // {walk, run}; 0 = not fitted
+        const std::array<float, 2> prev = sFitted[player->InstanceId()];
+        std::array<float, 2> now = prev;
+        auto fit = [&](float& walk, float& run, float dWalk, float dRun) {
+            bool changed = false;
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == (prev[0] > 0.0f ? prev[0] : dWalk)) {
+                walk = now[0] = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
+            }
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == (prev[1] > 0.0f ? prev[1] : dRun)) {
+                run = now[1] = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
+            }
+            return changed;
+        };
+        bool fitted = false;
+        // Each controller type's own defaults are the "untouched" speeds.
+        auto fitC = [&](auto* c) {
+            using T = std::remove_pointer_t<decltype(c)>;
+            if (c) { const T d; fitted = fit(c->walkSpeed, c->runSpeed, d.walkSpeed, d.runSpeed) || fitted; }
+        };
+        fitC(player->GetComponent<ThirdPersonController>());
+        fitC(player->GetComponent<ThirdPersonShooterController>());
+        fitC(player->GetComponent<FirstPersonController>());
+        fitC(player->GetComponent<ClickToMoveController>());
+        fitC(player->GetComponent<TopDownController>());
+        fitC(player->GetComponent<Platformer25DController>());
+        fitC(player->GetComponent<TopDownShooterController>());
+        sFitted[player->InstanceId()] = now;
+        if (fitted) {
+            mapped += mapped.empty() ? "move speeds fitted to the clips" : ", move speeds fitted to the clips";
+            // The clip-only path keys its walk/run blend to the controller speeds.
+            float w = 0.0f, r = 0.0f;
+            if (!wantRetarget && ControllerSpeeds(player, w, r) && w > 0.0f && r > w) {
+                ma->walkThreshold = w; ma->runThreshold = r;
+            }
+        }
+    }
+
     if (outLog) {
         *outLog = "Character model '" + root->name + "' on " + player->name +
                   " (height " + std::to_string(want).substr(0, 4) + "u" +
@@ -2243,6 +3019,116 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                   (phys.empty() ? "" : ", " + phys) + ")";
     }
     return root;
+}
+
+bool IsPlayableAvatar(GameObject* go) {
+    if (!go) return false;
+    return go->GetComponent<PlayerController>()
+        || go->GetComponent<FirstPersonController>()
+        || go->GetComponent<ThirdPersonController>()
+        || go->GetComponent<ThirdPersonShooterController>()
+        || go->GetComponent<TopDownController>()
+        || go->GetComponent<TopDownShooterController>()
+        || go->GetComponent<Platformer25DController>()
+        || go->GetComponent<ClickToMoveController>()
+        || go->GetComponent<CharacterController3D>();
+}
+
+GameObject* MakePlayableCharacter(Scene& scene, const std::string& path, std::string* outLog,
+                                  GameObject* onto) {
+    if (onto && IsPlayableAvatar(onto)) {
+        GameObject* model = AttachCharacterModel(scene, onto, path, outLog);
+        return model ? onto : nullptr;
+    }
+    GameObject* player = Templates::AddThirdPersonPlayer(scene, {0.0f, 1.0f, 0.0f});
+    if (!player) return nullptr;
+    GameObject* model = AttachCharacterModel(scene, player, path, outLog);
+    if (!model) { scene.Destroy(player); return nullptr; }
+    // One played character. Other active avatars are switched off, not deleted,
+    // so the template player they overlapped stays in the scene for undo.
+    std::string parked;
+    for (const auto& up : scene.Objects()) {
+        GameObject* g = up.get();
+        if (!g || g == player || !g->active || g->IsSelfOrDescendantOf(player)) continue;
+        if (!IsPlayableAvatar(g)) continue;
+        g->active = false;
+        if (!parked.empty()) parked += ", ";
+        parked += "'" + g->name + "'";
+    }
+    if (outLog && !parked.empty())
+        *outLog += " Deactivated " + parked + " so this character is the one that's played.";
+    return player;
+}
+
+const char* CharacterAnimationSourceName(int source) {
+    static const char* const n[] = {"None", "Imported clips", "Built-in retargeted", "Mixed"};
+    return source >= 0 && source < 4 ? n[source] : n[0];
+}
+
+bool DescribeCharacterModel(Scene& scene, GameObject* player, CharacterModelInfo& out) {
+    out = CharacterModelInfo{};
+    if (!player || !player->transform) return false;
+    GameObject* root = FindCharacterModelRoot(scene, player);
+    if (!root || root == player) return false;
+    out.valid = true;
+    out.model = root->name;
+    ModelAnimator* ma = root->GetComponent<ModelAnimator>();
+    if (!ma)
+        for (const auto& up : scene.Objects())
+            if (up->IsSelfOrDescendantOf(root) && (ma = up->GetComponent<ModelAnimator>())) break;
+    out.animator = ma;
+    auto* ch = player->GetComponent<Character>();
+    auto* hr = player->GetComponent<HumanoidRetarget>();
+    out.characterOff = ch && !ch->enabled;
+    out.builtinAvailable = ch && ch->enabled && ch->driveExternal && hr && hr->weight > 0.0f;
+    out.mappedBones = hr && hr->Wired() && hr->MappedBones() > 0 ? hr->MappedBones() : humanoid::MapHumanoidBones(root, hr ? hr->boneMap : nullptr).found;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) {
+        CharacterModelInfo::Slot sl;
+        sl.slot = s;
+        sl.label = ModelAnimator::SlotName(s);
+        if (ma) sl.clip = ma->SlotClip(s);
+        if (ma && ma->driveByMovement && ma->SlotFilled(s)) { sl.source = 1; ++out.importedSlots; }
+        else if (out.builtinAvailable && (!ma || !ma->driveByMovement || ma->builtinFallback)) { sl.source = 2; ++out.builtinSlots; }
+        out.slots.push_back(std::move(sl));
+    }
+    out.source = out.importedSlots && out.builtinSlots ? 3 : (out.importedSlots ? 1 : (out.builtinSlots ? 2 : 0));
+    return true;
+}
+
+std::string FixCharacterAnimations(Scene& scene, GameObject* player) {
+    CharacterModelInfo before;
+    if (!DescribeCharacterModel(scene, player, before)) return "No imported character model on '" + (player ? player->name : std::string()) + "'.";
+    GameObject* root = FindCharacterModelRoot(scene, player);
+    ModelAnimator* ma = before.animator;
+    int cleared = 0;
+    if (ma) {
+        for (int s = 0; s < ModelAnimator::SlotCount; ++s)   // a slot naming a clip the model doesn't have
+            if (!ma->SlotClip(s).empty() && ma->FindClip(ma->SlotClip(s)) < 0) { ma->SlotClip(s).clear(); ++cleared; }
+        AutoMapLocomotion(ma);
+    }
+    int found = 0;
+    if (player->GetComponent<Character>()) {
+        HumanoidRetarget probe;
+        probe.gameObject = player;
+        if (auto* hr = player->GetComponent<HumanoidRetarget>())   // bones the user mapped by hand count
+            for (int b = 0; b < humanoid::BoneCount; ++b) probe.boneMap[b] = hr->boneMap[b];
+        found = probe.DetectAndWire(scene, root);
+    }
+    if (found >= 8) {
+        EnableBuiltinFallback(scene, player, root);
+        if (ma) { ma->builtinFallback = true; SettleCharacterLocomotion(ma); }
+    } else if (ma && !ma->clips.empty()) {   // no humanoid skeleton: the clips alone
+        if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;
+        if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
+        ma->driveByMovement = true; ma->inPlace = true;
+    }
+    CharacterModelInfo after;
+    DescribeCharacterModel(scene, player, after);
+    std::string log = "Animations on '" + after.model + "': " + CharacterAnimationSourceName(after.source) + " (" +
+                      std::to_string(after.importedSlots) + " slot" + (after.importedSlots == 1 ? "" : "s") + " from clips, " +
+                      std::to_string(after.builtinSlots) + " built-in";
+    if (cleared) log += ", " + std::to_string(cleared) + " stale slot" + (cleared == 1 ? "" : "s") + " cleared";
+    return log + ")";
 }
 
 } // namespace okay

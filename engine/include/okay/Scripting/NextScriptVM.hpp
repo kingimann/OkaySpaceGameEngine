@@ -42,6 +42,7 @@ public:
     bool HasEvent(const std::string& function) const override;
 
     vs::VsValue GetGlobal(const std::string& name) const override;
+    std::vector<std::string> GlobalNames() const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
 
     /// Drop the `static` field values of scripts in `scene`: they last one play

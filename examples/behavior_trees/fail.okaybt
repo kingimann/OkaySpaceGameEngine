@@ -1,0 +1,5 @@
+okaybt 1
+name Fail
+key ready bool false
+root 0
+node 0 Condition parent=-1 x=0 y=0 name=Fail kind=blackboard key=ready op=== value=true

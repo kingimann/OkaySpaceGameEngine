@@ -7,12 +7,13 @@ namespace okay {
 /// frame and applies it to the window. Scripts and controllers just set the fields.
 class Cursor {
 public:
-    enum class LockMode { None, Locked };   // Locked covers FPS/TPS
+    enum class LockMode { None, Locked, Confined };   // Locked covers FPS/TPS; Confined keeps the pointer inside the view
 
     /// Hide/show the hardware cursor.
     static inline bool visible = true;
     /// None = free cursor; Locked = cursor hidden-centered, motion delivered as
-    /// relative deltas so mouse-look keeps working.
+    /// relative deltas so mouse-look keeps working. Confined = cursor stays
+    /// visible and cannot leave the game view; motion is still a look.
     static inline LockMode lockState = LockMode::None;
 
     static void SetVisible(bool v) { visible = v; }
@@ -23,6 +24,7 @@ public:
         visible   = !on;
     }
     static bool IsLocked() { return lockState == LockMode::Locked; }
+    static bool IsConfined() { return lockState == LockMode::Confined; }
 };
 
 } // namespace okay

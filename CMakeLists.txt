@@ -1,13 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.832.0
+    VERSION 2.869.0
     DESCRIPTION "A modern C++ game engine"
-    LANGUAGES C CXX)   # C enabled for vendored single-file C libs (e.g. tinyfiledialogs)
+    LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
 # Stamp the version into binaries (used by the editor's self-updater).
 # The version string is only compiled into the editor and launcher (their targets
 # add OKAY_ENGINE_VERSION), so a version bump doesn't change every file's compile
 # flags and the release build's compiler cache keeps hitting.
+include(${CMAKE_SOURCE_DIR}/cmake/OkayWinVersion.cmake)   # okay_win_version(): Windows exe name / version / manifest
 set(OKAY_VERSION_DEFINE OKAY_ENGINE_VERSION="${PROJECT_VERSION}")
 
 # ---- Global settings --------------------------------------------------
@@ -25,7 +26,15 @@ option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
+option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
+option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
+option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/own_http_client.md)" OFF)
+option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
 if(MSVC)
@@ -70,22 +79,38 @@ endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
 endif()
+# Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
+# Empty = not configured; the launcher then says so when it sends a reset email.
+set(OKAY_DEFAULT_PASSWORD_RESET_URL "" CACHE STRING "URL of the hosted password-reset page, sent to Supabase as redirect_to")
+if(OKAY_DEFAULT_PASSWORD_RESET_URL)
+    add_compile_definitions(OKAY_DEFAULT_PASSWORD_RESET_URL="${OKAY_DEFAULT_PASSWORD_RESET_URL}")
+endif()
 # Default voice server for launcher calls ("host" or "host:port" of a running
 # okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
 set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")
 if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
-# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys the player and
-# launcher accept on a build's Data/manifest.json, as hex, comma-separated (e.g.
-# the release key, then the dev key). Public keys only; the private keys never
-# go near CMake. Empty = none built in (a signature is checked but not its signer).
-set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: trusted ed25519 public keys (hex, comma-separated)")
+# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys accepted on a
+# build's Data/manifest.json, as hex, comma-separated (e.g. the release key, then
+# the dev key). Public keys only; the private keys never go near CMake. Empty =
+# none built in (a signature is checked but not its signer).
+#  * OKAY_AC_TRUSTED_KEYS: the launcher's, which it applies to the official game.
+#  * OKAY_AC_PLAYER_TRUSTED_KEYS: the player's. A player with keys refuses every
+#    game not signed by them, so the general runtime (which runs anyone's
+#    games) has none; set it only for a player that ships your own signed games.
+set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the launcher's trusted ed25519 public keys (hex, comma-separated)")
+set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's trusted ed25519 public keys (only for a player of your own signed games)")
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
-okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")   # exactly 64 hex digits per key, or configure fails
-if(OKAY_AC_TRUSTED_KEYS)
-    add_compile_definitions(OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
-endif()
+okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
+okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
+# Signed releases (docs/updater.md): the ed25519 PUBLIC keys that must have signed
+# the release index (versions.json.sig) before the launcher or editor will install
+# anything from it: the current key, and during a rotation the next one too.
+# Empty = none built in: an unsigned index is accepted (the transition for feeds
+# nobody has signed yet; set it once the first signed publish is out).
+set(OKAY_UPDATE_TRUSTED_KEYS "" CACHE STRING "Updater: ed25519 public keys (hex, comma-separated) that must sign versions.json (empty = unsigned feeds still accepted)")
+okay_ac_check_trusted_keys("${OKAY_UPDATE_TRUSTED_KEYS}")      # same rule: exactly 64 hex digits per key, or configure fails
 # The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
 # deployment its own so its hashes can't be matched with another's. Not a secret.
 set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
@@ -123,6 +148,12 @@ endif()
 # ---- Self-updating launcher ------------------------------------------
 if(OKAY_BUILD_LAUNCHER)
     add_subdirectory(launcher)
+    if(OKAY_AC_TRUSTED_KEYS AND TARGET okayspace-launcher)
+        target_compile_definitions(okayspace-launcher PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
+    endif()
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okayspace-launcher)
+        target_compile_definitions(okayspace-launcher PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Feature examples -------------------------------------------------
@@ -133,12 +164,18 @@ endif()
 # ---- Desktop GUI editor ----------------------------------------------
 if(OKAY_BUILD_EDITOR)
     add_subdirectory(editor)
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okay-editor)
+        target_compile_definitions(okay-editor PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Standalone game player ------------------------------------------
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     add_subdirectory(player)
+    if(OKAY_AC_PLAYER_TRUSTED_KEYS AND TARGET okay-player)
+        target_compile_definitions(okay-player PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_PLAYER_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Ship SDL2.dll beside the binaries ----

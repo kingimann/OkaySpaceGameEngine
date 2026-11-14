@@ -1,0 +1,973 @@
+node 1 OnUpdate
+entry OnUpdate 1
+node 2 GetX
+node 3 LbApproach
+default 3 1 2.2
+default 3 2 0.08
+data 3 0 2 0
+node 4 SetPosition
+default 4 1 0.5
+default 4 2 0
+data 4 0 3 0
+exec 1 0 4
+node 10 LbSmoothStep
+pos 10 40 400
+default 10 0 0.5
+node 11 LbSmootherStep
+pos 11 280 400
+default 11 0 0
+node 12 LbEaseIn
+pos 12 520 400
+default 12 0 0.5
+node 13 LbEaseOut
+pos 13 760 400
+default 13 0 0.5
+node 14 LbEaseInOut
+pos 14 1000 400
+default 14 0 0
+node 15 LbPowerEase
+pos 15 1240 400
+default 15 0 0.5
+default 15 1 2
+node 16 LbBiasCurve
+pos 16 1480 400
+default 16 0 0.5
+default 16 1 0.5
+node 17 LbGainCurve
+pos 17 1720 400
+default 17 0 0.5
+default 17 1 0.5
+node 18 LbLogistic
+pos 18 40 560
+default 18 0 0.5
+default 18 1 1
+node 19 LbSampleCurve
+pos 19 280 560
+default 19 0 0
+default 19 1 2
+default 19 2 4
+default 19 3 6
+default 19 4 8
+node 20 LbSampleBezier
+pos 20 520 560
+default 20 0 0
+default 20 1 1
+default 20 2 2
+default 20 3 3
+default 20 4 4
+node 21 LbHermite
+pos 21 760 560
+default 21 0 0
+default 21 1 5
+default 21 2 9
+default 21 3 0
+default 21 4 0
+node 22 LbTriangleWave
+pos 22 1000 560
+default 22 0 0.25
+default 22 1 1
+node 23 LbSawWave
+pos 23 1240 560
+default 23 0 1.25
+default 23 1 1
+node 24 LbSquareWave
+pos 24 1480 560
+default 24 0 0.1
+default 24 1 1
+node 25 LbSineWave
+pos 25 1720 560
+default 25 0 0
+default 25 1 1
+node 26 LbSampleNoise
+pos 26 40 720
+default 26 0 0
+node 27 LbDeadZone
+pos 27 280 720
+default 27 0 0.2
+default 27 1 0.5
+node 28 LbSoftClamp
+pos 28 520 720
+default 28 0 0.5
+default 28 1 2
+node 29 LbRepeatRange
+pos 29 760 720
+default 29 0 5
+default 29 1 2
+node 30 LbFoldRange
+pos 30 1000 720
+default 30 0 1.5
+default 30 1 1
+node 31 LbSafeReciprocal
+pos 31 1240 720
+default 31 0 4
+node 32 LbSquare
+pos 32 1480 720
+default 32 0 3
+node 33 LbCube
+pos 33 1720 720
+default 33 0 2
+node 34 LbNaturalLog
+pos 34 40 880
+default 34 0 1
+node 35 LbRaiseE
+pos 35 280 880
+default 35 0 0
+node 36 LbHypotenuse
+pos 36 520 880
+default 36 0 3
+default 36 1 4
+node 37 LbAngleFromPair
+pos 37 760 880
+default 37 0 1
+default 37 1 0
+node 38 LbDirectionFromAngle
+pos 38 1000 880
+default 38 0 90
+node 39 LbUpFromAngle
+pos 39 1240 880
+default 39 0 90
+node 40 LbMedianThree
+pos 40 1480 880
+default 40 0 3
+default 40 1 1
+default 40 2 2
+node 41 LbWeightedMean
+pos 41 1720 880
+default 41 0 1
+default 41 1 1
+default 41 2 3
+default 41 3 3
+node 42 LbInverseSquare
+pos 42 40 1040
+default 42 0 2
+default 42 1 4
+node 43 LbLinearFalloff
+pos 43 280 1040
+default 43 0 2
+default 43 1 4
+node 44 LbSmoothFalloff
+pos 44 520 1040
+default 44 0 0
+default 44 1 4
+node 45 LbPortionAlong
+pos 45 760 1040
+default 45 0 0
+default 45 1 10
+default 45 2 2.5
+node 46 LbRemapClamped
+pos 46 1000 1040
+default 46 0 5
+default 46 1 0
+default 46 2 10
+default 46 3 0
+default 46 4 100
+node 47 LbAbsDiff
+pos 47 1240 1040
+default 47 0 3
+default 47 1 8
+node 48 LbPositiveRemainder
+pos 48 1480 1040
+default 48 0 -1
+default 48 1 4
+node 49 LbNearestMultiple
+pos 49 1720 1040
+default 49 0 7.6
+default 49 1 2
+node 50 LbFloorTo
+pos 50 40 1200
+default 50 0 7.6
+default 50 1 2
+node 51 LbCeilTo
+pos 51 280 1200
+default 51 0 7.1
+default 51 1 2
+node 52 LbTruncZero
+pos 52 520 1200
+default 52 0 -2.9
+node 53 LbKeepPositive
+pos 53 760 1200
+default 53 0 -4
+node 54 LbKeepAtMost
+pos 54 1000 1200
+default 54 0 9
+default 54 1 4
+node 55 LbKeepAtLeast
+pos 55 1240 1200
+default 55 0 2
+default 55 1 5
+node 56 LbSpread
+pos 56 1480 1200
+default 56 0 10
+default 56 1 4
+default 56 2 1
+node 57 LbPercentOf
+pos 57 1720 1200
+default 57 0 2
+default 57 1 8
+node 58 LbValueFromPercent
+pos 58 40 1360
+default 58 0 25
+default 58 1 8
+node 59 LbDampToward
+pos 59 280 1360
+default 59 0 0
+default 59 1 10
+default 59 2 0
+default 59 3 1
+node 60 LbLimitRate
+pos 60 520 1360
+default 60 0 0
+default 60 1 10
+default 60 2 2
+default 60 3 1
+node 61 LbChangeBetween
+pos 61 760 1360
+default 61 0 2
+default 61 1 5
+node 62 LbSpringStep
+pos 62 1000 1360
+default 62 0 0
+default 62 1 0
+default 62 2 10
+default 62 3 0
+default 62 4 0.1
+node 63 LbSmoothSmaller
+pos 63 1240 1360
+default 63 0 2
+default 63 1 5
+default 63 2 0
+node 64 LbSmoothLarger
+pos 64 1480 1360
+default 64 0 2
+default 64 1 5
+default 64 2 0
+node 65 LbExponentialDecay
+pos 65 1720 1360
+default 65 0 8
+default 65 1 0
+default 65 2 1
+node 66 LbOneMinus
+pos 66 40 1520
+default 66 0 0.25
+node 67 LbSaturateNumber
+pos 67 280 1520
+default 67 0 2
+node 68 LbRoundPlaces
+pos 68 520 1520
+default 68 0 1.26
+default 68 1 1
+node 69 LbLerpUnclamped
+pos 69 760 1520
+default 69 0 0
+default 69 1 10
+default 69 2 1.5
+node 70 LbInverseLerpUnclamped
+pos 70 1000 1520
+default 70 0 0
+default 70 1 10
+default 70 2 15
+node 71 LbMapSigned
+pos 71 1240 1520
+default 71 0 0
+node 72 LbMapBipolar
+pos 72 1480 1520
+default 72 0 0.5
+node 73 LbStepAt
+pos 73 1720 1520
+default 73 0 5
+default 73 1 4
+node 74 LbIsOutside
+pos 74 40 1680
+default 74 0 9
+default 74 1 0
+default 74 2 8
+node 75 LbIsStrictBetween
+pos 75 280 1680
+default 75 0 3
+default 75 1 1
+default 75 2 5
+node 76 LbHasSameSign
+pos 76 520 1680
+default 76 0 2
+default 76 1 4
+node 77 LbHasOppositeSign
+pos 77 760 1680
+default 77 0 -2
+default 77 1 4
+node 78 LbIsAlmostZero
+pos 78 1000 1680
+default 78 0 0.001
+default 78 1 0.01
+node 79 LbIsMultiple
+pos 79 1240 1680
+default 79 0 8
+default 79 1 2
+node 80 LbIsPositive
+pos 80 1480 1680
+default 80 0 3
+node 81 LbIsNegative
+pos 81 1720 1680
+default 81 0 -1
+node 82 LbIsWhole
+pos 82 40 1840
+default 82 0 4
+node 83 LbSignOf
+pos 83 280 1840
+default 83 0 -6
+node 84 LbFractionOf
+pos 84 520 1840
+default 84 0 3.75
+node 85 LbClamp11
+pos 85 760 1840
+default 85 0 3
+node 86 LbLerpClamp
+pos 86 1000 1840
+default 86 0 0
+default 86 1 10
+default 86 2 2
+node 87 LbSmoothDampStep
+pos 87 1240 1840
+default 87 0 0
+default 87 1 10
+default 87 2 1
+default 87 3 0
+node 88 LbCircleEaseIn
+pos 88 1480 1840
+default 88 0 0
+node 89 LbCircleEaseOut
+pos 89 1720 1840
+default 89 0 1
+node 90 LbBounceOut
+pos 90 40 2000
+default 90 0 1
+node 91 LbExpEaseIn
+pos 91 280 2000
+default 91 0 0
+node 92 LbExpEaseOut
+pos 92 520 2000
+default 92 0 1
+node 93 LbShortestAngle
+pos 93 760 2000
+default 93 0 10
+default 93 1 350
+node 94 LbApproachAngle
+pos 94 1000 2000
+default 94 0 10
+default 94 1 40
+default 94 2 5
+node 95 LbBlendAngles
+pos 95 1240 2000
+default 95 0 0
+default 95 1 90
+default 95 2 0.5
+node 96 LbWrapAngle
+pos 96 1480 2000
+default 96 0 -90
+node 97 LbSnapAngle
+pos 97 1720 2000
+default 97 0 47
+default 97 1 15
+node 98 LbFlatLength
+pos 98 40 2160
+default 98 0 3
+default 98 1 4
+node 99 LbLimitFlat
+pos 99 280 2160
+default 99 0 6
+default 99 1 8
+default 99 2 5
+node 100 LbAheadLimited
+pos 100 520 2160
+default 100 0 0
+default 100 1 10
+default 100 2 4
+node 101 LbDotFlat
+pos 101 760 2160
+default 101 0 1
+default 101 1 0
+default 101 2 0
+default 101 3 1
+node 102 LbCrossFlat
+pos 102 1000 2160
+default 102 0 1
+default 102 1 0
+default 102 2 0
+default 102 3 1
+node 103 LbIsBehindFlat
+pos 103 1240 2160
+default 103 0 0
+default 103 1 1
+default 103 2 0
+default 103 3 -1
+node 104 LbIsLeftFlat
+pos 104 1480 2160
+default 104 0 0
+default 104 1 1
+default 104 2 -1
+default 104 3 0
+node 105 LbIsRightFlat
+pos 105 1720 2160
+default 105 0 0
+default 105 1 1
+default 105 2 1
+default 105 3 0
+node 106 LbMidpoint
+pos 106 40 2320
+default 106 0 0
+default 106 1 0
+default 106 2 4
+default 106 3 6
+node 107 LbMidAhead
+pos 107 280 2320
+default 107 0 0
+default 107 1 0
+default 107 2 4
+default 107 3 6
+node 108 LbDistanceFlat
+pos 108 520 2320
+default 108 0 0
+default 108 1 0
+default 108 2 3
+default 108 3 4
+node 109 LbIsWithinFlat
+pos 109 760 2320
+default 109 0 0
+default 109 1 0
+default 109 2 3
+default 109 3 4
+default 109 4 6
+node 110 LbClosestOnSegment
+pos 110 1000 2320
+default 110 0 0
+default 110 1 2
+default 110 2 0
+default 110 3 0
+default 110 4 4
+default 110 5 0
+node 111 LbDistanceToSegment
+pos 111 1240 2320
+default 111 0 0
+default 111 1 3
+default 111 2 0
+default 111 3 0
+default 111 4 4
+default 111 5 0
+node 112 LbIsInsideCircle
+pos 112 1480 2320
+default 112 0 1
+default 112 1 1
+default 112 2 0
+default 112 3 0
+default 112 4 2
+node 113 LbIsInsideSphere
+pos 113 1720 2320
+default 113 0 0
+default 113 1 0
+default 113 2 0
+default 113 3 0
+default 113 4 0
+default 113 5 0
+default 113 6 2
+node 114 LbVerticalGap
+pos 114 40 2480
+default 114 0 1
+default 114 1 4
+node 115 LbIsAbove
+pos 115 280 2480
+default 115 0 1
+default 115 1 3
+default 115 2 0.5
+node 116 LbIsBelow
+pos 116 520 2480
+default 116 0 3
+default 116 1 1
+default 116 2 0.5
+node 117 LbOffsetAhead
+pos 117 760 2480
+default 117 0 0
+default 117 1 0
+default 117 2 0
+default 117 3 1
+default 117 4 3
+node 118 LbOffsetAcross
+pos 118 1000 2480
+default 118 0 1
+default 118 1 2
+default 118 2 1
+default 118 3 0
+default 118 4 4
+node 119 LbGridCell
+pos 119 1240 2480
+default 119 0 5.2
+default 119 1 2
+node 120 LbCellCenter
+pos 120 1480 2480
+default 120 0 2
+default 120 1 2
+node 121 LbReflectFlat
+pos 121 1720 2480
+default 121 0 1
+default 121 1 -1
+default 121 2 0
+default 121 3 1
+node 122 LbReflectAhead
+pos 122 40 2640
+default 122 0 0
+default 122 1 -1
+default 122 2 0
+default 122 3 1
+node 123 LbProjectFlat
+pos 123 280 2640
+default 123 0 2
+default 123 1 2
+default 123 2 1
+default 123 3 0
+node 124 LbPortionFacing
+pos 124 520 2640
+default 124 0 0
+default 124 1 1
+default 124 2 0
+default 124 3 1
+node 125 LbCountLetters
+pos 125 760 2640
+default 125 0 "abcd"
+node 126 LbCountWords
+pos 126 1000 2640
+default 126 0 "one two"
+node 127 LbHasText
+pos 127 1240 2640
+default 127 0 "hi"
+node 128 LbIsBlank
+pos 128 1480 2640
+default 128 0 "   "
+node 129 LbCutText
+pos 129 1720 2640
+default 129 0 "hello"
+default 129 1 1
+default 129 2 3
+node 130 LbFindText
+pos 130 40 2800
+default 130 0 "hello"
+default 130 1 "ll"
+node 131 LbJoinWith
+pos 131 280 2800
+default 131 0 "red"
+default 131 1 "blue"
+default 131 2 "-"
+node 132 LbRepeatText
+pos 132 520 2800
+default 132 0 "ab"
+default 132 1 3
+node 133 LbLowerText
+pos 133 760 2800
+default 133 0 "AbC"
+node 134 LbUpperText
+pos 134 1000 2800
+default 134 0 "AbC"
+node 135 LbReverseText
+pos 135 1240 2800
+default 135 0 "ab"
+node 136 LbRemoveSpaces
+pos 136 1480 2800
+default 136 0 "a b"
+node 137 LbBeforeSeparator
+pos 137 1720 2800
+default 137 0 "red-blue"
+default 137 1 "-"
+node 138 LbAfterSeparator
+pos 138 40 2960
+default 138 0 "red-blue"
+default 138 1 "-"
+node 139 LbReplaceText
+pos 139 280 2960
+default 139 0 "cat"
+default 139 1 "a"
+default 139 2 "o"
+node 140 LbIsNumberText
+pos 140 520 2960
+default 140 0 "12.5"
+node 141 LbNumberFromText
+pos 141 760 2960
+default 141 0 "3.5"
+node 142 LbTextFromNumber
+pos 142 1000 2960
+default 142 0 3
+node 143 LbEqualLoose
+pos 143 1240 2960
+default 143 0 "Cat"
+default 143 1 "cat"
+node 144 LbContainsLoose
+pos 144 1480 2960
+default 144 0 "Hello"
+default 144 1 "ell"
+node 145 LbFirstWord
+pos 145 1720 2960
+default 145 0 "red blue"
+node 146 LbLastWord
+pos 146 40 3120
+default 146 0 "red blue"
+node 147 LbEnsurePrefix
+pos 147 280 3120
+default 147 0 "cat"
+default 147 1 "the "
+node 148 LbEnsureSuffix
+pos 148 520 3120
+default 148 0 "cat"
+default 148 1 "s"
+node 149 LbClampText
+pos 149 760 3120
+default 149 0 "hello"
+default 149 1 4
+node 150 LbCountMatches
+pos 150 1000 3120
+default 150 0 "ababa"
+default 150 1 "aba"
+node 151 LbPadLeft
+pos 151 1240 3120
+default 151 0 "ab"
+default 151 1 4
+node 152 LbPadRight
+pos 152 1480 3120
+default 152 0 "ab"
+default 152 1 4
+node 153 LbSelectLarger
+pos 153 1720 3120
+default 153 0 2
+default 153 1 5
+node 154 LbSelectSmaller
+pos 154 40 3280
+default 154 0 2
+default 154 1 5
+node 155 LbClampRange
+pos 155 280 3280
+default 155 0 9
+default 155 1 0
+default 155 2 4
+node 156 LbMapRange
+pos 156 520 3280
+default 156 0 5
+default 156 1 0
+default 156 2 10
+default 156 3 0
+default 156 4 100
+node 157 LbIsNearly
+pos 157 760 3280
+default 157 0 1.05
+default 157 1 1
+default 157 2 0.1
+node 158 LbIsFar
+pos 158 1000 3280
+default 158 0 1
+default 158 1 5
+default 158 2 2
+node 159 LbChooseNumber
+pos 159 1240 3280
+default 159 0 true
+default 159 1 4
+default 159 2 9
+node 160 LbChooseText
+pos 160 1480 3280
+default 160 0 false
+default 160 1 "yes"
+default 160 2 "no"
+node 161 LbAllNumbers
+pos 161 1720 3280
+default 161 0 1
+default 161 1 2
+default 161 2 3
+node 162 LbAnyNumber
+pos 162 40 3440
+default 162 0 0
+default 162 1 0
+default 162 2 4
+node 163 LbNoneNumber
+pos 163 280 3440
+default 163 0 0
+default 163 1 0
+default 163 2 0
+node 164 LbXorThree
+pos 164 520 3440
+default 164 0 true
+default 164 1 false
+default 164 2 false
+node 165 LbNorThree
+pos 165 760 3440
+default 165 0 false
+default 165 1 false
+default 165 2 false
+node 166 LbNandThree
+pos 166 1000 3440
+default 166 0 true
+default 166 1 true
+default 166 2 false
+node 167 LbImplies
+pos 167 1240 3440
+default 167 0 true
+default 167 1 true
+node 168 LbResourcePortion
+pos 168 1480 3440
+default 168 0 25
+default 168 1 100
+node 169 LbIsResourceLow
+pos 169 1720 3440
+default 169 0 10
+default 169 1 100
+default 169 2 0.2
+node 170 LbIsResourceFull
+pos 170 40 3600
+default 170 0 10
+default 170 1 10
+node 171 LbTrySpend
+pos 171 280 3600
+default 171 0 10
+default 171 1 3
+node 172 LbCouldSpend
+pos 172 520 3600
+default 172 0 5
+default 172 1 5
+node 173 LbRegenStep
+pos 173 760 3600
+default 173 0 5
+default 173 1 10
+default 173 2 2
+default 173 3 1
+node 174 LbStackMultiply
+pos 174 1000 3600
+default 174 0 10
+default 174 1 2
+default 174 2 3
+node 175 LbDiminishing
+pos 175 1240 3600
+default 175 0 10
+default 175 1 3
+node 176 LbOverflow
+pos 176 1480 3600
+default 176 0 12
+default 176 1 10
+node 177 LbQuestPortion
+pos 177 1720 3600
+default 177 0 1
+default 177 1 4
+node 178 LbIsQuestDone
+pos 178 40 3760
+default 178 0 3
+default 178 1 3
+node 179 LbStepsLeft
+pos 179 280 3760
+default 179 0 1
+default 179 1 4
+node 180 LbScoreGap
+pos 180 520 3760
+default 180 0 1
+default 180 1 5
+default 180 2 4
+default 180 3 0
+node 181 LbPickWorst
+pos 181 760 3760
+default 181 0 3
+default 181 1 1
+default 181 2 4
+default 181 3 2
+node 182 LbClosestScore
+pos 182 1000 3760
+default 182 0 5
+default 182 1 1
+default 182 2 6
+default 182 3 9
+node 183 LbScoresAbove
+pos 183 1240 3760
+default 183 0 2
+default 183 1 1
+default 183 2 3
+default 183 3 4
+default 183 4 0
+node 184 LbNormalizeScore
+pos 184 1480 3760
+default 184 0 5
+default 184 1 0
+default 184 2 10
+node 185 LbHysteresis
+pos 185 1720 3760
+node 186 LbRememberPeak
+pos 186 40 3920
+node 187 LbRememberValley
+pos 187 280 3920
+node 188 LbRunningMean
+pos 188 520 3920
+node 189 LbCountTrueFrames
+pos 189 760 3920
+node 190 LbSampleHold
+pos 190 1000 3920
+node 191 LbPreviousNumber
+pos 191 1240 3920
+node 192 LbSpike
+pos 192 1480 3920
+node 193 LbPassAfter
+pos 193 1720 3920
+node 194 LbEveryCalls
+pos 194 40 4080
+node 195 LbAccumulate
+pos 195 280 4080
+node 196 LbSquaredDistance
+pos 196 520 4080
+default 196 0 0
+default 196 1 0
+default 196 2 3
+default 196 3 4
+node 197 LbLerpInverse
+pos 197 760 4080
+default 197 0 0
+default 197 1 10
+default 197 2 2
+node 198 LbWrapPair
+pos 198 1000 4080
+default 198 0 11
+default 198 1 0
+default 198 2 10
+node 199 LbSnapPair
+pos 199 1240 4080
+default 199 0 3
+default 199 1 0
+default 199 2 10
+node 200 LbIsBetweenPair
+pos 200 1480 4080
+default 200 0 4
+default 200 1 8
+default 200 2 2
+node 201 LbScaleAround
+pos 201 1720 4080
+default 201 0 4
+default 201 1 2
+default 201 2 3
+node 202 LbPingTime
+pos 202 40 4240
+default 202 0 1.5
+default 202 1 1
+node 203 LbLoopTime
+pos 203 280 4240
+default 203 0 5
+default 203 1 2
+node 204 LbElapsedPortion
+pos 204 520 4240
+default 204 0 2
+default 204 1 8
+node 205 LbTimeLeft
+pos 205 760 4240
+default 205 0 2
+default 205 1 8
+node 206 LbIsTimeUp
+pos 206 1000 4240
+default 206 0 5
+default 206 1 5
+node 207 LbFramesToSeconds
+pos 207 1240 4240
+default 207 0 30
+default 207 1 60
+node 208 LbSecondsToFrames
+pos 208 1480 4240
+default 208 0 0.5
+default 208 1 60
+node 209 LbCooldownLeft
+pos 209 1720 4240
+default 209 0 0.25
+default 209 1 1
+node 210 LbIsCooldownReady
+pos 210 40 4400
+default 210 0 1
+default 210 1 1
+node 211 LbPulseAt
+pos 211 280 4400
+default 211 0 0.1
+default 211 1 1
+default 211 2 0.25
+node 212 LbBeatNumber
+pos 212 520 4400
+default 212 0 2.5
+default 212 1 1
+node 213 LbPhase
+pos 213 760 4400
+default 213 0 2.25
+default 213 1 1
+node 214 LbMixThree
+pos 214 1000 4400
+default 214 0 0
+default 214 1 10
+default 214 2 30
+default 214 3 0.25
+node 215 LbHoldRange
+pos 215 1240 4400
+default 215 0 9
+default 215 1 0
+default 215 2 4
+default 215 3 -1
+node 216 LbGreaterGap
+pos 216 1480 4400
+default 216 0 6
+default 216 1 2
+default 216 2 3
+node 217 LbLetterAt
+pos 217 1720 4400
+default 217 0 "cat"
+default 217 1 1
+node 218 LbHasPrefix
+pos 218 40 4560
+default 218 0 "hello"
+default 218 1 "he"
+node 219 LbHasSuffix
+pos 219 280 4560
+default 219 0 "hello"
+default 219 1 "lo"
+node 220 LbReplaceAll
+pos 220 520 4560
+default 220 0 "a-a"
+default 220 1 "a"
+default 220 2 "b"
+node 221 LbTrimEnds
+pos 221 760 4560
+default 221 0 "  hi  "
+node 222 LbIsSameText
+pos 222 1000 4560
+default 222 0 "cat"
+default 222 1 "cat"
+node 223 LbLongerText
+pos 223 1240 4560
+default 223 0 "a"
+default 223 1 "bbb"
+node 224 LbIsBlinking
+pos 224 1480 4560
+default 224 0 0.2
+default 224 1 0.5
+default 224 2 0.5
+node 225 LbResponseCurve
+pos 225 1720 4560
+default 225 0 5
+default 225 1 0
+default 225 2 10
+default 225 3 2
+node 226 LbWeighPick
+pos 226 40 4720
+default 226 0 1
+default 226 1 2
+default 226 2 3
+default 226 3 0
+default 226 4 1
+default 226 5 10
+default 226 6 1
+default 226 7 1
+node 227 LbQuestStage
+pos 227 280 4720
+default 227 0 1
+default 227 1 3
+node 228 LbFillBlanks
+pos 228 520 4720
+default 228 0 "Hi {0}"
+default 228 1 "Ada"
+default 228 2 "x"
+node 229 LbRunAndCheck
+pos 229 760 4720
+node 230 LbTrySeveral
+pos 230 1000 4720
+node 231 LbRepeatUntilSuccess
+pos 231 1240 4720
+node 232 LbRunInState
+pos 232 1480 4720

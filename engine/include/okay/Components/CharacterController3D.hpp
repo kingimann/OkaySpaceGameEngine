@@ -7,7 +7,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
-#include "okay/Components/StepUp.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -45,9 +45,14 @@ public:
     /// Steepest terrain slope (degrees) standable; steeper ground slides the
     /// body back down. 0 = no limit.
     float slopeLimit = 50.0f;
+    /// Crouch (Ctrl) and prone (Z): a smaller, slower body that eases between
+    /// stances; SetStance from scripts. No jumping unless standing.
+    StanceControl stanceControl;
+    void SetStance(int s) { stanceControl.Set(s); }
 
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
+        stanceControl.Start(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
     }
 
@@ -74,6 +79,11 @@ public:
         if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
         if (Input::GetKey(' ')) in.held |= PlayerInput::Jump;
         if (Input::GetKeyDown(' ')) in.pressed |= PlayerInput::Jump;
+        const StanceControl& sc = stanceControl;
+        if (sc.crouchKey && Input::GetKey(sc.crouchKey))     in.held    |= PlayerInput::Crouch;
+        if (sc.crouchKey && Input::GetKeyDown(sc.crouchKey)) in.pressed |= PlayerInput::Crouch;
+        if (sc.proneKey && Input::GetKey(sc.proneKey))       in.held    |= PlayerInput::Prone;
+        if (sc.proneKey && Input::GetKeyDown(sc.proneKey))   in.pressed |= PlayerInput::Prone;
         return in;
     }
 
@@ -83,8 +93,13 @@ public:
         if (!transform) return;
         Vec2 axis = in.move;
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
-        bool running = sprintKey && in.Held(PlayerInput::Sprint);
-        float spd = running ? runSpeed : speed;
+        if (stanceControl.crouchKey || stanceControl.proneKey)
+            stanceControl.Keys(in.Pressed(PlayerInput::Crouch), in.Held(PlayerInput::Crouch),
+                               in.Pressed(PlayerInput::Prone), in.Held(PlayerInput::Prone));
+        stanceControl.Step(gameObject, dt);
+        const bool standing = stanceControl.Stance() == 0;
+        bool running = standing && sprintKey && in.Held(PlayerInput::Sprint);
+        float spd = stanceControl.Speed(running ? runSpeed : speed);   // eases between the stances' caps
         // Normalize diagonal input so W+D isn't ~41% faster than W alone (magnitude √2).
         float alen = Mathf::Sqrt(axis.x * axis.x + axis.y * axis.y);
         if (alen > 1.0f) { axis.x /= alen; axis.y /= alen; }
@@ -93,13 +108,17 @@ public:
         bool grounded = true, jumped = false;
 
         if (rb) {
-            grounded = Mathf::Abs(rb->velocity.y) < 0.5f;
+            // Contact or terrain, not merely a quiet vertical speed: the apex of
+            // a jump is also |vy| < 0.5, and that used to count as a second jump.
+            grounded = ResolveGrounded(m_ground, rb->groundedOnTerrain, rb->velocity.y);
             float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
             rb->velocity.x = Mathf::MoveTowards(rb->velocity.x, tx, rate * dt);
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
-            if (canJump && in.Pressed(PlayerInput::Jump) && grounded) {
+            if (canJump && standing && in.Pressed(PlayerInput::Jump) && grounded) {
                 rb->velocity.y = jumpForce;
                 jumped = true;
+                m_ground.left = true; m_ground.fell = false;
+                grounded = false;
             }
             // Slope limit: too-steep terrain cancels uphill velocity and slides.
             if (slopeLimit > 0.0f && (grounded || rb->groundedOnTerrain) && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
@@ -133,6 +152,9 @@ public:
                 lo.onGround  = grounded || (rb && rb->groundedOnTerrain);
                 lo.jumped    = jumped;
                 lo.sprint    = running;
+                lo.crouch    = stanceControl.Stance() == 1;
+                lo.prone     = stanceControl.Stance() == 2;
+                lo.stance    = stanceControl.Level();
                 lo.walkSpeed = speed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
@@ -141,6 +163,7 @@ public:
 
 private:
     PlatformRide m_platRide;   // moving-platform tracking
+    GroundLatch  m_ground;     // apex of a jump is not ground
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 };

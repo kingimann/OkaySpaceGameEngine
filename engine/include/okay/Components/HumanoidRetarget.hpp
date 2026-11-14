@@ -6,10 +6,14 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/SkinnedMesh.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
+#include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Math/Quat.hpp"
 #include <string>
 #include <vector>
 #include <cctype>
+#include <cmath>
 
 namespace okay {
 
@@ -33,6 +37,20 @@ namespace okay {
 class HumanoidRetarget : public Component {
 public:
     float weight = 1.0f;   ///< 0 = off, 1 = full pose transfer (blend vs the bind pose)
+    /// Body lean into acceleration and turns, as a multiple of the default (a few
+    /// degrees on the hips and spine; 0 = upright). Starting off leans forward,
+    /// stopping leans back, a turn leans into the curve. Built-in poses only: an
+    /// imported clip carries its own.
+    float leanScale = 1.0f;
+    /// The lean currently applied (degrees: pitch forward, roll to the body's right).
+    float LeanPitch() const { return m_leanPitch; }
+    float LeanRoll() const { return m_leanRoll; }
+    /// True while the built-in pose is easing in from an imported clip's pose.
+    bool Blending() const { return m_fade < m_fadeDur; }
+    /// Bones picked by hand, per engine bone (Animation/HumanoidBones.hpp's
+    /// MapHumanoidBones): a bone name, "-" for none, "" for the automatic pick.
+    std::string boneMap[humanoid::BoneCount];
+    bool HasBoneMap() const { for (const auto& n : boneMap) if (!n.empty()) return true; return false; }
 
     /// How many of the 15 humanoid bones the last Wire() mapped (0 = not wired).
     int MappedBones() const { return m_mapped; }
@@ -44,6 +62,8 @@ public:
     }
     /// Drop the wiring so the next frame re-detects (after a model swap).
     void Rewire() { m_init = false; m_mapped = 0; m_map.clear(); }
+    /// The imported rig it drives (null until wired).
+    GameObject* RigRoot() const { return m_rig && !m_rig->IsDestroyed() ? m_rig : nullptr; }
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (dying.count(m_animGo)) m_animGo = nullptr;   // the cached animator holder is going away
     }
@@ -60,8 +80,33 @@ public:
         if (!rig || !rig->transform) return;
         // The model's own clips take priority while a script holds one (play_clip /
         // the Play Clip node) or a one-shot plays (play_clip_once: attack, emote).
-        if (ModelAnimator* ma = CachedAnimator(*sc, rig, dt))
-            if (ma->ClipOverridesPose()) return;
+        ModelAnimator* ma = CachedAnimator(*sc, rig, dt);
+        if (ma && ma->ClipOverridesPose()) {
+            // The clip owns the bones AND the height (a file's crouch clip already
+            // lowers the hips), so the model's stance drop goes back to rest. Returning
+            // here without that left a crouch's drop on the model after standing up,
+            // once the file's Idle took over. It eases back, never snaps.
+            if (rig != gameObject) {
+                Vec3 p = rig->transform->localPosition;
+                const float blend = std::fmax(0.05f, ma->blendTime);
+                p.y += (m_rigRestPos.y - p.y) * std::fmin(1.0f, dt / blend);
+                rig->transform->localPosition = p;
+            }
+            m_clipHadPose = true;
+            return;
+        }
+        // The built-in pose takes over from an imported clip: ease from the pose
+        // the clip left (a one-shot ending, a slot with no clip of its own).
+        if (m_clipHadPose) {
+            m_clipHadPose = false;
+            m_fade = 0.0f;
+            m_fadeDur = ma ? ma->blendTime : 0.25f;
+            for (MapEntry& e : m_map)
+                if (e.go && e.go->transform) { e.snapRot = e.go->transform->localRotation; e.snapPos = e.go->transform->localPosition; }
+        }
+        if (m_fade < m_fadeDur) m_fade += dt;
+        const float fadeW = m_fade >= m_fadeDur ? 1.0f : m_fade / m_fadeDur;
+        const float fadeE = fadeW * fadeW * (3.0f - 2.0f * fadeW);
 
         // Engine pose: per-bone Euler (local deltas, identity rest frames) —
         // accumulate down the engine hierarchy into root-frame rotations.
@@ -71,6 +116,12 @@ public:
         if ((int)pose.size() < n) pose.resize(n, Vec3{0, 0, 0});
         std::vector<Quat>& Re = m_rootRot;   // reused every frame (no per-frame allocation)
         Re.assign(n, Quat::Identity);
+        UpdateLean(dt);
+        if (m_leanPitch != 0.0f || m_leanRoll != 0.0f) {
+            // Spread over the hips and spine so it reads as the whole body leaning.
+            pose[HumanoidMotion::B_HIPS].x  += m_leanPitch * 0.3f;  pose[HumanoidMotion::B_HIPS].z  += m_leanRoll * 0.3f;
+            pose[HumanoidMotion::B_TORSO].x += m_leanPitch * 0.7f;  pose[HumanoidMotion::B_TORSO].z += m_leanRoll * 0.7f;
+        }
         for (int b = 0; b < n; ++b) {
             Quat q = Quat::Euler(pose[b]);
             Re[b] = sk[b].parent >= 0 ? Re[sk[b].parent] * q : q;
@@ -83,18 +134,27 @@ public:
             Quat desired = Re[e.bone] * e.align * e.restRootRel;      // root-frame target
             Quat rp = ChainRotation(g->transform->Parent(), rig);     // parent chain, current
             Quat local = rp.Inverse() * desired;
-            g->transform->localRotation = weight >= 1.0f
-                ? local.Normalized()
-                : Quat::Slerp(e.restLocal, local.Normalized(), weight);
+            Quat out = weight >= 1.0f ? local.Normalized() : Quat::Slerp(e.restLocal, local.Normalized(), weight);
+            if (fadeW < 1.0f) {
+                out = Quat::Slerp(e.snapRot, out, fadeE);
+                // A clip leaves the hips wherever its walk had them: ease them back to the rest.
+                if (e.bone == HumanoidMotion::B_HIPS && e.hasRestPos)
+                    g->transform->localPosition = e.snapPos + (e.restPos - e.snapPos) * fadeE;
+            }
+            g->transform->localRotation = out;
         }
         // Crouch / prone / landing dip: lower the whole model like the blocky
         // rig lowers its root (StanceOffset is in player-local units already).
         // (When the rig IS this object — built-in animations on a standalone
         // model — leave its position alone: that's where you placed it.)
-        if (rig != gameObject) {
-            Vec3 so = ch->StanceOffset();
-            rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
-        }
+        ApplyStanceDrop(rig, ch);
+    }
+    /// Crouch / prone / landing dip: lower the whole model like the blocky rig
+    /// lowers its root (StanceOffset is in player-local units already).
+    void ApplyStanceDrop(GameObject* rig, Character* ch) {
+        if (rig == gameObject) return;
+        Vec3 so = ch->StanceOffset();
+        rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
     }
 
     /// Detect the humanoid bones by name under `rigRoot` and capture the rest
@@ -108,32 +168,11 @@ public:
         m_rig = rigRoot;
         m_rigRestPos  = rigRoot->transform->localPosition;
 
-        // ---- 1. name-match the imported bones ----------------------------
-        // Mixamo (mixamorig:LeftUpLeg), engine mannequin rigs (thigh_l,
-        // upperarm_l, spine_01..05 — Quaternius' newer packs use it), Blender /
-        // Rigify (upper_arm.L, DEF-thigh.L) and plain names. Helper bones that
-        // only LOOK similar (ik_hand_l, upperarm_twist_01_l, ball_l, thumb_01_l,
-        // *_end, poles, controls) are skipped, and an exact canonical name beats
-        // a substring hit, so node order in the file doesn't matter.
+        // ---- 1. name-match the imported bones (Animation/HumanoidBones.hpp) --
         const int N = Character::BoneCount();
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(rigRoot, boneMap);
         std::vector<GameObject*> node(N, nullptr);
-        std::vector<int> depth(N, -1), score(N, -1);
-        for (const auto& up : s.Objects()) {
-            GameObject* g = up.get();
-            if (!g || g == rigRoot || !g->IsSelfOrDescendantOf(rigRoot) || !g->transform) continue;
-            int sc = 0;
-            const int bone = ClassifyBone(g->name, sc);
-            if (bone < 0) continue;
-            int d = 0;
-            for (Transform* t = g->transform->Parent(); t && t != rigRoot->transform; t = t->Parent()) ++d;
-            // Better score wins; on a tie the torso keeps the DEEPEST spine link
-            // (spine_03 over spine_01), everything else the shallowest.
-            if (node[bone]) {
-                if (sc < score[bone]) continue;
-                if (sc == score[bone] && (bone == 1 ? d <= depth[bone] : d >= depth[bone])) continue;
-            }
-            node[bone] = g; depth[bone] = d; score[bone] = sc;
-        }
+        for (int b = 0; b < N && b < humanoid::BoneCount; ++b) node[b] = bm.bone[b];
 
         // ---- 2. capture rest + build the alignment -----------------------
         const std::vector<Character::Bone> sk = ch->Skeleton();
@@ -146,8 +185,29 @@ public:
             float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
             return len > 1e-5f ? d * (1.0f / len) : Vec3{0, 0, 0};
         };
+        // Bind pose from the skin's inverse bind, when this bone is a joint.
+        // The transform in a scene saved mid-play is the animated pose.
         Mat4 rootInv = rigRoot->transform->LocalToWorldMatrix().Inverse();
-        auto rootRelPos = [&](GameObject* g) { return rootInv.MultiplyPoint(g->transform->Position()); };
+        auto bindOf = [&](GameObject* g, Quat& local, Vec3& rootPos, Vec3* localPos = nullptr) -> bool {
+            if (!g || !g->transform) return false;
+            for (const auto& up : s.Objects()) {
+                if (!up || !up->IsSelfOrDescendantOf(rigRoot)) continue;
+                auto* sm = up->GetComponent<SkinnedMesh>();
+                if (!sm || !sm->transform) continue;
+                Quat lr; Vec3 lp, meshPos;
+                if (!sm->BindJoint(g->transform, lr, lp, meshPos)) continue;
+                local = lr;
+                if (localPos) *localPos = lp;
+                rootPos = rootInv.MultiplyPoint(sm->transform->LocalToWorldMatrix().MultiplyPoint(meshPos));
+                return true;
+            }
+            return false;
+        };
+        auto rootRelPos = [&](GameObject* g) {
+            Quat lr; Vec3 rp;
+            if (bindOf(g, lr, rp)) return rp;
+            return rootInv.MultiplyPoint(g->transform->Position());
+        };
         std::vector<Quat> align(N, Quat::Identity);
         static const int parentOf[15] = {-1, 0, 1, 1, 3, 4, 1, 6, 7, 0, 9, 10, 0, 12, 13};
         static const int childOf[15]  = {1, 2, -1, 4, 5, -1, 7, 8, -1, 10, 11, -1, 13, 14, -1};
@@ -172,9 +232,21 @@ public:
             e.bone = b;
             e.node = node[b]->name;
             e.go = node[b];
-            e.restLocal = node[b]->transform->localRotation;
-            e.restRootRel = ChainRotation(node[b]->transform->Parent(), rigRoot) *
-                            node[b]->transform->localRotation;
+            Quat bindLocal; Vec3 bindRoot, bindPos;
+            if (bindOf(node[b], bindLocal, bindRoot, &bindPos)) { e.restLocal = bindLocal; e.restPos = bindPos; e.hasRestPos = true; }
+            else e.restLocal = node[b]->transform->localRotation;
+            // Parents saved mid-play are animated too: accumulate each bone's
+            // bind local, and only fall back to the transform when it isn't a joint.
+            Quat chain = Quat::Identity;
+            for (Transform* t = node[b]->transform; t && t != rigRoot->transform; t = t->Parent()) {
+                Quat local = t->localRotation;
+                if (t->gameObject) {
+                    Quat bl; Vec3 rp;
+                    if (bindOf(t->gameObject, bl, rp)) local = bl;
+                }
+                chain = local * chain;
+            }
+            e.restRootRel = chain;
             e.align = align[b];
             m_map.push_back(e);
             ++m_mapped;
@@ -186,71 +258,7 @@ public:
     /// Which engine humanoid bone (0 hips, 1 torso, 2 head, 3-5 left arm,
     /// 6-8 right arm, 9-11 left leg, 12-14 right leg) a bone name stands for,
     /// or -1. `score` = 2 for an exact canonical name, 1 for a looser match.
-    static int ClassifyBone(const std::string& rawName, int& score) {
-        score = 0;
-        std::string nm;
-        {   // drop "mixamorig:" / "Armature|" / "DEF-" style prefixes, lowercase
-            std::string s0 = rawName;
-            std::size_t cut = s0.find_last_of(":|");
-            if (cut != std::string::npos) s0 = s0.substr(cut + 1);
-            for (char c : s0) nm += (char)std::tolower((unsigned char)c);
-            for (const char* pre : {"def-", "def_", "org-", "mch-", "bip01 ", "bip01_", "bip001 ", "bip001_", "b_", "bone_"})
-                if (nm.rfind(pre, 0) == 0) { nm = nm.substr(std::char_traits<char>::length(pre)); break; }
-            if (nm.rfind("mixamorig", 0) == 0) nm = nm.substr(9);
-        }
-        auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
-        // Helpers that are never the deforming limb bone itself.
-        static const char* kSkip[] = {"ik_", "_ik", "ik.", ".ik", "twist", "roll", "ball", "toe", "thumb",
-            "index", "middle", "ring", "pinky", "finger", "_end", ".end", "end_", "tip", "pole", "target",
-            "ctrl", "control", "helper", "corrective", "weapon", "prop", "socket", "attach", "center_of_mass",
-            "interaction", "dummy", "nub", "jaw", "eye", "tongue", "breast", "hair"};
-        for (const char* k : kSkip) if (has(k)) return -1;
-        // Normalise separators so "upper_arm.l", "upperarm_l", "UpperArm L" compare equal.
-        std::string key;
-        for (char c : nm) if (std::isalnum((unsigned char)c)) key += c;
-        static const std::pair<const char*, int> kExact[] = {
-            {"hips", 0}, {"pelvis", 0}, {"hip", 0},
-            {"head", 2},
-            {"leftarm", 3}, {"upperarml", 3}, {"larm", 3}, {"arml", 3}, {"lupperarm", 3}, {"leftupperarm", 3},
-            {"leftforearm", 4}, {"lowerarml", 4}, {"forearml", 4}, {"lforearm", 4}, {"lelbow", 4}, {"leftlowerarm", 4},
-            {"lefthand", 5}, {"handl", 5}, {"lhand", 5},
-            {"rightarm", 6}, {"upperarmr", 6}, {"rarm", 6}, {"armr", 6}, {"rupperarm", 6}, {"rightupperarm", 6},
-            {"rightforearm", 7}, {"lowerarmr", 7}, {"forearmr", 7}, {"rforearm", 7}, {"relbow", 7}, {"rightlowerarm", 7},
-            {"righthand", 8}, {"handr", 8}, {"rhand", 8},
-            {"leftupleg", 9}, {"thighl", 9}, {"lthigh", 9}, {"leftupperleg", 9}, {"leftthigh", 9}, {"upperlegl", 9},
-            {"leftleg", 10}, {"calfl", 10}, {"shinl", 10}, {"lcalf", 10}, {"lshin", 10}, {"leftlowerleg", 10}, {"lowerlegl", 10}, {"leftknee", 10},
-            {"leftfoot", 11}, {"footl", 11}, {"lfoot", 11}, {"leftankle", 11},
-            {"rightupleg", 12}, {"thighr", 12}, {"rthigh", 12}, {"rightupperleg", 12}, {"rightthigh", 12}, {"upperlegr", 12},
-            {"rightleg", 13}, {"calfr", 13}, {"shinr", 13}, {"rcalf", 13}, {"rshin", 13}, {"rightlowerleg", 13}, {"lowerlegr", 13}, {"rightknee", 13},
-            {"rightfoot", 14}, {"footr", 14}, {"rfoot", 14}, {"rightankle", 14},
-        };
-        for (const auto& e : kExact) if (key == e.first) { score = 2; return e.second; }
-        // Torso: any spine / chest link (the deepest one wins in the caller).
-        if (key.rfind("spine", 0) == 0 || key.rfind("chest", 0) == 0 || key == "upperchest" || key == "torso") { score = 2; return 1; }
-        // Looser matches.
-        auto endsW = [&](const char* k) {
-            std::size_t kl = std::char_traits<char>::length(k);
-            return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
-        };
-        const bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l") || endsW(" l");
-        const bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r") || endsW(" r");
-        score = 1;
-        if (!isLeft && !isRight) {
-            if (has("hips") || has("pelvis")) return 0;
-            if (has("spine") || has("chest")) return 1;
-            if (has("head") && !has("top")) return 2;
-            return -1;
-        }
-        const int side = isLeft ? 0 : 1;
-        if (has("shoulder") || has("clavicle") || has("collar")) return -1;
-        if (has("hand") || has("wrist")) return 5 + side * 3;
-        if (has("forearm") || has("lowerarm") || has("elbow") || (has("fore") && has("arm"))) return 4 + side * 3;
-        if (has("upperarm") || has("uparm") || (has("arm") && !has("lower"))) return 3 + side * 3;
-        if (has("upleg") || has("upperleg") || has("thigh")) return 9 + side * 3;
-        if (has("foot") || has("ankle")) return 11 + side * 3;
-        if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) return 10 + side * 3;
-        return -1;
-    }
+    static int ClassifyBone(const std::string& rawName, int& score) { return humanoid::ClassifyBone(rawName, score); }
 
 private:
     struct MapEntry {
@@ -260,6 +268,10 @@ private:
         Quat restLocal;          ///< bind local rotation (weight blend target)
         Quat restRootRel;        ///< bind rotation relative to the rig root
         Quat align;              ///< rest-stance alignment (imported dir -> engine dir)
+        Vec3 restPos{0, 0, 0};   ///< bind local position (the hips are eased back to it after a clip)
+        bool hasRestPos = false;
+        Quat snapRot;            ///< the pose an imported clip left, the fade-in's start
+        Vec3 snapPos{0, 0, 0};
     };
     std::vector<MapEntry> m_map;
     std::vector<Quat> m_rootRot;            // per-frame scratch (root-frame bone rotations)
@@ -270,6 +282,42 @@ private:
     Vec3 m_rigRestPos{0, 0, 0};
     int  m_mapped = 0;
     bool m_init = false;
+    bool  m_clipHadPose = false;   // last frame an imported clip owned the pose
+    float m_fade = 1.0f, m_fadeDur = 0.0f;   // ease-in from that clip's pose (done when m_fade >= m_fadeDur)
+    // Lean: the body's smoothed velocity and acceleration, from how the player moves.
+    Vec3  m_leanPos{0, 0, 0}, m_leanVel{0, 0, 0}, m_leanAcc{0, 0, 0};
+    bool  m_haveLean = false;
+    float m_leanPitch = 0.0f, m_leanRoll = 0.0f;
+
+    /// Lean into acceleration and turns, eased: a push forward from a standstill
+    /// tips the body ahead, braking tips it back, a curve rolls it toward the
+    /// centre. Capped at a few degrees so it never reads as a stagger.
+    void UpdateLean(float dt) {
+        Transform* t = gameObject ? gameObject->transform : nullptr;
+        if (!t || dt <= 1e-5f) return;
+        const Vec3 p = t->Position();
+        if (m_haveLean) {
+            Vec3 d = p - m_leanPos; d.y = 0.0f;
+            Vec3 v = d.SqrMagnitude() > 4.0f ? m_leanVel : d * (1.0f / dt);   // a teleport isn't speed
+            const Vec3 vPrev = m_leanVel;
+            m_leanVel = m_leanVel + (v - m_leanVel) * (1.0f - std::exp(-dt / 0.08f));
+            const Vec3 a = (m_leanVel - vPrev) * (1.0f / dt);
+            m_leanAcc = m_leanAcc + (a - m_leanAcc) * (1.0f - std::exp(-dt / 0.15f));
+        }
+        m_leanPos = p; m_haveLean = true;
+        const Quat q = t->Rotation();
+        const Vec3 fwd = q * Vec3{0.0f, 0.0f, -1.0f}, right = q * Vec3{1.0f, 0.0f, 0.0f};   // controllers walk along local -Z
+        const float along = Vec3::Dot(m_leanAcc, fwd), across = Vec3::Dot(m_leanAcc, right);
+        auto cap = [](float v, float m) { return v > m ? m : (v < -m ? -m : v); };
+        // Moving only: a body standing still doesn't tip because something shoved the capsule.
+        const float moving = std::fmin(1.0f, std::sqrt(m_leanVel.x * m_leanVel.x + m_leanVel.z * m_leanVel.z) / 0.8f);
+        const float k = leanScale > 0.0f ? leanScale : 0.0f;
+        const float wantPitch = cap(along * 0.9f, 5.0f) * k;
+        const float wantRoll  = cap(across * 1.2f, 6.0f) * k * moving;
+        const float e = 1.0f - std::exp(-dt / 0.1f);
+        m_leanPitch += (wantPitch - m_leanPitch) * e;
+        m_leanRoll  += (wantRoll  - m_leanRoll)  * e;
+    }
 
     /// Accumulated rotation of the parent chain from (exclusive) rigRoot down
     /// to `t` (inclusive) using the CURRENT local rotations.

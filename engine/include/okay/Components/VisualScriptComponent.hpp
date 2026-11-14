@@ -21,7 +21,7 @@ namespace okay {
 class VisualScriptComponent : public Behaviour {
 public:
     /// Use an already-built graph.
-    void SetGraph(std::unique_ptr<vs::NodeGraph> graph) { m_graph = std::move(graph); }
+    void SetGraph(std::unique_ptr<vs::NodeGraph> graph) { AdoptGraph(std::move(graph)); }
     /// Build the graph from the OkayVS text format. Returns false on parse error.
     bool LoadFromText(const std::string& text, std::string* error = nullptr);
     /// Load a graph from a .okayvs file.
@@ -42,6 +42,13 @@ public:
     const std::unordered_map<std::string, vs::VsValue>& Variables() const { return m_ctx.variables; }
     /// Read back a blackboard variable (handy for tests/gameplay glue).
     vs::VsValue GetVariable(const std::string& name) const;
+    /// Run a named message: the entry of that name, and OnEvent:<name>.
+    /// Send Message and Broadcast use this. Does nothing when the graph has neither.
+    void Send(const std::string& message) {
+        if (message.empty()) return;
+        Fire(message.c_str(), nullptr);
+        Fire(("OnEvent:" + message).c_str(), nullptr);
+    }
 
     void Start() override;
     void Update(float dt) override;
@@ -113,6 +120,8 @@ public:
         Fire(entry, other);
     }
     /// Set a blackboard variable from outside (Set Object Var node, gameplay code).
+    /// Put each declared variable's default in its scope (object / scene / global) unless already set.
+    void ApplyDeclDefaults();
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 
     /// Most custom events that may trigger each other in a chain within one call.
@@ -128,26 +137,36 @@ private:
         m_ctx.variables["impact_speed"]   = vs::VsValue(impactSpeed);
     }
     void FireContact(const char* entryName, const Collision2D& c) {
-        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        if (!m_graph) return;
         SetContact(Vec3{c.point}, Vec3{c.normal}, c.impactSpeed);
         Fire(entryName, c.gameObject);
+        if (std::string(entryName) == "OnCollision") FireTagged("OnCollisionTag:", c.gameObject);
     }
     void FireContact(const char* entryName, const Collision3D& c) {
-        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        if (!m_graph) return;
         SetContact(c.point, c.normal, c.impactSpeed);
         Fire(entryName, c.gameObject);
+        if (std::string(entryName) == "OnCollision") FireTagged("OnCollisionTag:", c.gameObject);
     }
     void FireTrigger(const char* entryName, Collider2D* other) {
-        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        if (!m_graph) return;
         const TriggerContact2D* tc = Physics2D::CurrentTrigger();
         SetContact(tc ? Vec3{tc->point} : Vec3::Zero, tc ? Vec3{tc->normal} : Vec3::Zero, 0.0f);
-        Fire(entryName, other ? other->gameObject : nullptr);
+        GameObject* o = other ? other->gameObject : nullptr;
+        Fire(entryName, o);
+        if (std::string(entryName) == "OnTrigger") FireTagged("OnTagEnter:", o);
+        else if (std::string(entryName) == "OnTriggerStay") FireTagged("OnTagStay:", o);
+        else if (std::string(entryName) == "OnTriggerExit") FireTagged("OnTagExit:", o);
     }
     void FireTrigger(const char* entryName, Collider3D* other) {
-        if (!m_graph || m_graph->Entries(entryName).empty()) return;
+        if (!m_graph) return;
         const TriggerContact3D* tc = Physics3D::CurrentTrigger();
         SetContact(tc ? tc->point : Vec3::Zero, tc ? tc->normal : Vec3::Zero, 0.0f);
-        Fire(entryName, other ? other->gameObject : nullptr);
+        GameObject* o = other ? other->gameObject : nullptr;
+        Fire(entryName, o);
+        if (std::string(entryName) == "OnTrigger") FireTagged("OnTagEnter:", o);
+        else if (std::string(entryName) == "OnTriggerStay") FireTagged("OnTagStay:", o);
+        else if (std::string(entryName) == "OnTriggerExit") FireTagged("OnTagExit:", o);
     }
     void Fire(const char* entryName, GameObject* other) {
         if (!m_graph || !ScriptsRun(gameObject)) return;
@@ -173,9 +192,19 @@ private:
     const vs::NodeGraph* m_scanned = nullptr;
     std::vector<KeyEntry> m_keyEntries;
     std::vector<TimerEntry> m_timerEntries;
+    struct ActionEntry { std::string entry; std::string action; int edge; };   // 0 pressed, 1 released, 2 held
+    std::vector<ActionEntry> m_actionEntries;
+    std::vector<std::string> m_gestureEntries;   // OnTap, OnSwipe:up, ...
+    float m_lastHealth = -1.0f;
+    bool  m_sawHealth = false;
+    bool  m_deathFired = false;
+    void PollGameplay(float dt);
+    void FireTagged(const char* prefix, GameObject* other);
     std::unique_ptr<vs::NodeGraph> m_graph;
     std::unique_ptr<vs::NodeGraph> m_pendingGraph;   // a reload that arrived while m_graph was running
     void ApplyPendingGraph();
+    /// Swap in `graph`, copying node state (and parked chains) off the old one by file id.
+    void AdoptGraph(std::unique_ptr<vs::NodeGraph> graph);
     vs::VsContext m_ctx;
     std::string m_source;
     std::string m_path;

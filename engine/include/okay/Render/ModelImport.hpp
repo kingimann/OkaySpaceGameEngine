@@ -19,6 +19,7 @@ namespace okay {
 
 class Scene;
 class GameObject;
+class ModelAnimator;
 
 /// True if this build includes the Assimp importer (compiled with OKAY_USE_ASSIMP).
 bool AssimpAvailable();
@@ -62,9 +63,12 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 /// matching bones by name.
 /// Returns how many of the 15 humanoid bones were found (< 8 = not set up;
 /// `outLog` says why).
-int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr);
+/// `byHand`: bones picked by hand (HumanoidRetarget::boneMap, BoneCount names), or null.
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr,
+                            const std::string* byHand = nullptr);
 /// How many of the 15 humanoid bones a model's skeleton has (0 = not a humanoid rig).
-int CountHumanoidBones(Scene& scene, GameObject* modelRoot);
+int CountHumanoidBones(Scene& scene, GameObject* modelRoot, std::string* why = nullptr,
+                       const std::string* byHand = nullptr);
 
 /// World-space bounds of every mesh under `root` as currently posed (skinned
 /// meshes deformed from their joints, whatever the renderer's skinning mode).
@@ -94,6 +98,52 @@ std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* m
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 
+/// True when `go` reads player input (a person controller). An NPC or a bare
+/// Character is not one.
+bool IsPlayableAvatar(GameObject* go);
+
+/// A third-person player wearing the model at `path`, with humanoid IK
+/// (feet, built-in fallback when the skeleton matches, and Look-At IK on the
+/// head). Returns the player, or nullptr if the file does not import.
+/// `onto`, when it is a playable avatar, receives the model and no second
+/// player is created. Otherwise a new player is added and every other active
+/// playable avatar is deactivated (not destroyed); `outLog` names them.
+GameObject* MakePlayableCharacter(Scene& scene, const std::string& path,
+                                  std::string* outLog = nullptr,
+                                  GameObject* onto = nullptr);
+
+/// What drives a player's imported model: which locomotion slots (Idle, Walk,
+/// Run, Jump...) play one of the model's own clips and which play the engine's
+/// built-in animation retargeted onto the skeleton.
+struct CharacterModelInfo {
+    struct Slot {
+        int slot = 0;                 ///< ModelAnimator::Slot
+        const char* label = "";
+        std::string clip;             ///< the clip named in the slot ("" = none)
+        int source = 0;               ///< 0 empty, 1 imported clip, 2 built-in animation
+    };
+    bool valid = false;               ///< the player has an imported model
+    std::string model;                ///< the model object's name
+    int mappedBones = 0, totalBones = 15;   ///< humanoid bones the built-in animation can pose
+    int source = 0;                   ///< 0 none, 1 imported clips, 2 built-in retargeted, 3 mixed
+    int importedSlots = 0, builtinSlots = 0;
+    bool builtinAvailable = false;    ///< a retargeted Character is ready to fill empty slots
+    bool characterOff = false;        ///< the default blocky Character is disabled (the model replaced it)
+    ModelAnimator* animator = nullptr;
+    std::vector<Slot> slots;
+};
+const char* CharacterAnimationSourceName(int source);
+/// Read how `player`'s imported model is animated. False when it has none.
+bool DescribeCharacterModel(Scene& scene, GameObject* player, CharacterModelInfo& out);
+/// After a locomotion slot's clip changed on a retargeted model: clips drive the
+/// slots that have one (movement-driven, in place) and the built-in animation
+/// covers the rest. Does nothing for a model that isn't retargeted.
+void SettleCharacterLocomotion(ModelAnimator* ma);
+/// Re-run the clip auto-mapping on `player`'s model and switch the built-in
+/// animation on for every locomotion slot still without a clip. Returns a
+/// one-line summary for the console.
+std::string FixCharacterAnimations(Scene& scene, GameObject* player);
+
 /// Add the animation clips stored in `path` (Mixamo "without skin" downloads,
 /// any FBX/glTF with takes) to the model under `modelRoot`. Bones are matched
 /// by name, ignoring rig prefixes ("mixamorig:LeftArm" == "LeftArm"). When the
@@ -102,6 +152,13 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
 /// made for another character doesn't stretch this one. Idle/walk/run/jump are
 /// mapped from the clip names if not set yet. Returns how many clips were added;
 /// `outLog` gets a one-line summary (or why nothing was added).
+/// Fill a model's empty locomotion clip slots (idle, walk, run, jump, fall,
+/// land, crouch, crouch walk, prone, crawl, get up, strafe, back) from its clip
+/// names. A slot that already has a name is left alone.
+void AutoMapLocomotion(ModelAnimator* ma);
+/// The clip name AutoMap would put in an empty slot, or "" if nothing matches.
+/// Does not change `ma`. A slot that already has a name (even a missing one) returns "".
+std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot);
 int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path,
                           std::string* outLog = nullptr);
 

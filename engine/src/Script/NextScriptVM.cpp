@@ -1,4 +1,5 @@
 #include "okay/Scripting/NextScriptVM.hpp"
+#include <cctype>
 #include "ScriptInternal.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -130,12 +131,34 @@ void NextScriptVM::CallEvent(const std::string& function) {
     if (function == "on_enable") { RunMethod("OnEnable"); return; }
     if (function == "on_disable") { RunMethod("OnDisable"); return; }
     if (function == "on_destroy") { RunMethod("OnDestroy"); return; }
-    // Anything else is a public method by name (e.g. a UI button's On Click).
+    // Anything else is a public method by name (e.g. a UI button's On Click). An
+    // engine event's snake_case name also reaches the handler spelled the C# way
+    // (on_sequence_event -> OnSequenceEvent).
     if (!m_impl->prog) return;
-    int idx = m_impl->prog->MethodIndex(function);
+    std::string name = function;
+    int idx = m_impl->prog->MethodIndex(name);
+    if (idx < 0 && function.find('_') != std::string::npos) {
+        name.clear();
+        bool up = true;
+        for (char ch : function) {
+            if (ch == '_') { up = true; continue; }
+            name += up ? (char)std::toupper((unsigned char)ch) : ch;
+            up = false;
+        }
+        idx = m_impl->prog->MethodIndex(name);
+    }
     if (idx < 0) return;
     const MethodDecl& m = m_impl->prog->Component()->methods[(std::size_t)idx];
-    if (m.isPublic && m.params.empty() && m.lifecycle < 0) RunMethod(function);
+    if (m.isPublic && m.params.empty() && m.lifecycle < 0) RunMethod(name);
+}
+
+std::vector<std::string> NextScriptVM::GlobalNames() const {
+    std::vector<std::string> out;
+    if (!m_impl->inst) return out;
+    if (const ClassDecl* c = m_impl->inst->program().Component())
+        for (const FieldDecl& f : c->fields)
+            if (!f.isConst && !f.isStatic) out.push_back(f.name);
+    return out;
 }
 
 namespace {

@@ -15,6 +15,18 @@ entry <name> <id>            # mark an entry node ("OnStart" / "OnUpdate")
 # comments start with '#'
 ```
 
+An exec output may have **any number of `exec` lines**. They run in the order the
+lines appear in the file (the editor writes them in the order the wires were made,
+and keeps that order across save and load), each one to the end of its chain
+before the next starts, exactly as a Sequence's outputs do. A Delay or Wait in
+one chain parks only that chain; the others still run the same frame. A step that
+cannot run (a missing Target, say) is reported and skipped without skipping the
+other wires; only a runaway-loop stop ends the whole event. The loader puts an
+invisible Sequence behind such a pin, so the debugger steps into each wire in turn
+and never stops on that helper. A **Sequence** node stays useful for a visible,
+labelled order; a plain fan-out is the same thing without the extra node. A data
+output can feed any number of inputs, an input takes one wire.
+
 ## Node types
 
 **Events** (1 exec out): `OnStart`, `OnUpdate`
@@ -46,7 +58,8 @@ passes any value type through), `Concat` (in0+in1 as strings),
 **Data — Steam**: `SteamName`, `SteamIsUnlocked <achievement>`,
 `SteamGetStat <name>`
 
-**Data — physics & tween**: `VelX` / `VelY` (this object's Rigidbody2D velocity),
+**Data — physics & tween**: `VelX` / `VelY` / `VelZ` (this object's Rigidbody2D or
+Rigidbody3D velocity; a 2D body reads 0 on Z),
 `Raycast` (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist] → did it hit?),
 `EaseIn` / `EaseOut` / `EaseInOut` (shape a 0..1 `t` for smooth motion — feed into
 `Lerp`)
@@ -78,7 +91,10 @@ peers, at this object's position), `NetDespawn` (in0=sync id), `NetReady` (in0=b
 - `Repeat <n>` — run the downstream chain `n` times, then continue
 - `Once` — pass through only the first time it's reached (one-shot setup)
 - `Timer <seconds>` — pass through at most once every `seconds` (accumulates
-  `DeltaTime`); ideal for "every N seconds" pulses under `OnUpdate`
+  `DeltaTime`, keeps the leftover, and clamps that leftover to four intervals).
+  Zero, negative, and NaN pass every time. Ideal for "every N seconds" pulses
+  under `OnUpdate`. Generate script emits the same gate (`Time.deltaTime`, then
+  the following nodes inside the `if`)
 - `Wait <seconds>` — one-shot delay: blocks until `seconds` elapse, then passes
   through from then on (combine with `Once` for a single deferred action)
 - `FlipFlop` — alternate between exec out 0 and 1 on each execution
@@ -146,7 +162,10 @@ see exactly where it points before you press Play.
   `deactivate`, `set_active`, `set_tag`), rendering/audio (`set_text`,
   `set_color`, `emit`, `play_anim`, `play_sound`, `set_cam`, `set_bg`,
   `set_light`, `set_ambient`), physics (`velocity`, `impulse`), data
-  (`set_prefs`, `add_prefs`, `save_prefs`), **scenes** (`load_scene`,
+  (`set_prefs`, `add_prefs`, `save_prefs`), **save slots** (`game_save`, `game_load`,
+  `game_continue`, `game_autosave`, `game_delete_slot`, `game_slot_exists`,
+  `game_can_continue`, `game_slot_age`, `game_slot_text`; see
+  `docs/save_framework.md`, "Saving without code"), **scenes** (`load_scene`,
   `load_scene_index`, `load_next_scene`), **raycasting** (`raycast` — store the
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
@@ -243,6 +262,10 @@ Text (a Text object), Load Scene.
 **Animation & IK:** Anim Trigger, Anim Set Float, Anim Set Bool, Anim State
 (drive the Animator state machine), IK Look At and IK Hand Reach (Full Body IK).
 
+**Look:** Set Weather (none / rain / snow / storm, Intensity), Set Fog (On,
+Start, End) and Set Post Effect (a post-processing value by name) change the
+scene's weather, fog and post-processing; see [rendering.md](rendering.md).
+
 ## Third wave of nodes
 
 **Flow:** For Loop (First/Last; the **Index** output reads the current index, then
@@ -264,7 +287,7 @@ data node to read one back.
 **Input & engine:** Raycast 2D (origin, direction, max distance; outputs Hit),
 Mouse Wheel, Time Scale, Frame Count.
 
-**Multiplayer & Steam** (its own palette category): Host Game, Join Game
+**Online:** Host Game, Join Game
 (`host port` or `host:port`), Disconnect, Is Connected / Is Server / Is Client,
 Peer Count, My Net Id, Send Message, Set / Get Net Var, Send Chat, Call RPC, Net
 Spawn / Despawn, Set Ready, Start Match, Match Started, All Ready, Steam Name,
@@ -275,15 +298,20 @@ Submit Score.
 - **Search** is forgiving: `ply snd` finds Play Sound. Close matches come first,
   and the matched letters are highlighted.
 - **Keys:** **Up / Down** pick a result and **Enter** adds it.
-- **Sidebar:** browse by category, by **Do something** / **Check something**
-  (the Actions library), by **Recent**, or by **Favourites**. Click a node's star
-  to make it a favourite.
+- **Sidebar:** browse by topic (Events, Flow, Variables, Math, and the rest in
+  [visual_scripting_naming.md](visual_scripting_naming.md)), by **Recent**, or by
+  **Favourites**. A large topic opens into subcategories. Click a node's star
+  to make it a favourite. Searching for an old group name ("Do something",
+  "Check something", "Engine API", "Transform") still finds those nodes.
 - **Details:** the strip at the bottom says what the highlighted node takes and
   gives.
 - **Dragging from a pin:** only the nodes that fit that pin are listed.
 
 **Typed values:** every unconnected input has an inline box, so a Print node
-can print text without wiring a Const. Graphs attach from the Inspector (Add
+can print text without wiring a Const. Print has a **Text** box and an optional
+**Value** input: Text alone prints the text, Value alone prints the value, both
+print `Text: Value` (Key Held into Value with the text `Space held` logs
+`Space held: true`). Graphs saved before Value existed print exactly as before. Graphs attach from the Inspector (Add
 Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragging a
 `.okayvs` onto an object, or with **Attach to Selected** in the node editor.
 
@@ -334,14 +362,31 @@ Every N Times.
 
 ## Flow Graph editor: working faster
 
+- **Drag a component header, or Position / Rotation / Scale, from the Inspector
+  onto the graph.** Transform, Camera and Light drop a Get Position node.
+  Sprite, Mesh and Text drop Set Color. A rigidbody drops Set Velocity. Audio
+  drops Play Sound. Position, Rotation and Scale drop the matching getter.
+  Anything else drops a Const labelled with that name.
 - **Drag a wire into empty space** and the node palette opens, filtered to nodes
-  that fit; the node you pick is wired to that pin.
+  whose pin type can take that wire (a Number does not offer a Vector3-only
+  input). The bar names the type. The search box also matches pin types, so
+  typing `object` or `number` finds those nodes. The node you pick is wired to
+  that pin.
 - **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the
   selection; dragging any selected node moves the whole selection.
 - **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;
   **Del** deletes the selection; **Ctrl+A** selects everything.
 - **Ctrl+Z / Ctrl+Y** undo and redo every edit (moves, wiring, values).
-- **Alt+click a pin** to break its wires; right-click a node ▸ Break All Wires.
+- A flow output (On Start, On Update, any step) takes **as many wires as you like**;
+  drag from it again to add another. They run in the order you made them.
+- **Alt+click a pin** to break its wires; **Alt+click a wire** to break just that
+  one; right-click a node ▸ Break All Wires.
+- **Right-click a node ▸ Connect to...** shows what can plug into it. Each pin of
+  the node (flow in, each flow out, each value in and out) has its own list of
+  the nodes that fit that pin, easiest first and exact type matches ahead of
+  nodes that merely accept it. Pick one and it is added already wired; **Search
+  all** opens the full list for that pin (the same list as dropping a wire on
+  empty canvas).
 - **Comments** (toolbar *Comment*, or **C**): a titled, coloured frame around the
   selected nodes. Drag its title to move the group, drag the corner to resize,
   double-click to rename, right-click for colour / delete.
@@ -357,10 +402,11 @@ Every N Times.
 The Flow Graph window and the Actions list are gone as separate editors: everything
 is built in the **Visual Script** graph.
 
-- **+ Add > Do something / Check something** lists every step the Actions component
-  had (Move, Play Sound, Set Variable, Has Tag, ...). They become `Action` and
-  `Condition` (Check, True/False) nodes; click a node's grey line to edit its
-  arguments with the same friendly fields.
+- The Add Node menu lists every step the Actions component had (Move, Play Sound,
+  Set Variable, Has Tag, ...) in the topic it belongs to. A step that does the
+  same job as a hand-written node is not a second browse row; search still finds
+  it by its old label. They become `Action` and `Condition` (Check, True/False)
+  nodes; click a node's grey line to edit its arguments with the same friendly fields.
 - **Action Steps** (`Actions`) keeps a whole list together: Wait, If / Repeat /
   While blocks, jumps. The chain continues once the list finishes.
 - **Delay (s)** really pauses the chain and continues it later (once). The older
@@ -376,7 +422,11 @@ is built in the **Visual Script** graph.
 File format: `node <id> Action "<op> <args>"`, `node <id> Actions "<step> ; <step>"`,
 `node <id> Condition "<op> <args>"`, `node <id> Delay <seconds>`. Arguments are
 %-escaped (no spaces, quotes, `#` or `;` inside one), `%-` is an empty argument.
-OkayScript export: `run_action("...")` / `check_action("...")`.
+OkayScript export: an Action or Condition node is `run_action("...")` / `check_action("...")`.
+An Actions component exports as `actions_load("...")` with the list's own text, so every
+step and trigger runs on an Actions component (`editor/ActionExport.hpp`). A graph node
+that has no script fails the export: the Problems list and the node itself name it, and
+View as OkayScript does not offer a script that skips the node.
 
 Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
 left jumps to each chain; right- or middle-drag pans; F frames the selection.
@@ -540,6 +590,8 @@ Every data pin has a type, shown by its colour (hover a pin to see it):
 | yellow | Vector3 |
 | blue | Object |
 | cyan | List |
+| purple | Map (a struct is a map with declared fields) |
+| orange | Color |
 | grey | Any (variables, events, Select, Equals, Format...) |
 
 A wire is allowed when its value means something in the input:
@@ -547,7 +599,9 @@ A wire is allowed when its value means something in the input:
 - Number ↔ Bool;
 - anything → Text;
 - Text → Object (a name);
-- Object → Bool (does it still exist?).
+- Object → Bool (does it still exist?);
+- Vector3 ↔ Color (the red, green and blue channels; a Vector3 gets alpha 1);
+- Text → Color (`"#ff8800"`).
 
 Anything else is **refused when you drop the wire**, with a tip, for example
 "A Vector3 can't go into a Number input - use Vec X / Vec Y / Vec Z or Vec3
@@ -573,9 +627,14 @@ with a "!" you can hover for the details. It finds:
 errors, the build stops and Build Settings lists them, with **Build anyway** and
 **Dismiss**. Warnings never stop a build.
 
-Not covered yet: integer, Vector2, colour, quaternion and enum values. Pins use
-the types above; colours stay R / G / B / A numbers and rotations stay Euler
-Vector3s.
+Not covered yet: integer, Vector2, quaternion and enum values. Rotations stay Euler
+Vector3s, and the engine nodes that take a colour as R / G / B / A numbers still do
+(Split Color gives you those four numbers).
+
+Declared variables add more pin types: a Get Var of a variable declared `Vector3` has a
+Vector3 output, a Set Var of one declared `Number` takes a Number, and a list declared
+`List<Number>` makes List Get's Item a Number, and the checker refuses a Vector3 wired
+into List Add on it. See "Declared variables" below.
 
 ## Functions
 
@@ -634,9 +693,11 @@ entry OnStart 0
 
 ## Engine API nodes
 
-The **Engine API** group in the node search holds one node for every property and
-method of the typed script language: GameObject, Transform, Rigidbody, Vector3, Input,
-Time, Mathf and Debug. That language is `okayscript-next` in the Script Editor's
+Every property and method of the typed script language is a node in the topic it
+belongs to (Movement, Math, Physics, Input, and the rest). There is no separate
+Engine API group. Search for "engine api" still lists them. A binding that does
+the same job as a hand-written node (Mathf.Abs, Transform.Translate) is hidden
+while browsing and still appears in search. That language is `okayscript-next` in the Script Editor's
 language list, with scripts written as `class Name : Behaviour { ... }`. These nodes
 are generated from the same binding table that language uses, and they call the same
 code. Anything added to that table appears as a
@@ -673,7 +734,7 @@ it equals:
   parameters it takes).
 
 The older hand-made nodes (Translate, Get Position, Add Force...) still work and stay
-in their groups. The **Engine API** nodes are the ones that match the scripts exactly.
+in the same topic. The script-binding nodes are the ones that match the scripts exactly.
 The generated-code preview doesn't translate Engine API nodes yet. It lists them as
 not translated, and each node's tooltip gives the line of script.
 
@@ -686,13 +747,18 @@ not translated, and each node's tooltip gives the line of script.
 | **For Loop** | Runs Body for every number from First to Last (Index), then Done. |
 | **Repeat N** | Runs Body N times. |
 | **While** | Runs Body again and again while Cond is true. Cond is checked before each run. Then Done. |
-| **For Each** | Runs Body once per item of a List, with Item and Index (counted from 0), then Done. It walks the list as it was when the loop started, so the body may add to or remove from it safely. |
+| **For Each** | Runs Body once per item of a List, with Item and Index (counted from 0), then Done. It walks the list as it was when the loop started, so the body may add to or remove from it safely. A Delay in the body pauses the loop; the next item runs on a later frame. |
+| **For Each Map** | Same, for a map. Key and Value are set for each entry, keys in sorted order. |
 | **Break** | Leaves the loop whose Body runs it. The loop goes on to Done. |
 | **Continue** | Skips the rest of this run of the Body. The loop goes on to the next item. |
 
 - Break and Continue act on the innermost loop. In nested loops they only affect the inner one.
 - Before Play, the checker says when a Break / Continue isn't inside a loop's Body. While playing it's reported in the Console. That includes one that's after the loop's Done, or inside a function that has no loop of its own: Break doesn't reach out of a function into the loop that called it.
 - A loop that never ends (a While whose Cond stays true) is stopped by the event's step budget and reported. The game keeps running.
+- **Delay** and **Wait** inside a loop body pause that loop. The chain is picked up on a later frame and the loop continues with the next item (or the rest of the same one). A Sequence does not wait: its other outputs still run the same frame.
+- **Every (s)** keeps the leftover time. A 1 second timer that sees a 1.4 second frame fires and is 0.4 seconds into the next interval, instead of starting the interval over.
+- **Once** and **Do N Times** take a Reset input. Wire true into it to arm them again.
+- Editing a graph during Play keeps variables, and keeps node state that is tied to the same node id: Once, timers, a Delay that is still counting, a loop paused on a Delay. Deleting the node drops that state.
 
 ### Lists
 
@@ -703,8 +769,39 @@ Lists are shared: every node that reads `bag` sees the same list. The other list
 - **List Length**
 - **List Contains**
 - **List Remove At**
+- and Insert, Set, Find, Remove Item, Sort, Reverse, Clear and Copy (see "Declared variables, lists, maps and structs")
 
 **All With Tag** gives every active object with a tag as a list, and so do the 3D Overlap queries. Walk one with For Each.
+
+### Maps
+
+**New Map** makes an empty map from names to values. Keep it in a variable, then **Map Set** (Map, Key, Value). The same rules as lists: the map is shared, so every reader sees the write.
+
+- **Map Get** returns the value and Found (false when the key is missing; that is not an error)
+- **Map Has**, **Map Remove**
+- **Map Keys** / **Map Values** are lists, keys in sorted order, so a run is repeatable
+- **For Each Map** walks those entries. Break stops early
+
+### Ready-made gameplay
+
+A beginner set sits on top of the low-level nodes. It does not replace Move Towards, Look At, Teleport, Nav Move To, Clamp, Lerp, Play Sound, Play Music, Load Scene, or the other nodes that already did that job. Each new node uses a sensible default when a pin is left empty, and a missing object or component is a node error.
+
+Movement: Turn Towards, Orbit Around Center, Follow Path, Move Upward and Downward, Spin, Knock Back, Follow Smoothly. Tweens (the caller waits): Tween Position, Rotation, Scale and Color. Animation: Crossfade Animation, Stop Animation, Wait for Animation End. Interaction: On Interact (E within 2 units), Pick up, Drop, Open Door, Close Door, Flip Lever, Collect, On Tag Enter / Stay / Exit, Is Nearby. Combat: Apply Damage, Heal, Is Dead, On Death, On Health Changed, Respawn (a Health component), Spawn Projectile, Shoot, Use Ammo. AI: Patrol Waypoints, Chase Target, Flee From Threat, Wander Around, Is Target Visible. Spawning: Spawn Every Few Seconds, Destroy After Seconds, Take From Pool, Release to Pool. Flow: Add Score, Set Score, Get Score, Count Down, Show Win, Show Loss, Restart Scene, Save Checkpoint, Load Checkpoint (the existing save). UI: Set Progress, Show Floating Text, Fade Screen. Camera: Set Camera Target, Zoom Camera, Switch Camera. Audio: Play Sound Here, Stop Sound (the Audio Source; music stays on Play Music / Stop Music). Input: On Action Pressed / Released / Held (interact, jump, fire, or a key name) and Get Move Direction. Utility: Pick Random Item, Pick Random Point, Shuffle List, Find Smallest, Find Largest, On Collision With Tag.
+
+The Visual Script toolbar's Recipes menu drops in a whole graph: collect coins and score, an enemy that chases and damages, a door with a key, a health pickup, and a countdown that ends in a win.
+
+### Switches, gates and calling out
+
+- **Switch on Name** (`SwitchString`) and **Switch on Number** (`SwitchCases`): one pin per case in the text field (comma separated, or **+ case**), then Default. An older file that wired Default to pin 4 still hits Default. Switch Number is still the fixed Zero / One / Two / Default node.
+- A **Delay** or **Wait** inside a function pauses the **Call Function**. The caller continues when the wait finishes, with the same arguments and locals. A called graph's own Delay is kept if the parent graph is reloaded during Play.
+- **Latch Gate** starts closed (type `open` to start open). Open, Close and Toggle are pulses. The flow passes only while the latch is open.
+- **Is Valid** is false for a destroyed object, a name that finds nothing, or a number that isn't finite.
+- **Call Script** calls a function on this object's text script (`function bump(n) { return n + 1; }`) and reads the return value. The other direction already exists: a script's `send_event` runs On Custom Event.
+- **Run Another Graph** runs another `.okayvs` file's event on this object (`door_logic.okayvs` or `door_logic.okayvs|Open`). Variables are shared. A relative path only, no `..`.
+
+### Values
+
+A number written as text (`"3"`, `" -1.5 "`) counts as that number in math and in Branch. The words `true` / `false` / `yes` / `no` (any case) and the text `"0"` count as true or false. Any other text is true when it isn't empty. A destroyed object is false. NaN is false. Dividing or taking a remainder by zero reports an error and yields 0.
 Reading or removing past the end of a list is reported, not ignored.
 
 ### Scene and global variables
@@ -726,6 +823,235 @@ They give the new **Value** and the **Old** one.
 - **What counts as a change:** setting the same value again isn't a change. Neither is a value that was already there when the object started.
 - **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
 - **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.
+
+## Declared variables, lists, maps and structs
+
+Until now a variable was a name you typed on a Get Var / Set Var node, holding whatever was put in it.
+A graph can now **declare** a variable: give it a type, a scope and a starting value, edit that value in
+the editor and the Inspector, and have the checker and the runtime hold it to the type.
+
+### What was already there, and what was added
+
+This table is the audit this work started from (HAVE = it worked before, GAP = it did not) and what is true now.
+
+| Area | Before | Now |
+|---|---|---|
+| Variable scopes | HAVE: Object (`Get / Set / Add Var`), Scene, Global (each with Get / Set / Add), function Locals (`Set / Get Local`), Get / Set Object Var on another object | Same nodes. Declarations choose the scope: `object` (this graph's own), `scene`, `global`. |
+| Declaring a variable | GAP: only an old `var name value` line (number or text, no editor to add one) | `decl name Type scope default` lines; the Variables panel adds, renames, retypes, rescopes and removes them |
+| Number / Bool / Text | HAVE as untyped values; `var` rows edited as number or text | Typed: Set Var / Add Var / Set Scene Var / Set Global Var convert a fit (`"3"` to 3) and report a misfit without storing it |
+| Vector3 | HAVE as a value (Make Vec3, Vec X); GAP as a declared or editable default | Declarable; default edited with a three-field drag; Add Var adds vectors |
+| Color | GAP: no colour value or pin | New Color type and pin, Make Color, Split Color, `#rrggbb` / `#rrggbbaa` literals, a colour picker for defaults, a swatch in the watch panel |
+| Object | HAVE as a reference value (Self, Find Object...) | Declarable (default is a name or `@guid:`), type-checked at Set Var |
+| List | HAVE: New List, Add, Remove At, Get, Length, Contains, For Each, Shuffle, Min / Max. GAP: Insert, Set, Find, Remove by value, Sort, Reverse, Clear, Copy; element types; editable default; save / load | All of those added; `List<T>` element types; item-by-item default editor; saved and loaded with the game |
+| Map | HAVE: New Map, Set, Get, Has, Remove, Keys, Values, For Each Map. GAP: Clear, Count, Copy; value types; editable default; save / load | Added; `Map<T>`; entry-by-entry default editor; saved and loaded |
+| Struct | GAP | `struct` lines, a Structs section in the Variables panel, New Struct / Get Field / Set Field with typed fields |
+| Copy versus reference | HAVE (lists and maps are shared) but undocumented | Documented below; Copy List / Copy Map (shallow or deep); every object, scene and run gets its own deep copy of a declared default |
+| Bounds / key errors | HAVE for List Get / Remove At (reported with the node). A NaN or huge index could hit an unchecked cast | Every index is checked first (NaN, infinity and huge values included), reported with the node, nothing changes |
+| Inspector defaults | HAVE for number and text `var` rows only | Every declared type, any scope; live while playing |
+| Debugger watch | HAVE for numbers, text, objects and lists | Every type, readable on one line: vectors, colours (with a swatch), lists and maps with their size and first items, structs |
+| Checker | HAVE: pin types, unset variables. GAP: variable and element types | Typed Get / Set pins, element types for lists and maps, struct field types, a declaration that doesn't load |
+| Serialization | HAVE: the graph text is the scene / prefab data. GAP: lists, maps, colours dropped from play-time saves | Declarations are part of the graph text, so they round-trip with the scene and prefab. Save slots keep lists, maps and colours |
+
+### Declaring a variable
+
+In the Visual Script window's left sidebar, **Declared variables**: type a name, pick a scope and a type, press **Add variable**.
+Each declared variable then has a row with its name (Enter renames it, and the nodes that use it follow), scope, type, and a
+default edited with the widget for its type: a number drag, a checkbox, a text field, three drags for a Vector3, a colour
+picker for a Color, an object name, and for a list or map one row per item with **x** to remove it and **+ Add item** /
+**+ Add entry**. Lists, maps, structs and objects also have the default as one line of text you can edit and press Enter on.
+The **x** next to the name removes the declaration; nodes that use the name keep working, untyped.
+
+| Scope | Meaning | Where the default lands |
+|---|---|---|
+| `object` | this graph's own variables (the same ones Get Var / Set Var use). Each object that uses the graph gets its own | the object's variables when it starts |
+| `scene` | shared by every graph in the scene (Get / Set Scene Var) | the scene's variables, the first time a graph that declares it starts |
+| `global` | whole game run (Get / Set Global Var) | the global variables, the first time |
+
+A default never overwrites something already set. Declaring a variable while playing gives it its default straight away.
+Function locals (`Set Local`) stay untyped: they live for one call.
+
+**Types:** Number, Bool, Text, Vector3, Color, Object, List, Map, `List<T>` and `Map<T>` (T is Number, Bool, Text, Vector3, Color, Object
+or Any), or the name of a struct. Lists inside lists are allowed; their items aren't typed beyond "list".
+
+### Typing at run time
+
+A declared variable keeps its type. Set Var, Add Var, Set Scene Var and Set Global Var fit the new value to it first:
+
+- a value that converts is converted (`"3"` to 3, a Vector3 to a Color, a number to Text);
+- a value that doesn't is **reported with the node's id and the variable keeps its old value**: `Set Var 'hp': expected Number, got Vector3; the variable keeps its value`;
+- for `List<Number>` and `Map<Vector3>` every item is checked (and converted in place, so the list stays the same list); the report names the item (`item 2: expected Number, got Vector3`);
+- an undeclared name (and an old `var` line) behaves as before: anything goes.
+
+### Copy and reference
+
+| Kind | Behaviour |
+|---|---|
+| Number, Bool, Text, Vector3, Color | values: copied on every read and write |
+| Object | a reference to the object (by id; a destroyed object reads as nothing) |
+| List, Map, Struct | **references**: `Set Var b = Get Var a` makes both names the same list, so a change through one shows in the other. This is what lets List Add work on a list held in a variable. |
+
+To get an independent list use **List Copy** (new list, same items) or **Copy** with **Deep** true (nested lists and maps are copied too);
+**Map Copy** does the same for maps. A struct is a map, so Map Copy copies it. A declared default is deep-copied for every object,
+so two objects that use the same graph never share their lists.
+
+### Lists
+
+All of these report a bad index or a non-list input through the graph's error hook with the node's id, and change nothing.
+Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
+
+| Node | What it does |
+|---|---|
+| New List | an empty list. The text field may name the item type (`Number`, `Vector3`...) so the checker knows it |
+| List Add / List Insert (List, Index, Item) | add at the end / put at an index from 0 to the length; later items move up |
+| List Set | replace the item at an index |
+| List Get / List Length / List Contains | read; Get reports an index outside the list |
+| List Find | Index of the first match (-1 when there is none) and Found |
+| List Remove At / List Remove Item | remove by index / remove the first equal item (Removed says whether there was one) |
+| List Sort | in place, smallest first; Descending true for largest first. Numbers sort as numbers, text alphabetically; a mixed list sorts by kind (numbers, bools, text, vectors, colours, objects, lists, maps) and is stable |
+| List Reverse / List Clear | in place |
+| List Copy | a new list; Deep copies nested lists and maps |
+| For Each | walk a list (existing; the loop walks a snapshot) |
+
+### Maps
+
+| Node | What it does |
+|---|---|
+| New Map, Map Set, Map Get (Value, Found), Map Has, Map Remove, Map Keys, Map Values, For Each Map | as before; keys sort, so a run is repeatable |
+| Map Clear / Map Count | empty it / how many entries |
+| Map Copy | a new map; Deep copies nested lists and maps |
+
+A missing key is not an error: Map Get gives Found false.
+
+### Structs
+
+A struct is a record type declared in the **Structs** section of the Variables panel (or a `struct` line): a name and typed fields, each
+with a default. A struct can use structs declared above it, never itself. A variable declared with a struct's name starts as a struct
+with every field at its default.
+
+- **New Struct** (text: the struct name) makes one; **Get Field** / **Set Field** (text: the field) read and write a field. A field the struct doesn't have, or a value that doesn't fit the field's type, is reported and nothing changes. The checker knows the field's type when the struct comes from a declared variable or New Struct.
+- A struct is a map under the hood: Map Keys, For Each Map and Map Copy work on it. Adding a key with Map Set that the struct doesn't declare is allowed (it is just a map); the next typed Set Var will report it.
+
+### Colors
+
+**Make Color** (R, G, B, A each 0 to 1, clamped; A defaults to 1), **Split Color** (R, G, B, A). A colour prints as `#rrggbbaa`.
+
+### In the file
+
+```
+struct Enemy hp:Number=100 "pos:Vector3=(1, 2, 3)" "tint:Color=#ff0000"
+decl health Number object 100
+decl route List<Vector3> object "[(0, 0, 0), (4, 0, 2)]"
+decl best Number global 0
+decl boss Enemy object
+```
+
+`decl <name> <Type> <object|scene|global> [default]`. The default is one field: quote it when it holds spaces or `#`.
+Literals: `1.5`, `true`, `"text"`, `(1, 2, 3)`, `#ff8800` or `#ff880080`, `[a, b]`, `{key: value}`, `@Name` (an object by name). Literals nest
+up to 16 levels and 100000 items; anything bigger, malformed or of the wrong type makes the line (and so the graph) refuse to load, and the
+checker says which line. `var name value` lines from older graphs still load and mean an untyped object-scope default.
+
+A complete example, `examples/visual_script/declared_variables.okayvs`, declares an array of vectors, a map and a struct, inserts into
+the array, loops over it adding up the vectors' X, stores the total in the map, sets a struct field, sorts the array largest first and
+prints the lot. `vs_variables` runs it and checks every value and both printed lines.
+
+### In the Inspector
+
+An object's Visual Script shows every declared variable with the widget for its type: change a starting value, then press Play. While playing
+the object-scope rows show the live values and edits apply at once (a value that doesn't fit the type is refused in the Console). Starting
+values are written back to the graph file.
+
+### The checker, the watch panel and saving
+
+- The checker (toolbar problems list, Play, Build) refuses a wire of the wrong type into a typed variable, a wrong item into a typed list or
+  map, a wrong value into a struct field, and says when a declaration doesn't load. A declared variable counts as set (it has a default).
+- At a breakpoint the watch panel shows every variable in one line each, whatever its type: `route = list(2) [(0, 0, 0), (4, 0, 2)]`,
+  `boss = map(3) {hp: 100, pos: (1, 2, 3), tint: #ff0000ff}`, a colour with a swatch.
+- A save slot (see `docs/save_framework.md`) keeps lists, maps and colours in variables (nested, as literals). Objects held in a list come
+  back as their names (text), because an object's id doesn't outlive the run.
+
+### Known limits
+
+- List and map element types are checked by the checker and when a declared variable is set, not on every List Add at run time: a list you
+  made with New List and never stored in a typed variable accepts anything.
+- Typed lists of structs (`List<Enemy>`) aren't supported; use a plain List and Get Field, or a Map of structs.
+- The editor refuses a wrong wire only for the pin's own type; a wrong element or struct field type shows in the Problems list instead.
+- Renaming a variable renames the nodes that use it in the open graph; other graphs that reach it by Get Object Var are not touched.
+
+## Tweens, springs and eases
+
+Seven node types shape motion with the engine's tween, spring and ease code (the same code behind the script
+`tween_*` calls and `ease_curve`; see [timers_and_tweens.md](timers_and_tweens.md)). The type is the word in a
+`.okayvs` file.
+
+| Node (`type`) | Pins | What it does |
+|---|---|---|
+| **Ease With Curve** (`EaseCurve`) | in **Time** (0..1); out **Value**; setting: the ease | Shapes a time into an eased value. The setting is an ease by name (`OutBack`, `out_quad`) or a curve: `cubic-bezier(0.4, 0, 0.2, 1)`, `steps(4)`, `steps(4, start)`, `ease`, `ease-in-out`. A curve may overshoot 0..1. Time is clamped to 0..1 and NaN counts as 0; text it does not know leaves the time as it is. |
+| **Spring Step** (`SpringStep`) | exec; in **Target**, **Stiffness** (120), **Damping** (14); out **Value**, **Velocity**; setting: where it starts | Moves a value toward the target the way a spring would, once each time it runs, by the frame time: put it under *On Update*. It carries its velocity, so a new target bends the motion instead of restarting it. Damping `2 * sqrt(stiffness)` never overshoots, less rings, more is sluggish. The same answer for a long frame as for many short ones. The setting is a number to start from; blank starts at the first target, so it does not swing in. A target that is not a number leaves it where it is. |
+| **Tween Move** (`TweenMove`) | exec; in **X**, **Y**, **Z**, **Seconds**, **Ease**, **Target**; setting: tag | Moves this object's (or the Target's) local position to the point in that many seconds (default 1). An axis nothing feeds stays where it is. **Ease** is text as above (blank: Out Quad). The tween starts on the next frame. |
+| **Tween Move By Speed** (`TweenMoveSpeed`) | the same, with **Speed** in place of Seconds | The move lasts as long as the distance needs: 6 units at speed 3 take 2 seconds (default speed 5). A speed of zero or less moves at once. |
+| **Kill Tweens With Tag** (`TweenKillTag`) | exec; in **Complete** (jump to the end first); out **Count**; setting: tag | Ends every tween of the scene with that tag (the tag is set by *Tween Move*'s setting, `tween_tag(id, "tag")` in a script, a Tween Animation's **Tag** or `Tweener::SetTag`) and says how many. |
+| **Pause Tweens With Tag** (`TweenPauseTag`) | exec; out **Count**; setting: tag | Freezes them where they are. |
+| **Play Tweens With Tag** (`TweenPlayTag`) | exec; out **Count**; setting: tag | Resumes them. |
+
+In the editor all seven are in the node search and palette (**Ease With Curve** and **Spring Step** under Math, the rest under Action), with their help text. **Generate script** turns Ease With Curve into `ease_curve(t, "text")`, Tween Move / Tween Move By Speed into `tween_move3(...)` (wrapped in `tween_speed_based(...)` and `tween_tag(..., "tag")`), and the tag nodes into `tween_kill_tag` / `tween_pause_tag` / `tween_play_tag`; **Spring Step** has no script call and is listed under "NOT TRANSLATED".
+
+A graph that eases a number by hand:
+
+```
+node 1 OnUpdate
+node 2 SpringStep 0          # starts at 0
+default 2 0 10               # chases 10
+default 2 1 100              # stiffness
+default 2 2 20               # damping: 2 * sqrt(100), no overshoot
+node 3 SetVar x
+entry OnUpdate 1
+exec 1 0 2
+exec 2 0 3
+data 3 0 2 0                 # x = the spring's Value
+```
+
+## Nodes the sections above skip
+
+These are in the node search. The [palette index](#palette-index) at the end lists every hand-written node, in the same groups as the sidebar.
+
+**Animation clip events.** **On Anim Event** runs when a clip fires an event. Its setting is the event name; leave it blank to run for every clip event. **Anim Event Name** reads the name of the event that started the chain.
+
+**UI show and hide.** **Show UI** turns a UI object on (blank = this object) and plays its UI Animation intro. **Hide UI** plays the outro, then hides it; with no UI Animation it hides immediately.
+
+**Object RPCs and sync vars** (Multiplayer & Steam):
+
+| Node | What it does |
+|---|---|
+| Call Object RPC | Calls a named RPC on this object's NetworkObject. **Data** is the payload. |
+| On Object RPC | Runs when that named object RPC arrives. **Value** is the payload. |
+| Set Sync Var | Writes this object's SyncVar of that name. With no SyncVar component, a locally owned object still publishes the value as a net var named `<net id>.<name>`. |
+| Get Sync Var | Reads that SyncVar, or the same net var when the component is absent. |
+
+**Inventory.** These run on the object whose inventory changed. **Event Name** is the item, slot, or recipe. **Event Value** is the count or the item, when the event has one.
+
+| Node | When |
+|---|---|
+| On Item Added / On Item Removed | A stack was added or removed. Event Value is the count. |
+| On Inventory Full | An add did not fit. Event Value is how many were left over. |
+| On Item Used | An item was used. |
+| On Equip | An item was equipped. Event Name is the slot, Event Value the item. Taking it off does not fire this node. |
+| On Craft | A recipe finished. Event Name is the output item. |
+
+**Cutscenes** (a Sequence Player plays a `.okayseq`, see docs/cutscenes.md): **Play Sequence** and **Stop Sequence** steps, and
+**On Sequence Event** (blank catches every event; Event Name reads it).
+
+**Localization** (the project's string table, see docs/localization.md): **Localize** reads a key's text in the
+player's language with `{0}`..`{2}` from its inputs, **Get Language** and **Set Language** read and switch the
+language, and **On Language Changed** runs after a switch (Event Name is the new code).
+
+**Anti-cheat** (the server; the scene needs an Anti-Cheat Config):
+
+| Node | What it does |
+|---|---|
+| On Cheat Detected | A check failed. Event Name is the kind, Event Value the peer. |
+| On Validate Rpc | An RPC is about to run. Event Name is the RPC, Event Value its data. **Reject Rpc** in that chain refuses it. |
+| On Validate Hit | A hit claim is being checked. Event Name is the weapon, Event Value the shooter. **Reject Hit** refuses it. |
+| Server Budget | That RPC's remaining budget for a player. **Player** is the peer id, **Add** tops it up first (0 only reads). **Left** is what remains, or -1 when that RPC has no budget. |
 
 ## Debugging: breakpoints, stepping and the watch panel
 
@@ -776,3 +1102,423 @@ The keys work while the Visual Script window has focus.
 
 - **Saving:** you can edit and save the graph while the game is paused. The running copy keeps going with the old graph until the paused event ends; the next event uses the saved one.
 - **Removing objects:** removing objects, undo, a new scene and loading a scene all let the frozen frame finish first.
+
+## Palette index
+
+Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`).
+The Add Node menu uses the topics in [visual_scripting_naming.md](visual_scripting_naming.md), not the older group headings below.
+The words in bold are the name on the node. The word in backticks is the type stored in a `.okayvs` file.
+Names follow [visual_scripting_naming.md](visual_scripting_naming.md). Searching for an older name (for example "On Collision" or "On Var Changed") still finds the node.
+Script-binding nodes are the generated list in [engine_api.md](engine_api.md): one node for each script property and method. They are not copied here.
+
+### Events
+
+- **On Start** (`OnStart`)
+- **On Every Frame** (`OnUpdate`) — was On Update
+- **On Late Update** (`OnLateUpdate`)
+- **On Physics Update** (`OnFixedUpdate`) — was On Fixed Update. Runs 50 times a second, before On Every Frame, so a long frame does not speed it up
+- **On Enabled** (`OnEnable`) — was On Enable
+- **On Disabled** (`OnDisable`) — was On Disable
+- **On Destroyed** (`OnDestroy`) — was On Destroy
+- **On Every Few Seconds** (`OnTimer`) — was On Timer
+- **On Key Pressed** (`OnKey`) — setting: key
+- **On Key Released** (`OnKeyUp`) — setting: key
+- **On Click** (`OnClick`)
+- **On Mouse Pressed** (`OnMouseDown`) — was On Mouse Down
+- **On Mouse Released** (`OnMouseUp`) — was On Mouse Up
+- **On Mouse Entered** (`OnMouseEnter`) — was On Mouse Enter
+- **On Mouse Left** (`OnMouseExit`) — was On Mouse Exit
+- **On Mouse Hover** (`OnMouseOver`) — was On Mouse Over
+- **On Collision Start** (`OnCollision`) — was On Collision
+- **On Collision Stay** (`OnCollisionStay`)
+- **On Collision End** (`OnCollisionExit`) — was On Collision Exit
+- **On Trigger Enter** (`OnTrigger`) — was On Trigger
+- **On Trigger Stay** (`OnTriggerStay`)
+- **On Trigger Exit** (`OnTriggerExit`)
+- **On Animation Marker** (`OnAnimEvent`) — was On Anim Event; setting: event (blank = any)
+- **On Message** (`OnEvent`) — was On Custom Event; out Value; setting: event name
+- **On Object Placed** (`OnObjectPlaced`)
+- **On Object Removed** (`OnObjectRemoved`)
+- **On Signal** (`OnLogicSignal`) — was On Logic Signal
+- **On Item Added** (`OnItemAdded`)
+- **On Item Removed** (`OnItemRemoved`)
+- **On Inventory Full** (`OnInventoryFull`)
+- **On Item Used** (`OnItemUsed`)
+- **On Item Equipped** (`OnEquip`) — was On Equip
+- **On Item Crafted** (`OnCraft`) — was On Craft
+- **On Cutscene Marker** (`OnSequenceEvent`) — was On Sequence Event
+- **On Conversation Line** (`OnDialogueEvent`) — was On Dialogue Event
+- **On Conversation Ended** (`OnDialogueEnd`) — was On Dialogue End
+- **On Quest Started** (`OnQuestStarted`)
+- **On Quest Completed** (`OnQuestCompleted`)
+- **On Quest Failed** (`OnQuestFailed`)
+- **On Objective Completed** (`OnObjectiveCompleted`)
+- **On Quest Message** (`OnQuestEvent`) — was On Quest Event
+- **On Cheat Detected** (`OnCheatDetected`)
+- **On Network Action** (`OnValidateRpc`) — was On Validate Rpc
+- **On Hit Check** (`OnValidateHit`) — was On Validate Hit
+- **On Language Changed** (`OnLanguageChanged`) — the message name is the new language's code
+- **On Value Changed** (`OnVarChanged`) — was On Var Changed; out Value, Previous
+- **On Scene Value Changed** (`OnSceneVarChanged`) — was On Scene Var Changed; out Value, Previous
+- **On Game Value Changed** (`OnGlobalVarChanged`) — was On Global Var Changed; out Value, Previous
+
+### Flow
+
+- **Branch** (`Branch`) — in Condition
+- **Sequence** (`Sequence`) — continues to First, then Second
+- **Run Once** (`Once`) — was Once
+- **Every Seconds** (`Timer`) — was Every (s); setting: seconds. Passes at most once per interval and keeps the leftover. Generate script uses that same gate
+- **Wait Once** (`Wait`) — was Wait (s). Waits the first time, then stays open
+- **Wait Seconds** (`Delay`) — was Delay (s). Pauses, then continues, and waits again next time
+- **Cooldown** (`Cooldown`) — was Cooldown (s)
+- **For Loop** (`ForLoop`) — in First, Last; out Index
+- **Repeat** (`Repeat`) — was Repeat N
+- **Flip Flop** (`FlipFlop`) — was Flip-Flop; First, then Second
+- **Gate** (`Gate`) — in Open
+- **Run a Number of Times** (`DoN`) — was Do N Times; out Count
+- **Switch Number** (`SwitchInt`) — was Switch (int); Zero, One, Two, or Default
+- **Random Branch** (`ChanceBranch`) — in Chance
+- **Counter** (`Counter`) — in Reset; out Count
+- **Every Number of Times** (`EveryN`) — was Every N Times; in Times
+- **Define Function** (`FunctionStart`) — was Function
+- **Return** (`Return`)
+- **Call Function** (`CallFunction`)
+- **While** (`While`) — in Condition
+- **For Each** (`ForEach`) — in List; out Item, Index
+- **For Each Map** (`ForEachMap`) — in Map; out Key, Value
+- **Switch on Name** (`SwitchString`) — in Value; setting: cases
+- **Switch on Number** (`SwitchCases`) — in Value; setting: numbers
+- **Latch Gate** (`LatchGate`) — in Open, Close, Toggle; out Is Open
+- **Is Valid** (`IsValid`) — in Value; out Yes
+- **Call Script** (`CallScript`) — in Argument; out Result; setting: function
+- **Run Another Graph** (`RunGraph`) — setting: file or file|Event
+- **Break Loop** (`Break`) — was Break
+- **Continue Loop** (`Continue`) — was Continue
+
+### Variables
+
+- **Get Var** (`GetVar`) — out Value; setting: name
+- **Set Var** (`SetVar`) — in Value; setting: name
+- **Add Var** (`AddVar`) — in Amount; setting: name
+- **Toggle Var** (`Toggle`) — setting: name
+- **Set Object Var** (`SetObjectVar`) — in Target, Value; setting: variable
+- **Get Object Var** (`GetObjectVar`) — in Target; out Value; setting: variable
+- **Save Value** (`SaveValue`) — in Value; setting: key
+- **Load Value** (`LoadValue`) — in Default; out Value; setting: key
+- **Set Local** (`SetLocal`) — in Value; setting: name
+- **Get Local** (`GetLocal`) — out Value; setting: name
+- **Get Scene Var** (`GetSceneVar`) — out Value; setting: name
+- **Set Scene Var** (`SetSceneVar`) — in Value; setting: name
+- **Add Scene Var** (`AddSceneVar`) — in Amount; setting: name
+- **Get Global Var** (`GetGlobalVar`) — out Value; setting: name
+- **Set Global Var** (`SetGlobalVar`) — in Value; setting: name
+- **Add Global Var** (`AddGlobalVar`) — in Amount; setting: name
+
+### Math
+
+- **Add (+)** (`Add`) — in A, B; out Out
+- **Sub (-)** (`Sub`) — in A, B; out Out
+- **Mul (x)** (`Mul`) — in A, B; out Out
+- **Div (/)** (`Div`) — in A, B; out Out
+- **Min** (`Min`) — in A, B; out Out
+- **Max** (`Max`) — in A, B; out Out
+- **Mod (%)** (`Mod`) — in A, B; out Out
+- **Pow (^)** (`Pow`) — in A, B; out Out
+- **Abs** (`Abs`) — in In; out Out
+- **Negate** (`Neg`) — in In; out Out
+- **Sqrt** (`Sqrt`) — in In; out Out
+- **Sin** (`Sin`) — in In; out Out
+- **Cos** (`Cos`) — in In; out Out
+- **Floor** (`Floor`) — in In; out Out
+- **Round** (`Round`) — in In; out Out
+- **Sign** (`Sign`) — in In; out Out
+- **Clamp** (`Clamp`) — in Value, Min, Max; out Out
+- **Lerp** (`Lerp`) — in A, B, T; out Out
+- **Random 0-1** (`Random`) — out Out
+- **Random Range** (`RandomRange`) — in Min, Max; out Out
+- **Vec X** (`VecX`) — in Vec; out X
+- **Vec Y** (`VecY`) — in Vec; out Y
+- **Vec Z** (`VecZ`) — in Vec; out Z
+- **Ease In** (`EaseIn`) — in T; out Out
+- **Ease Out** (`EaseOut`) — in T; out Out
+- **Ease In-Out** (`EaseInOut`) — in T; out Out
+- **Tan** (`Tan`) — in In; out Out
+- **Atan2** (`Atan2`) — in Y, X; out Rad
+- **Exp** (`Exp`) — in In; out Out
+- **Log (ln)** (`Log`) — in In; out Out
+- **Inverse Lerp** (`InverseLerp`) — in A, B, Value; out T
+- **Remap** (`Remap`) — in Value, In Min, In Max, Out Min, Out Max; out Out
+- **Smooth Step** (`SmoothStep`) — in Edge0, Edge1, X; out Out
+- **Ping-Pong** (`PingPong`) — in T, Length; out Out
+- **Repeat (wrap)** (`Repeat01`) — in T, Length; out Out
+- **Move Towards (value)** (`MoveTowardsValue`) — in Current, Target, Max Step; out Out
+- **Delta Angle** (`DeltaAngle`) — in From, To; out Deg
+- **Vec3 Add** (`Vec3Add`) — in A, B; out Vec3
+- **Vec3 Subtract** (`Vec3Sub`) — in A, B; out Vec3
+- **Vec3 Scale** (`Vec3Scale`) — in Vec, Scale; out Vec3
+- **Vec3 Length** (`Vec3Length`) — in Vec; out Length
+- **Vec3 Normalize** (`Vec3Normalize`) — in Vec; out Vec3
+- **Vec3 Dot** (`Vec3Dot`) — in A, B; out Dot
+- **Vec3 Distance** (`Vec3Distance`) — in A, B; out Dist
+- **Random Int** (`RandomInt`) — in Min, Max; out Out
+- **Ceil** (`Ceil`) — in In; out Out
+- **Fraction** (`Frac`) — in In; out Out
+- **One Minus** (`OneMinus`) — in In; out Out
+- **Clamp 0-1** (`Saturate`) — in In; out Out
+- **Asin** (`Asin`) — in In; out Rad
+- **Acos** (`Acos`) — in In; out Rad
+- **Deg to Rad** (`Deg2Rad`) — in Deg; out Rad
+- **Rad to Deg** (`Rad2Deg`) — in Rad; out Deg
+- **Vec3 Cross** (`Vec3Cross`) — in A, B; out Vec3
+- **Vec3 Lerp** (`Vec3Lerp`) — in A, B, T; out Vec3
+- **Vec3 Negate** (`Vec3Negate`) — in Vec; out Vec3
+- **Perlin Noise** (`Noise`) — in X, Y; out Value
+- **Snap To Step** (`Snap`) — in Value, Step; out Out
+- **Wrap** (`Wrap`) — in Value, Min, Max; out Out
+- **Average** (`Average`) — in A, B; out Out
+- **Distance 2D** (`Distance2D`) — in X1, Y1, X2, Y2; out Distance
+
+### Logic
+
+- **Compare** (`Compare`) — in A, B; out Bool
+- **And** (`And`) — in A, B; out Out
+- **Or** (`Or`) — in A, B; out Out
+- **Not** (`Not`) — in In; out Out
+- **Xor** (`Xor`) — in A, B; out Out
+- **Equals** (`Equals`) — in A, B; out Bool
+- **Not Equals** (`NotEquals`) — in A, B; out Bool
+- **Approx Equal** (`Approx`) — in A, B; out Bool
+- **Between** (`Between`) — in Value, Min, Max; out Bool
+- **Chance** (`Chance`) — out Bool; setting: 0..1
+- **Has Var** (`HasVar`) — out Bool; setting: name
+- **Select** (`Select`) — in Cond, A, B; out Out
+- **Contains** (`Contains`) — in Text, Part; out Bool
+- **Check** (`Condition`)
+
+### Input
+
+- **Key Held** (`Key`) — out Down; setting: key
+- **Key Down** (`KeyDown`) — out Pressed; setting: key
+- **Axis X** (`AxisX`) — out X
+- **Axis Y** (`AxisY`) — out Y
+- **Time** (`Time`) — out t
+- **Delta Time** (`DeltaTime`) — out dt
+- **Key Up** (`KeyUp`) — out Released; setting: key
+- **Mouse X** (`MouseX`) — out X
+- **Mouse Y** (`MouseY`) — out Y
+- **Velocity X** (`VelX`) — out X
+- **Velocity Y** (`VelY`) — out Y
+- **Velocity Z** (`VelZ`) — out Z
+- **Mouse Held** (`MouseButton`) — out Down; setting: 0 L / 1 R / 2 M
+- **Mouse Pressed** (`MouseButtonDown`) — out Pressed; setting: 0 L / 1 R / 2 M
+- **Raycast 2D** (`Raycast`) — in Origin X, Origin Y, Dir X, Dir Y, Max Dist; out Hit
+- **Mouse Wheel** (`MouseWheel`) — out Delta
+- **Time Scale** (`TimeScale`) — out Scale
+- **Frame Count** (`FrameCount`) — out Frame
+- **Show Cursor** (`ShowCursor`) — in Visible
+- **Raycast 3D** (`Raycast3D`) — in Origin, Direction, Max Dist, Ignore Triggers; out Hit, Point, Normal, Distance, Object; setting: layers (blank = all)
+- **Sphere Cast** (`SphereCast3D`) — in Origin, Direction, Radius, Max Dist; out Hit, Point, Normal, Distance, Object; setting: layers (blank = all)
+- **Raycast All 3D** (`RaycastAll3D`) — in Origin, Direction, Max Dist; out Count, Objects, Nearest; setting: layers (blank = all)
+- **Overlap Sphere** (`OverlapSphere3D`) — in Center, Radius; out Count, Objects; setting: layers (blank = all)
+- **Overlap Box** (`OverlapBox3D`) — in Center, Half Size; out Count, Objects; setting: layers (blank = all)
+
+### Transform
+
+- **Get X** (`GetX`) — out X
+- **Get Y** (`GetY`) — out Y
+- **Translate** (`Translate`) — in X, Y, Z
+- **Set Position** (`SetPosition`) — in X, Y, Z
+- **Rotate** (`Rotate`) — in Deg
+- **Get Position** (`GetPosition`) — out Pos
+- **Get Z** (`GetZ`) — out Z
+- **Set Scale** (`SetScale`) — in X, Y, Z
+- **Set Rotation** (`SetRotation`) — in Deg
+- **Object Exists** (`ObjectExists`) — in Object; out Bool; setting: name
+- **Object Position** (`ObjectPosition`) — in Object; out Pos; setting: name / self / other
+- **Distance To** (`DistanceTo`) — in Object; out Dist; setting: name / other
+- **Self Name** (`SelfName`) — out Name
+- **Look At** (`LookAt`) — in Object; setting: name / other
+- **Move Towards** (`MoveTowards`) — in Speed, Object; setting: name / other
+- **Forward Vector** (`ForwardVector`) — out Vec3
+- **Right Vector** (`RightVector`) — out Vec3
+- **Up Vector** (`UpVector`) — out Vec3
+- **Get Scale** (`GetScale`) — out Scale
+- **Get Rotation** (`GetRotation`) — out Euler
+- **Set Position (Vec3)** (`SetPositionVec`) — in Pos
+- **Move By (Vec3)** (`MoveBy`) — in Offset
+- **Rotate (3D)** (`Rotate3`) — in X, Y, Z
+- **Set Rotation (3D)** (`SetRotation3`) — in X, Y, Z
+- **Find With Tag** (`FindWithTag`) — out Object; setting: tag
+- **Count With Tag** (`CountWithTag`) — out Count; setting: tag
+- **Nearest With Tag** (`NearestWithTag`) — out Object; setting: tag
+- **Teleport** (`Teleport`) — in X, Y, Z, Object; setting: object (self)
+- **Self** (`Self`) — out Object
+- **Other Object** (`Other`) — out Object
+- **Find Object** (`FindObject`) — out Object; setting: object name
+- **Get Name** (`GetName`) — out Name
+- **Get Tag** (`GetTag`) — out Tag
+- **All With Tag** (`AllWithTag`) — out Objects; setting: tag
+
+### Actions
+
+- **Print** (`Print`) — in Text, Value
+- **Play Sound** (`PlaySound`)
+- **Spawn** (`Spawn`) — in X, Y, Z; out Object; setting: prefab
+- **Destroy** (`Destroy`) — in Target
+- **Log Warning** (`LogWarn`) — in Value
+- **Log Error** (`LogError`) — in Value
+- **Add Force** (`AddForce`) — in X, Y, Z
+- **Set Velocity** (`SetVelocity`) — in X, Y, Z
+- **Add Impulse** (`AddImpulse`) — in X, Y, Z
+- **Set Active** (`SetActive`) — in On, Object; setting: name / self / other
+- **Set Text** (`SetText`) — in Text, Object; setting: text object name
+- **Load Scene** (`LoadScene`) — setting: scene name
+- **Anim Trigger** (`AnimTrigger`) — setting: parameter
+- **Anim Set Float** (`AnimSetFloat`) — in Value; setting: parameter
+- **Anim Set Bool** (`AnimSetBool`) — in Value; setting: parameter
+- **IK Look At** (`IkLook`) — in Point, Weight
+- **IK Hand Reach** (`IkHand`) — in Point, Weight; setting: left / right
+- **Set Weather** (`SetWeather`) — in Intensity; setting: none / rain / snow / storm
+- **Set Fog** (`SetFog`) — in On, Start, End
+- **Set Post Effect** (`SetPostEffect`) — in Value; setting: effect name (bloom, exposure, saturation, ...)
+- **Nav Move To** (`NavMoveTo`) — in Point: the object's Nav Mesh Agent walks there (see docs/navigation.md)
+- **Nav Stop** (`NavStop`) — stops the Nav Mesh Agent
+- **Nav Arrived** (`NavArrived`) — out Bool: true once the last Nav Move To point was reached
+- **Play Music** (`MusicPlay`) — setting: track (a file name or playlist number; empty: current/first): crossfades the scene's Music Player
+- **Stop Music** (`MusicStop`) — in Fade (s): fades the music out and stops
+- **Pause Music** (`MusicPause`) — pauses the scene's music
+- **Resume Music** (`MusicResume`) — resumes paused music
+- **Next Music Track** (`MusicNext`) — crossfades to the next playlist track
+- **Camera Shake** (`CameraShake`) — in Strength (0-1, stacks): shakes the main camera
+- **Set Camera FOV** (`SetFov`) — in Degrees (1-179): the main camera's field of view
+- **Camera Follow** (`CameraFollow`) — in Object name, Smoothing: the main camera eases after that object
+- **Play Particles** (`ParticlePlay`) — starts continuous emission on this object's (or the Target's) Particle System
+- **Stop Particles** (`ParticleStop`) — stops continuous emission
+- **Burst Particles** (`ParticleBurst`) — in Count (default 20): emits that many at once
+- **Set Blackboard** (`BtSet`) — in Value; setting: key: writes the Behavior Tree Runner's blackboard (see docs/behavior_trees.md)
+- **Get Blackboard** (`BtGet`) — out Value; setting: key
+- **Run Tree** (`BtRun`) — setting: tree file: loads a .okaybt on the Behavior Tree Runner and starts it
+- **Set Color** (`SetColor`) — in R, G, B, A
+- **Play Clip** (`PlayClip`) — setting: clip name
+- **Set Time Scale** (`SetTimeScale`) — in Scale
+- **Set Blend Shape** (`SetBlendShape`) — in Weight; setting: shape name
+- **Action** (`Action`)
+- **Action Steps** (`Actions`)
+- **Send Event** (`SendEvent`) — in Target, Value; setting: event name
+- **Broadcast Event** (`BroadcastEvent`) — in Value; setting: event name
+- **Reject Rpc** (`RejectRpc`)
+- **Reject Hit** (`RejectHit`)
+- **Server Budget** (`ServerBudget`) — in Player, Add; out Left; setting: rpc name
+- **Enter Build Mode** (`EnterBuildMode`)
+- **Exit Build Mode** (`ExitBuildMode`)
+- **Set Build Palette** (`SetBuildPalette`) — setting: Name=prefab|icon, ...
+- **Save Creation** (`SaveCreation`) — out Saved; setting: creation name
+- **Load Creation** (`LoadCreation`) — out Loaded; setting: creation name
+- **Add Item** (`AddItem`) — in Count (1); out Left (how many did not fit); setting: item
+- **Remove Item** (`RemoveItem`) — in Count (1); out Removed (all or nothing); setting: item
+- **Has Item?** (`HasItem`) — in Count (1); out Bool; setting: item
+- **Item Count** (`ItemCount`) — out Count; setting: item
+- **Equip** (`EquipItem`) — in Slot; out Equipped; setting: item (moved from the bag; needs an Equipment component)
+- **Craft** (`CraftItem`) — in Times (1); out Crafted; setting: recipe output item (needs a Crafting component)
+- **Loot Roll** (`LootRoll`) — out Rolled; setting: loot table (extras that do not fit drop next to the object)
+- **Spawn Pickup** (`SpawnPickup`) — in Count (1), X, Y, Z; out Name; setting: item
+- **Set Visible** (`SetVisible`) — in Visible
+- **Pause Game** (`PauseGame`) — in Paused
+- **Quit Game** (`QuitGame`)
+- **Show UI** (`ShowUI`) — setting: UI object (self)
+- **Hide UI** (`HideUI`) — setting: UI object (self)
+- **Set Language** (`SetLanguage`) — in Code; setting: code
+
+### Data
+
+- **Const** (`Const`) — out Value; setting: value
+- **Make Vec3** (`MakeVec3`) — in X, Y, Z; out Vec3
+- **Concat (text)** (`Concat`) — in A, B; out Out
+- **Anim Event Name** (`AnimEventName`) — out Name
+- **Other Name** (`OtherName`) — out Name
+- **Other Tag** (`OtherTag`) — out Tag
+- **To Text** (`ToString`) — in Value; out Text
+- **Format Number** (`ToFixed`) — in Value; out Text; setting: decimals
+- **Text Length** (`TextLength`) — in Text; out Len
+- **Upper Case** (`Upper`) — in Text; out Text
+- **Lower Case** (`Lower`) — in Text; out Text
+- **Anim State** (`AnimState`) — out State
+- **Blend Shape** (`GetBlendShape`) — out Weight; setting: shape name
+- **Event Value** (`EventValue`) — out Value
+- **Event Name** (`EventName`) — out Name
+- **In Build Mode?** (`InBuildMode`) — out Bool
+- **Format Text** (`Format`) — in {0}, {1}, {2}; out Text; setting: Score: {0}
+- **Substring** (`Substring`) — in Text, Start, Length; out Text
+- **Replace Text** (`Replace`) — in Text, Find, With; out Text
+- **To Number** (`ToNumber`) — in Text; out Number
+- **Starts With** (`StartsWith`) — in Text, Prefix; out Yes
+- **Ends With** (`EndsWith`) — in Text, Suffix; out Yes
+- **Trim Spaces** (`Trim`) — in Text; out Text
+- **Index Of** (`IndexOf`) — in Text, Find; out Index
+- **Localize** (`Localize`) — in {0}, {1}, {2}; out Text; setting: key
+- **Get Language** (`GetLanguage`) — out Code
+- **Contact Point** (`ContactPoint`) — out Point
+- **Contact Normal** (`ContactNormal`) — out Normal
+- **Impact Speed** (`ImpactSpeed`) — out Speed
+- **New List** (`NewList`) — out List; setting: item type (optional)
+- **New Map** (`NewMap`) — out Map; setting: item type (optional)
+- **Map Set** (`MapSet`) — in Map, Key, Value
+- **Map Get** (`MapGet`) — in Map, Key; out Value, Found
+- **Map Has** (`MapHas`) — in Map, Key; out Yes
+- **Map Remove** (`MapRemove`) — in Map, Key
+- **Map Keys** (`MapKeys`) — in Map; out Keys
+- **Map Values** (`MapValues`) — in Map; out Values
+- **List Add** (`ListAdd`) — in List, Item
+- **List Remove At** (`ListRemoveAt`) — in List, Index
+- **List Get** (`ListGet`) — in List, Index; out Item
+- **List Length** (`ListLength`) — in List; out Count
+- **List Contains** (`ListContains`) — in List, Item; out Bool
+- **List Insert** (`ListInsert`) — in List, Index, Item
+- **List Set** (`ListSet`) — in List, Index, Item
+- **List Find** (`ListFind`) — in List, Item; out Index, Found
+- **List Remove Item** (`ListRemoveItem`) — in List, Item; out Removed
+- **List Sort** (`ListSort`) — in List, Descending
+- **List Reverse** (`ListReverse`) — in List
+- **List Clear** (`ListClear`) — in List
+- **List Copy** (`ListCopy`) — in List, Deep; out Copy
+- **Map Clear** (`MapClear`) — in Map
+- **Map Count** (`MapCount`) — in Map; out Count
+- **Map Copy** (`MapCopy`) — in Map, Deep; out Copy
+- **New Struct** (`StructNew`) — out Struct; setting: struct name
+- **Get Field** (`StructGet`) — in Struct; out Value; setting: field
+- **Set Field** (`StructSet`) — in Struct, Value; setting: field
+- **Make Color** (`MakeColor`) — in R, G, B, A; out Color
+- **Split Color** (`SplitColor`) — in Color; out R, G, B, A
+
+### Multiplayer & Steam
+
+- **Host Game** (`NetHost`) — setting: port (45000)
+- **Join Game** (`NetJoin`) — setting: host [port]
+- **Disconnect** (`NetDisconnect`)
+- **Is Connected** (`NetConnected`) — out Bool
+- **Is Server** (`NetIsServer`) — out Bool
+- **Is Client** (`NetIsClient`) — out Bool
+- **Peer Count** (`NetPeers`) — out Count
+- **My Net Id** (`NetId`) — out Id
+- **Send Message** (`NetSend`) — in Data; setting: channel
+- **Set Net Var** (`NetSetVar`) — in Value; setting: name
+- **Get Net Var** (`NetGetVar`) — out Value; setting: name
+- **Send Chat** (`NetChat`) — in Text
+- **Call RPC** (`NetRpc`) — in Data; setting: rpc name
+- **Net Spawn** (`NetSpawnOwned`) — setting: prefab
+- **Net Despawn** (`NetDespawn`) — in Net Id
+- **Set Ready** (`NetReady`) — in Ready
+- **Start Match** (`NetStartMatch`)
+- **Match Started** (`NetMatchStarted`) — out Bool
+- **All Ready** (`NetAllReady`) — out Bool
+- **Call Object RPC** (`NetObjRpc`) — in Data; setting: rpc name
+- **Set Sync Var** (`SyncVarSet`) — in Value; setting: name
+- **Get Sync Var** (`SyncVarGet`) — out Value; setting: name
+- **On Object RPC** (`OnNetRpc`) — out Value; setting: rpc name
+- **Steam Name** (`SteamName`) — out Name
+- **Achievement Unlocked** (`SteamIsUnlocked`) — out Bool; setting: achievement id
+- **Unlock Achievement** (`SteamUnlock`) — setting: achievement id
+- **Get Steam Stat** (`SteamGetStat`) — out Value; setting: stat
+- **Set Steam Stat** (`SteamSetStat`) — in Value; setting: stat
+- **Store Stats** (`SteamStore`)
+- **Submit Score** (`SteamLeaderboard`) — in Score; setting: leaderboard

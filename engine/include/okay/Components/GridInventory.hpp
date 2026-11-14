@@ -42,6 +42,9 @@ public:
     /// Items Validate() couldn't fit in the grid (after the grid shrank, or from a bad
     /// file). Kept and saved — never deleted — and put back as soon as there's room.
     std::vector<GridItem> overflow;
+    /// Carry the contents into the next scene loaded with load_scene: the object with
+    /// the same name there (usually the player) gets them.
+    bool keepOnSceneLoad = false;
 
     /// Unturned-style role of this container, shown as the label above its grid in the
     /// multi-container screen ("Shirt", "Pants", "Vest", "Backpack", "Hands", ...). When
@@ -57,7 +60,7 @@ public:
 
     /// Is the w×h block at (x,y) fully in-bounds and free (ignoring item `ignore`)?
     bool CanPlace(int x, int y, int w, int h, int ignore = -1) const {
-        if (x < 0 || y < 0 || w < 1 || h < 1 || x + w > cols || y + h > rows) return false;
+        if (x < 0 || y < 0 || w < 1 || h < 1 || (long long)x + w > cols || (long long)y + h > rows) return false;
         for (int i = 0; i < (int)items.size(); ++i) {
             if (i == ignore) continue;
             const GridItem& it = items[i];

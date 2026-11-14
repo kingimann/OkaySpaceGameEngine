@@ -71,6 +71,38 @@ void Step(Scene& s, std::vector<char> keys, int n) {
 
 // Prone / crouch body for either controller: crawl under a low bar, can't stand
 // under it, stands up by itself once clear; gamepad tap/hold; allowProne off.
+// Crouch / prone through a StanceControl: keys (where the controller has them) or
+// SetStance, the collider eases down and back up, slower on the way, no jump.
+template <class C>
+void StanceOn(bool keys) {
+    Scene s("stance");
+    Block(s, "Ground", {0, -0.5f, 0}, {100, 1, 100});
+    GameObject* p = Templates::BuildPlayerBody(s, {0, 0.02f, 0}, "Player");
+    auto* c = p->AddComponent<C>();
+    auto* box = p->GetComponent<BoxCollider3D>();
+    StanceControl& sc = c->stanceControl;
+    sc.allowProne = true;                                          // off by default on the top-down one
+    s.Start();
+    Step(s, {}, 30);
+    if (keys) { sc.crouchKey = Input::KeyCtrl; Step(s, {Input::KeyCtrl}, 1); }
+    else c->SetStance(1);
+    Step(s, {}, 3);
+    CHECK_EQ(sc.Stance(), 1);
+    CHECK(box->size.y < 1.79f && box->size.y > 1.2f);              // on the way down, not snapped
+    Step(s, {}, 30);
+    CHECK_NEAR(box->size.y, 1.8f * sc.crouchHeight, 1e-3f);
+    CHECK_NEAR(box->offset.y, box->size.y * 0.5f, 1e-3f);          // feet stay on the ground
+    CHECK_NEAR(sc.Speed(4.0f), sc.crouchSpeed, 1e-4f);
+    c->SetStance(2); Step(s, {}, 60);
+    CHECK_NEAR(box->size.y, 1.8f * sc.proneHeight, 1e-3f);
+    c->SetStance(0); Step(s, {}, 60);
+    CHECK_EQ(sc.Stance(), 0);
+    CHECK_NEAR(box->size.y, 1.8f, 1e-3f);
+    sc.allowProne = false; c->SetStance(2); Step(s, {}, 5);
+    CHECK_EQ(sc.Stance(), 0);
+    Input::FeedKeys({});
+}
+
 template <class C>
 void ProneBody(void (*tpl)(Scene&)) {
     Scene s("prone"); tpl(s);
@@ -215,6 +247,33 @@ int main() {
     // ---- Prone in first and third person ----
     ProneBody<ThirdPersonController>(Templates::ThirdPerson);
     ProneBody<FirstPersonController>(Templates::FPS);
+
+    // ---- Crouch / prone on the other movement controllers ----
+    StanceOn<CharacterController3D>(true);
+    StanceOn<ThirdPersonShooterController>(true);
+    StanceOn<TopDownController>(true);
+    StanceOn<ClickToMoveController>(false);
+    StanceOn<NPCController>(false);
+    {
+        Scene s("ser");
+        GameObject* p = Templates::BuildPlayerBody(s, {0, 0, 0}, "N");
+        auto* npc = p->AddComponent<NPCController>();
+        npc->stanceControl.allowProne = false; npc->stanceControl.crouchKey = 'c';
+        npc->stanceControl.crouchSpeed = 1.5f; npc->stanceControl.proneHeight = 0.4f;
+        npc->stanceControl.Restore(1);
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("ser2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* n2 = s2.Find("N") ? s2.Find("N")->GetComponent<NPCController>() : nullptr;
+        CHECK(n2 != nullptr);
+        if (n2) {
+            const StanceControl& sc = n2->stanceControl;
+            CHECK(!sc.allowProne); CHECK_EQ(sc.crouchKey, 'c'); CHECK_EQ(sc.proneKey, 0);
+            CHECK_NEAR(sc.crouchSpeed, 1.5f, 1e-4f); CHECK_NEAR(sc.proneHeight, 0.4f, 1e-4f);
+            CHECK_EQ(sc.Stance(), 1);                                  // saved crouched, loads crouched
+            CHECK_NEAR(s2.Find("N")->GetComponent<BoxCollider3D>()->size.y, 1.8f, 1e-3f);   // collider saved standing
+        }
+    }
 
     // ---- Stance options survive save / load ----
     {

@@ -46,30 +46,48 @@ endif()
 
 # Embed a real Windows .exe icon (taskbar / Explorer / title bar) via windres.
 set(OKAY_LAUNCHER_SOURCES main.cpp
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c   # native file picker (chat attachments)
+    VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
+    VersionsNet.cpp       # the cancellable curl download behind it
+    VersionsUI.cpp        # the page itself
+    ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
+    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
     ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)
-set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
-    PROPERTIES COMPILE_OPTIONS "-w")
 if(WIN32)
     enable_language(RC)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)
 endif()
+# Our own image decoder (cover art, avatars, chat images): self-contained, std-only, so it is
+# compiled straight into the launcher rather than linking the engine.
+list(APPEND OKAY_LAUNCHER_SOURCES
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 add_executable(okayspace-launcher ${OKAY_LAUNCHER_SOURCES})
+okay_win_version(okayspace-launcher "OkaySpace Launcher" "OkaySpace.exe")
 target_compile_definitions(okayspace-launcher PRIVATE ${OKAY_VERSION_DEFINE})
 target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 # shared/ for the launcher's AppIcon, and the engine's public headers for the
-# (header-only) account service it shares with the engine. The launcher doesn't
-# link the engine library — the account core needs only the standard library.
+# (header-only) account service it shares with the engine. The account core needs only
+# the standard library; the engine library is linked only for the 2D painter the splash
+# screen draws through (okay::platform::WrapSdl2Renderer, whose font and image upload
+# need the engine's TrueType and image code). It is a static library, so the linker takes
+# only the objects the launcher actually uses.
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_SOURCE_DIR}/engine/include
-    ${CMAKE_SOURCE_DIR}/engine/third_party/stb     # stb_image for game cover art
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd) # tinyfiledialogs
-target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+    ${CMAKE_SOURCE_DIR}/engine/include)
+# okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
+target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
+if(TARGET okay_engine)
+    target_link_libraries(okayspace-launcher PRIVATE okay_engine)
+endif()
+# shared/AntiCheatCrypto.hpp calls okay::crypto when the build has -DOKAY_OWN_CRYPTO=ON (unreviewed, opt-in); link
+# the crypto library by itself so the launcher does not depend on the engine for that.
+if(TARGET okay_crypto)
+    target_link_libraries(okayspace-launcher PRIVATE okay_crypto)
+endif()
 # The Windows system-tray icon (Shell_NotifyIcon) lives in shell32.
 if(WIN32)
-    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + tinyfd dialogs, voice UDP, native HTTPS
+    target_link_libraries(okayspace-launcher PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)   # + file dialogs, voice UDP, native HTTPS
 endif()
 set_target_properties(okayspace-launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

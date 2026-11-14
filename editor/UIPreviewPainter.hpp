@@ -67,4 +67,9 @@ private:
     std::unordered_map<okay::ui2d::Tex, okay::ui2d::RGBA> m_mods;
 };
 
+/// A TTF font's glyph atlas as an SDL texture for ImGui draw lists, uploaded again
+/// when the font bakes new characters. Draw lists render at the end of the frame, so
+/// a texture replaced because the atlas grew stays alive until two frames later.
+SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f);
+
 } // namespace oked

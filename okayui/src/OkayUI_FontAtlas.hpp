@@ -4,6 +4,10 @@
 // pixel sizes into one RGBA atlas (white, coverage in alpha) with a solid white
 // patch, so flat shapes and text share a single texture and draw in one batch.
 
+struct SDL_Renderer;
+struct SDL_Texture;
+namespace okay { class TtfFont; }
+
 namespace OkayUI {
 namespace fontatlas {
 
@@ -39,6 +43,14 @@ const Atlas& Get();
 
 /// Next code point from UTF-8 (advances *s; returns 0 at the end).
 unsigned NextCodepoint(const char** s);
+
+/// A string with characters the atlas lacks (Cyrillic, Greek, CJK...) is drawn with
+/// the engine font okay::FontForText picks for it (the language's font, the built-in
+/// UI font, an installed one; each switch logged once). nullptr when the atlas has
+/// every character.
+okay::TtfFont* FallbackFont(const char* s);
+/// That font's glyph atlas as a texture on `r` (uploaded again when it grows).
+SDL_Texture* FallbackTexture(SDL_Renderer* r, okay::TtfFont* f);
 
 } // namespace fontatlas
 } // namespace OkayUI

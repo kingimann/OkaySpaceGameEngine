@@ -97,6 +97,191 @@ A physics body: velocity, mass and forces. The object needs a Rigidbody componen
 | `GetComponent<Rigidbody>().AddTorque(torque)` | `Rigidbody.AddTorque/1` | step | torque (Vector3), Target (Object) | - | Twist it around X / Y / Z. |
 | `GetComponent<Rigidbody>().AddForceAtPosition(force, point)` | `Rigidbody.AddForceAtPosition/2` | step | force (Vector3), point (Vector3), Target (Object) | - | Push it at a world point (off-centre pushes also spin it). |
 
+## PlayerView
+
+Switches one player between first person and third person. A Player Controller with View set to Both has one; PlayerController has the same calls.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
+| `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
+
+## PlayerController
+
+The first / third person controller. Its View says which views the player has; SetView only switches when it is Both.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<PlayerController>().SetView(view)` | `PlayerController.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person, 1 third person. Does nothing unless the View is Both. |
+| `GetComponent<PlayerController>().GetView()` | `PlayerController.GetView/0` | value | Target (Object) | Result (Number) | The view the player is in: 0 first person, 1 third person. |
+| `GetComponent<PlayerController>().SetViewMode(mode)` | `PlayerController.SetViewMode/1` | step | mode (Number), Target (Object) | - | Which views the player has: 0 first person only, 1 third person only, 2 both. |
+
+## UIColorPicker
+
+A row of color swatches. The chosen swatch is the current color.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
+| `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+
+## Crosshair
+
+An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Crosshair>().SetSpread(pixels)` | `Crosshair.SetSpread/1` | step | pixels (Number), Target (Object) | - | Set the extra gap around the ticks, in pixels. |
+| `GetComponent<Crosshair>().SetSpreadRecover(pixelsPerSecond)` | `Crosshair.SetSpreadRecover/1` | step | pixelsPerSecond (Number), Target (Object) | - | How fast the extra gap eases back to 0. 0 leaves the spread where it is. |
+| `GetComponent<Crosshair>().KickSpread(pixels)` | `Crosshair.KickSpread/1` | step | pixels (Number), Target (Object) | - | Push the ticks apart. They ease back while spread recover is above 0. |
+| `GetComponent<Crosshair>().Spread()` | `Crosshair.Spread/0` | value | Target (Object) | Result (Number) | The extra gap around the ticks, in pixels. |
+
+## UIRadialProgress
+
+A ring or pie. Thickness 0 is a pie. Spin turns the arc into a loader.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRadialProgress>().SetValue(value)` | `UIRadialProgress.SetValue/1` | step | value (Number), Target (Object) | - | Fill fraction from 0 to 1. |
+| `GetComponent<UIRadialProgress>().SetThickness(pixels)` | `UIRadialProgress.SetThickness/1` | step | pixels (Number), Target (Object) | - | Ring width in pixels. 0 draws a pie. |
+| `GetComponent<UIRadialProgress>().SetStartAngle(degrees)` | `UIRadialProgress.SetStartAngle/1` | step | degrees (Number), Target (Object) | - | Where the arc starts. 0 is 12 o'clock. |
+| `GetComponent<UIRadialProgress>().SetClockwise(on)` | `UIRadialProgress.SetClockwise/1` | step | on (Bool), Target (Object) | - | Fill clockwise when on. |
+| `GetComponent<UIRadialProgress>().SetSpin(on)` | `UIRadialProgress.SetSpin/1` | step | on (Bool), Target (Object) | - | Spin the arc as a loader. |
+| `GetComponent<UIRadialProgress>().SetShowPercent(on)` | `UIRadialProgress.SetShowPercent/1` | step | on (Bool), Target (Object) | - | Draw the fill as a percent in the middle. |
+
+## UISlotGrid
+
+A grid of buttons. Selecting one fires on_change. It does not know about inventory.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISlotGrid>().SetValue(index)` | `UISlotGrid.SetValue/1` | step | index (Number), Target (Object) | - | Select a slot by index. -1 clears the selection. |
+| `GetComponent<UISlotGrid>().SetColumns(columns)` | `UISlotGrid.SetColumns/1` | step | columns (Number), Target (Object) | - | How many slots across (1 to 16). |
+| `GetComponent<UISlotGrid>().SetRows(rows)` | `UISlotGrid.SetRows/1` | step | rows (Number), Target (Object) | - | How many slots down (1 to 16). |
+| `GetComponent<UISlotGrid>().Value()` | `UISlotGrid.Value/0` | value | Target (Object) | Result (Number) | The selected slot, or -1. |
+
+## UIDropdown
+
+A dropdown. Search, a row cap and per-option glyphs are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDropdown>().SetSearchable(on)` | `UIDropdown.SetSearchable/1` | step | on (Bool), Target (Object) | - | Show a search row that filters the options while the list is open. |
+| `GetComponent<UIDropdown>().SetMaxVisible(rows)` | `UIDropdown.SetMaxVisible/1` | step | rows (Number), Target (Object) | - | How many matching options the open list shows. 0 shows every match. |
+| `GetComponent<UIDropdown>().SetOptionIcon(index, glyph)` | `UIDropdown.SetOptionIcon/2` | step | index (Number), glyph (Text), Target (Object) | - | A short glyph drawn in front of one option. |
+| `GetComponent<UIDropdown>().Searchable()` | `UIDropdown.Searchable/0` | value | Target (Object) | Result (Bool) | True when the open list has a search row. |
+
+## UIScrollView
+
+A scroll view. Inertia, elastic edges and the bar style are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIScrollView>().SetInertia(rate)` | `UIScrollView.SetInertia/1` | step | rate (Number), Target (Object) | - | Wheel glide. 0 scrolls one notch immediately. Higher stops the glide sooner. |
+| `GetComponent<UIScrollView>().SetElastic(on)` | `UIScrollView.SetElastic/1` | step | on (Bool), Target (Object) | - | Let the content pass the ends, then spring back. |
+| `GetComponent<UIScrollView>().SetBarStyle(style)` | `UIScrollView.SetBarStyle/1` | step | style (Number), Target (Object) | - | Scrollbar: 0 the usual bar, 1 thin, 2 hidden until the view is scrolling. |
+
+## UITabs
+
+A tab bar. Closable tabs fire on_tab_close. Vertical is a style.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITabs>().SetClosable(on)` | `UITabs.SetClosable/1` | step | on (Bool), Target (Object) | - | Draw an X on each tab. Clicking it removes that tab. |
+| `GetComponent<UITabs>().CloseTab(index)` | `UITabs.CloseTab/1` | step | index (Number), Target (Object) | - | Remove one tab and fire on_tab_close. |
+| `GetComponent<UITabs>().Count()` | `UITabs.Count/0` | value | Target (Object) | Result (Number) | How many tabs are left. |
+
+## UITooltip
+
+A hover tooltip. It already waits and follows the cursor. Rich text and the offset are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITooltip>().SetRichText(on)` | `UITooltip.SetRichText/1` | step | on (Bool), Target (Object) | - | Draw <b> and #rrggbb in the tooltip text. |
+| `GetComponent<UITooltip>().SetOffset(x, y)` | `UITooltip.SetOffset/2` | step | x (Number), y (Number), Target (Object) | - | Pixels from the cursor to the box. 14, 14 is the usual spot. |
+| `GetComponent<UITooltip>().SetDelay(seconds)` | `UITooltip.SetDelay/1` | step | seconds (Number), Target (Object) | - | How long the pointer must hover before the tooltip shows. |
+
+## UIInputField
+
+A text field. Password, a character limit and integer or decimal mode already exist. Multiline is optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIInputField>().SetMultiline(on)` | `UIInputField.SetMultiline/1` | step | on (Bool), Target (Object) | - | Enter inserts a newline instead of submitting. |
+| `GetComponent<UIInputField>().SetMaxLength(length)` | `UIInputField.SetMaxLength/1` | step | length (Number), Target (Object) | - | The most characters the field accepts. |
+| `GetComponent<UIInputField>().SetContentType(type)` | `UIInputField.SetContentType/1` | step | type (Number), Target (Object) | - | 0 standard, 1 integer, 2 decimal, 3 password. |
+
+## UIToast
+
+A stack of toast notifications. The object needs a UI Toast.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIToast>().Push(title, body, kind)` | `UIToast.Push/3` | step | title (Text), body (Text), kind (Number), Target (Object) | - | Show a toast. kind: 0 info, 1 success, 2 warning, 3 error. |
+| `GetComponent<UIToast>().SetDuration(seconds)` | `UIToast.SetDuration/1` | step | seconds (Number), Target (Object) | - | How long a new toast stays up, in seconds. |
+| `GetComponent<UIToast>().SetCorner(corner)` | `UIToast.SetCorner/1` | step | corner (Number), Target (Object) | - | Where the stack sits: 0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center. |
+| `GetComponent<UIToast>().SetMaxStack(count)` | `UIToast.SetMaxStack/1` | step | count (Number), Target (Object) | - | How many toasts stay on screen. The oldest one drops off past this. |
+| `GetComponent<UIToast>().Count()` | `UIToast.Count/0` | value | Target (Object) | Result (Number) | How many toasts are on screen right now. |
+
+## UIModal
+
+A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel inside it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIModal>().Open()` | `UIModal.Open/0` | step | Target (Object) | - | Show the dialog. |
+| `GetComponent<UIModal>().Close()` | `UIModal.Close/0` | step | Target (Object) | - | Hide the dialog. Fires on_modal_close. |
+| `GetComponent<UIModal>().SetStyleCard(on)` | `UIModal.SetStyleCard/1` | step | on (Bool), Target (Object) | - | Turn the card styling on or off. Off leaves the dialog as it was authored. |
+| `GetComponent<UIModal>().SetCardRadius(radius)` | `UIModal.SetCardRadius/1` | step | radius (Number), Target (Object) | - | Corner radius of the card named Card, in pixels. |
+| `GetComponent<UIModal>().SetTitle(text)` | `UIModal.SetTitle/1` | step | text (Text), Target (Object) | - | Title text. Empty leaves whatever the Title label already says. |
+| `GetComponent<UIModal>().SetMessage(text)` | `UIModal.SetMessage/1` | step | text (Text), Target (Object) | - | Body text. Empty leaves whatever the Message label already says. |
+| `GetComponent<UIModal>().SetConfirmText(text)` | `UIModal.SetConfirmText/1` | step | text (Text), Target (Object) | - | Confirm button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().SetCancelText(text)` | `UIModal.SetCancelText/1` | step | text (Text), Target (Object) | - | Cancel button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().IsOpen()` | `UIModal.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the dialog is shown. |
+
+## UITheme
+
+A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITheme>().SetPreset(preset)` | `UITheme.SetPreset/1` | step | preset (Number), Target (Object) | - | Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy. |
+| `GetComponent<UITheme>().Apply()` | `UITheme.Apply/0` | step | Target (Object) | - | Bake this skin onto this object and its children. Widgets keep their positions. |
+| `GetComponent<UITheme>().ApplyTo(objectName)` | `UITheme.ApplyTo/1` | step | objectName (Text), Target (Object) | - | Bake this skin onto the named object and its children. |
+
+## UISlider
+
+A draggable value. The object needs a UI Slider. on_change fires when the value moves.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISlider>().SetValue(value)` | `UISlider.SetValue/1` | step | value (Number), Target (Object) | - | Set the value (snaps to the step). Fires OnValueChanged when it changes. |
+| `GetComponent<UISlider>().SetStep(step)` | `UISlider.SetStep/1` | step | step (Number), Target (Object) | - | Snap spacing. 0 keeps the slider continuous. |
+| `GetComponent<UISlider>().SetFormat(format)` | `UISlider.SetFormat/1` | step | format (Text), Target (Object) | - | Value label. "{v}" is the number. Empty keeps two decimals. |
+| `GetComponent<UISlider>().GetValue()` | `UISlider.GetValue/0` | value | Target (Object) | Result (Number) | The current value. |
+
+## UIProgressBar
+
+A fill bar (health, loading). The object needs a UI Progress Bar.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIProgressBar>().SetValue(value)` | `UIProgressBar.SetValue/1` | step | value (Number), Target (Object) | - | Fill amount, 0 to 1. A damage trail eases down when Trail is set. |
+| `GetComponent<UIProgressBar>().SetSegments(count)` | `UIProgressBar.SetSegments/1` | step | count (Number), Target (Object) | - | Chunk count. 0 or 1 is one solid bar. |
+| `GetComponent<UIProgressBar>().SetTrail(seconds)` | `UIProgressBar.SetTrail/1` | step | seconds (Number), Target (Object) | - | Seconds for the damage trail to catch a drop. 0 hides it. |
+| `GetComponent<UIProgressBar>().SetTextFormat(format)` | `UIProgressBar.SetTextFormat/1` | step | format (Text), Target (Object) | - | Label on the bar. "{n}" is the percent, "{v}" is 0..1. |
+
+## UIButton
+
+A clickable button. The object needs a UI Button. on_click fires when it is pressed.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIButton>().SetEase(ease, seconds)` | `UIButton.SetEase/2` | step | ease (Number), seconds (Number), Target (Object) | - | Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes. |
+| `GetComponent<UIButton>().SetInteractable(on)` | `UIButton.SetInteractable/1` | step | on (Bool), Target (Object) | - | False greys the button out and ignores clicks. |
+| `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
+| `GetComponent<UIButton>().Focus()` | `UIButton.Focus/0` | step | Target (Object) | - | Move keyboard and gamepad focus here, show the focus ring, and scroll it into view. |
+
 ## Input
 
 Keyboard, mouse and gamepad.
@@ -104,6 +289,11 @@ Keyboard, mouse and gamepad.
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
 | `Input.mousePosition` | `Input.mousePosition` | value | - | mousePosition (Vector3) | The cursor in screen pixels (x, y; z is 0). |
+| `Input.gamepadConnected` | `Input.gamepadConnected` | value | - | gamepadConnected (Bool) | True while a controller is plugged in. |
+| `Input.swipeDirection` | `Input.swipeDirection` | value | - | swipeDirection (Text) | "up", "down", "left" or "right" when a swipe happened this frame, otherwise empty. |
+| `Input.pinchScale` | `Input.pinchScale` | value | - | pinchScale (Number) | How far apart two fingers are compared with where the pinch began. 1 means unchanged. Greater than 1 means they moved apart. |
+| `Input.twistDegrees` | `Input.twistDegrees` | value | - | twistDegrees (Number) | How far two fingers have twisted, in degrees. Positive is counter-clockwise. |
+| `Input.touchScreen` | `Input.touchScreen` | value | - | touchScreen (Bool) | True once a touch screen has been used or reported. |
 | `Input.GetKey(key)` | `Input.GetKey/1` | value | key (Text) | Result (Bool) | True while the key is held. |
 | `Input.GetKeyDown(key)` | `Input.GetKeyDown/1` | value | key (Text) | Result (Bool) | True on the frame the key is pressed. |
 | `Input.GetKeyUp(key)` | `Input.GetKeyUp/1` | value | key (Text) | Result (Bool) | True on the frame the key is released. |
@@ -111,6 +301,16 @@ Keyboard, mouse and gamepad.
 | `Input.GetMouseButton(button)` | `Input.GetMouseButton/1` | value | button (Number) | Result (Bool) | True while the mouse button is held (0 left, 1 right, 2 middle). |
 | `Input.GetMouseButtonDown(button)` | `Input.GetMouseButtonDown/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is pressed. |
 | `Input.GetMouseButtonUp(button)` | `Input.GetMouseButtonUp/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is released. |
+| `Input.GetButton(action)` | `Input.GetButton/1` | value | action (Text) | Result (Bool) | True while the action is held ("Jump", "Fire"...), on keyboard, mouse or controller. |
+| `Input.GetButtonDown(action)` | `Input.GetButtonDown/1` | value | action (Text) | Result (Bool) | True on the frame the action is pressed. |
+| `Input.GetButtonUp(action)` | `Input.GetButtonUp/1` | value | action (Text) | Result (Bool) | True on the frame the action is released. |
+| `Input.GetActionValue(action)` | `Input.GetActionValue/1` | value | action (Text) | Result (Number) | How far the action is pressed, 0 to 1 (a trigger can be part way). |
+| `Input.GetActionVector(action)` | `Input.GetActionVector/1` | value | action (Text) | Result (Vector3) | A direction action ("Move", "Look") as x, y in -1..1 (y up; z is 0). |
+| `Input.Rumble(low, high, seconds)` | `Input.Rumble/3` | step | low (Number), high (Number), seconds (Number) | - | Shake the controller: low (heavy) and high (light) motor strength 0 to 1, for some seconds. |
+| `Input.RebindAction(action, binding)` | `Input.RebindAction/2` | step | action (Text), binding (Text) | Result (Bool) | Bind an action to "key:e", "mouse:right", "pad:rt"... for this player (saved). False if the binding isn't understood. |
+| `Input.DefineAction(action, binding, binding2)` | `Input.DefineAction/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a game action (or change its defaults), e.g. ("Dash", "key:q", "pad:rs"). Use "" for an unused binding. |
+| `Input.DefineDirection(action, binding, binding2)` | `Input.DefineDirection/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a direction action, e.g. ("Steer", "keys:i,k,j,l", "stick:right"). |
+| `Input.Gesture(name)` | `Input.Gesture/1` | value | name (Text) | Result (Bool) | True on the frame a touch gesture happens. name is "tap", "double tap", "long press", "swipe", "swipe up", "swipe down", "swipe left", "swipe right", "pinch" or "rotate". |
 
 ## Time
 
@@ -124,6 +324,20 @@ Frame timing.
 | `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.timeScale` | `Time.timeScale` | value | - | timeScale (Number) | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
 | `Time.timeScale = timeScale` | `Time.timeScale=` | step | timeScale (Number) | - | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
+| `Time.sessionTime` | `Time.sessionTime` | value | - | sessionTime (Number) | Seconds of game time since this Play began (Time.time keeps counting across Plays; this starts from 0 each time). |
+| `Time.sessionUnscaledTime` | `Time.sessionUnscaledTime` | value | - | sessionUnscaledTime (Number) | Real seconds since this Play began: a pause, slow motion and hit stops do not change it. |
+| `Time.sessionFrameCount` | `Time.sessionFrameCount` | value | - | sessionFrameCount (Number) | Frames since this Play began. |
+| `Time.unscaledDeltaTime` | `Time.unscaledDeltaTime` | value | - | unscaledDeltaTime (Number) | Real seconds since the last frame: not slowed by timeScale, a hit stop or a pause (animate a menu with it). |
+| `Time.unscaledTime` | `Time.unscaledTime` | value | - | unscaledTime (Number) | Real seconds since the game started: a pause, slow motion and hit stops do not change it. |
+| `Time.fps` | `Time.fps` | value | - | fps (Number) | Frames per second over the last half second of real frame times (0 before the first frame). |
+| `Time.hitchCount` | `Time.hitchCount` | value | - | hitchCount (Number) | How many frames took over a tenth of a second since this Play began. |
+| `Time.paused` | `Time.paused` | value | - | paused (Bool) | True while the game is paused (a menu, a cutscene or the pause button holds it). |
+| `Time.PushPause(reason)` | `Time.PushPause/1` | step | reason (Text) | - | Hold the game paused for a reason of your own ("dialogue", "shop"). The game stays paused until every reason is let go, so two scripts that pause never resume each other. |
+| `Time.PopPause(reason)` | `Time.PopPause/1` | step | reason (Text) | Result (Bool) | Let go of one hold of that reason. False when nothing held it. |
+| `Time.IsPausedBy(reason)` | `Time.IsPausedBy/1` | value | reason (Text) | Result (Bool) | True while that reason is holding the pause. |
+| `Time.HitStop(seconds, scale)` | `Time.HitStop/2` | step | seconds (Number), scale (Number) | - | A freeze frame or a brief slow-down for an impact: for some real seconds the game runs at this scale (0 = frozen), then goes back by itself. |
+| `Time.SlowMotion(scale, seconds)` | `Time.SlowMotion/2` | step | scale (Number), seconds (Number) | - | Bullet time: run at this speed (0.2 = a fifth) for some real seconds, then back to normal by itself. Composes with Time.timeScale. |
+| `Time.RampTimeScale(target, seconds)` | `Time.RampTimeScale/2` | step | target (Number), seconds (Number) | - | Ease Time.timeScale to a new value over some real seconds, in a straight line. |
 
 ## Debug
 
@@ -134,6 +348,254 @@ Messages to the Console.
 | `Debug.Log(message)` | `Debug.Log/1` | step | message (Any) | - | Print a message to the Console. |
 | `Debug.LogWarning(message)` | `Debug.LogWarning/1` | step | message (Any) | - | Print a warning to the Console. |
 | `Debug.LogError(message)` | `Debug.LogError/1` | step | message (Any) | - | Print an error to the Console. |
+
+## Audio
+
+The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a settings menu sets them.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Audio.masterVolume` | `Audio.masterVolume` | value | - | masterVolume (Number) | Overall volume, 0 to 1. |
+| `Audio.masterVolume = masterVolume` | `Audio.masterVolume=` | step | masterVolume (Number) | - | Overall volume, 0 to 1. |
+| `Audio.muted` | `Audio.muted` | value | - | muted (Bool) | Silence everything. |
+| `Audio.muted = muted` | `Audio.muted=` | step | muted (Bool) | - | Silence everything. |
+| `Audio.SetGroupVolume(group, volume)` | `Audio.SetGroupVolume/2` | step | group (Text), volume (Number) | - | Set one group's volume, 0 to 1 ("Music", "SFX", "UI" or "Voice"). |
+| `Audio.GetGroupVolume(group)` | `Audio.GetGroupVolume/1` | value | group (Text) | Result (Number) | One group's volume. |
+| `Audio.MuteGroup(group, mute)` | `Audio.MuteGroup/2` | step | group (Text), mute (Bool) | - | Mute or unmute one group. |
+| `Audio.SaveSettings()` | `Audio.SaveSettings/0` | step | - | - | Store the volumes in the player's prefs now (they are also saved when the game closes). |
+
+## SaveGame
+
+Whole-game saves in named slots: every object, the player, inventories, script variables.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `SaveGame.playTime` | `SaveGame.playTime` | value | - | playTime (Number) | Seconds played, counting the time in the save that was loaded. |
+| `SaveGame.Save(slot, label)` | `SaveGame.Save/2` | step | slot (Text), label (Text) | Result (Bool) | Save the game to a slot ("1", "quick"...) with a label for the load menu. False if it couldn't. |
+| `SaveGame.Load(slot)` | `SaveGame.Load/1` | step | slot (Text) | Result (Bool) | Load a slot at the end of this frame. False if there's no save there. |
+| `SaveGame.Exists(slot)` | `SaveGame.Exists/1` | value | slot (Text) | Result (Bool) | True if the slot has a save. |
+| `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
+| `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
+
+## Localization
+
+Text in the player's language from the project's string table (docs/localization.md). A script hears a change of language in OnLanguageChanged().
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Localization.Language` | `Localization.Language` | value | - | Language (Text) | The current language's code ("en", "fr"...). |
+| `Localization.Languages` | `Localization.Languages` | value | - | Languages (List) | The codes of the string table's languages, in the table's order. |
+| `Localization.Get(key)` | `Localization.Get/1` | value | key (Text) | Result (Text) | The key's text in the player's language (the default language's when it has none, else the key). |
+| `Localization.Get(key, arg0)` | `Localization.Get/2` | value | key (Text), arg0 (Any) | Result (Text) | The key's text with {0} filled in; a number also picks the plural form. |
+| `Localization.Get(key, arg0, arg1)` | `Localization.Get/3` | value | key (Text), arg0 (Any), arg1 (Any) | Result (Text) | The key's text with {0} and {1} filled in. |
+| `Localization.Get(key, arg0, arg1, arg2)` | `Localization.Get/4` | value | key (Text), arg0 (Any), arg1 (Any), arg2 (Any) | Result (Text) | The key's text with {0}, {1} and {2} filled in. |
+| `Localization.SetLanguage(code)` | `Localization.SetLanguage/1` | step | code (Text) | Result (Bool) | Show every localized text in a language of the string table ("fr") and remember it for the next run. False when the table doesn't have it. |
+| `Localization.LanguageName(code)` | `Localization.LanguageName/1` | value | code (Text) | Result (Text) | A language's name for a menu ("Français" for "fr"). |
+
+## Sequence
+
+Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Sequence.isPlaying` | `Sequence.isPlaying` | value | - | isPlaying (Bool) | True while a sequence plays. |
+| `Sequence.time` | `Sequence.time` | value | - | time (Number) | Seconds into the playing sequence (0 when none plays). |
+| `Sequence.lastEvent` | `Sequence.lastEvent` | value | - | lastEvent (Text) | The event being delivered: read it in OnSequenceEvent(). |
+| `Sequence.Play(name)` | `Sequence.Play/1` | step | name (Text) | Result (Bool) | Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none. |
+| `Sequence.Stop()` | `Sequence.Stop/0` | step | - | - | Stop every playing sequence; the camera goes back to the game. |
+
+## PostProcess
+
+The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette, FXAA, SSAO and depth of field (saved with the scene; the Lighting panel edits the same values).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `PostProcess.exposure` | `PostProcess.exposure` | value | - | exposure (Number) | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.exposure = exposure` | `PostProcess.exposure=` | step | exposure (Number) | - | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.Set(name, value)` | `PostProcess.Set/2` | step | name (Text), value (Number) | Result (Bool) | Set one value by name: "exposure", "tonemap" (0 none, 1 ACES, 2 filmic), "bloom" (0/1), "bloom_threshold", "bloom_intensity", "bloom_radius", "grading", "temperature", "tint", "saturation", "contrast", "vignette", "vignette_smoothness", "fxaa", "ssao", "ssao_radius", "ssao_intensity", "dof", "dof_focus", "dof_range". False for a name it doesn't know. |
+
+## Fog
+
+The scene's fog: linear (start / end), exponential or height fog, in the colour you set or the sky's.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Fog.enabled` | `Fog.enabled` | value | - | enabled (Bool) | Whether the fog is on. |
+| `Fog.enabled = enabled` | `Fog.enabled=` | step | enabled (Bool) | - | Whether the fog is on. |
+| `Fog.Set(enabled, start, end)` | `Fog.Set/3` | step | enabled (Bool), start (Number), end (Number) | - | Turn the fog on or off, fading from start to end (world units from the camera) in Linear mode. |
+| `Fog.SetColor(r, g, b)` | `Fog.SetColor/3` | step | r (Number), g (Number), b (Number) | - | The fog colour (0 to 1 each). Stops matching the sky's horizon. |
+| `Fog.SetMode(mode, density)` | `Fog.SetMode/2` | step | mode (Text), density (Number) | - | "linear", "exponential" or "height", with the density the last two thicken by per unit of distance. |
+
+## Weather
+
+Rain, snow and storms falling around the camera, and the wind particles and water follow.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Weather.preset` | `Weather.preset` | value | - | preset (Text) | The current preset's name. |
+| `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
+| `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
+
+## NavMeshAgent
+
+Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<NavMeshAgent>().speed` | `NavMeshAgent.speed` | value | Target (Object) | speed (Number) | Top speed in units per second. |
+| `GetComponent<NavMeshAgent>().speed = speed` | `NavMeshAgent.speed=` | step | speed (Number), Target (Object) | - | Top speed in units per second. |
+| `GetComponent<NavMeshAgent>().stoppingDistance` | `NavMeshAgent.stoppingDistance` | value | Target (Object) | stoppingDistance (Number) | How close to the destination counts as there. |
+| `GetComponent<NavMeshAgent>().stoppingDistance = stoppingDistance` | `NavMeshAgent.stoppingDistance=` | step | stoppingDistance (Number), Target (Object) | - | How close to the destination counts as there. |
+| `GetComponent<NavMeshAgent>().isStopped` | `NavMeshAgent.isStopped` | value | Target (Object) | isStopped (Bool) | True after Stop, until Resume or a new destination. |
+| `GetComponent<NavMeshAgent>().velocity` | `NavMeshAgent.velocity` | value | Target (Object) | velocity (Vector3) | How it is moving right now, in units per second. |
+| `GetComponent<NavMeshAgent>().destination` | `NavMeshAgent.destination` | value | Target (Object) | destination (Vector3) | The point it was last sent to. |
+| `GetComponent<NavMeshAgent>().SetDestination(point)` | `NavMeshAgent.SetDestination/1` | step | point (Vector3), Target (Object) | - | Plan a path to a world point and start walking there. |
+| `GetComponent<NavMeshAgent>().Stop()` | `NavMeshAgent.Stop/0` | step | Target (Object) | - | Stop where it is (Resume continues to the same point). |
+| `GetComponent<NavMeshAgent>().Resume()` | `NavMeshAgent.Resume/0` | step | Target (Object) | - | Carry on to the destination after Stop. |
+| `GetComponent<NavMeshAgent>().HasPath()` | `NavMeshAgent.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking to a destination. |
+| `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
+| `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
+
+## Dialogue
+
+Conversations: start an object's Dialogue Runner (by the object's or the graph's name) and ask whether one runs.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Dialogue.Start(name)` | `Dialogue.Start/1` | step | name (Text) | Result (Bool) | Start the conversation on the object (or graph) with this name; "" means this object's runner. False when there is none. |
+| `Dialogue.Stop()` | `Dialogue.Stop/0` | step | - | - | End the running conversation. |
+| `Dialogue.IsActive()` | `Dialogue.IsActive/0` | value | - | Result (Bool) | True while a conversation runs. |
+
+## Story
+
+The story's global variables and flags (the scene's Story State; saved with the game).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Story.Set(name, value)` | `Story.Set/2` | step | name (Text), value (Number) | - | Set a number variable. |
+| `Story.SetText(name, value)` | `Story.SetText/2` | step | name (Text), value (Text) | - | Set a text variable. |
+| `Story.Get(name)` | `Story.Get/1` | value | name (Text) | Result (Number) | A variable as a number (0 when unset). |
+| `Story.GetText(name)` | `Story.GetText/1` | value | name (Text) | Result (Text) | A variable as text ("" when unset). |
+| `Story.Has(name)` | `Story.Has/1` | value | name (Text) | Result (Bool) | True once the variable was set. |
+| `Story.SetFlag(name, on)` | `Story.SetFlag/2` | step | name (Text), on (Bool) | - | Set or clear a flag. |
+| `Story.HasFlag(name)` | `Story.HasFlag/1` | value | name (Text) | Result (Bool) | True while the flag is set. |
+
+## Quest
+
+Quests in the scene's Quest Log: start, complete objectives, read states.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Quest.Start(id)` | `Quest.Start/1` | step | id (Text) | Result (Bool) | Start a quest. False when it is unknown, already active or its prerequisites aren't done. |
+| `Quest.Complete(id)` | `Quest.Complete/1` | step | id (Text) | Result (Bool) | Complete an active quest outright (its rewards are granted). |
+| `Quest.CompleteObjective(id, index)` | `Quest.CompleteObjective/2` | step | id (Text), index (Number) | Result (Bool) | Mark one objective (0-based) of an active quest done. |
+| `Quest.AddProgress(id, index, amount)` | `Quest.AddProgress/3` | step | id (Text), index (Number), amount (Number) | Result (Bool) | Count toward a collect / kill style objective. |
+| `Quest.Fail(id)` | `Quest.Fail/1` | step | id (Text) | Result (Bool) | Fail an active quest. |
+| `Quest.State(id)` | `Quest.State/1` | value | id (Text) | Result (Text) | "inactive", "active", "completed" or "failed". |
+| `Quest.IsActive(id)` | `Quest.IsActive/1` | value | id (Text) | Result (Bool) | True while the quest is active. |
+
+## BehaviorTree
+
+This object's Behavior Tree Runner: its blackboard, and starting or stopping its tree.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `BehaviorTree.isRunning` | `BehaviorTree.isRunning` | value | - | isRunning (Bool) | True while the tree is being ticked. |
+| `BehaviorTree.Set(key, value)` | `BehaviorTree.Set/2` | step | key (Text), value (Any) | - | Write a blackboard value: a number, bool, string, Vector3 or GameObject. |
+| `BehaviorTree.Get(key)` | `BehaviorTree.Get/1` | value | key (Text) | Result (Any) | Read a blackboard value as whatever it is (use GetFloat / GetBool / GetString / GetVector / GetObject for a typed one). |
+| `BehaviorTree.GetFloat(key)` | `BehaviorTree.GetFloat/1` | value | key (Text) | Result (Number) | A blackboard number (0 when the key is missing). |
+| `BehaviorTree.GetBool(key)` | `BehaviorTree.GetBool/1` | value | key (Text) | Result (Bool) | A blackboard bool (false when the key is missing). |
+| `BehaviorTree.GetString(key)` | `BehaviorTree.GetString/1` | value | key (Text) | Result (Text) | A blackboard string ("" when the key is missing). |
+| `BehaviorTree.GetVector(key)` | `BehaviorTree.GetVector/1` | value | key (Text) | Result (Vector3) | A blackboard vector, or an object key's position. |
+| `BehaviorTree.GetObject(key)` | `BehaviorTree.GetObject/1` | value | key (Text) | Result (Object) | The object a blackboard key refers to, or null. |
+| `BehaviorTree.Run(tree)` | `BehaviorTree.Run/1` | step | tree (Text) | Result (Bool) | Load a .okaybt file and start it ("" starts the current tree over). False when the file can't be read. |
+| `BehaviorTree.Stop()` | `BehaviorTree.Stop/0` | step | - | - | Stop the tree; running tasks are aborted and the NPC stops. |
+
+## Spline
+
+A curve through control points (the object's Spline). t is a fraction of the length, 0 to 1.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Spline>().pointCount` | `Spline.pointCount` | value | Target (Object) | pointCount (Number) | How many control points it has. |
+| `GetComponent<Spline>().closed` | `Spline.closed` | value | Target (Object) | closed (Bool) | Whether the last point joins back to the first. |
+| `GetComponent<Spline>().closed = closed` | `Spline.closed=` | step | closed (Bool), Target (Object) | - | Whether the last point joins back to the first. |
+| `GetComponent<Spline>().EvaluatePosition(t)` | `Spline.EvaluatePosition/1` | value | t (Number), Target (Object) | Result (Vector3) | The world point a fraction t (0 to 1) of the way along. Even steps of t are even steps on the curve. |
+| `GetComponent<Spline>().EvaluateTangent(t)` | `Spline.EvaluateTangent/1` | value | t (Number), Target (Object) | Result (Vector3) | The direction of travel a fraction t of the way along (a unit vector). |
+| `GetComponent<Spline>().Length()` | `Spline.Length/0` | value | Target (Object) | Result (Number) | The length of the curve in world units. |
+| `GetComponent<Spline>().NearestPoint(position)` | `Spline.NearestPoint/1` | value | position (Vector3), Target (Object) | Result (Vector3) | The point on the curve closest to a world position. |
+
+## SplineFollower
+
+Moves the object along a Spline (platforms, rails, carts, patrols). The object needs a Spline Follower.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<SplineFollower>().speed` | `SplineFollower.speed` | value | Target (Object) | speed (Number) | Units per second along the curve (negative runs backwards). |
+| `GetComponent<SplineFollower>().speed = speed` | `SplineFollower.speed=` | step | speed (Number), Target (Object) | - | Units per second along the curve (negative runs backwards). |
+| `GetComponent<SplineFollower>().distance` | `SplineFollower.distance` | value | Target (Object) | distance (Number) | How far along the curve it is (setting it jumps there). |
+| `GetComponent<SplineFollower>().distance = distance` | `SplineFollower.distance=` | step | distance (Number), Target (Object) | - | How far along the curve it is (setting it jumps there). |
+| `GetComponent<SplineFollower>().isPlaying` | `SplineFollower.isPlaying` | value | Target (Object) | isPlaying (Bool) | True while it moves. |
+| `GetComponent<SplineFollower>().Play()` | `SplineFollower.Play/0` | step | Target (Object) | - | Start (or carry on) moving. |
+| `GetComponent<SplineFollower>().Stop()` | `SplineFollower.Stop/0` | step | Target (Object) | - | Stop where it is. |
+
+## LineRenderer
+
+Draws a line through points (lasers, ropes, aiming arcs). The object needs a Line Renderer.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<LineRenderer>().positionCount` | `LineRenderer.positionCount` | value | Target (Object) | positionCount (Number) | How many points the line has (setting it adds or drops points at the end). |
+| `GetComponent<LineRenderer>().positionCount = positionCount` | `LineRenderer.positionCount=` | step | positionCount (Number), Target (Object) | - | How many points the line has (setting it adds or drops points at the end). |
+| `GetComponent<LineRenderer>().width` | `LineRenderer.width` | value | Target (Object) | width (Number) | Width in world units (times the width curve). |
+| `GetComponent<LineRenderer>().width = width` | `LineRenderer.width=` | step | width (Number), Target (Object) | - | Width in world units (times the width curve). |
+| `GetComponent<LineRenderer>().SetPosition(index, position)` | `LineRenderer.SetPosition/2` | step | index (Number), position (Vector3), Target (Object) | - | Move one point (the line grows to reach a new index). |
+| `GetComponent<LineRenderer>().SetPositions(positions)` | `LineRenderer.SetPositions/1` | step | positions (Any), Target (Object) | - | Replace every point with an array or List of Vector3. |
+| `GetComponent<LineRenderer>().GetPosition(index)` | `LineRenderer.GetPosition/1` | value | index (Number), Target (Object) | Result (Vector3) | One point of the line. |
+
+## Animator
+
+The animation graph. On a player it is often on the imported model, and these calls find it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Animator>().state` | `Animator.state` | value | Target (Object) | state (Text) | Name of the state the graph is in. |
+| `GetComponent<Animator>().SetTrigger(name)` | `Animator.SetTrigger/1` | step | name (Text), Target (Object) | - | Fire a trigger parameter (jump, for example). |
+| `GetComponent<Animator>().SetBool(name, on)` | `Animator.SetBool/2` | step | name (Text), on (Bool), Target (Object) | - | Set a bool parameter (crouch, prone, grounded). |
+| `GetComponent<Animator>().SetFloat(name, value)` | `Animator.SetFloat/2` | step | name (Text), value (Number), Target (Object) | - | Set a float parameter (speed). |
+| `GetComponent<Animator>().Play(clip)` | `Animator.Play/1` | step | clip (Text), Target (Object) | - | Play one of the model's clips by name. |
+| `GetComponent<Animator>().GetFloat(name)` | `Animator.GetFloat/1` | value | name (Text), Target (Object) | Result (Number) | Read a float parameter (speed). 0 if the graph has no such name. |
+| `GetComponent<Animator>().GetBool(name)` | `Animator.GetBool/1` | value | name (Text), Target (Object) | Result (Bool) | Read a bool parameter (crouch, grounded). |
+| `GetComponent<Animator>().GetInt(name)` | `Animator.GetInt/1` | value | name (Text), Target (Object) | Result (Number) | Read an int parameter. |
+| `GetComponent<Animator>().SetLayerWeight(layer, weight)` | `Animator.SetLayerWeight/2` | step | layer (Text), weight (Number), Target (Object) | Result (Bool) | Set the mix weight of the Animator layer with this name (on this object or its model). |
+| `GetComponent<Animator>().SetLayerWeight(layer, weight)` | `Animator.SetLayerWeight/2:if` | step | layer (Number), weight (Number), Target (Object) | Result (Bool) | Set the mix weight of the Animator layer with this index (0 is the base). |
+| `GetComponent<Animator>().GetLayerWeight(layer)` | `Animator.GetLayerWeight/1` | value | layer (Text), Target (Object) | Result (Number) | Mix weight of the Animator layer with this name. 0 if there is no such layer. |
+| `GetComponent<Animator>().GetLayerWeight(layer)` | `Animator.GetLayerWeight/1:i` | value | layer (Number), Target (Object) | Result (Number) | Mix weight of the Animator layer with this index. 0 if there is no such layer. |
+| `GetComponent<Animator>().SetRootMotion(on)` | `Animator.SetRootMotion/1` | step | on (Bool), Target (Object) | Result (Bool) | Turn root motion on or off for the model on this object (or its child). |
+| `GetComponent<Animator>().SetCharacterModel(path)` | `Animator.SetCharacterModel/1` | step | path (Text), Target (Object) | Result (Bool) | Swap the character model for the file at this path. False if the file does not import. |
+
+## IK
+
+Look-At, feet and full-body IK on this object.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<IK>().LookAt(objectName)` | `IK.LookAt/1` | step | objectName (Text), Target (Object) | - | Aim Look-At IK at the object with this name. |
+| `GetComponent<IK>().SetWeight(weight)` | `IK.SetWeight/1` | step | weight (Number), Target (Object) | - | Set the weight (0..1) of Look-At, Foot and Full Body IK on this object. |
+| `GetComponent<IK>().SetKindWeight(kind, weight)` | `IK.SetKindWeight/2` | step | kind (Text), weight (Number), Target (Object) | Result (Bool) | Set one IK weight: foot, look, aim, hand_l, hand_r or full. Also looks on children. |
+| `GetComponent<IK>().SetLimbTarget(limb, objectName)` | `IK.SetLimbTarget/2` | step | limb (Text), objectName (Text), Target (Object) | Result (Bool) | Reach or look at the object with this name. Limb is hand_l, hand_r, foot_l, foot_r, look, aim or head. |
+| `GetComponent<IK>().SetLimbTarget(limb, x, y, z)` | `IK.SetLimbTarget/4` | step | limb (Text), x (Number), y (Number), z (Number), Target (Object) | Result (Bool) | Reach or look at a world point. Limb is hand_l, hand_r, foot_l, foot_r, look, aim or head. |
+| `GetComponent<IK>().ClearLimbTarget(limb)` | `IK.ClearLimbTarget/1` | step | limb (Text), Target (Object) | Result (Bool) | Drop the goal for that limb so the animation owns it again. |
+
+## TrailRenderer
+
+Leaves a fading ribbon behind the moving object. The object needs a Trail Renderer.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<TrailRenderer>().emitting` | `TrailRenderer.emitting` | value | Target (Object) | emitting (Bool) | Whether new points are added as it moves (off: the trail fades away). |
+| `GetComponent<TrailRenderer>().emitting = emitting` | `TrailRenderer.emitting=` | step | emitting (Bool), Target (Object) | - | Whether new points are added as it moves (off: the trail fades away). |
+| `GetComponent<TrailRenderer>().Clear()` | `TrailRenderer.Clear/0` | step | Target (Object) | - | Remove the trail at once (it starts again from where the object is). |
 
 ## Mathf
 

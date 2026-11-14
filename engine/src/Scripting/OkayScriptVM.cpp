@@ -1,10 +1,18 @@
+#include "okay/Core/SafeCast.hpp"
+#include "okay/Scene/UIGallery.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Clipboard.hpp"
+#include "okay/Core/DisplaySettings.hpp"
+#include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -20,18 +28,33 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/Light.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UINavigation.hpp"     // SetUIFocus
+#include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Render/ModelImport.hpp"
+#include "okay/Script/AnimIkTools.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -46,6 +69,7 @@
 #include "okay/Net/MatchResults.hpp"
 #include "okay/Net/Matchmaker.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
@@ -53,22 +77,53 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
+#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
+#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
+#include "okay/Components/UIToast.hpp"    // grok/ui-toast
+#include "okay/Components/UIModal.hpp"    // grok/ui-toast
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
+#include "okay/Components/UIScrollView.hpp"   // grok/ui-controls
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
+#include "okay/AI/Navigation.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
+#include "okay/Components/Crafting.hpp"
+#include "okay/Components/Equipment.hpp"
+#include "okay/Components/GridInventory.hpp"
+#include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Inventory/LootTable.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Core/SaveGame.hpp"
+#include "okay/Core/GameSaves.hpp"
+#include "okay/Core/SaveFramework.hpp"
+#include "okay/Components/SequencePlayer.hpp"
+#include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/StoryState.hpp"
+#include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
+#include "okay/Components/DayNightCycle.hpp"   // time_of_day
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -78,6 +133,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -116,6 +172,95 @@ namespace okay {
 namespace {
 
 using Value = vs::VsValue;
+
+static FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) {
+    if (!h) return nullptr;
+    if (p.rfind("right", 0) == 0) { rest = p.substr(5); return &h->right; }
+    if (p.rfind("left", 0) == 0) { rest = p.substr(4); return &h->left; }
+    return nullptr;
+}
+static Value FpHandsGet(FirstPersonHands* h, const std::string& p) {
+    if (!h) return Value{};
+    if (p == "showWhenEmpty") return Value{h->showWhenEmpty};
+    if (p == "showWhileRunning") return Value{h->showWhileRunning};
+    if (p == "bobAmount") return Value{h->bobAmount};
+    if (p == "swayAmount") return Value{h->swayAmount};
+    if (p == "punchAmount") return Value{h->punchAmount};
+    if (p == "handFov") return Value{h->handFov};
+    if (p == "itemScale") return Value{h->itemScale};
+    if (p == "holdMode") return Value{(float)h->holdMode};
+    if (p == "itemOffset") return Value{h->itemOffset};
+    if (p == "itemRotation") return Value{h->itemRotation};
+    if (p == "othersItemOffset") return Value{h->othersItemOffset};
+    if (p == "othersItemRotation") return Value{h->othersItemRotation};
+    if (p == "othersArmLift") return Value{h->othersArmLift};
+    if (p == "othersArmForward") return Value{h->othersArmForward};
+    std::string rest;
+    if (FirstPersonHands::HandSide* s = FpSide(h, p, rest)) {
+        if (rest == "Enabled") return Value{s->enabled};
+        if (rest == "Position") return Value{s->position};
+        if (rest == "Rotation") return Value{s->rotation};
+        if (rest == "UniformScale") return Value{s->uniformScale};
+        if (rest == "Scale") return Value{s->scale};
+        if (rest == "Size") return Value{s->size};
+        if (rest == "UseColour" || rest == "UseColor") return Value{s->useColour};
+        if (rest == "Colour" || rest == "Color") return Value{Vec3{s->colour.r, s->colour.g, s->colour.b}};
+        if (rest == "Sleeve") return Value{s->sleeve};
+        if (rest == "SleeveLength") return Value{s->sleeveLength};
+        if (rest == "SleeveColour" || rest == "SleeveColor")
+            return Value{Vec3{s->sleeveColour.r, s->sleeveColour.g, s->sleeveColour.b}};
+    }
+    return Value{};
+}
+static bool FpHandsSet(FirstPersonHands* h, const std::string& p, const Value& v) {
+    if (!h) return false;
+    auto col = [&](Color& c) {
+        if (!v.IsVec3()) return;
+        Vec3 q = v.AsVec3();
+        c = Color{q.x, q.y, q.z, 1.0f};
+    };
+    if (p == "showWhenEmpty") { h->showWhenEmpty = v.AsBool(); return true; }
+    if (p == "showWhileRunning") { h->showWhileRunning = v.AsBool(); return true; }
+    if (p == "bobAmount") { h->bobAmount = v.AsFloat(); return true; }
+    if (p == "swayAmount") { h->swayAmount = v.AsFloat(); return true; }
+    if (p == "punchAmount") { h->punchAmount = v.AsFloat(); return true; }
+    if (p == "handFov") { h->handFov = v.AsFloat(); return true; }
+    if (p == "itemScale") { h->itemScale = v.AsFloat(); return true; }
+    if (p == "holdMode") {
+        int m = SafeInt(v.AsFloat());
+        h->holdMode = m == 1 ? FirstPersonHands::HoldMode::Left
+                    : m == 2 ? FirstPersonHands::HoldMode::Two
+                             : FirstPersonHands::HoldMode::Right;
+        return true;
+    }
+    if (p == "itemOffset" && v.IsVec3()) { h->itemOffset = v.AsVec3(); return true; }
+    if (p == "itemRotation" && v.IsVec3()) { h->itemRotation = v.AsVec3(); return true; }
+    if (p == "othersItemOffset" && v.IsVec3()) { h->othersItemOffset = v.AsVec3(); return true; }
+    if (p == "othersItemRotation" && v.IsVec3()) { h->othersItemRotation = v.AsVec3(); return true; }
+    if (p == "othersArmLift") { h->othersArmLift = v.AsFloat(); return true; }
+    if (p == "othersArmForward") { h->othersArmForward = v.AsFloat(); return true; }
+    std::string rest;
+    if (FirstPersonHands::HandSide* s = FpSide(h, p, rest)) {
+        if (rest == "Enabled") { s->enabled = v.AsBool(); return true; }
+        if (rest == "Position" && v.IsVec3()) { s->position = v.AsVec3(); return true; }
+        if (rest == "Rotation" && v.IsVec3()) { s->rotation = v.AsVec3(); return true; }
+        if (rest == "UniformScale") { s->uniformScale = v.AsFloat(); return true; }
+        if (rest == "Scale" && v.IsVec3()) { s->scale = v.AsVec3(); return true; }
+        if (rest == "Size" && v.IsVec3()) { s->size = v.AsVec3(); return true; }
+        if (rest == "UseColour" || rest == "UseColor") { s->useColour = v.AsBool(); return true; }
+        if (rest == "Colour" || rest == "Color") { col(s->colour); return true; }
+        if (rest == "Sleeve") { s->sleeve = v.AsBool(); return true; }
+        if (rest == "SleeveLength") { s->sleeveLength = v.AsFloat(); return true; }
+        if (rest == "SleeveColour" || rest == "SleeveColor") { col(s->sleeveColour); return true; }
+    }
+    return false;
+}
+static bool FpHandsCall(FirstPersonHands* h, const std::string& m) {
+    if (!h) return false;
+    if (m == "ResetPlayerView") { h->ResetPlayerView(); return true; }
+    if (m == "ResetOthersView") { h->ResetOthersView(); return true; }
+    return false;
+}
 
 // Friendly key name -> Input char code (shared with the visual-script nodes).
 static char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); }
@@ -228,7 +373,7 @@ struct JsonReader {
 enum class Tok {
     End, Number, String, InterpString, Ident,
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
-    Question, Colon,
+    Question, Colon, QuestionQuestion, QuestionQuestionEq, QuestionDot,
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
@@ -243,12 +388,14 @@ struct Token {
     double number = 0.0;
     int line = 0;
     bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
+    int column = 0;        ///< 1-based column where this token starts
 };
 
 struct ScriptError : std::runtime_error {
     using std::runtime_error::runtime_error;
     int line = 0;                                  // source line (0 = unknown)
-    ScriptError(const std::string& msg, int ln) : std::runtime_error(msg), line(ln) {}
+    int column = 0;                                // 1-based column (0 = unknown)
+    ScriptError(const std::string& msg, int ln, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
 class Lexer {
@@ -260,28 +407,33 @@ public:
         while (!AtEnd()) {
             SkipTrivia();
             if (AtEnd()) break;
+            const int line = m_line, col = m_col;
             char c = Peek();
-            if (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1))))
-                out.push_back(Number());
-            else if (std::isalpha((unsigned char)c) || c == '_')
-                out.push_back(Ident());
-            else if (c == '"')
-                out.push_back(String());
-            else if (c == '\'')
-                out.push_back(CharLiteral());
-            else if (c == '$' && Peek(1) == '"')
-                out.push_back(InterpString());
-            else
-                out.push_back(Operator());
+            Token t = (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1)))) ? Number()
+                    : (std::isalpha((unsigned char)c) || c == '_') ? Ident()
+                    : c == '"' ? String()
+                    : c == '\'' ? CharLiteral()
+                    : (c == '$' && Peek(1) == '"') ? InterpString()
+                    : Operator();
+            t.line = line;
+            t.column = col;
+            out.push_back(std::move(t));
         }
-        out.push_back({Tok::End, "", 0, m_line});
+        Token end{Tok::End, "", 0, m_line};
+        end.column = m_col;
+        out.push_back(std::move(end));
         return out;
     }
 
 private:
     bool AtEnd() const { return m_pos >= m_src.size(); }
     char Peek(int o = 0) const { return (m_pos + o < m_src.size()) ? m_src[m_pos + o] : '\0'; }
-    char Advance() { char c = m_src[m_pos++]; if (c == '\n') ++m_line; return c; }
+    char Advance() {
+        char c = m_src[m_pos++];
+        if (c == '\n') { ++m_line; m_col = 1; }
+        else if (c != '\r') ++m_col;
+        return c;
+    }
 
     void SkipTrivia() {
         while (!AtEnd()) {
@@ -311,6 +463,7 @@ private:
     }
 
     Token String() {
+        const int sl = m_line, sc = m_col;
         Advance(); // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '"') {
@@ -323,13 +476,14 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::String, s, 0, m_line};
     }
 
     // C# char literal 'x' (or '\n') — a one-character string.
     Token CharLiteral() {
+        const int sl = m_line, sc = m_col;
         Advance();   // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '\'' && Peek() != '\n') {
@@ -340,7 +494,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", m_line);
+        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", sl, sc);
         Advance();   // closing quote
         return {Tok::String, s, 0, m_line};
     }
@@ -348,6 +502,7 @@ private:
     // C#-style interpolated string: $"Score: {score}". The raw inner text (with
     // {expr} markers preserved) is stored; the parser splits and compiles it.
     Token InterpString() {
+        const int sl = m_line, sc = m_col;
         Advance(); // '$'
         Advance(); // opening quote
         std::string s;
@@ -361,7 +516,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::InterpString, s, 0, m_line};
     }
@@ -381,13 +536,15 @@ private:
             {"function", Tok::Function}, {"return", Tok::Return},
             {"true", Tok::True}, {"false", Tok::False},
             {"break", Tok::Break}, {"continue", Tok::Continue}};
-        // C# `this.hp` is just `hp` (a script's fields are its globals).
-        if (s.rfind("this.", 0) == 0 && s.size() > 5) s = s.substr(5);
+        // `this.hp` stays one token. With no plain-class object in play it still
+        // means the global `hp` (a component's fields are its globals). Inside a
+        // method, `this.name` is that object's field, not a parameter of the same name.
         auto it = kw.find(s);
         return {it != kw.end() ? it->second : Tok::Ident, s, 0, m_line};
     }
 
     Token Operator() {
+        const int sl = m_line, sc = m_col;
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
@@ -405,7 +562,14 @@ private:
             case '}': return {Tok::RBrace, "", 0, m_line};
             case '[': return {Tok::LBracket, "", 0, m_line};
             case ']': return {Tok::RBracket, "", 0, m_line};
-            case '?': return {Tok::Question, "", 0, m_line};
+            case '?':
+                if (Peek() == '?') {
+                    Advance();
+                    if (Peek() == '=') { Advance(); return {Tok::QuestionQuestionEq, "", 0, m_line}; }
+                    return {Tok::QuestionQuestion, "", 0, m_line};
+                }
+                if (Peek() == '.') { Advance(); return {Tok::QuestionDot, "", 0, m_line}; }
+                return {Tok::Question, "", 0, m_line};
             case ':': return {Tok::Colon, "", 0, m_line};
             case ',': return {Tok::Comma, "", 0, m_line};
             case ';': return {Tok::Semicolon, "", 0, m_line};
@@ -418,12 +582,13 @@ private:
             case '&': if (Peek() == '&') { Advance(); return {Tok::And, "", 0, m_line}; } return {Tok::BitAnd, "", 0, m_line};
             case '|': if (Peek() == '|') { Advance(); return {Tok::Or, "", 0, m_line}; } return {Tok::BitOr, "", 0, m_line};
         }
-        throw ScriptError(std::string("unexpected character '") + c + "'", m_line);
+        throw ScriptError(std::string("unexpected character '") + c + "'", sl, sc);
     }
 
     const std::string& m_src;
     std::size_t m_pos = 0;
     int m_line = 1;
+    int m_col = 1;
 };
 
 // ===================== AST =====================
@@ -459,6 +624,17 @@ inline const char* KindName(unsigned char k) {
     switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
                         case KString: return "a string"; default: return "a variable"; }
 }
+// This VM spells null as the number 0 (an unset variable, a missed Find or
+// GetComponent, the name `null`). A real object name, a bool, a vector, or any
+// other number is present. A destroyed object reference (instance id) is null too.
+inline bool IsNullish(const Value& v) {
+    if (v.IsBool() || v.IsString() || v.IsVec3()) return false;
+    if (v.IsObject()) return v.AsObjectId() == 0 || !vs::VsObjectAlive(v.AsObjectId());
+    if (v.IsArray()) return !v.AsArray();
+    if (v.IsMap()) return !v.AsMap();
+    return v.IsNumber() && v.AsFloat() == 0.0f;
+}
+
 inline const char* ValueKindName(const Value& v) {
     if (v.IsString()) return "text";
     if (v.IsBool()) return "true/false";
@@ -468,6 +644,14 @@ inline const char* ValueKindName(const Value& v) {
     if (v.IsMap()) return "a map";
     return "that value";
 }
+/// A plain-class object: a map tagged with the class that made it. Other maps
+/// (dictionaries, lambdas) are not objects, so `==` keeps treating them as before.
+inline bool IsClassInstance(const Value& v) {
+    auto m = v.AsMap();
+    if (!m) return false;
+    auto it = m->find("__class");
+    return it != m->end() && it->second.IsString();
+}
 /// Convert `v` for a variable of `kind`, or throw a readable error.
 inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string& name) {
     const unsigned char t = kind & 0x0F;
@@ -476,7 +660,7 @@ inline Value CoerceToKind(unsigned char kind, const Value& v, const std::string&
     };
     switch (t) {
         case KInt:
-            if (v.IsNumber()) return Value{(float)(long long)v.AsFloat()};   // drops the fraction, like (int)
+            if (v.IsNumber()) return Value{(float)SafeInt64(v.AsFloat())};   // drops the fraction, like (int)
             if (v.IsBool()) return Value{v.AsBool() ? 1.0f : 0.0f};
             return fail(v.IsString() ? " (use int.Parse(text))" : "");
         case KFloat:
@@ -515,14 +699,38 @@ inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
 struct FunctionDecl {
     std::vector<std::string> params;
     std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
+    std::vector<ExprPtr> defaults;           ///< null unless the parameter was written `a = expr`
     std::vector<StmtPtr> body;
     unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
+};
+
+// A plain class (no base type). Instances are maps, so copies share one object
+// and an unset variable stays null. A class WITH a base is not one of these:
+// it is still the component, and its fields and methods are hoisted.
+struct FieldDef {
+    std::string name;
+    unsigned char kind = KAny;
+    bool isPublic = false;
+    ExprPtr init;
+};
+struct MethodDef {
+    FunctionDecl decl;
+    bool isPublic = false;
+};
+struct UserClass {
+    std::string name;
+    std::vector<FieldDef> fields;
+    std::unordered_map<std::string, MethodDef> methods;
+    std::unordered_map<int, MethodDef> ctors;   ///< one constructor per number of arguments
 };
 
 struct Runtime {
     std::vector<Environment> scopes{1};                 // scopes[0] = global
     std::shared_ptr<Environment> statics;               // `static` variables shared by this script's objects
     std::unordered_map<std::string, FunctionDecl> functions;
+    std::unordered_map<std::string, UserClass> classes;
+    Value self;                 ///< plain-class object a method or constructor is running on
+    std::string selfClass;
     std::unordered_map<std::string, std::function<Value(std::vector<Value>&)>> builtins;
     ScriptHost* host = nullptr;
 
@@ -556,10 +764,12 @@ struct Runtime {
     struct Coroutine {
         int id = 0;
         std::string fn; std::vector<Value> args;
+        std::vector<std::string> argNames;   ///< parallel to args; empty = positional
         std::thread th;
         std::mutex m; std::condition_variable cv;
         bool coTurn = false, started = false, done = false, abort = false;
         float wait = 0.0f; bool nextFrame = false; int waitFor = 0;   // waitFor: a coroutine id
+        Value cond; bool condWhile = false; bool real = false;   // WaitUntil/WaitWhile lambda; real = ignore time scale
         long long yieldFrame = -1;
         std::vector<Environment> frames;
         std::size_t baseDepth = 0;
@@ -580,7 +790,7 @@ struct Runtime {
             co->started = true;
             co->th = std::thread([this, co] {
                 { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); }
-                try { if (!co->abort) Call(co->fn, co->args); }
+                try { if (!co->abort) Call(co->fn, co->args, co->argNames.empty() ? nullptr : &co->argNames); }
                 catch (const CoroutineAbort&) {}
                 catch (const std::exception& e) { Log::Error("OkayScript coroutine ", co->fn, "(): ", e.what()); }
                 catch (...) { Log::Error("OkayScript coroutine ", co->fn, "(): error"); }
@@ -597,10 +807,11 @@ struct Runtime {
         currentCo = prev;
     }
     // Called on the coroutine's own thread by `yield return`.
-    void YieldCoroutine(float wait, bool nextFrame, int waitFor) {
+    void YieldCoroutine(float wait, bool nextFrame, int waitFor, Value cond = Value{}, bool condWhile = false, bool real = false) {
         Coroutine* co = currentCo;
         if (!co) throw ScriptError("'yield' only works inside a coroutine started with StartCoroutine()");
         co->wait = wait; co->nextFrame = nextFrame; co->waitFor = waitFor; co->yieldFrame = frame;
+        co->cond = std::move(cond); co->condWhile = condWhile; co->real = real;
         for (std::size_t i = co->baseDepth; i < scopes.size(); ++i) co->frames.push_back(std::move(scopes[i]));
         scopes.resize(co->baseDepth);
         std::unique_lock<std::mutex> lk(co->m);
@@ -608,10 +819,13 @@ struct Runtime {
         co->cv.wait(lk, [co] { return co->coTurn; });
         if (co->abort) throw CoroutineAbort{};
     }
-    int StartCoroutine(const std::string& fn, std::vector<Value> args) {
+    // Names from the call that started a coroutine (StartCoroutine(Blink(delay: 0.2))).
+    // Set only while that builtin runs, on the caller's thread.
+    const std::vector<std::string>* activeArgNames = nullptr;
+    int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {}) {
         if (!functions.count(fn)) throw ScriptError("StartCoroutine: no function named '" + fn + "'");
         auto co = std::make_unique<Coroutine>();
-        co->id = nextCoId++; co->fn = fn; co->args = std::move(args);
+        co->id = nextCoId++; co->fn = fn; co->args = std::move(args); co->argNames = std::move(argNames);
         Coroutine* raw = co.get();
         coroutines.push_back(std::move(co));
         Resume(raw);   // runs until its first yield
@@ -641,7 +855,12 @@ struct Runtime {
             if (co->done || co->yieldFrame >= frame) continue;   // yielded this frame: wait for the next
             if (co->waitFor) { Coroutine* w = FindCo(co->waitFor); if (w && !w->done) continue; co->waitFor = 0; Resume(co); continue; }
             if (co->nextFrame) { Resume(co); continue; }
-            co->wait -= dt;
+            if (IsLambda(co->cond)) {   // WaitUntil(() => c) resumes when c is true; WaitWhile when it is false
+                std::vector<Value> none;
+                if (CallLambda(co->cond, none).AsBool() != co->condWhile) Resume(co);
+                continue;
+            }
+            co->wait -= co->real ? Time::UnscaledDeltaTime() : dt;
             if (co->wait <= 0.0f) Resume(co);
         }
         ReapCoroutines();
@@ -650,6 +869,7 @@ struct Runtime {
     /// Advance scheduled timers by dt and invoke any that come due. Once-timers
     /// are removed after firing; repeating ones re-arm by their interval.
     void TickTimers(float dt) {
+        if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;   // a NaN or negative frame time would stop every timer for good
         std::vector<std::string> due;
         const float kEps = 1e-4f;                // absorb fp dust at the boundary
         for (auto& t : timers) {
@@ -702,9 +922,24 @@ struct Runtime {
         f->second = v;
         return true;
     }
+    /// A field of the object the current method is running on (locals and parameters
+    /// are checked first by Get/Assign, so they shadow the field).
+    FieldDef* SelfField(const std::string& n) {
+        if (selfClass.empty()) return nullptr;
+        auto cit = classes.find(selfClass);
+        if (cit == classes.end()) return nullptr;
+        for (auto& f : cit->second.fields) if (f.name == n) return &f;
+        return nullptr;
+    }
+    void WriteField(const Value& inst, const FieldDef& f, const Value& v) {
+        auto mp = inst.AsMap();
+        if (!mp) throw ScriptError("can't set '" + f.name + "': the object is null");
+        (*mp)[f.name] = (f.kind & 0x0F) ? CoerceToKind(f.kind, v, f.name) : v;
+    }
     void Assign(const std::string& n, const Value& v) {
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) if (AssignIn(*it, n, v)) return;
         if (statics && AssignIn(*statics, n, v)) return;
+        if (auto* f = SelfField(n)) { WriteField(self, *f, v); return; }
         Global().vars[n] = v; // create global on first assignment
     }
     /// Set a global from outside (the Inspector): converted to its declared type
@@ -721,29 +956,57 @@ struct Runtime {
             if (f != it->vars.end()) return f->second;
         }
         if (statics) { auto f = statics->vars.find(n); if (f != statics->vars.end()) return f->second; }
+        if (SelfField(n)) {
+            auto mp = self.AsMap();
+            if (!mp) return Value{};
+            auto it = mp->find(n);
+            return it == mp->end() ? Value{} : it->second;
+        }
         return Value{}; // undefined reads as 0/false/empty
     }
     bool Has(const std::string& n) {
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
             if (it->vars.count(n)) return true;
-        return statics && statics->vars.count(n);
+        if (statics && statics->vars.count(n)) return true;
+        return SelfField(n) != nullptr;
     }
 
-    Value Call(const std::string& name, std::vector<Value>& args);
+    Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
+    Value InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args);
+    Value MakeInstance(const std::string& type, std::vector<Value>& args);
+    Value GetMember(const Value& inst, const std::string& name, bool external);
+    void SetMember(const Value& inst, const std::string& name, const Value& v, bool external);
+    Value CallMethod(const Value& inst, const std::string& method, std::vector<Value>& args, bool external);
+    UserClass* ClassOf(const Value& inst);
+    bool SameInstance(const Value& inst) const;
+    bool HasMethod(const std::string& name);
 
     // C# lambdas (x => x * 2, (a, b) => { ... }): a lambda value is {"__lambda": id};
     // calling it runs its body in a new frame on top of the current scopes, so it
     // sees the locals of the code that called it (fine for ForEach/Find/Where...).
-    struct LambdaBody { const std::vector<std::string>* params; const std::vector<StmtPtr>* body; };
+    struct LambdaBody {
+        const std::vector<std::string>* params;
+        const std::vector<StmtPtr>* body;
+        const std::vector<ExprPtr>* defaults = nullptr;
+    };
     std::unordered_map<int, LambdaBody> lambdas;
     static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
-    Value CallLambda(const Value& f, std::vector<Value>& args);
+    Value CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
 
     // dotted property read/write (transform.position.x, Time.timeScale,
     // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
     // SetDotted returns true when it handled the assignment.
     Value GetDotted(const std::string& name, bool& ok);
     bool  SetDotted(const std::string& name, const Value& v);
+
+    // `OnClick += handler` listeners. Fired by the engine event (CallEvent) and
+    // by raise(). A listener is a lambda value or {"__fn": "FunctionName"}.
+    struct Sub { std::string name; Value fn; };
+    std::vector<Sub> subs;
+    void AddSub(const std::string& event, const Value& fn);
+    void RemoveSub(const std::string& event, const Value& fn);
+    void FireSubs(const std::string& event, std::vector<Value>& args);
+    bool HasSub(const std::string& event) const;
 };
 
 // ---- Expressions ----
@@ -766,14 +1029,17 @@ struct InterpStringExpr : Expr {
 struct VarExpr    : Expr {
     std::string n; explicit VarExpr(std::string s) : n(std::move(s)) {}
     Value Eval(Runtime& r) override {
-        // property reads: transform.position.x, Time.deltaTime, ...
-        if (n.find('.') != std::string::npos) {
-            bool ok = false; Value v = r.GetDotted(n, ok);
+        if (n == "this" && IsClassInstance(r.self)) return r.self;
+        // No plain-class object: `this.hp` is the global `hp`, as it always was.
+        const std::string key = (n.rfind("this.", 0) == 0 && !IsClassInstance(r.self)) ? n.substr(5) : n;
+        // property reads: transform.position.x, Time.deltaTime, item.name, ...
+        if (key.find('.') != std::string::npos) {
+            bool ok = false; Value v = r.GetDotted(key, ok);
             if (ok) return v;
         }
         // Bare `gameObject` (as in Destroy(gameObject)) is this object's name.
-        if (n == "gameObject" && !r.Has(n) && r.host && r.host->gameObject) return Value{r.host->gameObject->name};
-        return r.Get(n);
+        if (key == "gameObject" && r.selfClass.empty() && !r.Has(key) && r.host && r.host->gameObject) return Value{r.host->gameObject->name};
+        return r.Get(key);
     }
 };
 
@@ -782,8 +1048,9 @@ struct AssignExpr : Expr {
     AssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
     Value Eval(Runtime& r) override {
         Value v = value->Eval(r);
-        if (n.find('.') != std::string::npos && r.SetDotted(n, v)) return v;
-        r.Assign(n, v);
+        const std::string key = (n.rfind("this.", 0) == 0 && !IsClassInstance(r.self)) ? n.substr(5) : n;
+        if (key.find('.') != std::string::npos && r.SetDotted(key, v)) return v;
+        r.Assign(key, v);
         return v;
     }
 };
@@ -806,6 +1073,30 @@ struct LogicalExpr : Expr {
         Value lv = l->Eval(rt);
         if (op == Tok::And) return lv.AsBool() ? r->Eval(rt).AsBool() : false;
         return lv.AsBool() ? true : r->Eval(rt).AsBool();
+    }
+};
+
+bool ValuesEqual(const Value& a, const Value& b);
+// a ?? b: a, or b when a is null. b is not worked out when a is present.
+struct CoalesceExpr : Expr {
+    ExprPtr l, r;
+    CoalesceExpr(ExprPtr a, ExprPtr b) : l(std::move(a)), r(std::move(b)) {}
+    Value Eval(Runtime& rt) override {
+        Value lv = l->Eval(rt);
+        return IsNullish(lv) ? r->Eval(rt) : lv;
+    }
+};
+
+// x ??= value: set x only while it is null, and only then work out value.
+struct NullishAssignExpr : Expr {
+    std::string n; ExprPtr value;
+    NullishAssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
+    Value Eval(Runtime& rt) override {
+        Value cur = rt.Get(n);
+        if (!IsNullish(cur)) return cur;
+        Value v = value->Eval(rt);
+        rt.Assign(n, v);
+        return v;
     }
 };
 
@@ -844,17 +1135,15 @@ struct BinaryExpr : Expr {
             case Tok::Star:    return a.AsFloat() * b.AsFloat();
             case Tok::Slash:   { float d = b.AsFloat(); return d != 0 ? a.AsFloat() / d : 0.0f; }
             case Tok::Percent: { float d = b.AsFloat(); return d != 0 ? std::fmod(a.AsFloat(), d) : 0.0f; }
-            case Tok::BitAnd: return (float)((long long)a.AsFloat() & (long long)b.AsFloat());
-            case Tok::BitOr:  return (float)((long long)a.AsFloat() | (long long)b.AsFloat());
-            case Tok::BitXor: return (float)((long long)a.AsFloat() ^ (long long)b.AsFloat());
+            case Tok::BitAnd: return (float)(SafeInt64(a.AsFloat()) & SafeInt64(b.AsFloat()));
+            case Tok::BitOr:  return (float)(SafeInt64(a.AsFloat()) | SafeInt64(b.AsFloat()));
+            case Tok::BitXor: return (float)(SafeInt64(a.AsFloat()) ^ SafeInt64(b.AsFloat()));
             case Tok::Lt: return a.AsFloat() <  b.AsFloat();
             case Tok::Gt: return a.AsFloat() >  b.AsFloat();
             case Tok::Le: return a.AsFloat() <= b.AsFloat();
             case Tok::Ge: return a.AsFloat() >= b.AsFloat();
-            case Tok::Eq: return (a.IsString() || b.IsString()) ? a.AsString() == b.AsString()
-                                                                : a.AsFloat() == b.AsFloat();
-            case Tok::Ne: return (a.IsString() || b.IsString()) ? a.AsString() != b.AsString()
-                                                                : a.AsFloat() != b.AsFloat();
+            case Tok::Eq: return ValuesEqual(a, b);
+            case Tok::Ne: return !ValuesEqual(a, b);
             default: return Value{};
         }
     }
@@ -894,6 +1183,12 @@ bool ValueProperty(const Value& v, const std::string& prop, Value& out) {
     return false;
 }
 bool ValuesEqual(const Value& a, const Value& b) {
+    // An object is never null, and two variables are equal only when they are
+    // the same object. Arrays and plain maps stay on the old comparison.
+    if (IsClassInstance(a) || IsClassInstance(b)) {
+        if (IsClassInstance(a) && IsClassInstance(b)) return a.AsMap().get() == b.AsMap().get();
+        return false;
+    }
     if (a.IsString() || b.IsString()) return a.AsString() == b.AsString();
     return a.AsFloat() == b.AsFloat();
 }
@@ -932,8 +1227,8 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
         if (m == "IndexOf")    { auto p = str.find(arg(0).AsString()); out = Value{p == std::string::npos ? -1.0f : (float)p}; return true; }
         if (m == "LastIndexOf"){ auto p = str.rfind(arg(0).AsString()); out = Value{p == std::string::npos ? -1.0f : (float)p}; return true; }
         if (m == "Substring") {
-            int st = (int)arg(0).AsFloat(); if (st < 0) st = 0; if (st > (int)str.size()) st = (int)str.size();
-            int n = a.size() > 1 ? (int)a[1].AsFloat() : (int)str.size() - st; if (n < 0) n = 0;
+            int st = SafeInt(arg(0).AsFloat()); if (st < 0) st = 0; if (st > (int)str.size()) st = (int)str.size();
+            int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : (int)str.size() - st; if (n < 0) n = 0;
             out = Value{str.substr((std::size_t)st, (std::size_t)n)}; return true;
         }
         if (m == "Replace") {
@@ -956,15 +1251,15 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
             arr->push_back(Value{str.substr(p)}); return true;
         }
         if (m == "PadLeft" || m == "PadRight") {
-            int w = (int)arg(0).AsFloat(); char c = a.size() > 1 && !a[1].AsString().empty() ? a[1].AsString()[0] : ' ';
+            int w = SafeInt(arg(0).AsFloat()); char c = a.size() > 1 && !a[1].AsString().empty() ? a[1].AsString()[0] : ' ';
             std::string r = str;
             if ((int)r.size() < w) r = m == "PadLeft" ? std::string(w - r.size(), c) + r : r + std::string(w - r.size(), c);
             out = Value{r}; return true;
         }
-        if (m == "Insert") { std::size_t p = (std::size_t)std::max(0.0f, arg(0).AsFloat()); std::string r = str; r.insert(std::min(p, r.size()), arg(1).AsString()); out = Value{r}; return true; }
+        if (m == "Insert") { std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str; r.insert(std::min(p, r.size()), arg(1).AsString()); out = Value{r}; return true; }
         if (m == "Remove") {
-            std::size_t p = (std::size_t)std::max(0.0f, arg(0).AsFloat()); std::string r = str;
-            if (p < r.size()) r.erase(p, a.size() > 1 ? (std::size_t)std::max(0.0f, a[1].AsFloat()) : std::string::npos);
+            std::size_t p = SafeSize(arg(0).AsFloat()); std::string r = str;
+            if (p < r.size()) r.erase(p, a.size() > 1 ? SafeSize(a[1].AsFloat()) : std::string::npos);
             out = Value{r}; return true;
         }
         return false;
@@ -1013,9 +1308,9 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
         }
         if (m == "Add" || m == "Push" || m == "Enqueue") { arr->push_back(arg(0)); return true; }
         if (m == "AddRange") { if (auto o = arg(0).AsArray()) { auto copy = *o; arr->insert(arr->end(), copy.begin(), copy.end()); } return true; }
-        if (m == "Insert")   { int i = (int)arg(0).AsFloat(); i = std::max(0, std::min(i, (int)arr->size())); arr->insert(arr->begin() + i, arg(1)); return true; }
+        if (m == "Insert")   { int i = SafeInt(arg(0).AsFloat()); i = std::max(0, std::min(i, (int)arr->size())); arr->insert(arr->begin() + i, arg(1)); return true; }
         if (m == "Remove")   { int i = find(arg(0)); if (i >= 0) arr->erase(arr->begin() + i); out = Value{i >= 0}; return true; }
-        if (m == "RemoveAt") { int i = (int)arg(0).AsFloat(); if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i); return true; }
+        if (m == "RemoveAt") { int i = SafeInt(arg(0).AsFloat()); if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i); return true; }
         if (m == "Contains") { out = Value{find(arg(0)) >= 0}; return true; }
         if (m == "IndexOf")  { out = Value{(float)find(arg(0))}; return true; }
         if (m == "Clear")    { arr->clear(); return true; }
@@ -1059,10 +1354,12 @@ inline bool IsComponentRef(const Value& v) {
 }
 // expr.member  — a property read on any expression's value.
 struct MemberExpr : Expr {
-    ExprPtr obj; std::string name;
-    MemberExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; bool safe = false;
+    MemberExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
+        if (IsClassInstance(v)) return rt.GetMember(v, name, true);
         if (IsComponentRef(v)) { std::vector<Value> a{Value{v.AsString().substr(1)}, Value{name}}; return rt.Call("__get_component", a); }
         if (ValueProperty(v, name, out)) return out;
         throw ScriptError("no property '" + name + "' on this value");
@@ -1074,6 +1371,7 @@ struct MemberAssignExpr : Expr {
     MemberAssignExpr(ExprPtr o, std::string n, ExprPtr v) : obj(std::move(o)), name(std::move(n)), value(std::move(v)) {}
     Value Eval(Runtime& rt) override {
         Value target = obj->Eval(rt), v = value->Eval(rt);
+        if (IsClassInstance(target)) { rt.SetMember(target, name, v, true); return v; }
         if (!IsComponentRef(target))
             throw ScriptError(target.IsNumber() && target.AsFloat() == 0.0f
                 ? "can't set '" + name + "': the object is null (e.g. GetComponent found no such component)"
@@ -1091,7 +1389,7 @@ struct CastExpr : Expr {
         Value v = e->Eval(rt);
         if (type == "string") return Value{v.AsString()};
         if (type == "bool") return Value{v.AsBool()};
-        if (type == "char") return v.IsString() ? v : Value{std::string(1, (char)(int)v.AsFloat())};
+        if (type == "char") return v.IsString() ? v : Value{std::string(1, (char)SafeInt(v.AsFloat()))};
         if (type == "float" || type == "double" || type == "decimal") {
             if (v.IsString()) { try { return Value{std::stof(v.AsString())}; } catch (...) { return Value{0.0f}; } }
             return Value{v.AsFloat()};
@@ -1102,12 +1400,14 @@ struct CastExpr : Expr {
 };
 // expr.Method(args)  — a C#-style method on a value (string, list, dictionary, number).
 struct MethodCallExpr : Expr {
-    ExprPtr obj; std::string name; std::vector<ExprPtr> args;
-    MethodCallExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; std::vector<ExprPtr> args; bool safe = false;
+    MethodCallExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
         std::vector<Value> vals; vals.reserve(args.size());
         for (auto& a : args) vals.push_back(a->Eval(rt));
+        if (IsClassInstance(v)) return rt.CallMethod(v, name, vals, true);
         if (IsComponentRef(v)) {
             vals.insert(vals.begin(), {Value{v.AsString().substr(1)}, Value{name}});
             return rt.Call("__call_component", vals);
@@ -1118,14 +1418,35 @@ struct MethodCallExpr : Expr {
     }
 };
 
-struct CallExpr : Expr {
-    std::string name; std::vector<ExprPtr> args;
-    explicit CallExpr(std::string n) : name(std::move(n)) {}
+// new Item("Potion") / new Item(). Arrays (`new Item[4]`) and List/Dictionary
+// stay on their own paths; this is only a plain class.
+struct NewExpr : Expr {
+    std::string type; std::vector<ExprPtr> args;
+    explicit NewExpr(std::string t) : type(std::move(t)) {}
     Value Eval(Runtime& rt) override {
         std::vector<Value> vals;
         vals.reserve(args.size());
         for (auto& a : args) vals.push_back(a->Eval(rt));
-        return rt.Call(name, vals);
+        return rt.MakeInstance(type, vals);
+    }
+};
+
+struct CallExpr : Expr {
+    std::string name; std::vector<ExprPtr> args;
+    std::vector<std::string> argNames;   ///< parallel to args; empty string = positional
+    explicit CallExpr(std::string n) : name(std::move(n)) {}
+    Value Eval(Runtime& rt) override {
+        std::vector<Value> vals;
+        std::vector<std::string> names;
+        vals.reserve(args.size());
+        bool anyNamed = false;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            std::string nm = i < argNames.size() ? argNames[i] : std::string();
+            if (!nm.empty()) anyNamed = true;
+            names.push_back(std::move(nm));
+            vals.push_back(args[i]->Eval(rt));
+        }
+        return rt.Call(name, vals, anyNamed ? &names : nullptr);
     }
 };
 
@@ -1149,12 +1470,14 @@ struct ArrayExpr : Expr {
 
 // Read an element: arr[index] for arrays, or map["key"] for dictionaries.
 struct IndexExpr : Expr {
-    ExprPtr arr, index;
-    IndexExpr(ExprPtr a, ExprPtr i) : arr(std::move(a)), index(std::move(i)) {}
+    ExprPtr arr, index; bool safe = false;
+    IndexExpr(ExprPtr a, ExprPtr i, bool s = false) : arr(std::move(a)), index(std::move(i)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
+        if (safe && IsNullish(a)) return Value{};
+        if (IsClassInstance(a)) return rt.GetMember(a, index->Eval(rt).AsString(), true);
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i < 0 || i >= (int)v->size()) return Value{};
             return (*v)[i];
         }
@@ -1174,8 +1497,9 @@ struct IndexAssignExpr : Expr {
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
         Value val = value->Eval(rt);
+        if (IsClassInstance(a)) { rt.SetMember(a, index->Eval(rt).AsString(), val, true); return val; }
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i >= 0 && i < (int)v->size()) (*v)[i] = val;
             else if (i == (int)v->size()) v->push_back(val); // append at end
         } else if (auto m = a.AsMap()) {
@@ -1194,6 +1518,21 @@ struct IndexCompoundAssignExpr : Expr {
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
         Value rhs = value->Eval(rt);
+        if (IsClassInstance(a)) {
+            std::string k = index->Eval(rt).AsString();
+            Value cur = rt.GetMember(a, k, true);
+            Value next;
+            switch (op) {
+                case Tok::Plus:  next = (cur.IsString() || rhs.IsString()) ? Value{cur.AsString() + rhs.AsString()}
+                                                                           : Value{cur.AsFloat() + rhs.AsFloat()}; break;
+                case Tok::Minus: next = Value{cur.AsFloat() - rhs.AsFloat()}; break;
+                case Tok::Star:  next = Value{cur.AsFloat() * rhs.AsFloat()}; break;
+                case Tok::Slash: { float d = rhs.AsFloat(); next = Value{d != 0 ? cur.AsFloat() / d : 0.0f}; break; }
+                default: next = rhs; break;
+            }
+            rt.SetMember(a, k, next, true);
+            return next;
+        }
         auto apply = [&](const Value& cur) -> Value {
             switch (op) {
                 case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return cur.AsString() + rhs.AsString();
@@ -1205,7 +1544,7 @@ struct IndexCompoundAssignExpr : Expr {
             }
         };
         if (auto v = a.AsArray()) {
-            int i = (int)index->Eval(rt).AsFloat();
+            int i = SafeInt(index->Eval(rt).AsFloat());
             if (i >= 0 && i < (int)v->size()) { (*v)[i] = apply((*v)[i]); return (*v)[i]; }
         } else if (auto m = a.AsMap()) {
             std::string k = index->Eval(rt).AsString();
@@ -1375,11 +1714,52 @@ struct ForEachStmt : Stmt {
 struct LambdaExpr : Expr {
     int id = 0;
     std::vector<std::string> params;
+    std::vector<ExprPtr> defaults;   ///< null unless that parameter was written `a = expr`
     std::vector<StmtPtr> body;
     Value Eval(Runtime& r) override {
-        r.lambdas[id] = Runtime::LambdaBody{&params, &body};
+        r.lambdas[id] = Runtime::LambdaBody{&params, &body, &defaults};
         Value v = Value::MakeMap(); (*v.AsMap())["__lambda"] = Value{(float)id};
         return v;
+    }
+};
+// `OnClick += fn` / `OnHurt += (n) => ...` subscribes. A number on the right
+// stays ordinary compound assignment (`score += 1`), so both share `+=` / `-=`.
+// Evaluates an expression owned elsewhere.
+struct BorrowedExpr : Expr {
+    Expr* e;
+    explicit BorrowedExpr(Expr* x) : e(x) {}
+    Value Eval(Runtime& rt) override { return e->Eval(rt); }
+};
+struct EventOrCompoundExpr : Expr {
+    std::string name;
+    ExprPtr rhs;
+    bool remove;
+    Tok bin;
+    // name = name <bin> rhs, the plain compound assignment (dotted names and
+    // this. included); it borrows rhs so every run can still read it.
+    ExprPtr combined;
+    EventOrCompoundExpr(std::string n, ExprPtr r, bool rem, Tok b)
+        : name(std::move(n)), rhs(std::move(r)), remove(rem), bin(b),
+          combined(std::make_unique<AssignExpr>(name, std::make_unique<BinaryExpr>(
+              b, std::make_unique<VarExpr>(name), std::make_unique<BorrowedExpr>(rhs.get())))) {}
+    Value Eval(Runtime& rt) override {
+        auto take = [&](const Value& fn) {
+            if (remove) rt.RemoveSub(name, fn);
+            else rt.AddSub(name, fn);
+            return fn;
+        };
+        if (auto* v = dynamic_cast<VarExpr*>(rhs.get())) {
+            if (rt.Has(v->n) && Runtime::IsLambda(rt.Get(v->n)))
+                return take(rt.Get(v->n));
+            if (!rt.Has(v->n) && rt.functions.count(v->n)) {
+                Value fn = Value::MakeMap();
+                (*fn.AsMap())["__fn"] = Value{v->n};
+                return take(fn);
+            }
+        } else if (dynamic_cast<LambdaExpr*>(rhs.get())) {
+            return take(rhs->Eval(rt));
+        }
+        return combined->Eval(rt);
     }
 };
 // yield return <wait>;  — inside a coroutine: hand control back to the game loop.
@@ -1388,8 +1768,11 @@ struct YieldStmt : Stmt {
     void Exec(Runtime& r) override {
         Value v = e ? e->Eval(r) : Value{};
         if (auto m = v.AsMap()) {
-            if (auto it = m->find("__wait"); it != m->end()) { r.YieldCoroutine(it->second.AsFloat(), false, 0); return; }
-            if (auto it = m->find("__co"); it != m->end()) { r.YieldCoroutine(0.0f, false, (int)it->second.AsFloat()); return; }
+            bool real = m->count("__real") > 0;
+            if (auto it = m->find("__wait"); it != m->end()) { r.YieldCoroutine(it->second.AsFloat(), false, 0, Value{}, false, real); return; }
+            if (auto it = m->find("__until"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, false); return; }
+            if (auto it = m->find("__while"); it != m->end()) { r.YieldCoroutine(0.0f, false, 0, it->second, true); return; }
+            if (auto it = m->find("__co"); it != m->end()) { r.YieldCoroutine(0.0f, false, SafeInt(it->second.AsFloat())); return; }
         }
         r.YieldCoroutine(0.0f, true, 0);   // null / WaitForEndOfFrame / anything else: next frame
     }
@@ -1415,20 +1798,195 @@ struct CallDepthGuard {
     ~CallDepthGuard() { --t_callDepth; }
 };
 
-Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
+Value Runtime::InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args) {
+    CallDepthGuard depthGuard(label);
+    scopes.push_back(Environment{});
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+        if (!k) { Define(fn.params[i], i < args.size() ? args[i] : Value{}); continue; }
+        try { DefineTyped(fn.params[i], i < args.size() ? args[i] : DefaultForKind(k), k); }
+        catch (...) { scopes.pop_back(); throw; }
+    }
+    Value ret;
+    try {
+        for (auto& s : fn.body) s->Exec(*this);
+    } catch (ReturnSignal& rs) {
+        ret = rs.value;
+    } catch (BreakSignal&) {
+    } catch (ContinueSignal&) {
+    } catch (...) {
+        scopes.pop_back();
+        throw;
+    }
+    scopes.pop_back();
+    if (fn.returnKind & 0x0F) return CoerceToKind(fn.returnKind, ret, label);
+    return ret;
+}
+
+UserClass* Runtime::ClassOf(const Value& inst) {
+    auto mp = inst.AsMap();
+    if (!mp) return nullptr;
+    auto tag = mp->find("__class");
+    if (tag == mp->end() || !tag->second.IsString()) return nullptr;
+    auto cit = classes.find(tag->second.AsString());
+    return cit == classes.end() ? nullptr : &cit->second;
+}
+bool Runtime::SameInstance(const Value& inst) const {
+    auto a = self.AsMap(), b = inst.AsMap();
+    return a && b && a.get() == b.get();
+}
+bool Runtime::HasMethod(const std::string& name) {
+    if (selfClass.empty() || name.find('.') != std::string::npos) return false;
+    auto cit = classes.find(selfClass);
+    return cit != classes.end() && cit->second.methods.count(name) != 0;
+}
+static const FieldDef* FindField(const UserClass& c, const std::string& n) {
+    for (auto& f : c.fields) if (f.name == n) return &f;
+    return nullptr;
+}
+Value Runtime::GetMember(const Value& inst, const std::string& name, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw ScriptError("no field '" + name + "' on this value");
+    const FieldDef* f = FindField(*c, name);
+    if (!f) throw ScriptError(c->name + " has no field '" + name + "'");
+    if (external && !f->isPublic && !SameInstance(inst))
+        throw ScriptError("'" + name + "' is private on " + c->name);
+    auto mp = inst.AsMap();
+    auto it = mp->find(name);
+    return it == mp->end() ? Value{} : it->second;
+}
+void Runtime::SetMember(const Value& inst, const std::string& name, const Value& v, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw ScriptError("can't set '" + name + "' on this value");
+    const FieldDef* f = FindField(*c, name);
+    if (!f) throw ScriptError(c->name + " has no field '" + name + "'");
+    if (external && !f->isPublic && !SameInstance(inst))
+        throw ScriptError("'" + name + "' is private on " + c->name);
+    WriteField(inst, *f, v);
+}
+Value Runtime::CallMethod(const Value& inst, const std::string& method, std::vector<Value>& args, bool external) {
+    UserClass* c = ClassOf(inst);
+    if (!c) throw ScriptError("no method '" + method + "' on this value");
+    auto mit = c->methods.find(method);
+    if (mit == c->methods.end()) {
+        if (const FieldDef* f = FindField(*c, method)) {
+            if (external && !f->isPublic && !SameInstance(inst))
+                throw ScriptError("'" + method + "' is private on " + c->name);
+            auto mp = inst.AsMap();
+            auto it = mp->find(method);
+            Value fv = it == mp->end() ? Value{} : it->second;
+            if (IsLambda(fv)) return CallLambda(fv, args);
+        }
+        throw ScriptError(c->name + " has no method '" + method + "'");
+    }
+    if (external && !mit->second.isPublic && !SameInstance(inst))
+        throw ScriptError("'" + method + "' is private on " + c->name);
+    Value prev = self;
+    std::string prevClass = selfClass;
+    self = inst;
+    selfClass = c->name;
+    try {
+        Value ret = InvokeDecl(mit->second.decl, c->name + "." + method + "()", args);
+        self = prev; selfClass = prevClass;
+        return ret;
+    } catch (...) {
+        self = prev; selfClass = prevClass;
+        throw;
+    }
+}
+Value Runtime::MakeInstance(const std::string& type, std::vector<Value>& args) {
+    CallDepthGuard guard("new " + type);
+    auto cit = classes.find(type);
+    if (cit == classes.end()) throw ScriptError("no class named '" + type + "'");
+    UserClass& c = cit->second;
+    Value inst = Value::MakeMap();
+    (*inst.AsMap())["__class"] = Value{type};
+    Value prev = self;
+    std::string prevClass = selfClass;
+    self = inst;
+    selfClass = type;
+    try {
+        for (auto& f : c.fields) {
+            Value v = f.init ? f.init->Eval(*this) : DefaultForKind(f.kind);
+            if (f.kind & 0x0F) v = CoerceToKind(f.kind, v, f.name);
+            (*inst.AsMap())[f.name] = std::move(v);
+        }
+        auto ct = c.ctors.find((int)args.size());
+        if (ct != c.ctors.end()) InvokeDecl(ct->second.decl, type + "()", args);
+        else if (!args.empty() || !c.ctors.empty())
+            throw ScriptError(type + " has no constructor that takes " + std::to_string(args.size()) +
+                              (args.size() == 1 ? " value" : " values"));
+    } catch (...) {
+        self = prev; selfClass = prevClass;
+        throw;
+    }
+    self = prev; selfClass = prevClass;
+    return inst;
+}
+
+namespace {
+bool AnyNamed(const std::vector<std::string>* names) {
+    if (!names) return false;
+    for (const std::string& n : *names) if (!n.empty()) return true;
+    return false;
+}
+// Lay call arguments onto parameter slots. Extra positional arguments are ignored,
+// matching calls that already passed more values than a function reads.
+void PlaceArgs(const std::vector<std::string>& params, const std::vector<Value>& args,
+               const std::vector<std::string>* names, std::vector<char>& present,
+               std::vector<Value>& slot, const std::string& what) {
+    present.assign(params.size(), 0);
+    slot.assign(params.size(), Value{});
+    bool sawNamed = false;
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string nm = (names && i < names->size()) ? (*names)[i] : std::string();
+        if (nm.empty()) {
+            if (sawNamed) throw ScriptError(what + ": a value without a name can't follow a named one");
+            if (next >= params.size()) continue;
+            slot[next] = args[i]; present[next] = 1; ++next;
+        } else {
+            sawNamed = true;
+            std::size_t idx = params.size();
+            for (std::size_t p = 0; p < params.size(); ++p) if (params[p] == nm) { idx = p; break; }
+            if (idx == params.size()) throw ScriptError(what + " has no parameter '" + nm + "'");
+            if (present[idx]) throw ScriptError(what + ": '" + nm + "' was given twice");
+            slot[idx] = args[i]; present[idx] = 1;
+        }
+    }
+}
+} // namespace
+
+Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto b = builtins.find(name);
-    if (b != builtins.end()) return b->second(args);
+    if (b != builtins.end()) {
+        if (AnyNamed(names) && name != "StartCoroutine")
+            throw ScriptError("'" + name + "' doesn't take named arguments");
+        const std::vector<std::string>* prev = activeArgNames;
+        activeArgNames = names;
+        Value v = b->second(args);
+        activeArgNames = prev;
+        return v;
+    }
+
+    // Inside a method, a bare call prefers that class's own method.
+    if (HasMethod(name)) return CallMethod(self, name, args, false);
 
     auto f = functions.find(name);
     if (f == functions.end()) {
         // `name.Method(...)` on a variable (or a dotted property like gameObject.name):
-        // s.ToUpper(), enemies.Add(e), scores.ContainsKey("bob"), hp.ToString().
+        // s.ToUpper(), enemies.Add(e), item.Use(), hp.ToString().
         auto dot = name.rfind('.');
         if (dot != std::string::npos && dot > 0) {
             const std::string base = name.substr(0, dot), method = name.substr(dot + 1);
-            bool ok = Has(base);
-            Value obj = ok ? Get(base) : Value{};
+            bool ok = false;
+            Value obj;
+            if (base.find('.') == std::string::npos) {
+                if (base == "this" && IsClassInstance(self)) { obj = self; ok = true; }
+                else if (Has(base)) { obj = Get(base); ok = true; }
+            }
             if (!ok) obj = GetDotted(base, ok);
+            if (ok && IsClassInstance(obj)) return CallMethod(obj, method, args, true);
             Value out;
             if (ok && IsComponentRef(obj)) {   // rb.AddForce(...), anim.SetTrigger("Jump")
                 std::vector<Value> a{Value{obj.AsString().substr(1)}, Value{method}};
@@ -1445,18 +2003,26 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
             if (ok && CallValueMethod(obj, method, args, out, &inv)) return out;
         }
         // A variable holding a lambda: Action onHit = () => ...; onHit();
-        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args);
+        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args, names);
         throw ScriptError("call to undefined function '" + name + "'");
     }
 
     CallDepthGuard depthGuard(name + "()");
-    scopes.push_back(Environment{});
     const FunctionDecl& fn = f->second;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(fn.params, args, names, present, slot, name + "()");
+    scopes.push_back(Environment{});
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
         const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
-        if (!k) { Define(fn.params[i], i < args.size() ? args[i] : Value{}); continue; }
-        try { DefineTyped(fn.params[i], i < args.size() ? args[i] : DefaultForKind(k), k); }
-        catch (...) { scopes.pop_back(); throw; }
+        Value v;
+        try {
+            if (present[i]) v = slot[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = fn.defaults[i]->Eval(*this);
+            else v = k ? DefaultForKind(k) : Value{};
+            if (!k) Define(fn.params[i], v);
+            else DefineTyped(fn.params[i], v, k);
+        } catch (...) { scopes.pop_back(); throw; }
     }
 
     Value ret;
@@ -1475,17 +2041,29 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
     return ret;
 }
 
-Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
+Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto m = f.AsMap();
     if (!m) throw ScriptError("not a function");
     auto it = m->find("__lambda");
     if (it == m->end()) throw ScriptError("not a function");
-    auto lb = lambdas.find((int)it->second.AsFloat());
+    auto lb = lambdas.find(SafeInt(it->second.AsFloat()));
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
     CallDepthGuard depthGuard("a lambda");
-    scopes.push_back(Environment{});
     const auto& ps = *lb->second.params;
-    for (std::size_t i = 0; i < ps.size(); ++i) Define(ps[i], i < args.size() ? args[i] : Value{});
+    const std::vector<ExprPtr>* defs = lb->second.defaults;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(ps, args, names, present, slot, "lambda");
+    scopes.push_back(Environment{});
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        try {
+            Value v;
+            if (present[i]) v = slot[i];
+            else if (defs && i < defs->size() && (*defs)[i]) v = (*defs)[i]->Eval(*this);
+            else v = Value{};
+            Define(ps[i], v);
+        } catch (...) { scopes.pop_back(); throw; }
+    }
     Value ret;
     try { for (auto& st : *lb->second.body) st->Exec(*this); }
     catch (ReturnSignal& rs) { ret = rs.value; }
@@ -1496,6 +2074,17 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
 
 // ---- dotted property access --------------------------------------
 namespace {
+// Frames per second over the last half second of REAL frame times (the loop that is running the game keeps
+// them, GameLoop::Stats()), so a pause, a slow-motion scale or a hit stop does not change it and a stall shows.
+// Without a loop (a host that does not run one) the last frame's real time stands in.
+float RealFps() {
+    if (const GameLoop* loop = GameLoop::Current()) {
+        const double f = loop->Stats().AverageFps(30);
+        if (f > 0.0) return (float)f;
+    }
+    const float u = Time::UnscaledDeltaTime();
+    return u > 1e-6f ? 1.0f / u : 0.0f;
+}
 // Euler Z angle (degrees) of a quaternion, for transform.eulerAngles.z.
 float EulerZ(const Quat& q) {
     return std::atan2(2.0f * (q.w * q.z + q.x * q.y),
@@ -1513,8 +2102,18 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Time.time")       return Value{Time::ElapsedTime()};
     if (name == "Time.timeScale")  return Value{Time::TimeScale()};
     if (name == "Time.frameCount") return Value{(float)Time::FrameCount()};
-    if (name == "Time.fixedDeltaTime" || name == "Time.unscaledDeltaTime")
-        return Value{host ? host->deltaTime : 0.0f};
+    // The step of a FixedUpdate and the real frame time were both answered with this frame's SCALED delta
+    // (so Time.unscaledDeltaTime read 0 in a pause and half of itself at timeScale 0.5).
+    if (name == "Time.fixedDeltaTime")      return Value{Time::FixedDeltaTime()};
+    if (name == "Time.unscaledDeltaTime")   return Value{Time::UnscaledDeltaTime()};
+    if (name == "Time.unscaledTime")        return Value{(float)Time::UnscaledTime()};
+    // Since this Play began (the game's clocks that Time.time and Time.frameCount are the process's own).
+    if (name == "Time.sessionTime")         return Value{(float)Time::SessionTime()};
+    if (name == "Time.sessionUnscaledTime") return Value{(float)Time::SessionUnscaledTime()};
+    if (name == "Time.sessionFrameCount")   return Value{(float)Time::SessionFrameCount()};
+    if (name == "Time.fps")                 return Value{RealFps()};
+    if (name == "Time.paused")              return Value{Game::Paused()};
+    if (name == "Time.hitchCount")          return Value{(float)(GameLoop::Current() ? GameLoop::Current()->HitchCount() : 0)};
     if (name == "Space.World")     return Value{1.0f};
     if (name == "Space.Self")      return Value{0.0f};
     if (name == "null")            return Value{};
@@ -1556,7 +2155,7 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     if (name == "Vector2.right") return Value{Vec3{1, 0, 0}};
     if (name == "Vector2.left")  return Value{Vec3{-1, 0, 0}};
 
-    if (t) {
+    if (t && selfClass.empty()) {
         Vec3 wp = t->Position();
         if (name == "transform.position")   return Value{wp};
         if (name == "transform.position.x") return Value{wp.x};
@@ -1580,7 +2179,7 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         if (name == "transform.up")      return Value{t->Up()};
         if (name == "transform.right")   return Value{t->Right()};
     }
-    if (g) {
+    if (g && selfClass.empty()) {
         if (name == "gameObject.name") return Value{g->name};
         if (name == "gameObject.activeSelf" || name == "gameObject.active") return Value{g->active};
         if (name == "gameObject.tag")  return Value{g->tag};
@@ -1592,8 +2191,10 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
         auto dot = name.rfind('.');
         if (dot != std::string::npos) {
             std::string base = name.substr(0, dot), prop = name.substr(dot + 1);
+            if (base == "this" && IsClassInstance(self)) return GetMember(self, prop, false);
             if (base.find('.') == std::string::npos && Has(base)) {
                 Value out, bv = Get(base);
+                if (IsClassInstance(bv)) return GetMember(bv, prop, true);
                 if (IsComponentRef(bv)) { std::vector<Value> a{Value{bv.AsString().substr(1)}, Value{prop}}; return Call("__get_component", a); }
                 if (ValueProperty(bv, prop, out)) return out;
                 // An object's name (e.g. `other` in a collision handler): other.name, other.tag,
@@ -1610,6 +2211,7 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
                 // A property of a property: transform.position.normalized, gameObject.name.Length.
                 bool inner = false;
                 Value bv = GetDotted(base, inner), out;
+                if (inner && IsClassInstance(bv)) return GetMember(bv, prop, true);
                 if (inner && ValueProperty(bv, prop, out)) return out;
                 if (inner && bv.IsString() && g && g->scene() && base.rfind(".transform") == base.size() - 10)
                     if (GameObject* o = g->scene()->Find(bv.AsString()))   // other.transform.position
@@ -1625,6 +2227,11 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
     Transform* t = host ? host->transform : nullptr;
     GameObject* g = host ? host->gameObject : nullptr;
 
+    if (auto dot = name.find('.'); dot != std::string::npos && name.find('.', dot + 1) == std::string::npos) {
+        const std::string base = name.substr(0, dot), field = name.substr(dot + 1);
+        if (base == "this" && IsClassInstance(self)) { SetMember(self, field, v, false); return true; }
+        if (Has(base) && IsClassInstance(Get(base))) { SetMember(Get(base), field, v, true); return true; }
+    }
     if (name == "Time.timeScale") { Time::SetTimeScale(v.AsFloat()); return true; }
     // rb.velocity = ... on a GetComponent<T>() reference held in a variable.
     if (auto dot = name.find('.'); dot != std::string::npos && name.find('.', dot + 1) == std::string::npos) {
@@ -1638,7 +2245,7 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
             }
         }
     }
-    if (t) {
+    if (t && selfClass.empty()) {
         if (name == "transform.position")        { t->SetPosition(v.AsVec3()); return true; }
         if (name == "transform.localPosition")   { t->localPosition = v.AsVec3(); return true; }
         if (name == "transform.localScale")      { t->localScale = v.AsVec3(); return true; }
@@ -1660,7 +2267,7 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
         if (name == "transform.rotation")
             { t->localRotation = Quat::Euler({0, 0, v.AsVec3().z}); return true; }
     }
-    if (g) {
+    if (g && selfClass.empty()) {
         if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
         if (name == "gameObject.activeSelf" || name == "gameObject.active") { g->active = v.AsBool(); return true; }
         if (name == "gameObject.tag")        { g->tag = v.AsString(); return true; }
@@ -1684,7 +2291,7 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
 // ===================== Parser =====================
 class Parser {
 public:
-    explicit Parser(std::vector<Token> toks) : m_toks(std::move(toks)) { ScanEnums(); }
+    explicit Parser(std::vector<Token> toks) : m_toks(std::move(toks)) { ScanEnums(); ScanUserClasses(); }
 
     // C# enums anywhere in the file: `enum State { Idle, Run = 5, Jump }` makes
     // State.Idle / State.Run / State.Jump number constants (0, 5, 6).
@@ -1712,6 +2319,17 @@ public:
             }
         }
     }
+    // Plain classes (`class Item { ... }`, no base) are real types made with `new`.
+    // A class with a base (`class Hero : Behaviour`) is the component and is not recorded.
+    void ScanUserClasses() {
+        for (std::size_t i = 0; i + 1 < m_toks.size(); ++i) {
+            if (m_toks[i].type != Tok::Ident) continue;
+            if (m_toks[i].text != "class" && m_toks[i].text != "struct") continue;
+            if (m_toks[i + 1].type != Tok::Ident) continue;
+            const std::size_t j = SkipTypeSuffix(i + 2);
+            if (m_toks[j].type == Tok::LBrace) m_userClasses.insert(m_toks[i + 1].text);
+        }
+    }
     // Skip `[modifiers] enum Name [: type] { ... }` (already collected by ScanEnums).
     bool SkipEnumDecl() {
         std::size_t i = m_pos;
@@ -1733,6 +2351,7 @@ public:
         while (!Check(Tok::End)) ParseMember(top, funcs);
         return top;
     }
+    std::unordered_map<std::string, UserClass> TakeClasses() { return std::move(m_classes); }
 
     // Parse for diagnostics only: keep going after a parse error by recording it
     // and re-synchronizing to the next statement boundary, so the editor can list
@@ -1744,8 +2363,8 @@ public:
     std::vector<ScriptDiagnostic> NoEffectWarnings() const {
         std::vector<ScriptDiagnostic> w;
         std::set<std::pair<int, std::string>> seen;
-        auto add = [&](int line, const std::string& key, const std::string& msg) {
-            if (seen.insert({line, key}).second) w.push_back({line, msg, 1});
+        auto add = [&](int line, int col, const std::string& key, const std::string& msg) {
+            if (seen.insert({line, key}).second) w.push_back({line, msg, 1, col});
         };
         static const std::unordered_map<std::string, const char*> kMods = {
             {"virtual",   "`virtual` does nothing: scripts don't inherit from each other. Delete it."},
@@ -1768,30 +2387,29 @@ public:
             const Token& t = m_toks[i];
             const Token& nx = m_toks[i + 1];
             if (t.type == Tok::Number && t.suffix) {
-                add(t.line, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
+                add(t.line, t.column, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
                                       "already a decimal). Write " + t.text + ".");
                 continue;
             }
             if (t.type != Tok::Ident) continue;
             if (t.text == "using" && nx.type == Tok::Ident)
-                add(t.line, "using", "`using` does nothing: everything is already available. Delete this line.");
+                add(t.line, t.column, "using", "`using` does nothing: everything is already available. Delete this line.");
             else if (t.text == "namespace" && nx.type == Tok::Ident)
-                add(t.line, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
+                add(t.line, t.column, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
             else if ((t.text == "class" || t.text == "struct") && nx.type == Tok::Ident) {
                 const std::size_t after = SkipTypeSuffix(i + 2);
                 if (m_toks[after].type == Tok::Colon)
-                    add(t.line, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
+                    add(t.line, t.column, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
                                          "and methods in this file are the component. Delete the `class " + nx.text +
                                          "` line and its braces.");
-                else
-                    add(t.line, "class", "The class wrapper does nothing: the fields and methods in this file are the "
-                                         "component. Delete the `class " + nx.text + "` line and its braces.");
+                // A plain `class Name { }` is a real script class. Only `: Base`
+                // is still the old component wrapper, warned about above.
             } else if (nx.type == Tok::Ident) {
                 auto m = kMods.find(t.text);
-                if (m != kMods.end()) add(t.line, t.text, m->second);
+                if (m != kMods.end()) add(t.line, t.column, t.text, m->second);
             }
             if (kNeverCalled.count(t.text) && nx.type == Tok::LParen && i > 0 && m_toks[i - 1].type == Tok::Ident)
-                add(t.line, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
+                add(t.line, t.column, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
         }
         return w;
     }
@@ -1805,7 +2423,7 @@ public:
             try {
                 ParseMember(top, funcs);
             } catch (const ScriptError& e) {
-                diags.push_back({ e.line, e.what() });
+                diags.push_back({ e.line, e.what(), 0, e.column });
                 if (diags.size() >= 100) break;          // stop runaway cascades
                 Synchronize(before);
             }
@@ -1842,6 +2460,7 @@ public:
             return;
         }
         if (IsClassAhead()) {
+            if (!ClassHasBase()) { ParseUserClass(); return; }
             while (Check(Tok::Ident) && Peek().text != "class" && Peek().text != "struct") ++m_pos;  // modifiers
             Expect(Tok::Ident, "'class'");                                // the 'class' keyword
             Expect(Tok::Ident, "class name");                            // its name
@@ -1917,6 +2536,16 @@ public:
         }
         return false;
     }
+    // `class Item {` is a plain class. `class Hero : Behaviour {` is the component.
+    bool ClassHasBase() const {
+        std::size_t i = m_pos;
+        while (m_toks[i].type == Tok::Ident && m_toks[i].text != "class" && m_toks[i].text != "struct") ++i;
+        if (m_toks[i].type != Tok::Ident) return false;
+        ++i;
+        if (m_toks[i].type != Tok::Ident) return false;
+        i = SkipTypeSuffix(i + 1);
+        return m_toks[i].type == Tok::Colon;
+    }
 
 private:
     const Token& Peek() const { return m_toks[m_pos]; }
@@ -1924,7 +2553,7 @@ private:
     bool Check(Tok t) const { return Peek().type == t; }
     bool Match(Tok t) { if (Check(t)) { ++m_pos; return true; } return false; }
     const Token& Expect(Tok t, const char* msg) {
-        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line);
+        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line, Peek().column);
         return m_toks[m_pos++];
     }
 
@@ -2026,9 +2655,15 @@ private:
                 // `dt`, `float dt`, `List<int> xs`, `ref int n` — the last identifier is the name.
                 const unsigned char pk = (unsigned char)(DeclKindAhead() & 0x0F);
                 std::string p = ConsumeIdentRun("parameter");
-                if (Match(Tok::Assign)) ParseExpression();   // C# default value (ignored)
+                ExprPtr def;
+                if (Match(Tok::Assign)) def = ParseExpression();   // `void Heal(int hp, int bonus = 2)`
+                else if (!decl.defaults.empty() && decl.defaults.back())
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                for (const std::string& prev : decl.params)
+                    if (prev == p) throw ScriptError("parameter '" + p + "' is already in this function", Peek().line);
                 decl.params.push_back(p);
                 decl.paramKinds.push_back(pk);
+                decl.defaults.push_back(std::move(def));
             } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
@@ -2073,19 +2708,19 @@ private:
     }
     // Catch the obvious mistakes while typing: `int lives = "three";`,
     // `string name = 5;`, `int half = 0.5;` (becomes 0).
-    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line) {
+    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line, int column) {
         const unsigned char t = kind & 0x0F;
         if (!t || !init) return;
         const bool isStr = dynamic_cast<StringExpr*>(init) || dynamic_cast<InterpStringExpr*>(init);
         auto* num = dynamic_cast<NumberExpr*>(init);
         const bool isBool = dynamic_cast<BoolExpr*>(init) != nullptr;
         if ((t == KInt || t == KFloat || t == KBool) && isStr)
-            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text"});
+            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text", 0, column});
         else if (t == KString && (num || isBool))
-            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes"});
+            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes", 0, column});
         else if (t == KInt && num && num->v != (double)(long long)num->v)
             m_semantic.push_back({line, "'" + name + "' is an int, so " + Fmt(num->v) + " becomes " +
-                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1});
+                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1, column});
     }
     static std::string Fmt(double v) { std::ostringstream o; o << v; return o.str(); }
 
@@ -2112,6 +2747,102 @@ private:
         if (!IsAutoPropertyAt(m_pos)) return;
         while (!Check(Tok::RBrace)) ++m_pos;
         ++m_pos;
+    }
+    bool HasPublicModifier() const {
+        int idents = 0;
+        const std::size_t end = ScanIdentRun(m_pos, idents);
+        for (std::size_t i = m_pos; i < end; ++i)
+            if (m_toks[i].type == Tok::Ident && m_toks[i].text == "public") return true;
+        return false;
+    }
+    // `class Item { fields, constructors, methods }`. No base type: this is data,
+    // not the component. `static` and `const` aren't supported on these yet.
+    void ParseUserClass() {
+        while (Check(Tok::Ident) && Peek().text != "class" && Peek().text != "struct") ++m_pos;
+        Expect(Tok::Ident, "'class'");
+        const int line = Peek().line;
+        const std::string name = Expect(Tok::Ident, "class name").text;
+        m_pos = SkipTypeSuffix(m_pos);
+        if (m_classes.count(name))
+            throw ScriptError("there's already a class named '" + name + "'", line);
+        Expect(Tok::LBrace, "'{'");
+        UserClass cls;
+        cls.name = name;
+        auto addField = [&](std::string fname, unsigned char kind, bool isPublic, ExprPtr init) {
+            for (auto& f : cls.fields)
+                if (f.name == fname) throw ScriptError(name + " already has a field named '" + fname + "'", Peek().line);
+            FieldDef fd;
+            fd.name = std::move(fname);
+            fd.kind = (unsigned char)(kind & 0x0F);
+            fd.isPublic = isPublic;
+            fd.init = std::move(init);
+            cls.fields.push_back(std::move(fd));
+        };
+        while (!Check(Tok::RBrace) && !Check(Tok::End)) {
+            SkipAttributes();
+            if (Check(Tok::RBrace) || Check(Tok::End)) break;
+            if (Match(Tok::Semicolon)) continue;
+            if (IsClassAhead()) {
+                if (ClassHasBase()) throw ScriptError("a class inside " + name + " can't have a base type", Peek().line);
+                ParseUserClass();
+                continue;
+            }
+            if (IsEnumAhead()) { SkipEnumDecl(); continue; }
+            const bool isPublic = HasPublicModifier();
+            const unsigned char flags = DeclKindAhead();
+            if (flags & (KStatic | KConst))
+                throw ScriptError("plain classes can't be static or const yet", Peek().line);
+            if (Check(Tok::Function) || IsTypedFunctionAhead() || IsBareFunctionAhead()) {
+                std::string mname;
+                FunctionDecl decl;
+                if (Check(Tok::Function)) decl = ParseFunction(mname);
+                else if (IsTypedFunctionAhead()) decl = ParseTypedFunction(mname);
+                else {
+                    mname = Expect(Tok::Ident, "function name").text;
+                    decl = ParseParamsAndBody();
+                }
+                MethodDef md;
+                md.decl = std::move(decl);
+                md.isPublic = isPublic;
+                if (mname == name) {
+                    const int arity = (int)md.decl.params.size();
+                    if (cls.ctors.count(arity))
+                        throw ScriptError(name + " already has a constructor that takes " + std::to_string(arity) +
+                                          (arity == 1 ? " value" : " values"), Peek().line);
+                    cls.ctors.emplace(arity, std::move(md));
+                } else {
+                    if (cls.methods.count(mname))
+                        throw ScriptError(name + " already has a method named '" + mname + "'", Peek().line);
+                    cls.methods.emplace(mname, std::move(md));
+                }
+                continue;
+            }
+            if (Match(Tok::Var) || IsTypedVarDeclAhead()) {
+                const unsigned char kind = Check(Tok::Ident) ? flags : KAny;
+                const int declLine = Peek().line;
+                std::string fname = ConsumeIdentRun("field name");
+                SkipAutoPropertyBody();
+                ExprPtr init;
+                int initCol = Peek().column;
+                if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
+                CheckLiteralInit(kind, fname, init.get(), declLine, initCol);
+                addField(std::move(fname), kind, isPublic, std::move(init));
+                while (Match(Tok::Comma)) {
+                    std::string n2 = Expect(Tok::Ident, "field name").text;
+                    ExprPtr i2;
+                    int col2 = Peek().column;
+                    if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
+                    CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
+                    addField(std::move(n2), kind, isPublic, std::move(i2));
+                }
+                Match(Tok::Semicolon);
+                continue;
+            }
+            throw ScriptError("this isn't a field or a method of " + name, Peek().line);
+        }
+        Expect(Tok::RBrace, "'}'");
+        Match(Tok::Semicolon);
+        m_classes.emplace(name, std::move(cls));
     }
 
     StmtPtr ParseStatement() {
@@ -2181,7 +2912,7 @@ private:
             auto st = std::make_unique<DoWhileStmt>();
             st->body = ParseBlock();
             if (!(Check(Tok::While) || (Check(Tok::Ident) && Peek().text == "while")))
-                throw ScriptError("parse error: expected 'while' after do-block", Peek().line);
+                throw ScriptError("parse error: expected 'while' after do-block", Peek().line, Peek().column);
             ++m_pos;   // 'while'
             Expect(Tok::LParen, "'('");
             st->cond = ParseExpression();
@@ -2204,7 +2935,7 @@ private:
                 } else if (Check(Tok::Ident) && Peek().text == "default") {
                     ++m_pos; c.isDefault = true; Expect(Tok::Colon, "':'");
                 } else {
-                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line);
+                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line, Peek().column);
                 }
                 while (!Check(Tok::RBrace) && !Check(Tok::End) &&
                        !(Check(Tok::Ident) && (Peek().text == "case" || Peek().text == "default")))
@@ -2223,16 +2954,18 @@ private:
             std::string name = ConsumeIdentRun("variable name");
             SkipAutoPropertyBody();   // public int Lives { get; set; } = 3;
             ExprPtr init;
-            if (Match(Tok::Assign)) init = ParseExpression();
-            CheckLiteralInit(kind, name, init.get(), declLine);
+            int initCol = Peek().column;
+            if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
+            CheckLiteralInit(kind, name, init.get(), declLine, initCol);
             if (!Check(Tok::Comma)) { Match(Tok::Semicolon); return std::make_unique<VarDeclStmt>(name, std::move(init), kind); }
             auto multi = std::make_unique<MultiStmt>();   // int a = 1, b = 2;
             multi->list.push_back(std::make_unique<VarDeclStmt>(name, std::move(init), kind));
             while (Match(Tok::Comma)) {
                 std::string n2 = Expect(Tok::Ident, "variable name").text;
                 ExprPtr i2;
-                if (Match(Tok::Assign)) i2 = ParseExpression();
-                CheckLiteralInit(kind, n2, i2.get(), declLine);
+                int col2 = Peek().column;
+                if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
+                CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
                 multi->list.push_back(std::make_unique<VarDeclStmt>(n2, std::move(i2), kind));
             }
             Match(Tok::Semicolon);
@@ -2296,11 +3029,11 @@ private:
         }
         if (Match(Tok::Return)) {
             ExprPtr e;
-            const int retLine = Prev().line;
+            const int retLine = Prev().line, retCol = Prev().column;
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) e = ParseExpression();
             if (e && m_inVoid)
                 m_semantic.push_back({retLine, m_fnName + "() is void, so it can't return a value. "
-                                               "Give it a return type (int, float, bool or string) or just write `return;`"});
+                                               "Give it a return type (int, float, bool or string) or just write `return;`", 0, retCol});
             Match(Tok::Semicolon);
             return std::make_unique<ReturnStmt>(std::move(e));
         }
@@ -2325,7 +3058,7 @@ private:
 
     // Ternary: cond ? a : b (lower precedence than assignment's RHS).
     ExprPtr ParseTernary() {
-        ExprPtr c = ParseOr();
+        ExprPtr c = ParseCoalesce();
         if (Match(Tok::Question)) {
             ExprPtr a = ParseAssignment();
             Expect(Tok::Colon, "':'");
@@ -2338,9 +3071,14 @@ private:
     bool IsLambdaAhead() const {
         if (Check(Tok::Ident) && m_toks[m_pos + 1].type == Tok::Arrow) return true;
         if (!Check(Tok::LParen)) return false;
-        std::size_t i = m_pos + 1;
-        while (m_toks[i].type == Tok::Ident || m_toks[i].type == Tok::Comma) ++i;
-        return m_toks[i].type == Tok::RParen && m_toks[i + 1].type == Tok::Arrow;
+        int depth = 0;
+        for (std::size_t i = m_pos; i < m_toks.size(); ++i) {
+            if (m_toks[i].type == Tok::LParen) ++depth;
+            else if (m_toks[i].type == Tok::RParen) {
+                if (--depth == 0) return i + 1 < m_toks.size() && m_toks[i + 1].type == Tok::Arrow;
+            }
+        }
+        return false;
     }
     ExprPtr ParseLambda() {
         static int s_nextLambda = 1;
@@ -2349,8 +3087,15 @@ private:
         if (Check(Tok::Ident)) lam->params.push_back(m_toks[m_pos++].text);
         else {
             Expect(Tok::LParen, "'('");
+            bool sawDefault = false;
             while (!Check(Tok::RParen)) {
-                lam->params.push_back(ConsumeIdentRun("parameter"));
+                std::string p = ConsumeIdentRun("parameter");
+                ExprPtr def;
+                if (Match(Tok::Assign)) { def = ParseExpression(); sawDefault = true; }
+                else if (sawDefault)
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                lam->params.push_back(std::move(p));
+                lam->defaults.push_back(std::move(def));
                 if (!Match(Tok::Comma)) break;
             }
             Expect(Tok::RParen, "')'");
@@ -2365,6 +3110,11 @@ private:
     ExprPtr ParseAssignment() {
         if (IsLambdaAhead()) return ParseLambda();
         ExprPtr left = ParseTernary();
+        if (Match(Tok::QuestionQuestionEq)) {
+            if (auto* var = dynamic_cast<VarExpr*>(left.get()))
+                return std::make_unique<NullishAssignExpr>(var->n, ParseAssignment());
+            throw ScriptError("invalid ??=", Peek().line);
+        }
         if (Match(Tok::Assign)) {
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))
@@ -2384,7 +3134,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Compound assignment: x += e  desugars to  x = x + e. Also works on an
         // element target: arr[i] += e / map["k"] += e.
@@ -2396,6 +3146,10 @@ private:
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get())) {
                 std::string name = var->n;
+                // += / -= on a name may subscribe a function. A number still adds.
+                if (t == Tok::PlusEq || t == Tok::MinusEq)
+                    return std::make_unique<EventOrCompoundExpr>(
+                        name, std::move(value), t == Tok::MinusEq, bin);
                 auto combined = std::make_unique<BinaryExpr>(
                     bin, std::make_unique<VarExpr>(name), std::move(value));
                 return std::make_unique<AssignExpr>(name, std::move(combined));
@@ -2407,7 +3161,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Postfix increment/decrement: x++  ->  x = x + 1  (also x--). Works on an
         // element target too: arr[i]++ / map["k"]--.
@@ -2426,7 +3180,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid increment target");
+            throw ScriptError("invalid increment target", Peek().line, Peek().column);
         }
         return left;
     }
@@ -2435,7 +3189,16 @@ private:
     static constexpr int kMaxOperators = 1000;
     void CountOperator() {
         if (++m_operators > kMaxOperators)
-            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line);
+            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line, Peek().column);
+    }
+    // a ?? b ?? c groups to the right, below || and above ?:.
+    ExprPtr ParseCoalesce() {
+        ExprPtr l = ParseOr();
+        if (Match(Tok::QuestionQuestion)) {
+            CountOperator();
+            l = std::make_unique<CoalesceExpr>(std::move(l), ParseCoalesce());
+        }
+        return l;
     }
     ExprPtr ParseOr() {
         auto l = ParseAnd();
@@ -2485,7 +3248,7 @@ private:
     ExprPtr ParseUnary() {
         // Every nested expression ('(', '-', '!', ...) comes through here: cap the
         // depth so thousands of them are a parse error, not a stack overflow.
-        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line);
+        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line, Peek().column);
         struct NestGuard { int& n; explicit NestGuard(int& d) : n(d) { ++n; } ~NestGuard() { --n; } } guard(m_nesting);
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
         // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
@@ -2493,7 +3256,7 @@ private:
             Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
             ExprPtr target = ParseUnary();
             auto* var = dynamic_cast<VarExpr*>(target.get());
-            if (!var) throw ScriptError("invalid increment target");
+            if (!var) throw ScriptError("invalid increment target", Peek().line, Peek().column);
             std::string name = var->n;
             auto combined = std::make_unique<BinaryExpr>(
                 bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
@@ -2502,34 +3265,40 @@ private:
         return ParsePostfix();
     }
     // Postfix indexing: base[i][j]...
+    // One `.name` or `.name(args)` step. `safe` skips the step when the receiver is null.
+    ExprPtr ParseMemberStep(ExprPtr e, bool safe) {
+        std::string path = Expect(Tok::Ident, "member name").text;
+        std::vector<std::string> parts;
+        for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
+            b = path.find('.', a); if (b == std::string::npos) b = path.size();
+            parts.push_back(path.substr(a, b - a));
+        }
+        for (std::size_t k = 0; k + 1 < parts.size(); ++k)
+            e = std::make_unique<MemberExpr>(std::move(e), parts[k], safe);
+        if (Match(Tok::LParen)) {
+            auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back(), safe);
+            if (!Check(Tok::RParen)) {
+                do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+            }
+            Expect(Tok::RParen, "')'");
+            return call;
+        }
+        return std::make_unique<MemberExpr>(std::move(e), parts.back(), safe);
+    }
     ExprPtr ParsePostfix() {
         ExprPtr e = ParsePrimary();
+        // After `?.`, the rest of this chain is skipped when a step is null.
+        bool safe = false;
         for (;;) {
             if (Match(Tok::LBracket)) {
                 ExprPtr idx = ParseExpression();
                 Expect(Tok::RBracket, "']'");
-                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx));
+                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx), safe);
+            } else if (Match(Tok::QuestionDot)) {
+                safe = true;
+                e = ParseMemberStep(std::move(e), true);
             } else if (Match(Tok::Dot)) {
-                // Member access on any expression: (a - b).magnitude, xs[0].ToString(),
-                // GetName().ToUpper(). The lexer may glue a dotted run ("position.x").
-                std::string path = Expect(Tok::Ident, "member name").text;
-                std::vector<std::string> parts;
-                for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
-                    b = path.find('.', a); if (b == std::string::npos) b = path.size();
-                    parts.push_back(path.substr(a, b - a));
-                }
-                for (std::size_t k = 0; k + 1 < parts.size(); ++k)
-                    e = std::make_unique<MemberExpr>(std::move(e), parts[k]);
-                if (Match(Tok::LParen)) {
-                    auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back());
-                    if (!Check(Tok::RParen)) {
-                        do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                    }
-                    Expect(Tok::RParen, "')'");
-                    e = std::move(call);
-                } else {
-                    e = std::make_unique<MemberExpr>(std::move(e), parts.back());
-                }
+                e = ParseMemberStep(std::move(e), safe);
             } else break;
         }
         return e;
@@ -2581,6 +3350,16 @@ private:
             else if (from) call->args.push_back(std::move(from));
             return call;
         }
+        if (m_userClasses.count(base)) {                 // new Item("Potion") / new Item()
+            auto made = std::make_unique<NewExpr>(base);
+            if (Match(Tok::LParen)) {
+                if (!Check(Tok::RParen)) {
+                    do { made->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+                }
+                Expect(Tok::RParen, "')'");
+            }
+            return made;
+        }
         if (m_pos == typeTok + 1) { m_pos = typeTok; return ParsePrimary(); }   // new Vector3(1, 2, 3)
         // Some other generic type: build a call named after it.
         auto call = std::make_unique<CallExpr>(type);
@@ -2616,6 +3395,20 @@ private:
         }
         node->AddLiteral(lit);
         return node;
+    }
+
+    // `Heal(5)` or `Heal(bonus: 4, hp: 1)`. A name is a bare identifier followed by ':'.
+    void ParseCallArguments(std::vector<ExprPtr>& args, std::vector<std::string>& names) {
+        if (Check(Tok::RParen)) return;
+        do {
+            std::string nm;
+            if (Check(Tok::Ident) && m_pos + 1 < m_toks.size() && m_toks[m_pos + 1].type == Tok::Colon) {
+                nm = m_toks[m_pos].text;
+                m_pos += 2;
+            }
+            names.push_back(std::move(nm));
+            args.push_back(ParseExpression());
+        } while (Match(Tok::Comma));
     }
 
     ExprPtr ParsePrimary() {
@@ -2671,16 +3464,19 @@ private:
             }
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
-                if (!Check(Tok::RParen)) {
-                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                }
+                ParseCallArguments(call->args, call->argNames);
                 Expect(Tok::RParen, "')'");
                 // StartCoroutine(Blink(0.2f)) names the routine instead of calling it now.
+                // Named arguments inside it (`Blink(delay: 0.2)`) travel with the values.
                 if ((name == "StartCoroutine" || name == "StopCoroutine") && call->args.size() == 1)
                     if (auto* inner = dynamic_cast<CallExpr*>(call->args[0].get())) {
                         auto co = std::make_unique<CallExpr>(name);
                         co->args.push_back(std::make_unique<StringExpr>(inner->name));
-                        for (auto& a : inner->args) co->args.push_back(std::move(a));
+                        co->argNames.push_back("");
+                        for (std::size_t i = 0; i < inner->args.size(); ++i) {
+                            co->args.push_back(std::move(inner->args[i]));
+                            co->argNames.push_back(i < inner->argNames.size() ? inner->argNames[i] : "");
+                        }
                         return co;
                     }
                 return call;
@@ -2689,7 +3485,7 @@ private:
                 return std::make_unique<NumberExpr>(it->second);   // State.Run -> 1
             return std::make_unique<VarExpr>(name);
         }
-        throw ScriptError("parse error: unexpected token", Peek().line);
+        throw ScriptError("parse error: unexpected token", Peek().line, Peek().column);
     }
 
     std::vector<Token> m_toks;
@@ -2697,6 +3493,8 @@ private:
     int m_nesting = 0;                                      // ParseUnary recursion depth
     int m_operators = 0;                                    // binary operators in this expression
     std::set<std::string> m_enums;                          // enum type names
+    std::set<std::string> m_userClasses;                    // plain classes (no base), from the prepass
+    std::unordered_map<std::string, UserClass> m_classes;
     std::vector<ScriptDiagnostic> m_semantic;               // type mistakes found while parsing
     bool m_inVoid = false;                                  // parsing the body of a `void` function
     std::string m_fnName;
@@ -2726,6 +3524,9 @@ struct OkayScriptVM::Impl {
     // Last network message popped by net_poll(), exposed via net_msg_* builtins.
     std::string netMsgChannel, netMsgData;
     float       netMsgFrom = 0.0f;
+    // Last object RPC popped by net_obj_rpc_poll().
+    std::string netObjRpcName, netObjRpcData;
+    float       netObjRpcFrom = 0.0f;
 
     // The scene's NetworkManager, if any (multiplayer is opt-in per scene).
     NetworkManager* Net() {
@@ -2831,14 +3632,14 @@ struct OkayScriptVM::Impl {
         auto uiN = [](std::vector<Value>& a, std::size_t i, float d) { return a.size() > i ? a[i].AsFloat() : d; };
         b["ui_heading"]   = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Heading(uiS(a, 0).c_str()); return Value{}; };
         b["ui_caption"]   = [uiS, uiN](std::vector<Value>& a) {
-            if (auto* u = GetScriptUI()) u->Caption(uiS(a, 0).c_str(), (int)uiN(a, 1, 115), (int)uiN(a, 2, 209), (int)uiN(a, 3, 143));
+            if (auto* u = GetScriptUI()) u->Caption(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 115)), SafeInt(uiN(a, 2, 209)), SafeInt(uiN(a, 3, 143)));
             return Value{};
         };
         b["ui_text_dim"]     = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextDim(uiS(a, 0).c_str()); return Value{}; };
         b["ui_text_wrapped"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->TextWrapped(uiS(a, 0).c_str()); return Value{}; };
         b["ui_primary_button"] = [uiS](std::vector<Value>& a) { auto* u = GetScriptUI(); return Value{u && u->PrimaryButton(uiS(a, 0).c_str()) ? 1.0f : 0.0f}; };
         b["ui_badge"]     = [uiS, uiN](std::vector<Value>& a) {
-            if (auto* u = GetScriptUI()) u->Badge(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), (int)uiN(a, 2, 0), (int)uiN(a, 3, 0));
+            if (auto* u = GetScriptUI()) u->Badge(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 0)), SafeInt(uiN(a, 2, 0)), SafeInt(uiN(a, 3, 0)));
             return Value{};
         };
         b["ui_avatar"]    = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Avatar(uiS(a, 0).c_str(), uiN(a, 1, 0.0f)); return Value{}; };
@@ -2851,9 +3652,9 @@ struct OkayScriptVM::Impl {
         };
         b["ui_key_value"] = [uiS](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->KeyValue(uiS(a, 0).c_str(), uiS(a, 1).c_str()); return Value{}; };
         b["ui_spinner"]   = [](std::vector<Value>&) { if (auto* u = GetScriptUI()) u->Spinner(); return Value{}; };
-        b["ui_toast"]     = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Toast(uiS(a, 0).c_str(), (int)uiN(a, 1, 0), uiN(a, 2, 3.0f)); return Value{}; };
+        b["ui_toast"]     = [uiS, uiN](std::vector<Value>& a) { if (auto* u = GetScriptUI()) u->Toast(uiS(a, 0).c_str(), SafeInt(uiN(a, 1, 0)), uiN(a, 2, 3.0f)); return Value{}; };
         b["ui_tabs"]      = [uiS, uiN](std::vector<Value>& a) {
-            auto* u = GetScriptUI(); const int cur = (int)uiN(a, 1, 0);
+            auto* u = GetScriptUI(); const int cur = SafeInt(uiN(a, 1, 0));
             return Value{(float)(u ? u->Tabs(uiS(a, 0).c_str(), cur) : cur)};
         };
         b["ui_input"]     = [uiS](std::vector<Value>& a) {
@@ -2955,18 +3756,49 @@ struct OkayScriptVM::Impl {
         // has_var("score"): is a script variable defined (in any scope)?
         b["has_var"] = [this](std::vector<Value>& a) { return Value{!a.empty() && rt.Has(a[0].AsString())}; };
         b["frame_count"]   = [](std::vector<Value>&) { return Value{(float)Time::FrameCount()}; };
+        // Time since this Play began: time() and frame_count() keep counting across Plays, these start from 0.
+        b["session_time"]          = [](std::vector<Value>&) { return Value{(float)Time::SessionTime()}; };
+        b["session_unscaled_time"] = [](std::vector<Value>&) { return Value{(float)Time::SessionUnscaledTime()}; };
+        b["session_frame_count"]   = [](std::vector<Value>&) { return Value{(float)Time::SessionFrameCount()}; };
+        b["unscaled_dt"]   = [](std::vector<Value>&) { return Value{Time::UnscaledDeltaTime()}; };   // real frame time: a pause, slow motion and hit stops do not change it
+        b["is_paused"]     = [](std::vector<Value>&) { return Value{Game::Paused()}; };
+        // Pause with a reason of your own (push_pause("dialogue") ... pop_pause("dialogue")): the game stays paused until every
+        // reason is let go, so two scripts that pause never resume each other (pause_game(true/false) is the one "manual" reason).
+        b["push_pause"]    = [](std::vector<Value>& a) { Game::PushPause(a.empty() ? std::string() : a[0].AsString()); return Value{}; };
+        b["pop_pause"]     = [](std::vector<Value>& a) { return Value{Game::PopPause(a.empty() ? std::string() : a[0].AsString())}; };
+        b["is_paused_by"]  = [](std::vector<Value>& a) { return Value{Game::IsPausedBy(a.empty() ? std::string() : a[0].AsString())}; };
+        b["hitch_count"]   = [](std::vector<Value>&) { return Value{(float)(GameLoop::Current() ? GameLoop::Current()->HitchCount() : 0)}; };
+        // hit_stop(seconds [, scale]): a freeze frame (scale 0, the default) or a brief slow-down for an impact; it runs on
+        // real time, ends by itself and composes with set_timescale. slow_motion(scale, seconds) is the same effect with
+        // the arguments the other way round, for bullet time: slow_motion(0.2, 2) runs at a fifth speed for two seconds.
+        b["hit_stop"]      = [](std::vector<Value>& a) {
+            if (!a.empty()) Time::HitStop(a[0].AsFloat(), a.size() > 1 ? a[1].AsFloat() : 0.0f);
+            return Value{};
+        };
+        b["slow_motion"]   = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Time::HitStop(a[1].AsFloat(), a[0].AsFloat());
+            return Value{};
+        };
+        // ramp_timescale(target, seconds): ease the time scale to target over that many real seconds (a straight line).
+        b["ramp_timescale"] = [](std::vector<Value>& a) {
+            if (a.size() >= 2) Time::RampTimeScale(a[0].AsFloat(), a[1].AsFloat());
+            return Value{};
+        };
         b["mouse_wheel"]   = [](std::vector<Value>&) { return Value{Input::MouseWheel()}; };
         b["dt"]    = [this](std::vector<Value>&) { return Value{rt.host ? rt.host->deltaTime : 0.0f}; };
         // Scheduled callbacks: after(seconds, "fn") fires once; every(seconds,
         // "fn") repeats; cancel_timers() clears them. fn is a function in this
         // script. Great for spawn waves, respawns, cooldowns, blinking text.
         b["after"] = [this](std::vector<Value>& a) {
-            if (a.size() >= 2) rt.timers.push_back({a[0].AsFloat(), 0.0f, a[1].AsString(), false});
+            if (a.size() >= 2) {
+                float wait = a[0].AsFloat(); if (!(wait > 0.0f)) wait = 0.0f;   // negative and NaN fire on the next tick
+                rt.timers.push_back({wait, 0.0f, a[1].AsString(), false});
+            }
             return Value{};
         };
         b["every"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) {
-                float iv = a[0].AsFloat(); if (iv <= 0.0f) iv = 0.0001f;
+                float iv = a[0].AsFloat(); if (!(iv > 0.0001f)) iv = 0.0001f;   // zero, negative and NaN: the shortest interval
                 rt.timers.push_back({iv, iv, a[1].AsString(), false});
             }
             return Value{};
@@ -2997,13 +3829,51 @@ struct OkayScriptVM::Impl {
             char c = KeyCharFromName(a[0].AsString());
             return Value{c != 0 && Input::GetKeyDown(c)};
         };
+        // Game actions (InputActions): action("jump"), action_down / action_up,
+        // action_value (0..1), action_x / action_y for Move / Look, rumble(low, high, s),
+        // rebind("interact", "key:f").
+        auto actName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
+        b["action"]       = [actName](std::vector<Value>& a) { return Value{InputActions::Get(actName(a))}; };
+        b["action_down"]  = [actName](std::vector<Value>& a) { return Value{InputActions::Down(actName(a))}; };
+        b["action_up"]    = [actName](std::vector<Value>& a) { return Value{InputActions::Up(actName(a))}; };
+        b["action_value"] = [actName](std::vector<Value>& a) { return Value{InputActions::Value(actName(a))}; };
+        b["action_x"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).x}; };
+        b["action_y"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).y}; };
+        // Touch gestures. gesture("tap"), gesture("double tap"), gesture("long press"),
+        // gesture("swipe"), gesture("swipe up"|"down"|"left"|"right"), gesture("pinch"),
+        // gesture("rotate"). True on the frame it happens.
+        b["gesture"] = [](std::vector<Value>& a) {
+            return Value{Gestures::Happened(a.empty() ? std::string() : a[0].AsString())};
+        };
+        b["swipe_direction"] = [](std::vector<Value>&) { return Value{Gestures::SwipeDirection()}; };
+        b["pinch_scale"] = [](std::vector<Value>&) { return Value{Gestures::PinchScale()}; };
+        b["twist_degrees"] = [](std::vector<Value>&) { return Value{Gestures::TwistDegrees()}; };
+        b["is_touch_screen"] = [](std::vector<Value>&) { return Value{Input::TouchScreen()}; };
+        b["rumble"] = [](std::vector<Value>& a) {
+            Input::Rumble(a.size() > 0 ? a[0].AsFloat() : 0.5f, a.size() > 1 ? a[1].AsFloat() : 0.5f, a.size() > 2 ? a[2].AsFloat() : 0.2f);
+            return Value{};
+        };
+        // define_action("dash", "key:q", "pad:rs") adds an action (or changes its defaults);
+        // define_direction("steer", "keys:i,k,j,l", "stick:right") a direction one.
+        auto define = [](std::vector<Value>& a, bool dir) {
+            if (a.empty()) return Value{false};
+            std::vector<std::string> binds;
+            for (std::size_t i = 1; i < a.size(); ++i) binds.push_back(a[i].AsString());
+            InputActions::Define(a[0].AsString(), binds, dir);
+            return Value{true};
+        };
+        b["define_action"]    = [define](std::vector<Value>& a) { return define(a, false); };
+        b["define_direction"] = [define](std::vector<Value>& a) { return define(a, true); };
+        b["rebind"] = [](std::vector<Value>& a) {
+            return Value{a.size() >= 2 && InputActions::Rebind(a[0].AsString(), a[1].AsString())};
+        };
         b["mouse_x"] = [](std::vector<Value>&) { return Value{Input::MousePosition().x}; };
         b["mouse_y"] = [](std::vector<Value>&) { return Value{Input::MousePosition().y}; };
         b["mouse"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["mouse_held"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["move_towards"] = [](std::vector<Value>& a) {   // (current, target, maxDelta)
             float c = a.size() > 0 ? a[0].AsFloat() : 0.0f, t = a.size() > 1 ? a[1].AsFloat() : 0.0f, m = a.size() > 2 ? a[2].AsFloat() : 0.0f;
@@ -3014,20 +3884,20 @@ struct OkayScriptVM::Impl {
             return Value{Vec3::Dot(a[0].AsVec3(), a[1].AsVec3())};
         };
         b["to_fixed"] = [](std::vector<Value>& a) {   // (value, decimals) -> text
-            int d = a.size() > 1 ? (int)a[1].AsFloat() : 2; d = d < 0 ? 0 : (d > 6 ? 6 : d);
+            int d = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 2; d = d < 0 ? 0 : (d > 6 ? 6 : d);
             char buf[64]; std::snprintf(buf, sizeof(buf), "%.*f", d, a.empty() ? 0.0f : a[0].AsFloat());
             return Value{std::string(buf)};
         };
         b["mouse_down"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButtonDown(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["gamepad_x"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().x}; };
         b["gamepad_y"] = [](std::vector<Value>&) { return Value{Input::GamepadAxis().y}; };
         b["gamepad"] = [](std::vector<Value>& a) {
-            return Value{Input::GetGamepadButton(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetGamepadButton(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["gamepad_down"] = [](std::vector<Value>& a) {
-            return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetGamepadButtonDown(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
         b["rand"] = [](std::vector<Value>& a) {
             float lo = a.size() > 0 ? a[0].AsFloat() : 0.0f;
@@ -3092,6 +3962,43 @@ struct OkayScriptVM::Impl {
                                                  a.size() > 2 ? a[2].AsFloat() : 0.0f,
                                                  a.size() > 3 ? a[3].AsFloat() : 0.0f};
             return Value{true};
+        };
+        // ---- Object pools: reuse spawned objects instead of creating and freeing each one ----
+        // pool_get("Bullet.okayprefab", x, y [, z]) is spawn / spawn3 taken from this scene's pool for that prefab: an
+        // idle object when there is one (reset to a fresh copy of the prefab, its scripts start again), else a new one.
+        // Returns true on success. pool_release() hands THIS script's object back to its pool (destroyed when it did not
+        // come from one), so a bullet ends with it. pool_prewarm(prefab, n) makes n idle objects ahead of time and
+        // returns how many are idle; pool_idle(prefab) says how many are.
+        b["pool_get"] = [this](std::vector<Value>& a) {
+            if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
+            Scene* sc = rt.host->gameObject->scene();
+            if (!sc) return Value{false};
+            ObjectPool* pool = ObjectPool::ForPrefab(*sc, a[0].AsString());
+            GameObject* go = pool ? pool->Get() : nullptr;
+            if (!go) return Value{false};
+            if (go->transform)
+                go->transform->localPosition = {a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                                 a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                                                 a.size() > 3 ? a[3].AsFloat() : 0.0f};
+            return Value{true};
+        };
+        b["pool_release"] = [this](std::vector<Value>&) {
+            GameObject* go = rt.host ? rt.host->gameObject : nullptr;
+            Scene* sc = go ? go->scene() : nullptr;
+            return Value{sc ? sc->Despawn(go) : false};
+        };
+        b["pool_prewarm"] = [this](std::vector<Value>& a) {
+            Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            if (!pool) return Value{0.0f};
+            const float n = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            pool->Prewarm(n > 0.0f && n < 100000.0f ? static_cast<int>(n) : 0);
+            return Value{static_cast<float>(pool->IdleCount())};
+        };
+        b["pool_idle"] = [this](std::vector<Value>& a) {
+            Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
+            return Value{pool ? static_cast<float>(pool->IdleCount()) : 0.0f};
         };
         // Destroy this script's own GameObject (deferred to end of frame).
         b["destroy"] = [this](std::vector<Value>&) {
@@ -3180,6 +4087,62 @@ struct OkayScriptVM::Impl {
         b["has_parent"] = [this](std::vector<Value>&) -> Value {
             return Value{rt.host && rt.host->gameObject &&
                          rt.host->gameObject->transform->Parent() != nullptr};
+        };
+        // Hierarchy queries by object name: child_count("Ship"), get_child("Ship", 0)
+        // (the child's name, "" if out of range) and parent_of("Gun") ("" if none).
+        b["child_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                return Value{(float)g->transform->ChildCount()};
+            return Value{0.0f};
+        };
+        b["get_child"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                int i = SafeInt(a[1].AsFloat());
+                if (i >= 0 && i < g->transform->ChildCount() && g->transform->Children()[i]->gameObject)
+                    return Value{g->transform->Children()[i]->gameObject->name};
+            }
+            return Value{std::string{}};
+        };
+        b["parent_of"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (Transform* p = g->transform->Parent(); p && p->gameObject) return Value{p->gameObject->name};
+            return Value{std::string{}};
+        };
+        // RPG / survival stats on a named object: hurt("Orc", 12) (defense-mitigated,
+        // fires on_death), heal, add_xp (fires on_level_up), get_hp/get_max_hp. Work on a
+        // Stats or a SurvivalStats component, whichever the object has.
+        b["hurt"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) { st->TakeDamage(a[1].AsFloat()); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Damage(a[1].AsFloat()); return Value{true}; }
+            }
+            return Value{false};
+        };
+        b["heal"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) { st->Heal(a[1].AsFloat()); return Value{true}; }
+                if (auto* sv = g->GetComponent<SurvivalStats>()) { sv->Heal(a[1].AsFloat()); return Value{true}; }
+            }
+            return Value{false};
+        };
+        b["add_xp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* st = g->GetComponent<Stats>()) { st->AddXP(SafeInt(a[1].AsFloat())); return Value{true}; }
+            return Value{false};
+        };
+        b["get_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) return Value{st->health};
+                if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->health};
+            }
+            return Value{0.0f};
+        };
+        b["get_max_hp"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
+                if (auto* st = g->GetComponent<Stats>()) return Value{st->maxHealth};
+                if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->maxHealth};
+            }
+            return Value{0.0f};
         };
         // Read another object's world position by name (enemy AI chasing the
         // player, doors tracking a key, cameras following a target…).
@@ -3293,7 +4256,7 @@ struct OkayScriptVM::Impl {
         };
         b["build_palette_select"] = [buildOf](std::vector<Value>& a) -> Value {
             BuildMode* m = buildOf(); if (!m || a.empty()) return Value{false};
-            m->SelectSlot((int)a[0].AsFloat()); return Value{true};
+            m->SelectSlot(SafeInt(a[0].AsFloat())); return Value{true};
         };
         b["build_selected"] = [buildOf](std::vector<Value>&) -> Value {
             BuildMode* m = buildOf(); return Value{(float)(m ? m->SelectedSlot() : -1)};
@@ -3605,7 +4568,7 @@ struct OkayScriptVM::Impl {
             // spawn_wave("prefab", count[, radius]): ring of prefabs around self.
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Scene* s = sceneOf(); if (!s) return Value{0.0f};
-            int count = a.size() > 1 ? (int)a[1].AsFloat() : 8;
+            int count = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 8;
             if (count < 1) count = 1;
             float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
             Vec3 c = rt.host->gameObject->transform->Position();
@@ -3674,6 +4637,18 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // camera_follow("name"[, smoothing]): the main camera eases after that object
+        // (adds a CameraFollow if it has none). Empty name stops following.
+        b["camera_follow"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera && s->mainCamera->gameObject) {
+                GameObject* cg = s->mainCamera->gameObject;
+                auto* f = cg->GetComponent<CameraFollow>();
+                if (!f) f = cg->AddComponent<CameraFollow>();
+                f->targetName = a.empty() ? std::string{} : a[0].AsString();
+                if (a.size() > 1) f->smoothing = a[1].AsFloat();
+            }
+            return Value{};
+        };
         // Set the main camera's clear/background color (flash, day-night, fades).
         b["set_bg"] = [sceneOf](std::vector<Value>& a) {
             if (Scene* s = sceneOf()) if (s->mainCamera)
@@ -3696,6 +4671,21 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["ambient"] = [](std::vector<Value>&) { return Value{SceneLight::Ambient()}; };
+        // Light component on a named object: set_light_intensity("Lamp", 2),
+        // set_light_range, set_light_angle (spot cone, degrees), set_light_color(name, r, g, b).
+        auto lightOf = [this](std::vector<Value>& a, size_t need) -> Light* {
+            if (a.size() < need || !rt.host || !rt.host->gameObject || !rt.host->gameObject->scene()) return nullptr;
+            GameObject* g = rt.host->gameObject->scene()->Find(a[0].AsString());
+            return g ? g->GetComponent<Light>() : nullptr;
+        };
+        b["set_light_intensity"] = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->intensity = a[1].AsFloat(); return Value{}; };
+        b["set_light_range"]     = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->range = a[1].AsFloat(); return Value{}; };
+        b["set_light_angle"]     = [lightOf](std::vector<Value>& a) { if (auto* l = lightOf(a, 2)) l->spotAngle = a[1].AsFloat(); return Value{}; };
+        b["set_light_color"]     = [lightOf](std::vector<Value>& a) {
+            if (auto* l = lightOf(a, 4)) l->color = Color(a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat());
+            return Value{};
+        };
+
         // Screen size in pixels (HUD layout, clamping, spawn-at-edge).
         b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
         b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };
@@ -3761,6 +4751,14 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // ui_set_focus("Play"): keyboard/gamepad focus, the ring, and scroll into view. 1 if it took focus.
+        b["ui_set_focus"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            if (!s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString());
+            return Value{g && SetUIFocus(g) ? 1.0f : 0.0f};
+        };
         b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
                 if (auto* tr = g->GetComponent<TextRenderer>()) return Value{tr->text};
@@ -3768,6 +4766,13 @@ struct OkayScriptVM::Impl {
                 if (auto* bt = g->GetComponent<UIButton>()) return Value{bt->label};
             }
             return Value{std::string{}};
+        };
+        // The game clipboard (the same text a focused input field copies and pastes).
+        // Control characters are removed and the text is capped. See Clipboard.hpp.
+        b["get_clipboard_text"] = [](std::vector<Value>&) -> Value { return Value{GetClipboardText()}; };
+        b["set_clipboard_text"] = [](std::vector<Value>& a) -> Value {
+            const std::string t = a.empty() ? std::string() : a[0].AsString();
+            return Value{SetClipboardText(t) ? 1.0f : 0.0f};
         };
         b["ui_clicked"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
@@ -3811,7 +4816,7 @@ struct OkayScriptVM::Impl {
         };
         b["ui_set_dropdown"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue((int)a[1].AsFloat());
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetValue(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         // Tab bars: read / select the tab (fires on_change), badge a tab (0 none,
@@ -3828,22 +4833,347 @@ struct OkayScriptVM::Impl {
         };
         b["ui_set_tab"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->Select((int)a[1].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_badge"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[1].AsFloat(), (int)a[2].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["ui_set_tab_enabled"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[1].AsFloat(), a[2].AsBool());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[1].AsFloat()), a[2].AsBool());
             return Value{};
         };
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
+            return Value{};
+        };
+        // Rotation (degrees, clockwise on screen) and scale (width, height) of a UI frame.
+        // One scale number sets both axes. A widget with no frame gets one when you set these.
+        auto uiFrame = [sceneOf](const std::string& name, bool create) -> UIFrame* {
+            Scene* s = sceneOf();
+            GameObject* g = s ? s->Find(name) : nullptr;
+            if (!g) return nullptr;
+            if (auto* f = g->GetComponent<UIFrame>()) return f;
+            return create ? ConvertToUIFrame(g) : nullptr;
+        };
+        b["ui_get_rotation"] = [uiFrame](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            UIFrame* f = uiFrame(a[0].AsString(), false);
+            return Value{f ? f->rotation : 0.0f};
+        };
+        b["ui_set_rotation"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) f->rotation = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_get_scale"] = [uiFrame](std::vector<Value>& a) -> Value {
+            Vec2 s{1.0f, 1.0f};
+            if (!a.empty()) if (UIFrame* f = uiFrame(a[0].AsString(), false)) s = f->scale;
+            return Value{Vec3{s.x, s.y, 0.0f}};
+        };
+        b["ui_set_scale"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) {
+                if (a.size() >= 3) f->scale = {a[1].AsFloat(), a[2].AsFloat()};
+                else { const float u = a[1].AsFloat(); f->scale = {u, u}; }
+            }
+            return Value{};
+        };
+        // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
+        // ui_set_variant("Quit", "danger"): give a widget a role (primary, secondary, danger, ghost,
+        // outline, pill, default) and style it from the scene's theme now.
+        b["ui_set_variant"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            Scene* s = sceneOf();
+            GameObject* g = s ? s->Find(a[0].AsString()) : nullptr;
+            if (!g) return Value{0.0f};
+            int v = a[1].IsNumber() ? SafeInt(a[1].AsFloat()) : UITheme::VariantFromName(a[1].AsString());
+            if (v < 0 || v >= UITheme::kVariantCount) return Value{0.0f};
+            auto* sv = g->GetComponent<UIStyleVariant>();
+            if (!sv) sv = g->AddComponent<UIStyleVariant>();
+            sv->variant = v;
+            if (a.size() >= 3) sv->themeName = a[2].AsString();
+            if (UITheme* th = UITheme::Find(s, sv->themeName)) th->ApplyTo(g);
+            return Value{1.0f};
+        };
+        // ui_theme_preset("Neon") restyles the scene with a built-in look (first theme in the scene, or the one named).
+        b["ui_theme_preset"] = [sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            if (!s) return Value{0.0f};
+            int p = a[0].IsNumber() ? SafeInt(a[0].AsFloat()) : UITheme::PresetFromName(a[0].AsString());
+            if (p < 0 || p >= UITheme::kPresetCount) return Value{0.0f};
+            UITheme* th = UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string());
+            if (!th) return Value{0.0f};
+            th->ApplyPreset(p);
+            th->Apply();
+            UIGallery::StyleGalleryExtras(*s, th);   // the UI Gallery's slots, insets and Glass blobs follow too
+            return Value{1.0f};
+        };
+        // ui_set_rich("Label", true): read [color=...] [b] [i] tags in that screen-space text.
+        b["ui_set_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tr = g->GetComponent<TextRenderer>()) if (tr->screenSpace) tr->richText = a[1].AsBool();   // world text does not read tags
+            return Value{};
+        };
+        // ui_load_theme("Assets/UI/Forest.okaytheme") loads a saved theme into the scene's theme and restyles the UI.
+        b["ui_load_theme"] = [sceneOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            UITheme* th = s ? UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string()) : nullptr;
+            if (!th) return Value{0.0f};
+            if (!LoadUIThemeAsset(*th, a[0].AsString())) return Value{0.0f};
+            th->Apply();
+            return Value{1.0f};
+        };
+        // Radio buttons: ui_radio_value("Quality") is the index of the picked one in its group (-1 none);
+        // ui_set_radio("High") picks one by object name.
+        b["ui_radio_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            Scene* s = sceneOf();
+            if (a.empty() || !s) return Value{-1.0f};
+            const std::string group = a[0].AsString();
+            int idx = 0;
+            for (auto* t : s->FindObjectsOfType<UIToggle>()) {
+                if (t->style != UIToggle::Style::Radio || t->radioGroup != group) continue;
+                if (t->on) return Value{(float)idx};
+                ++idx;
+            }
+            return Value{-1.0f};
+        };
+        b["ui_set_radio"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tg = g->GetComponent<UIToggle>()) tg->Select();
+            return Value{};
+        };
+        // Floating numbers: ui_damage_number("-25", x, y [, "crit"|"heal"|"miss"|"info"]) on the first
+        // UI Damage Numbers in the scene.
+        b["ui_damage_number"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 3) return Value{};
+            Scene* s = sceneOf();
+            auto* dn = s ? s->FindObjectOfType<UIDamageNumbers>() : nullptr;
+            if (dn) dn->Spawn(a[0].AsString(), a.size() >= 4 ? UIDamageNumbers::KindFromName(a[3].AsString()) : UIDamageNumbers::Kind::Normal,
+                              Vec2{a[1].AsFloat(), a[2].AsFloat()});
+            return Value{};
+        };
+        // Dialogue box: ui_dialogue_show("Mara", "Hello", "Yes", "No") shows a line with up to 4 choices;
+        // ui_dialogue_choice() is the last picked choice (-1 none); ui_dialogue_open() tells if it is up.
+        b["ui_dialogue_show"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{};
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            if (!db) return Value{};
+            std::vector<std::string> ch;
+            for (std::size_t i = 2; i < a.size() && ch.size() < 4; ++i) ch.push_back(a[i].AsString());
+            db->Show(a[0].AsString(), a[1].AsString(), ch);
+            return Value{};
+        };
+        b["ui_dialogue_choice"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            return Value{db ? (float)db->LastChoice() : -1.0f};
+        };
+        b["ui_dialogue_open"] = [sceneOf](std::vector<Value>&) -> Value {
+            Scene* s = sceneOf();
+            auto* db = s ? s->FindObjectOfType<UIDialogueBox>() : nullptr;
+            return Value{db ? db->IsOpen() : false};
+        };
+        // grok/ui-color — pick a swatch on a named color picker (fires on_change).
+        b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["swatch_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) return Value{(float)cp->Value()};
+            return Value{-1.0f};
+        };
+        // grok/ui-hud — crosshair recovery, radial options, and the slot grid, by object name.
+        b["kick_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->KickSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread_recover"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpreadRecover(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_thickness"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetThickness(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_start"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetStartAngle(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_spin"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetSpin(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_clockwise"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetClockwise(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_percent"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetShowPercent(a[1].AsBool());
+            return Value{};
+        };
+        b["set_slot"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["slot_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) return Value{(float)sg->Value()};
+            return Value{-1.0f};
+        };
+        // grok/ui-controls: the options added on top of dropdown, scroll, tabs, tooltip and text fields.
+        b["set_dropdown_search"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetSearchable(a[1].AsBool());
+            return Value{};
+        };
+        b["set_dropdown_max"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["set_dropdown_icon"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon(SafeInt(a[1].AsFloat()), a[2].AsString());
+            return Value{};
+        };
+        b["set_scroll_inertia"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetInertia(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_scroll_elastic"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetElastic(a[1].AsBool());
+            return Value{};
+        };
+        b["set_scroll_bar"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["set_tabs_closable"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetClosable(a[1].AsBool());
+            return Value{};
+        };
+        b["close_tab"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["set_tooltip_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetRichText(a[1].AsBool());
+            return Value{};
+        };
+        b["set_tooltip_offset"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetOffset(a[1].AsFloat(), a[2].AsFloat());
+            return Value{};
+        };
+        b["set_tooltip_delay"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetDelay(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_input_multiline"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMultiline(a[1].AsBool());
+            return Value{};
+        };
+        b["set_input_limit"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["set_input_type"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        // grok/ui-toast. toast_push (not ui_toast, which is the immediate-mode popup).
+        auto firstToast = [sceneOf]() -> UIToast* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIToast>() : nullptr;
+        };
+        auto firstModal = [sceneOf]() -> UIModal* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIModal>() : nullptr;
+        };
+        b["toast_push"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast())
+                t->Push(a.size() > 0 ? a[0].AsString() : std::string{},
+                        a.size() > 1 ? a[1].AsString() : std::string{},
+                        a.size() > 2 ? SafeInt(a[2].AsFloat()) : 0);
+            return Value{};
+        };
+        b["set_toast_duration"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetDuration(a.empty() ? 4.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["set_toast_corner"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetCorner(a.empty() ? 0 : SafeInt(a[0].AsFloat()));
+            return Value{};
+        };
+        b["set_toast_max"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetMaxStack(a.empty() ? 4 : SafeInt(a[0].AsFloat()));
+            return Value{};
+        };
+        b["toast_count"] = [firstToast](std::vector<Value>&) -> Value {
+            return Value{firstToast() ? (float)firstToast()->Count() : 0.0f};
+        };
+        b["modal_open"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Open();
+            return Value{};
+        };
+        b["modal_close"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Close();
+            return Value{};
+        };
+        b["set_modal_style"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetStyleCard(a.empty() ? true : a[0].AsBool());
+            return Value{};
+        };
+        b["set_modal_title"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetTitle(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_message"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetMessage(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_confirm"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetConfirmText(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_cancel"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetCancelText(a.empty() ? std::string{} : a[0].AsString());
             return Value{};
         };
         b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
@@ -3891,9 +5221,14 @@ struct OkayScriptVM::Impl {
                     sr->flipY = a.empty() ? true : a[0].AsBool();
             return Value{};
         };
-        b["play_sound"] = [go](std::vector<Value>&) {
+        b["play_sound"] = [go](std::vector<Value>& a) {
+            // play_sound() restarts the source; play_sound(volume) plays its clip
+            // as a one-shot instead, so quick repeats overlap.
             if (GameObject* g = go())
-                if (auto* au = g->GetComponent<AudioSource>()) au->Play();
+                if (auto* au = g->GetComponent<AudioSource>()) {
+                    if (a.empty()) au->Play();
+                    else au->PlayOneShot(a[0].AsFloat());
+                }
             return Value{};
         };
         b["set_progress"] = [go](std::vector<Value>& a) {
@@ -3914,6 +5249,79 @@ struct OkayScriptVM::Impl {
                     sl->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
+        // grok/ui-options: the main new slider / bar / button controls. Events stay
+        // on_change (OnValueChanged), on_click (OnClick) and on_submit (OnSubmit).
+        b["set_slider_step"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->step = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_slider_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->valueFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_slider_step"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->step = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_slider_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->valueFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_bar_segments"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->segments = a.empty() ? 0 : SafeInt(a[0].AsFloat());
+            return Value{};
+        };
+        b["set_bar_trail"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->trailDelay = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_bar_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->textFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_bar_segments"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = SafeInt(a[1].AsFloat());
+            return Value{};
+        };
+        b["ui_set_bar_trail"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->trailDelay = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_bar_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->textFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_button_ease"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = a.empty() ? 0 : SafeInt(a[0].AsFloat());
+                    if (a.size() >= 2) bt->transitionDuration = a[1].AsFloat();
+                }
+            return Value{};
+        };
+        b["ui_set_button_ease"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = SafeInt(a[1].AsFloat());
+                    if (a.size() >= 3) bt->transitionDuration = a[2].AsFloat();
+                }
+            return Value{};
+        };
         b["toggle_on"] = [go](std::vector<Value>&) -> Value {
             if (GameObject* g = go())
                 if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
@@ -3932,17 +5340,17 @@ struct OkayScriptVM::Impl {
         };
         b["set_tab"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(a.empty() ? 0 : (int)a[0].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->Select(a.empty() ? 0 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["set_tab_badge"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge((int)a[0].AsFloat(), (int)a[1].AsFloat());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetBadge(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["set_tab_enabled"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
-                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled((int)a[0].AsFloat(), a[1].AsBool());
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetTabEnabled(SafeInt(a[0].AsFloat()), a[1].AsBool());
             return Value{};
         };
         // Sibling Rigidbody2D control (jump, dash, knockback, top-down movement).
@@ -4027,6 +5435,15 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // add_explosion_force(cx, cy, force, radius [, up]) — shove this 2D body
+        // away from (cx, cy). Linear falloff; nothing past the radius. up > 0 pops it.
+        b["add_explosion_force"] = [go](std::vector<Value>& a) {
+            if (a.size() < 4) return Value{};
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->AddExplosionForce(a[2].AsFloat(), {a[0].AsFloat(), a[1].AsFloat()},
+                                      a[3].AsFloat(), a.size() > 4 ? a[4].AsFloat() : 0.0f);
+            return Value{};
+        };
         // Set a sibling UIImage's texture from script (swap icons, states).
         b["set_image"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
@@ -4042,7 +5459,7 @@ struct OkayScriptVM::Impl {
         // Particle FX on a sibling ParticleSystem (explosions, dust, pickups).
         b["emit"] = [go](std::vector<Value>& a) {       // one-off burst of N
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>())
-                ps->Emit(a.empty() ? 1 : (int)a[0].AsFloat());
+                ps->Emit(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
             return Value{};
         };
         b["particles_on"] = [go](std::vector<Value>& a) {  // start/stop continuous emission
@@ -4053,7 +5470,7 @@ struct OkayScriptVM::Impl {
         // explode([count]): burst particles AND remove this object — the classic death
         // effect in one call (needs a Particle System for the burst).
         b["explode"] = [this, go](std::vector<Value>& a) {
-            int n = a.empty() ? 20 : (int)a[0].AsFloat();
+            int n = a.empty() ? 20 : SafeInt(a[0].AsFloat());
             if (GameObject* g = go()) if (auto* ps = g->GetComponent<ParticleSystem>()) ps->Emit(n);
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->Destroy(rt.host->gameObject);
@@ -4096,19 +5513,19 @@ struct OkayScriptVM::Impl {
         b["tile_resize"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    tm->Resize(a.size() > 0 ? (int)a[0].AsFloat() : 0, a.size() > 1 ? (int)a[1].AsFloat() : 0);
+                    tm->Resize(a.size() > 0 ? SafeInt(a[0].AsFloat()) : 0, a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0);
             return Value{};
         };
         b["set_tile"] = [go](std::vector<Value>& a) {
             if (a.size() >= 3) if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    tm->SetTile((int)a[0].AsFloat(), (int)a[1].AsFloat(), (int)a[2].AsFloat());
+                    tm->SetTile(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
             return Value{};
         };
         b["get_tile"] = [go](std::vector<Value>& a) {
             if (a.size() >= 2) if (GameObject* g = go())
                 if (auto* tm = g->GetComponent<Tilemap>())
-                    return Value{(float)tm->GetTile((int)a[0].AsFloat(), (int)a[1].AsFloat())};
+                    return Value{(float)tm->GetTile(SafeInt(a[0].AsFloat()), SafeInt(a[1].AsFloat()))};
             return Value{0.0f};
         };
         b["tile_w"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Width() : 0.0f}; };
@@ -4117,6 +5534,540 @@ struct OkayScriptVM::Impl {
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
+        // Mixer groups ("music", "sfx", "ui", "voice"): their own volume and mute.
+        b["set_group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (a.size() >= 2 && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupVolume[(int)g] = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
+        b["group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                return Value{AudioMixer::groupVolume[(int)g]};
+            return Value{0.0f};
+        };
+        // Whole-game saves (SaveGame): save_game(["save1"] [, "label"]), load_game(["save1"])
+        // (happens at the end of the frame), has_save, delete_save, save_label,
+        // play_time (seconds played, carried through loads).
+        auto slotArg = [](std::vector<Value>& a) { return a.empty() ? std::string("save1") : a[0].AsString(); };
+        b["save_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Save(*s, slotArg(a), a.size() > 1 ? a[1].AsString() : "", &err);
+            if (!ok) Log::Warning("[script] save_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["load_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Load(*s, slotArg(a), &err);
+            if (!ok) Log::Warning("[script] load_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["has_save"]    = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Exists(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
+        b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Load menus: save_slots() lists every slot (newest first, damaged ones included), save_valid
+        // says whether a slot would load, and one slot's details come as text a menu can show.
+        b["save_slots"]  = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const SaveSlotInfo& i : SaveGame::List()) list.AsArray()->push_back(Value{i.slot});
+            return list;
+        };
+        b["save_valid"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Check(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_scene"]     = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).scene}; };
+        b["save_play_time"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).playTime}; };
+        b["save_play_text"] = [slotArg](std::vector<Value>& a) {   // "1h 05m"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists ? SaveMenuModel::FormatPlayTime(i.playTime) : std::string()};
+        };
+        b["save_date"] = [slotArg](std::vector<Value>& a) {   // "2026-11-08 14:03" (UTC)
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatDateTime(i.savedAt, 0) : std::string()};
+        };
+        b["save_ago"] = [slotArg](std::vector<Value>& a) {   // "5 minutes ago"
+            const SaveSlotInfo i = SaveGame::Info(slotArg(a));
+            return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
+        };
+        // Save slots with no code to write (docs/save_framework.md): objects marked with a Saveable
+        // component are stored; game_save("slot_1" [, "label"]), game_load("slot_1") (at the start
+        // of the next frame), game_delete_slot, game_slot_exists, game_slot_age (seconds since it was saved, -1 = none),
+        // game_slot_text ("2026-11-08 14:03"), game_slot_label, game_continue, game_can_continue,
+        // game_autosave. Every problem (missing, damaged or newer-version slot) is a Console error.
+        auto gameSlot = [](std::vector<Value>& a) { return a.empty() ? std::string("slot_1") : a[0].AsString(); };
+        b["game_save"] = [sceneOf, gameSlot](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Save(*s, gameSlot(a), a.size() > 1 ? a[1].AsString() : "") ? 1.0f : 0.0f};
+        };
+        b["game_load"] = [sceneOf, gameSlot](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Load(*s, gameSlot(a)) ? 1.0f : 0.0f};
+        };
+        b["game_continue"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::Continue(*s) ? 1.0f : 0.0f};
+        };
+        b["game_autosave"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{s && GameSaves::AutoSave(*s) ? 1.0f : 0.0f};
+        };
+        b["game_delete_slot"]  = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Delete(gameSlot(a)) ? 1.0f : 0.0f}; };
+        b["game_slot_exists"]  = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Exists(gameSlot(a)) ? 1.0f : 0.0f}; };
+        b["game_slot_age"]     = [gameSlot](std::vector<Value>& a) { return Value{(float)GameSaves::SecondsSinceSave(gameSlot(a))}; };
+        b["game_slot_text"]    = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::SavedText(gameSlot(a))}; };
+        b["game_slot_label"]   = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Label(gameSlot(a))}; };
+        b["game_can_continue"] = [](std::vector<Value>&) { return Value{GameSaves::CanContinue() ? 1.0f : 0.0f}; };
+        // Display: the monitor, window mode, resolution and refresh the Settings screen edits.
+        // set_* applies at once and is saved. begin_display_confirm remembers the current
+        // choice and starts the 10-second "keep these settings?" clock; keep_display_settings
+        // accepts it and revert_display_settings puts the previous choice back.
+        b["get_monitor"] = [](std::vector<Value>&) { return Value{DisplaySettings::MonitorName()}; };
+        b["get_monitors"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayMonitor& m : DisplaySettings::Monitors()) list.AsArray()->push_back(Value{m.name});
+            return list;
+        };
+        b["set_monitor"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            if (a[0].IsNumber()) {
+                DisplaySettings::SetMonitorIndex((int)a[0].AsFloat());
+                return Value{1.0f};
+            }
+            const std::string name = a[0].AsString();
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) { DisplaySettings::SetMonitorIndex(std::atoi(name.c_str())); return Value{1.0f}; }
+            const bool ok = DisplaySettings::SetMonitorName(name);
+            if (!ok) Log::Warning("[script] set_monitor: no connected monitor named \"", name, "\"");
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["get_display_mode"] = [](std::vector<Value>&) { return Value{std::string(DisplaySettings::ModeName(DisplaySettings::Mode()))}; };
+        b["set_display_mode"] = [](std::vector<Value>& a) {
+            WindowMode mode = WindowMode::Windowed;
+            const std::string text = a.empty() ? std::string() : a[0].AsString();
+            if (!DisplaySettings::ParseMode(text, mode)) {
+                Log::Warning("[script] set_display_mode: use windowed, borderless or fullscreen, not \"", text, "\"");
+                return Value{0.0f};
+            }
+            DisplaySettings::SetMode(mode);
+            return Value{1.0f};
+        };
+        b["get_display_width"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Width()}; };
+        b["get_display_height"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Height()}; };
+        b["set_display_resolution"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) { Log::Warning("[script] set_display_resolution: needs a width and a height"); return Value{0.0f}; }
+            DisplaySettings::SetResolution((int)a[0].AsFloat(), (int)a[1].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_refresh_rate"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::RefreshHz()}; };
+        b["set_refresh_rate"] = [](std::vector<Value>& a) {
+            if (a.empty()) { Log::Warning("[script] set_refresh_rate: needs a rate in hertz"); return Value{0.0f}; }
+            DisplaySettings::SetRefreshHz((int)a[0].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_display_resolutions"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayResolution& r : DisplaySettings::Resolutions()) list.AsArray()->push_back(Value{r.Label()});
+            return list;
+        };
+        b["get_refresh_rates"] = [](std::vector<Value>& a) {
+            const int w = a.size() >= 2 ? (int)a[0].AsFloat() : DisplaySettings::Width();
+            const int h = a.size() >= 2 ? (int)a[1].AsFloat() : DisplaySettings::Height();
+            Value list = Value::MakeArray();
+            for (int hz : DisplaySettings::RefreshRatesForResolution(w, h)) list.AsArray()->push_back(Value{(float)hz});
+            return list;
+        };
+        b["begin_display_confirm"] = [](std::vector<Value>&) { DisplaySettings::BeginTrial(10.f); return Value{1.0f}; };
+        b["keep_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::KeepTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["revert_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::RevertTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["get_display_confirm_seconds"] = [](std::vector<Value>&) { return Value{DisplaySettings::TrialSecondsLeft()}; };
+        // Localization (docs/localization.md): loc("key", args...) is the key's text in
+        // the player's language with {0}, {1}... filled from the arguments, or {name}
+        // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
+        // remembers the choice for the next run; get_language(), languages() (codes),
+        // language_name("fr") -> "Français". Changes reach on_language_changed(code).
+        b["loc"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string()};
+            auto arg = [](const Value& v) { return v.IsNumber() ? LocArg((double)v.AsFloat()) : LocArg(v.AsString()); };
+            std::vector<LocArg> args;
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (auto m = a[i].AsMap()) { for (const auto& kv : *m) args.push_back(LocArg::Named(kv.first, arg(kv.second))); }
+                else args.push_back(arg(a[i]));
+            }
+            return Value{Localization::LocalizeArgs(a[0].AsString(), args)};
+        };
+        b["set_language"] = [](std::vector<Value>& a) {
+            const std::string code = a.empty() ? std::string() : a[0].AsString();
+            const bool ok = Localization::SetLanguage(code);
+            if (ok) Localization::SaveSettings();
+            else Log::Warning("[script] set_language: the string table has no language \"", code, "\"");
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["get_language"]  = [](std::vector<Value>&) { return Value{Localization::Language()}; };
+        b["languages"]     = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const std::string& c : Localization::Languages()) list.AsArray()->push_back(Value{c});
+            return list;
+        };
+        b["language_name"] = [](std::vector<Value>& a) {
+            return Value{Localization::LanguageName(a.empty() ? Localization::Language() : a[0].AsString())};
+        };
+        // Cutscenes (SequencePlayer): play_sequence("Intro") plays the Sequence Player
+        // whose file is Intro (or the first one, loading Assets/Intro.okayseq),
+        // stop_sequence() stops every one, sequence_playing(), sequence_time().
+        b["play_sequence"] = [sceneOf, this](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            const bool ok = s && !a.empty() && SequencePlayer::PlayByName(*s, rt.host ? rt.host->gameObject : nullptr, a[0].AsString());
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["stop_sequence"] = [sceneOf](std::vector<Value>&) { if (Scene* s = sceneOf()) SequencePlayer::StopAll(*s); return Value{}; };
+        b["sequence_playing"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{(s && SequencePlayer::Playing(*s)) ? 1.0f : 0.0f};
+        };
+        b["sequence_time"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+            return Value{sp ? sp->Time() : 0.0f};
+        };
+        // Dialogue, story variables and quests (DialogueRunner / StoryState / QuestLog):
+        //   start_dialogue("Smith") (an object with a Dialogue Runner, else a graph name;
+        //   no name = this object's runner), dialogue_active(), set_story(name, value),
+        //   get_story(name), story_flag(name) / set_story_flag(name, on), start_quest(id),
+        //   complete_objective(id, index), fail_quest(id), quest_state(id), quest_active(id).
+        b["start_dialogue"] = [sceneOf, go](std::vector<Value>& a) {
+            DialogueRunner* r = nullptr;
+            if (a.empty() || a[0].AsString().empty()) { if (GameObject* g = go()) r = g->GetComponent<DialogueRunner>(); }
+            if (!r && !a.empty()) r = DialogueRunner::FindByName(sceneOf(), a[0].AsString());
+            if (!r) { Log::Warning("[script] start_dialogue: no Dialogue Runner named ", a.empty() ? std::string() : a[0].AsString()); return Value{false}; }
+            return Value{r->StartDialogue(a.size() > 1 ? SafeInt(a[1].AsFloat()) : -1)};
+        };
+        b["stop_dialogue"]   = [sceneOf](std::vector<Value>&) { if (DialogueRunner* r = DialogueRunner::ActiveIn(sceneOf())) r->Stop(); return Value{}; };
+        b["dialogue_active"] = [sceneOf](std::vector<Value>&) { return Value{DialogueRunner::ActiveIn(sceneOf()) != nullptr}; };
+        b["set_story"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (StoryState* st = StoryState::Get(sceneOf(), true)) st->Set(a[0].AsString(), a[1]);
+            return Value{};
+        };
+        b["get_story"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return (st && !a.empty()) ? Value{st->Get(a[0].AsString())} : Value{};
+        };
+        b["has_story"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return Value{st && !a.empty() && st->Has(a[0].AsString())};
+        };
+        b["set_story_flag"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (StoryState* st = StoryState::Get(sceneOf(), true)) st->SetFlag(a[0].AsString(), a.size() < 2 || a[1].AsBool());
+            return Value{};
+        };
+        b["story_flag"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return Value{st && !a.empty() && st->HasFlag(a[0].AsString())};
+        };
+        b["start_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->StartQuest(a[0].AsString())};
+        };
+        b["complete_objective"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->CompleteObjective(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0)};
+        };
+        b["add_quest_progress"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->AddProgress(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0, a.size() > 2 ? SafeInt(a[2].AsFloat()) : 1)};
+        };
+        b["complete_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->CompleteQuest(a[0].AsString())};
+        };
+        b["fail_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->FailQuest(a[0].AsString())};
+        };
+        b["quest_state"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{std::string(q ? q->StatusName(a[0].AsString()) : "inactive")};
+        };
+        b["quest_active"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->IsActive(a[0].AsString())};
+        };
+        b["quest_completed"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->IsCompleted(a[0].AsString())};
+        };
+        b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
+        // The scene's look (docs/rendering.md): post_set("bloom", 1) / post_set("tonemap", "filmic"),
+        // fog_set(on [, "#rrggbb"] [, start, end] [, mode [, density]]), weather_set("rain" [, intensity]),
+        // time_of_day([hours]) on the scene's DayNightCycle.
+        b["post_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 2) return Value{false};
+            const std::string name = a[0].AsString();
+            const float v = a[1].IsString() ? (float)TonemapFromName(a[1].AsString()) : a[1].AsFloat();
+            const bool ok = PostSet(s->renderSettings, name, v);
+            if (!ok) Log::Warning("[script] post_set: unknown setting '", name, "'");
+            return Value{ok};
+        };
+        b["fog_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& rs = s->renderSettings;
+            rs.fog = a[0].AsBool();
+            std::size_t i = 1;
+            if (i < a.size() && a[i].IsString()) {   // an optional "#rrggbb" colour
+                std::string hex = a[i].AsString(); ++i;
+                if (!hex.empty() && hex[0] == '#') hex.erase(0, 1);
+                if (hex.size() == 6) {
+                    const unsigned long v = std::strtoul(hex.c_str(), nullptr, 16);
+                    rs.fogColor = Color::FromBytes((int)((v >> 16) & 0xFF), (int)((v >> 8) & 0xFF), (int)(v & 0xFF));
+                    rs.fogMatchSky = false;
+                }
+            }
+            if (i + 1 < a.size()) { rs.fogStart = a[i].AsFloat(); rs.fogEnd = a[i + 1].AsFloat(); i += 2; }
+            if (i < a.size()) { rs.fogMode = a[i].IsString() ? FogModeFromName(a[i].AsString()) : SafeInt(Mathf::Clamp(a[i].AsFloat(), 0.0f, 2.0f)); ++i; }
+            if (i < a.size()) rs.fogDensity = Mathf::Clamp(a[i].AsFloat(), 0.0f, 10.0f);
+            return Value{};
+        };
+        b["weather_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& w = s->renderSettings.weather;
+            w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : SafeInt(Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f));
+            if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
+            return Value{};
+        };
+        b["time_of_day"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr;
+            if (!dn) return Value{-1.0f};
+            if (!a.empty()) dn->SetTime(a[0].AsFloat());
+            return Value{dn->Hour()};
+        };
+        // Keep the current volumes as the player's settings (also saved on quit).
+        b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
+        // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
+        // nav_move_to(x, y, z) / nav_move_to("Name", x, y, z): walk there over the
+        // navmesh; nav_stop(), nav_arrived() -> 1 once the point was reached,
+        // nav_remaining() -> path length left (0 when idle).
+        auto navOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> NavMeshAgent* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<NavMeshAgent>() : nullptr;
+        };
+        b["nav_move_to"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n || a.size() < i + 3) return Value{0.0f};
+            n->SetDestination({a[i].AsFloat(), a[i + 1].AsFloat(), a[i + 2].AsFloat()});
+            return Value{1.0f};
+        };
+        b["nav_stop"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n) return Value{0.0f};
+            n->Stop(); return Value{1.0f};
+        };
+        b["nav_arrived"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n && n->Arrived() ? 1.0f : 0.0f};
+        };
+        b["nav_remaining"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n ? n->RemainingDistance() : 0.0f};
+        };
+        // ---- Navmesh queries (no agent needed) ----------------------------------
+        // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to
+        // the point (nav_path_exists(fx, fy, fz, tx, ty, tz) between two points);
+        // nav_path_length(...) -> that route's length (-1 when there is none);
+        // nav_point_walkable(x, y, z[, maxDist]) -> 1 when the baked navmesh has ground
+        // within maxDist (default 1); nav_nearest_point(x, y, z[, maxDist]) -> the closest
+        // walkable point as a vector (the point itself when there is none within range).
+        // The scene's baked navmesh is used, else the sampled grid (as agents do).
+        auto navRoute = [this, sceneOf](std::vector<Value>& a, std::vector<Vec3>& path) -> bool {
+            Scene* s = sceneOf();
+            if (!s) return false;
+            Vec3 from{}, to{};
+            if (a.size() >= 6) {
+                from = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+                to   = {a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            } else if (a.size() >= 3 && rt.host && rt.host->transform) {
+                from = rt.host->transform->Position();
+                to   = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            } else return false;
+            return Navigation::FindPath(*s, from, to, path, 0.4f, rt.host ? rt.host->gameObject : nullptr) && !path.empty();
+        };
+        b["nav_path_exists"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            return Value{navRoute(a, path) ? 1.0f : 0.0f};
+        };
+        b["nav_path_length"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            if (!navRoute(a, path)) return Value{-1.0f};
+            float len = 0.0f;
+            for (std::size_t i = 1; i < path.size(); ++i) len += (path[i] - path[i - 1]).Magnitude();
+            return Value{len};
+        };
+        auto navSample = [sceneOf](std::vector<Value>& a, Vec3& p, Vec3& out) -> bool {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 3) return false;
+            p = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            return Navigation::SamplePosition(*s, p, a.size() > 3 ? a[3].AsFloat() : 1.0f, out);
+        };
+        b["nav_point_walkable"] = [navSample](std::vector<Value>& a) {
+            Vec3 p, out;
+            return Value{navSample(a, p, out) ? 1.0f : 0.0f};
+        };
+        b["nav_nearest_point"] = [navSample](std::vector<Value>& a) {
+            Vec3 p{}, out;
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 q{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            std::vector<Value> b2 = a;
+            if (b2.size() < 4) b2.push_back(Value{50.0f});   // "nearest" looks further than "walkable"
+            return Value{navSample(b2, p, out) ? out : q};
+        };
+        // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
+        // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,
+        // bt_get(key) / bt_get("Name", key) reads it, bt_run("Assets/Guard.okaybt")
+        // loads and starts a tree (bt_run() starts the current one over), bt_stop().
+        auto btOf = [sceneOf, go](std::vector<Value>& a, std::size_t need, std::size_t& first) -> BehaviorTreeRunner* {
+            first = 0;
+            GameObject* g = go();
+            if (a.size() > need && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+        };
+        b["bt_set"] = [btOf](std::vector<Value>& a) {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 2, i);
+            if (!r || a.size() < i + 2) return Value{0.0f};
+            r->blackboard.Set(a[i].AsString(), BtValue::FromVs(a[i + 1]));
+            return Value{1.0f};
+        };
+        b["bt_get"] = [btOf](std::vector<Value>& a) -> Value {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 1, i);
+            if (!r || a.size() < i + 1) return Value{};
+            const BtValue* v = r->blackboard.Find(a[i].AsString());
+            return v ? v->ToVs() : Value{};
+        };
+        b["bt_run"] = [go](std::vector<Value>& a) {
+            GameObject* g = go();
+            if (!g) return Value{0.0f};
+            auto* r = g->GetComponent<BehaviorTreeRunner>();
+            if (!r) r = g->AddComponent<BehaviorTreeRunner>();
+            if (!a.empty() && !a[0].AsString().empty()) {
+                std::string err;
+                if (!r->LoadTree(a[0].AsString(), &err)) { Log::Warning("[script] bt_run: ", err); return Value{0.0f}; }
+            }
+            r->Run();
+            return Value{r->IsRunning() ? 1.0f : 0.0f};
+        };
+        b["bt_stop"] = [go](std::vector<Value>&) {
+            GameObject* g = go();
+            auto* r = g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+            if (r) r->Stop();
+            return Value{r ? 1.0f : 0.0f};
+        };
+        // ---- Splines, lines and trails: this object's, or a named object's -----------
+        // spline_point("Rail", t): the world point a fraction t (0..1) of the way along
+        // the Spline (by length, so even steps of t are even steps on the curve);
+        // spline_length("Rail"); follower_set_speed([name,] speed);
+        // line_set_points([name,] points) with a list of vectors or several vectors;
+        // trail_clear([name]).
+        auto objOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GameObject* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g;
+        };
+        b["spline_point"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            const Spline* sp = g ? g->GetComponent<Spline>() : nullptr;
+            if (!sp) return Value{Vec3::Zero};
+            const float t = a.size() > i ? a[i].AsFloat() : 0.0f;
+            return Value{sp->SampleAtDistance(t * sp->Length()).position};
+        };
+        b["spline_length"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            const Spline* sp = g ? g->GetComponent<Spline>() : nullptr;
+            return Value{sp ? sp->Length() : 0.0f};
+        };
+        b["follower_set_speed"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            SplineFollower* f = g ? g->GetComponent<SplineFollower>() : nullptr;
+            if (!f || a.size() <= i) return Value{0.0f};
+            f->speed = a[i].AsFloat();
+            return Value{1.0f};
+        };
+        b["line_set_points"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            LineRenderer* lr = g ? g->GetComponent<LineRenderer>() : nullptr;
+            if (!lr) return Value{0.0f};
+            std::vector<Vec3> pts;
+            for (std::size_t k = i; k < a.size(); ++k) {
+                if (auto arr = a[k].AsArray()) for (const Value& v : *arr) pts.push_back(v.AsVec3());
+                else pts.push_back(a[k].AsVec3());
+            }
+            lr->positions = std::move(pts);
+            return Value{(float)lr->positions.size()};
+        };
+        b["trail_clear"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            TrailRenderer* tr = g ? g->GetComponent<TrailRenderer>() : nullptr;
+            if (tr) tr->Clear();
+            return Value{tr ? 1.0f : 0.0f};
+        };
+        // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
+        // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
+        auto music = [go]() -> MusicPlayer* {
+            GameObject* g = go();
+            if (!g || !g->scene()) return nullptr;
+            auto all = g->scene()->FindObjectsOfType<MusicPlayer>();
+            return all.empty() ? nullptr : all.front();
+        };
+        b["music_play"] = [music](std::vector<Value>& a) {
+            MusicPlayer* m = music();
+            if (!m) return Value{false};
+            if (a.empty()) return Value{m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex())};
+            if (a[0].IsString()) return Value{m->Play(a[0].AsString())};
+            return Value{m->Play(SafeInt(a[0].AsFloat()))};
+        };
+        b["music_next"]     = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Next(); return Value{}; };
+        b["music_previous"] = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Previous(); return Value{}; };
+        b["music_stop"]     = [music](std::vector<Value>& a) { if (MusicPlayer* m = music()) m->Stop(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
+        b["music_pause"]    = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Pause(); return Value{}; };
+        b["music_resume"]   = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Resume(); return Value{}; };
+        // Ducking: set_ducking(on [, level]) dips the Music group while Voice plays.
+        b["set_ducking"] = [](std::vector<Value>& a) {
+            AudioMixer::duckMusicUnderVoice = a.empty() || a[0].AsBool();
+            if (a.size() >= 2) AudioMixer::duckLevel = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
+        b["mute_group"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupMuted[(int)g] = a.size() < 2 || a[1].AsBool();
+            return Value{};
+        };
         // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
         // the ray hits a collider, and overlap(x, y) returns 1 if a collider
         // contains that point. Great for shooting, ground checks, line-of-sight.
@@ -4143,7 +6094,7 @@ struct OkayScriptVM::Impl {
             // Optional filters: [, layers [, ignore_triggers]] (as for raycast3).
             std::uint32_t mask = Physics2D::kAllLayers;
             if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
-                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : SafeUInt32(a[5].AsFloat()));
             bool trig = a.size() > 6 ? !a[6].AsBool() : true;
             RaycastHit2D h = sc->physics().Raycast(*sc, origin, dir, maxDist, nullptr, mask, trig);
             sc->physics().RecordQueryRay(origin, dir, maxDist, h);
@@ -4176,7 +6127,7 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
             std::uint32_t mask = Physics2D::kAllLayers;
             if (a.size() > 5) mask = a[5].IsString() ? Layers::MaskFromList(a[5].AsString())
-                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : (std::uint32_t)a[5].AsFloat());
+                                   : (a[5].AsFloat() <= 0.0f ? Physics2D::kAllLayers : SafeUInt32(a[5].AsFloat()));
             bool trig = a.size() > 6 ? !a[6].AsBool() : true;
             auto hits = sc->physics().RaycastAll(*sc, origin, dir, maxDist, nullptr, mask, trig);
             sc->physics().RecordQueryRay(origin, dir, maxDist, hits.empty() ? RaycastHit2D{} : hits.front());
@@ -4212,7 +6163,7 @@ struct OkayScriptVM::Impl {
         // Scene Manager (build list) — load by index/name, next, reload, query.
         b["load_scene_index"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) return Value{SceneManager::LoadScene(*s, (int)a[0].AsFloat()) ? 1.0f : 0.0f};
+            if (s && !a.empty()) return Value{SceneManager::LoadScene(*s, SafeInt(a[0].AsFloat())) ? 1.0f : 0.0f};
             return Value{0.0f};
         };
         b["load_scene_name"] = [this](std::vector<Value>& a) {
@@ -4321,12 +6272,61 @@ struct OkayScriptVM::Impl {
         };
         // Set/get the built-in animation index (0 none,1 idle,2 walk,3 run,...).
         b["set_anim"] = [charSelf](std::vector<Value>& a) {
-            if (Character* c = charSelf(); c && !a.empty()) c->anim = (int)a[0].AsFloat();
+            if (Character* c = charSelf(); c && !a.empty()) c->anim = SafeInt(a[0].AsFloat());
             return Value{};
         };
         b["get_anim"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
         };
+        // grok/view-toggle: set_view(0 first / 1 third) eases the camera; get_view()
+        // is the view asked for (0 / 1), or -1 when this object has no player view.
+        b["set_view"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            PlayerView* v = g ? PlayerView::FindForScript(g, true) : nullptr;
+            if (!v) return Value{0.0f};
+            v->SetView(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
+            return Value{1.0f};
+        };
+        b["get_view"] = [selfObj](std::vector<Value>&) {
+            GameObject* g = selfObj();
+            if (PlayerController* pc = PlayerController::Of(g)) return Value{(float)pc->CurrentView()};
+            PlayerView* v = g ? PlayerView::FindForScript(g, false) : nullptr;
+            return Value{v ? (float)v->GetView() : -1.0f};
+        };
+        b["SetView"] = b["set_view"];
+        b["GetView"] = b["get_view"];
+        // grok/ui-theme: apply_ui_theme() bakes the theme on this object (or the
+        // first in the scene). apply_ui_theme(name) picks a theme by name.
+        // apply_ui_theme(name, root) bakes it onto the named object instead.
+        b["apply_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.empty() ? std::string() : a[0].AsString();
+            UITheme* theme = UITheme::Find(g->scene(), name);
+            if (!theme && name.empty()) theme = g->GetComponent<UITheme>();
+            if (!theme) return Value{0.0f};
+            GameObject* root = theme->gameObject;
+            if (a.size() >= 2) {
+                if (GameObject* named = g->scene()->Find(a[1].AsString())) root = named;
+            }
+            theme->ApplyTo(root);
+            return Value{1.0f};
+        };
+        b["ApplyUITheme"] = b["apply_ui_theme"];
+        // set_ui_theme(0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy) fills the
+        // palette and bakes it onto this theme's object.
+        b["set_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.size() >= 2 ? a[1].AsString() : std::string();
+            UITheme* theme = name.empty() ? g->GetComponent<UITheme>() : nullptr;
+            if (!theme) theme = UITheme::Find(g->scene(), name);
+            if (!theme) return Value{0.0f};
+            theme->ApplyPreset(a.empty() ? 1 : SafeInt(a[0].AsFloat()));
+            theme->Apply();
+            return Value{1.0f};
+        };
+        b["SetUITheme"] = b["set_ui_theme"];
         // Clip queries: timing + existence, so scripts can react to where a clip is.
         b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
@@ -4380,6 +6380,210 @@ struct OkayScriptVM::Impl {
             if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
             return Value{};
         };
+        b["anim_get_float"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? m->GetFloat(a[0].AsString()) : 0.0f};
+        };
+        b["anim_get_bool"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{(m && m->GetBool(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["anim_get_int"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? (float)m->GetInt(a[0].AsString()) : 0.0f};
+        };
+        auto layerOf = [selfObj](const Value& which) -> AnimStateMachine* {
+            GameObject* g = selfObj();
+            if (!g) return nullptr;
+            if (which.IsString()) return FindAnimLayer(g, true, which.AsString(), 0);
+            return FindAnimLayer(g, false, {}, (int)std::lround(which.AsFloat()));
+        };
+        b["anim_set_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            if (!sm) return Value{0.0f};
+            sm->layerWeight = a[1].AsFloat();
+            return Value{1.0f};
+        };
+        b["anim_get_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            return Value{sm ? sm->layerWeight : 0.0f};
+        };
+        b["set_root_motion"] = [selfObj](std::vector<Value>& a) {
+            const bool on = a.empty() || a[0].AsFloat() != 0.0f;
+            return Value{SetRootMotionOn(selfObj(), on) ? 1.0f : 0.0f};
+        };
+        b["set_character_model"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{SetCharacterModelPath(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
+        };
+        // Actions (HumanoidActions): play_action goes to a state, or a blend-tree
+        // motion of that clip name, else play_clip. die/revive drive Death.
+        b["play_action"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            const float blend = a.size() >= 2 ? a[1].AsFloat() : 0.2f;
+            return Value{HumanoidActions::Play(selfObj(), a[0].AsString(), blend) ? 1.0f : 0.0f};
+        };
+        b["is_in_action"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsInAction(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["action_time"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::ActionTime(selfObj())};
+        };
+        b["die"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            const Vec3* from = nullptr;
+            Vec3 world;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                world = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+                from = &world;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                world = a[0].AsVec3();
+                from = &world;
+            } else if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+            else if (!a.empty() && a[0].IsNumber()) dir = SafeInt(a[0].AsFloat());
+            HumanoidActions::RequestDeath(go, dir, from);
+            return Value{};
+        };
+        b["revive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestRevive(selfObj());
+            return Value{};
+        };
+        // is_dead("Orc") also reads a named object's Stats / SurvivalStats.
+        b["is_dead"] = [selfObj](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                GameObject* me = selfObj();
+                if (GameObject* g = me && me->scene() ? me->scene()->Find(a[0].AsString()) : nullptr) {
+                    if (auto* st = g->GetComponent<Stats>()) return Value{st->IsDead() ? 1.0f : 0.0f};
+                    if (auto* sv = g->GetComponent<SurvivalStats>()) return Value{sv->dead ? 1.0f : 0.0f};
+                }
+                return Value{0.0f};
+            }
+            return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
+        };
+        // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz)
+        // shoves the chest (or the part nearest an optional px, py, pz).
+        b["ragdoll"] = [selfObj](std::vector<Value>& a) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            if (!rd) return Value{0.0f};
+            if (!a.empty() && a[0].AsFloat() == 0.0f) { rd->Deactivate(); return Value{1.0f}; }
+            return Value{rd->Activate() ? 1.0f : 0.0f};
+        };
+        b["ragdoll_push"] = [selfObj](std::vector<Value>& a) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            if (!rd || a.size() < 3) return Value{0.0f};
+            const Vec3 v{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            const Vec3 at = a.size() >= 6 ? Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}
+                                          : rd->ParticlePosition(rd->BoneParticle(humanoid::Torso));
+            rd->Hit(at, v);
+            return Value{1.0f};
+        };
+        b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
+        };
+        b["dive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestDive(selfObj());
+            return Value{};
+        };
+        b["can_dive"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::CanDive(selfObj()) ? 1.0f : 0.0f};
+        };
+        // sit() ground, sit("Chair") a Seat by name, sit("knees") / sit(2) a kneel.
+        // sit(0) is a chair pose with no Seat (the body stays where it is).
+        b["sit"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go) return Value{0.0f};
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!a.empty()) {
+                if (a[0].IsNumber()) type = SafeInt(a[0].AsFloat());
+                else if (go->scene()) {
+                    const std::string name = a[0].AsString();
+                    seat = go->scene()->Find(name);
+                    if (!seat) {
+                        std::string k = name;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            return Value{HumanoidActions::RequestSit(go, seat, type) ? 1.0f : 0.0f};
+        };
+        b["stand_up"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestStandUp(selfObj());
+            return Value{};
+        };
+        b["is_sitting"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsSitting(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["interact"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::Interact(selfObj());
+            return Value{};
+        };
+        b["seat_prompt"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::SeatPrompt(selfObj())};
+        };
+        // hit_react("back") light, hit_react("left", 1) heavy, or hit_react(x, y, z [, heavy]).
+        b["hit_react"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            bool heavy = false;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                dir = HumanoidActions::HitDirFromWorld(go, Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()});
+                if (a.size() >= 4) heavy = a[3].AsFloat() != 0.0f;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                dir = HumanoidActions::HitDirFromWorld(go, a[0].AsVec3());
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            } else {
+                if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+                else if (!a.empty() && a[0].IsNumber()) dir = SafeInt(a[0].AsFloat());
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            }
+            return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
+        };
+        auto dirArg = [](const Value& v) {
+            if (v.IsString()) return HumanoidActions::DirFromName(v.AsString());
+            return SafeInt(v.AsFloat());
+        };
+        b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestDodge(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        // Vault / mantle / ledge. These probe even when the controller flags are off.
+        b["vault"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestVault(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["mantle"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestMantle(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["ledge_grab"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestLedgeGrab(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["climb_up"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestClimbUp(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["let_go"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestLetGo(selfObj());
+            return Value{};
+        };
+        b["is_hanging"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsHanging(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["shimmy"] = [selfObj](std::vector<Value>& a) {
+            HumanoidActions::SetShimmy(selfObj(), a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)
@@ -4410,8 +6614,12 @@ struct OkayScriptVM::Impl {
         // (0..1 per loop; keeps counting past 1 on loops) — for gameplay timing.
         // ---- IK control on this object (any of LimbIK / ChainIK / LookAtIK / AimIK) ----
         //   ik_enable(on)            switch IK on/off (eases over each component's fadeTime)
-        //   ik_set_weight(w)         0..1 influence
-        //   ik_set_target(x, y, z)   world point to reach / look at / aim at
+        //   ik_set_weight(w)         0..1 on every IK component on this object
+        //   ik_set_weight(kind, w)   one of foot, look, aim, hand_l, hand_r, full
+        //                            (also foot_l, foot_r). Looks on this object and its children.
+        //   ik_set_target(x, y, z)   world point on Limb / Chain / Look / Aim
+        //   ik_set_target(limb, "Name") or ik_set_target(limb, x, y, z)
+        //   ik_clear_target(limb)    drop that goal
         //   ik_set_pole(x, y, z)     bend direction point (LimbIK pole / ChainIK pole)
         auto ikEach = [this](auto fn) {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -4431,16 +6639,35 @@ struct OkayScriptVM::Impl {
             ikToggle([&](auto* c) { c->ikActive = on; });
             return Value{};
         };
-        b["ik_set_weight"] = [ikEach, ikToggle](std::vector<Value>& a) {
+        b["ik_set_weight"] = [selfObj, ikEach, ikToggle](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                const float w = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+                return Value{SetIkKindWeight(selfObj(), a[0].AsString(), w) ? 1.0f : 0.0f};
+            }
             float w = a.empty() ? 1.0f : a[0].AsFloat();
             ikEach([&](auto* c) { c->weight = w; });
             ikToggle([&](auto* c) { c->weight = w; });
             return Value{};
         };
-        b["ik_set_target"] = [ikEach](std::vector<Value>& a) {
+        b["ik_set_target"] = [selfObj, ikEach](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                GameObject* g = selfObj();
+                if (a.size() >= 2 && a[1].IsString()) {
+                    GameObject* named = (g && g->scene()) ? g->scene()->Find(a[1].AsString()) : nullptr;
+                    if (!named) return Value{0.0f};
+                    return Value{SetIkLimbTarget(g, a[0].AsString(), named, nullptr) ? 1.0f : 0.0f};
+                }
+                Vec3 t{a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                       a.size() > 3 ? a[3].AsFloat() : 0.0f};
+                return Value{SetIkLimbTarget(g, a[0].AsString(), nullptr, &t) ? 1.0f : 0.0f};
+            }
             Vec3 t{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
             ikEach([&](auto* c) { c->targetObject = nullptr; c->target = t; });
             return Value{};
+        };
+        b["ik_clear_target"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{ClearIkLimbTarget(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
         };
         // Full Body IK goals on this object:
         //   ik_hand("left"|"right", x, y, z [, weight])   reach a point (weight 0 releases)
@@ -4466,12 +6693,90 @@ struct OkayScriptVM::Impl {
         };
         b["ik_hand"] = [setGoal](std::vector<Value>& a) { return setGoal(a, true); };
         b["ik_foot"] = [setGoal](std::vector<Value>& a) { return setGoal(a, false); };
-        b["ik_look"] = [fbik](std::vector<Value>& a) {
+        // ik_look_at("Guard") aims this object's Look-At IK at that object.
+        // set_stance(0 stand, 1 crouch, 2 prone); crouch / prone / stand are the same.
+        // (look_at is the transform turn; this one is the head IK.)
+        b["ik_look_at"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene() || a.empty()) return Value{0.0f};
+            GameObject* tgt = g->scene()->Find(a[0].AsString());
+            if (!tgt) return Value{0.0f};
+            GameObject* host = g;
+            for (Transform* t = g->transform; t; t = t->Parent()) {
+                if (!t->gameObject) continue;
+                if (t->gameObject->GetComponent<LookAtIK>() || t->gameObject->GetComponent<Character>())
+                    host = t->gameObject;
+            }
+            LookAtIK* look = host->GetComponent<LookAtIK>();
+            if (!look) look = host->AddComponent<LookAtIK>();
+            look->targetObject = tgt->transform;
+            look->targetName = tgt->name;
+            look->ikActive = true;
+            if (a.size() > 1) look->weight = a[1].AsFloat();
+            return Value{1.0f};
+        };
+        // recoil(strength) kicks an Aim Offset on this object or under it.
+        // capture_pose() saves one frame; capture_pose(seconds) records that long.
+        b["recoil"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g) return Value{0.0f};
+            const float strength = a.empty() ? 1.0f : a[0].AsFloat();
+            auto fire = [&](AimOffset* o) { if (o) { o->Recoil(strength); return true; } return false; };
+            if (fire(g->GetComponent<AimOffset>())) return Value{1.0f};
+            if (!g->scene()) return Value{0.0f};
+            for (const auto& up : g->scene()->Objects())
+                if (up && up->IsSelfOrDescendantOf(g) && fire(up->GetComponent<AimOffset>())) return Value{1.0f};
+            return Value{0.0f};
+        };
+        b["capture_pose"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g) return Value{0.0f};
+            PoseCapture* pc = g->GetComponent<PoseCapture>();
+            if (!pc && g->scene())
+                for (const auto& up : g->scene()->Objects())
+                    if (up && up->IsSelfOrDescendantOf(g) && (pc = up->GetComponent<PoseCapture>())) break;
+            if (!pc) pc = g->AddComponent<PoseCapture>();
+            if (!a.empty() && a[0].AsFloat() > 0.0f) { pc->StartRecord(a[0].AsFloat()); return Value{1.0f}; }
+            if (pc->IsRecording()) return Value{pc->StopRecord() >= 0 ? 1.0f : 0.0f};
+            return Value{pc->CaptureFrame() >= 0 ? 1.0f : 0.0f};
+        };
+        auto setStance = [selfObj](int s) {
+            if (s < 0) s = 0;
+            if (s > 2) s = 2;
+            GameObject* g = selfObj();
+            for (Transform* t = g ? g->transform : nullptr; t; t = t->Parent()) {
+                GameObject* p = t->gameObject;
+                if (!p) continue;
+                if (auto* c = p->GetComponent<ThirdPersonController>()) {
+                    c->SetStance((ThirdPersonController::Stance)s); return true;
+                }
+                if (auto* c = p->GetComponent<FirstPersonController>()) {
+                    c->SetStance((FirstPersonController::Stance)s); return true;
+                }
+            }
+            return false;
+        };
+        b["set_stance"] = [setStance](std::vector<Value>& a) {
+            return Value{setStance(a.empty() ? 0 : SafeInt(a[0].AsFloat())) ? 1.0f : 0.0f};
+        };
+        b["crouch"] = [setStance](std::vector<Value>&) { return Value{setStance(1) ? 1.0f : 0.0f}; };
+        b["prone"]  = [setStance](std::vector<Value>&) { return Value{setStance(2) ? 1.0f : 0.0f}; };
+        b["stand"]  = [setStance](std::vector<Value>&) { return Value{setStance(0) ? 1.0f : 0.0f}; };
+        b["ik_look"] = [fbik, selfObj](std::vector<Value>& a) {
             if (FullBodyIK* f = fbik()) {
                 f->lookTarget = nullptr;
                 f->lookPosition = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
                 f->lookWeight = a.size() > 3 ? a[3].AsFloat() : 1.0f;
                 f->lookEnabled = f->lookWeight > 0.0f;
+            }
+            GameObject* g = selfObj();
+            if (g) if (auto* look = g->GetComponent<LookAtIK>()) {
+                look->targetObject = nullptr;
+                look->aimAtPoint = true;
+                look->target = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                a.size() > 2 ? a[2].AsFloat() : 0.0f};
+                if (a.size() > 3) look->weight = a[3].AsFloat();
+                look->ikActive = true;
             }
             return Value{};
         };
@@ -4492,7 +6797,10 @@ struct OkayScriptVM::Impl {
         };
         // Procedural Object Holding on this object:
         //   hold_pickup(name) / hold_nearest([range])   take an object into the hands -> 1 if held
-        //   hold_drop()                                 let go of it
+        //   hold_drop()                                 let go of it (keeps the holder's velocity)
+        //   hold_throw([charge])                        launch it along the camera aim; charge is 0..1
+        //                                               (omit it to use the charge built by holding the key)
+        //   hold_charge()                               that charge right now, 0..1
         //   hold_object()                               name of what's held ("" = nothing)
         auto holder = [this]() -> ProceduralObjectHolding* {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -4512,15 +6820,233 @@ struct OkayScriptVM::Impl {
             if (ProceduralObjectHolding* h = holder()) h->Drop();
             return Value{};
         };
+        b["hold_throw"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            const float charge = a.empty() ? -1.0f : a[0].AsFloat();
+            return Value{h && h->Throw(charge) ? 1.0f : 0.0f};
+        };
+        b["hold_charge"] = [holder](std::vector<Value>&) {
+            ProceduralObjectHolding* h = holder();
+            return Value{h ? h->ThrowCharge() : 0.0f};
+        };
         b["hold_object"] = [holder](std::vector<Value>&) {
             ProceduralObjectHolding* h = holder();
             return Value{h && h->Held() ? h->Held()->name : std::string()};
         };
+        // ---- Inventory ----
+        // Every inv_* / grid_* call works on the host's Inventory (on it or its root), or
+        // on the named object's when the optional last argument names one. Item names
+        // map to item ids through the item database (ids, old names and display names).
+        auto invHost = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
+        auto invObj = [invHost](std::vector<Value>& a, std::size_t k) -> GameObject* {
+            GameObject* host = invHost();
+            if (a.size() > k && host && host->scene()) return host->scene()->Find(a[k].AsString());
+            return host;
+        };
+        auto invAt = [invObj](std::vector<Value>& a, std::size_t k) -> Inventory* {
+            return ItemPickup::InventoryOf(invObj(a, k));
+        };
+        auto itemArg = [](std::vector<Value>& a, std::size_t k) -> std::string {
+            return a.size() > k ? ItemDatabase::Get().Resolve(a[k].AsString()) : std::string();
+        };
+        auto intArg = [](std::vector<Value>& a, std::size_t k, int def) { return a.size() > k ? SafeInt(a[k].AsFloat()) : def; };
+        b["inv_add"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // -> leftover that didn't fit
+            Inventory* inv = invAt(a, 2);
+            const int n = intArg(a, 1, 1);
+            return Value{(float)(inv ? inv->AddPartial(itemArg(a, 0), n) : n)};
+        };
+        b["inv_remove"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // all or nothing
+            Inventory* inv = invAt(a, 2);
+            const std::string item = itemArg(a, 0);
+            const int n = intArg(a, 1, 1);
+            return Value{inv && n > 0 && inv->Count(item) >= n && inv->Remove(item, n) ? 1.0f : 0.0f};
+        };
+        b["inv_count"] = [invAt, itemArg](std::vector<Value>& a) {
+            Inventory* inv = invAt(a, 1);
+            return Value{(float)(inv ? inv->Count(itemArg(a, 0)) : 0)};
+        };
+        b["inv_has"] = [invAt, itemArg, intArg](std::vector<Value>& a) {
+            Inventory* inv = invAt(a, 2);
+            return Value{inv && inv->Has(itemArg(a, 0), intArg(a, 1, 1)) ? 1.0f : 0.0f};
+        };
+        b["inv_clear"] = [invAt](std::vector<Value>& a) { if (Inventory* inv = invAt(a, 0)) inv->Clear(); return Value{}; };
+        b["inv_slot"] = [invAt, intArg](std::vector<Value>& a) {   // -> [item, count] ("" and 0 for a hole)
+            Inventory* inv = invAt(a, 1);
+            const int i = intArg(a, 0, -1);
+            const bool ok = inv && i >= 0 && i < (int)inv->slots.size() && !Inventory::Empty(inv->slots[i]);
+            Value v = Value::MakeArray();
+            v.AsArray()->push_back(Value{ok ? inv->slots[i].item : std::string()});
+            v.AsArray()->push_back(Value{ok ? (float)inv->slots[i].count : 0.0f});
+            return v;
+        };
+        b["inv_set_slot"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // count <= 0 or "" empties it
+            Inventory* inv = invAt(a, 3);
+            const int i = intArg(a, 0, -1);
+            if (!inv || i < 0 || (inv->capacity > 0 && i >= inv->capacity) || i > 4096) return Value{0.0f};
+            const std::string item = itemArg(a, 1);
+            const long long n = std::min<long long>(intArg(a, 2, 1), inv->StackCap(item));
+            if ((int)inv->slots.size() <= i) inv->slots.resize(i + 1);
+            inv->slots[i] = (item.empty() || n <= 0) ? Inventory::Slot{} : Inventory::Slot{item, (int)n, {}};
+            inv->NotifyChanged();
+            return Value{1.0f};
+        };
+        b["inv_capacity"] = [invAt](std::vector<Value>& a) { Inventory* inv = invAt(a, 0); return Value{(float)(inv ? inv->capacity : 0)}; };
+        auto invUI = [invObj](std::vector<Value>& a, std::size_t k) -> InventoryUI* {
+            GameObject* g = invObj(a, k);
+            if (!g) return nullptr;
+            if (auto* ui = g->GetComponent<InventoryUI>()) return ui;
+            Scene* s = g->scene();   // the UI may sit on another object that points at this inventory
+            Inventory* inv = ItemPickup::InventoryOf(g);
+            if (s && inv) for (auto* ui : s->FindObjectsOfType<InventoryUI>()) if (ui->Inv() == inv) return ui;
+            return nullptr;
+        };
+        b["inv_selected"] = [invUI](std::vector<Value>& a) { InventoryUI* ui = invUI(a, 0); return Value{ui ? ui->SelectedItem() : std::string()}; };
+        b["inv_select"] = [invUI, intArg](std::vector<Value>& a) {
+            InventoryUI* ui = invUI(a, 1);
+            const int i = intArg(a, 0, 0);
+            if (ui && i >= 0 && i < ui->hotbarSlots) ui->selected = i;
+            return Value{};
+        };
+        b["inv_move"] = [invAt, intArg](std::vector<Value>& a) {   // (from, to, n = whole stack) -> bool
+            Inventory* inv = invAt(a, 3);
+            return Value{inv && InventoryOps::Move(inv, intArg(a, 0, -1), inv, intArg(a, 1, -1), intArg(a, 2, 0),
+                                                   InventoryOps::UsableSlots(*inv)).Ok() ? 1.0f : 0.0f};
+        };
+        b["inv_transfer"] = [invAt, invHost, itemArg, intArg](std::vector<Value>& a) {   // (target, item, n) -> moved
+            Inventory* src = invAt(a, 3);
+            GameObject* tg = invHost() && invHost()->scene() && !a.empty() ? invHost()->scene()->Find(a[0].AsString()) : nullptr;
+            Inventory* dst = ItemPickup::InventoryOf(tg);
+            const std::string item = itemArg(a, 1);
+            int left = intArg(a, 2, 1), moved = 0;
+            if (!src || !dst || src == dst) return Value{0.0f};
+            for (auto& s : src->slots) {   // stack by stack, keeping each stack's instance data
+                if (left <= 0) break;
+                if (Inventory::Empty(s) || s.item != item) continue;
+                Inventory carried;
+                carried.slots.push_back(Inventory::Slot{s.item, std::min(left, s.count), s.data});
+                const int want = carried.slots[0].count;
+                const InvResult r = InventoryOps::Transfer(&carried, 0, dst);
+                s.count -= r.moved; moved += r.moved; left -= r.moved;
+                if (s.count <= 0) s = Inventory::Slot{};
+                if (r.moved < want) break;   // the target is full
+            }
+            if (moved > 0) src->NotifyChanged();
+            return Value{(float)moved};
+        };
+        b["item_def"] = [itemArg](std::vector<Value>& a) -> Value {   // (id, field): a definition field or custom value
+            const ItemDefinition* d = ItemDatabase::Get().Find(itemArg(a, 0));
+            const std::string f = a.size() > 1 ? a[1].AsString() : std::string("name");
+            if (!d) return Value{std::string()};
+            if (f == "name") return Value{d->DisplayName()};
+            if (f == "description") return Value{d->description};
+            if (f == "icon") return Value{d->icon};
+            if (f == "category") return Value{d->category};
+            if (f == "weight") return Value{d->weight};
+            if (f == "stack") return Value{(float)d->maxStack};
+            if (f == "rarity") return Value{(float)d->rarity};
+            if (f == "equip") return Value{std::string(EquipSlotName(d->equip))};
+            if (f == "use") return Value{d->useAction};
+            if (f == "prefab") return Value{d->worldPrefab};
+            if (f == "width") return Value{(float)d->gridW};
+            if (f == "height") return Value{(float)d->gridH};
+            return Value{d->Custom(f)};
+        };
+        b["equip"] = [invHost, itemArg](std::vector<Value>& a) {   // (slot, item): from the host's bag
+            GameObject* g = invHost();
+            Equipment* eq = Equipment::Of(g);
+            Inventory* inv = ItemPickup::InventoryOf(g);
+            const int slot = eq && !a.empty() ? eq->Find(a[0].AsString()) : -1;
+            const std::string item = itemArg(a, 1);
+            if (!eq || !inv || slot < 0) return Value{0.0f};
+            for (int i = 0; i < (int)inv->slots.size(); ++i)
+                if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == item)
+                    return Value{eq->EquipFrom(*inv, i, slot).Ok() ? 1.0f : 0.0f};
+            return Value{0.0f};
+        };
+        b["unequip"] = [invHost](std::vector<Value>& a) {   // (slot): back into the bag
+            GameObject* g = invHost();
+            Equipment* eq = Equipment::Of(g);
+            Inventory* inv = ItemPickup::InventoryOf(g);
+            const int slot = eq && !a.empty() ? eq->Find(a[0].AsString()) : -1;
+            return Value{eq && inv && eq->Unequip(slot, *inv).Ok() ? 1.0f : 0.0f};
+        };
+        b["equipped"] = [invHost](std::vector<Value>& a) {
+            Equipment* eq = Equipment::Of(invHost());
+            return Value{eq && !a.empty() ? eq->ItemIn(eq->Find(a[0].AsString())) : std::string()};
+        };
+        b["craft"] = [invHost, itemArg, intArg](std::vector<Value>& a) {   // (recipe output, times = 1)
+            GameObject* g = invHost();
+            auto* c = g ? g->GetComponent<Crafting>() : nullptr;
+            return Value{c && c->Craft(itemArg(a, 0), std::max(1, intArg(a, 1, 1))) ? 1.0f : 0.0f};
+        };
+        b["can_craft"] = [invHost, itemArg](std::vector<Value>& a) {
+            GameObject* g = invHost();
+            auto* c = g ? g->GetComponent<Crafting>() : nullptr;
+            return Value{c && c->CanCraft(itemArg(a, 0)) ? 1.0f : 0.0f};
+        };
+        b["drop_item"] = [invHost, itemArg, intArg](std::vector<Value>& a) {   // (item, n = 1) -> how many dropped
+            GameObject* g = invHost();
+            Inventory* inv = ItemPickup::InventoryOf(g);
+            Scene* sc = g ? g->scene() : nullptr;
+            const std::string item = itemArg(a, 0);
+            int left = intArg(a, 1, 1), dropped = 0;
+            if (!inv || !sc || !g->transform) return Value{0.0f};
+            const Vec3 pos = g->transform->Position() + g->transform->Forward() * 1.2f;
+            for (int i = 0; i < (int)inv->slots.size() && left > 0; ++i) {
+                if (Inventory::Empty(inv->slots[i]) || inv->slots[i].item != item) continue;
+                const ItemInstanceData data = inv->slots[i].data;
+                const int k = std::min(left, inv->slots[i].count);
+                if (!InventoryOps::Drop(inv, i, k).Ok()) break;
+                ItemPickup::Spawn(*sc, item, k, data, pos);
+                dropped += k; left -= k;
+            }
+            return Value{(float)dropped};
+        };
+        b["spawn_pickup"] = [invHost, itemArg, intArg](std::vector<Value>& a) {   // (item, n, x, y, z) -> object name
+            GameObject* g = invHost();
+            Scene* sc = g ? g->scene() : nullptr;
+            const Vec3 p{a.size() > 2 ? a[2].AsFloat() : 0.0f, a.size() > 3 ? a[3].AsFloat() : 0.0f, a.size() > 4 ? a[4].AsFloat() : 0.0f};
+            GameObject* pk = sc ? ItemPickup::Spawn(*sc, itemArg(a, 0), std::max(1, intArg(a, 1, 1)), {}, p) : nullptr;
+            return Value{pk ? pk->name : std::string()};
+        };
+        b["loot_roll"] = [invObj](std::vector<Value>& a) {   // (table, target = host) -> items rolled
+            GameObject* t = invObj(a, 1);
+            if (a.empty() || !t) return Value{0.0f};
+            Inventory* inv = ItemPickup::InventoryOf(t);
+            auto* grid = t->GetComponent<GridInventory>();
+            int n = 0;
+            for (const auto& s : LootTable::Cached(a[0].AsString()).Roll(Random::Shared())) {
+                n += s.count;
+                int left = s.count;
+                if (inv) left = inv->AddPartial(s.item, left);
+                else if (grid) for (; left > 0 && grid->AddDefined(s.item, 1) >= 0; --left) {}
+                if (left > 0 && t->scene() && t->transform) ItemPickup::Spawn(*t->scene(), s.item, left, {}, t->transform->Position());
+            }
+            return Value{(float)n};
+        };
+        auto gridAt = [invObj](std::vector<Value>& a, std::size_t k) -> GridInventory* {
+            GameObject* g = invObj(a, k);
+            return g ? g->GetComponent<GridInventory>() : nullptr;
+        };
+        b["grid_add"] = [gridAt, itemArg, intArg](std::vector<Value>& a) {   // (item, n = 1) -> bool, all or nothing
+            GridInventory* g = gridAt(a, 2);
+            return Value{g && g->AddDefined(itemArg(a, 0), std::max(1, intArg(a, 1, 1))) >= 0 ? 1.0f : 0.0f};
+        };
+        b["grid_fits"] = [gridAt, itemArg](std::vector<Value>& a) {   // would one more fit (either way round)?
+            GridInventory* g = gridAt(a, 1);
+            const ItemDefinition* d = ItemDatabase::Get().Find(itemArg(a, 0));
+            if (!g || !d) return Value{0.0f};
+            int x = 0, y = 0;
+            const bool room = g->FindSpot(d->gridW, d->gridH, x, y) || g->FindSpot(d->gridH, d->gridW, x, y);
+            return Value{room && g->WeightAllows(d->weight) ? 1.0f : 0.0f};
+        };
+        b["grid_weight"] = [gridAt](std::vector<Value>& a) { GridInventory* g = gridAt(a, 0); return Value{g ? g->TotalWeight() : 0.0f}; };
+
         b["ik_set_pole"] = [this](std::vector<Value>& a) {
             Vec3 p{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
             if (GameObject* g = rt.host ? rt.host->gameObject : nullptr) {
-                if (auto* l = g->GetComponent<LimbIK>())  { l->poleObject = nullptr; l->pole = p - (l->upper ? l->upper->Position() : Vec3{0, 0, 0}); }
-                if (auto* c = g->GetComponent<ChainIK>()) { c->poleObject = nullptr; c->usePole = true; c->pole = p; }
+                if (auto* l = g->GetComponent<LimbIK>())  { l->poleObject = nullptr; l->poleMode = LimbIK::PoleMode::World; l->pole = p - (l->upper ? l->upper->Position() : Vec3{0, 0, 0}); }
+                if (auto* c = g->GetComponent<ChainIK>()) { c->poleObject = nullptr; c->poleMode = -1; c->usePole = true; c->pole = p; }
             }
             return Value{};
         };
@@ -4548,13 +7074,13 @@ struct OkayScriptVM::Impl {
 
         b["net_host"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
-            std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : (int)a[0].AsFloat());
+            std::uint16_t port = (std::uint16_t)(a.empty() ? 45000 : SafeInt(a[0].AsFloat()));
             return Value{(n && n->StartServer(port)) ? 1.0f : 0.0f};
         };
         b["net_join"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             std::string host = a.empty() ? "127.0.0.1" : a[0].AsString();
-            std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : (int)a[1].AsFloat());
+            std::uint16_t port = (std::uint16_t)(a.size() < 2 ? 45000 : SafeInt(a[1].AsFloat()));
             return Value{(n && n->StartClient(host, port)) ? 1.0f : 0.0f};
         };
         // Relay (NAT traversal): host/join through a shared relay + session code,
@@ -4562,13 +7088,13 @@ struct OkayScriptVM::Impl {
         b["net_host_relay"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             if (!n || a.size() < 3) return Value{0.0f};
-            return Value{n->HostViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+            return Value{n->HostViaRelay(a[0].AsString(), (std::uint16_t)SafeInt(a[1].AsFloat()),
                                          a[2].AsString()) ? 1.0f : 0.0f};
         };
         b["net_join_relay"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
             if (!n || a.size() < 3) return Value{0.0f};
-            return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)(int)a[1].AsFloat(),
+            return Value{n->JoinViaRelay(a[0].AsString(), (std::uint16_t)SafeInt(a[1].AsFloat()),
                                          a[2].AsString()) ? 1.0f : 0.0f};
         };
         // Launcher integration (Steam-style): was this run started to join a friend
@@ -4597,7 +7123,7 @@ struct OkayScriptVM::Impl {
         b["net_browser_count"] = [](std::vector<Value>&) { return Value{(float)ServerBrowser::Shared().Results().size()}; };
         auto browserAt = [](std::vector<Value>& a, ServerBrowser::Entry& out) {
             if (a.empty()) return false;
-            const auto r = ServerBrowser::Shared().Results(); const int i = (int)a[0].AsFloat();
+            const auto r = ServerBrowser::Shared().Results(); const int i = SafeInt(a[0].AsFloat());
             if (i < 0 || i >= (int)r.size()) return false;
             out = r[i]; return true;
         };
@@ -4622,16 +7148,16 @@ struct OkayScriptVM::Impl {
         b["net_set_score"] = [this](std::vector<Value>& a) {   // server only: (id, score)
             NetworkManager* n = Net();
             if (!n || a.size() < 2 || !n->IsServer()) return Value{0.0f};
-            n->SetPeerScore((std::uint32_t)(int)a[0].AsFloat(), (int)a[1].AsFloat());
+            n->SetPeerScore(SafeUInt32(a[0].AsFloat()), SafeInt(a[1].AsFloat()));
             return Value{1.0f};
         };
         b["net_score"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
-            return Value{(n && !a.empty()) ? (float)n->PeerScore((std::uint32_t)(int)a[0].AsFloat()) : 0.0f};
+            return Value{(n && !a.empty()) ? (float)n->PeerScore(SafeUInt32(a[0].AsFloat())) : 0.0f};
         };
         b["net_peer_name"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
-            return Value{(n && !a.empty()) ? n->PeerName((std::uint32_t)(int)a[0].AsFloat()) : std::string{}};
+            return Value{(n && !a.empty()) ? n->PeerName(SafeUInt32(a[0].AsFloat())) : std::string{}};
         };
         b["net_roster_count"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net();
@@ -4640,7 +7166,7 @@ struct OkayScriptVM::Impl {
         b["net_roster_id"] = [this](std::vector<Value>& a) {   // (index) -> peer id, -1 if out of range
             NetworkManager* n = Net();
             if (!n || a.empty()) return Value{-1.0f};
-            const auto r = n->Roster(); const int i = (int)a[0].AsFloat();
+            const auto r = n->Roster(); const int i = SafeInt(a[0].AsFloat());
             return Value{(i >= 0 && i < (int)r.size()) ? (float)r[i].id : -1.0f};
         };
         // ---- Matchmaking queues (docs/sql/matchmaking.sql) ----
@@ -4652,8 +7178,8 @@ struct OkayScriptVM::Impl {
             EnsureNet();   // the found match needs a NetworkManager to connect
             MatchRequest r;
             r.mode = a.size() > 0 ? a[0].AsString() : std::string();
-            r.players = a.size() > 1 ? (int)a[1].AsFloat() : 2;
-            r.minPlayers = a.size() > 2 ? (int)a[2].AsFloat() : 0;
+            r.players = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 2;
+            r.minPlayers = a.size() > 2 ? SafeInt(a[2].AsFloat()) : 0;
             r.region = a.size() > 3 ? a[3].AsString() : std::string();
             return Value{Matchmaker::Shared().Start(r) ? 1.0f : 0.0f};
         };
@@ -4691,8 +7217,8 @@ struct OkayScriptVM::Impl {
             if (!n || !n->IsServer()) return Value{0.0f};
             std::vector<std::uint32_t> winners;
             for (auto& v : a) {
-                if (auto arr = v.AsArray()) { for (auto& w : *arr) winners.push_back((std::uint32_t)(int)w.AsFloat()); }
-                else winners.push_back((std::uint32_t)(int)v.AsFloat());
+                if (auto arr = v.AsArray()) { for (auto& w : *arr) winners.push_back(SafeUInt32(w.AsFloat())); }
+                else winners.push_back(SafeUInt32(v.AsFloat()));
             }
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             return Value{EndMatchAndReport(*n, winners, std::string(), sc ? sc->Name() : std::string()) ? 1.0f : 0.0f};
@@ -4710,7 +7236,7 @@ struct OkayScriptVM::Impl {
             auto arr = v.AsArray();
             if (!arr || !Account::Exists() || !Account::IsLoggedIn()) return v;
             const std::string stat = a.empty() ? std::string("wins") : a[0].AsString();
-            const int count = a.size() > 1 ? std::max(1, (int)a[1].AsFloat()) : 10;
+            const int count = a.size() > 1 ? std::max(1, SafeInt(a[1].AsFloat())) : 10;
             std::string game = a.size() > 2 ? a[2].AsString() : std::string();
             if (game.empty()) { NetworkManager* n = Net(); game = n && !n->gameId.empty() ? n->gameId : ServerBrowser::Shared().Game(); }
             for (const auto& e : MatchResults(Account::Get()).Leaderboard(game, stat, count)) {
@@ -4736,7 +7262,7 @@ struct OkayScriptVM::Impl {
         b["net_teleport"] = [this](std::vector<Value>& a) {
             NetworkManager* n = Net();
             if (!n || a.size() < 3 || !n->IsServer()) return Value{0.0f};
-            n->ServerTeleport((std::uint32_t)(int)a[0].AsFloat(),
+            n->ServerTeleport(SafeUInt32(a[0].AsFloat()),
                               Vec3(a[1].AsFloat(), a[2].AsFloat(), a.size() > 3 ? a[3].AsFloat() : 0.0f));
             return Value{1.0f};
         };
@@ -4746,7 +7272,7 @@ struct OkayScriptVM::Impl {
             return Value{n ? n->maxMoveSpeed : 0.0f};
         };
         b["net_rate_limit"] = [this](std::vector<Value>& a) {
-            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = (int)a[0].AsFloat();
+            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = SafeInt(a[0].AsFloat());
             return Value{n ? (float)n->maxMessagesPerSecond : 0.0f};
         };
         // Server only: the anti-cheat (see okay/Net/AntiCheat.hpp). net_anticheat([on])
@@ -4767,7 +7293,7 @@ struct OkayScriptVM::Impl {
         };
         b["net_violations"] = [this](std::vector<Value>& a) {
             NetworkManager* n = EnsureNet();
-            return Value{n && !a.empty() ? (float)n->anticheat.Violations((std::uint32_t)a[0].AsFloat()) : 0.0f};
+            return Value{n && !a.empty() ? (float)n->anticheat.Violations(SafeUInt32(a[0].AsFloat())) : 0.0f};
         };
         // Claim that this peer's shot hit a networked object (its sync id), fired
         // from (ox, oy, oz) along (dx, dy, dz). The server checks it and applies
@@ -4787,7 +7313,7 @@ struct OkayScriptVM::Impl {
             if (!s || a.size() < 2) return Value{-1.0f};
             NetValidator* nv = NetValidator::BudgetFor(*s, a[1].AsString());
             if (!nv) return Value{-1.0f};
-            const auto peer = (std::uint32_t)a[0].AsFloat();
+            const auto peer = SafeUInt32(a[0].AsFloat());
             return Value{a.size() >= 3 ? nv->TopUp(peer, a[2].AsFloat()) : nv->Budget(peer)};
         };
         // Open the OkaySpace launcher's "Invite friends" window for this game.
@@ -4894,15 +7420,15 @@ struct OkayScriptVM::Impl {
         // mm_host(name, addr, port [, max, room, region]) -> session id ("" on fail).
         b["mm_host"] = [](std::vector<Value>& a) {
             if (a.size() < 3) return Value{std::string{}};
-            int max = a.size() > 3 ? (int)a[3].AsFloat() : 8;
+            int max = a.size() > 3 ? SafeInt(a[3].AsFloat()) : 8;
             std::string room   = a.size() > 4 ? a[4].AsString() : std::string{};
             std::string region = a.size() > 5 ? a[5].AsString() : std::string{};
             return Value{Matchmaking::Host(a[0].AsString(), a[1].AsString(),
-                                           (int)a[2].AsFloat(), max, room, region)};
+                                           SafeInt(a[2].AsFloat()), max, room, region)};
         };
         b["mm_heartbeat"] = [](std::vector<Value>& a) {
             if (a.size() < 2) return Value{0.0f};
-            return Value{Matchmaking::Heartbeat(a[0].AsString(), (int)a[1].AsFloat()) ? 1.0f : 0.0f};
+            return Value{Matchmaking::Heartbeat(a[0].AsString(), SafeInt(a[1].AsFloat())) ? 1.0f : 0.0f};
         };
         b["mm_unregister"] = [](std::vector<Value>& a) {
             return Value{(!a.empty() && Matchmaking::Unregister(a[0].AsString())) ? 1.0f : 0.0f};
@@ -4916,7 +7442,7 @@ struct OkayScriptVM::Impl {
         // Field getters for a cached session by index.
         auto at = [mmList](std::vector<Value>& a) -> const GameSession* {
             if (a.empty()) return nullptr;
-            std::size_t i = (std::size_t)a[0].AsFloat();
+            std::size_t i = SafeSize(a[0].AsFloat());
             return i < mmList->size() ? &(*mmList)[i] : nullptr;
         };
         b["mm_name"]    = [at](std::vector<Value>& a) { auto* g = at(a); return Value{g ? g->name : std::string{}}; };
@@ -4939,7 +7465,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["net_send_to"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a[2].AsString());
             return Value{};
         };
         // Broadcast a chat line (stamped with your name, logged everywhere).
@@ -4958,12 +7484,12 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["net_send_reliable_to"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo((std::uint32_t)a[0].AsFloat(), a[1].AsString(), a[2].AsString());
+            if (NetworkManager* n = Net(); n && a.size() >= 3) n->SendReliableTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a[2].AsString());
             return Value{};
         };
         // Moderation: host kicks a peer; clients can check if they were kicked.
         b["net_kick"] = [this](std::vector<Value>& a) {
-            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick((std::uint32_t)a[0].AsFloat(), a.size() > 1 ? a[1].AsString() : std::string{});
+            if (NetworkManager* n = Net(); n && !a.empty()) n->Kick(SafeUInt32(a[0].AsFloat()), a.size() > 1 ? a[1].AsString() : std::string{});
             return Value{};
         };
         b["net_was_kicked"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{(n && n->WasKicked()) ? 1.0f : 0.0f}; };
@@ -5018,6 +7544,74 @@ struct OkayScriptVM::Impl {
             NetworkManager* n = Net();
             return Value{(n && !a.empty()) ? n->GetVar(a[0].AsString()) : std::string{}};
         };
+        // Object RPC / SyncVar on THIS object (needs a NetworkObject for RPCs).
+        auto netObj = [this]() -> NetworkObject* {
+            return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<NetworkObject>() : nullptr;
+        };
+        auto syncNamed = [this](const std::string& name) -> SyncVar* {
+            if (!rt.host || !rt.host->gameObject) return nullptr;
+            for (auto* sv : rt.host->gameObject->GetComponents<SyncVar>())
+                if (sv->name == name) return sv;
+            return nullptr;
+        };
+        b["net_obj_id"] = [netObj](std::vector<Value>&) {
+            NetworkObject* o = netObj(); return Value{o ? o->Id() : std::string{}};
+        };
+        b["net_obj_owned"] = [netObj](std::vector<Value>&) {
+            NetworkObject* o = netObj(); return Value{(o && o->IsLocallyOwned()) ? 1.0f : 0.0f};
+        };
+        b["net_obj_rpc"] = [netObj](std::vector<Value>& a) {
+            if (NetworkObject* o = netObj(); o && !a.empty())
+                o->Rpc(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{};
+        };
+        b["net_obj_rpc_to"] = [netObj](std::vector<Value>& a) {
+            if (NetworkObject* o = netObj(); o && a.size() >= 2)
+                o->RpcTo(SafeUInt32(a[0].AsFloat()), a[1].AsString(), a.size() > 2 ? a[2].AsString() : std::string{});
+            return Value{};
+        };
+        b["net_obj_rpc_reliable"] = [netObj](std::vector<Value>& a) {
+            if (NetworkObject* o = netObj(); o && !a.empty())
+                o->RpcReliable(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string{});
+            return Value{};
+        };
+        b["net_obj_rpc_poll"] = [this, netObj](std::vector<Value>&) {
+            NetworkObject* o = netObj();
+            std::uint32_t from = 0; std::string name, data;
+            if (o && o->PollRpc(from, name, data)) {
+                netObjRpcName = std::move(name); netObjRpcData = std::move(data); netObjRpcFrom = (float)from;
+                return Value{1.0f};
+            }
+            netObjRpcName.clear(); netObjRpcData.clear(); netObjRpcFrom = 0.0f;
+            return Value{0.0f};
+        };
+        b["net_obj_rpc_name"] = [this](std::vector<Value>&) { return Value{netObjRpcName}; };
+        b["net_obj_rpc_data"] = [this](std::vector<Value>&) { return Value{netObjRpcData}; };
+        b["net_obj_rpc_from"] = [this](std::vector<Value>&) { return Value{netObjRpcFrom}; };
+        b["net_syncvar_set"] = [this, syncNamed](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            const std::string name = a[0].AsString();
+            const std::string val = a.size() > 1 ? a[1].AsString() : std::string{};
+            if (SyncVar* sv = syncNamed(name)) { sv->Set(val); return Value{}; }
+            if (!rt.host || !rt.host->gameObject) return Value{};
+            NetworkObject* o = rt.host->gameObject->GetComponent<NetworkObject>();
+            NetworkManager* n = Net();
+            if (n && (!o || o->IsLocallyOwned())) {
+                const std::string id = o ? o->Id() : rt.host->gameObject->name;
+                n->SetVar(id.empty() ? name : id + "." + name, val);
+            }
+            return Value{};
+        };
+        b["net_syncvar_get"] = [this, syncNamed](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string{}};
+            const std::string name = a[0].AsString();
+            if (SyncVar* sv = syncNamed(name)) return Value{sv->Get()};
+            NetworkManager* n = Net();
+            if (!n || !rt.host || !rt.host->gameObject) return Value{std::string{}};
+            NetworkObject* o = rt.host->gameObject->GetComponent<NetworkObject>();
+            const std::string id = o ? o->Id() : rt.host->gameObject->name;
+            return Value{n->GetVar(id.empty() ? name : id + "." + name)};
+        };
         // ---- Steam (shared process-wide service) ----------------------
         b["steam_name"]   = [](std::vector<Value>&) { return Value{Steam::Get().UserName()}; };
         b["steam_unlock"] = [](std::vector<Value>& a) {
@@ -5055,7 +7649,7 @@ struct OkayScriptVM::Impl {
             return Value{a.empty() ? std::string{} : Steam::Get().CloudRead(a[0].AsString())};
         };
         b["steam_progress"] = [](std::vector<Value>& a) {
-            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), (std::uint32_t)a[1].AsFloat(), (std::uint32_t)a[2].AsFloat());
+            if (a.size() >= 3) Steam::Get().IndicateAchievementProgress(a[0].AsString(), SafeUInt32(a[1].AsFloat()), SafeUInt32(a[2].AsFloat()));
             return Value{};
         };
         b["steam_presence"] = [](std::vector<Value>& a) {
@@ -5063,8 +7657,8 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["steam_friends"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().FriendCount()}; };
-        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
-        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : (std::uint32_t)a[0].AsFloat()) ? 1.0f : 0.0f}; };
+        b["steam_owns"] = [](std::vector<Value>& a) { return Value{Steam::Get().OwnsApp(a.empty() ? 0u : SafeUInt32(a[0].AsFloat())) ? 1.0f : 0.0f}; };
+        b["steam_owns_dlc"] = [](std::vector<Value>& a) { return Value{Steam::Get().IsDlcInstalled(a.empty() ? 0u : SafeUInt32(a[0].AsFloat())) ? 1.0f : 0.0f}; };
         b["steam_achievement_count"] = [](std::vector<Value>&) { return Value{(float)Steam::Get().AchievementCount()}; };
         b["steam_language"] = [](std::vector<Value>&) { return Value{Steam::Get().Language()}; };
         // Top-N leaderboard entries as an array of "rank,name,score" strings.
@@ -5072,7 +7666,7 @@ struct OkayScriptVM::Impl {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 for (auto& e : Steam::Get().DownloadLeaderboardTop(a[0].AsString(), n))
                     arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
             }
@@ -5115,18 +7709,18 @@ struct OkayScriptVM::Impl {
         // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
         // counters that climb high belong here rather than in steam_*_stat.
         b["steam_set_stat_int"] = [](std::vector<Value>& a) {
-            if (a.size() >= 2) Steam::Get().SetStatInt(a[0].AsString(), (int)a[1].AsFloat());
+            if (a.size() >= 2) Steam::Get().SetStatInt(a[0].AsString(), SafeInt(a[1].AsFloat()));
             return Value{};
         };
         b["steam_get_stat_int"] = [](std::vector<Value>& a) {
             return Value{a.empty() ? 0.0f : (float)Steam::Get().GetStatInt(a[0].AsString())};
         };
         b["steam_inc_stat_int"] = [](std::vector<Value>& a) {
-            return Value{a.size() < 2 ? 0.0f : (float)Steam::Get().IncrementStatInt(a[0].AsString(), (int)a[1].AsFloat())};
+            return Value{a.size() < 2 ? 0.0f : (float)Steam::Get().IncrementStatInt(a[0].AsString(), SafeInt(a[1].AsFloat()))};
         };
         // Achievement name by index (0..steam_achievement_count-1).
         b["steam_achievement_name"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().AchievementName((int)a[0].AsFloat())};
+            return Value{a.empty() ? std::string{} : Steam::Get().AchievementName(SafeInt(a[0].AsFloat()))};
         };
         // Read back a rich-presence value previously set with steam_presence.
         b["steam_get_presence"] = [](std::vector<Value>& a) {
@@ -5136,10 +7730,10 @@ struct OkayScriptVM::Impl {
         // Big Steam ids exceed float precision, so friend/lobby ids are passed
         // as strings in and out of these builtins.
         b["steam_friend_name"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().FriendName((int)a[0].AsFloat())};
+            return Value{a.empty() ? std::string{} : Steam::Get().FriendName(SafeInt(a[0].AsFloat()))};
         };
         b["steam_friend_id"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : std::to_string(Steam::Get().FriendId((int)a[0].AsFloat()))};
+            return Value{a.empty() ? std::string{} : std::to_string(Steam::Get().FriendId(SafeInt(a[0].AsFloat())))};
         };
         b["steam_invite"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};
@@ -5148,7 +7742,7 @@ struct OkayScriptVM::Impl {
         };
         // ---- Lobbies (Steam matchmaking) -----------------------------------
         b["steam_lobby_create"] = [](std::vector<Value>& a) {
-            int maxm = a.empty() ? 4 : (int)a[0].AsFloat();
+            int maxm = a.empty() ? 4 : SafeInt(a[0].AsFloat());
             std::string name = a.size() > 1 ? a[1].AsString() : std::string{};
             return Value{std::to_string(Steam::Get().CreateLobby(maxm, name))};
         };
@@ -5212,14 +7806,14 @@ struct OkayScriptVM::Impl {
         };
         b["pf_set_stat"] = [](std::vector<Value>& a) {        // pf_set_stat(stat, value)
             return Value{(a.size() >= 2 &&
-                          PlayFab::Get().SetStat(a[0].AsString(), (int)a[1].AsFloat())) ? 1.0f : 0.0f};
+                          PlayFab::Get().SetStat(a[0].AsString(), SafeInt(a[1].AsFloat()))) ? 1.0f : 0.0f};
         };
         // Top-N entries as an array of "rank,name,score" strings (Steam parity).
         b["pf_leaderboard_top"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 std::vector<PlayFab::Entry> rows;
                 if (PlayFab::Get().GetLeaderboard(a[0].AsString(), n, rows))
                     for (auto& e : rows)
@@ -5296,13 +7890,13 @@ struct OkayScriptVM::Impl {
         // player's best; leaderboard_top("high", n) returns "rank,name,score"
         // strings (same shape as steam_leaderboard_top).
         b["leaderboard_submit"] = [](std::vector<Value>& a) {
-            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), (long)a[1].AsFloat())) ? 1.0f : 0.0f};
+            return Value{(a.size() >= 2 && Account::LeaderboardSubmit(a[0].AsString(), SafeInt64(a[1].AsFloat()))) ? 1.0f : 0.0f};
         };
         b["leaderboard_top"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
             auto arr = v.AsArray();
             if (!a.empty() && arr) {
-                int n = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+                int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
                 for (auto& e : Account::LeaderboardTop(a[0].AsString(), n))
                     arr->push_back(Value{std::to_string(e.rank) + "," + e.name + "," + std::to_string(e.score)});
             }
@@ -5484,7 +8078,8 @@ struct OkayScriptVM::Impl {
         // ---- Easing curves: map a normalized time t (0..1) to an eased 0..1 ----
         // For tweening/animation. Pass the raw progress; multiply the result into a
         // range yourself, or use with lerp(a, b, ease_out(t)).
-        auto E = [](std::vector<Value>& a) { return Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat()); };
+        // A NaN counts as 0 (Easing::Evaluate does the same), so a bad value cannot hand a script NaN to write into an object.
+        auto E = [](std::vector<Value>& a) { const float t = a.empty() ? 0.0f : a[0].AsFloat(); return t == t ? Mathf::Clamp01(t) : 0.0f; };
         b["ease_in"]  = [E](std::vector<Value>& a) { float t = E(a); return Value{t * t}; };
         b["ease_out"] = [E](std::vector<Value>& a) { float t = E(a); return Value{1.0f - (1.0f - t) * (1.0f - t)}; };
         b["ease_in_out"] = [E](std::vector<Value>& a) {
@@ -5515,6 +8110,14 @@ struct OkayScriptVM::Impl {
             else if (t < 2.0f / d1) { t -= 1.5f / d1;  return Value{n1 * t * t + 0.75f}; }
             else if (t < 2.5f / d1) { t -= 2.25f / d1; return Value{n1 * t * t + 0.9375f}; }
             else                    { t -= 2.625f / d1; return Value{n1 * t * t + 0.984375f}; }
+        };
+        // ease_curve(t, "OutBack" | "cubic-bezier(0.4,0,0.2,1)" | "steps(4)" | "ease-in-out"): any ease by name or as a
+        // curve (the text tween_ease takes). Text it does not know is a straight line; a curve may overshoot 0..1.
+        b["ease_curve"] = [E](std::vector<Value>& a) {
+            const float t = E(a);
+            EaseCurve c;
+            if (a.size() > 1 && a[1].IsString() && EaseCurve::Parse(a[1].AsString(), c)) return Value{c.Evaluate(t)};
+            return Value{t};
         };
         // Loop t into [0,length) (Mathf.Repeat).
         b["math_repeat"] = [](std::vector<Value>& a) {
@@ -5597,7 +8200,7 @@ struct OkayScriptVM::Impl {
         };
         b["remove_at"] = [](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
-                int i = (int)a[1].AsFloat();
+                int i = SafeInt(a[1].AsFloat());
                 if (i >= 0 && i < (int)arr->size()) arr->erase(arr->begin() + i);
             }
             return a.empty() ? Value{} : a[0];
@@ -5635,18 +8238,18 @@ struct OkayScriptVM::Impl {
         };
         b["choose"] = [](std::vector<Value>& a) {
             if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty())
-                return (*arr)[(std::size_t)Random::Shared().Range(0, (int)arr->size() - 1)];
+                return (*arr)[(std::size_t)Random::Shared().Range(0, (int)arr->size())];   // max is exclusive
             return Value{};
         };
         b["shuffle"] = [](std::vector<Value>& a) {
             if (!a.empty()) if (auto arr = a[0].AsArray())
                 for (int i = (int)arr->size() - 1; i > 0; --i)
-                    std::swap((*arr)[i], (*arr)[Random::Shared().Range(0, i)]);
+                    std::swap((*arr)[i], (*arr)[Random::Shared().Range(0, i + 1)]);   // 0..i inclusive: a Fisher-Yates step
             return a.empty() ? Value{} : a[0];
         };
         b["randi"] = [](std::vector<Value>& a) {
-            int lo = a.size() > 0 ? (int)a[0].AsFloat() : 0;
-            int hi = a.size() > 1 ? (int)a[1].AsFloat() : 1;
+            int lo = a.size() > 0 ? SafeInt(a[0].AsFloat()) : 0;
+            int hi = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 1;
             if (hi < lo) std::swap(lo, hi);
             return Value{(float)Random::Shared().Range(lo, hi)};
         };
@@ -5671,7 +8274,7 @@ struct OkayScriptVM::Impl {
         };
         b["insert_at"] = [](std::vector<Value>& a) {
             if (a.size() >= 3) if (auto arr = a[0].AsArray()) {
-                int i = (int)a[1].AsFloat();
+                int i = SafeInt(a[1].AsFloat());
                 if (i < 0) i = 0; if (i > (int)arr->size()) i = (int)arr->size();
                 arr->insert(arr->begin() + i, a[2]);
             }
@@ -5681,8 +8284,8 @@ struct OkayScriptVM::Impl {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (!a.empty()) if (auto arr = a[0].AsArray()) {
                 int n = (int)arr->size();
-                int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
-                int end   = a.size() > 2 ? (int)a[2].AsFloat() : n;
+                int start = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+                int end   = a.size() > 2 ? SafeInt(a[2].AsFloat()) : n;
                 if (start < 0) start += n; if (end < 0) end += n;
                 start = start < 0 ? 0 : (start > n ? n : start);
                 end   = end   < 0 ? 0 : (end   > n ? n : end);
@@ -5768,7 +8371,7 @@ struct OkayScriptVM::Impl {
         };
         b["parse_int"] = [](std::vector<Value>& a) {
             std::string s = a.empty() ? "" : a[0].AsString();
-            int base = a.size() > 1 ? (int)a[1].AsFloat() : 10;
+            int base = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 10;
             return Value{(float)std::strtol(s.c_str(), nullptr, base)};
         };
         // JSON: serialize any value (arrays/maps included) to a string, and parse a
@@ -5787,11 +8390,13 @@ struct OkayScriptVM::Impl {
         // Higher-order array ops: each takes an array and the NAME of a script
         // function to apply per element, so games can write functional-style code
         // (map/filter/reduce) with a named callback. (call() lives further down.)
+        // Each walks a copy of the array: the callback runs script, which may push to, clear or
+        // remove from the very array being walked, and that must not pull it out from under the loop.
         b["map_fn"] = [this](std::vector<Value>& a) {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; res->push_back(rt.Call(fn, ca)); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; res->push_back(rt.Call(fn, ca)); }
             }
             return out;
         };
@@ -5799,7 +8404,7 @@ struct OkayScriptVM::Impl {
             Value out = Value::MakeArray(); auto res = out.AsArray();
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) res->push_back(e); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) res->push_back(e); }
             }
             return out;
         };
@@ -5809,35 +8414,35 @@ struct OkayScriptVM::Impl {
             Value acc = a.size() >= 3 ? a[2] : Value{};
             if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{acc, e}; acc = rt.Call(fn, ca); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{acc, e}; acc = rt.Call(fn, ca); }
             }
             return acc;
         };
         b["for_each"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; rt.Call(fn, ca); }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; rt.Call(fn, ca); }
             }
             return a.empty() ? Value{} : a[0];
         };
         b["find_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return e; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return e; }
             }
             return Value{};
         };
         b["any_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return Value{true}; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) return Value{true}; }
             }
             return Value{false};
         };
         b["all_fn"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (!rt.Call(fn, ca).AsBool()) return Value{false}; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (!rt.Call(fn, ca).AsBool()) return Value{false}; }
             }
             return Value{true};
         };
@@ -5845,7 +8450,7 @@ struct OkayScriptVM::Impl {
             float n = 0;
             if (a.size() >= 2) if (auto arr = a[0].AsArray()) {
                 std::string fn = a[1].AsString();
-                for (auto& e : *arr) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) n += 1.0f; }
+                for (const Value& e : std::vector<Value>(*arr)) { std::vector<Value> ca{e}; if (rt.Call(fn, ca).AsBool()) n += 1.0f; }
             }
             return Value{n};
         };
@@ -5864,8 +8469,8 @@ struct OkayScriptVM::Impl {
         b["substr"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int start = a.size() > 1 ? (int)a[1].AsFloat() : 0;
-            int n = a.size() > 2 ? (int)a[2].AsFloat() : (int)s.size();
+            int start = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
+            int n = a.size() > 2 ? SafeInt(a[2].AsFloat()) : (int)s.size();
             if (start < 0) start = 0;
             if (start > (int)s.size()) return Value{std::string{}};
             if (n < 0) n = 0;
@@ -5874,7 +8479,7 @@ struct OkayScriptVM::Impl {
         b["char_at"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int i = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            int i = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             if (i < 0 || i >= (int)s.size()) return Value{std::string{}};
             return Value{std::string(1, s[i])};
         };
@@ -5954,26 +8559,42 @@ struct OkayScriptVM::Impl {
             return Value{s};
         };
         // Repeat a string n times ("=" * 10 style separators/bars).
-        b["repeat"] = [](std::vector<Value>& a) {
+        // Script-supplied counts are capped so one line can't hang the frame or
+        // exhaust memory (issue #719); longer results are truncated, not errors.
+        constexpr int kMaxRepeatCount = 1 << 20;
+        auto repeatCount = [](std::vector<Value>& a) {
+            const double raw = a.size() > 1 ? a[1].AsFloat() : 0.0;
+            if (!(raw > 0.0)) return 0;   // also covers NaN
+            const double capped = raw < (double)kMaxRepeatCount ? raw : (double)kMaxRepeatCount;
+            return (int)capped;
+        };
+        b["repeat"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
-            std::string s = a[0].AsString(), out;
-            int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            const std::string s = a[0].AsString();
+            int n = repeatCount(a);
+            // A cap can still make n copies of a long s huge, so the budget is on
+            // the result size: shrink the count until it fits.
+            if (!s.empty()) {
+                const std::size_t maxLen = (std::size_t)kMaxRepeatCount * s.size() > (1u << 22) ? (1u << 22) / s.size() : kMaxRepeatCount;
+                if ((std::size_t)n > maxLen) n = (int)maxLen;
+            }
+            std::string out;
             for (int i = 0; i < n; ++i) out += s;
             return Value{out};
         };
         // pad_left("7", 3)      -> "  7"   ;  pad_left("7", 3, "0") -> "007"
-        b["pad_left"] = [](std::vector<Value>& a) {
+        b["pad_left"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s.insert(s.begin(), fill);
             return Value{s};
         };
-        b["pad_right"] = [](std::vector<Value>& a) {
+        b["pad_right"] = [repeatCount](std::vector<Value>& a) {
             if (a.empty()) return Value{std::string{}};
             std::string s = a[0].AsString();
-            int width = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
             while ((int)s.size() < width) s += fill;
             return Value{s};
@@ -5994,8 +8615,14 @@ struct OkayScriptVM::Impl {
                         } else {
                             bool num = !inside.empty();
                             for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
-                            if (num) { std::size_t idx = (std::size_t)std::stoi(inside) + 1;
-                                       if (idx < a.size()) out += a[idx].AsString(); }
+                            // Digits only, parsed without exceptions: std::stoi throws
+                            // std::out_of_range on a huge index and aborts the frame
+                            // (issue #719). An index beyond the args is an empty field.
+                            if (num) {
+                                long long idx = 0;
+                                const auto r = std::from_chars(inside.data(), inside.data() + inside.size(), idx);
+                                if (r.ec == std::errc() && idx >= 0 && (std::size_t)idx + 1 < a.size()) out += a[(std::size_t)idx + 1].AsString();
+                            }
                             else { out += '{'; out += inside; out += '}'; }   // leave literal
                         }
                         i = close;
@@ -6312,7 +8939,7 @@ struct OkayScriptVM::Impl {
             return Value{c != 0 && Input::GetKeyUp(c)};
         };
         b["mouse_up"] = [](std::vector<Value>& a) {
-            return Value{Input::GetMouseButtonUp(a.empty() ? 0 : (int)a[0].AsFloat())};
+            return Value{Input::GetMouseButtonUp(a.empty() ? 0 : SafeInt(a[0].AsFloat()))};
         };
 
         // --- More math / utility ---
@@ -6323,10 +8950,9 @@ struct OkayScriptVM::Impl {
                   dz = a[5].AsFloat() - a[2].AsFloat();
             return Value{Mathf::Sqrt(dx * dx + dy * dy + dz * dz)};
         };
-        b["fps"] = [this](std::vector<Value>&) -> Value {
-            float d = rt.host ? rt.host->deltaTime : 0.0f;
-            return Value{d > 1e-6f ? 1.0f / d : 0.0f};
-        };
+        // fps(): frames per second as measured, not 1 / this frame's scaled delta (which read 0 in a pause and doubled
+        // at timeScale 0.5): see RealFps above.
+        b["fps"] = [](std::vector<Value>&) -> Value { return Value{RealFps()}; };
         // 3D physics: ground/line-of-sight check via a 3D ray, and gravity.
         b["raycast_hit3"] = [this](std::vector<Value>& a) -> Value {
             if (a.size() < 6 || !rt.host || !rt.host->gameObject) return Value{false};
@@ -6394,7 +9020,7 @@ struct OkayScriptVM::Impl {
             return out;
         };
         auto allAt = [this](std::vector<Value>& a) -> const Runtime::LastHit* {
-            int i = a.empty() ? 0 : (int)a[0].AsFloat();
+            int i = a.empty() ? 0 : SafeInt(a[0].AsFloat());
             return (i >= 0 && i < (int)rt.lastHitAll.size()) ? &rt.lastHitAll[(std::size_t)i] : nullptr;
         };
         b["ray_all_count"]  = [this](std::vector<Value>&) -> Value { return Value{(float)rt.lastHitAll.size()}; };
@@ -6447,6 +9073,93 @@ struct OkayScriptVM::Impl {
             rt.lastHit3D = toHit(h);
             return Value{rt.lastHit3D.object};
         };
+        // 2D shape casts fill the same ray_* details as raycast() (not ray3_*).
+        // A leading word ("hit", "point", "normal", "distance", "object") picks one
+        // detail; without it the call returns the hit object's name.
+        // box_cast([what,] cx, cy, hx, hy, dx, dy [, maxDist [, layers [, ignore_triggers [, angle_deg]]]])
+        auto toHit2 = [](const RaycastHit2D& h) {
+            Runtime::LastHit l;
+            if (!h.hit) return l;
+            l.hit = true;
+            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.px = h.point.x; l.py = h.point.y;
+            l.nx = h.normal.x; l.ny = h.normal.y;
+            l.dist = h.distance;
+            return l;
+        };
+        auto detail2 = [](const std::string& what, const RaycastHit2D& h) -> Value {
+            if (what == "hit") return Value{h.hit};
+            if (what == "point") return Value{Vec3{h.point.x, h.point.y, 0.0f}};
+            if (what == "normal") return Value{Vec3{h.normal.x, h.normal.y, 0.0f}};
+            if (what == "distance") return Value{h.distance};
+            return Value{h.gameObject ? h.gameObject->name : std::string{}};
+        };
+        auto miss2 = [](const std::string& what) -> Value {
+            if (what == "hit") return Value{false};
+            if (what == "point" || what == "normal") return Value{Vec3::Zero};
+            if (what == "distance") return Value{0.0f};
+            return Value{std::string{}};
+        };
+        b["box_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 6 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 c{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 h2{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            Vec2 d{a[b + 4].AsFloat(), a[b + 5].AsFloat()};
+            float maxDist = a.size() > b + 6 ? a[b + 6].AsFloat() : 1e9f;
+            float angle = (a.size() > b + 9 ? a[b + 9].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            RaycastHit2D h = sc->physics().BoxCast(*sc, c, h2, d, angle, maxDist, nullptr,
+                                                   maskArg(a, b + 7), trigArg(a, b + 8, false));
+            sc->physics().RecordQueryRay(c, d, maxDist, h, Mathf::Min(Mathf::Abs(h2.x), Mathf::Abs(h2.y)));
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        // capsule_cast([what,] ax, ay, bx, by, radius, dx, dy [, maxDist [, layers [, ignore_triggers]]])
+        b["capsule_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 7 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 p0{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 p1{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            float r = a[b + 4].AsFloat();
+            Vec2 d{a[b + 5].AsFloat(), a[b + 6].AsFloat()};
+            float maxDist = a.size() > b + 7 ? a[b + 7].AsFloat() : 1e9f;
+            RaycastHit2D h = sc->physics().CapsuleCast(*sc, p0, p1, r, d, maxDist, nullptr,
+                                                       maskArg(a, b + 8), trigArg(a, b + 9, false));
+            sc->physics().RecordQueryRay((p0 + p1) * 0.5f, d, maxDist, h, r);
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        auto names2 = [](const std::vector<Collider2D*>& cols) {
+            Value out = Value::MakeArray();
+            for (Collider2D* c : cols)
+                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            return out;
+        };
+        // overlap_box(cx, cy, hx, hy [, layers [, ignore_triggers [, angle_deg]]])
+        b["overlap_box"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            float angle = (a.size() > 6 ? a[6].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            return names2(sc->physics().OverlapBox(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                   {a[2].AsFloat(), a[3].AsFloat()},
+                                                   maskArg(a, 4), trigArg(a, 5, true), nullptr, angle));
+        };
+        // overlap_capsule(ax, ay, bx, by, radius [, layers [, ignore_triggers]])
+        b["overlap_capsule"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 5 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names2(sc->physics().OverlapCapsule(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                       {a[2].AsFloat(), a[3].AsFloat()}, a[4].AsFloat(),
+                                                       maskArg(a, 5), trigArg(a, 6, true)));
+        };
         // Overlaps -> the names of every collider's object inside the shape.
         auto names3 = [](const std::vector<Collider3D*>& cols) {
             Value out = Value::MakeArray();
@@ -6480,7 +9193,7 @@ struct OkayScriptVM::Impl {
         b["layer_mask"] = [](std::vector<Value>& a) -> Value {
             std::uint32_t m = 0;
             for (const Value& v : a)
-                m |= v.IsString() ? Layers::MaskFromList(v.AsString()) : (1u << ((int)v.AsFloat() & 31));
+                m |= v.IsString() ? Layers::MaskFromList(v.AsString()) : (1u << (SafeInt(v.AsFloat()) & 31));
             return Value{(float)(a.empty() ? Physics3D::kAllLayers : m)};
         };
         // ray3_cast(what, origin, direction [, maxDist [, layers [, ignore_triggers [, radius]]]])
@@ -6599,6 +9312,16 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
 
+        // fire_output("OnOpened", param): raise a named output on this object's Logic Source,
+        // running its I/O links. Returns how many links were delivered or queued.
+        b["fire_output"] = [this](std::vector<Value>& a) -> Value {
+            int n = 0;
+            if (!a.empty() && rt.host && rt.host->gameObject)
+                for (LogicSource* ls : rt.host->gameObject->GetComponents<LogicSource>())
+                    n += ls->FireOutput(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string());
+            return Value{(float)n};
+        };
+
         // --- Custom events + object variables shared with visual-script graphs ---
         // send_event("Target", "Hit", value): runs the target's On Custom Event "Hit"
         // graph nodes and its scripts' OnEvent_Hit(value). "" / "self" = this object.
@@ -6620,6 +9343,19 @@ struct OkayScriptVM::Impl {
             deliverEvent(evTarget(a[0].AsString()), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
             return Value{};
         };
+        // raise("OnHurt", 3) runs this script's += listeners for that name, and a
+        // function of the same name when there is one.
+        b["raise"] = [this](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            std::vector<Value> args;
+            if (a.size() > 1) args.push_back(a[1]);
+            const std::string ev = a[0].AsString();
+            try {
+                if (rt.functions.count(ev)) rt.Call(ev, args);
+                rt.FireSubs(ev, args);
+            } catch (const std::exception& e) { Log::Error("OkayScript raise: ", e.what()); }
+            return Value{};
+        };
         // run_action("move 1 0 0") / check_action("var_gt hp 0"): one step of the
         // no-code Actions library, run on this object (what a graph's Action /
         // Condition node exports to).
@@ -6629,7 +9365,20 @@ struct OkayScriptVM::Impl {
             ActionList runner;
             runner.gameObject = me; runner.transform = me->transform;
             runner.instructions = ActionList::DecodeItems(a[0].AsString());
-            if (runner.BeginRun()) runner.Update(0.0f);
+            if (runner.BeginRun()) runner.Update(rt.host ? rt.host->deltaTime : 0.0f);
+            return Value{};
+        };
+        // actions_load(text): the Actions export. Adds the list described by `text`
+        // (ActionList::ToText) to this object. The scene starts it and ticks it, so
+        // every step, wait, branch, and trigger behaves as it does on an Actions component.
+        b["actions_load"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{};
+            const std::string text = a[0].AsString();
+            for (ActionList* have : me->GetComponents<ActionList>())
+                if (have->ToText() == text) return Value{};
+            ActionList* al = me->AddComponent<ActionList>();
+            al->FromText(text);
             return Value{};
         };
         b["check_action"] = [this](std::vector<Value>& a) {
@@ -6702,6 +9451,27 @@ struct OkayScriptVM::Impl {
         b["pause_game"] = [](std::vector<Value>& a) { Game::SetPaused(a.empty() || a[0].AsBool()); return Value{}; };
         if (!b.count("quit")) b["quit"] = [](std::vector<Value>&) { Game::RequestQuit(); return Value{}; };   // Application.Quit()
         b["show_cursor"] = [](std::vector<Value>& a) { Cursor::Capture(!(a.empty() || a[0].AsBool())); return Value{}; };
+        // cursor_lock("locked" | "confined" | "none"). Locked hides the pointer,
+        // Confined keeps it inside the window, None lets it roam.
+        b["cursor_lock"] = [](std::vector<Value>& a) {
+            std::string m = a.empty() ? std::string("locked") : a[0].AsString();
+            for (char& c : m) c = (char)std::tolower((unsigned char)c);
+            if (m == "none" || m == "free" || m == "0") {
+                Cursor::SetLock(Cursor::LockMode::None);
+                Cursor::SetVisible(true);
+            } else if (m == "confined" || m == "2") {
+                Cursor::SetLock(Cursor::LockMode::Confined);
+                Cursor::SetVisible(true);
+            } else {
+                Cursor::Capture(true);
+            }
+            return Value{};
+        };
+        b["cursor_lock_mode"] = [](std::vector<Value>&) {
+            if (Cursor::IsConfined()) return Value{std::string("confined")};
+            if (Cursor::IsLocked()) return Value{std::string("locked")};
+            return Value{std::string("none")};
+        };
 
         // --- Sprite glyph/size on a sibling SpriteRenderer ---
         b["set_glyph"] = [go](std::vector<Value>& a) {
@@ -6759,7 +9529,7 @@ struct OkayScriptVM::Impl {
             return Value{fr + d * t};
         };
         b["str_repeat"] = [](std::vector<Value>& a) {
-            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? (int)a[1].AsFloat() : 0;
+            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
         };
 
@@ -6771,6 +9541,14 @@ struct OkayScriptVM::Impl {
         auto easeFromArg = [](std::vector<Value>& a, std::size_t i) -> Ease {
             if (i >= a.size() || !a[i].IsString()) return Ease::Linear;
             return Easing::FromName(a[i].AsString(), Ease::Linear);
+        };
+        // Apply the ease named by arg `i` to a tween: a preset name as above, or a curve
+        // as text ("cubic-bezier(0.4,0,0.2,1)", "steps(4)"). Unknown text is linear.
+        auto applyEase = [easeFromArg](Tweener& t, std::vector<Value>& a, std::size_t i) {
+            EaseCurve c;
+            if (i < a.size() && a[i].IsString() && EaseCurve::Parse(a[i].AsString(), c) && c.kind != EaseCurve::Kind::Preset)
+                t.SetEaseSpec(a[i].AsString());
+            else t.SetEase(easeFromArg(a, i));
         };
         auto tweens = [this]() -> TweenManager* {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
@@ -6807,9 +9585,9 @@ struct OkayScriptVM::Impl {
             return t && t->IsActive() ? t : nullptr;
         };
         // Finish a new tween: ease from arg `ei` (else keep its own), on-complete from `di`.
-        auto finish = [easeFromArg, fnFromArg, reg](std::vector<Value>& a, std::shared_ptr<Tweener> t, std::size_t ei, std::size_t di) -> Value {
+        auto finish = [applyEase, easeFromArg, fnFromArg, reg](std::vector<Value>& a, std::shared_ptr<Tweener> t, std::size_t ei, std::size_t di) -> Value {
             if (!t) return Value{0.0f};
-            if (ei < a.size() && a[ei].IsString()) t->SetEase(easeFromArg(a, ei));
+            if (ei < a.size() && a[ei].IsString()) applyEase(*t, a, ei);
             else if (ei != (std::size_t)-1) t->SetEase(Ease::Linear);
             if (auto f = fnFromArg(a, di)) t->OnComplete(f);
             return reg(t);
@@ -6817,6 +9595,9 @@ struct OkayScriptVM::Impl {
         const std::size_t kNone = (std::size_t)-1;
         auto self = go;
         auto num = [](std::vector<Value>& a, std::size_t i, float def) { return i < a.size() && !a[i].IsString() ? a[i].AsFloat() : def; };
+        // A script number as a count: NaN is `whenNaN`, and a huge value stops at about two billion (casting a float that
+        // is out of range to int is undefined, and gave a negative count: a loop count of 1e12 became "forever").
+        auto toCount = [](float v, int whenNaN) { return v != v ? whenNaN : v >= 2.0e9f ? 2000000000 : v <= -2.0e9f ? -2000000000 : (int)v; };
 
         b["tween_move"] = [self, finish](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
@@ -6886,38 +9667,38 @@ struct OkayScriptVM::Impl {
             return reg(t);
         };
         // Punch the scale out and settle back (DOPunchScale) — button presses, pickups.
-        b["tween_punch_scale"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_scale"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float p = a[0].AsFloat();
-            return reg(DOTween::PunchScale(g, {p, p, p}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+            return reg(DOTween::PunchScale(g, {p, p, p}, a[1].AsFloat(), toCount(num(a, 2, 6.0f), 6)));
         };
-        b["tween_punch_pos"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_pos"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
-            return reg(DOTween::PunchPosition(g, {a[0].AsFloat(), a[1].AsFloat(), 0}, a[2].AsFloat(), (int)num(a, 3, 6.0f)));
+            return reg(DOTween::PunchPosition(g, {a[0].AsFloat(), a[1].AsFloat(), 0}, a[2].AsFloat(), toCount(num(a, 3, 6.0f), 6)));
         };
-        b["tween_punch_rotate"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_punch_rotate"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
-            return reg(DOTween::PunchRotation(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+            return reg(DOTween::PunchRotation(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat(), toCount(num(a, 2, 6.0f), 6)));
         };
         // Shake, fading out (camera / impact shake).
-        b["tween_shake"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float s = a[0].AsFloat();
-            return reg(DOTween::ShakePosition(g, a[1].AsFloat(), {s, s, 0}, (int)num(a, 2, 20.0f)));
+            return reg(DOTween::ShakePosition(g, a[1].AsFloat(), {s, s, 0}, toCount(num(a, 2, 20.0f), 20)));
         };
-        b["tween_shake_rotate"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake_rotate"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
-            return reg(DOTween::ShakeRotation(g, a[1].AsFloat(), {0, 0, a[0].AsFloat()}, (int)num(a, 2, 14.0f)));
+            return reg(DOTween::ShakeRotation(g, a[1].AsFloat(), {0, 0, a[0].AsFloat()}, toCount(num(a, 2, 14.0f), 14)));
         };
-        b["tween_shake_scale"] = [self, reg, num](std::vector<Value>& a) {
+        b["tween_shake_scale"] = [self, reg, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
             const float s = a[0].AsFloat();
-            return reg(DOTween::ShakeScale(g, a[1].AsFloat(), {s, s, s}, (int)num(a, 2, 14.0f)));
+            return reg(DOTween::ShakeScale(g, a[1].AsFloat(), {s, s, s}, toCount(num(a, 2, 14.0f), 14)));
         };
         // Jump to (x, y) in an arc `height` high: tween_jump(x, y, height, dur[, jumps][, "done"]).
-        b["tween_jump"] = [self, finish, num](std::vector<Value>& a) {
+        b["tween_jump"] = [self, finish, num, toCount](std::vector<Value>& a) {
             GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
-            const int jumps = (int)num(a, 4, 1.0f);
+            const int jumps = toCount(num(a, 4, 1.0f), 1);
             const std::size_t di = a.size() > 4 && a[4].IsString() ? 4 : 5;
             auto t = DOTween::Jump(g, {a[0].AsFloat(), a[1].AsFloat(), g->transform->localPosition.z}, a[2].AsFloat(), jumps, a[3].AsFloat());
             return finish(a, t, kNone, di);
@@ -6989,6 +9770,17 @@ struct OkayScriptVM::Impl {
             t->SetTarget(rt.host->gameObject);
             return finish(a, t, 3, 4);
         };
+        // Any property of this object by path: tween_prop("Light.intensity", 3, 0.5[, ease][, "done"]).
+        // One vector component is its own path ("Transform.scale.y"); an integer property rounds.
+        b["tween_prop"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self();
+            if (!g || a.size() < 3 || !a[0].IsString()) return Value{0.0f};
+            const std::string path = a[0].AsString();
+            const PropertyValue cur = PropertyRegistry::GetProperty(*g, path);
+            const PropertyValue to = cur.Type() == PropertyType::Int ? PropertyValue::MakeInt(std::llround((double)a[1].AsFloat()))
+                                                                      : PropertyValue::MakeFloat(a[1].AsFloat());
+            return finish(a, DOTween::Property(g, path, to, a[2].AsFloat()), 3, 4);
+        };
         // Call a function after a delay: tween_call(seconds, "fn") (DOVirtual.DelayedCall).
         b["tween_call"] = [this, tweens, fnFromArg, reg](std::vector<Value>& a) {
             TweenManager* m = tweens(); if (!m || a.size() < 2) return Value{0.0f};
@@ -7006,19 +9798,27 @@ struct OkayScriptVM::Impl {
             };
         };
         b["tween_delay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDelay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
-        b["tween_ease"]     = setting([easeFromArg](Tweener& t, std::vector<Value>& a) { t.SetEase(easeFromArg(a, 1)); });
+        b["tween_ease"]     = setting([applyEase](Tweener& t, std::vector<Value>& a) { applyEase(t, a, 1); });
         b["tween_speed"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeed(a.size() > 1 ? a[1].AsFloat() : 1.0f); });
         b["tween_unscaled"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetUpdate(a.size() > 1 ? a[1].AsBool() : true); });
+        // tween_clock(id, "ui"): follow a named clock channel ("game", "ui", "cinematic", your own); "" = scene time.
+        b["tween_clock"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetClock(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_tag(id, "menu"): a group label for tween_kill_tag / tween_pause_tag / tween_play_tag.
+        b["tween_tag"]      = setting([](Tweener& t, std::vector<Value>& a) { t.SetTag(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        // tween_speed_based(id): the duration you gave is a speed (units a second); the tween lasts distance / speed.
+        b["tween_speed_based"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeedBased(a.size() > 1 ? a[1].AsBool() : true); });
+        // tween_decay(id, rate): how a punch or shake dies away (0 = straight fade, 6 = snappy).
+        b["tween_decay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDecay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["tween_set_id"]   = setting([](Tweener& t, std::vector<Value>& a) { t.SetId(a.size() > 1 ? a[1].AsString() : std::string{}); });
         b["tween_from"]     = setting([](Tweener& t, std::vector<Value>&) { t.From(); });
         b["tween_relative"] = setting([](Tweener& t, std::vector<Value>&) { t.SetRelative(); });
         b["tween_keep"]     = setting([](Tweener& t, std::vector<Value>&) { t.SetAutoKill(false); });
         // tween_loops(id, count[, "restart" | "yoyo" | "incremental"]); count -1 = forever.
-        b["tween_loops"] = setting([](Tweener& t, std::vector<Value>& a) {
+        b["tween_loops"] = setting([toCount](Tweener& t, std::vector<Value>& a) {
             std::string ty = a.size() > 2 && a[2].IsString() ? a[2].AsString() : std::string("restart");
             for (auto& ch : ty) ch = (char)std::tolower((unsigned char)ch);
             const LoopType lt = ty == "yoyo" ? LoopType::Yoyo : ty == "incremental" ? LoopType::Incremental : LoopType::Restart;
-            t.SetLoops(a.size() > 1 ? (int)a[1].AsFloat() : 1, lt);
+            t.SetLoops(a.size() > 1 ? toCount(a[1].AsFloat(), 1) : 1, lt);   // NaN plays once; a negative count loops forever
         });
         b["tween_on_complete"] = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnComplete(fnFromArg(a, 1)); });
         b["tween_on_step"]     = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnStepComplete(fnFromArg(a, 1)); });
@@ -7057,6 +9857,24 @@ struct OkayScriptVM::Impl {
                 return Value{(float)n};
             };
         };
+        // Everything with a tag set by tween_tag, scene-wide: tween_kill_tag("menu"[, complete]), pause, play, complete.
+        auto byTag = [tweens](int op) {
+            return [tweens, op](std::vector<Value>& a) -> Value {
+                TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+                const std::string tag = a[0].AsString();
+                const int n = op == 0 ? m->KillByTag(tag, a.size() > 1 && a[1].AsBool())
+                            : op == 1 ? m->PauseByTag(tag) : op == 2 ? m->PlayByTag(tag) : m->CompleteByTag(tag);
+                return Value{(float)n};
+            };
+        };
+        b["tween_kill_tag"]     = byTag(0);
+        b["tween_pause_tag"]    = byTag(1);
+        b["tween_play_tag"]     = byTag(2);
+        b["tween_complete_tag"] = byTag(3);
+        b["tween_rewind_id"] = [tweens](std::vector<Value>& a) -> Value {
+            TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+            return Value{(float)m->Rewind(a[0].AsString())};
+        };
         b["tween_kill_id"]    = byId(0);
         b["tween_pause_id"]   = byId(1);
         b["tween_play_id"]    = byId(2);
@@ -7078,6 +9896,8 @@ struct OkayScriptVM::Impl {
         };
         b["seq_append"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Append(t); });
         b["seq_join"]   = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Join(t); });
+        b["seq_prepend"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Prepend(t); });
+        b["seq_join_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) { if (auto f = fnFromArg(a, 1)) s.JoinCallback(f); });
         b["seq_insert"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 2)) s.Insert(a[1].AsFloat(), t); });
         b["seq_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.AppendInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
         b["seq_prepend_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.PrependInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
@@ -7085,34 +9905,8 @@ struct OkayScriptVM::Impl {
         b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
-        // ---- Save system: snapshot the whole scene to a slot file ------
-        b["save_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (!s) return Value{0.0f};
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_game")) return Value{0.0f};
-            const std::string path = Save::Resolve("saves/" + slot + ".okaysave");
-            std::error_code ec; std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-            return Value{SceneSerializer::SaveToFile(*s, path) ? 1.0f : 0.0f};
-        };
-        b["load_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "load_game")) return Value{0.0f};
-            std::string path = ScriptReadPath("saves/" + slot + ".okaysave");
-            if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
-            return Value{0.0f};
-        };
-        b["save_exists"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_exists")) return Value{0.0f};
-            return Value{std::ifstream(ScriptReadPath("saves/" + slot + ".okaysave")).good() ? 1.0f : 0.0f};
-        };
-        b["delete_save"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "delete_save")) return Value{0.0f};
-            return Value{std::remove(ScriptReadPath("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
-        };
+        // Whole-game saves are save_game / load_game / has_save above (SaveGame).
+        b["save_exists"] = b["has_save"];
 
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
@@ -7312,6 +10106,18 @@ struct OkayScriptVM::Impl {
             if (c == "Rigidbody2D")    { g->AddComponent<Rigidbody2D>();    return Value{true}; }
             if (c == "TextRenderer")   { g->AddComponent<TextRenderer>();   return Value{true}; }
             if (c == "BoxCollider2D")  { g->AddComponent<BoxCollider2D>();  return Value{true}; }
+            if (c == "NetworkObject") {
+                auto* o = g->AddComponent<NetworkObject>();
+                if (a.size() > 1) o->netId = a[1].AsString();
+                return Value{true};
+            }
+            if (c == "NetworkTransform") { g->AddComponent<NetworkTransform>(); return Value{true}; }
+            if (c == "SyncVar") {
+                auto* sv = g->AddComponent<SyncVar>();
+                if (a.size() > 1) sv->name = a[1].AsString();
+                return Value{true};
+            }
+            if (c == "FirstPersonHands") { g->AddComponent<FirstPersonHands>(); return Value{true}; }
             return Value{false};
         };
         // Input.GetAxis("Horizontal"/"Vertical") -> WASD/stick axis.
@@ -7394,6 +10200,9 @@ struct OkayScriptVM::Impl {
         alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
         alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
         alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
+        alias("Physics2D.BoxCast", "box_cast"); alias("Physics2D.CapsuleCast", "capsule_cast");
+        alias("Physics2D.OverlapBox", "overlap_box"); alias("Physics2D.OverlapCapsule", "overlap_capsule");
+        alias("Rigidbody2D.AddExplosionForce", "add_explosion_force");
         alias("SceneManager.LoadScene", "load_scene_name");
         alias("Application.Quit", "quit");
         alias("GameObject.Find", "exists");
@@ -7441,6 +10250,13 @@ struct OkayScriptVM::Impl {
         alias("repeat_every", "every");
         alias("set_time_scale", "set_timescale");
         alias("time_scale", "timescale");
+        alias("Time.PushPause", "push_pause");
+        alias("Time.PopPause", "pop_pause");
+        alias("Time.IsPausedBy", "is_paused_by");
+        alias("Time.HitStop", "hit_stop");
+        alias("Time.SlowMotion", "slow_motion");
+        alias("Time.RampTimeScale", "ramp_timescale");
+        alias("ramp_time_scale", "ramp_timescale");
         // Objects & scene
         alias("create_object", "spawn");
         alias("create_object_3d", "spawn3");
@@ -7515,7 +10331,7 @@ struct OkayScriptVM::Impl {
         };
         b["__new_array"] = [](std::vector<Value>& a) {
             Value v = Value::MakeArray();
-            int n = a.empty() ? 0 : (int)a[0].AsFloat();
+            int n = a.empty() ? 0 : SafeInt(a[0].AsFloat());
             if (n > 0) v.AsArray()->assign((std::size_t)std::min(n, 1 << 20), Value{0.0f});
             return v;
         };
@@ -7618,20 +10434,32 @@ struct OkayScriptVM::Impl {
         b["WaitForSeconds"] = [](std::vector<Value>& a) {
             Value v = Value::MakeMap(); (*v.AsMap())["__wait"] = Value{a.empty() ? 0.0f : a[0].AsFloat()}; return v;
         };
-        alias("WaitForSecondsRealtime", "WaitForSeconds");
+        b["WaitForSecondsRealtime"] = [](std::vector<Value>& a) {   // ignores Time.timeScale
+            Value v = Value::MakeMap(); (*v.AsMap())["__wait"] = Value{a.empty() ? 0.0f : a[0].AsFloat()}; (*v.AsMap())["__real"] = Value{true}; return v;
+        };
+        // yield return new WaitUntil(() => cond) / WaitWhile(() => cond)
+        b["WaitUntil"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeMap(); (*v.AsMap())["__until"] = a.empty() ? Value{} : a[0]; return v;
+        };
+        b["WaitWhile"] = [](std::vector<Value>& a) {
+            Value v = Value::MakeMap(); (*v.AsMap())["__while"] = a.empty() ? Value{} : a[0]; return v;
+        };
         b["WaitForEndOfFrame"] = [](std::vector<Value>&) { return Value{}; };
         alias("WaitForFixedUpdate", "WaitForEndOfFrame");
         b["StartCoroutine"] = [this](std::vector<Value>& a) {
             if (a.empty()) return Value{};
             std::vector<Value> args(a.begin() + 1, a.end());
-            int id = rt.StartCoroutine(a[0].AsString(), std::move(args));
+            std::vector<std::string> names;
+            if (rt.activeArgNames && rt.activeArgNames->size() > 1)
+                names.assign(rt.activeArgNames->begin() + 1, rt.activeArgNames->end());
+            int id = rt.StartCoroutine(a[0].AsString(), std::move(args), std::move(names));
             Value v = Value::MakeMap(); (*v.AsMap())["__co"] = Value{(float)id}; return v;
         };
         b["StopCoroutine"] = [this](std::vector<Value>& a) {
             if (a.empty()) return Value{};
             if (auto m = a[0].AsMap()) {
                 if (auto it = m->find("__co"); it != m->end())
-                    if (auto* co = rt.FindCo((int)it->second.AsFloat())) { rt.StopCoroutine(co); rt.ReapCoroutines(); }
+                    if (auto* co = rt.FindCo(SafeInt(it->second.AsFloat()))) { rt.StopCoroutine(co); rt.ReapCoroutines(); }
                 return Value{};
             }
             rt.StopCoroutines(a[0].AsString().empty() ? std::string("\x01") : a[0].AsString());
@@ -7716,7 +10544,12 @@ struct OkayScriptVM::Impl {
             if (t == "Rigidbody2D") return g->GetComponent<Rigidbody2D>();
             if (t == "Rigidbody")   return g->GetComponent<Rigidbody3D>();
             if (t == "AudioSource") return g->GetComponent<AudioSource>();
+            if (t == "NetworkObject") return g->GetComponent<NetworkObject>();
+            if (t == "NetworkTransform") return g->GetComponent<NetworkTransform>();
+            if (t == "SyncVar") return g->GetComponent<SyncVar>();
+            if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>() != nullptr;
             if (t == "Animator" || t == "Animation") return true;   // resolved by the anim_* builtins
+            if (t == "IK") return true;                              // resolved by the ik_* builtins
             return false;
         };
         // The engine component a C# type name refers to (for .enabled).
@@ -7730,6 +10563,10 @@ struct OkayScriptVM::Impl {
             if (t == "Rigidbody2D") return g->GetComponent<Rigidbody2D>();
             if (t == "Rigidbody")   return g->GetComponent<Rigidbody3D>();
             if (t == "AudioSource") return g->GetComponent<AudioSource>();
+            if (t == "NetworkObject") return g->GetComponent<NetworkObject>();
+            if (t == "NetworkTransform") return g->GetComponent<NetworkTransform>();
+            if (t == "SyncVar") return g->GetComponent<SyncVar>();
+            if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>();
             return nullptr;
         };
         b["GetComponent"] = [this, compOf](std::vector<Value>& a) -> Value {
@@ -7765,8 +10602,30 @@ struct OkayScriptVM::Impl {
             }
             if (auto* rb = g->GetComponent<Rigidbody3D>(); rb && t == "Rigidbody")
                 if (p == "velocity" || p == "linearVelocity") return Value{rb->velocity};
-            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource")
+            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource") {
                 if (p == "volume") return Value{au->volume};
+                if (p == "pitch") return Value{au->pitch};
+                if (p == "pan") return Value{au->pan};
+                if (p == "lowPass") return Value{au->lowPass};
+                if (p == "doppler") return Value{au->doppler};
+                if (p == "dopplerScale") return Value{au->dopplerScale};
+                if (p == "occlude") return Value{au->occlude};
+                if (p == "occlusionVolume") return Value{au->occlusionVolume};
+                if (p == "occlusionLowPass") return Value{au->occlusionLowPass};
+                if (p == "distanceLowPass") return Value{au->distanceLowPass};
+                if (p == "distanceLowPassHz") return Value{au->distanceLowPassHz};
+                if (p == "isPlaying") return Value{au->IsPlaying()};
+            }
+            if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
+                if (p == "netId") return Value{o->netId};
+                if (p == "owned" || p == "isOwned") return Value{o->IsLocallyOwned()};
+                if (p == "authority") return Value{(float)o->authority};
+            }
+            if (auto* sv = g->GetComponent<SyncVar>(); sv && t == "SyncVar") {
+                if (p == "name") return Value{sv->name};
+                if (p == "value") return Value{sv->Get()};
+            }
+            if (t == "FirstPersonHands") return FpHandsGet(g->GetComponent<FirstPersonHands>(), p);
             return Value{};
         };
         b["__set_component"] = [this, go, compPtr](std::vector<Value>& a) -> Value {
@@ -7793,7 +10652,29 @@ struct OkayScriptVM::Impl {
             }
             if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>())
                 if (p == "velocity" || p == "linearVelocity") rb->velocity = v.AsVec3();
-            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) if (p == "volume") au->volume = v.AsFloat();
+            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
+                if (p == "volume") au->volume = v.AsFloat();
+                if (p == "pitch") au->pitch = v.AsFloat();
+                if (p == "pan") au->pan = v.AsFloat();
+                if (p == "lowPass") au->lowPass = v.AsFloat();
+                if (p == "doppler") au->doppler = v.AsBool();
+                if (p == "dopplerScale") au->dopplerScale = v.AsFloat();
+                if (p == "occlude") au->occlude = v.AsBool();
+                if (p == "occlusionVolume") au->occlusionVolume = v.AsFloat();
+                if (p == "occlusionLowPass") au->occlusionLowPass = v.AsFloat();
+                if (p == "distanceLowPass") au->distanceLowPass = v.AsBool();
+                if (p == "distanceLowPassHz") au->distanceLowPassHz = v.AsFloat();
+            }
+            if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
+                if (p == "netId") o->netId = v.AsString();
+                if (p == "owned") o->SetOwned(v.AsBool());
+                if (p == "authority") o->authority = (NetworkObject::Authority)SafeInt(v.AsFloat());
+            }
+            if (t == "SyncVar") if (auto* sv = g->GetComponent<SyncVar>()) {
+                if (p == "name") sv->name = v.AsString();
+                if (p == "value") sv->Set(v.AsString());
+            }
+            if (t == "FirstPersonHands") FpHandsSet(g->GetComponent<FirstPersonHands>(), p, v);
             return Value{};
         };
         b["__call_component"] = [this, go](std::vector<Value>& a) -> Value {
@@ -7805,13 +10686,49 @@ struct OkayScriptVM::Impl {
                 if (m == "SetTrigger") { std::vector<Value> x{arg(0)}; return rt.Call("anim_trigger", x); }
                 if (m == "SetBool")    { std::vector<Value> x{arg(0), Value{arg(1).AsBool() ? 1.0f : 0.0f}}; return rt.Call("anim_set_bool", x); }
                 if (m == "SetFloat" || m == "SetInteger") { std::vector<Value> x{arg(0), arg(1)}; return rt.Call("anim_set_float", x); }
-                if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") { std::vector<Value> x{arg(0)}; return rt.Call("play_clip", x); }
+                if (m == "GetFloat") return rt.Call("anim_get_float", rest);
+                if (m == "GetBool") return rt.Call("anim_get_bool", rest);
+                if (m == "GetInt" || m == "GetInteger") return rt.Call("anim_get_int", rest);
+                if (m == "SetLayerWeight") return rt.Call("anim_set_layer_weight", rest);
+                if (m == "GetLayerWeight") return rt.Call("anim_get_layer_weight", rest);
+                if (m == "SetRootMotion") return rt.Call("set_root_motion", rest);
+                if (m == "SetCharacterModel") return rt.Call("set_character_model", rest);
+                if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") {
+                    std::vector<Value> x{arg(0)};
+                    if (m != "Play" && rest.size() >= 2) x.push_back(arg(1));
+                    return rt.Call("play_action", x);
+                }
+                return Value{};
+            }
+            if (t == "IK") {
+                if (m == "SetKindWeight") return rt.Call("ik_set_weight", rest);
+                if (m == "SetLimbTarget") return rt.Call("ik_set_target", rest);
+                if (m == "ClearLimbTarget") return rt.Call("ik_clear_target", rest);
+                if (m == "LookAt") return rt.Call("ik_look_at", rest);
+                if (m == "SetWeight") return rt.Call("ik_set_weight", rest);
                 return Value{};
             }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {
                 Vec3 f = arg(0).IsVec3() ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), 0.0f};
                 const bool impulse = rest.size() >= 2 && arg(0).IsVec3() && arg(1).AsFloat() != 0.0f;   // ForceMode2D.Impulse
                 if (m == "AddForce") { if (impulse) rb->AddImpulse({f.x, f.y}); else rb->AddForce({f.x, f.y}); }
+                if (m == "AddExplosionForce") {
+                    float up = 0.0f;
+                    Vec2 c; float force = 0.0f, radius = 0.0f;
+                    if (arg(0).IsVec3()) {
+                        Vec3 v = arg(0).AsVec3();
+                        c = {v.x, v.y};
+                        force = rest.size() > 1 ? arg(1).AsFloat() : 0.0f;
+                        radius = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        up = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                    } else {
+                        c = {arg(0).AsFloat(), rest.size() > 1 ? arg(1).AsFloat() : 0.0f};
+                        force = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        radius = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                        up = rest.size() > 4 ? arg(4).AsFloat() : 0.0f;
+                    }
+                    rb->AddExplosionForce(force, c, radius, up);
+                }
                 if (m == "MovePosition" && g->transform) g->transform->localPosition = {f.x, f.y, g->transform->localPosition.z};
                 return Value{};
             }
@@ -7824,8 +10741,25 @@ struct OkayScriptVM::Impl {
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (m == "Play") au->Play();
                 if (m == "Stop") au->Stop();
+                if (m == "Pause") au->Pause();
+                if (m == "Resume") au->Resume();
+                if (m == "PlayOneShot") au->PlayOneShot(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeIn") au->FadeIn(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeOut") au->FadeOut(rest.empty() ? 1.0f : arg(0).AsFloat());
                 return Value{};
             }
+            if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
+                if (m == "Rpc" && !rest.empty()) o->Rpc(arg(0).AsString(), rest.size() > 1 ? arg(1).AsString() : std::string{});
+                if (m == "RpcTo" && rest.size() >= 2) o->RpcTo(SafeUInt32(arg(0).AsFloat()), arg(1).AsString(), rest.size() > 2 ? arg(2).AsString() : std::string{});
+                if (m == "RpcReliable" && !rest.empty()) o->RpcReliable(arg(0).AsString(), rest.size() > 1 ? arg(1).AsString() : std::string{});
+                return Value{};
+            }
+            if (t == "SyncVar") if (auto* sv = g->GetComponent<SyncVar>()) {
+                if (m == "Set") sv->Set(arg(0).AsString());
+                if (m == "Get") return Value{sv->Get()};
+                return Value{};
+            }
+            if (t == "FirstPersonHands") { FpHandsCall(g->GetComponent<FirstPersonHands>(), m); return Value{}; }
             if (t == "Transform") {
                 std::vector<Value> x = rest;
                 return rt.Call("transform." + m, x);
@@ -7848,8 +10782,13 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->rt.StopCoroutines("");
         m_impl->rt.pendingDestroy.clear();
         m_impl->rt.functions.clear();
+        m_impl->rt.subs.clear();
+        m_impl->rt.classes.clear();
+        m_impl->rt.self = Value{};
+        m_impl->rt.selfClass.clear();
         m_impl->rt.statics = SharedStatics(source);
         m_impl->topLevel = parser.ParseProgram(m_impl->rt.functions);
+        m_impl->rt.classes = parser.TakeClasses();
         // Bare mode: no functions defined -> the top-level statements ARE the update
         // loop (run every frame), so a whole script can be a single line. Otherwise run
         // top-level once now for globals/setup.
@@ -7870,8 +10809,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->loaded = true; return true;
     } catch (const ScriptError& e) {
         // Prefix the source line when known, so editors can show a diagnostic.
-        std::string msg = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                     : std::string(e.what());
+        std::string msg = e.what();
+        if (e.line > 0) {
+            std::string where = "line " + std::to_string(e.line);
+            if (e.column > 0) where += ", column " + std::to_string(e.column);
+            msg = where + ": " + msg;
+        }
         if (error) *error = msg;
         Log::Error("OkayScript: ", msg);
         m_impl->loaded = false;
@@ -7886,6 +10829,20 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
 
 void OkayScriptVM::AddBuiltin(const std::string& name, Builtin fn) {
     m_impl->rt.builtins[name] = std::move(fn);
+}
+
+vs::VsValue OkayScriptVM::CallBuiltin(const std::string& name, std::vector<vs::VsValue> args, std::string* error) {
+    auto it = m_impl->rt.builtins.find(name);
+    if (it == m_impl->rt.builtins.end()) {
+        if (error) *error = "no text-script builtin named \"" + name + "\"";
+        return {};
+    }
+    try {
+        return it->second(args);
+    } catch (const std::exception& e) {
+        if (error) *error = e.what();
+        return {};
+    }
 }
 
 std::vector<std::string> OkayScriptVM::BuiltinNames() const {
@@ -7907,8 +10864,15 @@ bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
         parser.ParseProgram(throwaway);
         return true;
     } catch (const ScriptError& e) {
-        if (error) *error = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                       : std::string(e.what());
+        if (error) {
+            std::string msg = e.what();
+            if (e.line > 0) {
+                std::string where = "line " + std::to_string(e.line);
+                if (e.column > 0) where += ", column " + std::to_string(e.column);
+                msg = where + ": " + msg;
+            }
+            *error = msg;
+        }
         return false;
     } catch (const std::exception& e) {
         if (error) *error = e.what();
@@ -7926,7 +10890,7 @@ std::vector<ScriptDiagnostic> OkayScriptVM::ValidateAll(const std::string& sourc
         Parser parser(lex.Scan());
         diags = parser.ParseProgramRecovering();
     } catch (const ScriptError& e) {
-        diags.push_back({ e.line, e.what() });
+        diags.push_back({ e.line, e.what(), 0, e.column });
     } catch (const std::exception& e) {
         diags.push_back({ 0, e.what() });
     }
@@ -8010,12 +10974,21 @@ void OkayScriptVM::CallEvent(const std::string& function) {
 }
 
 namespace {
-// The handler a script defines for an engine event name: the requested name
-// wins; otherwise an alias, so scripts can name handlers in PascalCase
-// (OnCollisionEnter, OnClick, ...). "" = none.
-template <class Functions>
-std::string ResolveEventHandler(const Functions& functions, const std::string& function) {
+const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() {
     static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
+        // Inventory events (C#-style handler names work too).
+        {"on_item_added",       {"OnItemAdded"}},
+        {"on_item_removed",     {"OnItemRemoved"}},
+        {"on_inventory_full",   {"OnInventoryFull"}},
+        {"on_item_used",        {"OnItemUsed"}},
+        {"on_item_dropped",     {"OnItemDropped"}},
+        {"on_item_picked_up",   {"OnItemPickedUp"}},
+        {"on_equip",            {"OnEquip"}},
+        {"on_unequip",          {"OnUnequip"}},
+        {"on_craft",            {"OnCraft"}},
+        {"on_craft_failed",     {"OnCraftFailed"}},
+        {"on_chest_opened",     {"OnChestOpened"}},
+        {"on_chest_closed",     {"OnChestClosed"}},
         // Physics — distinct enter/stay/exit. The legacy on_trigger/on_collision
         // are accepted as enter handlers so older scripts keep working.
         {"on_trigger_enter",   {"OnTriggerEnter", "OnTriggerEnter2D", "on_trigger"}},
@@ -8033,7 +11006,10 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_mouse_down",  {"OnMouseDown"}},
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
+        {"on_modal_close", {"OnModalClose"}},   // grok/ui-toast
         {"on_change",    {"OnValueChanged"}},
+        {"on_submit",    {"OnSubmit"}},
+        {"on_tab_close", {"OnTabClose"}},
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},
         {"on_receive",   {"OnReceive"}},
@@ -8052,7 +11028,24 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_cheat_detected", {"OnCheatDetected"}},
         {"on_validate_rpc",   {"OnValidateRpc"}},
         {"on_validate_hit",   {"OnValidateHit"}},
+        // Cutscenes (SequencePlayer).
+        {"on_sequence_event",    {"OnSequenceEvent"}},
+        {"on_sequence_started",  {"OnSequenceStarted"}},
+        {"on_sequence_finished", {"OnSequenceFinished"}},
+        // Localization (the player picked another language).
+        {"on_language_changed",  {"OnLanguageChanged"}},
+        // Splines (SplineFollower: "end" or "start").
+        {"on_spline_end",        {"OnSplineEnd"}},
     };
+    return kAliases;
+}
+
+// The handler a script defines for an engine event name: the requested name
+// wins; otherwise an alias, so scripts can name handlers in PascalCase
+// (OnCollisionEnter, OnClick, ...). "" = none.
+template <class Functions>
+std::string ResolveEventHandler(const Functions& functions, const std::string& function) {
+    const auto& kAliases = EventAliases();
     if (functions.count(function)) return function;
     auto it = kAliases.find(function);
     if (it != kAliases.end())
@@ -8060,38 +11053,113 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
             if (functions.count(alt)) return alt;
     return {};
 }
+
+// "OnClick" and "on_click" are the same event. A name that isn't in the table
+// (OnHurt, OnEvent_Hit) stays as written.
+std::string CanonEvent(const std::string& name) {
+    const auto& kAliases = EventAliases();
+    if (kAliases.count(name)) return name;
+    for (const auto& kv : kAliases)
+        for (const auto& alt : kv.second)
+            if (alt == name) return kv.first;
+    return name;
+}
+
+bool SameListener(const Value& a, const Value& b) {
+    auto ma = a.AsMap(), mb = b.AsMap();
+    if (!ma || !mb) return false;
+    if (ma->count("__lambda") && mb->count("__lambda"))
+        return (*ma)["__lambda"].AsFloat() == (*mb)["__lambda"].AsFloat();
+    if (ma->count("__fn") && mb->count("__fn"))
+        return (*ma)["__fn"].AsString() == (*mb)["__fn"].AsString();
+    return false;
+}
 } // namespace
+
+void Runtime::AddSub(const std::string& event, const Value& fn) {
+    subs.push_back(Sub{event, fn});
+}
+
+void Runtime::RemoveSub(const std::string& event, const Value& fn) {
+    const std::string canon = CanonEvent(event);
+    for (auto it = subs.begin(); it != subs.end(); ++it) {
+        if (CanonEvent(it->name) == canon && SameListener(it->fn, fn)) {
+            subs.erase(it);
+            return;
+        }
+    }
+}
+
+bool Runtime::HasSub(const std::string& event) const {
+    const std::string canon = CanonEvent(event);
+    for (const auto& s : subs)
+        if (CanonEvent(s.name) == canon) return true;
+    return false;
+}
+
+void Runtime::FireSubs(const std::string& event, std::vector<Value>& args) {
+    const std::string canon = CanonEvent(event);
+    const std::vector<Sub> snap = subs;
+    for (const Sub& s : snap) {
+        if (CanonEvent(s.name) != canon) continue;
+        auto m = s.fn.AsMap();
+        if (!m) continue;
+        if (m->count("__fn")) {
+            const std::string fn = (*m)["__fn"].AsString();
+            if (functions.count(fn)) Call(fn, args);
+            continue;
+        }
+        if (IsLambda(s.fn)) CallLambda(s.fn, args);
+    }
+}
 
 void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
     CallEventArgs(function, std::vector<vs::VsValue>{arg});
 }
 
 bool OkayScriptVM::HasEvent(const std::string& function) const {
-    return m_impl->loaded && !ResolveEventHandler(m_impl->rt.functions, function).empty();
+    return m_impl->loaded &&
+           (!ResolveEventHandler(m_impl->rt.functions, function).empty() || m_impl->rt.HasSub(function));
 }
 
 vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
                                         std::string* error) {
     if (!m_impl->loaded) return {};
+    std::vector<Value> all(given.begin(), given.end());
     const std::string fn = ResolveEventHandler(m_impl->rt.functions, function);
-    if (fn.empty()) return {};
-    // Up to as many arguments as the handler declares (OnTriggerEnter(Collider
-    // other) takes one; a handler with none gets none). Call gives any it
-    // declares beyond those its usual default for the parameter's type.
-    const std::size_t want = std::min(m_impl->rt.functions[fn].params.size(), given.size());
-    std::vector<Value> args(given.begin(), given.begin() + static_cast<std::ptrdiff_t>(want));
-    try { return m_impl->rt.Call(fn, args); }
-    catch (const std::exception& e) {
-        if (error) *error = e.what();
-        else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
+    vs::VsValue ret;
+    if (!fn.empty()) {
+        // Up to as many arguments as the handler declares (OnTriggerEnter(Collider
+        // other) takes one; a handler with none gets none). Call gives any it
+        // declares beyond those its usual default for the parameter's type.
+        const std::size_t want = std::min(m_impl->rt.functions[fn].params.size(), all.size());
+        std::vector<Value> args(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(want));
+        try { ret = m_impl->rt.Call(fn, args); }
+        catch (const std::exception& e) {
+            if (error) *error = e.what();
+            else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
+        }
     }
-    return {};
+    // Listeners added with += run as well, including when no function is defined.
+    try { m_impl->rt.FireSubs(function, all); }
+    catch (const std::exception& e) {
+        if (error && error->empty()) *error = e.what();
+        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", e.what());
+    }
+    return ret;
 }
 
 vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
     auto& g = m_impl->rt.Global().vars;
     auto it = g.find(name);
     return it != g.end() ? it->second : vs::VsValue{};
+}
+
+std::vector<std::string> OkayScriptVM::GlobalNames() const {
+    std::vector<std::string> out;
+    for (const auto& kv : m_impl->rt.Global().vars) out.push_back(kv.first);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {

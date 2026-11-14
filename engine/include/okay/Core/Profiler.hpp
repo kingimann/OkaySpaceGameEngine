@@ -1,9 +1,15 @@
 #pragma once
+#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
+#include <algorithm>
+#include <fstream>
+#include "okay/Core/Utf8.hpp"
 
 namespace okay {
 
@@ -16,6 +22,11 @@ namespace okay {
 ///
 /// Usage:  { OKAY_PROFILE("Physics"); ...work... }   // RAII begin/end (nestable)
 /// Frame:  Prof().BeginFrame();  ...  Prof().EndFrame(frameMs);
+///
+/// Threads: the profiler records the thread that calls BeginFrame (the main thread). A scope
+/// opened on any other thread (a job, a loader) is ignored, so OKAY_PROFILE in code that
+/// also runs on workers can never corrupt the frame being built. Read the results (FrameAt,
+/// ExportChromeTrace ...) from the same thread, between frames.
 class Profiler {
 public:
     static constexpr int kHistory = 240;   // frames kept (~4s at 60fps)
@@ -26,10 +37,12 @@ public:
         double inclusive = 0.0;  // ms including children
         int    calls = 0;
         int    depth = 0;        // nesting depth (for the call tree indent)
+        double startMs = 0.0;    // first call's start, ms after the frame began (for traces)
     };
     struct Frame {
         std::vector<Bucket> buckets;
         double total = 0.0, cpu = 0.0, gpu = 0.0;
+        double startMs = 0.0;    // frame start, ms since the profiler's first frame
         int objects = 0, triangles = 0, particles = 0;
     };
     struct Stat { double mn = 0, avg = 0, mx = 0; int frames = 0; };  // per-section over the window
@@ -43,20 +56,23 @@ public:
     void Stat3(int objects, int tris, int parts) { drawObjects = objects; drawTriangles = tris; particles = parts; }
 
     double gpuMs = 0.0;          // most recent synchronous render/read-back time (GPU proxy)
-    void Gpu(double ms) { gpuMs = ms; }
+    void Gpu(double ms) { gpuMs = std::isfinite(ms) && ms > 0.0 ? ms : 0.0; }
 
     int    histPos = 0;          // next write slot in the ring
     double lastFrameMs = 0.0, cpuMs = 0.0;
 
     // ---- frame ring access -------------------------------------------------
     int Count() const { return m_count < kHistory ? m_count : kHistory; }
+    // (The accessors below take a timeline index; one outside 0..Count()-1 gives an empty frame / 0.)
     /// Map a 0..Count()-1 timeline index (oldest..newest) to a ring slot.
     int RingSlot(int timelineIdx) const {
         int n = Count();
         int start = (histPos - n + kHistory * 2) % kHistory;
         return (start + timelineIdx) % kHistory;
     }
-    const Frame& FrameAt(int timelineIdx) const { return m_ring[RingSlot(timelineIdx)]; }
+    const Frame& FrameAt(int timelineIdx) const {
+        return timelineIdx < 0 || timelineIdx >= Count() ? m_empty : m_ring[RingSlot(timelineIdx)];
+    }
     /// The frame the window should display: the scrubbed one, else the newest.
     const Frame& Displayed() const {
         int n = Count();
@@ -66,9 +82,9 @@ public:
     }
 
     // history series for plotting (oldest -> newest), filled by the caller's loop
-    double SeriesTotal(int i) const { return m_ring[RingSlot(i)].total; }
-    double SeriesGpu(int i)   const { return m_ring[RingSlot(i)].gpu; }
-    double SeriesCpu(int i)   const { return m_ring[RingSlot(i)].cpu; }
+    double SeriesTotal(int i) const { return FrameAt(i).total; }
+    double SeriesGpu(int i)   const { return FrameAt(i).gpu; }
+    double SeriesCpu(int i)   const { return FrameAt(i).cpu; }
 
     /// Sum of self time over a category prefix (e.g. "Scripts") for a frame — used
     /// for the stacked CPU graph. "" matches everything not otherwise categorised.
@@ -96,26 +112,33 @@ public:
     // ---- collection --------------------------------------------------------
     void BeginFrame() {
         if (!enabled) return;
+        m_owner.store(ThreadTag(), std::memory_order_relaxed);   // from now on only this thread is profiled
         m_build.clear();
         m_stack.clear();
+        m_frameStart = Now();
+        if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
     }
     void Begin(const char* name) {
-        if (!enabled) return;
+        if (!enabled || !OnOwnerThread()) return;
+        if (!name) name = "(null)";
         Open o; o.name = name; o.start = Now(); o.childMs = 0.0; o.depth = (int)m_stack.size();
         m_stack.push_back(o);
     }
     void End() {
-        if (!enabled || m_stack.empty()) return;
+        if (!enabled || !OnOwnerThread() || m_stack.empty()) return;
         Open o = m_stack.back(); m_stack.pop_back();
         double inclusive = Ms(Now() - o.start);
         double self = inclusive - o.childMs; if (self < 0.0) self = 0.0;
         if (!m_stack.empty()) m_stack.back().childMs += inclusive;
         Bucket* b = Find(o.name, o.depth);
-        if (!b) { m_build.push_back({o.name, 0, 0, 0, o.depth}); b = &m_build.back(); }
+        double startMs = o.start > m_frameStart ? Ms(o.start - m_frameStart) : 0.0;
+        if (!b) { m_build.push_back({o.name, 0, 0, 0, o.depth, startMs}); b = &m_build.back(); }
+        else if (startMs < b->startMs) b->startMs = startMs;
         b->self += self; b->inclusive += inclusive; b->calls++;
     }
     void EndFrame(double frameMs) {
-        if (!enabled) return;
+        if (!enabled || !OnOwnerThread()) return;
+        if (!std::isfinite(frameMs) || frameMs < 0.0) frameMs = 0.0;   // one bad number must not poison the averages
         lastFrameMs = frameMs;
         double cpu = 0.0;
         for (const auto& b : m_build) if (b.depth == 0) cpu += b.inclusive;
@@ -124,6 +147,7 @@ public:
         Frame& f = m_ring[histPos];
         f.buckets = m_build;
         f.total = frameMs; f.cpu = cpu; f.gpu = gpuMs;
+        f.startMs = m_haveEpoch ? Ms(m_frameStart - m_epoch) : 0.0;
         f.objects = drawObjects; f.triangles = drawTriangles; f.particles = particles;
         histPos = (histPos + 1) % kHistory;
         if (m_count < kHistory * 2) ++m_count;
@@ -136,13 +160,146 @@ public:
         outAvg = n > 0 ? sum / n : 0.0; outPeak = peak;
     }
 
+    // ---- export / text reports (allocate only when called) -----------------
+    /// (File versions are named ...ToFile so a std::string path can never pick the string-out overload.)
+    /// Chrome trace JSON ("traceEvents", ph "X", ts/dur in microseconds) for the
+    /// timeline frames firstFrame..lastFrame inclusive (0 = oldest; clamped).
+    /// Open the result in chrome://tracing or Perfetto. A bucket merges repeated
+    /// calls of one section, so it is one event spanning its summed time (calls in args).
+    /// Returns the number of events written.
+    int ExportChromeTrace(std::string& out, int firstFrame, int lastFrame) const {
+        out = "{\"displayTimeUnit\":\"ms\",\"traceEvents\":[";
+        int events = 0, n = Count();
+        if (firstFrame < 0) firstFrame = 0;
+        if (lastFrame > n - 1) lastFrame = n - 1;
+        for (int fi = firstFrame; fi <= lastFrame; ++fi) {
+            const Frame& f = FrameAt(fi);
+            for (const auto& b : f.buckets) {
+                if (events++) out += ',';
+                out += "{\"name\":\""; AppendJsonEscaped(out, b.name);
+                out += "\",\"cat\":\"okay\",\"ph\":\"X\",\"ts\":"; AppendNum(out, (f.startMs + b.startMs) * 1000.0);
+                out += ",\"dur\":"; AppendNum(out, b.inclusive * 1000.0);
+                out += ",\"pid\":1,\"tid\":1,\"args\":{\"frame\":" + std::to_string(fi)
+                     + ",\"calls\":" + std::to_string(b.calls)
+                     + ",\"depth\":" + std::to_string(b.depth) + ",\"self_ms\":";
+                AppendNum(out, b.self);
+                out += "}}";
+            }
+        }
+        out += "]}";
+        return events;
+    }
+    bool ExportChromeTraceToFile(const std::string& path, int firstFrame, int lastFrame) const {
+        std::string s; ExportChromeTrace(s, firstFrame, lastFrame);
+        return WriteText(path, s);
+    }
+    /// CSV: frame,section,ms,calls,depth,self_ms (ms = inclusive). One row per
+    /// bucket for frames firstFrame..lastFrame (default: the whole ring).
+    int ExportCsv(std::string& out, int firstFrame = 0, int lastFrame = kHistory) const {
+        out = "frame,section,ms,calls,depth,self_ms\n";
+        int rows = 0, n = Count();
+        if (firstFrame < 0) firstFrame = 0;
+        if (lastFrame > n - 1) lastFrame = n - 1;
+        for (int fi = firstFrame; fi <= lastFrame; ++fi)
+            for (const auto& b : FrameAt(fi).buckets) {
+                out += std::to_string(fi) + ',';
+                bool q = b.name.find_first_of(",\"\n\r") != std::string::npos;
+                if (q) {
+                    out += '"';
+                    for (char c : b.name) { if (c == '"') out += '"'; out += c; }
+                    out += '"';
+                } else out += b.name;
+                out += ','; AppendNum(out, b.inclusive);
+                out += ',' + std::to_string(b.calls) + ',' + std::to_string(b.depth) + ',';
+                AppendNum(out, b.self); out += '\n';
+                ++rows;
+            }
+        return rows;
+    }
+    bool ExportCsvToFile(const std::string& path, int firstFrame = 0, int lastFrame = kHistory) const {
+        std::string s; ExportCsv(s, firstFrame, lastFrame);
+        return WriteText(path, s);
+    }
+    /// One frame (timeline index, 0 = oldest) as an indented tree, parents first.
+    std::string DumpFrame(int idx) const {
+        if (idx < 0 || idx >= Count()) return "(no such frame)\n";
+        const Frame& f = FrameAt(idx);
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "Frame %d: total %.3f ms, cpu %.3f ms, gpu %.3f ms\n", idx, f.total, f.cpu, f.gpu);
+        std::string out = buf;
+        std::vector<const Bucket*> order;
+        for (const auto& b : f.buckets) order.push_back(&b);
+        std::stable_sort(order.begin(), order.end(), [](const Bucket* a, const Bucket* b) {
+            return a->startMs != b->startMs ? a->startMs < b->startMs : a->depth < b->depth; });
+        for (const Bucket* b : order) {
+            out.append((std::size_t)b->depth * 2 + 2, ' ');
+            std::snprintf(buf, sizeof(buf), "  %.3f ms (self %.3f) x%d\n", b->inclusive, b->self, b->calls);
+            out += b->name; out += buf;
+        }
+        return out;
+    }
+    /// Per-section self-ms min/avg/max over the whole ring, as a text table.
+    std::string Summary() const {
+        std::vector<std::string> names;
+        for (int i = 0, n = Count(); i < n; ++i)
+            for (const auto& b : FrameAt(i).buckets)
+                if (std::find(names.begin(), names.end(), b.name) == names.end()) names.push_back(b.name);
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "Profiler summary over %d frame(s)\n", Count());
+        std::string out = buf;
+        for (const auto& nm : names) {
+            Stat s = SectionStat(nm);
+            std::snprintf(buf, sizeof(buf), "  min %8.3f  avg %8.3f  max %8.3f ms  (%d frames)  ", s.mn, s.avg, s.mx, s.frames);
+            out += buf; out += nm; out += '\n';
+        }
+        return out;
+    }
+
 private:
+    static void AppendNum(std::string& out, double v) {
+        char b[48]; std::snprintf(b, sizeof(b), "%.3f", v); out += b;
+    }
+    // A JSON string body: quotes, backslashes and control characters escaped. Text that is not valid UTF-8 (a name
+    // from a Latin-1 file) is repaired first (bad bytes become U+FFFD, see utf8::Sanitize), so the output is always
+    // valid JSON that a trace viewer will open.
+    static void AppendJsonEscaped(std::string& out, const std::string& raw) {
+        const std::string s = utf8::Sanitize(raw);
+        for (unsigned char c : s) {
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (c < 0x20) { char b[8]; std::snprintf(b, sizeof(b), "\\u%04x", c); out += b; }
+                    else out += (char)c;
+            }
+        }
+    }
+    static bool WriteText(const std::string& path, const std::string& s) {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write(s.data(), (std::streamsize)s.size());
+        return (bool)f;
+    }
+
+    static const void* ThreadTag() { static thread_local char tag; return &tag; }
+    // True on the thread that started the current frame (or before any frame was started).
+    bool OnOwnerThread() const {
+        const void* o = m_owner.load(std::memory_order_relaxed);
+        return o == nullptr || o == ThreadTag();
+    }
+    std::atomic<const void*> m_owner{nullptr};
+
     struct Open { const char* name; std::chrono::steady_clock::time_point start; double childMs; int depth; };
     std::vector<Open>   m_stack;
     std::vector<Bucket> m_build;
     Frame   m_ring[kHistory];
     Frame   m_empty;
     int     m_count = 0;
+    std::chrono::steady_clock::time_point m_frameStart{}, m_epoch{};
+    bool    m_haveEpoch = false;
 
     static std::chrono::steady_clock::time_point Now() { return std::chrono::steady_clock::now(); }
     static double Ms(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }

@@ -4,12 +4,51 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 18:20 UTC_
+_Last updated: 2026-11-13 17:55 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.869.0 | Server-side anti-cheat detection engine, off by default (#803); model reader fixes: concave OBJ/PLY polygons, PLY header, glTF primitive modes and bad indices, empty glTF reported as a failure, Windows non-ASCII paths, locale-independent numbers, FBX 3ds Max PBR materials (#804); OkayUI window stacking, colour widgets, tables with row clipping, plots and render backends, off by default (#806); launcher: dead setting and stale offline highlights removed (#809); README and docs index rewritten (#808) |
+| 2.868.0 | Anti-cheat backend (#801): session-ticket join gate (a banned answer is final; `okay_tickets.cfg` mode off/optional/required), signed update feed (Ed25519, trusted keys baked in at build, unsigned still accepted until a key is set), PBKDF2 600k-round accounts, hardened example account server, SQL audit log, report/appeal rate limits and ban-evasion tables, three new non-required CI jobs; release publishing key re-added |
+| 2.867.0 | Windows programs and installer are signed when a certificate is configured (#798); a release becomes "latest" only after its checksums are published, fixing the "no checksum" update error (#796); own crypto tests: Wycheproof vectors, differential tests, faster Ed25519 verify (#799, own crypto stays OFF and NOT READY); own 3DS and BVH readers and real-file checks of the own FBX and COLLADA readers (#795, all OFF); feature-map conflict markers removed (#797) |
+| 2.866.0 | Joint3D hinge limits (#763); convex mesh colliders for moving bodies and landing callbacks (#766); 2D box and capsule casts and 2D explosion force (#771); behaviour-tree sub-trees and breakpoints (#775); every duplicate component saved (#774); sequence letterbox, camera shake, screen fade and nested sequences (#776); spatial audio reverb zones, doppler, occlusion and distance muffling (#778); Settings screen monitor, display mode, resolution and refresh (#777); subtitles, hold-to-toggle and aim assist (#767); themed and high-visibility focus ring (#781); on-screen touch controls and gestures (#779); UI frame rotation and scale (#780); game clipboard (#770); items, loot and recipes editor (#782); Localization window tools (#765); renderer feature notes (#772); visual-script Timer and Actions export (#773); duplicate PLY vertex block refused (#768) |
+| 2.865.0 | Visual-script export: Wait and Delay emit after(seconds, fn) (#764). Confirmed bug fixes now on main (#756): file dialogs cancelled on scene rebuild and shortcuts blocked while one is open; prefab variant undo reads the file back; prefab override counts keyed by instance id; negative numbers no longer drop the following save fields; build-profile names cannot forge keys; object-header guids used in scene diff; launcher Content-Length parsing, 2 GiB download cap, link previews skip non-public hosts, bounded Tenor dims, voice-clip WAV ownership; script repeat and pad caps; MTL paths cannot climb out of the model directory; FBX axis selectors clamped; ufbx shifts masked; OkayUI child, popup and id stacks stay balanced |
+| 2.864.0 | Batch of hostile-input, hang and data-race fixes (FBX/GLB/PLY readers, physics sweeps, NavMesh, voice chat); navigation obstacle carving; build pipeline (Data folder layout, build report); visual-script declared variables, lists and maps, clearer pin and node tips; multiplayer dead-host detection and relay re-hello hardening; relay protocol v4 (upgrade the live relay with this release, or set allowUnverifiedRelay); CI runs the Ubuntu builds in parallel |
+| 2.863.0 | Updater hardening (checksums required, all-or-nothing swap, verified restart with rollback, no retry loop); ordered-queue overflow fix; hostile-input fixes; editor unsaved-check throttle; proprietary license |
+| 2.862.0 | Visual script: right-click a node > Connect to... lists what fits each pin; Print takes Text + Value; one flow output can have many wires |
+| 2.861.2 | Visual script Add Node menu: only the visible rows are drawn and the results are cached, so the menu stays fast while open |
+| 2.861.1 | Visual script Add Node menu: opening it and searching no longer lower the frame rate |
+| 2.861.0 | Prefab override UI and prefab mode (#666, #676); foliage, terrain layers, decals, cables, ortho views, measuring (#677); volumes and zones (#675); I/O links (#672); navigation areas (#661); mesh collider (#663); Project panel on the asset database (#673); undo (#662); editor UX pass (#682); accessibility (#657); save without code (#664); launcher data export, account delete and reports (#651, #652); own TrueType rasteriser (#655); own replacements for third-party code under construction, off and not for use (#656, #654, #681, #659, #678, #679) |
+| 2.860.0 | Stereo audio and streaming from files (#665); our own Ogg Vorbis, MP3, image, PNG-writer, font and file-dialog code (#644, #642, #649, #639, #641, #640); Lua and Mono script backends removed (#643); launcher kick, ban and admin role (#668), server-side blocks and enforced privacy (#667), password-reset page (#647), honest typing and read-receipt note (#646), updater that verifies every file (#650); own FBX reader, off by default (#658) |
+| 2.859.0 | Visual Script: topic palette, named-pin dropdowns, refused wires, object slots, Save-then-Play (#628), 241 gameplay nodes with every node proven (#629); runtime UI themes, widgets and UI Gallery (#622); Project panel create, rename, move, delete with undo, favourites and safe import (#619, #627); Inspector and Hierarchy overhaul (#621, #626); import settings for model normals and animations (#634); launcher Create tab wizard (#624); real Development build log and head-bob sway (#635); unfinished features hidden (#632) |
+| 2.858.0 | Visual Script: searchable add-node panel with docs for every node, graph tabs, and prompts so New, Open, Play and quit do not discard unsaved graphs (#597); editor and player render the camera stack, LOD and occlusion, and keep glTF metallic-roughness and emissive maps (#599) |
+| 2.857.0 | Property registry accepts every key binding, and Spawner pooling plus the Loading Screen are registered (1405 properties on 86 types) (#615); launcher Versions page with Latest and LTS, kept previous editors, and Open with a version (#617) |
+| 2.856.0 | Project upgrade: every project records its editor version and opening an older one asks Upgrade, Keep or Cancel, with a verified backup, safe rollback and File > Project Upgrade... restore (#614); editor wiring: Game view Stats and Timers, slow motion and Run N frames, Tween Animation speed/decay/tag, tween nodes, Time help, path search, tags and layers (#606); scene lifecycle, serializer and pooling: key-binding records fixed, chained and overlapping loads safe, unknown records kept, more per-instance saving, pool support and a background Loading Screen (#613); runtime utilities: ECS, logging, data assets, validators, cvar flags and console fixes (#608); property registry on 85 types with undo reporting (#609); crash-safe saves and prefs, display settings, localization fixes (#611); release channels tooling for an LTS line and versions.json (#612); animation and IK integration: camera orbit above ground, Play keyboard and mouse release fixes, spawn clearance, locomotion settings kept (#554) |
+| 2.855.0 | Projects and saving: per-project settings and build files, all-or-nothing create and save, unsaved-changes prompts everywhere, New Project dialog, save status in the status bar, no saving or shipping a running game, every collider and audio source saved (#607); loop and time fifth pass: script access to the clock, thread-safe Random, saved ramps, replay of pauses and random state, TimeBudget (#603); timers and tweens fifth pass: nested updates, pause-menu rule, sequence cleanup, Tween Animation speed/decay/tag, ease_curve, seven visual-script tween nodes (#604); scene graph fifth pass: component order for every object, fast long child lists, pool reset, clone-safe joints, FindAllByPath, look-at helpers (#605) |
+| 2.854.0 | Updater restarts the app after install, keeping arguments and paths with spaces (#584); loop and time fourth pass: TogglePause under a menu pause, session clocks, run N frames and slow-motion presets, shared overlay text, random sampling and saved bags, 13 fixes (#594); timers and tweens: O(1) scheduler, double-precision tween timeline, typed and tagged tweens, timer debug view, 10 script builtins (#595); scene graph: cached active state, linear destroy, deferred Clear, saved component order, zero-scale inverse (#596); docs index and properties page (#593); Windows build retries SDL2 and libsodium downloads (#592) |
+| 2.853.0 | Editor on the new core: Play on the shared game loop, project tag and layer lists with rename, Duplicate keeps the parent, tween clock and ease-curve fields (#590); feature map for the core 1.1 to 1.3 wave (#589) |
+| 2.852.0 | Loop and time third pass: player on the shared game loop, Countdown and Cooldown, time snapshot, frame stats CSV and console (#585); timers and tweens: owner-safe timers, clock channels, springs, ease curves, tween any property (#587); scene graph: deep hierarchies, Transform and spawn API, project tag and layer lists, collision presets (#586) |
+| 2.851.0 | Roomier editor layout across the shell, Visual Script editor and Script Editor (#577); frame stepping, frame recorder and player, capture mode, frame stats, server tick pacer (#581); scene text tools learn the gravity3 record (#582); feature map v2 (#576) |
+| 2.850.0 | Shared game loop with hitch handling, clocks, hit stop, pause and quit reasons, random helpers (#579); nested prefabs and variants, property registry, scene diff and merge, job system and arenas (#578); scene hierarchy, search and validation, exact float round trip (#575); profiling data, optimization tools, localization tools, accessibility (#574) |
+| 2.849.0 | Scenes load all-or-nothing and in the background, with pooling, GUIDs, prefab overrides, layer matrix and camera stack (#553, #570, #558); durable saves (#552); asset manager and asset database (#568); core wave 4: math, CLI, localization, ECS, input (#571); undo/recovery, test framework, save framework (#572); log, profiler, timers and tweens (#559, #560); core bug audit (#557, #565) |
+| 2.848.0 | Speed fit for every player controller (#561); strafe blend (#537); IK follows state weight (#535); more script builtins, navmesh calls and music, camera, particle and inventory visual-script nodes (#556, #562, #563, #566); build-cost and refund fixes (#564) |
+| 2.847.0 | Imported characters with their own Walk and Run clips walk on W and run on Shift (#541); a new script starts as an empty Start and Update (#543); Windows exes carry their own name, description and version (#545); docs index, a README checked against the code and the feature map (#544, #546) |
+| 2.846.0 | Built-in walk: no more hip snap at every footfall, which was the leg jitter and head bob (#540) |
+| 2.845.0 | VRoid, Character Creator and Daz characters animate; a Mixamo character with its own clips no longer stays low after a crouch; rig sweep test (#528) |
+| 2.844.0 | Animator graph keeps the built-in idle, run, jump and stride matching for walk-only models (#531); blocky character jump crouch, turn steps and lean (#532); Make Playable Character right-click, the Set Character Model crash fix, and the ik_look_at, crouch and stand script calls (#533); walk-only jump test |
+| 2.843.0 | In-game UI fixes: one press does one thing, clickable stretch widgets, a working Settings screen, menus and HUD that fit 16:9, 4:3 and 9:16, Quality High keeps the sky (#529) |
+| 2.842.0 | One Player Controller for first and third person (#523); stride-matched Mixamo locomotion, per-slot built-in fallback and the Character Model panel (#524); riders turn with rotating platforms (#526) |
+| 2.841.0 | Navigation meshes (#514); cutscenes (#515); dialogue and quests (#516); behavior trees (#517, #519); post-processing, sky, fog and weather (#518); localization (#520); map a rig's body bones by hand (#522, IK plan item 8) |
+| 2.840.0 | First-person hands, view switch and the third-person head fix (#505); save games (#498); built-in action clips (#506); ragdolls (#501); IK batches 1–2: Look-At shares, clamp, eyes and range, Limb and Full Body stretch, foot toe/heel rays, keep-phase transitions (#507, #508); Animation window key lane (#509); older starter projects get both view controllers on load (#510); Animation tab clip editor: dope sheet, curves, record, onion skin, clip list (#511); Animator window: canvas, parameters, blend trees, inspectors, layers (#512) |
+| 2.839.0 | Smoother built-in walk: fast walks ease into a jog, baked cycles on a curve (#500); an Animator graph for imported characters' own clips (#499, IK plan item 7); net_interp fix: no near-second lag after an object stands still (#502) |
+| 2.838.0 | Audio: stereo mixer, OGG/MP3, music player, saved volume settings, Audio Mixer (#492); input actions, rebinding and full gamepad (#494); action framework (#435); bone mapper (#493); grounded stops (#480); IK guide (#424); inventory tooltips and host-owned bags (#426, #481) |
+| 2.837.0 | IK plan PR 7: one solve order, goals that swing (#417); bind-pose recovery and held props on model swap (#416); Script Editor undo for Format/Rename/Replace All/Reload (#445); Plugins menu with several plugins (#479) |
+| 2.836.0 | Networking catch-up, rewind, snapshots and interest (#401, #403, #407, #408, #423, #427, #428); animation missing-clip and jump hold, gait crossfade (#404, #410, #419, #459); FullBodyIK restore (#414); sandbox swim, throw, and fill without zoom (#439, #443, #448); OkayScript classes, events, nullish, named args, play buffer, arrow axes (#454, #455, #456, #458, #460, #462, #465, #474); visual-script drag, pin filter, node docs (#463, #473, #475); UI themes, options, toasts, controls, HUD and color (#452, #457, #466, #470, #472, #476); Brick Breaker (#477) |
+| 2.835.0 | IK plan PRs 2d–5: own crouch/prone clips (#385), joint limits (#396), ChainIK (#398), FootIK turns bones (#412) and filtered ground probes (#413); Look At/Aim at any frame rate (#418, #433); sandbox hands (#430); Animator preview (#429); first/third-person toggle (#434); apex and step fixes (#409, #411, #436); voxel and heightmap digging (#440, #437), sandbox lake (#438); inventory 6b–7a (#367, #378, #383, #387); Scene Manager (#415); Script Editor outline (#442); NetworkObject/SyncVar/RPCs (#431), net simulator (#432), authoritative pawn and server flag (#400, #405, #406) |
+| 2.834.0 | Directional crawl, get-up/drop (#371) and crouch/prone on every controller (#375); Limb IK turns bones with a steady pole (#388, IK PR 1 #395); holding body adjustment (#389) and the prone-holding fix (#397); inventory pickups/drops, encumbrance, loot (#359); UI P1a/P1c frames, modals, gamepad + touch (#381, #386, #391); typed OkayScript lambdas + LINQ (#379); relay voice on v3 hubs (#393); anti-cheat: bans at ticket issue (#350), bound tickets (#360), SQL hardening (#392), join gating (#365), reconnect strikes (#363), limits (#368), safe defaults (#384), lag-comp cap (#376), pings/rate/press limits (#390), trusted keys (#394) |
+| 2.833.0 | Smooth stance changes (#364, IK PR 2a); fixes: walking in place at a wall (#366), one-shot replay in a fade (#380), Euler flip near straight up/down (#370); object holding PRs 1–2 (#362, #377); item definitions (#358); cached, batched UI (#361) and UI P1b layout (#374); typed OkayScript `??`/`?.`, classes, collections (#354, #369); hardening PRs 4 and 11 (#355, #372); release tags on the built commit (#373); CI cancels superseded PR runs (#382) |
 | 2.832.0 | Visible Animator on the built-in players (#346) and its inspector (#348), IK plan PR 1 done; one shared inventory interaction layer (#349); anti-cheat hardening PRs 1–3 and 7: safe spawns (#351), pinning (#352), hit claims (#353), relay cookies (#357); CI toolchain cache (#356) |
 | 2.831.0 | Online camera corrections (#344, camera plan done); nearest chest/bench, slot count, scene wiring (#343); Animator backend (#340) |
 | 2.830.0 | Step-up only on real steps (#338); grid inventory fixes (#339); even frame timing (#341); controllers before animation (#342) |
@@ -35,13 +74,13 @@ _Last updated: 2026-10-26 18:20 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PR 4 (#355) in CI; PR 6 (#360) waits on Iman's OK for its Edge-function part; PR 8 next |
-| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 2: smooth stance changes |
-| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; PR 5 (#350) waits on Iman's OK |
-| Robustness | Inventory, PRs 1–9 | PR 5 item definitions (#358), PR 6a world pickups (#359) |
-| UI | In-game UI plan and component library | P0.3: cached UI pass and batched atlas rendering (#361) |
-| Scripting | Script language to C# level | P1.4: `??`/`?.`, plain classes with `new` (#354) |
-| Holding | Procedural object holding | PR 1: hold objects with IK hands (#362) |
+| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
+| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
+| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |
+| Robustness | Inventory, PRs 1–9 | PR 6a–6c (#359, #367, #378): pickups and drops, bag between scenes, equipment |
+| UI | In-game UI plan and component library | P1a UIFrame (#381), then P1c: modals, context menu, keybind field, 2-D navigation, touch |
+| Scripting | Script language to C# level | P1.6 lambdas (#379), then events and inheritance |
+| Holding | Procedural object holding | PR 3: body adjustment, then PR 4: multiplayer |
 
 ### Camera and animation smoothing (QA)
 1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
@@ -53,12 +92,12 @@ _Last updated: 2026-10-26 18:20 UTC_
 
 ### IK, animation and rigging (Humanoid)
 1. [x] Animator component on the built-in players; procedural animation baked into clips: 1a backend (#340), 1b default graph and baked clips (#346), 1c inspector (#348).
-2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction.
-3. [ ] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK.
-4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips.
-5. [ ] One shared humanoid bone mapper that rejects non-humanoids.
+2. [x] Smooth stance changes: stand, crouch and prone, moving in any direction. 2a core (#364); 2b animation (#371); 2c every controller (#375); 2d imported humanoids (#385).
+3. [x] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK (#417, #507, #508).
+4. [x] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips (#409, #411, #436, #526).
+5. [x] One shared humanoid bone mapper that rejects non-humanoids (#493, #522).
 6. [ ] Rest-pose normalisation and retargeting by avatar slot.
-7. [ ] Animator graph and preview for every character; import a clip into a state.
+7. [x] Animator graph and preview for every character; import a clip into a state (#499, #531). A graph still uses the built-in fallback and stride matching for empty slots.
 8. [ ] One-click humanoid import with the default library on any rig; character script API.
 
 ### Inventory (Robustness)
@@ -66,7 +105,7 @@ _Last updated: 2026-10-26 18:20 UTC_
 2. [x] Grid fixes (#339).
 3. [x] Wiring (#343).
 4. [x] One shared interaction layer (#349).
-5. [ ] Item definitions.
+5. [x] Item definitions (#358).
 6. [ ] Gameplay features.
 7. [ ] Scripting.
 8. [ ] UI polish.
@@ -76,14 +115,14 @@ _Last updated: 2026-10-26 18:20 UTC_
 1. [x] Only safe, registered prefabs can be network-spawned (critical) (#351).
 2. [x] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked (#352).
 3. [x] Hit claims need a known weapon and are rate-limited (#353).
-4. [ ] The hit origin isn't taken from positions the client can bank.
+4. [x] The hit origin isn't taken from positions the client can bank (#355).
 5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
 6. [ ] Tickets bound to one server, one client key and one connection.
-7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, so keep legacy hellos on.
+7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, legacy hellos are now off by default (#733); `--legacy-hello=on` re-allows them.
 8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
 9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
 10. [ ] SyncVar, message and spawn limits.
-11. [ ] Unowned world objects belong to the server.
+11. [x] Unowned world objects belong to the server (#372).
 12. [ ] Lag-compensation inputs the client can't stretch.
 13. [ ] Safer defaults and a config that fails closed.
 14. [ ] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).

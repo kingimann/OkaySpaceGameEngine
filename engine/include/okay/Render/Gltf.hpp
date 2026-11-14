@@ -14,15 +14,17 @@
 // base-color / emissive factors and a metallic-roughness -> Blinn-Phong glint.
 // (ImportModelScene rebuilds the node graph with per-node transforms, splits
 // multi-material meshes into sub-objects, and imports skins + animation clips; the
-// merged LoadGLTF() path stays a single static Mesh.) Not yet: the packed
-// metallic-roughness *texture* and the emissive *texture*.
+// merged LoadGLTF() path stays a single static Mesh.) Packed metallic-roughness
+// and emissive textures are imported too (green = roughness, blue = metallic).
 // ---------------------------------------------------------------------------
 #include "okay/Render/Mesh.hpp"
+#include <algorithm>
 #include <cmath>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Vec2.hpp"
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -154,7 +156,7 @@ struct GltfDoc {
 
 inline GltfDoc LoadDoc(const std::string& path) {
     GltfDoc doc;
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) return doc;
     std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (bytes.size() < 4) return doc;
@@ -191,7 +193,7 @@ inline GltfDoc LoadDoc(const std::string& path) {
                 std::size_t bp = u.find(mark);
                 if (u.rfind("data:", 0) == 0 && bp != std::string::npos)
                     Base64Decode(u.substr(bp + mark.size()), data);
-                else { std::ifstream bf(doc.dir + u, std::ios::binary);
+                else { std::ifstream bf(std::filesystem::u8path(doc.dir + u), std::ios::binary);
                        if (bf) data.assign((std::istreambuf_iterator<char>(bf)), std::istreambuf_iterator<char>()); }
             } else data = glbBin;   // bufferless entry in a .glb -> the BIN chunk
             doc.buffers.push_back(std::move(data));
@@ -341,6 +343,8 @@ struct PrimGeom {
     std::vector<float> pos, nor, uv, idx;
     int pn = 0, nn = 0, tn = 0, in = 0;
     bool indexed = false;
+    int mode = 4;                  ///< glTF primitive mode (4 triangles, 5 strip, 6 fan; the others are left out)
+    std::vector<int> tri;          ///< the triangles, 3 vertex indices (0 .. pn-1) each, whatever the mode
 };
 inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
     const JVal* attr = prim.Find("attributes");
@@ -362,8 +366,29 @@ inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
         g.indexed = true;
         g.idx = ReadAccessor(doc, I->Int(-1), ic, g.in);
         if (ic != 1) return false;
-        for (float f : g.idx) if (!(f >= 0.0f && f < (float)g.pn)) return false;   // also rejects NaN
     }
+    if (const JVal* M = prim.Find("mode")) g.mode = M->Int(4);
+    // Points (0) and lines (1 to 3) have no surface: the primitive is left out, as a malformed one is. 7 and up do not exist.
+    if (g.mode < 4 || g.mode > 6) return false;
+    // The index sequence, then the triangles the mode makes of it. A triangle with an index past the vertices is dropped on
+    // its own (the rest of the primitive stays); a strip's degenerate triangles (repeated index) are dropped too.
+    std::vector<int> seq;
+    if (g.indexed) {
+        seq.reserve(g.idx.size());
+        for (float f : g.idx) seq.push_back((f >= 0.0f && f < (float)g.pn) ? (int)(f + 0.5f) : -1);   // -1 also for NaN
+    } else {
+        seq.resize((std::size_t)std::max(g.pn, 0));
+        for (int i = 0; i < g.pn; ++i) seq[(std::size_t)i] = i;
+    }
+    auto emit = [&](int a, int b, int c) {
+        if (a < 0 || b < 0 || c < 0 || a >= g.pn || b >= g.pn || c >= g.pn) return;
+        if (g.mode != 4 && (a == b || b == c || a == c)) return;
+        g.tri.push_back(a); g.tri.push_back(b); g.tri.push_back(c);
+    };
+    const std::size_t n = seq.size();
+    if (g.mode == 4) { for (std::size_t i = 0; i + 2 < n; i += 3) emit(seq[i], seq[i + 1], seq[i + 2]); }
+    else if (g.mode == 5) { for (std::size_t i = 0; i + 2 < n; ++i) { if (i % 2 == 0) emit(seq[i], seq[i + 1], seq[i + 2]); else emit(seq[i + 1], seq[i], seq[i + 2]); } }
+    else { for (std::size_t i = 1; i + 1 < n; ++i) emit(seq[0], seq[i], seq[i + 1]); }
     return true;
 }
 
@@ -377,15 +402,7 @@ inline bool AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
     for (int i = 0; i < g.pn; ++i) mesh.vertices.push_back(Vec3{g.pos[i*3+0], g.pos[i*3+1], g.pos[i*3+2]});
     for (int i = 0; i < g.nn; ++i) mesh.normals.push_back(Vec3{g.nor[i*3+0], g.nor[i*3+1], g.nor[i*3+2]});
     for (int i = 0; i < g.tn; ++i) mesh.uvs.push_back(Vec2{g.uv[i*2+0], g.uv[i*2+1]});
-    if (g.indexed) {
-        for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-    } else {
-        for (int i = 0; i + 2 < g.pn; i += 3) {
-            mesh.triangles.push_back(base + i);
-            mesh.triangles.push_back(base + i + 1);
-            mesh.triangles.push_back(base + i + 2);
-        }
-    }
+    for (int v : g.tri) mesh.triangles.push_back(base + v);
     return true;
 }
 
@@ -432,7 +449,7 @@ inline std::string WriteImageSidecar(const GltfDoc& doc, const std::string& mode
     if (std::size_t sl = stem.find_last_of("/\\"); sl != std::string::npos) stem = stem.substr(sl + 1);
     if (std::size_t dot = stem.find_last_of('.'); dot != std::string::npos) stem = stem.substr(0, dot);
     std::string out = doc.dir + stem + "_tex" + std::to_string(imageIdx) + ext;
-    std::ofstream of(out, std::ios::binary);
+    std::ofstream of(std::filesystem::u8path(out), std::ios::binary);
     if (!of) return {};
     of.write((const char*)data.data(), (std::streamsize)data.size());
     return of ? out : std::string{};
@@ -514,6 +531,8 @@ struct GltfMat {
     std::string baseColorTex;                // albedo image path ("" if none)
     std::string normalTex;                   // tangent-space normal map path ("" if none)
     std::string aoTex;                       // ambient-occlusion map path ("" if none)
+    std::string metallicRoughnessTex;        // packed: G roughness, B metallic
+    std::string emissiveTex;                 // emissive colour texture
     float baseColor[4] = {1, 1, 1, 1};
     float emissive[3]  = {0, 0, 0};
     float metallic  = 1.0f, roughness = 1.0f;
@@ -552,11 +571,13 @@ inline GltfMat ResolveMaterial(const GltfDoc& doc, int matI, const std::string& 
             out.hasBaseColorFactor = true;
         }
         if (int im = texImage(pbr->Find("baseColorTexture")); im >= 0) out.baseColorTex = ImageFilePath(doc, im, modelPath);
+        if (int im = texImage(pbr->Find("metallicRoughnessTexture")); im >= 0) out.metallicRoughnessTex = ImageFilePath(doc, im, modelPath);
         if (const JVal* mf = pbr->Find("metallicFactor"))  { out.metallic  = (float)mf->Number(1.0); out.hasMetalRough = true; }
         if (const JVal* rf = pbr->Find("roughnessFactor")) { out.roughness = (float)rf->Number(1.0); out.hasMetalRough = true; }
     }
     if (int im = texImage(mat.Find("normalTexture")); im >= 0) out.normalTex = ImageFilePath(doc, im, modelPath);
     if (int im = texImage(mat.Find("occlusionTexture")); im >= 0) out.aoTex = ImageFilePath(doc, im, modelPath);
+    if (int im = texImage(mat.Find("emissiveTexture")); im >= 0) out.emissiveTex = ImageFilePath(doc, im, modelPath);
     if (const JVal* ef = mat.Find("emissiveFactor"); ef && ef->type == JVal::Arr) {
         for (int i = 0; i < 3 && i < (int)ef->arr.size(); ++i) out.emissive[i] = (float)ef->arr[i].Number(0.0);
         out.hasEmissiveFactor = true;

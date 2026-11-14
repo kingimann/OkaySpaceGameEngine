@@ -88,6 +88,9 @@ private:
         }
         if (controlSky) {
             Scene* s = gameObject ? gameObject->scene() : nullptr;
+            // A Procedural sky already follows the sun (it reads the Light this
+            // cycle rotates), so the camera's background is left to the sky then.
+            if (s && s->renderSettings.skyMode == Scene::RenderSettings::SkyProcedural) return;
             if (s && s->mainCamera && s->mainCamera->gameObject) {
                 Color sky = e >= 0.0f ? Color::Lerp(skyHorizon, skyDay, day)
                                       : Color::Lerp(skyHorizon, skyNight, Mathf::Clamp01(-e / 0.25f));

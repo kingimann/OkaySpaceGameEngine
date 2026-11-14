@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <cstring>
 
 namespace okay {
 
@@ -326,6 +327,8 @@ static const int kEdgeC[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4
 void VoxelTerrain::Resize(int X, int Y, int Z) {
     nx = X < 2 ? 2 : X; ny = Y < 2 ? 2 : Y; nz = Z < 2 ? 2 : Z;
     density.assign((std::size_t)nx * ny * nz, -1.0f);   // all air
+    mcAllDirty_ = true;
+    mcNx_ = -1;
 }
 
 // Material values are kept within a bounded band (±~5 voxels) so the field reads
@@ -342,6 +345,8 @@ void VoxelTerrain::FillSlab(float frac) {
         for (int y = 0; y < ny; ++y)
             for (int x = 0; x < nx; ++x)
                 density[Index(x, y, z)] = ClampTo(topY - y * voxelSize, c);   // solid below topY
+    SealFloor();
+    mcAllDirty_ = true;
 }
 
 void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed) {
@@ -365,6 +370,8 @@ void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount
                 density[Index(x, y, z)] = ClampTo(d, Clamp());
             }
         }
+    SealFloor();
+    mcAllDirty_ = true;
 }
 
 bool VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
@@ -379,6 +386,9 @@ bool VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
     for (int z = z0; z <= z1; ++z)
         for (int y = y0; y <= y1; ++y)
             for (int x = x0; x <= x1; ++x) {
+                // The bottom rows are the floor of the volume. Carving them opens a
+                // hole out of the world; filling (negative amount) is still allowed.
+                if (floorLayers > 0 && amount > 0.0f && y < floorLayers) continue;
                 float dx = x - gx, dy = y - gy, dz = z - gz;
                 float d = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (d > gr) continue;
@@ -388,6 +398,7 @@ bool VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
                 float nv = ClampTo(cell - amount * fall, Clamp());   // subtract = carve air
                 if (nv != cell) { cell = nv; changed = true; }
             }
+    if (changed) TouchBox(x0, y0, z0, x1, y1, z1);
     return changed;
 }
 
@@ -403,7 +414,8 @@ bool VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
     float gz = (local.z + HalfZ()) / voxelSize;
     float gr = radius / voxelSize;
     int x0 = std::max(1, (int)std::floor(gx - gr)), x1 = std::min(nx - 2, (int)std::ceil(gx + gr));
-    int y0 = std::max(1, (int)std::floor(gy - gr)), y1 = std::min(ny - 2, (int)std::ceil(gy + gr));
+    int y0 = std::max(std::max(1, floorLayers), (int)std::floor(gy - gr));
+    int y1 = std::min(ny - 2, (int)std::ceil(gy + gr));
     int z0 = std::max(1, (int)std::floor(gz - gr)), z1 = std::min(nz - 2, (int)std::ceil(gz + gr));
     std::vector<float> src = density;   // read from a snapshot so it relaxes evenly
     bool changed = false;
@@ -422,6 +434,7 @@ bool VoxelTerrain::SmoothAt(const Vec3& local, float radius, float amount) {
                 float nv = ClampTo(cell + (avg - cell) * w, Clamp());
                 if (nv != cell) { cell = nv; changed = true; }
             }
+    if (changed) TouchBox(x0, y0, z0, x1, y1, z1);
     return changed;
 }
 
@@ -438,10 +451,12 @@ bool VoxelTerrain::DigBox(const Vec3& a, const Vec3& b, float amount) {
     for (int z = z0; z <= z1; ++z)
         for (int y = y0; y <= y1; ++y)
             for (int x = x0; x <= x1; ++x) {
+                if (floorLayers > 0 && amount > 0.0f && y < floorLayers) continue;
                 float& cell = density[Index(x, y, z)];
                 float nv = ClampTo(cell - amount, Clamp());
                 if (nv != cell) { cell = nv; changed = true; }
             }
+    if (changed) TouchBox(x0, y0, z0, x1, y1, z1);
     return changed;
 }
 
@@ -471,10 +486,15 @@ int VoxelTerrain::RemoveFloaters(int minVoxels) {
             }
         }
         if ((int)comp.size() < minVoxels) {                      // a crumb — clear it
-            for (int idx : comp) density[idx] = air;
-            cleared += (int)comp.size();
+            for (int idx : comp) {
+                int y = (idx / nx) % ny;
+                if (floorLayers > 0 && y < floorLayers) continue;   // leave the floor
+                density[idx] = air;
+                ++cleared;
+            }
         }
     }
+    if (cleared > 0) mcAllDirty_ = true;
     return cleared;
 }
 
@@ -527,9 +547,14 @@ bool VoxelTerrain::SurfaceY(float lx, float lz, float& outY) const {
     return false;
 }
 
-Mesh VoxelTerrain::BuildMesh() const {
-    Mesh m;
-    m.name = "VoxelTerrain";
+void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, int z1) const {
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (z0 < 0) z0 = 0;
+    if (x1 > nx - 1) x1 = nx - 1;
+    if (y1 > ny - 1) y1 = ny - 1;
+    if (z1 > nz - 1) z1 = nz - 1;
+    if (x0 >= x1 || y0 >= y1 || z0 >= z1) return;
     auto interp = [&](const Vec3& p1, const Vec3& p2, float v1, float v2) {
         float t = (std::fabs(v2 - v1) > 1e-6f) ? (iso - v1) / (v2 - v1) : 0.5f;
         return p1 + (p2 - p1) * t;
@@ -554,9 +579,9 @@ Mesh VoxelTerrain::BuildMesh() const {
                      grassColor.b + (soilColor.b - grassColor.b) * t, 1.0f};
     };
 
-    for (int z = 0; z < nz - 1; ++z)
-        for (int y = 0; y < ny - 1; ++y)
-            for (int x = 0; x < nx - 1; ++x) {
+    for (int z = z0; z < z1; ++z)
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x) {
                 float val[8]; Vec3 pos[8];
                 int cubeindex = 0;
                 for (int i = 0; i < 8; ++i) {
@@ -601,16 +626,120 @@ Mesh VoxelTerrain::BuildMesh() const {
                     }
                 }
             }
+}
+
+Mesh VoxelTerrain::BuildMesh() const {
+    Mesh m;
+    m.name = "VoxelTerrain";
+    AppendCubes(m, 0, 0, 0, nx - 1, ny - 1, nz - 1);
     return m;
+}
+
+bool VoxelTerrain::SealFloor() {
+    if (floorLayers <= 0 || nx <= 0 || ny <= 0 || nz <= 0) return false;
+    const int yMax = floorLayers < ny ? floorLayers : ny;
+    const float solid = Clamp();
+    bool changed = false;
+    for (int y = 0; y < yMax; ++y)
+        for (int z = 0; z < nz; ++z)
+            for (int x = 0; x < nx; ++x) {
+                float& c = density[Index(x, y, z)];
+                if (c <= iso) { c = solid; changed = true; }
+            }
+    return changed;
+}
+
+unsigned VoxelTerrain::MeshStamp() const {
+    unsigned h = 2166136261u;
+    auto mix = [&](float f) {
+        unsigned u = 0;
+        std::memcpy(&u, &f, sizeof(u));
+        h = h * 16777619u ^ u;
+    };
+    mix(iso); mix(snowLevel); mix(rockSlope);
+    mix(grassColor.r); mix(grassColor.g); mix(grassColor.b);
+    mix(soilColor.r); mix(soilColor.g); mix(soilColor.b);
+    mix(rockColor.r); mix(rockColor.g); mix(rockColor.b);
+    mix(snowColor.r); mix(snowColor.g); mix(snowColor.b);
+    h ^= autoColor ? 1u : 0u;
+    return h;
 }
 
 void VoxelTerrain::Apply() {
     if (!gameObject) return;
+    if (SealFloor()) mcAllDirty_ = true;
     auto* mr = gameObject->GetComponent<MeshRenderer>();
     if (!mr) mr = gameObject->AddComponent<MeshRenderer>();
-    mr->mesh = BuildMesh();
+
+    // Marching cubes is the expensive part of a dig. Split the volume into
+    // chunks and only rerun the cubes whose corners the last edit touched.
+    // Each cube belongs to one chunk, and normals sample the full field, so
+    // the surface matches a full rebuild along the borders.
+    const int cubesX = std::max(0, nx - 1);
+    const int cubesY = std::max(0, ny - 1);
+    const int cubesZ = std::max(0, nz - 1);
+    const int ncx = std::max(1, (cubesX + kChunk - 1) / kChunk);
+    const int ncy = std::max(1, (cubesY + kChunk - 1) / kChunk);
+    const int ncz = std::max(1, (cubesZ + kChunk - 1) / kChunk);
+    const unsigned stamp = MeshStamp();
+    const int nChunks = ncx * ncy * ncz;
+    if (mcNx_ != nx || mcNy_ != ny || mcNz_ != nz || mcVox_ != voxelSize ||
+        mcStamp_ != stamp || (int)mcChunks_.size() != nChunks) {
+        mcChunks_.assign((std::size_t)nChunks, McChunk{});
+        mcNx_ = nx; mcNy_ = ny; mcNz_ = nz; mcVox_ = voxelSize; mcStamp_ = stamp;
+        mcAllDirty_ = true;
+    }
+    auto overlaps = [](int a0, int a1, int d0, int d1) {
+        return a0 <= d1 && a1 > d0;   // [a0, a1) vs inclusive [d0, d1]
+    };
+    int ci = 0;
+    for (int cz = 0; cz < ncz; ++cz)
+        for (int cy = 0; cy < ncy; ++cy)
+            for (int cx = 0; cx < ncx; ++cx, ++ci) {
+                const int x0 = cx * kChunk, y0 = cy * kChunk, z0 = cz * kChunk;
+                const int x1 = std::min(x0 + kChunk, cubesX);
+                const int y1 = std::min(y0 + kChunk, cubesY);
+                const int z1 = std::min(z0 + kChunk, cubesZ);
+                const bool dirty = mcAllDirty_ || (dirty1_[0] >= dirty0_[0] &&
+                    overlaps(x0, x1, dirty0_[0], dirty1_[0]) &&
+                    overlaps(y0, y1, dirty0_[1], dirty1_[1]) &&
+                    overlaps(z0, z1, dirty0_[2], dirty1_[2]));
+                if (!dirty) continue;
+                mcChunks_[(std::size_t)ci].mesh = Mesh{};
+                AppendCubes(mcChunks_[(std::size_t)ci].mesh, x0, y0, z0, x1, y1, z1);
+            }
+
+    Mesh combined;
+    combined.name = "VoxelTerrain";
+    std::size_t nv = 0, nt = 0, nc = 0;
+    for (const McChunk& c : mcChunks_) {
+        nv += c.mesh.vertices.size();
+        nt += c.mesh.triangles.size();
+        nc += c.mesh.triColors.size();
+    }
+    combined.vertices.reserve(nv);
+    combined.normals.reserve(nv);
+    combined.uvs.reserve(nv);
+    combined.triangles.reserve(nt);
+    if (nc) combined.triColors.reserve(nc);
+    for (const McChunk& c : mcChunks_) {
+        const int base = (int)combined.vertices.size();
+        combined.vertices.insert(combined.vertices.end(), c.mesh.vertices.begin(), c.mesh.vertices.end());
+        combined.normals.insert(combined.normals.end(), c.mesh.normals.begin(), c.mesh.normals.end());
+        combined.uvs.insert(combined.uvs.end(), c.mesh.uvs.begin(), c.mesh.uvs.end());
+        for (int idx : c.mesh.triangles) combined.triangles.push_back(base + idx);
+        if (!c.mesh.triColors.empty())
+            combined.triColors.insert(combined.triColors.end(), c.mesh.triColors.begin(), c.mesh.triColors.end());
+    }
+    // A fresh Mesh (new buffers) so the renderer uploads this frame. An in-place
+    // edit of the old vertex vector can sit unseen until a sampled hash notices.
+    mr->mesh = std::move(combined);
+    mcAllDirty_ = false;
+    dirty0_[0] = dirty0_[1] = dirty0_[2] = 0;
+    dirty1_[0] = dirty1_[1] = dirty1_[2] = -1;
+
     mr->color = color;
-    // Single-sided: the winding is forced outward in BuildMesh, so backface culling
+    // Single-sided: the winding is forced outward in AppendCubes, so backface culling
     // safely skips the hidden ~half of the triangles (a real frame-rate win on big
     // terrains) while caves still render correctly from the inside.
     mr->doubleSided = false;
@@ -677,6 +806,7 @@ bool VoxelTerrain::DecodeDensity(const std::string& b64) {
         signed char q = (signed char)bytes[i];
         density[i] = (q / 127.0f) * clamp;
     }
+    mcAllDirty_ = true;
     return true;
 }
 

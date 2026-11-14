@@ -1,0 +1,6 @@
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 RunGraph sub_wait.okayvs
+pos 2 340 40
+exec 1 0 2

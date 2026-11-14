@@ -1,6 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
-#include "okay/AI/NavGrid3D.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -8,6 +8,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
@@ -55,9 +56,9 @@ public:
     float acceleration = 14.0f;    ///< how quickly velocity eases to the target (per sec; <=0 = instant)
     float stopDistance = 0.0f;     ///< extra buffer added to the arrival distance
     bool  faceMovement = true;     ///< turn to face the direction of travel
-    /// Route around obstacles with grid A* (walls, props, terrain holes)
-    /// instead of walking straight lines into them. Recomputes every
-    /// `repathInterval` seconds while moving toward a goal.
+    /// Route around obstacles (walls, props, terrain holes) instead of walking
+    /// straight lines into them: over the scene's baked NavMesh when it has one,
+    /// else grid A*. Recomputes every `repathInterval` seconds while moving toward a goal.
     bool  usePathfinding = false;
     float repathInterval = 0.6f;
 
@@ -107,16 +108,30 @@ public:
     /// Order the NPC to walk to a world point, overriding its base behavior
     /// (Chase/Flee still take priority so a commanded guard can defend itself).
     /// Broadcasts `npc_arrived` on arrival. Call from a script (`npc_goto`) or code.
-    void CommandGoTo(const Vec3& p) { m_command = p; m_hasCommand = true; }
+    /// `speed` overrides the walk speed for this order (0 = moveSpeed).
+    void CommandGoTo(const Vec3& p, float speed = 0.0f) { m_command = p; m_hasCommand = true; m_commandSpeed = speed; }
     void CancelCommand() { m_hasCommand = false; }
     bool Commanded() const { return m_hasCommand; }
+    /// A Behavior Tree Runner on the object drives the NPC: the perception and the
+    /// fixed states stand down, orders come from CommandGoTo / AttackNow, and the
+    /// steering, pathfinding and Character animation keep working as before.
+    void SetExternalBrain(bool on) {
+        m_external = on;
+        if (on) { m_hasCommand = false; m_state = State::Idle; m_extAlert = false; }
+    }
+    bool ExternalBrain() const { return m_external; }
+    /// With an external brain: the NPC is alert (head-tracks its target, runs its alert animation).
+    void SetAlert(bool on) { m_extAlert = on; }
+    /// Hit `tgt` now, with the usual windup and interval; true when the hit landed
+    /// this call (the tree's Attack task keeps calling until it does).
+    bool AttackNow(GameObject* tgt) { return Attack(tgt); }
     /// Current runtime AI state, for HUD / debugging / scripts.
     int  StateId() const { return (int)m_state; }
     const char* StateName() const {
         static const char* n[] = {"Idle","Wander","Patrol","Follow","Flee","Chase","Search","Return"};
         int i = (int)m_state; return (i >= 0 && i < 8) ? n[i] : "?";
     }
-    bool IsAlerted() const { return m_state == State::Chase || m_state == State::Search; }
+    bool IsAlerted() const { return m_external ? m_extAlert : (m_state == State::Chase || m_state == State::Search); }
 
     /// Take damage; provokes (if allowed), and on death broadcasts `npc_died`, plays a
     /// sibling AudioSource and removes the object. Call from a weapon or trap.
@@ -135,7 +150,13 @@ public:
         }
     }
 
+    /// Crouch and prone from scripts (SetStance): a smaller, slower body that
+    /// eases between stances (sneaking guards, a wounded NPC down on the ground).
+    StanceControl stanceControl{0, 0, true};
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
+        stanceControl.Start(gameObject);
         health = maxHealth; m_dead = false; m_provoked = false;
         if (transform) m_home = transform->Position();
         m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
@@ -151,17 +172,25 @@ public:
         if (m_atkTimer > 0.0f) m_atkTimer -= dt;
         if (m_windup  > 0.0f) m_windup  -= dt;
         if (m_wait    > 0.0f) m_wait    -= dt;
+        stanceControl.Step(gameObject, dt);
 
         GameObject* tgt = Target();
         Vec3 tp = tgt ? TP(tgt) : pos;
         float distT = tgt ? Dist2D(pos, tp) : 1e9f;
+        Vec3 goal = pos; bool move = false; float speed = moveSpeed; float arrive = 0.4f;
+        bool canSee = false, acquired = false;
 
+        if (m_external) {
+            // A behavior tree decides: it orders moves (CommandGoTo) and attacks.
+            m_state = State::Idle;
+            canSee = acquired = m_extAlert;
+        } else {
         // ---- Perception ----------------------------------------------------
-        bool canSee = tgt && distT <= sightRange && InFov(pos, tp) && (!lineOfSight || LosClear(pos, tp, distT));
+        canSee = tgt && distT <= sightRange && InFov(pos, tp) && (!lineOfSight || LosClear(pos, tp, distT));
         bool heard  = tgt && hearingRange > 0.0f && distT <= hearingRange;
         if (canSee) { m_detect = std::fmin(m_detect + dt, detectionTime + 0.001f); m_lastKnown = tp; m_sightLost = 0.0f; }
         else        { m_detect = std::fmax(m_detect - dt * 0.6f, 0.0f); m_sightLost += dt; }
-        bool acquired = canSee && (detectionTime <= 0.0f || m_detect >= detectionTime);
+        acquired = canSee && (detectionTime <= 0.0f || m_detect >= detectionTime);
         bool aware    = acquired || heard || (m_provoked && distT <= sightRange * 1.5f);
 
         // ---- Decide the AI state ------------------------------------------
@@ -197,7 +226,6 @@ public:
         if (m_state != prev) OnEnterState(prev);
 
         // ---- Act on the state ---------------------------------------------
-        Vec3 goal = pos; bool move = false; float speed = moveSpeed; float arrive = 0.4f;
         switch (m_state) {
             case State::Chase:
                 if (distT > attackRange + stopDistance) { goal = canSee ? tp : m_lastKnown; move = true; speed = runSpeed; }
@@ -235,6 +263,7 @@ public:
             default:
                 break;
         }
+        }   // !m_external
 
         // ---- Commanded destination (CommandGoTo / `npc_goto` script) --------
         // Overrides the base behavior's goal; combat (Chase/Flee) still wins so
@@ -244,7 +273,7 @@ public:
                 m_hasCommand = false; move = false; goal = pos;
                 Broadcast("npc_arrived");
             } else {
-                goal = m_command; move = true; speed = moveSpeed;
+                goal = m_command; move = true; speed = m_commandSpeed > 0.0f ? m_commandSpeed : moveSpeed;
             }
         }
 
@@ -259,7 +288,7 @@ public:
             m_repath -= dt;
             float goalMoved = Dist2D(goal, m_pathGoal);
             if (m_repath <= 0.0f || m_path.empty() || goalMoved > 1.5f) {
-                m_path = NavGrid3D::FindPath(*gameObject->scene(), pos, goal, gameObject);
+                m_path = Navigation::FindPath(*gameObject->scene(), pos, goal, 0.4f, gameObject);
                 m_pathIdx = 0; m_pathGoal = goal; m_repath = repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() && Dist2D(pos, m_path[m_pathIdx]) < 0.5f)
@@ -270,6 +299,7 @@ public:
         }
 
         // ---- Steering + movement ------------------------------------------
+        speed = stanceControl.Speed(speed);   // crouched / prone: slower, eased between stances
         Vec3 dir = move ? Dir(pos, goal) : Vec3{0, 0, 0};
         if (move && separationRadius > 0.0f) dir = Steer(dir, pos);
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -301,6 +331,9 @@ private:
     Vec3  m_pathGoal{0, 0, 0};
     Vec3  m_command{0, 0, 0};      // CommandGoTo destination
     bool  m_hasCommand = false;
+    float m_commandSpeed = 0.0f;   // CommandGoTo speed override (0 = moveSpeed)
+    bool  m_external = false;      // a Behavior Tree Runner decides (SetExternalBrain)
+    bool  m_extAlert = false;
     Vec3  m_lastPos{0, 0, 0};      // stuck detection while pathfinding
     float m_stuckT = 0.0f;
 
@@ -394,6 +427,9 @@ private:
             lo.facing    = transform->localRotation * Vec3{0, 0, -1};
             lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
             lo.sprint    = move && speed >= runSpeed - 0.01f;
+            lo.crouch    = stanceControl.Stance() == 1;
+            lo.prone     = stanceControl.Stance() == 2;
+            lo.stance    = stanceControl.Level();
             lo.walkSpeed = moveSpeed;
             lo.dt = dt;
             ch->DriveLocomotion(lo);
@@ -404,13 +440,14 @@ private:
         }
     }
 
-    void Attack(GameObject* tgt) {
-        if (m_atkTimer > 0.0f || !tgt) return;
-        if (attackWindup > 0.0f && m_windup <= 0.0f && !m_winding) { m_windup = attackWindup; m_winding = true; return; }
-        if (m_winding && m_windup > 0.0f) return;   // still telegraphing
+    bool Attack(GameObject* tgt) {
+        if (m_atkTimer > 0.0f || !tgt) return false;
+        if (attackWindup > 0.0f && m_windup <= 0.0f && !m_winding) { m_windup = attackWindup; m_winding = true; return false; }
+        if (m_winding && m_windup > 0.0f) return false;   // still telegraphing
         DamageHealthOn(tgt, attackDamage);
         m_atkTimer = attackInterval; m_winding = false;
         Broadcast("npc_attack");
+        return true;
     }
     void Broadcast(const std::string& msg) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;

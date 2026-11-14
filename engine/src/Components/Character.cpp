@@ -1,7 +1,13 @@
 #include "okay/Components/Character.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
+#include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/FootIK.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -75,6 +81,25 @@ std::vector<Character::Bone> Character::Skeleton() const {
 
 namespace {
 Color mul(Color c, float f) { return Color(c.r * f, c.g * f, c.b * f, 1.0f); }
+
+// The block body is modelled facing +Z. Cameras and movement look down -Z, so
+// the baked mesh is mirrored onto -Z. That mirror reverses winding; swapping
+// each triangle puts the faces back outward, and a single-sided draw then
+// shows the shell instead of the cavity.
+void FaceMinusZ(Mesh& m) {
+    for (Vec3& v : m.vertices) v = Vec3{-v.x, v.y, -v.z};
+    for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
+        std::swap(m.triangles[i + 1], m.triangles[i + 2]);
+}
+
+// The neck is a small box skinned to the torso, so it cannot be hidden on its
+// own while it still lives in the torso mesh. In torso-joint space it sits
+// just above the collar. Only that box moves off the shirt: the shirt's own
+// lid stays, or a look down stares through the open top at whatever is inside.
+bool NeckLocalVert(const Vec3& v) {
+    return std::fabs(v.x) <= 0.085f && std::fabs(v.z) <= 0.085f
+        && v.y >= 0.395f && v.y <= 0.505f;
+}
 }
 
 Mesh Character::BuildRig(std::vector<int>& bone) const {
@@ -101,7 +126,12 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
     for (int s = -1; s <= 1; s += 2) {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
-        box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
+        // Stops a centimetre short of the upper arm and of the hand. Sharing a
+        // face with either one z-fights on a depth buffer: dark vertical lines
+        // down the hand, as if the old finger gaps were still there.
+        box({s * 0.27f, 0.995f, 0}, {0.10f, 0.25f, 0.14f}, foreArmCol, fo);
+        // One brick on the hand bone, the block this rig used before the palm,
+        // thumb and finger boxes. No finger bones: the hand is still l_hand / r_hand.
         box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
@@ -331,25 +361,49 @@ float Character::RunWeight(int state) const {
     return state == 3 ? 1.0f : 0.0f;
 }
 
+bool Character::SprintingPose() const {
+    if (anim == 3) return true;
+    // The walk cruise sits near m_runW 0.3. Stay hidden only while the pose is
+    // still mostly a run, so a fast walk shows its arms and a sprint doesn't
+    // pop them back for the first frames of the blend.
+    return anim == 2 && m_runW > 0.55f;
+}
+
+void Character::SetHeldHiddenFromOwner(bool hide) {
+    if (!gameObject) return;
+    auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    if (!hold) return;
+    if (GameObject* item = hold->Held())
+        item->ownerCameraSkip = hide ? gameObject : nullptr;
+}
+
 // Advance the built-in animation clocks. The gait phase runs at the cadence the
 // reported ground speed calls for (backwards when the body backpedals), so a stride
 // always covers exactly the ground the body moved, and a state change never moves it.
 void Character::AdvanceAnimClock(float dt) {
     const bool gait = (anim == 2 || anim == 3 || anim == 17);
-    float target = -1.0f;
-    if (moveSpeed >= 0.0f) {
-        float sc = height > 1e-3f ? height : 1.0f;   // a bigger body takes proportionally longer strides
+    // Rig units per second from the reported ground speed (m/s). A bigger body
+    // takes proportionally longer strides.
+    auto toRig = [&](float metres) {
+        float sc = height > 1e-3f ? height : 1.0f;
         if (gameObject && gameObject->transform) {
             Vec3 ls = gameObject->transform->LossyScale();
             float s = 0.5f * (std::fabs(ls.x) + std::fabs(ls.z));
             if (s > 1e-3f) sc *= s;
         }
-        target = moveSpeed / sc;
+        return metres / sc;
+    };
+    if (m_gaitFromDrive) {
+        // DriveLocomotion already smoothed the metres/second. Don't smooth again.
+        m_gaitFromDrive = false;
+        m_gaitSpeed = moveSpeed < 0.0f ? -1.0f : toRig(moveSpeed);
+    } else {
+        float target = moveSpeed >= 0.0f ? toRig(moveSpeed) : -1.0f;
+        if (target < 0.0f)           m_gaitSpeed = -1.0f;
+        else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
+        else                         m_gaitSpeed += (target - m_gaitSpeed) *
+                                                    (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
     }
-    if (target < 0.0f)          m_gaitSpeed = -1.0f;
-    else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
-    else                         m_gaitSpeed += (target - m_gaitSpeed) *
-                                                (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
 
     // Travel direction relative to the facing: the hips and legs turn toward it
     // (up to 75°, the chest stays forward); pointing behind, they step backwards.
@@ -357,13 +411,18 @@ void Character::AdvanceAnimClock(float dt) {
     float limit = m_gaitDir < 0.0f ? 80.0f : 100.0f;            // hysteresis around the side
     m_gaitDir = std::fabs(a) > limit ? -1.0f : 1.0f;
     float yaw = m_gaitDir < 0.0f ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
-    if (!gait || m_gaitSpeed < 0.1f) yaw = 0.0f;
+    if ((!gait && anim != 7) || m_gaitSpeed < 0.1f) yaw = 0.0f;   // the crawl goes every way too
     float ek = 1.0f - std::exp(-10.0f * dt);
     m_travelYaw += (yaw - m_travelYaw) * ek;                    // where the feet actually step
     m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
 
     // Walk <-> run blends the two styles over ~0.2 s on the live poses.
-    float wantRun = anim == 3 ? 1.0f : 0.0f;
+    // DriveLocomotion sets the target from speed, so the threshold is a blend
+    // and not a second crossfade on top of this one. Without it, a fast walk
+    // takes the run's style (JogWeight): a walk cycle stretched to 4.5 m/s whips the feet.
+    float wantRun = m_haveRunWant ? m_runWant
+                  : (anim == 3 ? 1.0f : (anim == 2 ? HumanoidMotion::JogWeight(m_gaitSpeed) : 0.0f));
+    m_haveRunWant = false;
     float step = dt / 0.2f;
     m_runW = m_runW < wantRun ? std::fmin(wantRun, m_runW + step) : std::fmax(wantRun, m_runW - step);
 
@@ -389,14 +448,15 @@ void Character::AdvanceAnimClock(float dt) {
 void Character::DriveLocomotion(const Locomotion& l) {
     // Measure what the body really did: a controller sets the velocity it WANTS
     // before physics runs, so pressed against a wall the velocity still says
-    // "moving" while the body stands still. The position change is the truth. It
-    // is taken over the last ~0.08 s of frames, so it doesn't matter whether the
-    // move landed this frame (a controller moving the transform) or last frame (a
-    // physics step), and an uneven frame rate doesn't make the stride shimmer. A
+    // "moving" while the body stands still. The position change since the previous
+    // sample is the truth, so it doesn't matter whether the move landed this frame
+    // (a controller moving the transform) or last frame (a physics step). A
     // teleport/respawn jump restarts the measurement, and a one-frame spike (a
     // hitch, a depenetration push) is set aside unless the next frame agrees.
+    // The accepted speed is smoothed once, below — not averaged over a window
+    // and then smoothed again.
     Vec3 vel = l.velocity;
-    float vyNow = l.velocity.y;   // vertical speed right now (the window lags a takeoff)
+    float vyNow = l.velocity.y;   // vertical speed right now
     if (gameObject && gameObject->transform && l.dt > 1e-5f) {
         Vec3 pos = gameObject->transform->Position();
         const float al = l.ignoreAxis.Magnitude();
@@ -405,21 +465,16 @@ void Character::DriveLocomotion(const Locomotion& l) {
             return d;
         };
         m_moveClock += l.dt;
-        if (m_histN > 0 && flat(pos - m_hist[m_histN - 1].p).Magnitude() > 2.0f) m_histN = 0;
         if (m_histN > 0) {
-            float last = m_moveClock - m_hist[m_histN - 1].t;
-            if (last > 1e-5f) vyNow = std::max(vyNow, (pos.y - m_hist[m_histN - 1].p.y) / last);
             Vec3 d = flat(pos - m_hist[0].p);
-            float span = m_moveClock - m_hist[0].t;
-            if (span > 1e-5f) vel = d * (1.0f / span);
+            if (d.Magnitude() > 2.0f) m_histN = 0;   // a teleport: don't treat it as a stride
+            else if (l.dt > 1e-5f) {
+                vyNow = std::max(vyNow, (pos.y - m_hist[0].p.y) / l.dt);
+                vel = d * (1.0f / l.dt);
+            }
         }
-        // Keep one sample at least 0.08 s old (the window's start) and the newer ones.
-        while (m_histN > 1 && m_moveClock - m_hist[1].t >= 0.08f) {
-            for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i];
-            --m_histN;
-        }
-        if (m_histN == kMoveHist) { for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i]; --m_histN; }
-        m_hist[m_histN++] = {pos, m_moveClock};
+        m_hist[0] = {pos, m_moveClock};
+        m_histN = 1;
     }
     // On the ground: a fresh contact, or solid ground just under the feet (contact
     // callbacks stop for a body at rest, and stepping off a curb shouldn't count).
@@ -442,7 +497,17 @@ void Character::DriveLocomotion(const Locomotion& l) {
         m_spike = false;
         m_measured = hs;
     }
-    moveSpeed = hs;
+    // One smooth, in metres/second. AdvanceAnimClock turns this into the stride
+    // rate without smoothing it a second time.
+    // The stride eases toward this frame's speed. Idle / walk / run still follow
+    // the speed itself (with the hysteresis below), so a sprint changes state on
+    // the frame it happens.
+    if (moveSpeed < 0.0f) moveSpeed = hs;
+    else if (l.dt > 1e-5f) {
+        const float a = gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-l.dt / gaitSpeedSmoothing) : 1.0f;
+        moveSpeed += (hs - moveSpeed) * a;
+    }
+    m_gaitFromDrive = true;
     Vec3 f{l.facing.x, 0.0f, l.facing.z};
     float fl = std::sqrt(f.x * f.x + f.z * f.z);
     if (fl > 1e-4f && hs > 0.05f) {
@@ -450,21 +515,49 @@ void Character::DriveLocomotion(const Locomotion& l) {
         Vec3 right{-f.z, 0.0f, f.x};                          // the body's right
         moveAngle = std::atan2(v.x * right.x + v.z * right.z, v.x * f.x + v.z * f.z) * kRad2Deg;
     }
+    if (l.swim) ground = true;                                 // water is holding the body
     m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    if (l.jumped && jumpCrouchTime > 0.0f) m_anticipation = jumpCrouchTime;
+    // Standing still, turning the body twists the feet until they step.
+    if (!l.jumped && m_airT <= 0.0f && hs < turnStillSpeed && l.dt > 0.0f) {
+        m_twist += l.yawRate * l.dt;
+        if (m_stepT < 0.0f && turnStepAngle > 1.0f && std::fabs(m_twist) >= turnStepAngle) {
+            m_stepLeg = m_twist > 0.0f ? 1 : 0;
+            m_stepT = 0.0f;
+            m_twist = 0.0f;
+        }
+    } else if (l.dt > 0.0f) {
+        m_twist *= std::exp(-l.dt / 0.12f);
+    }
+    if (l.swim) m_airT = 0.0f;
+    m_swimming = l.swim;
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
+    {
+        const float rs = l.runSpeed > 0.1f ? l.runSpeed : 8.0f;
+        const float lo = std::max(0.4f, l.walkSpeed * 0.65f);
+        const float hi = std::max(lo + 0.75f, rs);
+        float style = hs <= lo ? 0.0f : std::min(1.0f, (hs - lo) / (hi - lo));
+        if (run) style = 1.0f;
+        m_runWant = style;
+        m_haveRunWant = true;
+    }
+    m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);
+    m_stanceLevel = l.stance >= 0.0f ? l.stance : (float)m_stanceTarget;
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
         PoseSource::Movement m;
-        m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
-        m.stance = l.stance >= 0.0f ? l.stance : (l.prone ? 2.0f : (l.crouch ? 1.0f : 0.0f));
+        m.speed = hs; m.run = l.swim ? false : run; m.crouch = l.swim ? false : l.crouch; m.prone = l.swim ? false : l.prone;
+        m.stance = l.swim ? 0.0f : m_stanceLevel;
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
+        m.swim = l.swim;
         m_poseSource->Move(m);
         return;
     }
     const bool wasMoving = anim == 2 || anim == 3 || anim == 17;
     const bool moving = hs > (wasMoving ? 0.2f : 0.35f);       // hysteresis: no idle/walk flicker
-    if (l.prone)                   anim = 7;
+    if (l.swim)                    anim = moving ? 2 : 1;   // no swim clip yet: paddle with the walk, tread with the idle
+    else if (l.prone)              anim = 7;
     else if (l.jumped)             anim = 5;
     else if (m_airT > 0.12f)       anim = l.velocity.y > 0.4f ? 5 : 18;   // short drops keep the stride
     else if (l.crouch)             anim = moving ? 17 : 6;
@@ -499,6 +592,74 @@ void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
     float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
     r[B_TORSO].z += lean * 0.7f;
     r[B_HIPS].z  += lean * 0.3f;
+    // Speeding up tips the chest forward; a turn rolls it into the curve.
+    r[B_TORSO].x += m_motionPitch * 0.7f;
+    r[B_HIPS].x  += m_motionPitch * 0.3f;
+    r[B_TORSO].z += m_motionRoll * 0.7f;
+    r[B_HIPS].z  += m_motionRoll * 0.3f;
+    // Takeoff crouch: a short knee dip on top of the jump, which has already started.
+    if (m_jumpCrouchW > 0.0f && jumpCrouchBend > 0.0f) {
+        const float bend = jumpCrouchBend * m_jumpCrouchW;
+        r[B_LTHIGH].x += bend;       r[B_RTHIGH].x += bend;
+        r[B_LSHIN].x  -= bend * 1.3f; r[B_RSHIN].x  -= bend * 1.3f;
+    }
+    // One foot lifts through a turn-in-place step.
+    if (m_stepT >= 0.0f && turnStepLift > 0.0f) {
+        const float lift = turnStepLift * std::sin(m_stepT * 3.14159265f);
+        if (m_stepLeg == 0) { r[B_LTHIGH].x += lift; r[B_LSHIN].x -= lift * 0.6f; }
+        else                { r[B_RTHIGH].x += lift; r[B_RSHIN].x -= lift * 0.6f; }
+    }
+}
+
+void Character::TickFeel(float dt) {
+    if (jumpCrouchTime > 1e-4f && m_anticipation > 0.0f) {
+        const float u = std::min(1.0f, m_anticipation / jumpCrouchTime);
+        m_jumpCrouchW = std::sin(u * 1.5707963f);   // 1 at the takeoff, 0 as it ends
+        m_anticipation = std::max(0.0f, m_anticipation - dt);
+        if (m_anticipation <= 0.0f) m_jumpCrouchW = 0.0f;
+    } else {
+        m_jumpCrouchW = 0.0f;
+    }
+    if (m_stepT >= 0.0f) {
+        m_stepT += dt / std::max(turnStepTime, 1e-3f);
+        if (gameObject)
+            if (auto* fik = gameObject->GetComponent<FootIK>())
+                fik->ReleaseLocks(std::max(dt, 0.02f) + 0.02f);
+        if (m_stepT >= 1.0f) m_stepT = -1.0f;
+    }
+    UpdateMotionLean(dt);
+}
+
+void Character::UpdateMotionLean(float dt) {
+    auto ease = [&](float& v, float want) {
+        const float e = dt > 1e-5f ? 1.0f - std::exp(-dt / 0.1f) : 1.0f;
+        v += (want - v) * e;
+    };
+    Transform* t = gameObject ? gameObject->transform : nullptr;
+    if (!t || dt <= 1e-5f || motionLean <= 0.0f) {
+        ease(m_motionPitch, 0.0f);
+        ease(m_motionRoll, 0.0f);
+        return;
+    }
+    const Vec3 p = t->Position();
+    if (m_haveMotionLean) {
+        Vec3 d = p - m_leanPos; d.y = 0.0f;
+        Vec3 v = d.SqrMagnitude() > 4.0f ? m_leanVel : d * (1.0f / dt);
+        const Vec3 vPrev = m_leanVel;
+        m_leanVel = m_leanVel + (v - m_leanVel) * (1.0f - std::exp(-dt / 0.08f));
+        const Vec3 a = (m_leanVel - vPrev) * (1.0f / dt);
+        m_leanAcc = m_leanAcc + (a - m_leanAcc) * (1.0f - std::exp(-dt / 0.15f));
+    }
+    m_leanPos = p; m_haveMotionLean = true;
+    const Quat q = t->Rotation();
+    const Vec3 fwd = q * Vec3{0.0f, 0.0f, -1.0f}, right = q * Vec3{1.0f, 0.0f, 0.0f};
+    const float along = Vec3::Dot(m_leanAcc, fwd), across = Vec3::Dot(m_leanAcc, right);
+    auto cap = [](float v, float m) { return v > m ? m : (v < -m ? -m : v); };
+    const float moving = std::fmin(1.0f, std::sqrt(m_leanVel.x * m_leanVel.x + m_leanVel.z * m_leanVel.z) / 0.8f);
+    const float k = motionLean;
+    const float capD = motionLeanMax > 0.0f ? motionLeanMax : 0.0f;
+    ease(m_motionPitch, cap(along * 0.9f, capD) * k);
+    ease(m_motionRoll,  cap(across * 1.2f, capD) * k * moving);
 }
 
 bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
@@ -529,6 +690,21 @@ Vec3 Character::RawStanceOffset(float t) const { return RawStanceOffsetFor(anim,
 
 Vec3 Character::RawStanceOffsetFor(int state, float t) const {
     return {0.0f, HumanoidMotion::HipY(state, MotionInputs(state, t)) * height, 0.0f};   // rig units scale with height
+}
+
+std::vector<Vec3> Character::PosedJoints(const std::vector<Vec3>& pose) const {
+    std::vector<Bone> bones = Skeleton();
+    const int n = (int)bones.size();
+    std::vector<Mat4> poseW(n);
+    std::vector<Vec3> out(n);
+    for (int i = 0; i < n; ++i) {
+        Vec3 jp = bones[i].parent >= 0 ? bones[bones[i].parent].joint : Vec3{0, 0, 0};
+        Mat4 posed = Mat4::Translate(bones[i].joint - jp) *
+                     Mat4::Rotate(Quat::Euler(i < (int)pose.size() ? pose[i] : Vec3{0, 0, 0}));
+        poseW[i] = bones[i].parent >= 0 ? poseW[bones[i].parent] * posed : posed;
+        out[i] = poseW[i].MultiplyPoint(Vec3{0, 0, 0});
+    }
+    return out;
 }
 
 void Character::Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Vec3>& rot) const {
@@ -566,10 +742,11 @@ void Character::Apply() {
     // is what stops the walk looking backwards (moonwalk). StanceOffset lowers the
     // whole body for crouch / prone (the rig's root is otherwise pinned at the hip).
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }
     m.normals.clear();                     // boxy -> flat shading
     mr->mesh = std::move(m);
-    mr->doubleSided = true;
+    mr->doubleSided = false;               // outward faces only: no view into the cavity
 }
 
 void Character::AddClip(AnimClip clip) {
@@ -640,6 +817,7 @@ void Character::BeginBlend() {
     m_blendFromY = RawStanceOffset(animTime).y;
     m_blendFromAnim = -1;
     m_blendT = 0.0f;
+    m_blendDur = blendTime;
 }
 
 void Character::FireClipEvents(float from, float to) {
@@ -664,13 +842,46 @@ void Character::FireClipEvents(float from, float to) {
 void Character::AdvanceClip(float dt) {
     if (!m_activeClip) return;
     float from = m_clipTime;
-    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
-    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     float dur = m_activeClip->Duration();
+    // The jump binding holds its last frame while the body is still in that
+    // state. A looping takeoff clip used to replay for the whole jump.
+    const bool holdJump = m_stateDriven && !clipJump.empty() && m_activeClipName == clipJump;
+    const float add = dt * animSpeed * m_activeClip->speed;
+    m_clipTime = (holdJump && dur > 0.0f) ? std::min(from + add, dur) : from + add;
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     if (dur > 0.0f) {
-        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        if (m_activeClip->loop && !holdJump) m_clipTime = std::fmod(m_clipTime, dur);
         else if (m_clipTime > dur) m_clipTime = dur;
     }
+}
+
+bool Character::RemoveClip(const std::string& name) {
+    auto it = m_clips.find(name);
+    if (it == m_clips.end()) return false;
+    if (m_activeClipName == name) StopClip();   // before the erase: the pointer goes with it
+    if (m_layerName == name) StopLayer();
+    m_clips.erase(it);
+    ++m_clipsVer;
+    for (std::string* b : {&clipIdle, &clipWalk, &clipRun, &clipJump, &clipFall, &clipCrouch, &clipDive, &autoPlayClip})
+        if (*b == name) b->clear();
+    return true;
+}
+
+bool Character::RenameClip(const std::string& from, const std::string& to) {
+    auto it = m_clips.find(from);
+    if (it == m_clips.end() || to.empty() || from == to || m_clips.count(to)) return false;
+    AnimClip c = std::move(it->second);
+    m_clips.erase(it);
+    c.name = to;
+    AnimClip& stored = m_clips[to];
+    stored = std::move(c);
+    if (m_activeClipName == from) { m_activeClipName = to; m_activeClip = &stored; }
+    if (m_layerName == from)      { m_layerName = to; m_layerClip = &stored; }
+    for (std::string* b : {&clipIdle, &clipWalk, &clipRun, &clipJump, &clipFall, &clipCrouch, &clipDive, &autoPlayClip})
+        if (*b == from) *b = to;
+    for (BlendStop& st : m_blendStops) if (st.clip == from) st.clip = to;
+    ++m_clipsVer;
+    return true;
 }
 
 std::vector<std::string> Character::ClipNames() const {
@@ -730,29 +941,81 @@ void Character::NoteStateChange() {
     // weight to it instead of the legs snapping straight the frame you touch down.
     if (anim != m_prevAnim) {
         if ((m_prevAnim == 5 || m_prevAnim == 18) && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        // Crossfade between the built-in animations. The Animator's table times
+        // each pair (idle <-> walk longer than a clip switch, walk <-> run included,
+        // air <-> ground each way). A blend already on screen is captured first,
+        // before the stride phase is touched, so reversing mid-way continues from
+        // that pose instead of the state we left.
+        const bool reversing = m_blendT < 1.0f;
+        if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && m_prevAnim != 0 && anim != 0) {
+            const float secs = CrossfadeSeconds(m_prevAnim, anim);
+            if (secs <= 1e-4f) { m_blendT = 1.0f; m_blendFromAnim = -1; }
+            else {
+                CaptureLeavingPose();
+                m_blendT = 0.0f;
+                m_blendDur = secs;
+            }
+        }
         auto isGait = [](int a) { return a == 2 || a == 3 || a == 17; };
-        if (isGait(anim) && !isGait(m_prevAnim)) {
+        if (!reversing && isGait(anim) && !isGait(m_prevAnim)) {
             // Stepping off: a landing comes down on the left foot (phase 0); from a
             // stand, start with the left foot planted under the hips and the right
-            // one swinging through.
+            // one swinging through. A blend already playing keeps its phase.
             m_runW = anim == 3 ? 1.0f : 0.0f;
             m_gaitPhase = (m_prevAnim == 5 || m_prevAnim == 18) ? 0.0f
                         : HumanoidMotion::StartPhase(anim, m_gaitSpeed);
-        }
-        // Crossfade between the built-in animations (idle -> walk -> crouch ...) from
-        // the state we're leaving, still playing live, so neither side freezes. Walk
-        // <-> run needs none: the stride is continuous and its style blends itself.
-        bool walkRun = (anim == 2 || anim == 3) && (m_prevAnim == 2 || m_prevAnim == 3);
-        if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && blendTime > 1e-4f &&
-            m_prevAnim != 0 && anim != 0 && !walkRun) {
-            m_blendFromAnim = m_prevAnim;
-            m_blendT = 0.0f;
         }
         m_prevAnim = anim;
     }
 }
 
+float Character::CrossfadeSeconds(int from, int to) const {
+    GaitCrossfades g;
+    StanceTimes st;
+    if (gameObject)
+        for (AnimStateMachine* sm : gameObject->GetComponents<AnimStateMachine>())
+            if (sm->layer == 0) { g = sm->crossfades; st = sm->stanceTimes; break; }
+    auto air = [](int a) { return a == 5 || a == 18; };
+    auto stand = [](int a) { return a == 1 || a == 2 || a == 3; };
+    auto crouch = [](int a) { return a == 6 || a == 17; };
+    auto prone = [](int a) { return a == 7; };
+    if (air(from) && to != 0 && !air(to)) return g.airGround;
+    if (from != 0 && !air(from) && air(to)) return g.groundAir;
+    if ((from == 2 && to == 3) || (from == 3 && to == 2)) return g.walkRun;
+    if ((from == 1 && to == 2) || (from == 2 && to == 1)) return g.idleWalk;
+    if ((from == 1 && to == 3) || (from == 3 && to == 1)) return g.walkRun;
+    if ((stand(from) && crouch(to)) || (crouch(from) && stand(to))) return st.standCrouch;
+    if ((crouch(from) && prone(to)) || (prone(from) && crouch(to))) return st.crouchProne;
+    if (prone(from) && stand(to)) return st.proneStand;
+    if (stand(from) && prone(to)) return st.standCrouch + st.crouchProne;
+    return blendTime;
+}
+
+void Character::CaptureLeavingPose() {
+    // `anim` is already the state being entered. Sample the one on screen, whose
+    // walk/run style follows m_runW only while it is the live state.
+    const int entered = anim;
+    anim = m_prevAnim;
+    std::vector<Vec3> shown = PoseFor(m_prevAnim, animTime);
+    const float toY = RawStanceOffset(animTime).y;
+    if (m_blendT < 1.0f) {
+        std::vector<Vec3> from = m_blendFromAnim >= 0 ? PoseFor(m_blendFromAnim, animTime) : m_blendFrom;
+        const float u = std::min(std::max(m_blendT, 0.0f), 1.0f);
+        const float w = u * u * (3.0f - 2.0f * u);
+        if (from.size() == shown.size())
+            for (std::size_t i = 0; i < shown.size(); ++i) shown[i] = from[i] + (shown[i] - from[i]) * w;
+        const float fromY = m_blendFromAnim >= 0 ? RawStanceOffsetFor(m_blendFromAnim, animTime).y : m_blendFromY;
+        m_blendFromY = fromY + (toY - fromY) * w;
+        m_blendFrom = std::move(shown);
+        m_blendFromAnim = -1;
+    } else {
+        m_blendFromAnim = m_prevAnim;
+    }
+    anim = entered;
+}
+
 void Character::Update(float dt) {
+    TickFeel(dt);
     NoteStateChange();
     if (m_landT >= 0.0f) {
         m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
@@ -762,7 +1025,8 @@ void Character::Update(float dt) {
     SyncStateClips();
     // Advance any in-progress crossfade (covers every render path below).
     if (m_blendT < 1.0f) {
-        m_blendT += (blendTime > 1e-4f ? dt / blendTime : 1.0f);
+        const float dur = m_blendDur > 1e-4f ? m_blendDur : blendTime;
+        m_blendT += dur > 1e-4f ? dt / dur : 1.0f;
         if (m_blendT > 1.0f) m_blendT = 1.0f;
     }
     AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
@@ -811,7 +1075,10 @@ void Character::Update(float dt) {
             m_headPitch += (lookPitch - m_headPitch) * k;
             m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
             // (An Animator's pose is shown in LateUpdate.)
-            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) DriveParts();   // preview / clip still drive
+            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) {
+                EaseFirstPersonArm(dt);
+                DriveParts();   // preview / clip still drive
+            }
             return;
         }
     }
@@ -823,8 +1090,9 @@ void Character::Update(float dt) {
             Mesh m = m_rest;
             std::vector<Vec3> pose = m_editorPose; pose.resize(B_COUNT, Vec3{0, 0, 0});
             Skin(m, m_bone, pose);
-            for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += m_editorOffset; }
-            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+            FaceMinusZ(m);
+            for (Vec3& v : m.vertices) { v = v * height; v += m_editorOffset; }
+            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = false;
         }
         return;
     }
@@ -837,10 +1105,11 @@ void Character::Update(float dt) {
         EnsureRest();
         Mesh m = m_rest;
         Skin(m, m_bone, CurrentSourcePose());   // crossfade-aware (blends into the clip)
-        for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; }  // face -Z (see Apply)
+        FaceMinusZ(m);
+        for (Vec3& v : m.vertices) v = v * height;  // face -Z (see Apply)
         m.normals.clear();
         mr->mesh = std::move(m);
-        mr->doubleSided = true;
+        mr->doubleSided = false;
         return;
     }
     // Advance the punch arc even when posing manually, so a punch always plays.
@@ -854,7 +1123,14 @@ void Character::Update(float dt) {
     // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
     // named target. Same sign convention the controllers use: the head Euler-Y offset
     // is (body heading − target heading), and +pitch raises the gaze.
-    if ((lookAtCamera || !lookAtTarget.empty()) && gameObject && gameObject->transform) {
+    // A remote copy already received the owner's look. Tracking the local camera
+    // would fight that and jitter the head.
+    bool remoteLook = false;
+    for (Transform* t = gameObject ? gameObject->transform : nullptr; t && !remoteLook; t = t->Parent())
+        if (t->gameObject)
+            if (auto* ns = t->gameObject->GetComponent<NetworkSync>())
+                remoteLook = ns->syncAnimation && !ns->IsLocallyOwned();
+    if ((lookAtCamera || !lookAtTarget.empty()) && !remoteLook && gameObject && gameObject->transform) {
         Scene* sc = gameObject->scene();
         Transform* tgt = nullptr;
         if (sc && !lookAtTarget.empty()) { if (GameObject* g = sc->Find(lookAtTarget)) tgt = g->transform; }
@@ -881,9 +1157,25 @@ void Character::Update(float dt) {
     if (!AnimatorDriven()) PresentMesh();   // an Animator's pose is shown in LateUpdate
 }
 
-void Character::LateUpdate(float) {
+void Character::LateUpdate(float dt) {
+    // Turning the Animator component back on does not restart it, so the stale
+    // clip would pop on. The first time we see it stays instant (play start).
+    // This runs after every Update, so it doesn't matter which component ticked first.
+    if (m_poseSource) {
+        const bool on = m_poseSource->AnimatorOn();
+        if (!m_animSeen) { m_animSeen = true; m_animOn = on; }
+        else if (on && !m_animOn) m_resumeAnim = true;
+        m_animOn = on;
+    } else m_animSeen = false;
+    if (m_resumeAnim && m_poseSource) {
+        Vec3 root = RawStanceOffset(animTime);
+        if (height > 1e-3f) root = root * (1.0f / height);
+        m_poseSource->ResumeFrom(PoseAt(animTime), root, CrossfadeSeconds(1, 2));
+        m_resumeAnim = false;
+    }
     if (driveExternal) { NoteStateChange(); return; }   // the HumanoidRetarget shows it
     if (!AnimatorDriven()) return;
+    EaseFirstPersonArm(dt);
     if (separateParts && m_partsBuilt) { if (animateParts) DriveParts(); }
     else PresentMesh();
 }
@@ -914,12 +1206,15 @@ void Character::PresentMesh() {
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
+    // The head is never sunk or scaled away. A first-person camera skips the
+    // head part (and the neck) and leaves the mesh here for every other view.
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }   // face -Z + stance drop (see Apply)
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
     if (firstPersonArm) { BuildFpArm(m); m_fpArmReady = true; } else m_fpArmReady = false;
     mr->mesh = std::move(m);
-    mr->doubleSided = true;
+    mr->doubleSided = false;
 }
 
 // Copy just the arm bones out of the fully-skinned body mesh (per-face colours kept),
@@ -971,18 +1266,850 @@ bool Character::AdoptParts(GameObject* rig) {
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;
     RememberPartRest();
     m_partsBuilt = true;
+    for (GameObject* p : m_parts)
+        if (p) if (auto* pmr = p->GetComponent<MeshRenderer>()) pmr->doubleSided = false;
+    SplitNeckFromTorso();
     return true;
 }
 
+bool Character::HandsOnAHold() const {
+    if (!gameObject) return false;
+    auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    return hold && hold->IsHolding();
+}
+
+void Character::SetOwnerArmActive(bool on) {
+    if (m_ownerArm) m_ownerArm->active = on;
+    if (m_ownerFore) m_ownerFore->active = on;
+    if (m_ownerHand) m_ownerHand->active = on;
+}
+
+void Character::ReleaseOwnerArm() {
+    if (m_fpHiddenHeld && !m_fpHiddenHeld->IsDestroyed() && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+        m_fpHiddenHeld->ownerCameraSkip = nullptr;
+    m_fpHiddenHeld = nullptr;
+    SetOwnerArmActive(false);
+    if (m_ownerItem && !m_ownerItem->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerItem);
+    m_ownerItem = nullptr;
+    if (m_ownerArm && !m_ownerArm->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerArm);
+    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+    m_ownerArmBase = -2;
+}
+
+void Character::ReleaseOwnerArm2() {
+    if (m_ownerArm2 && !m_ownerArm2->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerArm2);
+    m_ownerArm2 = m_ownerFore2 = m_ownerHand2 = nullptr;
+    m_ownerArmBase2 = -2;
+}
+
+void Character::DeactivateOwnerArm2() {
+    if (m_ownerArm2) m_ownerArm2->active = false;
+    if (m_ownerFore2) m_ownerFore2->active = false;
+    if (m_ownerHand2) m_ownerHand2->active = false;
+}
+
+namespace {
+// The owner's first-person view is the character's own hand brick, not a
+// made-up cube and not the sleeve. Scale stays inside the range the player
+// tests allow. The brick's local +Y is up (the lit face) and local +Z is the
+// long axis, pointed toward screen centre, where a held item sits.
+constexpr float kFpHandScale = 0.55f;
+
+void PaintFpHand(GameObject* hand, GameObject* srcPart, const FirstPersonHands::HandSide* side) {
+    if (!hand) return;
+    auto* mr = hand->GetComponent<MeshRenderer>();
+    auto* src = srcPart ? srcPart->GetComponent<MeshRenderer>() : nullptr;
+    if (!mr || !src) return;
+    mr->mesh = src->mesh;
+    mr->mesh.normals.clear();
+    mr->color = src->color;
+    mr->castShadows = false;
+    mr->enabled = true;
+    if (side && side->useColour) {
+        mr->color = side->colour;
+        const int faces = (int)mr->mesh.triangles.size() / 3;
+        mr->mesh.triColors.assign((std::size_t)std::max(0, faces), side->colour);
+        mr->emissive = Color{side->colour.r * 0.37f, side->colour.g * 0.37f, side->colour.b * 0.37f, 1.0f};
+    } else {
+        mr->emissive = Color::FromBytes(82, 58, 46);
+    }
+}
+
+void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
+    if (!fore) return;
+    auto* mr = fore->GetComponent<MeshRenderer>();
+    if (!mr) return;
+    if (!side || !side->sleeve) {
+        mr->mesh = Mesh{};
+        mr->enabled = false;
+        return;
+    }
+    float L = side->sleeveLength;
+    if (L < 0.04f) L = 0.04f;
+    if (L > 0.8f) L = 0.8f;
+    Mesh m;
+    Mesh::AppendBox(m, {-0.055f, -0.055f, -0.02f - L}, {0.055f, 0.055f, -0.02f});
+    mr->mesh = std::move(m);
+    mr->mesh.normals.clear();
+    mr->enabled = true;
+    mr->castShadows = false;
+    mr->doubleSided = false;
+    mr->color = side->sleeveColour;
+    mr->emissive = Color{side->sleeveColour.r * 0.37f, side->sleeveColour.g * 0.37f,
+                         side->sleeveColour.b * 0.37f, 1.0f};
+}
+
+// Optional bar under the hand. Off unless the hand asks for it, so a hold is
+// a brick in the palm and not a green sleeve filling the corner. `armInCam`
+// is the arm's rotation in camera space.
+void PaintFpForearm(GameObject* fore, const FirstPersonHands::HandSide* side, const Quat& armInCam) {
+    if (!fore) return;
+    auto* mr = fore->GetComponent<MeshRenderer>();
+    if (!mr) return;
+    if (!side || !side->forearm || side->sleeve) {
+        mr->mesh = Mesh{};
+        mr->enabled = false;
+        return;
+    }
+    Color col = side->forearmColour;
+    float length = side->forearmLength;
+    if (length < 0.05f) length = 0.05f;
+    if (length > 1.2f) length = 1.2f;
+    float rad = side->forearmThickness * 0.5f;
+    if (rad < 0.012f) rad = 0.012f;
+    if (rad > 0.2f) rad = 0.2f;
+    const float bend = side->elbowBend * Mathf::Deg2Rad;
+    Vec3 down = armInCam.Conjugate() * Vec3{0.0f, -std::cos(bend), -0.16f - std::sin(bend)};
+    if (down.SqrMagnitude() < 1e-8f) down = Vec3{0.0f, -1.0f, 0.0f};
+    down = down.Normalized();
+    Vec3 hint = armInCam.Conjugate() * Vec3{0.0f, 0.0f, -1.0f};
+    Vec3 sidev = hint - down * Vec3::Dot(hint, down);
+    if (sidev.SqrMagnitude() < 1e-6f) sidev = Vec3{1.0f, 0.0f, 0.0f};
+    sidev = sidev.Normalized();
+    Vec3 up = Vec3::Cross(sidev, down).Normalized();
+    const float start = 0.02f;
+    Mesh m;
+    Mesh::AppendBox(m, {-rad, start, -rad}, {rad, start + length, rad});
+    for (Vec3& v : m.vertices) v = sidev * v.x + down * v.y + up * v.z;
+    mr->mesh = std::move(m);
+    mr->mesh.normals.clear();
+    mr->enabled = true;
+    mr->castShadows = false;
+    mr->doubleSided = false;
+    mr->color = col;
+    mr->emissive = Color{col.r * 0.55f, col.g * 0.55f, col.b * 0.55f, 1.0f};
+}
+
+Vec3 FpHandScale(const FirstPersonHands::HandSide* side) {
+    if (!side) return Vec3::One;
+    return Vec3{side->scale.x * side->size.x, side->scale.y * side->size.y, side->scale.z * side->size.z}
+         * side->uniformScale;
+}
+
+float FpFovScale(const FirstPersonHands* hands, const Camera* cam) {
+    if (!hands || !cam || hands->handFov <= 1.0f || cam->fieldOfView <= 1.0f) return 1.0f;
+    return std::tan(cam->fieldOfView * Mathf::Deg2Rad * 0.5f)
+         / std::tan(hands->handFov * Mathf::Deg2Rad * 0.5f);
+}
+}
+
+void Character::EnsureOwnerArm(int base) {
+    if (m_ownerArm && m_ownerArm->IsDestroyed()) {
+        m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+        m_ownerArmBase = -2;
+    }
+    if (m_ownerArm && m_ownerFore && m_ownerHand && m_ownerArmBase == base) return;
+    ReleaseOwnerArm();
+    Scene* s = GetScene();
+    if (!s || base < 0 || base + 2 >= (int)m_parts.size()) return;
+    GameObject* src[3] = {m_parts[base], m_parts[base + 1], m_parts[base + 2]};
+    MeshRenderer* mesh[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        if (!src[i]) return;
+        mesh[i] = src[i]->GetComponent<MeshRenderer>();
+        if (!mesh[i] || mesh[i]->mesh.vertices.empty()) return;
+    }
+    const char* names[3] = {"FP_OwnerArm", "FP_OwnerFore", "FP_OwnerHand"};
+    GameObject* made[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        made[i] = s->CreateGameObject(names[i]);
+        auto* mr = made[i]->AddComponent<MeshRenderer>();
+        mr->mesh = mesh[i]->mesh;
+        mr->doubleSided = false;
+        mr->castShadows = false;
+        made[i]->firstPersonOnly = true;
+        made[i]->firstPersonViewmodel = true;
+        made[i]->active = false;
+    }
+    made[1]->transform->SetParent(made[0]->transform, false);
+    made[2]->transform->SetParent(made[1]->transform, false);
+    for (int i = 0; i < 3; ++i) made[i]->transient = true;
+    // The hand keeps the body's brick (one block, skin or glove). The upper arm
+    // stays in the hierarchy and draws nothing. The forearm is filled in while
+    // a hold is up, so the hand has an arm under it.
+    auto* armMr = made[0]->GetComponent<MeshRenderer>();
+    armMr->mesh = Mesh{};
+    armMr->enabled = false;
+    auto* foreMr = made[1]->GetComponent<MeshRenderer>();
+    foreMr->mesh = Mesh{};
+    foreMr->enabled = false;
+    auto* handMr = made[2]->GetComponent<MeshRenderer>();
+    handMr->mesh.normals.clear();
+    handMr->castShadows = false;
+    // The key light sits in front of the lens, so the face you see is in shadow.
+    // A warm lift keeps that face skin-coloured; the shade on each side stays.
+    handMr->emissive = Color::FromBytes(82, 58, 46);
+    // Under the player, not the camera. A first-person-only object is drawn
+    // only for the camera that is hiding its owner, and only when it is still
+    // inside that owner's subtree. The anchor is that subtree, so a blend can
+    // draw the copy without hiding the body. Parenting it to the camera would
+    // hide it from the owner too.
+    if (GameObject* anchor = EnsureViewAnchor()) {
+        if (anchor->transform) made[0]->transform->SetParent(anchor->transform, false);
+    } else if (gameObject && gameObject->transform) {
+        made[0]->transform->SetParent(gameObject->transform, false);
+    }
+    m_ownerArm = made[0];
+    m_ownerFore = made[1];
+    m_ownerHand = made[2];
+    m_ownerArmBase = base;
+}
+
+void Character::EnsureOwnerArm2(int base) {
+    if (m_ownerArm2 && m_ownerArm2->IsDestroyed()) {
+        m_ownerArm2 = m_ownerFore2 = m_ownerHand2 = nullptr;
+        m_ownerArmBase2 = -2;
+    }
+    if (m_ownerArm2 && m_ownerFore2 && m_ownerHand2 && m_ownerArmBase2 == base) return;
+    ReleaseOwnerArm2();
+    Scene* s = GetScene();
+    if (!s || base < 0 || base + 2 >= (int)m_parts.size()) return;
+    GameObject* src[3] = {m_parts[base], m_parts[base + 1], m_parts[base + 2]};
+    MeshRenderer* mesh[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        if (!src[i]) return;
+        mesh[i] = src[i]->GetComponent<MeshRenderer>();
+        if (!mesh[i] || mesh[i]->mesh.vertices.empty()) return;
+    }
+    const char* names[3] = {"FP_OwnerArm2", "FP_OwnerFore2", "FP_OwnerHand2"};
+    GameObject* made[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        made[i] = s->CreateGameObject(names[i]);
+        auto* mr = made[i]->AddComponent<MeshRenderer>();
+        mr->mesh = mesh[i]->mesh;
+        mr->doubleSided = false;
+        mr->castShadows = false;
+        made[i]->firstPersonOnly = true;
+        made[i]->firstPersonViewmodel = true;
+        made[i]->active = false;
+    }
+    made[1]->transform->SetParent(made[0]->transform, false);
+    made[2]->transform->SetParent(made[1]->transform, false);
+    for (int i = 0; i < 3; ++i) made[i]->transient = true;
+    auto* armMr = made[0]->GetComponent<MeshRenderer>();
+    armMr->mesh = Mesh{};
+    armMr->enabled = false;
+    auto* foreMr = made[1]->GetComponent<MeshRenderer>();
+    foreMr->mesh = Mesh{};
+    foreMr->enabled = false;
+    auto* handMr = made[2]->GetComponent<MeshRenderer>();
+    handMr->mesh.normals.clear();
+    handMr->castShadows = false;
+    handMr->emissive = Color::FromBytes(82, 58, 46);
+    if (GameObject* anchor = EnsureViewAnchor()) {
+        if (anchor->transform) made[0]->transform->SetParent(anchor->transform, false);
+    } else if (gameObject && gameObject->transform) {
+        made[0]->transform->SetParent(gameObject->transform, false);
+    }
+    m_ownerArm2 = made[0];
+    m_ownerFore2 = made[1];
+    m_ownerHand2 = made[2];
+    m_ownerArmBase2 = base;
+}
+
+namespace {
+// The camera that is allowed to draw this player's first-person-only arm.
+// Prefer the one already hiding the player; otherwise the camera mounted on
+// the body. A free orbit camera is not it — posing the arm there parks a
+// giant sleeve out in the world.
+Camera* OwnerCamera(GameObject* player) {
+    if (!player || !player->scene()) return nullptr;
+    Scene* sc = player->scene();
+    Camera* child = nullptr;
+    Camera* ignoring = nullptr;
+    for (const auto& o : sc->Objects()) {
+        if (!o || !o->active) continue;
+        Camera* cam = o->GetComponent<Camera>();
+        if (!cam || !cam->enabled || !cam->transform || !o->active) continue;
+        if (GameObject* ig = cam->ignoreObject) {
+            // The player (head hidden) or the viewmodel anchor (body still drawn).
+            if (ig == player || (ig->name == "FP_ViewAnchor" && ig->IsSelfOrDescendantOf(player)))
+                ignoring = cam;
+        }
+        if (!child && o.get() != player && o->IsSelfOrDescendantOf(player)) child = cam;
+    }
+    if (ignoring) return ignoring;
+    return child;
+}
+}
+
+void Character::RefreshOwnerArm() {
+    if (!m_partsBuilt) return;
+    PoseOwnerArm(CurrentSourcePose());
+}
+
+void Character::ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning) {
+    FirstPersonHands* h = FirstPersonHands::FindOn(gameObject);
+    if (h && !h->enabled) h = nullptr;
+    int primary = showLeftArm ? B_RUPARM : B_LUPARM;
+    bool two = false;
+    if (h) {
+        primary = h->holdMode == FirstPersonHands::HoldMode::Left ? B_RUPARM : B_LUPARM;
+        two = h->holdMode == FirstPersonHands::HoldMode::Two;
+        if (!h->right.enabled && h->left.enabled) { primary = B_RUPARM; two = false; }
+        else if (h->right.enabled && !h->left.enabled) { primary = B_LUPARM; two = false; }
+        else if (!h->right.enabled && !h->left.enabled) {
+            fpArmBase = primary;
+            fpArmUp = 0.0f;
+            m_fpSecond = false;
+            return;
+        }
+    }
+    bool holding = HandsOnAHold();
+    if (holding) {
+        auto* ph = gameObject->GetComponent<ProceduralObjectHolding>();
+        GameObject* held = ph ? ph->Held() : nullptr;
+        auto* ho = held ? held->GetComponent<HoldableObject>() : nullptr;
+        if (ho && ho->WantsTwoHands()) {
+            const bool rightOn = !h || h->right.enabled;
+            const bool leftOn = !h || h->left.enabled;
+            if (rightOn && leftOn) { two = true; primary = B_LUPARM; }
+        } else if (ho && ho->style == HoldableObject::Style::OneHandLeft) {
+            primary = B_RUPARM;
+            two = false;
+        } else if (ho && ho->style == HoldableObject::Style::OneHandRight) {
+            primary = B_LUPARM;
+            two = false;
+        }
+    }
+    const bool run = HideFirstPersonHands();
+    // The panel wins when it is on the player. A legacy hand has no panel, so
+    // its own Show While Running is the only way a sprint keeps a held item.
+    const bool allowRun = h ? h->showWhileRunning : showWhileRunning;
+    const bool show = (holding || (h && h->showWhenEmpty)) && (!run || allowRun);
+    fpArmBase = primary;
+    fpArmUp = show ? 1.0f : 0.0f;
+    m_fpSecond = two;
+}
+
+void Character::PoseOwnerArm(const std::vector<Vec3>&) {
+    const int base = fpArmBase;
+    const bool on = firstPersonArm && base >= 0 && base + 2 < (int)m_parts.size();
+    auto clearHeld = [&]() {
+        if (m_fpHiddenHeld && !m_fpHiddenHeld->IsDestroyed() && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+            m_fpHiddenHeld->ownerCameraSkip = nullptr;
+        m_fpHiddenHeld = nullptr;
+        if (m_ownerItem) m_ownerItem->active = false;
+    };
+    // A run eases the copy off the corner (m_fpShown). It is not popped off.
+    // A view blend uses a lower cutoff so the copy can sit on the grip at the
+    // start of the ease instead of appearing later in the corner.
+    const float hideAt = fpViewWeight >= 0.0f ? 0.02f : 0.08f;
+    if (!on || m_fpShown < hideAt) {
+        SetOwnerArmActive(false);
+        DeactivateOwnerArm2();
+        if (m_ownerItem) m_ownerItem->active = false;
+        // A sprint keeps the real item out of this camera even when the copy
+        // never rose. Leaving first person, or dropping the copy while walking,
+        // gives the real grip back.
+        const bool release = !on || (fpViewWeight >= 0.0f && !HideFirstPersonHands());
+        if (release) clearHeld();
+        else if (gameObject) {
+            auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+            GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+            if (held && !held->IsDestroyed()) {
+                if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
+                    && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+                    m_fpHiddenHeld->ownerCameraSkip = nullptr;
+                held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
+                m_fpHiddenHeld = held;
+            }
+        }
+        return;
+    }
+    EnsureOwnerArm(base);
+    if (!m_ownerArm || !m_ownerFore || !m_ownerHand || !m_ownerArm->transform) return;
+    Transform* armParent = nullptr;
+    if (GameObject* anchor = EnsureViewAnchor()) armParent = anchor->transform;
+    else if (gameObject) armParent = gameObject->transform;
+    if (armParent && m_ownerArm->transform->Parent() != armParent)
+        m_ownerArm->transform->SetParent(armParent, false);
+    Camera* cam = OwnerCamera(gameObject);
+    if (!cam || !cam->transform || !gameObject || !gameObject->transform) {
+        SetOwnerArmActive(false);
+        DeactivateOwnerArm2();
+        return;
+    }
+    const Quat playerRot = gameObject->transform->Rotation();
+    const Quat camRot = cam->transform->Rotation();
+    const Quat camLocal = (playerRot.Conjugate() * camRot).Normalized();
+    const Vec3 camEuler = camLocal.ToEuler();
+    const float viewPitch = camEuler.x;
+    // followPitch writes fpPitch from the lens. A manual pitch stays put.
+    const bool follow = std::fabs(fpPitch - viewPitch) < 8.0f;
+    const Quat basis = follow ? camRot : (playerRot * Quat::Euler(fpPitch, camEuler.y, camEuler.z));
+
+    // Mouse look lags: the arm swings a little against the turn, then catches up.
+    // The camera itself is not moved.
+    const Vec3 camWorld = camRot.ToEuler();
+    if (!m_fpTrailInit) {
+        m_fpPrevYaw = camWorld.y; m_fpPrevPitch = camWorld.x; m_fpTrailInit = true;
+    }
+    const float dy = Mathf::DeltaAngle(m_fpPrevYaw, camWorld.y);
+    const float dp = camWorld.x - m_fpPrevPitch;
+    m_fpPrevYaw = camWorld.y; m_fpPrevPitch = camWorld.x;
+    const float dt = m_fpDt > 1e-4f ? m_fpDt : 0.016f;
+    const float decay = std::exp(-dt * 9.0f);
+    // Against the turn: a look to the right leaves the arm on the left for a
+    // moment (it was already there in the world), then it catches the corner.
+    m_fpTrailYaw = Mathf::Clamp(m_fpTrailYaw * decay + dy * 0.55f, -14.0f, 14.0f);
+    m_fpTrailPitch = Mathf::Clamp(m_fpTrailPitch * decay - dp * 0.45f, -12.0f, 12.0f);
+
+    // Screen right for the L-named bones (the rig's yaw puts them there).
+    const float side = base >= B_RUPARM ? -1.0f : 1.0f;
+    const float aspect = cam->viewportAspect > 0.05f ? cam->viewportAspect : (16.0f / 9.0f);
+    const float vFov = cam->VerticalFovDegrees(aspect) * Mathf::Deg2Rad;
+    const float tanV = std::tan(std::max(0.15f, vFov * 0.5f));
+    const float tanH = tanV * aspect;
+    const float near = std::max(cam->nearClip, 0.04f);
+    // Close enough that the hand reads as yours. Farther than this it floats.
+    const float depth = std::max(0.30f, near + 0.14f);
+
+    // The body's hand brick. Local +Z (its long axis) points inward. Local +Y,
+    // the broad face, points back at the lens and up so it takes the light.
+    // No sleeve.
+    float snap = 0.0f;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+        if (m_punchT < 0.32f) snap = std::sin(m_punchT / 0.32f * 1.5707963f);
+        else snap = std::sin((1.0f - (m_punchT - 0.32f) / 0.68f) * 1.5707963f);
+    }
+    const float slide = 1.0f - m_fpShown;
+    const bool stepping = anim == 2 || anim == 7 || anim == 17
+        || (anim == 6 && std::fabs(m_gaitSpeed) > 0.2f);
+    float bobS = 0.0f, bobC = 0.0f;
+    if (fpArmBob && !fpSteady && stepping) {
+        bobS = std::sin(m_gaitPhase * 6.2831853f);
+        bobC = std::cos(m_gaitPhase * 6.2831853f);
+    }
+    FirstPersonHands* fpHands = FirstPersonHands::FindOn(gameObject);
+    if (fpHands && !fpHands->enabled) fpHands = nullptr;
+    const FirstPersonHands::HandSide* fpSide = nullptr;
+    if (fpHands) {
+        bobS *= fpHands->bobAmount;
+        bobC *= fpHands->bobAmount;
+        snap *= fpHands->punchAmount;
+        fpSide = base >= B_RUPARM ? &fpHands->left : &fpHands->right;
+    }
+    // Long axis toward screen centre. The broad face is turned up toward the
+    // key light and only a little back at the lens: a face square to the lens
+    // is in shadow, because the light sits in front of the camera.
+    Vec3 inward{-side * 0.92f, -0.02f, -0.08f};
+    inward.y += 0.10f * bobS;
+    if (snap > 0.0f) {
+        const Vec3 aim{-side * 0.18f, 0.88f, 0.12f};
+        inward = inward + (aim - inward) * snap;
+    }
+    if (inward.SqrMagnitude() < 1e-8f) inward = Vec3{-side, 0.2f, 0.1f};
+    inward = inward.Normalized();
+    Vec3 topHint{side * 0.04f, 0.86f, 0.40f};
+    Vec3 top = topHint - inward * Vec3::Dot(topHint, inward);
+    if (top.SqrMagnitude() < 1e-6f) top = Vec3{0.0f, 1.0f, 0.0f};
+    top = top.Normalized();
+    Quat camSpace = Quat::LookRotation(inward, top);
+    camSpace = Quat::Euler(1.6f * bobS, -side * 2.2f * bobC, side * 1.1f * bobS) * camSpace;
+    if (fpSide && !m_fpSecond)
+        camSpace = Quat::Euler(fpSide->elbowBend, 0.0f, 0.0f) * Quat::Euler(fpSide->wristRotation)
+                 * Quat::Euler(fpSide->rotation) * camSpace;
+    m_ownerFore->transform->localPosition = Vec3::Zero;
+    m_ownerFore->transform->localRotation = Quat::Identity;
+    m_ownerFore->transform->localScale = Vec3::One;
+    m_ownerHand->transform->localPosition = Vec3::Zero;
+    m_ownerHand->transform->localRotation = Quat::Identity;
+    m_ownerHand->transform->localScale = (!m_fpSecond) ? FpHandScale(fpSide) : Vec3::One;
+    if (!m_fpSecond && base + 2 < (int)m_parts.size()) {
+        PaintFpHand(m_ownerHand, m_parts[base + 2], fpSide);
+        PaintFpSleeve(m_ownerFore, fpSide);
+    }
+    const float fovScale = FpFovScale(fpHands, cam);
+    m_ownerArm->transform->localScale = Vec3{kFpHandScale * fovScale, kFpHandScale * fovScale, kFpHandScale * fovScale};
+    // Measure in the camera, then correct. One shift is not enough: a nearer
+    // corner projects further out than the vertex that was extreme before the move.
+    m_ownerArm->transform->SetRotation(cam->transform->Rotation() * camSpace);
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * Vec3{side * 0.16f, -0.08f, -depth});
+
+    // A hold stays on the real hands for everyone else. This camera sees a
+    // copy of the prop on the inner face of the cube, and skips the real one.
+    // Placed before the screen pin so the item cannot stick off the corner.
+    bool showItem = false;
+    ProceduralObjectHolding* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+    if (!held || !held->transform || held->IsDestroyed()) {
+        clearHeld();
+    } else {
+        if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
+            && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+            m_fpHiddenHeld->ownerCameraSkip = nullptr;
+        held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
+        m_fpHiddenHeld = held;
+        if (!m_ownerItem || m_ownerItem->IsDestroyed()) {
+            m_ownerItem = nullptr;
+            if (Scene* sc = GetScene()) {
+                m_ownerItem = sc->CreateGameObject("FP_OwnerItem");
+                auto* mr = m_ownerItem->AddComponent<MeshRenderer>();
+                mr->castShadows = false;
+                mr->doubleSided = false;
+                m_ownerItem->firstPersonOnly = true;
+                m_ownerItem->firstPersonViewmodel = true;
+                m_ownerItem->transient = true;
+                m_ownerItem->active = false;
+            }
+        }
+        if (m_ownerItem && m_ownerItem->transform) {
+            m_ownerItem->transform->SetParent(m_ownerHand->transform, false);
+            MeshRenderer* src = held->GetComponent<MeshRenderer>();
+            if (!src)
+                for (Transform* c : held->transform->Children())
+                    if (c && c->gameObject)
+                        if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
+            auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
+            if (!src || !dst || src->mesh.vertices.empty()) {
+                m_ownerItem->active = false;
+            } else {
+                dst->mesh = src->mesh;
+                dst->color = src->color;
+                dst->castShadows = false;
+                dst->mesh.normals.clear();
+                // The prop sits in the palm (local +Y), a little toward the inner
+                // end. It is smaller than the hand, and overlaps the palm just
+                // enough to read as held.
+                auto* handMr = m_ownerHand->GetComponent<MeshRenderer>();
+                Vec3 hmn = handMr && !handMr->mesh.vertices.empty() ? handMr->mesh.vertices[0] : Vec3{-0.06f, -0.06f, -0.08f};
+                Vec3 hmx = hmn;
+                if (handMr)
+                    for (const Vec3& v : handMr->mesh.vertices) {
+                        hmn.x = std::min(hmn.x, v.x); hmn.y = std::min(hmn.y, v.y); hmn.z = std::min(hmn.z, v.z);
+                        hmx.x = std::max(hmx.x, v.x); hmx.y = std::max(hmx.y, v.y); hmx.z = std::max(hmx.z, v.z);
+                    }
+                const Vec3 handExt = hmx - hmn;
+                const float palm = std::min(handExt.x, handExt.z);
+                Vec3 mn = src->mesh.vertices[0], mx = mn;
+                for (const Vec3& v : src->mesh.vertices) {
+                    mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+                    mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+                }
+                const float maxExt = std::max(mx.x - mn.x, std::max(mx.y - mn.y, mx.z - mn.z));
+                float uni = maxExt > 1e-4f ? (0.72f * palm / maxExt) : 1.0f;
+                if (fpHands && fpHands->itemScale > 0.0f) uni *= fpHands->itemScale;
+                Quat irot = Quat::Euler(-16.0f, -side * 18.0f, side * 8.0f);
+                if (fpHands) irot = Quat::Euler(fpHands->itemRotation) * irot;
+                if (auto* hoScale = held->GetComponent<HoldableObject>()) {
+                    if (hoScale->fpScale > 0.0f) uni *= hoScale->fpScale;
+                    irot = Quat::Euler(hoScale->fpRotation) * irot;
+                }
+                Vec3 center{0.0f, 0.0f, 0.0f};
+                float minY = 1.0e9f;
+                const float invN = 1.0f / (float)src->mesh.vertices.size();
+                for (const Vec3& v : src->mesh.vertices) {
+                    const Vec3 p = irot * (v * uni);
+                    center = center + p * invN;
+                    minY = std::min(minY, p.y);
+                }
+                const float bite = 0.18f * handExt.y;
+                Vec3 place{-center.x, hmx.y - bite - minY, -center.z + 0.12f * handExt.z};
+                if (auto* ho = held->GetComponent<HoldableObject>()) {
+                    const HoldableObject::Grip& grip = base >= B_RUPARM ? ho->leftGrip : ho->rightGrip;
+                    if (grip.enabled) {
+                        const Vec3 palmPoint{0.0f, hmx.y - bite, 0.12f * handExt.z};
+                        place = palmPoint - irot * (grip.position * uni);
+                    }
+                }
+                if (auto* hoPlace = held->GetComponent<HoldableObject>()) place = place + hoPlace->fpOffset;
+                if (fpHands) place = place + fpHands->itemOffset;
+                m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
+                m_ownerItem->transform->localRotation = irot;
+                m_ownerItem->transform->localPosition = place;
+                m_ownerItem->active = true;
+                showItem = true;
+            }
+        }
+    }
+
+    Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
+    // Every vertex, not the single extreme. A nearer corner projects further
+    // than a far one, so the shift is the tightest bound across the cube.
+    const float wantNx = side * (0.72f + 0.55f * slide - 0.40f * snap + 0.04f * bobC);
+    // Low in the view, with room under the brick for the forearm to reach the
+    // bottom edge. Pinning the hand itself on the bottom hid that arm.
+    const float wantNy = -0.50f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
+    float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
+    float shiftY = -1.0e9f;
+    bool any = false;
+    auto bound = [&](GameObject* g) {
+        if (!g) return;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr || !mr->enabled) return;
+        for (const Vec3& v : mr->mesh.vertices) {
+            const Vec3 c = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+            const float nz = std::max(0.05f, -c.z);
+            const float limX = wantNx * tanH * nz - c.x;
+            const float limY = wantNy * tanV * nz - c.y;
+            shiftX = side > 0.0f ? std::min(shiftX, limX) : std::max(shiftX, limX);
+            shiftY = std::max(shiftY, limY);
+            any = true;
+        }
+    };
+    bound(m_ownerHand);
+    if (showItem) bound(m_ownerItem);
+    if (fpSide && fpSide->sleeve && !m_fpSecond) bound(m_ownerFore);
+    if (any) { camOff.x += shiftX; camOff.y += shiftY; }
+    if (fpSide && !m_fpSecond) {
+        camOff = camOff + fpSide->position + fpSide->wristOffset;
+        camOff.z -= fpSide->reach;
+    }
+    const float sway = fpHands ? fpHands->swayAmount : 1.0f;
+    const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
+    camOff = lag * camOff;
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
+    m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
+
+    // Nothing may cross the near plane. Push along the look, away from the lens.
+    const float keep = std::max(0.18f, near + 0.12f);
+    float minAhead = 1.0e9f;
+    auto consider = [&](GameObject* g) {
+        if (!g || !g->transform) return;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr) return;
+        for (const Vec3& v : mr->mesh.vertices) {
+            const Vec3 local = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+            minAhead = std::min(minAhead, -local.z);
+        }
+    };
+    consider(m_ownerArm);
+    consider(m_ownerHand);
+    if (fpSide && (fpSide->sleeve || fpSide->forearm) && !m_fpSecond) consider(m_ownerFore);
+    if (showItem) consider(m_ownerItem);
+    if (minAhead < keep) {
+        const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
+        m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
+    }
+    if (m_ownerFore) PaintFpForearm(m_ownerFore, m_fpSecond ? nullptr : fpSide, lag * camSpace);
+    SetOwnerArmActive(true);
+    if (m_ownerItem && !showItem) m_ownerItem->active = false;
+    if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
+    else DeactivateOwnerArm2();
+    BlendHeldTowardGrip();
+}
+
+void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS, float bobC) {
+    if (!cam || !cam->transform || !m_ownerArm || !m_ownerHand || !gameObject || !gameObject->transform) {
+        DeactivateOwnerArm2();
+        return;
+    }
+    const int baseR = B_LUPARM;
+    const int baseL = B_RUPARM;
+    if (m_ownerArmBase != baseR) EnsureOwnerArm(baseR);
+    EnsureOwnerArm2(baseL);
+    if (!m_ownerArm || !m_ownerHand || !m_ownerArm2 || !m_ownerHand2 || !m_ownerArm->transform || !m_ownerArm2->transform) {
+        DeactivateOwnerArm2();
+        return;
+    }
+    FirstPersonHands* settings = FirstPersonHands::FindOn(gameObject);
+    if (settings && !settings->enabled) settings = nullptr;
+    const FirstPersonHands::HandSide* right = settings ? &settings->right : nullptr;
+    const FirstPersonHands::HandSide* left = settings ? &settings->left : nullptr;
+    const float fovScale = FpFovScale(settings, cam);
+    const Vec3 root{kFpHandScale * fovScale, kFpHandScale * fovScale, kFpHandScale * fovScale};
+    auto prep = [&](GameObject* arm, GameObject* fore, GameObject* hand, int base, const FirstPersonHands::HandSide* side) {
+        if (arm && arm->transform) arm->transform->localScale = root;
+        if (fore && fore->transform) {
+            fore->transform->localPosition = Vec3::Zero;
+            fore->transform->localRotation = Quat::Identity;
+            fore->transform->localScale = Vec3::One;
+        }
+        if (hand && hand->transform) {
+            hand->transform->localPosition = Vec3::Zero;
+            hand->transform->localRotation = Quat::Identity;
+            hand->transform->localScale = FpHandScale(side);
+        }
+        if (base + 2 < (int)m_parts.size()) PaintFpHand(hand, m_parts[base + 2], side);
+        PaintFpSleeve(fore, side);
+    };
+    prep(m_ownerArm, m_ownerFore, m_ownerHand, baseR, right);
+    prep(m_ownerArm2, m_ownerFore2, m_ownerHand2, baseL, left);
+
+    ProceduralObjectHolding* ph = gameObject->GetComponent<ProceduralObjectHolding>();
+    GameObject* held = (ph && ph->IsHolding()) ? ph->Held() : nullptr;
+    const bool have = held && held->transform && !held->IsDestroyed() && m_ownerItem && m_ownerItem->transform;
+    const float sway = settings ? settings->swayAmount : 1.0f;
+    const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
+    const float slide = 1.0f - m_fpShown;
+
+    if (!have) {
+        if (m_ownerItem) m_ownerItem->active = false;
+        Vec3 off = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
+        if (right) off = off + right->position;
+        m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * off);
+        if (right) m_ownerArm->transform->SetRotation(m_ownerArm->transform->Rotation() * Quat::Euler(right->rotation));
+        Vec3 leftOff{-off.x, off.y, off.z};
+        if (left) leftOff = leftOff + left->position;
+        const Quat rel = cam->transform->Rotation().Conjugate() * m_ownerArm->transform->Rotation();
+        Vec3 e = rel.ToEuler();
+        e.y = -e.y;
+        e.z = -e.z;
+        if (left) e = e + left->rotation;
+        m_ownerArm2->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * leftOff);
+        m_ownerArm2->transform->SetRotation(cam->transform->Rotation() * Quat::Euler(e));
+        m_ownerArm2->active = true;
+        if (m_ownerFore2) m_ownerFore2->active = true;
+        if (m_ownerHand2) m_ownerHand2->active = true;
+        SetOwnerArmActive(true);
+        return;
+    }
+
+    MeshRenderer* src = held->GetComponent<MeshRenderer>();
+    if (!src)
+        for (Transform* c : held->transform->Children())
+            if (c && c->gameObject)
+                if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
+    auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
+    if (!src || !dst || src->mesh.vertices.empty()) {
+        m_ownerItem->active = false;
+        DeactivateOwnerArm2();
+        return;
+    }
+    dst->mesh = src->mesh;
+    dst->color = src->color;
+    dst->castShadows = false;
+    dst->mesh.normals.clear();
+    Vec3 mn = src->mesh.vertices[0], mx = mn;
+    for (const Vec3& v : src->mesh.vertices) {
+        mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+        mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+    }
+    const Vec3 centre = (mn + mx) * 0.5f;
+    const Vec3 half = (mx - mn) * 0.5f;
+    // The copy uses the prop's own proportions, fitted so the long side is a
+    // held object in front of the lens rather than a wall. itemScale still applies.
+    const Vec3 lossy = held->transform->LossyScale();
+    const Vec3 ext{mx.x - mn.x, mx.y - mn.y, mx.z - mn.z};
+    const float worldLong = std::max(std::fabs(lossy.x * ext.x),
+                            std::max(std::fabs(lossy.y * ext.y), std::fabs(lossy.z * ext.z)));
+    Vec3 scl = worldLong > 1e-4f ? lossy * (0.20f / worldLong) : Vec3{0.20f, 0.20f, 0.20f};
+    if (settings && settings->itemScale > 0.0f) scl = scl * settings->itemScale;
+    // Tilt the top toward the lens. A face square to the camera sits in shadow.
+    Quat irot = Quat::Euler(-36.0f, 12.0f, 0.0f);
+    if (settings) irot = Quat::Euler(settings->itemRotation) * irot;
+    // Low enough to sit in the hands, high enough that the crate stays in frame
+    // while the forearms run off the bottom.
+    Vec3 camOff{0.0f, -0.10f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.36f, depth + 0.02f)};
+    camOff.x += 0.02f * bobC;
+    if (settings) camOff = camOff + settings->itemOffset;
+    camOff = lag * camOff;
+    m_ownerItem->transform->SetParent(gameObject->transform, false);
+    m_ownerItem->transform->localScale = scl;
+    m_ownerItem->transform->SetRotation(cam->transform->Rotation() * lag * irot);
+    m_ownerItem->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
+    // Lift the camera-facing side so a crate does not read as a black slab.
+    dst->emissive = Color{src->color.r * 0.22f, src->color.g * 0.22f, src->color.b * 0.22f, 1.0f};
+    m_ownerItem->active = true;
+    held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
+    m_fpHiddenHeld = held;
+
+    Vec3 imn{1.0e9f, 1.0e9f, 1.0e9f}, imx{-1.0e9f, -1.0e9f, -1.0e9f};
+    for (const Vec3& v : dst->mesh.vertices) {
+        const Vec3 c = cam->transform->InverseTransformPoint(m_ownerItem->transform->TransformPoint(v));
+        imn.x = std::min(imn.x, c.x); imn.y = std::min(imn.y, c.y); imn.z = std::min(imn.z, c.z);
+        imx.x = std::max(imx.x, c.x); imx.y = std::max(imx.y, c.y); imx.z = std::max(imx.z, c.z);
+    }
+    auto* ho = held->GetComponent<HoldableObject>();
+    auto placeHand = [&](GameObject* arm, GameObject* hand, bool isLeft, const FirstPersonHands::HandSide* side) {
+        // Grip height comes from the item. The hand itself sits on the near
+        // left or right edge, outside the prop, broad face back at the lens.
+        float gripY = 0.0f;
+        if (ho) {
+            const HoldableObject::Grip& g = isLeft ? ho->leftGrip : ho->rightGrip;
+            const Vec3 gripLocal = g.enabled ? g.position : (centre + Vec3{isLeft ? -half.x : half.x, 0.0f, 0.0f});
+            const Vec3 gripCam = cam->transform->InverseTransformPoint(m_ownerItem->transform->TransformPoint(gripLocal));
+            gripY = gripCam.y;
+        }
+        if (gripY < imn.y) gripY = imn.y;
+        if (gripY > imx.y) gripY = imx.y;
+        float radius = 0.05f * root.x;
+        if (hand) if (auto* mr = hand->GetComponent<MeshRenderer>()) if (!mr->mesh.vertices.empty()) {
+            float e = 0.0f;
+            for (const Vec3& v : mr->mesh.vertices) e = std::max(e, std::max(std::fabs(v.x), std::max(std::fabs(v.y), std::fabs(v.z))));
+            const float sy = hand->transform ? std::fabs(hand->transform->localScale.y) : 1.0f;
+            radius = e * sy * root.x;
+        }
+        const float x = isLeft ? (imn.x - radius * 0.65f) : (imx.x + radius * 0.65f);
+        const float z = imx.z - 0.01f;   // the near face; camera looks down -Z
+        Vec3 pos = cam->transform->TransformPoint(Vec3{x, gripY, z});
+        const Vec3 inward = (cam->transform->Rotation() * Vec3{isLeft ? 0.85f : -0.85f, 0.0f, -0.25f}).Normalized();
+        const Vec3 face = (cam->transform->Rotation() * Vec3{isLeft ? -0.2f : 0.2f, 0.78f, 0.50f}).Normalized();
+        Quat rot = Quat::LookRotation(inward, face);
+        if (side) {
+            rot = Quat::Euler(side->elbowBend, 0.0f, 0.0f) * Quat::Euler(side->wristRotation)
+                * Quat::Euler(side->rotation) * rot;
+            pos = pos + cam->transform->Rotation() * (side->position + side->wristOffset + Vec3{0.0f, 0.0f, -side->reach});
+        }
+        arm->transform->SetRotation(rot);
+        arm->transform->SetPosition(pos);
+        arm->active = true;
+        if (hand && hand->transform && hand->transform->Parent() && hand->transform->Parent()->gameObject)
+            PaintFpForearm(hand->transform->Parent()->gameObject, side,
+                           cam->transform->Rotation().Conjugate() * rot);
+        (void)snap;
+    };
+    placeHand(m_ownerArm, m_ownerHand, false, right);
+    placeHand(m_ownerArm2, m_ownerHand2, true, left);
+    if (m_ownerFore) m_ownerFore->active = true;
+    if (m_ownerHand) m_ownerHand->active = true;
+    if (m_ownerFore2) m_ownerFore2->active = true;
+    if (m_ownerHand2) m_ownerHand2->active = true;
+}
+
 void Character::RememberPartRest() {
+    const std::vector<Bone> sk = Skeleton();
     m_partRest.assign(m_parts.size(), Vec3{0.0f, 0.0f, 0.0f});
-    for (std::size_t i = 0; i < m_parts.size(); ++i)
-        if (m_parts[i] && m_parts[i]->transform) m_partRest[i] = m_parts[i]->transform->localPosition;
+    for (std::size_t i = 0; i < m_parts.size(); ++i) {
+        if (!m_parts[i] || !m_parts[i]->transform) continue;
+        const Vec3 live = m_parts[i]->transform->localPosition;
+        Vec3 bind = live;
+        if ((int)i < B_COUNT && (int)i < (int)sk.size()) {
+            const int par = sk[i].parent;
+            const Vec3 pj = par >= 0 ? sk[par].joint : Vec3{0.0f, 0.0f, 0.0f};
+            bind = sk[i].joint - pj;
+        }
+        // A scene saved mid-play stores the animated bone. The joint offset of
+        // the rig is the skeleton's rest, not a foot planted on a step. A part
+        // still sitting at its rest rotation keeps an edit-mode position tweak.
+        const Quat& q = m_parts[i]->transform->localRotation;
+        const bool posed = std::fabs(q.w) < 0.9995f;
+        m_partRest[i] = posed ? bind : live;
+    }
 }
 
 void Character::RemoveParts() {
+    ReleaseOwnerArm();   // the copy hangs off the player, not the rig, so the rig's destroy would miss it
+    ReleaseOwnerArm2();
+    if (m_viewAnchor && !m_viewAnchor->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_viewAnchor);
+    m_viewAnchor = nullptr;
     if (GameObject* rig = FindRig())
-        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it
+        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it, copy included
     m_rigRoot = nullptr;
     m_parts.clear();
     m_partRest.clear();
@@ -993,7 +2120,11 @@ void Character::RemoveParts() {
 void Character::EditorPreviewTick() {
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
-        if (m_partsBuilt) DriveParts();      // push the (preview/rest) pose onto the rig
+        if (m_partsBuilt) {
+            m_fpShown = (firstPersonArm && fpArmBase >= 0)
+                ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+            DriveParts();      // push the (preview/rest) pose onto the rig
+        }
         return;
     }
     // Single mesh: rebuild from the previewed pose so the editor shows it live.
@@ -1003,8 +2134,9 @@ void Character::EditorPreviewTick() {
     Mesh m = m_rest;
     Skin(m, m_bone, CurrentSourcePose());
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }
-    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }
+    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = false;
 }
 
 void Character::BuildParts() {
@@ -1052,7 +2184,9 @@ void Character::BuildParts() {
         if (part.vertices.empty()) continue;
         GameObject* po = s->CreateGameObject(BoneName(bi));
         auto* mr = po->AddComponent<MeshRenderer>();
-        mr->mesh = std::move(part); mr->doubleSided = true;
+        // Outward winding (the rig's 180° yaw keeps it). Single-sided, so a
+        // camera that pitches down sees the shell and not the open inside.
+        mr->mesh = std::move(part); mr->doubleSided = false;
         m_parts[bi] = po;
     }
     // Parent per the skeleton so rotating a bone moves its children (real rig).
@@ -1067,6 +2201,102 @@ void Character::BuildParts() {
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;   // hide the baked mesh
     RememberPartRest();
     m_partsBuilt = true;
+    SplitNeckFromTorso();
+}
+
+void Character::SplitNeckFromTorso() {
+    GameObject* torso = Part(B_TORSO);
+    if (!torso || !torso->transform) return;
+    for (Transform* c : torso->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Neck") return;
+    auto* mr = torso->GetComponent<MeshRenderer>();
+    Scene* s = GetScene();
+    if (!mr || !s) return;
+    Mesh& src = mr->mesh;
+    const bool cols = src.HasFaceColors();
+    Mesh neck, keep;
+    const int faces = (int)src.triangles.size() / 3;
+    for (int f = 0; f < faces; ++f) {
+        int i0 = src.triangles[f * 3], i1 = src.triangles[f * 3 + 1], i2 = src.triangles[f * 3 + 2];
+        const bool ok = i0 >= 0 && i1 >= 0 && i2 >= 0
+            && i0 < (int)src.vertices.size() && i1 < (int)src.vertices.size() && i2 < (int)src.vertices.size();
+        const bool neckFace = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
+            && NeckLocalVert(src.vertices[i2]);
+        Mesh& dst = neckFace ? neck : keep;
+        if (!ok) continue;
+        for (int idx : {i0, i1, i2}) {
+            dst.triangles.push_back((int)dst.vertices.size());
+            dst.vertices.push_back(src.vertices[idx]);
+        }
+        if (cols && f < (int)src.triColors.size()) dst.triColors.push_back(src.triColors[f]);
+    }
+    if (neck.vertices.empty()) return;
+    mr->mesh = std::move(keep);
+    mr->doubleSided = false;
+    GameObject* n = s->CreateGameObject("Neck");
+    auto* nm = n->AddComponent<MeshRenderer>();
+    nm->mesh = std::move(neck);
+    nm->doubleSided = false;
+    nm->castShadows = true;
+    n->transform->SetParent(torso->transform, false);
+    n->transform->localPosition = Vec3{0.0f, 0.0f, 0.0f};
+    n->active = true;
+    n->firstPersonViewmodel = false;
+}
+
+void Character::ApplyOwnerVisibility(bool firstPerson) {
+    if (!m_partsBuilt) return;
+    for (int i = 0; i < B_COUNT && i < (int)m_parts.size(); ++i) {
+        GameObject* p = m_parts[i];
+        if (!p) continue;
+        p->active = true;
+        p->firstPersonViewmodel = firstPerson && ShowsToOwnerCamera(i);
+        if (auto* mr = p->GetComponent<MeshRenderer>()) {
+            mr->doubleSided = false;
+            if (i == B_HEAD) mr->castShadows = true;
+        }
+    }
+    GameObject* torso = Part(B_TORSO);
+    if (!torso || !torso->transform) return;
+    for (Transform* c : torso->transform->Children()) {
+        if (!c || !c->gameObject || c->gameObject->name != "Neck") continue;
+        c->gameObject->active = true;
+        c->gameObject->firstPersonViewmodel = false;
+        if (auto* mr = c->gameObject->GetComponent<MeshRenderer>()) {
+            mr->doubleSided = false;
+            mr->castShadows = true;
+        }
+    }
+}
+
+Vec3 Character::ClearFirstPersonEye(Vec3 eye) const {
+    if (!m_partsBuilt || !gameObject || !gameObject->transform) return eye;
+    const Vec3 fwd = gameObject->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+    const Vec3 up  = gameObject->transform->Rotation() * Vec3{0.0f, 1.0f, 0.0f};
+    auto inside = [&](const Vec3& at) {
+        for (int b = 0; b < B_COUNT && b < (int)m_parts.size(); ++b) {
+            if (b == B_HEAD || (b >= B_LUPARM && b <= B_RHAND)) continue;
+            GameObject* part = m_parts[b];
+            if (!part || !part->transform) continue;
+            auto* mr = part->GetComponent<MeshRenderer>();
+            if (!mr || mr->mesh.vertices.empty()) continue;
+            Vec3 lo, hi;
+            mr->mesh.Bounds(lo, hi);
+            const Vec3 local = part->transform->InverseTransformPoint(at);
+            if (local.x > lo.x && local.x < hi.x && local.y > lo.y && local.y < hi.y
+                && local.z > lo.z && local.z < hi.z)
+                return true;
+        }
+        return false;
+    };
+    bool moved = false;
+    for (int step = 0; step < 12 && inside(eye); ++step) {
+        eye = eye + fwd * 0.05f + up * 0.04f;
+        moved = true;
+    }
+    // Stop a little clear of the shell so the near plane does not slice it.
+    if (moved) eye = eye + fwd * 0.04f + up * 0.03f;
+    return eye;
 }
 
 std::vector<Vec3> Character::CurrentSourcePose() const {
@@ -1204,50 +2434,110 @@ std::uint32_t Character::UpperBodyMask() {
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
+void Character::PoseBuiltParts() {
+    if (m_partsBuilt && animateParts) DriveParts();
+}
+
+void Character::SetViewmodelBlend(float weight) {
+    fpViewWeight = weight;
+    if (weight < 0.0f) return;
+    float arm = 0.0f;
+    if (firstPersonArm && fpArmBase >= 0)
+        arm = fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp);
+    if (weight > 1.0f) weight = 1.0f;
+    m_fpShown = arm * weight;
+}
+
+GameObject* Character::EnsureViewAnchor() {
+    if (m_viewAnchor && m_viewAnchor->IsDestroyed()) m_viewAnchor = nullptr;
+    if (m_viewAnchor) return m_viewAnchor;
+    Scene* s = GetScene();
+    if (!s || !gameObject || !gameObject->transform) return nullptr;
+    m_viewAnchor = s->CreateGameObject("FP_ViewAnchor");
+    m_viewAnchor->transient = true;
+    m_viewAnchor->transform->SetParent(gameObject->transform, false);
+    m_viewAnchor->transform->localPosition = Vec3::Zero;
+    m_viewAnchor->transform->localRotation = Quat::Identity;
+    m_viewAnchor->transform->localScale = Vec3::One;
+    return m_viewAnchor;
+}
+
+GameObject* Character::OwnerHideTarget() const {
+    Camera* cam = OwnerCamera(gameObject);
+    if (!cam || !cam->ignoreObject) return nullptr;
+    GameObject* ig = cam->ignoreObject;
+    if (ig == gameObject) return ig;
+    if (m_viewAnchor && ig == m_viewAnchor) return ig;
+    return nullptr;
+}
+
+void Character::BlendHeldTowardGrip() {
+    // The copy is already in the first-person placement. While the blend is
+    // open, slide that world pose back toward the real grip so the item the
+    // owner sees does not teleport. At either end the caller shows only one.
+    if (fpViewWeight < 0.0f || m_fpShown >= 0.999f) return;
+    if (!m_ownerItem || !m_ownerItem->active || !m_ownerItem->transform) return;
+    if (!m_fpHiddenHeld || m_fpHiddenHeld->IsDestroyed() || !m_fpHiddenHeld->transform) return;
+    const float w = m_fpShown < 0.0f ? 0.0f : m_fpShown;
+    const Vec3 fpPos = m_ownerItem->transform->Position();
+    const Quat fpRot = m_ownerItem->transform->Rotation();
+    const Vec3 fpScale = m_ownerItem->transform->LossyScale();
+    const Vec3 gripPos = m_fpHiddenHeld->transform->Position();
+    const Quat gripRot = m_fpHiddenHeld->transform->Rotation();
+    const Vec3 gripScale = m_fpHiddenHeld->transform->LossyScale();
+    Transform* parent = nullptr;
+    if (GameObject* anchor = EnsureViewAnchor()) parent = anchor->transform;
+    else if (gameObject) parent = gameObject->transform;
+    if (parent) m_ownerItem->transform->SetParent(parent, true);
+    m_ownerItem->transform->SetPosition(Vec3::Lerp(gripPos, fpPos, w));
+    m_ownerItem->transform->SetRotation(Quat::Slerp(gripRot, fpRot, w));
+    const Vec3 parentScale = parent ? parent->LossyScale() : Vec3::One;
+    const Vec3 scl = Vec3::Lerp(gripScale, fpScale, w);
+    auto div = [](float world, float by) { return std::fabs(by) < 1e-5f ? world : world / by; };
+    m_ownerItem->transform->localScale = Vec3{div(scl.x, parentScale.x), div(scl.y, parentScale.y), div(scl.z, parentScale.z)};
+}
+
+void Character::EaseFirstPersonArm(float dt) {
+    if (dt > 0.0f) m_fpDt = dt;
+    const float want = (firstPersonArm && fpArmBase >= 0)
+        ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+    if (fpViewWeight >= 0.0f) {
+        float w = fpViewWeight > 1.0f ? 1.0f : fpViewWeight;
+        m_fpShown = want * w;
+        return;
+    }
+    if (dt <= 0.0f) { m_fpShown = want; return; }
+    const float k = 1.0f - std::exp(-dt * 8.0f);   // most of the way there in ~0.3 s
+    m_fpShown += (want - m_fpShown) * k;
+    if (std::fabs(m_fpShown - want) < 0.001f) m_fpShown = want;
+}
+
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
     std::vector<Vec3> pose = CurrentSourcePose();
-    // First-person: raise the visible arm into the lower corner of the view like a
-    // Minecraft hand (overriding the walk pose for those three bones).
-    int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
-    if (fpb >= 0) {
-        // The arm hangs off the hips/torso, which also carry the walk bob and the
-        // crouch/prone pose. We can only steady the arm by zeroing those SHARED bones,
-        // which would distort the BODY if it's visible — so we do it ONLY for the opt-in
-        // "Steady arm" / "no bob" cases (meant for first person, where the body is culled
-        // from the owner's own camera). The body's own crouch/prone pose is left intact.
-        if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
-        // Raise the arm; subtract the camera pitch so the arm follows the view up/down
-        // (the rig's 180° flip maps the bone's local X to a world rotation such that
-        // subtracting pitch tilts the arm the same way the camera tilts).
-        pose[fpb]     = {fpRaise - fpPitch, 0.0f, 0.0f};   // upper arm: into frame + follow look
-        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};             // forearm bend (hand height)
-        pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
-    }
-    // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
-    // otherwise the right arm. Forward (-Z, the body's facing) so it lands in front.
-    int pb = (fpb >= 0) ? fpb : B_RUPARM;
-    if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
+    // The punch stays on the real right arm, the swing third person and every
+    // other machine already play. The owner's copy swings separately, below.
+    std::vector<Vec3> shown = pose;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && B_RUPARM + 1 < (int)shown.size()) {
         float arc = std::sin(m_punchT * 3.14159265f);
-        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
-        pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
-        pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {-18.0f, 0.0f, 0.0f};
+        shown[B_RUPARM]     = shown[B_RUPARM]     + (up   - shown[B_RUPARM])     * arc;
+        shown[B_RUPARM + 1] = shown[B_RUPARM + 1] + (fore - shown[B_RUPARM + 1]) * arc;
     }
     // The whole pose is rewritten every frame, joint offsets included: IK that moved
     // a joint last frame (foot IK on a step) starts again from the animation.
-    for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
+    // First person does not rewrite these bones. A look pitch lives on the copy.
+    for (int bi = 0; bi < B_COUNT && bi < (int)shown.size(); ++bi)
         if (m_parts[bi] && m_parts[bi]->transform) {
-            m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
+            m_parts[bi]->transform->localRotation = Quat::Euler(shown[bi]);
             if (bi < (int)m_partRest.size()) m_parts[bi]->transform->localPosition = m_partRest[bi];
         }
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
-        // A steady first-person arm ignores the crouch/prone height drop so it stays in
-        // view (the owner only sees the arm, so the body's true height is irrelevant).
-        float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;
-        m_rigRoot->transform->localPosition = Vec3{0.0f, y, 0.0f};
+        m_rigRoot->transform->localPosition = Vec3{0.0f, so.y, 0.0f};
         m_rigRoot->transform->localScale = Vec3{height, height, height};
     }
+    PoseOwnerArm(pose);
 }
 
 std::string Character::ToText() const {
@@ -1315,6 +2605,26 @@ std::string Character::ToText() const {
         if (!c.hasRoot) continue;
         o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
         for (const auto& k : c.keys) o << ' ' << k.root.x << ' ' << k.root.y << ' ' << k.root.z;
+    }
+    // How fast the stride follows the ground (trailing, so older saves keep the default).
+    o << ' ' << gaitSpeedSmoothing;
+    o << ' ' << jumpCrouchTime << ' ' << jumpCrouchBend
+      << ' ' << turnStepAngle << ' ' << turnStepTime << ' ' << turnStepLift
+      << ' ' << turnStillSpeed << ' ' << motionLean << ' ' << motionLeanMax;
+    o << ' ' << (clipDive.empty() ? "-" : clipDive);
+    // Per-key easing, for the clips that set it on any key (trailing, count-prefixed).
+    auto hasKeyEase = [](const AnimClip& c) {
+        for (const auto& k : c.keys) if (k.ease != AnimKeyEase::Clip) return true;
+        return false;
+    };
+    int withEase = 0;
+    for (const auto& kv : m_clips) if (hasKeyEase(kv.second)) ++withEase;
+    o << ' ' << withEase;
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        if (!hasKeyEase(c)) continue;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
+        for (const auto& k : c.keys) o << ' ' << (int)k.ease;
     }
     return o.str();
 }
@@ -1396,7 +2706,8 @@ void Character::FromText(const std::string& text) {
             if (!(in >> cn >> ip >> spd >> len >> ov)) break;
             auto it = m_clips.find(cn == "-" ? "" : cn);
             if (it == m_clips.end()) continue;
-            it->second.interp = (ip == 1) ? AnimInterp::Smooth : (ip == 2) ? AnimInterp::Step : AnimInterp::Linear;
+            it->second.interp = (ip == 1) ? AnimInterp::Smooth : (ip == 2) ? AnimInterp::Step
+                              : (ip == 3) ? AnimInterp::Cubic  : AnimInterp::Linear;
             it->second.speed = spd > 1e-4f ? spd : 1.0f;
             it->second.length = len > 0.0f ? len : 0.0f;
             it->second.overrideMovement = (ov != 0);
@@ -1415,6 +2726,35 @@ void Character::FromText(const std::string& text) {
                 if (clip) clip->keys[k].root = r;
             }
             if (clip && in) clip->hasRoot = true;
+        }
+    }
+    float gs = gaitSpeedSmoothing;
+    if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
+    float jct = jumpCrouchTime, jcb = jumpCrouchBend, tsa = turnStepAngle, tst = turnStepTime;
+    float tsl = turnStepLift, tss = turnStillSpeed, ml = motionLean, mlm = motionLeanMax;
+    if (in >> jct) jumpCrouchTime = std::max(0.0f, jct);
+    if (in >> jcb) jumpCrouchBend = std::max(0.0f, jcb);
+    if (in >> tsa) turnStepAngle = std::max(0.0f, tsa);
+    if (in >> tst) turnStepTime = std::max(0.05f, tst);
+    if (in >> tsl) turnStepLift = std::max(0.0f, tsl);
+    if (in >> tss) turnStillSpeed = std::max(0.0f, tss);
+    if (in >> ml)  motionLean = std::max(0.0f, ml);
+    if (in >> mlm) motionLeanMax = std::max(0.0f, mlm);
+    // Optional trailing dive binding (absent in older saves).
+    std::string sdive;
+    if (in >> sdive) clipDive = (sdive == "-" ? "" : sdive);
+    // Optional trailing per-key easing.
+    int ne = 0;
+    if (in >> ne) {
+        for (int i = 0; i < ne; ++i) {
+            std::string cn; std::size_t nk = 0;
+            if (!(in >> cn >> nk)) break;
+            auto it = m_clips.find(cn == "-" ? "" : cn);
+            AnimClip* clip = (it != m_clips.end() && it->second.keys.size() == nk) ? &it->second : nullptr;
+            for (std::size_t k = 0; k < nk && in; ++k) {
+                int e = 0; in >> e;
+                if (clip && e >= 0 && e <= (int)AnimKeyEase::EaseOut) clip->keys[k].ease = (AnimKeyEase)e;
+            }
         }
     }
     m_built = false;

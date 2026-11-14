@@ -36,6 +36,12 @@ public:
             ForEachEventBetween(clip, prev, m_time, !m_eventsPrimed, [&](const std::string& n) { Dispatch(n); });
             m_eventsPrimed = true;
         }
+        // A looping clip's phase is t mod length. Leaving the raw time to grow
+        // forever loses that phase once the float can't tell frames apart.
+        // Events above still see the unwrapped window, so a loop crossing fires once.
+        const float len = clip.Length();
+        if (clip.loop && len > 0.0f)
+            m_time = std::fmod(std::fmod(m_time, len) + len, len);
     }
 
     /// Call `fn` for each event of `clip` passed when raw playback time goes from

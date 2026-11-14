@@ -1,0 +1,70 @@
+# Walk loot and stop at the key. potion and key are visited; gem is not.
+node 1 OnStart
+pos 1 40 30
+entry OnStart 1
+node 2 NewList
+pos 2 40 180
+node 3 SetVar loot
+pos 3 280 30
+exec 1 0 3
+data 3 0 2 0
+
+node 4 GetVar loot
+pos 4 40 360
+node 5 Const "potion"
+pos 5 280 360
+node 6 ListAdd
+pos 6 520 360
+exec 3 0 6
+data 6 0 4 0
+data 6 1 5 0
+
+node 7 GetVar loot
+pos 7 40 540
+node 8 Const "key"
+pos 8 280 540
+node 9 ListAdd
+pos 9 520 540
+exec 6 0 9
+data 9 0 7 0
+data 9 1 8 0
+
+node 10 GetVar loot
+pos 10 40 720
+node 11 Const "gem"
+pos 11 280 720
+node 12 ListAdd
+pos 12 520 720
+exec 9 0 12
+data 12 0 10 0
+data 12 1 11 0
+
+node 13 GetVar loot
+pos 13 780 360
+node 14 ForEach
+pos 14 1020 360
+exec 12 0 14
+data 14 0 13 0
+node 15 AddVar seen
+pos 15 1300 280
+default 15 0 1
+exec 14 0 15
+node 16 SetVar last
+pos 16 1300 460
+exec 15 0 16
+data 16 0 14 0
+node 17 Const "key"
+pos 17 1300 640
+node 18 Equals
+pos 18 1540 520
+data 18 0 14 0
+data 18 1 17 0
+node 19 Branch
+pos 19 1780 360
+exec 16 0 19
+data 19 0 18 0
+node 20 Break
+pos 20 2020 300
+exec 19 0 20
+
+comment 20 10 2200 880 0 "For Each with Break: stop on the key"

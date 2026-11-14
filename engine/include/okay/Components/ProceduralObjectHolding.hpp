@@ -15,17 +15,24 @@
 // (bones found by name). Grips come from the object's HoldableObject (one is
 // added with automatic settings if the object has none).
 //
-// Dropping hands the object back to physics and the hands ease back to the
-// animation.
+// Dropping hands the object back to physics (it keeps the holder's velocity) and
+// the hands ease back to the animation. Throwing is separate: hold the throw
+// input to charge, release to launch the object along the camera aim, strength
+// scaled by that charge plus the holder's velocity.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -41,15 +48,33 @@ namespace okay {
 
 class ProceduralObjectHolding : public Component {
 public:
-    int ExecutionOrder() const override { return 90; }   // after animation, before the IK solve (100)
+    int ExecutionOrder() const override { return 90; }   // after animation and FootIK (85), before FullBodyIK (100)
 
     enum class Hand { Left, Right, Both };
     enum class StyleMode { Automatic, Custom };
+    enum class CarryAnim { Automatic, Custom };
 
     Hand      primaryHand  = Hand::Right;              ///< the hand a one-handed object goes in (Both = support hand too)
     StyleMode holdingStyle = StyleMode::Automatic;     ///< Automatic: the object's own style; Custom: always its grip points
     bool      armIK = true;                            ///< bend the arms onto the grips (off: the object rides along)
     float     transitionTime = 0.3f;                   ///< seconds the object takes to come into the hands
+    bool      bodyAdjustment = true;                   ///< heavy / big loads: lean back, walk slower, kept off the body
+    CarryAnim carryAnimations = CarryAnim::Automatic;  ///< Automatic: the built-in lean; Custom: your Animator's carry
+                                                       ///< states, driven by the holding / carryStyle / carryWeight params
+
+    // Throw. Hold the key, mouse button or pad button to charge; releasing launches
+    // the object. Drop() is unchanged (it only lets go, at the holder's velocity).
+    char  throwKey = 'g';            ///< hold to charge, release to throw (0 = no key)
+    int   throwMouseButton = 2;      ///< mouse button that throws (-1 = none; 0 left, 1 right, 2 middle)
+    int   throwGamepadButton = 2;    ///< pad button (0=A 1=B 2=X 3=Y ...; -1 = none)
+    float throwChargeTime = 0.75f;   ///< seconds held to reach full strength
+    float throwMinSpeed = 4.0f;      ///< launch speed (m/s) with no charge, along the aim
+    float throwMaxSpeed = 16.0f;     ///< launch speed (m/s) at full charge
+    float pickupRange = 2.0f;        ///< with empty hands, pressing the throw input picks up the nearest object this close
+
+    /// 0..1 while the throw input is held, else 0.
+    float ThrowCharge() const { return m_charge; }
+    bool  IsChargingThrow() const { return m_charging; }
 
     /// Take `obj` into the hands. Refused when it's already held (by anyone), is
     /// this character or part of it, or is null. Holding something else drops it.
@@ -60,22 +85,18 @@ public:
         if (h && h->m_holder && h->m_holder != gameObject) return false;
         if (obj == m_held) return true;
         Drop();
+        ReleaseStrays(obj);
         FinishRelease(true);
         if (!h) h = obj->AddComponent<HoldableObject>();
-        h->m_holder = gameObject;
         m_held = obj; m_hold = h;
-        m_haveFrom = false; m_t = 0.0f;
-        // Physics lets go of it: no falling, no pushing the holder around.
-        m_physics.clear();
-        if (auto* rb = obj->GetComponent<Rigidbody3D>()) {
-            m_rbType = rb->bodyType; m_rb = rb;
-            rb->bodyType = Rigidbody3D::BodyType::Kinematic;
-            rb->velocity = Vec3::Zero; rb->angularVelocity = Vec3::Zero;
+        m_itemScale = obj->transform->localScale;
+        m_scaledItem = false;
+        if (h->inHandScale > 0.01f && std::fabs(h->inHandScale - 1.0f) > 1e-3f) {
+            obj->transform->localScale = m_itemScale * h->inHandScale;
+            m_scaledItem = true;
         }
-        if (Scene* sc = obj->scene())
-            for (const auto& up : sc->Objects())
-                if (up && up->IsSelfOrDescendantOf(obj))
-                    for (auto* c : up->GetComponents<Collider3D>()) { m_physics.push_back({c, c->isTrigger}); c->isTrigger = true; }
+        m_haveFrom = false; m_t = 0.0f;
+        h->FreezeForHold(gameObject);
         if (m_ik) for (int l = 0; l < 2; ++l) m_saved[l] = m_ik->effectors[l];
         m_savedValid = m_ik != nullptr;
         return true;
@@ -101,15 +122,52 @@ public:
     /// Let go of the held object: physics takes it back (moving with the holder's
     /// velocity) and the hands ease back to the animation.
     void Drop() {
-        if (!m_held) return;
-        if (m_rb) {
-            m_rb->bodyType = m_rbType;
-            if (m_rbType == Rigidbody3D::BodyType::Dynamic)
-                if (auto* own = BodyRigidbody()) m_rb->velocity = own->velocity;
+        if (!m_held && !m_hold) { ReleaseStrays(nullptr); return; }
+        GameObject* dropped = m_held;
+        HoldableObject* hold = m_hold;
+        if (m_scaledItem && dropped && dropped->transform) dropped->transform->localScale = m_itemScale;
+        m_scaledItem = false;
+        if (hold) {
+            Rigidbody3D* rb = dropped ? dropped->GetComponent<Rigidbody3D>() : nullptr;
+            const bool giveSpeed = rb && rb->bodyType == Rigidbody3D::BodyType::Kinematic;
+            hold->ReleaseHold();
+            if (giveSpeed && rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic)
+                if (auto* own = BodyRigidbody()) rb->velocity = own->velocity;
         }
-        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
-        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
+        if (dropped) dropped->ownerCameraSkip = nullptr;
         Forget();
+        ReleaseStrays(nullptr);
+    }
+
+    /// Launch the held object along the camera aim (the camera's -Z; the body's
+    /// forward if there is no camera). `charge01` < 0 uses the charge built by
+    /// holding the throw input. Speed is minSpeed + charge * (maxSpeed - minSpeed),
+    /// added to the holder's velocity. A kinematic body becomes dynamic so it can
+    /// fly; a static body is let go the way Drop() would. Returns false when
+    /// nothing is held.
+    bool Throw(float charge01 = -1.0f) {
+        if (!m_held || m_held->IsDestroyed()) return false;
+        const float c = charge01 < 0.0f ? m_charge : std::clamp(charge01, 0.0f, 1.0f);
+        const float lo = std::min(throwMinSpeed, throwMaxSpeed);
+        const float hi = std::max(throwMinSpeed, throwMaxSpeed);
+        const Vec3 vel = HolderVelocity() + AimDirection() * (lo + c * (hi - lo));
+        GameObject* thrown = m_held;
+        if (m_scaledItem && thrown->transform) thrown->transform->localScale = m_itemScale;
+        m_scaledItem = false;
+        // ReleaseHold puts the body type and colliders back and unparents the item.
+        if (m_hold) m_hold->ReleaseHold();
+        thrown->ownerCameraSkip = nullptr;
+        if (auto* rb = thrown->GetComponent<Rigidbody3D>()) {
+            if (rb->bodyType == Rigidbody3D::BodyType::Kinematic) rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+            if (rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
+                rb->velocity = vel;
+                rb->angularVelocity = Vec3::Zero;
+                rb->continuousCollision = true;   // a fast throw shouldn't tunnel a wall
+                rb->WakeUp();
+            }
+        }
+        Forget();
+        return true;
     }
 
     GameObject* Held() const { return m_held; }
@@ -120,13 +178,41 @@ public:
     Vec3 GripPoint(bool left) const { return m_gripW[left ? 0 : 1]; }
     /// The Full Body IK the hands are driven through (null until Play wires it).
     FullBodyIK* IK() const { return m_ik; }
+    /// How heavy the load feels, 0 (light) .. 1 (30 kg, or a big heavy-style load).
+    float Heaviness() const { return m_held ? m_heavy : 0.0f; }
+    /// What movement speed is multiplied by while carrying (1 = unaffected; 0.55
+    /// at the heaviest). Controllers read it through MoveSpeedScale.
+    float SpeedMultiplier() const { return m_held && bodyAdjustment ? 1.0f - 0.45f * m_heavy : 1.0f; }
+    /// The style the held object is carried in this frame (Automatic = a small
+    /// item in one hand).
+    HoldableObject::Style CarryStyle() const { return m_style; }
 
     void Start() override { EnsureRig(); }
+
+    // Charge while the throw input is held; release launches. With empty hands the
+    // same press picks up the nearest object, so a tap takes it and holding on
+    // throws. Paused time and a modal UI (an open inventory) don't charge or throw.
+    void Update(float dt) override {
+        if (dt <= 0.0f || Input::UICaptured() || Game::Paused()) return;
+        if (!m_held) {
+            m_charging = false;
+            m_charge = 0.0f;
+            if (ThrowPressed()) PickupNearest(pickupRange);
+            return;
+        }
+        if (ThrowHeld()) {
+            m_charging = true;
+            const float dur = throwChargeTime > 1e-3f ? throwChargeTime : 1e-3f;
+            m_charge = std::min(1.0f, m_charge + dt / dur);
+        } else if (m_charging) {
+            Throw(m_charge);
+        }
+    }
 
     void LateUpdate(float dt) override {
         if (m_releasing) FinishRelease(false);
         if (m_held && EnsureRig()) Hold(dt);
-        if (m_ik) for (int l = 0; l < 2; ++l) CurlFingers(l);
+        AdjustBody(dt);
     }
 
     void OnDestroy() override {
@@ -136,16 +222,12 @@ public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_held && dying.count(m_held)) {
-            m_rb = nullptr; m_physics.clear();
+            if (m_hold) m_hold->ReleaseHold();
             Forget();
         }
-        for (auto& p : m_physics) if (p.c && dying.count(p.c->gameObject)) p.c = nullptr;
-        if (m_rb && dying.count(m_rb->gameObject)) m_rb = nullptr;
         for (int l = 0; l < 2; ++l) {
             if (m_grip[l] && dying.count(m_grip[l])) m_grip[l] = nullptr;
             if (m_hint[l] && dying.count(m_hint[l])) m_hint[l] = nullptr;
-            for (const Finger& f : m_fingers[l])
-                if (dying.count(f.t->gameObject)) { m_fingers[l].clear(); m_fingersFound[l] = false; break; }
         }
         if (m_ik && dying.count(m_ik->gameObject)) { m_ik = nullptr; m_savedValid = false; m_releasing = false; }
         if (m_char && dying.count(m_char->gameObject)) m_char = nullptr;
@@ -156,7 +238,11 @@ private:
     void Hold(float dt) {
         const Body b = BodyFrame();
         Plan p = MakePlan(b);
-        if (!p.fixed) KeepInReach(b, p);
+        if (!p.fixed) {
+            KeepInReach(b, p);
+            // (A rifle's stock belongs against the shoulder.)
+            if (bodyAdjustment && m_style != HoldableObject::Style::Rifle && KeepOutOfBody(b, p)) KeepInReach(b, p, true);
+        }
         // Ease from where it was picked up (kept relative to the body, so walking
         // during the pickup doesn't drag it) into the hold.
         const Quat inv = b.rot.Inverse();
@@ -192,16 +278,23 @@ private:
         Vec3 gp[2], gf[2], gn[2];   // grip point, finger direction, palm normal
         float curl[2] = {}, indexCurl[2] = {};   // how far the fingers (and the index finger) close
         bool fixed = false;          // at a socket: the object doesn't move to suit the arms
+        Vec3 bc{0, 0, 0}, bh{0.1f, 0.1f, 0.1f};   // the object's local bounds (centre, half size; scaled)
     };
-    struct SavedCollider { Collider3D* c; bool trigger; };
+    struct ArmRest {
+        bool saved = false;
+        MeshRenderer* fore = nullptr;
+        bool foreOn = true;
+        Transform* hand = nullptr;
+        Vec3 handScale{1, 1, 1};
+    };
+    ArmRest m_armRest[2];
+    Vec3 m_itemScale{1, 1, 1};
+    bool m_scaledItem = false;
 
     GameObject*      m_held = nullptr;
     HoldableObject*  m_hold = nullptr;
     Character*       m_char = nullptr;
     FullBodyIK*      m_ik = nullptr;
-    Rigidbody3D*     m_rb = nullptr;
-    Rigidbody3D::BodyType m_rbType = Rigidbody3D::BodyType::Dynamic;
-    std::vector<SavedCollider> m_physics;
     FullBodyIK::Effector m_saved[2];
     bool  m_savedValid = false, m_releasing = false;
     GameObject* m_grip[2] = {};     // runtime hand goals (children of the body)
@@ -209,17 +302,52 @@ private:
     bool  m_use[2] = {};
     Vec3  m_gripW[2];
     bool  m_calib[2] = {};          // hand bone axes learned from the rig
-    Vec3  m_fingersLocal[2], m_palmLocal[2];
+    Vec3  m_fingersLocal[2], m_palmLocal[2];   // which way the hand points, and the palm
     float m_palmLen[2] = {0.065f, 0.065f};
-    // Finger bones under each hand (imported rigs), curled around the grip.
-    struct Finger { Transform* t; float scale; bool index; Quat before, set; bool live; };
-    std::vector<Finger> m_fingers[2];
-    bool  m_fingersFound[2] = {};
-    float m_curl[2] = {}, m_indexCurl[2] = {};
+    HoldableObject::Style m_style = HoldableObject::Style::Automatic;
+    float m_heavy = 0.0f;           // Heaviness() of the held object
+    float m_lean = 0.0f;            // eased weight of the lean-back layer
+    bool  m_announced = false;      // the Animator has been told about holding at least once
     Vec3  m_fromPos{0, 0, 0};
     Quat  m_fromRot;
     bool  m_haveFrom = false;
     float m_t = 1.0f;
+    float m_charge = 0.0f;          ///< 0..1 throw charge while the input is held
+    bool  m_charging = false;
+
+    bool ThrowHeld() const {
+        if (throwKey && Input::GetKey(throwKey)) return true;
+        if (throwMouseButton >= 0 && Input::GetMouseButton(throwMouseButton)) return true;
+        if (throwGamepadButton >= 0 && Input::GetGamepadButton(throwGamepadButton)) return true;
+        return false;
+    }
+    bool ThrowPressed() const {
+        if (throwKey && Input::GetKeyDown(throwKey)) return true;
+        if (throwMouseButton >= 0 && Input::GetMouseButtonDown(throwMouseButton)) return true;
+        if (throwGamepadButton >= 0 && Input::GetGamepadButtonDown(throwGamepadButton)) return true;
+        return false;
+    }
+    Vec3 HolderVelocity() const {
+        if (auto* own = BodyRigidbody()) return own->velocity;
+        return Vec3::Zero;
+    }
+    /// Where a throw goes: the main camera's aim (local -Z), else the body's forward.
+    Vec3 AimDirection() const {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        Camera* cam = sc ? sc->mainCamera : nullptr;
+        if ((!cam || !cam->transform) && sc)
+            for (auto* c : sc->FindObjectsOfType<Camera>())
+                if (c && c->enabled && c->transform && c->main) { cam = c; break; }
+        if (cam && cam->transform) {
+            Vec3 d = cam->transform->Rotation() * Vec3{0, 0, -1};
+            if (d.SqrMagnitude() > 1e-8f) return d.Normalized();
+        }
+        if (Transform* bt = BodyTransform()) {
+            Vec3 d = bt->Rotation() * Vec3{0, 0, -1};
+            if (d.SqrMagnitude() > 1e-8f) return d.Normalized();
+        }
+        return {0, 0, -1};
+    }
 
     Transform* BodyTransform() const { return m_char && m_char->transform ? m_char->transform : transform; }
     Rigidbody3D* BodyRigidbody() const {
@@ -290,8 +418,8 @@ private:
         return b;
     }
 
-    // Learn which way the hand bone's fingers and palm point (rigs disagree on
-    // bone axes): fingers continue the forearm, the palm faces the body.
+    // Learn which way the hand points and which way the palm faces (rigs disagree
+    // on bone axes). The point continues the forearm; the palm faces the body.
     void Calibrate(int l, Transform* fore, Transform* hand, const Body& b) {
         Vec3 f = hand->Position() - fore->Position();
         const float len = f.Magnitude();
@@ -327,6 +455,14 @@ private:
         const bool custom = (h.style == HoldableObject::Style::Custom || holdingStyle == StyleMode::Custom) &&
                             (h.leftGrip.enabled || h.rightGrip.enabled);
         Transform* socket = h.socket.empty() ? nullptr : FindSocket(h.socket);
+        h.LocalBounds(p.bc, p.bh);
+        p.bc = p.bc * scale;
+        p.bh = {std::fabs(p.bh.x * scale.x), std::fabs(p.bh.y * scale.y), std::fabs(p.bh.z * scale.z)};
+        m_style = custom ? HoldableObject::Style::Custom : h.ResolvedStyle();
+        // Heaviness: from 3 kg (nothing) to 30 kg (all); big loads and the heavy style count more.
+        m_heavy = std::min(1.0f, std::max(0.0f, (h.Mass() - 3.0f) / 27.0f) +
+                                 (std::max(p.bh.x, p.bh.z) * 2.0f > 0.5f * b.s ? 0.25f : 0.0f));
+        if (m_style == HoldableObject::Style::Heavy) m_heavy = std::max(m_heavy, 0.6f);
         if (custom) {
             p.rot = b.rot * Quat::Euler(h.holdRotation);
             p.pos = b.chest + (b.side * h.holdOffset.x + b.up * h.holdOffset.y + b.fwd * h.holdOffset.z) * b.s;
@@ -345,15 +481,25 @@ private:
                 for (int l = 0; l < 2; ++l) if (g[l]->enabled) { SetGrip(p, l, *g[l], scale); p.use[l] = true; }
             }
         } else {
-            Vec3 c, half;
-            h.LocalBounds(c, half);
-            c = c * scale; half = {std::fabs(half.x * scale.x), std::fabs(half.y * scale.y), std::fabs(half.z * scale.z)};
-            StylePlan(b, p, h.ResolvedStyle(), c, half);
+            StylePlan(b, p, m_style, p.bc, p.bh);
         }
         if (socket) {
             p.pos = socket->Position(); p.rot = socket->Rotation();
             p.fixed = true;
             if (!custom) p.use[0] = p.use[1] = false;   // resting in a holster / on the back
+        }
+        // Others-view nudge. The arms follow the object, so this is also how
+        // the full-body pose is raised or brought in. Grip points stay on the item.
+        if (!p.fixed) {
+            p.pos = p.pos + b.side * h.tpOffset.x + b.up * h.tpOffset.y + b.fwd * h.tpOffset.z;
+            p.rot = (p.rot * Quat::Euler(h.tpRotation)).Normalized();
+            if (FirstPersonHands* hands = gameObject ? gameObject->GetComponent<FirstPersonHands>() : nullptr)
+                if (hands->enabled) {
+                    p.pos = p.pos + b.side * hands->othersItemOffset.x + b.up * hands->othersItemOffset.y
+                          + b.fwd * hands->othersItemOffset.z;
+                    p.pos = p.pos + b.up * hands->othersArmLift + b.fwd * hands->othersArmForward;
+                    p.rot = (p.rot * Quat::Euler(hands->othersItemRotation)).Normalized();
+                }
         }
         return p;
     }
@@ -448,6 +594,52 @@ private:
             }
             break;
         }
+        case S::OneHandRight:
+        case S::OneHandLeft: {
+            const int hand = st == S::OneHandLeft ? 0 : 1;
+            const float sg = hand == 0 ? -1.0f : 1.0f;
+            p.rot = (b.rot * fix).Normalized();
+            const Vec3 hb = Extents(p.rot, half, b);
+            const float reach = (b.arm[hand] && b.reach[hand] > 0.05f) ? b.reach[hand] : 0.54f * s;
+            const float R = 0.88f * reach;
+            const float down = 0.62f * R;
+            const float ahead = std::sqrt(std::max(0.0f, R * R - down * down));
+            const Vec3 shoulder = b.arm[hand] ? b.shoulder[hand]
+                                : b.chest + b.side * (0.22f * sg);
+            const Vec3 palm = shoulder - b.up * down + b.fwd * ahead + b.side * (0.02f * sg);
+            centre = palm + b.up * hb.y;
+            grip(hand, centre - b.up * hb.y, b.fwd, b.up, centre, 0.35f, 0.35f);
+            break;
+        }
+        case S::TwoHanded:
+        case S::CarryFront: {
+            p.rot = (b.rot * fix).Normalized();
+            const Vec3 hb = Extents(p.rot, half, b);
+            const bool bothArms = b.arm[0] && b.arm[1];
+            const float reach = bothArms ? std::min(b.reach[0], b.reach[1]) : 0.54f * s;
+            const float halfShoulders = bothArms ? (b.shoulder[1] - b.shoulder[0]).Magnitude() * 0.5f : 0.22f * s;
+            const float dx = std::max(0.0f, hb.x - halfShoulders);
+            const float dz = hb.z + 0.06f * s;
+            const float R = 0.90f * (reach > 0.05f ? reach : 0.54f * s);
+            const float drop = std::sqrt(std::max(0.0f, R * R - dx * dx - dz * dz));
+            const Vec3 mid = bothArms ? (b.shoulder[0] + b.shoulder[1]) * 0.5f : b.chest;
+            centre = mid - b.up * drop + b.fwd * dz;
+            for (int l = 0; l < 2; ++l) {
+                const float g = l == 0 ? -1.0f : 1.0f;
+                grip(l, centre + b.side * (g * hb.x), b.fwd, b.side * -g, centre, 0.25f, 0.25f);
+            }
+            break;
+        }
+        case S::OverShoulder: {
+            const int hand = primaryHand == Hand::Left ? 0 : 1;
+            const float sg = hand == 0 ? -1.0f : 1.0f;
+            p.rot = (b.rot * fix).Normalized();
+            const Vec3 hb = Extents(p.rot, half, b);
+            const Vec3 shoulder = b.arm[hand] ? b.shoulder[hand] : b.chest + b.side * (0.22f * sg);
+            centre = shoulder + b.up * (0.04f * s) + b.fwd * (hb.z + 0.04f * s) + b.side * (0.06f * sg);
+            grip(hand, centre - b.up * (0.5f * hb.y) - b.fwd * (0.2f * hb.z), b.fwd, b.up, centre, 0.4f, 0.4f);
+            break;
+        }
         default: {   // small and light: one hand under it, forearm forward
             p.rot = (b.rot * fix).Normalized();
             const Vec3 hb = Extents(p.rot, half, b);
@@ -502,7 +694,8 @@ private:
 
     // Move the object toward the body until every hand on it is within reach
     // (a little short of full stretch, where the soft IK would start easing).
-    void KeepInReach(const Body& b, Plan& p) const {
+    // `keepOut`: never move it back toward the body (it was just pushed off it).
+    void KeepInReach(const Body& b, Plan& p, bool keepOut = false) const {
         for (int it = 0; it < 4; ++it) {
             Vec3 shift{0, 0, 0};
             float worst = 0.0f;
@@ -514,8 +707,23 @@ private:
                 if (dist > maxR && dist - maxR > worst) { worst = dist - maxR; shift = d * ((dist - maxR) / dist); }
             }
             if (worst <= 1e-4f) break;
+            if (keepOut) { const float f = Vec3::Dot(shift, b.fwd); if (f < 0.0f) shift = shift - b.fwd * f; }
             p.pos = p.pos + shift;
         }
+    }
+    // Keep the object out of the torso (a box from the hips to the shoulders):
+    // anything that would sink into the chest or belly is pushed out in front.
+    // Returns true when it moved.
+    static bool KeepOutOfBody(const Body& b, Plan& p) {
+        const Vec3 hb = Extents(p.rot, p.bh, b);
+        const Vec3 rel = p.pos + p.rot * p.bc - b.chest;
+        const float x = Vec3::Dot(rel, b.side), y = Vec3::Dot(rel, b.up), z = Vec3::Dot(rel, b.fwd);
+        const float front = 0.13f * b.s;
+        const bool overlaps = std::fabs(x) - hb.x < 0.24f * b.s && y + hb.y > -0.75f * b.s && y - hb.y < 0.15f * b.s &&
+                              z - hb.z < front && z + hb.z > -0.14f * b.s;
+        if (!overlaps) return false;
+        p.pos = p.pos + b.fwd * (front + 0.01f * b.s - (z - hb.z));
+        return true;
     }
 
     GameObject* RuntimeTarget(GameObject*& slot, const char* name) {
@@ -535,15 +743,56 @@ private:
         const Vec3 G = pos + rot * p.gp[l];
         const Vec3 F = (rot * p.gf[l]).Normalized(), N = (rot * p.gn[l]).Normalized();
         m_gripW[l] = G;
-        m_curl[l] = p.curl[l]; m_indexCurl[l] = p.indexCurl[l];
         GameObject* g = RuntimeTarget(m_grip[l], l == 0 ? "Holding Grip L" : "Holding Grip R");
         GameObject* h = RuntimeTarget(m_hint[l], l == 0 ? "Holding Elbow L" : "Holding Elbow R");
         if (!g || !h) return;
         g->transform->SetPosition(WristFor(l, b, G, F, N));
         if (m_calib[l]) g->transform->SetRotation(HandRotation(l, F, N));
-        // Elbows hang below and outside the shoulder, a little behind it.
+        // Elbows hang below and outside the shoulder. The others-view bend
+        // folds that hint further out; reach and the wrist nudge move the grip.
         const Vec3 out = b.side * (l == 0 ? -1.0f : 1.0f);
-        h->transform->SetPosition(b.shoulder[l] + (b.up * -1.0f + out * 0.6f - b.fwd * 0.3f) * std::max(b.upper[l], 0.05f));
+        float bend = 35.0f;
+        Vec3 wristNudge{0, 0, 0};
+        Vec3 gripRot{0, 0, 0};
+        bool customBend = false;
+        if (FirstPersonHands* hands = gameObject ? gameObject->GetComponent<FirstPersonHands>() : nullptr)
+            if (hands->enabled) {
+                const FirstPersonHands::OthersArm& arm = l == 0 ? hands->othersLeft : hands->othersRight;
+                bend = arm.elbowBend;
+                customBend = std::fabs(bend) > 0.5f;
+                wristNudge = b.side * arm.wristOffset.x + b.up * arm.wristOffset.y + b.fwd * (arm.wristOffset.z + arm.reach);
+                gripRot = arm.wristRotation;
+                if (m_ik) {
+                    Transform *ua = nullptr, *fa = nullptr, *ha = nullptr;
+                    m_ik->LimbBones(l, ua, fa, ha);
+                    (void)ua;
+                    if (fa && fa->gameObject)
+                        if (auto* mr = fa->gameObject->GetComponent<MeshRenderer>()) {
+                            if (!m_armRest[l].saved) {
+                                m_armRest[l].saved = true;
+                                m_armRest[l].fore = mr;
+                                m_armRest[l].foreOn = mr->enabled;
+                                m_armRest[l].hand = ha;
+                                m_armRest[l].handScale = ha ? ha->localScale : Vec3::One;
+                            }
+                            if (!arm.forearm) mr->enabled = false;
+                        }
+                    if (ha && (std::fabs(arm.handSize.x - 1.0f) > 1e-3f || std::fabs(arm.handSize.y - 1.0f) > 1e-3f
+                               || std::fabs(arm.handSize.z - 1.0f) > 1e-3f))
+                        ha->localScale = arm.handSize;
+                }
+            }
+        const float upper = std::max(b.upper[l], 0.05f);
+        if (!customBend)
+            h->transform->SetPosition(b.shoulder[l] + (b.up * -1.0f + out * 0.6f - b.fwd * 0.3f) * upper);
+        else {
+            const float fold = std::sin(bend * 0.0174533f);
+            const float hang = std::cos(bend * 0.0174533f);
+            h->transform->SetPosition(b.shoulder[l] + (b.up * -hang + out * (0.35f + 0.45f * fold) - b.fwd * 0.15f) * upper);
+        }
+        g->transform->SetPosition(g->transform->Position() + wristNudge);
+        if (gripRot.SqrMagnitude() > 1e-6f)
+            g->transform->SetRotation(g->transform->Rotation() * Quat::Euler(gripRot));
         e.enabled = true;
         e.target = g->transform;
         e.hint = h->transform;
@@ -552,49 +801,70 @@ private:
         e.pull = 0.0f;
     }
 
-    // Close the fingers around the grip: every finger joint turns toward the palm
-    // (thumb half as far), faded with the hand's IK weight. Last frame's curl is
-    // taken off first when nothing re-posed a finger, so it never compounds.
-    void CurlFingers(int l) {
-        Transform *a, *m, *e; m_ik->LimbBones(l, a, m, e);
-        if (e && m_calib[l] && !m_fingersFound[l]) FindFingers(l, e);
-        const float w = (m_held || m_releasing) && e && m_calib[l] ? m_ik->EffectiveWeight(l) : 0.0f;
-        const Vec3 axis = e && m_calib[l] ? e->Rotation() * Vec3::Cross(m_fingersLocal[l], m_palmLocal[l]) : Vec3{0, 0, 0};
-        for (Finger& f : m_fingers[l]) {
-            const Quat r = f.t->localRotation;
-            if (f.live && std::fabs(Quat::Dot(r, f.set)) > 0.999999f) f.t->localRotation = f.before;
-            f.live = false;
-            const float k = (f.index ? m_indexCurl[l] : m_curl[l]) * f.scale * w;
-            if (k <= 1e-3f || axis.SqrMagnitude() < 1e-8f) continue;
-            f.before = f.t->localRotation;
-            f.t->SetRotation((Quat::AngleAxis(k * 70.0f, axis) * f.t->Rotation()).Normalized());
-            f.set = f.t->localRotation;
-            f.live = true;
+    // Body adjustment through the character's animation: the Animator gets the
+    // holding / carryStyle / carryWeight parameters (its own carry states can use
+    // them), and with Automatic carry animations an additive layer leans the torso
+    // back against a heavy load, eased in and out.
+    static constexpr const char* kLeanClip = "Holding Lean";
+    void AdjustBody(float dt) {
+        if (m_held || m_announced) {
+            if (AnimStateMachine* sm = BaseAnimator()) {
+                sm->SetBool("holding", m_held != nullptr);
+                sm->SetInt("carryStyle", m_held ? (int)m_style : 0);
+                sm->SetFloat("carryWeight", m_held && m_hold ? m_hold->Mass() : 0.0f);
+                m_announced = m_held != nullptr;
+            }
         }
+        const float want = m_held && bodyAdjustment && carryAnimations == CarryAnim::Automatic ? m_heavy : 0.0f;
+        m_lean += (want - m_lean) * (1.0f - std::exp(-4.0f * dt));
+        if (std::fabs(want - m_lean) < 1e-3f) m_lean = want;
+        Character* ch = m_char;
+        if (!ch) return;
+        const bool mine = ch->LayerClip() == kLeanClip;
+        if (m_lean <= 1e-3f) { if (mine) ch->StopLayer(); return; }
+        if (mine) { ch->SetLayerWeight(m_lean); return; }
+        if (ch->IsLayering()) return;   // a script's layer is playing: leave it be
+        if (!ch->HasClip(kLeanClip)) {
+            AnimClip c;
+            c.name = kLeanClip;
+            AnimKey k;
+            k.pose.assign(Character::BoneCount(), Vec3{0, 0, 0});
+            k.pose[1] = {-10.0f, 0.0f, 0.0f};   // torso: lean back 10 degrees at full weight
+            c.keys.push_back(k);
+            ch->AddClip(c);
+        }
+        ch->PlayLayer(kLeanClip, Character::BoneBit(1), true, m_lean);
     }
-    void FindFingers(int l, Transform* hand) {
-        m_fingersFound[l] = true;
-        m_fingers[l].clear();
-        std::vector<Transform*> stack(hand->Children().rbegin(), hand->Children().rend());
-        while (!stack.empty()) {   // depth first, parents before children
-            Transform* t = stack.back(); stack.pop_back();
-            if (!t || !t->gameObject) continue;
-            std::string n;
-            for (char ch : t->gameObject->name) n += (char)std::tolower((unsigned char)ch);
-            auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
-            if (has("thumb")) m_fingers[l].push_back({t, 0.5f, false, {}, {}, false});
-            else if (has("index")) m_fingers[l].push_back({t, 1.0f, true, {}, {}, false});
-            else if (has("finger") || has("middle") || has("ring") || has("pinky") || has("little"))
-                m_fingers[l].push_back({t, 1.0f, false, {}, {}, false});
-            for (auto it = t->Children().rbegin(); it != t->Children().rend(); ++it) stack.push_back(*it);
-        }
+    AnimStateMachine* BaseAnimator() const {
+        GameObject* host = m_char ? m_char->gameObject : gameObject;
+        if (!host) return nullptr;
+        for (auto* sm : host->GetComponents<AnimStateMachine>()) if (sm->layer == 0) return sm;
+        return nullptr;
     }
 
     // Forget the object; the hands fade out on the goals they had, then the Full
     // Body IK gets its own effectors back.
+    void RestoreArms() {
+        for (ArmRest& a : m_armRest) {
+            if (!a.saved) continue;
+            if (a.fore) a.fore->enabled = a.foreOn;
+            if (a.hand) a.hand->localScale = a.handScale;
+            a = {};
+        }
+    }
+    void ReleaseStrays(GameObject* keep) {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc) return;
+        for (auto* h : sc->FindObjectsOfType<HoldableObject>()) {
+            if (!h || !h->gameObject || h->gameObject == keep || h->gameObject == m_held) continue;
+            if (h->Holder() == gameObject) h->ReleaseHold();
+        }
+    }
     void Forget() {
-        m_held = nullptr; m_hold = nullptr; m_rb = nullptr; m_physics.clear();
+        RestoreArms();
+        m_held = nullptr; m_hold = nullptr;
         m_use[0] = m_use[1] = false;
+        m_charge = 0.0f; m_charging = false;
         if (m_ik) { m_ik->effectors[0].enabled = false; m_ik->effectors[1].enabled = false; }
         m_releasing = m_savedValid;
     }

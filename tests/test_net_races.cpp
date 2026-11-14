@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/Matchmaker.hpp"
+#include "okay/Net/ServerBrowser.hpp"
 #include <atomic>
 #include <chrono>
 #include <string>
@@ -60,6 +61,30 @@ int main() {
         CHECK(q->polls.load() > 0);
         mm.Cancel();
     }   // ~Matchmaker joins the last worker
+
+    // ---- ServerBrowser: Game() copies under the lock while SetGame rewrites it ----
+    {
+        ServerBrowser sb;
+        std::atomic<bool> stop{false};
+        std::atomic<int> bad{0};
+        std::thread writer([&] {
+            for (int i = 0; i < 20000; ++i) sb.SetGame(i % 2 ? std::string(200, 'a') : std::string("b"));
+            stop = true;
+        });
+        std::vector<std::thread> readers;
+        for (int t = 0; t < 3; ++t)
+            readers.emplace_back([&] {
+                while (!stop) {
+                    const std::string g = sb.Game();   // value: safe to hold across the next SetGame
+                    if (!(g.empty() || g == "b" || g == std::string(200, 'a'))) ++bad;
+                }
+            });
+        writer.join();
+        for (auto& t : readers) t.join();
+        CHECK(bad.load() == 0);
+        sb.SetGame("Space Arena");
+        CHECK(sb.Game() == "Space Arena");
+    }
 
     TEST_MAIN_RESULT();
 }

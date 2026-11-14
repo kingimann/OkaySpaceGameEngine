@@ -8,7 +8,7 @@ namespace {
 constexpr const char* kPrefix = "okt1.";
 const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-#ifdef OKAY_HAVE_SODIUM
+#ifdef OKAY_NET_CRYPTO
 bool ParseInt64(const std::string& v, std::int64_t& out) {
     if (v.empty()) return false;
     auto r = std::from_chars(v.data(), v.data() + v.size(), out);
@@ -57,9 +57,9 @@ bool SessionTicket::Base64UrlDecode(const std::string& t, std::vector<std::uint8
 bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uint8_t>& publicKey,
                            const std::string& audience, std::int64_t now,
                            SessionTicketClaims& out, std::string* error) {
-#ifdef OKAY_HAVE_SODIUM
-    SecureChannel::Init();
-    if (publicKey.size() != crypto_sign_PUBLICKEYBYTES) return Fail(error, "no ticket key configured");
+#ifdef OKAY_NET_CRYPTO
+    netcrypto::Init();
+    if (publicKey.size() != netcrypto::kSignPublicBytes) return Fail(error, "no ticket key configured");
     if (ticket.size() > 2048) return Fail(error, "ticket too long");
     if (ticket.compare(0, 5, kPrefix) != 0) return Fail(error, "not a session ticket");
     const std::size_t dot = ticket.find('.', 5);
@@ -68,9 +68,9 @@ bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uin
     std::vector<std::uint8_t> payload, sig;
     if (!Base64UrlDecode(ticket.substr(5, dot - 5), payload) || !Base64UrlDecode(ticket.substr(dot + 1), sig))
         return Fail(error, "malformed ticket");
-    if (sig.size() != crypto_sign_BYTES) return Fail(error, "malformed ticket");
-    if (crypto_sign_verify_detached(sig.data(), reinterpret_cast<const unsigned char*>(signedPart.data()),
-                                    signedPart.size(), publicKey.data()) != 0)
+    if (sig.size() != netcrypto::kSignBytes) return Fail(error, "malformed ticket");
+    if (!netcrypto::Verify(sig.data(), reinterpret_cast<const std::uint8_t*>(signedPart.data()),
+                           signedPart.size(), publicKey.data()))
         return Fail(error, "bad ticket signature");
     // Signed, so the payload is the service's: parse it strictly anyway.
     SessionTicketClaims c;
@@ -88,6 +88,7 @@ bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uin
         else if (k == "aud") { c.audience = v; haveAud = true; }
         else if (k == "iat") { if (!ParseInt64(v, c.issuedAt)) return Fail(error, "malformed ticket claims"); haveIat = true; }
         else if (k == "exp") { if (!ParseInt64(v, c.expiresAt)) return Fail(error, "malformed ticket claims"); haveExp = true; }
+        else if (k == "cnf") { c.keyBinding = v; }
         // other keys: ignored (room for later claims)
         a = b + 1;
     }
@@ -105,26 +106,38 @@ bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uin
 }
 
 std::string SessionTicket::Sign(const SessionTicketClaims& c, const std::vector<std::uint8_t>& secretKey) {
-#ifdef OKAY_HAVE_SODIUM
-    SecureChannel::Init();
-    if (secretKey.size() != crypto_sign_SECRETKEYBYTES) return {};
+#ifdef OKAY_NET_CRYPTO
+    netcrypto::Init();
+    if (secretKey.size() != netcrypto::kSignSecretBytes) return {};
     const std::string payload = "sub=" + c.userId + "&aud=" + c.audience + "&iat=" + std::to_string(c.issuedAt) +
-                                "&exp=" + std::to_string(c.expiresAt);
+                                "&exp=" + std::to_string(c.expiresAt) + (c.keyBinding.empty() ? "" : "&cnf=" + c.keyBinding);
     const std::string signedPart = kPrefix + Base64UrlEncode(std::vector<std::uint8_t>(payload.begin(), payload.end()));
-    std::vector<std::uint8_t> sig(crypto_sign_BYTES);
-    crypto_sign_detached(sig.data(), nullptr, reinterpret_cast<const unsigned char*>(signedPart.data()),
-                         signedPart.size(), secretKey.data());
+    std::vector<std::uint8_t> sig(netcrypto::kSignBytes);
+    netcrypto::Sign(sig.data(), reinterpret_cast<const std::uint8_t*>(signedPart.data()),
+                    signedPart.size(), secretKey.data());
     return signedPart + "." + Base64UrlEncode(sig);
 #else
     (void)c; (void)secretKey; return {};
 #endif
 }
 
+std::string SessionTicket::KeyBinding(const std::vector<std::uint8_t>& publicKey) {
+#ifdef OKAY_NET_CRYPTO
+    if (publicKey.empty()) return {};
+    netcrypto::Init();
+    std::vector<std::uint8_t> h(netcrypto::kSha256Bytes);
+    netcrypto::Sha256(h.data(), publicKey.data(), publicKey.size());
+    return Base64UrlEncode(h);
+#else
+    (void)publicKey; return {};
+#endif
+}
+
 bool SessionTicket::GenerateKeyPair(std::vector<std::uint8_t>& pk, std::vector<std::uint8_t>& sk) {
-#ifdef OKAY_HAVE_SODIUM
-    SecureChannel::Init();
-    pk.resize(crypto_sign_PUBLICKEYBYTES); sk.resize(crypto_sign_SECRETKEYBYTES);
-    return crypto_sign_keypair(pk.data(), sk.data()) == 0;
+#ifdef OKAY_NET_CRYPTO
+    netcrypto::Init();
+    pk.resize(netcrypto::kSignPublicBytes); sk.resize(netcrypto::kSignSecretBytes);
+    return netcrypto::SignKeypair(pk.data(), sk.data());
 #else
     (void)pk; (void)sk; return false;
 #endif

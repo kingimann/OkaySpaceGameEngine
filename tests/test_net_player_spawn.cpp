@@ -21,7 +21,7 @@ int main() {
     // A player template: Character + controller, with a camera + FP hand child.
     auto* tmpl = s.CreateGameObject("PlayerTemplate");
     tmpl->AddComponent<Character>()->Apply();
-    tmpl->AddComponent<FirstPersonController>();
+    PlayerController::Add(tmpl, PlayerController::ViewMode::Both, PlayerView::View::First);
     auto* tcam = s.CreateGameObject("Eye");
     tcam->transform->SetParent(tmpl->transform, false);
     tcam->AddComponent<Camera>();
@@ -42,7 +42,9 @@ int main() {
     CHECK(me != nullptr);
     if (me) {
         CHECK(me->active);
+        CHECK(PlayerController::Of(me) != nullptr);
         CHECK(me->GetComponent<FirstPersonController>() != nullptr);
+        CHECK(me->GetComponent<PlayerView>() != nullptr);    // the local view toggle stays
         CHECK(HasCameraInSubtree(me));                       // viewmodel camera intact
         CHECK(me->GetComponent<Character>() != nullptr);
         CHECK(std::abs(me->transform->localPosition.x - 5.0f) < 1e-3f);
@@ -52,7 +54,11 @@ int main() {
     GameObject* proxy = sp->SpawnPlayer(3, false);
     CHECK(proxy != nullptr);
     if (proxy) {
-        CHECK(proxy->GetComponent<FirstPersonController>() == nullptr);   // input stripped
+        CHECK(PlayerController::Of(proxy) == nullptr);                    // input stripped, parts and all
+        CHECK(proxy->GetComponent<FirstPersonController>() == nullptr);
+        CHECK(proxy->GetComponent<ThirdPersonController>() == nullptr);
+        CHECK(proxy->GetComponent<PlayerView>() == nullptr);              // cannot grab this client's camera
+        CHECK(proxy->GetComponent<FirstPersonHand>() == nullptr);
         CHECK(!HasCameraInSubtree(proxy));                                // camera stripped
         CHECK(proxy->GetComponent<NetworkAvatarMotion>() != nullptr);     // motion driver added
         CHECK(proxy->GetComponent<Character>() != nullptr);               // still a real character

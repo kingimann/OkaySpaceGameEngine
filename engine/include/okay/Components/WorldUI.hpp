@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 
 namespace okay {
@@ -15,6 +16,8 @@ namespace okay {
 class WorldUI final : public Behaviour {
 public:
     std::string text = "Label";
+    /// Localized: a string-table key whose text replaces `text` in the current language.
+    LocalizedText loc;
     Color color = Color::White;                 // text color
     Color background = Color::FromBytes(0, 0, 0, 0);  // alpha 0 => no panel behind
     Vec3  worldOffset{0.0f, 2.0f, 0.0f};        // offset from the object (default: above it)

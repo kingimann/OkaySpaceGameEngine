@@ -1,5 +1,7 @@
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -45,9 +47,20 @@ bool ItemDefinition::HasTag(const std::string& tag) const {
 }
 
 std::string ItemIconPath(const std::string& folder, const std::string& item) {
-    if (const ItemDefinition* d = ItemDatabase::Get().Find(item))
-        if (!d->icon.empty()) return d->icon;
-    return folder.empty() ? std::string() : folder + item + ".png";
+    return ItemIconOf(folder, item).path;
+}
+
+ItemIconRef ItemIconOf(const std::string& folder, const std::string& item) {
+    ItemIconRef r;
+    if (const ItemDefinition* d = ItemDatabase::Get().Find(item)) {
+        if (d->hasAtlas && !d->atlas.empty()) {
+            r.path = d->atlas; r.u0 = d->au0; r.v0 = d->av0; r.u1 = d->au1; r.v1 = d->av1; r.atlas = true;
+            return r;
+        }
+        if (!d->icon.empty()) { r.path = d->icon; return r; }
+    }
+    if (!folder.empty() && !item.empty()) r.path = folder + item + ".png";
+    return r;
 }
 
 ItemDatabase& ItemDatabase::Get() {
@@ -113,6 +126,13 @@ bool ItemDatabase::LoadText(const std::string& text, std::string* err) {
         else if (key == "equip")       d.equip = EquipSlotFromName(ReadQuoted(ls));
         else if (key == "use")         { d.useAction = ReadQuoted(ls); ls >> d.useAmount; }
         else if (key == "prefab")      d.worldPrefab = ReadQuoted(ls);
+        else if (key == "atlas") {
+            d.atlas = ReadQuoted(ls);
+            float u0, v0, u1, v1;
+            if ((ls >> u0 >> v0 >> u1 >> v1) && !d.atlas.empty()) {
+                d.au0 = u0; d.av0 = v0; d.au1 = u1; d.av1 = v1; d.hasAtlas = true;
+            }
+        }
         else if (key == "custom")      { std::string k = ReadQuoted(ls); d.custom.push_back({k, ReadQuoted(ls)}); }
         else if (key == "legacy")      d.legacyNames.push_back(ReadQuoted(ls));
     }
@@ -149,6 +169,8 @@ std::string ItemDatabase::Serialize() const {
         if (d.equip != EquipSlot::None) o << "  equip " << EquipSlotName(d.equip) << "\n";
         if (!d.useAction.empty())   o << "  use " << Quote(d.useAction) << " " << d.useAmount << "\n";
         if (!d.worldPrefab.empty()) o << "  prefab " << Quote(d.worldPrefab) << "\n";
+        if (d.hasAtlas && !d.atlas.empty())
+            o << "  atlas " << Quote(d.atlas) << " " << d.au0 << " " << d.av0 << " " << d.au1 << " " << d.av1 << "\n";
         for (const auto& kv : d.custom) o << "  custom " << Quote(kv.first) << " " << Quote(kv.second) << "\n";
         for (const auto& n : d.legacyNames) o << "  legacy " << Quote(n) << "\n";
         o << "end\n";
@@ -165,17 +187,59 @@ ItemDefinition* ItemDatabase::FindMutable(const std::string& id) {
     return nullptr;
 }
 
+bool ItemDatabase::IsDefined(const std::string& id) const {
+    const ItemDefinition* d = Find(id);
+    return d && !d->loose;
+}
+
+std::vector<std::string> ItemDatabase::Issues() const {
+    std::vector<std::string> out;
+    for (const std::string& id : DuplicateIds())
+        out.push_back("Two items use the id \"" + id + "\". Every item needs its own id.");
+    for (const std::string& pair : CaseConflicts())
+        out.push_back("These item ids only differ by case: " + pair + ". A lookup can pick the wrong item.");
+    return out;
+}
+
+namespace {
+std::string TrimCopy(const std::string& s) {
+    std::size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) ++a;
+    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+    return s.substr(a, b - a);
+}
+std::string Fold(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+bool FoldMatch(const ItemDefinition& d, const std::string& fold) {
+    if (Fold(d.id) == fold || Fold(d.name) == fold) return true;
+    for (const auto& n : d.legacyNames) if (Fold(n) == fold) return true;
+    return false;
+}
+}
+
 std::string ItemDatabase::Resolve(const std::string& nameOrId) {
-    if (nameOrId.empty() || Find(nameOrId)) return nameOrId;
+    const std::string key = TrimCopy(nameOrId);
+    if (key.empty() || Find(key)) return key;
     for (const auto& d : m_items)
-        if (!d.loose && std::find(d.legacyNames.begin(), d.legacyNames.end(), nameOrId) != d.legacyNames.end()) return d.id;
+        if (!d.loose && std::find(d.legacyNames.begin(), d.legacyNames.end(), key) != d.legacyNames.end()) return d.id;
     for (const auto& d : m_items)
-        if (!d.loose && d.name == nameOrId) return d.id;
+        if (!d.loose && d.name == key) return d.id;
+    const std::string fold = Fold(key);
+    const ItemDefinition* hit = nullptr;
+    int hits = 0;
+    for (const auto& d : m_items) {
+        if (d.loose || !FoldMatch(d, fold)) continue;
+        hit = &d;
+        if (++hits > 1) break;
+    }
+    if (hits == 1) return hit->id;   // "WOOD" is the one item whose id is "wood"
     ItemDefinition loose;   // an item nobody defined: keep it working as-is
-    loose.id = nameOrId;
+    loose.id = key;
     loose.loose = true;
     m_items.push_back(loose);
-    return nameOrId;
+    return key;
 }
 
 const ItemDefinition* ItemDatabase::Def(const std::string& nameOrId) {
@@ -200,6 +264,17 @@ std::vector<std::string> ItemDatabase::DuplicateIds() const {
     std::set<std::string> seen, dup;
     for (const auto& d : m_items) if (!seen.insert(d.id).second) dup.insert(d.id);
     return std::vector<std::string>(dup.begin(), dup.end());
+}
+
+std::vector<std::string> ItemDatabase::CaseConflicts() const {
+    std::map<std::string, std::string> seen;
+    std::vector<std::string> out;
+    for (const auto& d : m_items) {
+        if (d.loose || d.id.empty()) continue;
+        auto it = seen.emplace(Fold(d.id), d.id).first;
+        if (it->second != d.id) out.push_back(d.id + " and " + it->second);
+    }
+    return out;
 }
 
 int ItemDatabase::StackLimit(const std::string& item, int container) const {

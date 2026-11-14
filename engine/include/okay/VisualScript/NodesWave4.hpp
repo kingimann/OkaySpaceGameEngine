@@ -6,6 +6,7 @@
 // plain EventNodes; VisualScriptComponent fires them.
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodesExtra.hpp"
+#include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
@@ -84,10 +85,20 @@ struct SetObjectVarNode : VsNode {
     explicit SetObjectVarNode(std::string v) : var(std::move(v)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = HasInput(0) ? VsResolveObject(ctx, In(0, g, ctx)) : ctx.gameObject;
+        const VsValue target = HasInput(0) ? In(0, g, ctx) : VsValue{};
+        GameObject* o = HasInput(0) ? VsResolveObject(ctx, target) : ctx.gameObject;
+        if (!o) {
+            g.Error(this, ctx, target.IsObject() ? std::string("its Target object no longer exists")
+                                                 : "no object named '" + target.AsString() + "' to store '" + var + "' on");
+            return 0;
+        }
         VsValue v = In(1, g, ctx);
-        if (o == ctx.gameObject) ctx.variables[var] = v;
-        else if (o) if (auto* vc = o->GetComponent<VisualScriptComponent>()) vc->SetVariable(var, v);
+        bool stored = false;
+        if (o == ctx.gameObject) { ctx.variables[var] = v; stored = true; }
+        else if (auto* vc = o->GetComponent<VisualScriptComponent>()) { vc->SetVariable(var, v); stored = true; }
+        for (auto* sc : o->GetComponents<ScriptComponent>())
+            if (sc->VM()) { sc->VM()->SetGlobal(var, v); stored = true; }
+        if (!stored) g.Error(this, ctx, "object '" + o->name + "' has no visual script or text script to store '" + var + "' on");
         return 0;
     }
 };
@@ -95,9 +106,18 @@ struct GetObjectVarNode : VsNode {   // in0 = target object
     std::string var;
     explicit GetObjectVarNode(std::string v) : var(std::move(v)) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
-        GameObject* o = HasInput(0) ? VsResolveObject(ctx, In(0, g, ctx)) : ctx.gameObject;
+        const bool named = HasInput(0);
+        const VsValue target = named ? In(0, g, ctx) : VsValue{};
+        GameObject* o = named ? VsResolveObject(ctx, target) : ctx.gameObject;
+        if (!o) {
+            if (named) g.Error(this, ctx, target.IsObject() ? std::string("its Target object no longer exists")
+                                                           : "no object named '" + target.AsString() + "' to read '" + var + "' from");
+            return {};
+        }
         if (o == ctx.gameObject) { auto it = ctx.variables.find(var); return it != ctx.variables.end() ? it->second : VsValue{}; }
-        if (o) if (auto* vc = o->GetComponent<VisualScriptComponent>()) return vc->GetVariable(var);
+        if (auto* vc = o->GetComponent<VisualScriptComponent>()) return vc->GetVariable(var);
+        for (auto* sc : o->GetComponents<ScriptComponent>())
+            if (sc->VM()) return sc->VM()->GetGlobal(var);
         return {};
     }
 };
@@ -324,6 +344,8 @@ struct CounterNode : VsNode {
     int count = 0;
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return (float)count; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (count <= 0) return false; r.i0 = count; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { count = r.i0; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (HasInput(0) && In(0, g, ctx).AsBool()) count = 0;
         ++count;
@@ -334,8 +356,11 @@ struct CounterNode : VsNode {
 struct EveryNNode : VsNode {
     int calls = 0;
     int ExecOutCount() const override { return 1; }
+    bool SaveFlow(VsFlowRecord& r) const override { if (calls <= 0) return false; r.i0 = calls; return true; }
+    void LoadFlow(const VsFlowRecord& r, NodeGraph&) override { calls = r.i0; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        int n = std::max(1, (int)std::lround(In(0, g, ctx, VsValue{2.0f}).AsFloat()));
+        int n = VsWhole(In(0, g, ctx, VsValue{2.0f}).AsFloat(), 1);
+        if (n < 1) n = 1;   // zero, negative, or not a real number: every time
         return (++calls % n) == 0 ? 0 : -1;
     }
 };

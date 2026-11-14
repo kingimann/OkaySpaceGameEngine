@@ -12,12 +12,14 @@ namespace okay::net {
 /// are seen, so they never collide with the inner Msg types.
 enum RelayTag : std::uint8_t {
     RelayHello   = 0x90, // peer->relay: [u8 role][string code][u8 version][u32 keyLo][u32 keyHi]
-                         //   [16-byte cookie], zero-padded to kRelayHelloMinBytes
+                         //   [16-byte cookie][u32 nonceLo][u32 nonceHi] (version 4),
+                         //   zero-padded to kRelayHelloMinBytes
                          //   (role: 0=host,1=client; version and hostKey are absent
                          //   from version-1 peers, the cookie from version 1 and 2;
                          //   hostKey is 0 until the relay gave one, the cookie zero
                          //   until it sent one)
     RelayWelcome = 0x91, // relay->peer: [u32 yourSlot][u32 hostSlot][u8 version][u32 keyLo][u32 keyHi]
+                         //   [u32 nonceLo][u32 nonceHi] (version 4, only when the hello had a nonce)
                          //   (hostKey only to the host, else 0; hostSlot 0 tells a
                          //   client its host has gone)
     RelayData    = 0x92, // peer->relay: [u32 destSlot][payload]; relay->peer: [u32 srcSlot][payload]
@@ -37,10 +39,14 @@ enum RelayRefusal : std::uint8_t {
 /// byte, no host key and no RelayRefused; version 2 adds them. Version 3 adds
 /// the hello cookie: a new peer's first hello gets a RelayCookie, and only a
 /// hello that echoes it gets a slot, so a spoofed source address gets nothing.
-inline constexpr std::uint8_t kRelayProtocolVersion = 3;
+/// Version 4 adds the hello nonce: the peer picks a random 64-bit value, the
+/// relay echoes it in every welcome for that peer, and the peer drops a welcome
+/// that doesn't carry it, so a forged welcome can't pair, redirect or end a
+/// session. Older relays ignore the nonce; older peers get the old welcome.
+inline constexpr std::uint8_t kRelayProtocolVersion = 4;
 inline constexpr std::size_t kRelayCookieBytes = 16;
 /// A version-3 hello is padded to at least this, so the relay never answers
-/// with more bytes than it was sent (a welcome is 18, a cookie 18); shorter
+/// with more bytes than it was sent (a welcome is 26, a cookie 18); shorter
 /// version-3 hellos are ignored.
 inline constexpr std::size_t kRelayHelloMinBytes = 32;
 /// The oldest version the relay still accepts. Version-1 peers still work:
@@ -52,7 +58,12 @@ inline constexpr std::uint8_t kRelayMinProtocolVersion = 1;
 /// the session and is given its host key; everyone else joins as a client and
 /// is wired to that host. While the session lives, another host hello for the
 /// code is refused unless it carries that key.
-enum RelayRole : std::uint8_t { RelayHost = 0, RelayClient = 1 };
+enum RelayRole : std::uint8_t { RelayHost = 0, RelayClient = 1, RelayHub = 2 };
+/// RelayHub (version 3, the launcher's voice calls): every member announces it.
+/// The first one in hosts, as with RelayHost, but the session is never
+/// protected by a host key: when the hub leaves, the next hub hello takes over
+/// (version 1's hand-over, now behind a cookie). A hub hello can't take a
+/// protected game session, and a game host can't join a hub session that has a hub.
 
 /// Synthetic Endpoint port marker: in relay mode a peer is addressed by its slot
 /// id carried in Endpoint::address, with this constant in the port so the value

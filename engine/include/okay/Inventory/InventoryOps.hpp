@@ -47,8 +47,22 @@ InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots = 0);
 /// Move as much of `from` slot `i` into `to` as fits (chest take / stash).
 InvResult Transfer(Inventory* from, int i, Inventory* to);
 
+/// Move every stack from `from` into `to`, as much as fits. Returns how many items moved.
+int TransferAll(Inventory* from, Inventory* to);
+/// Move stacks from `from` whose item `to` already holds (quick-stack). Returns items moved.
+int TransferMatching(Inventory* from, Inventory* to);
+/// Compact, re-split by maxStack, and order by display name. Does nothing (and returns
+/// false) when the packed stacks would not fit, so a sort never drops items.
+bool SortByName(Inventory* inv);
+
 /// Take `n` out of slot `i` (dropped into the world by the caller).
 InvResult Drop(Inventory* inv, int i, int n = 1);
+
+/// Use the item in slot `i` as `user` (who carries the inventory): eat/drink/heal it
+/// through a Consumables on the user (its recipe, else the item definition's use
+/// action), pick the matching piece in the user's BuildMode palette, or equip it
+/// through the user's Equipment when its definition has an equip slot.
+InvResult Use(Inventory* inv, int i, GameObject* user);
 
 /// Atomically remove `take` and add `give` (crafting).
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give);
@@ -59,6 +73,18 @@ InvResult Move(GridInventory* src, int index, GridInventory* dst, int x, int y, 
 
 /// Split `n` off grid item `index` into the first free spot.
 InvResult Split(GridInventory* inv, int index, int n);
+
+/// Hotbar/slot bag -> grid bag: move `amount` (0 = the whole stack) of slot `si` to cell
+/// (x,y) of `dst` (turned 90 degrees when `rotated`). The footprint and weight come from
+/// the item definition and the stack keeps its instance data (durability, uid). Merges onto
+/// a matching stack there, never swaps. Rejected, with nothing changed, for a bad slot, a
+/// negative amount, a spot that is out of bounds or taken, or an enforced weight limit.
+/// Partial when only some fit (stack size or weight). Unique (uid) items only move whole.
+/// Not sent to a networked host: it is a local operation (see docs/inventory.md).
+InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool rotated = false, int amount = 0);
+/// Grid bag -> slot bag: move `amount` (0 = all) of grid item `index` to slot `di` of `dst`
+/// when that slot is empty or holds the same item (merges up to the stack size). Never swaps.
+InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int amount = 0, int dstSlots = 0);
 
 } // namespace InventoryOps
 } // namespace okay

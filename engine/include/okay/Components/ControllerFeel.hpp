@@ -23,6 +23,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <functional>
@@ -44,8 +45,9 @@ struct AnimLink {
     struct Frame {
         float speed = 0.0f, verticalSpeed = 0.0f;
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
+        bool swim = false;        ///< in a swim. The graph ignores it until a swim state exists.
         float stance = 0.0f;      ///< eased stance level: 0 stand .. 1 crouch .. 2 prone
-        bool jumped = false, landed = false;
+        bool jumped = false, landed = false, dived = false;
         Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
     };
     void Apply(GameObject* owner, const Frame& f) {
@@ -66,6 +68,7 @@ struct AnimLink {
         m_sm->SetBool("sprint", f.sprint);
         m_sm->SetBool("slide", f.slide);
         m_sm->SetBool("aim", f.aim);
+        m_sm->SetBool("swim", f.swim);
         if (owner && owner->transform) {
             Vec3 local = owner->transform->InverseTransformDirection(f.velocity);
             m_sm->SetFloat("moveX", local.x);
@@ -73,6 +76,7 @@ struct AnimLink {
         }
         if (f.jumped) m_sm->SetTrigger("jump");
         if (f.landed) m_sm->SetTrigger("land");
+        if (f.dived)  m_sm->SetTrigger("dived");
     }
     AnimStateMachine* machine() const { return m_sm; }
 private:
@@ -83,11 +87,17 @@ private:
 
 /// Eased field of view: base (captured from the camera) + sprint boost, or a zoom FOV.
 struct FovKick {
-    void Update(Camera* cam, bool sprinting, float boost, bool zoom, float zoomFov, float lerp, float dt) {
+    /// `adoptExternal`: a script or the inspector changed the FOV, so that becomes
+    /// the new base. Pass false when another controller shares this camera — its
+    /// sprint kick is not a new base, or the two views would settle at different FOVs.
+    void Update(Camera* cam, bool sprinting, float boost, bool zoom, float zoomFov, float lerp, float dt,
+                bool adoptExternal = true) {
         if (!cam) return;
         if (m_cam != cam) { m_cam = cam; m_base = cam->fieldOfView; m_cur = m_base; }
-        // Someone else changed the FOV (a script, the inspector): adopt it as the new base.
-        if (std::fabs(cam->fieldOfView - m_cur) > 0.01f) { m_base = cam->fieldOfView - (m_cur - m_base); m_cur = cam->fieldOfView; }
+        if (std::fabs(cam->fieldOfView - m_cur) > 0.01f) {
+            if (adoptExternal) m_base = cam->fieldOfView - (m_cur - m_base);
+            m_cur = cam->fieldOfView;
+        }
         float want = zoom ? zoomFov : m_base + (sprinting ? boost : 0.0f);
         float t = lerp > 0.0f ? 1.0f - std::exp(-lerp * dt) : 1.0f;
         m_cur += (want - m_cur) * t;
@@ -111,6 +121,8 @@ struct Landing {
         return landed;
     }
     void SetDt(float dt) { m_dt = dt; }
+    /// Forget a fall. Used in water, so climbing out doesn't count the swim as a landing.
+    void Reset() { m_wasGrounded = true; m_airTime = 0.0f; m_minVy = 0.0f; }
 private:
     bool m_wasGrounded = true;
     float m_airTime = 0.0f, m_minVy = 0.0f, m_dt = 0.016f;
@@ -137,6 +149,16 @@ private:
 /// 1 - e^(-k dt): the share of the way an exponential ease covers this frame
 /// (frame-rate independent; k <= 0 = all the way at once).
 inline float EaseFactor(float k, float dt) { return k > 0.0f ? 1.0f - std::exp(-k * dt) : 1.0f; }
+
+/// A grounded stop keeps full deceleration until the last 2.2 m/s, then
+/// decays with a 0.10 s time constant so the body settles. The last 0.12 m/s
+/// uses the full rate again, so the stop still reaches rest. A held move,
+/// and any stop in the air, keep `rate`.
+inline float StopSettleRate(float rate, bool stopping, float speed) {
+    if (!stopping || speed >= 2.2f || speed < 0.12f) return rate;
+    const float eased = speed / 0.10f;
+    return eased < rate ? eased : rate;
+}
 
 /// The point an orbit camera looks at and turns around: the player's head,
 /// smoothed. Horizontal and vertical ease on their own (a slower vertical soaks
@@ -184,7 +206,7 @@ struct SpringArm {
             if (hit.hit) allow = std::max(0.0f, hit.distance - skin);
         }
         if (m_len < 0.0f) m_len = allow;                                  // first frame: the right length at once
-        else if (allow < m_len - skin * 0.25f) m_len = allow;             // blocked: in at once
+        else if (allow < m_len - skin * 0.25f) m_len = allow;             // blocked: in at once, never left inside
         else if (allow < m_len) m_len += (allow - m_len) * EaseFactor(pullIn, dt);    // a hair closer: ease
         else m_len += (allow - m_len) * EaseFactor(recover, dt);         // clear: glide back out
         return m_len;
@@ -193,6 +215,104 @@ struct SpringArm {
 private:
     float m_len = -1.0f;
 };
+
+/// The Game view (and the player) switch the pointer between canvas pixels and
+/// a relative-mode virtual cursor. Call this on that switch, before the mouse
+/// position is fed: the next look sample adopts the new position and does not
+/// treat the jump as a turn. A warp under the 700 px drop in LookPixels (a short
+/// look, then Esc, then a click back on the Game view) used to snap the orbit.
+inline int& MouseSpaceGenerationSlot() { static int g = 0; return g; }
+inline void NoteMouseSpaceChanged() { ++MouseSpaceGenerationSlot(); }
+inline int MouseSpaceGeneration() { return MouseSpaceGenerationSlot(); }
+
+/// Mouse pixels this frame, before sensitivity. A warp (capture starting, or a
+/// tool injecting a jump) is dropped. A large flick is capped. Never scale this
+/// by frame time: degrees are pixels times sensitivity, so a hitch cannot swing
+/// the view.
+inline void LookPixels(float& dx, float& dy) {
+    const float ax = std::fabs(dx), ay = std::fabs(dy);
+    if (ax >= 700.0f || ay >= 700.0f || ax + ay >= 700.0f) { dx = 0.0f; dy = 0.0f; return; }
+    if (dx > 220.0f) dx = 220.0f;
+    else if (dx < -220.0f) dx = -220.0f;
+    if (dy > 220.0f) dy = 220.0f;
+    else if (dy < -220.0f) dy = -220.0f;
+}
+
+/// A cursor grab, or a warp back to the Game view, is not a look. The frame
+/// that switches mouse space often carries no delta: the warp shows up on the
+/// next poll. That first nonzero sample is dropped. A jump that arrives on the
+/// switch frame itself is that sample, so the look after it still counts.
+/// Returns true when this sample must not turn the view.
+inline bool DropLookHandoff(bool spaceChanged, bool& dropArmed, float dx, float dy) {
+    const bool moved = std::fabs(dx) + std::fabs(dy) > 0.5f;
+    if (spaceChanged) {
+        dropArmed = !moved;
+        return true;
+    }
+    if (dropArmed) {
+        if (moved) dropArmed = false;
+        return true;
+    }
+    return false;
+}
+
+/// Pitch stays short of straight up or straight down. A wider window (a blend,
+/// or a look easing home) cannot open past this, or the view flips over.
+inline void ClampPitchWindow(float& lo, float& hi) {
+    constexpr float kCap = 89.0f;
+    if (lo < -kCap) lo = -kCap;
+    if (hi > kCap) hi = kCap;
+    if (lo > hi) { lo = -kCap; hi = kCap; }
+}
+inline float ClampLookPitch(float pitch) {
+    if (pitch > 89.0f) return 89.0f;
+    if (pitch < -89.0f) return -89.0f;
+    return pitch;
+}
+
+/// One horizontal step toward `wish`. `accel` changes speed along the wish,
+/// `steer` removes the part of the velocity that isn't the wish, so a turn
+/// does not keep the old heading. Stopping uses `decel` and StopSettleRate.
+/// The caller passes already-scaled rates (air control included). Nothing
+/// here eases the input a second time.
+inline void StepPlanarVelocity(float& vx, float& vz, float wishX, float wishZ,
+                               bool moving, bool groundedStop, float accel, float decel,
+                               float steer, float dt) {
+    const float curX = vx, curZ = vz;
+    const float speed = std::sqrt(curX * curX + curZ * curZ);
+    if (!moving) {
+        const float rate = StopSettleRate(decel, groundedStop, speed);
+        const float step = rate * dt;
+        if (speed <= step || speed < 1e-4f) { vx = 0.0f; vz = 0.0f; return; }
+        const float k = (speed - step) / speed;
+        vx = curX * k; vz = curZ * k;
+        return;
+    }
+    const float wish = std::sqrt(wishX * wishX + wishZ * wishZ);
+    if (wish < 1e-5f) return;
+    const float dx = wishX / wish, dz = wishZ / wish;
+    float along = curX * dx + curZ * dz;
+    float sx = curX - dx * along, sz = curZ - dz * along;
+    float side = std::sqrt(sx * sx + sz * sz);
+    if (along < 0.0f) {
+        const float kill = std::min(-along, std::max(0.0f, steer) * dt);
+        along += kill;
+    }
+    const float gap = wish - along;
+    const float span = std::max(0.35f, wish * 0.28f);
+    const float ease = std::max(0.45f, std::min(1.0f, std::fabs(gap) / span));
+    const float step = std::max(0.0f, accel) * ease * dt;
+    if (gap > step) along += step;
+    else if (gap < -step) along -= step;
+    else along = wish;
+    const float brake = std::max(0.0f, steer) * dt;
+    if (side > brake && side > 1e-5f) {
+        const float k = (side - brake) / side;
+        sx *= k; sz *= k;
+    } else { sx = 0.0f; sz = 0.0f; }
+    vx = dx * along + sx;
+    vz = dz * along + sz;
+}
 
 /// An orbit controller places the main camera itself. A CameraFollow on that
 /// camera, or a virtual-camera brain with a live virtual camera, would fight it

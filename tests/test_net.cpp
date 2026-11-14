@@ -230,6 +230,7 @@ int main() {
         big.reserve(20000);
         for (int i = 0; i < 20000; ++i) big.push_back((char)('A' + (i * 7 + 3) % 26));
         std::string gotBig;
+        server->maxRelayedBytes = 32 * 1024;   // past the 16 KB a client may send by default
         server->SetMessageHandler([&](const NetworkManager::NetMessage& m){ if (m.channel == "big") gotBig = m.data; });
         client->SendReliable("big", big);
         for (int i = 0; i < 150; ++i) {

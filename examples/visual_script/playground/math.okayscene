@@ -1,0 +1,32 @@
+okayscene 1
+name "VS Playground: Math"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 9 -16 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "Press Play. The list 3, 8, 1 reports its min and max. The marker moves to x = min and y = max. Add, clamp and lerp run beside them." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+end
+gameobject 2 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.15 2 0 0 0 1 16 0.3 16
+    mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Marker"
+  active 1
+  parent -1
+  transform 0 0.5 0 0 0 0 1 1 1 1
+    mesh "Cube" 0.4 0.85 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    visualscript ""
+    visualscriptpath "math.okayvs"
+end

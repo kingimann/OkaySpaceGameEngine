@@ -1,5 +1,1398 @@
 OkaySpace Game Engine — Changelog
 
+v2.869.0
+  Anti-cheat
+  - A server-side detection engine can watch for speed hacks, flying,
+    no-clip, aim bots, rapid fire, item duplication and message floods. It
+    is off until a game turns it on, and it has an observe mode that only
+    records. Existing games are not affected.
+
+  Importing models
+  - Concave faces in OBJ and PLY files are triangulated properly instead of
+    being fanned, which fixed warped surfaces.
+  - PLY files with a free-text header line load. glTF files with strips,
+    fans or a bad index load what they can, and a glTF with no usable mesh
+    now says so instead of importing an empty model.
+  - On Windows, model files in folders with non-English names load. Files
+    with decimal commas in a different language setting no longer break.
+  - FBX files from 3ds Max keep their PBR material values.
+
+  Launcher
+  - Removed a setting that did nothing. The offline What's New page no
+    longer shows an outdated list.
+
+  Behind the scenes (off by default, nothing changes for players)
+  - OkayUI, our own interface toolkit, gained window stacking, colour
+    widgets, tables that skip off-screen rows, plots and drawing backends.
+    The editor and launcher still use Dear ImGui.
+
+v2.868.0
+  Accounts and anti-cheat
+  - Joining a server that needs a session ticket now asks the account
+    service for one first. A banned answer is final and the game does not
+    join. Servers that do not need tickets are not affected.
+  - Account passwords stored on this computer use a much slower, safer hash.
+    Older accounts upgrade the next time you sign in.
+  - The update feed can be digitally signed. Until a signing key is set up
+    in a build, updates work exactly as before.
+  - Behind the scenes: ban and appeal records are kept in an audit log,
+    report and appeal spam is limited, and repeat evasion by device is
+    tracked on the server side.
+
+  Releases
+  - The key used to publish updates was replaced, so new versions are
+    published with their checksums again.
+
+v2.867.0
+  Updates and releases
+  - A new version is only offered to players after its files and checksums
+    are published, so the "no checksum" update error should not come back.
+  - Windows programs and the installer are signed with a code-signing
+    certificate when one is configured. Until then they stay unsigned, as
+    before.
+
+  Behind the scenes (all off by default, nothing changes for players)
+  - Our own readers for 3DS and BVH files, and checks of the own FBX and
+    COLLADA readers against real files from other tools.
+  - More tests of our own encryption code (published test vectors and
+    comparisons with libsodium). It is not used and is not ready for use.
+  - OkayUI (our own interface toolkit) gained more widgets and a code
+    editor widget. The editor and launcher still use Dear ImGui.
+
+v2.866.0
+  Gameplay and physics
+  - A 3D hinge can stop at a minimum and maximum angle, so doors and levers
+    no longer swing all the way round. Limits are off until you turn them
+    on, so existing hinges behave as before.
+  - A moving body can use a mesh collider: it collides as the convex hull
+    of its mesh. A body that lands on a solid mesh now gets collision
+    enter, stay and exit callbacks.
+  - 2D games can sweep a box or a capsule, check what is inside those
+    shapes, and push 2D bodies with an explosion force. Text scripts and
+    visual scripts both have these.
+  - Behaviour trees can run another tree as a sub-tree, with its own
+    blackboard and optional key mapping. A tree that would run itself
+    fails instead of looping. A breakpoint on a node pauses Play on that
+    node until you resume.
+  - Two components of the same type on one object (for example two
+    colliders or two lights) are both saved now. Before, only the first
+    was kept. Older scene files still load.
+
+  Cutscenes and audio
+  - Sequences can key letterbox bars, a camera shake, a coloured screen
+    fade, and another sequence played inside this one. Reduce motion turns
+    the shake off. See examples/cutscene.
+  - 3D sound can echo in Reverb zones (Room, Hall, Cave, Outdoor), change
+    pitch with speed, get quieter behind walls, and sound duller with
+    distance. Every effect is off until you turn it on, so existing scenes
+    sound the same. See examples/spatial_audio.
+
+  Settings and accessibility
+  - The Settings screen can pick a monitor, a display mode (windowed,
+    borderless or fullscreen), a resolution and a refresh rate. Apply asks
+    "Keep these settings?" for 10 seconds and goes back on its own if
+    nobody answers. The choice is saved for the next launch.
+  - Subtitles and sound captions are drawn in the game. Hold to toggle
+    keeps sprint, aim and crouch on after you let go. Aim assist pulls
+    right-stick aiming a short way toward a nearby target (mouse aiming is
+    never pulled). All three are on the Settings screen.
+  - Keyboard and gamepad menus draw one focus ring that follows the UI
+    theme. The Settings screen can make it high-visibility (thick yellow
+    with a dark edge) or thicker. A mouse click hides it.
+
+  UI and input
+  - On-screen touch controls: a virtual joystick, a D-pad and touch
+    buttons that drive the same actions as keys and pads. Tap, double tap,
+    long press, swipe, pinch and two-finger rotate are available to scripts.
+    See examples/touch_controls.
+  - UI frames can be rotated and scaled. Their children turn and scale with
+    them, and clicks follow the new shape.
+  - Games can copy and paste text. Input fields support Ctrl or Command
+    with C, X and V. Scripts and visual scripts can read and set the
+    clipboard.
+
+  Editor
+  - Window > Items, Loot & Recipes edits items, loot tables and crafting
+    recipes in one window, with search, undo and a live loot roll preview.
+  - The Localization window shows missing translations and placeholder
+    mismatches, scans the project for unused and missing keys, and
+    previews a pseudo-locale and right-to-left text.
+  - The Lighting window, Build Settings and the Light Inspector say which
+    lighting, post-processing, fog and sky switches a renderer does not
+    draw.
+  - Exporting a visual script now turns Timer into working code, and an
+    Actions list into actions_load, so every step still runs. A node that
+    cannot be exported is reported by name instead of being skipped.
+
+  Fixes
+  - A PLY model that declares its vertex list twice is refused, instead of
+    loading with mismatched normals.
+
+v2.865.0
+  Editor and visual scripting
+  - Exporting a visual script turns Wait and Delay into after(seconds, fn).
+    The nodes that follow run in that function after the delay, instead of
+    running immediately. A test runs the exported script and the graph for
+    the same Wait and Delay.
+  - A built-in file dialog is cancelled when the scene is rebuilt (undo,
+    redo, load, new scene, delete, play and stop). Scene shortcuts do not
+    fire while one is open.
+  - Creating a prefab variant fails the step if the new file cannot be read
+    back, instead of recording an empty file for undo.
+  - The prefab override count is remembered by object id, and stale entries
+    are dropped, so a new object cannot inherit a destroyed object's count.
+
+  Saving
+  - A negative number, such as an audio pitch of -1, no longer looks like
+    missing fields, so the rest of that component is kept on the next save.
+  - Build profile names cannot inject extra keys, and profile text values
+    are escaped.
+  - A guid written on an object's header line is used when diffing and
+    merging scenes.
+
+  Launcher
+  - Content-Length is parsed without overflow. A download that announces
+    itself over 2 GiB is refused, and curl is given the same cap.
+  - Link previews are not fetched when the host is loopback, private,
+    link-local, or does not resolve.
+  - Tenor preview sizes are read from the tinygif dims, and the read stays
+    inside the response.
+  - A voice clip copies the loaded WAV into its own buffer and frees SDL's
+    buffer at load.
+
+  Scripts and models
+  - repeat, pad_left and pad_right truncate huge counts instead of hanging
+    or running out of memory. format() with an index past the arguments
+    yields an empty field.
+  - An MTL texture path that is absolute, or that climbs out of the model's
+    directory with "..", is dropped.
+  - FBX up, front and coord axis selectors are clamped to 0, 1 or 2.
+  - A corrupted FBX deflate block can no longer shift by 63 or more bits.
+
+  OkayUI
+  - BeginChild past 8 deep and a popup past 4 deep do not start, so the
+    matching end cannot restore a layout that was never saved.
+  - BeginFrame clears the per-frame stacks. PushID past 32 deep is skipped,
+    and the matching PopID does not restore a seed that was never saved.
+
+v2.864.0
+  Editor and visual scripting
+  - Visual scripts can declare typed variables (numbers, text, colours, lists,
+    maps and structs) with scopes. The editor has panels for variables and
+    structs, the Inspector edits them live, and the debugger can watch them.
+    Note: Add Var on a Vector3 now adds component by component.
+  - Pins show a tooltip saying what can connect, and nodes show what they do,
+    need and give.
+  - New navigation obstacles can carve holes in the navigation mesh; the editor
+    previews them.
+  - The Build window follows a <Name>_Data folder layout, strips unused assets,
+    supports StreamingAssets and writes a build report (with a dry run). The
+    player has --build-info.
+
+  Multiplayer
+  - A client now notices when the host has gone away or refuses the join,
+    instead of waiting forever.
+  - The relay only accepts a repeated hello with a valid cookie, limits how
+    fast one address can send them, and will not downgrade the protocol
+    version. Session codes no longer appear in logs, the relay checks its port
+    range, and the per-address session count follows a host that moves.
+  - Games in this release speak relay protocol version 4. The live relay has
+    to be upgraded with this release. A game drops welcomes from an older
+    relay unless it sets allowUnverifiedRelay.
+  - Position updates at the edge of the number range no longer overflow.
+
+  Engine
+  - Hostile or damaged model files (FBX, GLB, PLY) no longer crash or hang:
+    depth, node and animation limits are enforced and out-of-range numbers are
+    clamped. Skinned meshes with bad joint indices are repaired.
+  - Physics sweeps with NaN or huge distances, huge navigation grids and path
+    searches, and array functions that changed the list while walking it no
+    longer hang or overflow.
+  - Fixed data races in the server browser and voice chat.
+
+v2.863.0
+  Launcher and updates
+  - Updates are checked before they are used. The Versions page no longer has
+    an "Install anyway" button: a file without a published checksum is refused.
+    The editor's own update and the player download use the same checks.
+  - An update swaps the launcher, editor and player together or not at all. If
+    the swap fails nothing is left half replaced.
+  - After an update restarts the launcher, the new program is asked to confirm
+    its version before it is started for real. A file that cannot start, or
+    reports the wrong version, is rolled back: the previous launcher is put
+    back and started, and the bad file is kept next to it for inspection.
+  - If an update fails, the update window says why and what to do. At most two
+    automatic attempts are made for the same version; the Retry button always
+    works.
+  - On Linux the restart now starts the new file instead of the renamed old one.
+
+  Engine
+  - Reliable ordered messages are no longer silently dropped when more than 32
+    are waiting for acknowledgement; they are queued and sent in order.
+  - Hostile or damaged data no longer crashes or hangs: network position
+    updates at the edge of the number range, subtitle timestamps that are far
+    too large, localization files with unusual whitespace, model files that
+    declare absurd sizes, and a console view with a NaN background.
+
+  Editor
+  - The editor no longer re-checks the whole scene for unsaved changes on every
+    frame while you play, which saves time on every frame.
+
+  Project
+  - The project license is now a proprietary license: games made with the
+    engine can be sold without royalty. See LICENSE.
+
+v2.862.0
+  Editor
+  - Visual script: right-click a node and choose Connect to... to see what can
+    plug into it. Every pin of the node has its own list of nodes that fit that
+    pin (easiest and exact-type matches first). Pick one and it is added already
+    wired, or choose "Search all" to open the full list for that pin.
+  - Visual script: the Print node now has a Text input and an optional Value
+    input, so it can print your own text, a value, or both ("Text: Value").
+  - Visual script: the Add Node menu opens faster the first time (the list is
+    built about three times quicker).
+  - Visual script: one flow output can now be wired to several nodes. They run
+    in the order they were connected. Alt+click a wire to remove just that wire.
+
+v2.861.2
+  Editor
+  - Visual script: the Add Node menu is much lighter while it is open. It now
+    draws only the rows you can see and keeps the results, topic counts and
+    search matches until something changes, so scrolling, hovering and idle
+    time in the menu cost almost nothing.
+
+v2.861.1
+  Editor
+  - Visual script: the Add Node menu no longer lowers the frame rate when it
+    opens or while you type in its search box. The node list is built once and
+    reused instead of being rebuilt on every frame.
+
+v2.861.0
+  Editor
+  - Prefabs: an override header shows what an instance changes, with revert and
+    apply per property or for all (#666). Open on a prefab enters prefab mode,
+    with its own scene view, a leave prompt for unsaved edits and undo (#676).
+    Prefab variants are changed by their overrides or by opening their base
+    prefab; they are not opened directly.
+  - Level design: foliage painting (paint, erase, rescale; slope, height and
+    spacing limits; merged into chunks for speed), up to four painted terrain
+    texture layers, decal projector, cable between two objects, true
+    orthographic Top/Front/Side views, and a measuring tool (#677). Volumes
+    and logic zones: checkpoint, kill, force, atmosphere and ambience regions
+    drawn in the scene view; an ambience region fades in the Audio Source on
+    its object while the camera is inside (#675). I/O links on logic objects:
+    when a named output fires, any object's input is triggered, with a delay
+    and a once option (#672). Navigation areas, costs and off-mesh links
+    (#661). Mesh Collider 3D uses the real triangles for static objects (#663).
+  - Project panel rebuilt on the asset database (#673). Undo records named
+    scene steps that survive Play (#662).
+  - Scene view and layout: the camera readout is an optional overlay that no
+    longer overlaps the stats line; toolbar tooltips and an icon-plus-label
+    mode, with overflow moved into the "..." menu on narrow views; Compact and
+    Comfortable inspector density; object and camera/light names avoid each
+    other and the gizmo; Shift+Space maximizes the Scene view; panel groups
+    collapse and expand; the last layout is restored at start (#682).
+  Game features
+  - The player's Settings screen has Text size, Colour filter, High contrast,
+    Reduce motion and Reduce flashing, and the engine and UI components honour
+    them (#657).
+  - Save games without code: a Saveable component, Save Settings, Save / Load /
+    Delete / Continue as nodes, actions and script functions, and a Save Slots
+    screen (#664).
+  Launcher
+  - "Download my data" and "Delete my account" in Account > Sign-in & security;
+    deleting needs your password and removes or anonymises your rows (#651;
+    needs the delete-account function deployed, see docs/account_data.md; until
+    then the launcher says deletion is not set up).
+  - Report a message, post, item or profile; reports are reviewed by staff
+    (#652, needs docs/sql/reports.sql, applied to the live project).
+  Fonts
+  - TrueType fonts are rasterised by our own code (#655).
+
+v2.860.0
+  Audio
+  - Clips keep their stereo channels and long music streams from disk in a
+    small fixed amount of memory (AudioSource "Stream", Music Player). Ogg
+    streaming runs on our own decoder (#665).
+  - Ogg Vorbis and MP3 files are decoded by our own decoders, checked against
+    reference decodes of many encoder settings; damaged files are skipped, not
+    crashed on (#644, #642).
+  Images, fonts and dialogs
+  - PNG, JPEG, BMP, TGA, GIF, HDR and PSD loading, PNG saving, the built-in 8x8 font and the file
+    open/save dialogs now use our own code (#649, #639, #641, #640).
+  Scripting
+  - The optional Lua and C# (Mono) script backends are removed; OkayScript and
+    Visual Script are the supported ways to script (#643).
+  Launcher
+  - Kick, ban, unban and admin role for community servers and group chats.
+    Run docs/sql/member_moderation.sql on your Supabase project first; it also
+    closes a hole that let anyone join a server as admin (#668).
+  - Blocking and privacy are enforced by the server, not just the PC: nobody can
+    DM, call or friend-request someone who blocked them, and the DM, friend
+    request and online-status settings are applied by the database. Needs
+    docs/sql/blocks.sql (applied to the live project with this release) (#667).
+  - Password-reset page and an honest message when no reset page is set up
+    (#647). Typing indicators and read receipts say "Not set up on the server
+    yet" until docs/sql/chat_receipts.sql is run (#646).
+  - The updater refuses to install any file without a SHA-256 in the versions
+    index, verifies everything before replacing anything, and shows why when an
+    update fails (#650).
+  Models
+  - okay::fbx, our own FBX reader, is built next to the existing reader and is
+    off by default (#658).
+
+v2.859.0
+  Visual Script
+  - The Add Node panel has topics, Basic/Intermediate/Advanced levels, a Starter
+    list and Recently used, and typing searches every topic. Named pins (clips,
+    tags, layers, scenes, variables, events, sounds) are dropdowns of the real
+    choices; a required pin that is empty is marked; a wire that cannot work is
+    refused with the reason; drag an object or prefab onto a slot; Save then Play
+    runs the graph you just edited (#628).
+  - 241 new gameplay nodes (movement, health and combat, items and inventory,
+    physics, perception and AI, camera, UI text, audio, quests, dialogue, saving,
+    input, time) plus loops that wait across frames, maps, switches and runtime
+    errors that name the node. Every node has a test showing it does something;
+    nodes that need a network or PlayFab service and have no test are hidden from
+    the palette (old graphs still load). Network nodes now say when no session is
+    running instead of doing nothing. Fixed vault and mantle failing after a scene
+    ended mid-move (#629).
+  Runtime UI
+  - Twelve in-game UI themes, style roles (Primary, Secondary, Danger, Ghost,
+    Outline, Pill), whole-scene theming and .okaytheme files. New radio buttons,
+    draggable windows, floating damage numbers, a dialogue box with choices and an
+    inventory screen, with script calls for each. File > Examples > UI Gallery
+    builds every widget. Typing in a text box no longer moves menu focus, and
+    widgets under a panel can be blocked from clicks (#622).
+  - Text can use colour, bold and italic tags. Text is readable in all twelve
+    themes. The inventory screen shows the real inventory, and the nameplate's
+    health bar follows the object's Health. Dropdowns scroll, and there is a phone
+    layout of the gallery. The Glass theme is fixed and reachable, saved looks apply
+    from the UI Theme window, and Examples save into your project so Play starts
+    straight away (#631).
+  Project panel (editor)
+  - Create folders, scripts, scenes, prefabs, materials, data assets and visual
+    scripts through a name prompt. Renaming and moving keep every scene, prefab and
+    material pointing at the file. Copy, cut, paste and duplicate; delete asks
+    first and moves to a trash folder; Ctrl+Z undoes it all. Find References,
+    Reimport, per-asset favourites, folder-tree arrow keys, a Folder/Project search
+    switch and a thumbnail size slider. Opening a project no longer writes a
+    metadata file next to every asset. Files and folders dropped in from outside
+    are imported safely (#619, #627).
+  Inspector and Hierarchy (editor)
+  - Every edit is one undo step. Dropping on the empty Hierarchy area, dragging a
+    group, and dropping a prefab or model on a row work. Hierarchy search
+    understands t:tag, c:component, l:layer, is:state and -word. The Inspector
+    lists what changed from a prefab with Revert and Apply, edits several objects
+    at once, shows which values differ, copies, pastes and resets component values,
+    has tooltips on the common components' fields, and is wider by default
+    (#621, #626).
+  Import settings
+  - Model Normals (from the file, calculated with a smoothing angle, or flat) and
+    Import animations on or off, plus texture Largest side and model Scale. Open
+    from the Project panel or the Inspector (#634).
+  Launcher
+  - The Create tab is a home with a + New Project wizard and a recent-projects
+    grid. A failed create tells you why and leaves no folders behind (#624).
+  Game builds
+  - A Development build writes a timestamped log file next to the game; a release
+    build writes none. The first-person controller's Bob Sway is a real camera
+    roll. Developer demo panels (F1 Test UI) and other features that were not
+    finished are hidden in released builds (#632, #635).
+  Removed
+  - The Mixamo Soldier and Xbot sample entries in the Player menu.
+
+v2.858.0
+  Visual Script
+  - The add-node panel searches name, category, keywords and description,
+    including a short typo, and documents every registered node. Graphs stay
+    open in tabs, and New, Open, Play, Stop and quit ask before throwing away
+    an unsaved graph (#597).
+  Rendering
+  - The Game view, Play mode and the player draw every camera, lowest depth
+    first, each in its own rectangle. An LOD Group switches to a cheaper mesh
+    with distance, and an imported glTF model keeps its metallic-roughness
+    and emissive textures (#599).
+
+v2.857.0
+  Properties
+  - A key binding in the property registry can be any key, including Space,
+    Tab and Enter. Spawner pooling is registered, and the Loading Screen is
+    registered as its own type. The registry now covers 1405 properties on
+    86 types (#615).
+  Launcher
+  - The Versions page installs and removes editor versions, with checksums
+    checked before a version is moved into place. Latest or LTS is a channel
+    choice. An update keeps the previous editor, and a project can be opened
+    with the editor version it was saved with (#617).
+
+v2.856.0
+  Projects: upgrade or keep your version (editor)
+  - Every project now records the editor version that last saved it
+    (engine_version in project.okayproj). Opening a project made with an older
+    version asks first: Upgrade, Keep that version, or Cancel. Nothing in the
+    project is touched before you answer. A project with no recorded version
+    (made before this) can be upgraded or cancelled. Two patches of one line,
+    such as 2.850.0 and 2.850.1, never ask (#614).
+  - Upgrade checks every scene and prefab first, makes a complete backup next
+    to the project ("My Game (backup v2.850.0)"), rewrites only the files that
+    change and stamps the new version last. If anything fails, the project is
+    put back exactly as it was. File > Project Upgrade... re-runs it and
+    restores a backup (#614).
+  - A project saved by a newer version warns that this editor may drop data it
+    does not understand: Cancel, Open anyway (a backup is made first) or Update
+    OkaySpace. Keep v2.850.x opens the project with that version's editor when
+    it is installed (#614).
+  Editor
+  - The Game view in Play has a Stats overlay (fps graph, min, max, 1% low,
+    object and component counts) and a Timers box (scheduler tasks, tweens,
+    tags). Playback speed from 0.05x to 32x and Run N frames then pause sit
+    beside Step. The PLAYING pill no longer overlaps the size readout (#606).
+  - Tween Animation has Speed based, Decay and Tag. The Script Editor lists the
+    new Time members (sessionTime, fps, hitchCount, paused, HitStop, SlowMotion,
+    RampTimeScale, PushPause and more) with descriptions and call signatures.
+    The visual-script search has the seven tween nodes. Hierarchy search finds
+    objects by path (Cube/Sphere), and Delete Children is in the right-click
+    menu (#606).
+  - Project Settings has Tags and Layers: Strict tags, a tag list you can
+    rename and remove from, a warning with Add them when a scene uses a tag that
+    is not on the list, and 32 named layers (#606).
+  Scene lifecycle, serializer and pooling
+  - Key bindings of the five controller records no longer corrupt a scene:
+    Space, Tab, Enter or - used to shift every later field or cut the record
+    short. Old files still load (#613).
+  - A scene load started from another load's callback (a chained loading
+    screen) no longer corrupts memory; when two loads overlap the last
+    replacing one wins; a failed load leaves the scene and its
+    DontDestroyOnLoad objects as they were (#613).
+  - A quoted value with a line break inside a record (a two-line quest
+    description) is read whole. Unknown object fields and records from a newer
+    build are kept and written back instead of dropped. Joints, spawners,
+    lights, particle systems, trigger zones, UI animations, sequence players
+    and quest triggers save every instance, not only the first (#613).
+  - Pooling: Scene.Despawn returns a pooled object to its pool, Spawner has a
+    Use pool option, scripts get pool_get, pool_release, pool_prewarm and
+    pool_idle, and scripts, projectiles, trails, particle systems and sprite
+    animators reset when reused. The Loading Screen can load the next scene in
+    the background and follow the real progress (#613).
+  Core runtime
+  - Fixes in events and ECS (adding or clearing a system from inside a running
+    system, entity ids and order, a throwing event handler), logging and the
+    profiler (log file rotation, failed writes, the Chrome trace), data assets
+    and data packs (a byte order mark, NaN and infinite numbers, a damaged
+    pack), the scene validators (built-in textures reported as missing, fonts
+    and second components never checked) and the console (a command that runs
+    itself, range checks on console variables) (#608).
+  - New: console variable flags (read-only, cheat, restart required), a
+    console exec command, Log.Flush, DataAsset GetInt and GetBool, and a shared
+    asset-exists rule for both validators (#608).
+  Property registry
+  - The property registry covers 85 component types and 1358 properties (was 26
+    and 336): the controllers, vehicles, projectile, spawner, music, joints, the
+    no-code gameplay components, navigation, networking, day and night, water
+    and 19 UI widgets, each checked by a save and load round trip. A property
+    write now reports its old and new value for undo (#609).
+  - Hooks removed during a change no longer run, hooks that keep writing the
+    same property stop after 32 levels, and unaddressable names are refused
+    (#609).
+  Saves, display and localization
+  - Saves and preferences are written crash-safe by one shared writer: writers
+    to one file take turns, a damaged or half-written file recovers from its
+    backup instead of loading empty, infinity and NaN no longer save as 0, and
+    a failed write says why ("the disk is full", "permission denied") (#611).
+  - Save slots: a long label no longer breaks the date, slots from a newer
+    build and damaged slots are listed and flagged, saving an older build over
+    a newer slot keeps a backup, and Windows device names are refused. New
+    script calls: save_slots, save_valid, save_scene, save_play_time,
+    save_play_text, save_date, save_ago (#611).
+  - Display settings: saved video settings now reach the window at start; there
+    are window modes (windowed, borderless, fullscreen) and a resolution list;
+    the Low, Medium and High presets now change shadow size, distance, cascades
+    and softness (#611).
+  - Localization: non-Latin names no longer collapse to the same key,
+    Traditional and Simplified Chinese players get the right language, plural
+    rules for about 25 more languages, {0, number}, currency and select
+    placeholders, and UTF-16 CSV import (#611).
+  Animation, camera and Play
+  - The camera orbit stays above the ground, with clamped and tunable pitch.
+    Play takes the keyboard even when an Inspector field was focused. Pressing
+    Esc in Play releases the mouse even on a quick tap, a click in the game view
+    no longer lands on Stop, and Ctrl+P stops Play with the Script Editor
+    focused (#554).
+  - Spawn clearance no longer pushes a body through a single solid (#554).
+  - Locomotion keeps its settings (playback speed, fallback clip, foot and
+    full-body IK weights, look weight, loop, mirror, root motion) when the clip
+    blend updates, and a remote player's action message can carry a direction
+    or swim speed (#554).
+  Release channels
+  - The update server now supports a long-term-support (LTS) line next to the
+    latest version, with versions.json listing every release with sizes and
+    checksums. The launcher side comes in a later release (#612).
+
+v2.855.0
+  Projects, saving and loading (editor)
+  - File > New Project... checks the name as you type, shows the full path
+    and what each of the 21 templates contains, and offers recent locations.
+    The same form is in the startup chooser. File > Open Project Folder is
+    new, and a project that was moved or deleted shows as "missing" with a
+    Forget button (#607).
+  - Project Settings, tags, layer names and Build Settings are now stored
+    inside each project, so one project no longer leaks its settings into
+    another. Build Settings survive a restart even without a saved profile,
+    and Save Project no longer erases the build profiles (#607).
+  - Creating a project and saving a scene are all or nothing: a failed Create
+    leaves no half-made folder and keeps your open scene, a failed save never
+    loses the file that was there, and a read-only file or missing folder is
+    refused with the reason. Project, build and preference files are written
+    atomically (#607).
+  - Save changes? (Save / Don't Save / Cancel) now appears before anything
+    that replaces the open scene: New Scene, Open, Open Recent, the Project
+    panel, the Scene Manager, drops, and the launcher hand-off, which used to
+    discard a never-saved scene. An edit that forgot to mark the scene dirty
+    is no longer lost on quit (#607).
+  - The status bar shows project / scene, a green "Saved", an amber
+    "unsaved" and a red "Save failed" with a popup that says why. The window
+    title shows the project, scene and an asterisk (#607).
+  - Save is refused while the game is playing, Build and Export stop Play
+    first, and Play edits no longer mark the scene dirty, so the running game
+    is never saved or shipped by mistake. The network helper object created
+    by hosting is no longer saved into the scene (#607).
+  - Open starts a fresh undo history, so Undo can no longer paste the
+    previous scene's objects into the file you just opened. Opening another
+    project's scene reloads its item database and string table (#607).
+  - Two or more colliders (all 10 kinds) or audio sources on one object now
+    save every one, not only the first. Older files still load. Scene files
+    are written with LF line endings on Windows; they load either way, but the
+    first save of an old CRLF scene changes every line (#607).
+  Loop and time
+  - Scripts can read the clock: Time.sessionTime, fps, hitchCount, paused,
+    unscaledDeltaTime and fixedDeltaTime, and can use HitStop, SlowMotion,
+    RampTimeScale and PushPause / PopPause / IsPausedBy, in both the typed
+    language and OkayScript. unscaledDeltaTime, fixedDeltaTime and fps used to
+    return the scaled value, which is 0 in a pause (#603).
+  - Random is safe to use from several threads (it used to race and could
+    deadlock). A game saved in the middle of a time-scale ramp keeps the ramp.
+    A countdown of a day or a week no longer runs 6% off or never finishes
+    (#603).
+  - Replays can reproduce recorded pauses and the random state, also on every
+    lap of a looping replay. Frame recordings stay version 1 and old files
+    load (#603).
+  - New: GameLoop.Current, FrameStats.AverageFps, FrameOverlay.FpsLabel (the
+    player's show_fps now shows real frame times) and TimeBudget, which spends
+    at most N milliseconds a frame on a job (#603).
+  - Fixes: time.debug_scale, time.step and time.run reject bad numbers instead
+    of truncating them, a NaN frame time no longer zeroes every later delta,
+    and a tiny target fps no longer plans a sleep of 1e30 seconds (#603).
+  Timers and tweens
+  - A tween or timer callback that updates its own scheduler or tween manager
+    no longer loses a repeat, steps a tween twice, recurses without end or
+    kills a tween before its complete callback (#604).
+  - Pausing the game (PauseAll) no longer freezes tweens that run on a
+    real-time channel such as "ui", so a pause menu can animate. A tween on
+    the "game" channel stays paused even with SetUpdate(true) (#604).
+  - Ending a sequence (Kill, Clear, a scene load, its object dying) now ends
+    its children too; a held child handle can no longer write into a freed
+    scene (#604).
+  - Tween Animation gets speedBased, decay and tag, saved as an optional
+    tail of its record (old files load, older readers warn and skip). New
+    script ease_curve(t, "OutBack" | "cubic-bezier(..)" | "steps(4)"), and
+    seven visual-script nodes: EaseCurve, SpringStep, TweenMove,
+    TweenMoveSpeed, TweenKillTag, TweenPauseTag, TweenPlayTag (#604).
+  - Fixes: a NaN or huge loop count in tween_loops no longer loops for ever
+    or goes negative, shake and punch counts cannot overflow, and the timer
+    debug view is two to three times cheaper on 10000 timers (#604).
+  Scene graph
+  - Component order is now saved for every object whose components would
+    load in a different order, and prefab diff and merge understand the
+    record. Scenes already in writer order save exactly as before; an
+    editor scene with 2 or more components in another order gains one
+    comporder line on its next save (#605).
+  - Detaching 300000 children one at a time takes about 31 ms instead of
+    growing with the list; GetSiblingIndex is a lookup (#605).
+  - Object pools reset what the last use left behind: velocity, spin, forces
+    and sleep on rigidbodies, a waiting delayed destroy, tag, layer, active
+    state, enabled flags and child poses. An object queued for destruction can
+    no longer be handed out and vanish (#605).
+  - Cloned joints pull on their own clone instead of the original, through the
+    new FindNearest. FindByPath tries every sibling match and finds names
+    containing /; FindAllByPath is new (#605).
+  - Tags and layer names are counted in characters, so a 22-character
+    Japanese tag is accepted, and layer names compare case-insensitively for
+    Latin, Greek and Cyrillic (#605).
+  - New: GetOrAddComponent, ForEachDescendant, Transform LookDirection,
+    LookAtYaw, LookAt2D, RotateTowards and LookAt(Transform) (#605).
+
+v2.854.0
+  Updater
+  - After an update, the editor and the launcher start again. The new process
+    waits until the old one has exited, so it is not turned away by the
+    single-instance lock, and it keeps the original arguments and folder,
+    including paths with spaces and parentheses. A failed install puts the
+    previous program back and writes okay_update.log (#584).
+  Loop and time
+  - Game.TogglePause now works while a cutscene or menu holds a pause: it
+    flips the player's own pause hold, so the game stays paused when the
+    cutscene ends if the player paused it (#594).
+  - New session clocks (Time.SessionTime, SessionUnscaledTime,
+    SessionFrameCount) count from the start of the current Play session;
+    elapsed time and frame count still never rewind (#594).
+  - Run N frames then pause (GameLoop.RunFrames), slower and faster presets
+    from 0.05x to 32x, and the console commands time.run and time.overlay
+    (#594).
+  - The player's F3 overlay and the console share one text builder: fps, 1%
+    low, hitches, dropped frames, time scale, hit stop and who paused the
+    game (#594).
+  - Random: pick k different items (SampleIndices), blue-noise points
+    (PoissonDisk2D), and shuffle bags and weighted tables can save and load
+    their position, so a reloaded game does not re-roll the next draw
+    (#594).
+  - Fixes: a huge frame time no longer pushes elapsed time to infinity,
+    smoothed fps no longer turns into NaN, a tiny target fps no longer asks
+    for a sleep of years, the tick pacer and the fixed step no longer
+    overflow or spin two billion steps, Gaussian and point helpers return
+    numbers for NaN or infinite input, restoring a time snapshot without a
+    scale keeps the current scale, and a frame recording with an extreme
+    marker loads again (#594).
+  Timers and tweens
+  - Timers stay fast with many of them: cancelling by handle, owner or tag
+    took seconds for 10000 timers and now takes about a tenth of a second
+    for 100000 (#595).
+  - A tween with a delay such as 0.1 no longer freezes just short of its
+    end, endless and long tweens stay exact after hours (the timeline is now
+    a double), and NaN or infinite values never reach an object (#595).
+  - New: tween by speed, retarget a running tween, tween Vec2, Vec3, Color
+    and Quat values, tag tweens and kill, pause, play or complete them by
+    tag, decay easing for punch and shake, tween along a spline, and Prepend
+    and JoinCallback on sequences (#595).
+  - A timers debug view builds overlay lines for the scheduler and the
+    tweens (#595).
+  - Scripts get tween_tag, tween_speed_based, tween_decay, tween_kill_tag,
+    tween_pause_tag, tween_play_tag, tween_complete_tag, tween_rewind_id,
+    seq_prepend and seq_join_callback, and after(NaN) or every(NaN) no
+    longer makes a timer that never fires (#595).
+  Scene graph
+  - Very deep and very wide hierarchies stay fast: the active state is
+    cached and destroying a big subtree is one pass (a 50000-deep chain took
+    over two minutes to destroy before) (#596).
+  - Calling Clear, LoadFromFile or Deserialize from inside Update,
+    OnDisable, OnDestroy or Awake no longer frees the running component; the
+    change is applied at the end of the frame (#596).
+  - Components moved in the inspector keep their order in the saved scene
+    (an optional record, older files load as before) (#596).
+  - Fixes: InverseTransformPoint on a zero-scale object, SetPosition under a
+    sheared parent chain, a Lifetime longer than six days never ending,
+    Instantiate of a destroyed object, and Scene.Update with a NaN time
+    (#596).
+  - New: Scene.Stats, DestroyChildren, GetComponentsInParent,
+    SetPositionAndRotation and SetParent with a sibling index (#596).
+  Docs
+  - The docs index lists every page, and the properties page has the right
+    counts (#593).
+  CI
+  - The Windows build retries the SDL2 and libsodium downloads and checks
+    that the archives actually arrived (#592).
+
+
+v2.853.0
+  Editor
+  - Play mode in the editor now runs on the shared game loop, like the built
+    player: time scale, hit stop, time-scale ramps and the named clocks work
+    inside Play, Time.deltaTime and elapsed time advance, and every Play starts
+    a clean session. Editing never advances game time (#590).
+  - Tags and layers: the editor uses the project tag and layer lists. Add a
+    custom tag with a clear error when the name is not allowed, rename or remove
+    it (objects keep their tags in one undo step), and rename a layer by
+    right-clicking it in the object Layer menu or the camera Culling Mask list
+    (#590).
+  - Duplicate keeps a copy under the same parent, places it right after the
+    original and numbers the name ("Cube (1)") (#590).
+  - The Tween Animation inspector has a Curve field (cubic-bezier, steps or a
+    preset name, with a preview) and a Clock menu, so a tween can run on the UI
+    clock while the game is paused (#590).
+  - The script editor knows tween_clock and tween_prop (#590).
+  Loop and time
+  - A dedicated server starts every run with a clean time session, so a time
+    scale left over from an earlier run in the same process no longer slows the
+    world (#590).
+  Docs
+  - The feature map now covers the new loop, timer, tween and scene graph parts,
+    their tests and what is still open (#589).
+
+v2.852.0
+  Loop and time
+  - The built player now runs on the shared game loop, so its hitch handling,
+    refresh-rate changes, focus pause and fresh sessions all come from one place
+    (#585).
+  - Countdown and Cooldown timers that you poll each frame: pause aware, frame
+    rate independent, and savable. Clocks can ramp their time scale smoothly
+    (#585).
+  - One save block for the clocks, the base time scale and named random
+    generators, so a loaded game continues with the same dice (#585).
+  - Frame statistics can be exported as CSV, and console commands (time.stats,
+    time.scale, time.pause, time.step) show and change the loop live (#585).
+  - A lock for the shared random generator, random directions inside a cone,
+    points in a triangle, and a much larger UTF-8 toolkit: validate, sanitize,
+    walk backwards, cut safely, and convert to and from UTF-16 and UTF-32 (#585).
+  Timers and tweens
+  - A timer or tween can belong to an object and goes away silently when that
+    object is destroyed, so a delayed call can no longer touch a dead object
+    after a scene change (#587).
+  - Timers and tweens can follow a named clock, so a pause menu freezes gameplay
+    timers while menu animation keeps running (#587).
+  - Springs and critically damped smoothing for numbers, vectors, angles and
+    rotations; one big step gives the same answer as many small ones (#587).
+  - Ease curves as data: cubic-bezier(...), steps(n) and preset names, for
+    tweens and for the Tween Animation component. Tween any property by name,
+    for example tween_prop("Light.intensity", 3, 0.5) (#587).
+  - A debug listing of every pending timer and tween (#587).
+  Scene graph
+  - Hierarchies 100000 levels deep can be built, saved, loaded, copied and
+    destroyed; they used to crash at around 60000 (#586).
+  - Transform: find a child by path, move an object among its siblings, move and
+    rotate in world, local or self space, rotate around a point (#586).
+  - Spawning: Instantiate with position, rotation and parent, Duplicate, unique
+    names such as "Cube (1)", DestroyImmediate, world bounds of a hierarchy, and
+    queries by name or layer (#586).
+  - Tag and layer lists saved in the project file, named layers, and collision
+    matrix presets (everything, nothing, same layer only) (#586).
+  - Mover, Spinner and Lifetime can work in local, world or self space, and
+    Lifetime saves how long it has lived (#586).
+  Fixes
+  - The game loop can no longer lengthen a frame when it clamps a hitch, a
+    frame time beyond the number range no longer overflows, a tiny fixed step
+    can no longer keep the loop busy for billions of callbacks, and options set
+    on the loop before Run are no longer dropped (#585).
+  - Timers and tweens: NaN or infinite times, a huge step on a fast repeating
+    timer, a callback that throws, a 10-hour timer firing late, and tweens from
+    action lists writing into destroyed objects are all fixed (#587).
+  - Scene graph: removing a component from its own disable or destroy handler,
+    changing a tag in place, reordering root objects, an object parented to one
+    that is being destroyed, children of a transient object, and scene files that
+    contain a NaN are all fixed. A spinner that turns on several axes now gives
+    the same result at any frame rate (#586).
+
+v2.851.0
+  Editor
+  - A roomier editor layout: larger type, more space and bigger click targets
+    across the shell, hierarchy, inspector, project browser, scene toolbar,
+    console, Visual Script editor and Script Editor. Shortcuts, file formats and
+    scripting behavior are unchanged (#577).
+  - Visual Script editor: a variables outline, snap and align for nodes, and an
+    inline line on a node that nothing runs (#577).
+  - Script Editor: a find and replace bar with a match count and highlighted
+    matches (#577).
+  Loop and time
+  - Frame stepping and a debug time scale, and a capture mode with a fixed frame
+    time for recording video and screenshots (#581).
+  - A frame recorder and player that saves a run's frame times and plays them
+    back, plus rolling frame-time statistics (#581).
+  - The dedicated server paces its ticks with a shared tick pacer (#581).
+  Fixes
+  - Thirteen more loop and time bugs found by an audit of the first pass, each
+    with a test (#581).
+  - The scene diff, merge and canonical-form tools now know the 3D gravity record
+    that scenes carry, so they no longer fail on current scene files (#582).
+  Docs
+  - The feature map is now generated from one detail page per area, with every
+    source file mapped, numbered parts, an A-Z index and a by-symptom table (#576).
+
+v2.850.0
+  Loop and time
+  - A shared per-frame game loop (GameLoop): it clamps one huge frame after a
+    breakpoint or alt-tab, counts hitches, runs fixed steps with a catch-up cap
+    and a render interpolation value, and fires pause and resume events. The
+    console Application already runs on it (#579).
+  - Separate clocks for game, UI and cinematics, so a pause menu can freeze
+    gameplay while menu animation keeps running. Hit stop and smooth time-scale
+    ramps that combine with the time scale instead of overwriting it (#579).
+  - Pausing works through reasons: two systems that pause no longer un-pause each
+    other. Quit can carry a reason and an exit code, and a guard can veto it (for
+    example unsaved changes). The game can pause when its window loses focus (#579).
+  - More Random helpers: points and directions on circles and spheres, shuffle
+    bags, weighted tables, dice such as "2d6+3" that never throws, and string
+    seeds with the same result on every platform (#579).
+  Scenes and prefabs
+  - Nested prefabs and prefab variants, unpack, and per-field apply and revert
+    that rewrites the prefab file safely. Cycles, deep nesting and damaged inner
+    files are reported instead of breaking the scene (#578).
+  - A property registry: read, write, watch, snapshot and compare any component
+    field by name, for undo, live editing and prefab overrides (#578).
+  - Scene text tools for version control: a canonical form, a readable diff, a
+    three-way merge with a conflict report, and format migration (#578).
+  - An inactive parent now disables its children everywhere. Scenes can be
+    searched by path, validated for broken links, duplicate ids and missing
+    files, and report why a load failed. Components get FixedUpdate and
+    OnDestroy when a scene is cleared (#575).
+  Tools and performance
+  - A job system with ParallelFor, task dependencies and a main-thread queue,
+    plus frame arenas, pool allocators, generational handles and string ids (#578).
+  - Profiling and debugging data: frame history, render statistics, memory
+    tracking, a draw-call recorder and a stats overlay (#574).
+  - Optimization tools: mesh simplification and LOD chains, LOD selection,
+    occlusion culling, batching plans, streaming and an optimization report (#574).
+  - Localization tools: translation tables with CSV and JSON import and export,
+    missing and unused key reports, pseudo-localization, font coverage (#574).
+  - Accessibility: subtitles and captions, colour-blindness simulation and a safe
+    palette, directional UI focus, and a remapping model (#574).
+  Fixes
+  - Time no longer turns to NaN when a frame step is NaN, negative or infinite,
+    an infinite time scale is capped, the FPS readout is right after the first
+    frame, and the game stopwatch no longer freezes in long sessions (#579).
+  - Random.Range no longer overflows on very wide float ranges, and UTF-8
+    helpers handle surrogates and reads past the end of a string (#579).
+  - A script error in the console game loop no longer leaves the terminal in raw
+    mode, and the quit key is ignored while a text field is active (#579).
+  - Floats in scene files are written with the digits needed to read back the
+    same value, so a position like 12345.678 is no longer rounded on every save,
+    undo step or prefab copy (#575).
+
+v2.849.0
+  Scenes and objects
+  - Scenes load all-or-nothing: a damaged or truncated scene file no longer
+    leaves a half-built level, sizes are bounded, and files written by a newer
+    version still open (#553).
+  - Scenes can load in the background without freezing the game, and objects
+    can be pooled and reused instead of created and destroyed (#570).
+  - Components can require other components, objects and prefabs carry stable
+    IDs, prefab instances remember their overrides, and a layer collision
+    matrix, a tag index and a camera stack are available (#570).
+  - Scene lifecycle is predictable: Start runs once the object is really
+    active, SetParent keeps the world position, Destroy can be delayed and is
+    safe in the middle of an update, OnEnable and OnDisable fire, and objects
+    can survive a scene change with DontDestroyOnLoad (#558).
+  Saves and data
+  - Saves are durable: files are written atomically so a crash mid-save keeps
+    the old file, text is escaped properly, save slots are versioned and
+    checksummed, and the loaders tolerate damaged files (#552).
+  - Asset manager with handles, background loading and hot reload, and an
+    asset database with stable IDs, dependency tracking, import settings and
+    thumbnails (#568).
+  - Localization and Prefs improvements, plus math and geometry helpers, a
+    command line and console, ECS commands and deltas, and more keys and
+    gamepads in the input system (#571).
+  Scripts and tools
+  - Log has categories, a rotating log file and is safe to call from several
+    threads; the profiler exports Chrome trace and CSV files (#559).
+  - Timers and tweens run on one global scheduler, can be cancelled by tag or
+    owner, and several tween bugs are fixed (#560).
+  - Undo and crash recovery, an automated test framework and a save framework
+    for tools and games (#572).
+  Fixes
+  - Random.Range no longer returns its maximum, the event bus is safe when a
+    handler adds or removes handlers, time uses double precision so long
+    sessions don't drift, a pause scale is available, and UTF-8 handling no
+    longer breaks on bad input (#557).
+  - Core audit: fixed bugs in math, the ECS, network snapshots, the camera,
+    layers and input (#565).
+
+v2.848.0
+  Characters
+  - The speed fit from 2.847.0 now covers every player controller (third-person
+    shooter, click to move, top-down, top-down shooter, 2.5D platformer), not
+    only third-person and first-person. A Walk Speed or Run Speed still at that
+    controller's own default is set to a pace the model's clips can show (for
+    example about 2.0 and 5.0 m/s), so a default speed changes when you attach a
+    model with its own Walk and Run clips. A speed you set yourself is kept.
+    Attaching a different model refits (#561).
+  - Strafe blend: sideways and backward movement blend cleanly, legs follow the
+    travel direction only when you turn that on, and a missing locomotion clip
+    falls back to the built-in one (#537).
+  - IK follows an Animator state's weight, including look and aim; the look
+    weight defaults to fully on (#535).
+  Scripts and tools
+  - New script builtins: hurt, heal, add_xp, get_hp, get_max_hp, is_dead,
+    child_count, get_child, parent_of, light setters, WaitUntil and WaitWhile,
+    and a real WaitForSecondsRealtime (#556).
+  - New navmesh script calls: nav_path_exists, nav_path_length,
+    nav_point_walkable, nav_nearest_point, plus camera_follow (#566).
+  - New visual-script nodes: Music Play/Stop/Pause/Resume/Next, Camera Shake,
+    Set FOV, Camera Follow, Particle Play/Stop/Burst (#566), and Add Item,
+    Remove Item, Has Item, Item Count, Equip, Craft, Loot Roll and Spawn
+    Pickup for the inventory (#562).
+  - New per-kind IK and Animator script tools, and IK gizmos for the selected
+    object (#563).
+  Fixes
+  - Building, upgrading and repairing a structure no longer takes materials
+    when you can't afford it; a demolish refund that doesn't fit in the bag
+    drops as a pickup instead of vanishing; item names match ignoring case and
+    surrounding spaces (#564).
+
+v2.847.0
+  Characters
+  - A character model that comes with its own Walk and Run clips now walks
+    when you press W and runs with Shift. The controllers' default 4.5 m/s
+    "walk" is really a jog, so a downloaded walk clip (made for about 1.4 m/s)
+    lost out to the run clip and the character ran when it should walk. When
+    such a model is attached, a Walk Speed or Run Speed that is still at its
+    default is set to a pace the clips can show (about 2.0 and 5.0 m/s). A
+    speed you changed yourself is kept (#541; see docs/animation.md).
+  Scripts and tools
+  - A new script in the Script Editor starts as an empty Start and Update,
+    with a line saying when each runs. The longer example is still in the
+    scripting docs (#543).
+  - On Windows, OkaySpace.exe, OkayEngine.exe, OkaySpacePlayer.exe and the
+    relay now show their own name, description and engine version in the file
+    Properties and in Task Manager, instead of a library's name. They also
+    declare that they run as the current user and never ask for administrator
+    rights (#545).
+  Docs
+  - New docs/README.md indexes every guide by what you want to do. The README
+    is shorter and its claims were checked against the code (a few wrong
+    ones were fixed), and the scripting function reference is now
+    docs/scripting_reference.md (#544).
+  - New docs/FEATURE_MAP.md splits the engine into 19 areas, with the code,
+    docs and editor window for each and what is still open (#546).
+
+v2.846.0
+  Characters
+  - The built-in walk no longer jerks at every step. At walking speeds the
+    hips used to snap up or down by 3 to 10 cm each time a foot touched the
+    ground, which made the legs jitter and the head bob. The hip height is now
+    a smooth curve through the whole stride. Running is unchanged (#540).
+
+v2.845.0
+  Characters
+  - Downloaded VRoid, Character Creator and Daz characters now animate. Their
+    limb bones (J_Bip_*, CC_Base_*, lThighBend, lShldrBend) weren't read as a
+    humanoid, so they stood still with no walk, run, jump or crouch. They get
+    the built-in animations now (#528).
+  - A Mixamo character that has its own animation clips no longer stays about
+    17 cm too low after you crouch and stand back up. The model eases back to
+    its normal height when the file's clip takes over (#528).
+  - A new rig sweep test puts every test character through idle, walk, run,
+    turn, jump and crouch (#528).
+
+v2.844.0
+  Characters
+  - An Animator graph on a walk-only model keeps the built-in idle, run and
+    jump, and still matches the walk clip to the body's stride. A walk file
+    no longer loses those poses when you create an Animator from its clips
+    (#531).
+  - The blocky character crouches into a jump, takes a step when it turns in
+    place, and leans into acceleration and turns (#532).
+  - Right-click a model in the Project panel and choose Make Playable
+    Character. If one player is selected, the model is attached to it;
+    otherwise the new character is the one that's played and the other
+    active players are deactivated. Set Character Model no longer crashes
+    the Inspector. Scripts can call ik_look_at, crouch and stand (#533).
+  - A walk-only jump test checks that every frame in the air uses the
+    built-in pose with the arms lowered, not a T-pose.
+
+v2.843.0
+  In-game UI
+  - One press does one thing. Pressing E to pick something up, or to drop
+    what you are holding, no longer also opens the bag. While the pause
+    menu, the inventory, a dialogue or a text field is open, that click and
+    those keys stay in the menu instead of digging, punching or using the
+    hotbar.
+  - A button or slider set to fill the screen can be clicked. A control
+    stretched across the view used to end up with no click area.
+  - The Settings screen works. Music and effects change the mixer,
+    fullscreen and VSync change the window, and Quality changes the picture.
+    Done closes it and, when you opened it from the pause menu, takes you
+    back there. Picking High in the Quality list no longer also presses the
+    button sitting under the open list.
+  - Menus and the HUD stay on screen at 16:9, 4:3 and a tall 9:16 view. The
+    pause card is centred with its sliders inside it, the main menu fits
+    and the volume number stays on the slider, the hotbar fits, and help
+    text starts below the editor's PLAYING badge. Closing a menu no longer
+    leaves a focus outline where the button was.
+  - Quality High keeps the sky. The extra glow no longer turns the clear
+    background black and hazy (#529).
+
+v2.842.0
+  Characters
+  - One Player Controller for first and third person. Pick First Person,
+    Third Person or Both in its View setting; with Both, V switches the view.
+    Turning a view off removes its settings, and the old separate
+    controllers no longer show up in Add Component. Scenes saved with the
+    old controllers load as one Player Controller, and scripts get
+    set_view, get_view and a PlayerController type (#523; see
+    docs/making_a_game.md).
+  - Downloaded Mixamo-style characters now move naturally. Walk and run
+    clips play at the pace the body really moves, so a walk no longer looks
+    like a jog and a run is a real run clip rather than a faster walk.
+    Every missing animation (idle, walk, run, jump, fall, land, crouch,
+    crawl and the rest) falls back to the built-in one retargeted onto the
+    skeleton, and the body leans a little into starts, stops and turns.
+    A new Character Model panel at the top of the Inspector shows which
+    animation comes from the file and which is built in, and says which
+    components to edit (#524; see docs/animation.md).
+  - Characters standing on a rotating platform now turn with it instead of
+    keeping their old facing (#526).
+
+v2.841.0
+  Game systems
+  - Navigation meshes: bake a walkable surface, ask for paths, and move
+    agents along them, with an editor window (#514).
+  - Cutscenes: sequences of camera, animation, audio and script steps, a
+    Sequence Player and a Timeline window (#515).
+  - Dialogue and quests: dialogue graphs, a runner, story state, a quest
+    log and an editor window (#516).
+  - Behavior trees: assets, blackboards, a runner, script commands and an
+    editor window, with a Start Dialogue task (#517, #519).
+  - Localization: string tables, a Localization window, localized text,
+    dialogue and fonts (#520).
+  Look
+  - Post-processing, a procedural sky, fog modes and weather (#518).
+  Characters
+  - Imported characters whose bones have names the engine can't read
+    ("Bone.001") can now be mapped by hand: right-click the model, choose
+    Map Humanoid Bones, and pick each body bone. The built-in animations
+    then play on it, and the choice is saved with the scene (#522).
+
+v2.840.0
+  Characters and view
+  - Switching to third person with V no longer hides the character's head
+    (or, in the editor's Game view, the whole body): in first person only
+    the owner's own camera skips the head. First-person hands, run feel
+    and hold settings land with it (#505). A project created by an older
+    First Person or Third Person starter, whose player had only one of the
+    two controllers, gets the other when it loads, so its V switches the
+    same way (#510).
+  Save games
+  - Save the whole game to a slot: every object, the player, inventories,
+    spawned and destroyed objects, velocities, script variables and play
+    time. Load it from a script or a menu; an AutoSave component saves
+    every N seconds or on scene start. Scripts get SaveGame.Save / Load /
+    Exists / Delete / Label and playTime (#498; see docs/save_games.md).
+  Animation
+  - Built-in action clips for the Character: a dolphin dive from a sprint
+    into prone, chair and ground sitting with a Seat component, hit
+    reactions on an upper-body layer, roll, dodge and slide, vault, mantle
+    and ledge shimmy, swimming, and nod, shake and shrug emotes. The ones
+    that change movement stay off until a game turns them on (#506).
+  - Ragdolls: a character goes limp when it dies, pushed away from the hit,
+    and hits shove the struck part and spring back. Works on the blocky
+    Character and on imported humanoid rigs; revive restores the pose.
+    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/ragdolls.md).
+  - Animation window: a Character clip's keys are a lane of diamonds you
+    click, box-select, drag and nudge, with per-key easing, retime,
+    amplify and offset, copy / paste / mirror of a pose or the clip, and
+    insert or remove time (#509).
+  - The Animation tab is a clip editor: a clip list (new, duplicate, rename,
+    delete, import, export, bake from the built-ins), a dope sheet with a row
+    per bone (hollow diamonds where a bone holds still), a curve editor for
+    the picked bone, a transport with frame snapping, Record (angle fields,
+    the rotate gizmo on a rig part, the root offset all key at the playhead),
+    and an onion skin that draws the neighbouring keys in the Scene view
+    (#511).
+  - The Animator window is rebuilt: a canvas with pan, zoom, box and
+    multi-select, inline rename, a minimap and auto layout; readable nodes
+    and arrows (the running state lights up in Play and the fired
+    transition flashes); a tabbed side panel with state, transition,
+    parameter, layer, issues and clip tabs; parameters live in Play with
+    defaults; 1D and 2D blend trees you drag; layer masks as a bone tree; a
+    transition blend preview; and a list of the graph's problems (#512).
+  IK
+  - Look-At IK: each bone takes a share of the turn, the look stays within
+    a Clamp of the body's forward (a target behind is watched from the
+    corner of the eye), eye bones lead the head, and Max Distance fades
+    the look out on far targets. Limb IK and Full Body IK can Stretch a
+    limb for a goal just out of reach. Foot IK's Toe & Heel Rays sit a
+    foot on a stair edge instead of sinking its toes in. Auto-Detect reads
+    which way a rig's head bone faces, so look-at and aim work on rigs
+    whose head axis points backwards. Transitions can Keep phase, so a
+    walk hands its step to a run (#507, #508).
+
+v2.839.0
+  Animation
+  - The built-in character's walk is smooth at full speed: walking at the
+    controllers' 4.5 m/s used to whip the feet forward and slap them down.
+    A fast walk now eases into a jog, about where people break into one,
+    and the built-in clips play on a smooth curve through their poses
+    (#500).
+  - Imported characters that bring their own animations can get a full
+    Animator graph: select one and click Create Animator. Idle, walk and
+    run blend at the speeds your player moves, with crouch, prone, crawl,
+    get up, jump, fall and land, all editable and previewable in the
+    Animator window (#499).
+  Multiplayer
+  - Other players' objects no longer lag almost a second behind after
+    standing still: a pause in an object's updates was taken for a slow
+    network (#502).
+
+v2.838.0
+  Audio
+  - Sounds play in stereo with pitch, pan, 3D panning that follows the
+    camera, and three distance curves. Every sound plays through a group
+    (Music, SFX, UI, Voice) with its own volume.
+  - AudioSource plays OGG and MP3 files as well as WAV.
+  - Fades, a low-pass filter for muffled sounds, and a Music Player
+    component: a playlist with crossfades, shuffle and looping. Music can
+    dip while a Voice-group sound plays.
+  - The Pause Menu has Volume, Music and Effects sliders. Each player's
+    levels are saved and come back the next time they play.
+  - New Audio Mixer window (Window > Panels): group volumes, mutes, output
+    meters and ducking. Scripts and visual scripts get Audio commands
+    (#492; see docs/audio.md).
+  Controls
+  - Named actions (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact,
+    Reload, Inventory, Pause) work on keyboard, mouse and controller at
+    once. Players can rebind them with a UI Keybind Field, and their
+    bindings are saved.
+  - Full controller support: right stick, analog triggers, stick clicks,
+    rumble, and plugging a controller in or out mid-game. The editor's
+    Play mode reads the whole controller too.
+  - Scripts and visual scripts: Input.GetButton / GetButtonDown,
+    GetActionVector, Rumble, RebindAction and DefineAction (#494; see
+    docs/input.md).
+  Animation and characters
+  - Built-in action framework and death clips (#435).
+  - One shared bone mapper finds the humanoid bones on imported models,
+    rejects models that aren't humanoid, and pairs clips up by bone (#493).
+  - Grounded stops ease out over the last 2.2 m/s (#480).
+  - A guide to the rewritten IK (#424).
+  Inventory
+  - Tooltips, chest actions, a slot cursor and icon tiles (#426).
+  - In multiplayer the host owns the bags, and changes go through requests
+    that can be rolled back (#481).
+
+v2.837.0
+  Animation and characters
+  - IK runs in one fixed order each frame (feet, then body, then limbs, then
+    look and aim), and IK goals that jump to a new target swing over instead
+    of snapping (#417).
+  - Dropping a model onto a character recovers its bind pose, and a held prop
+    stays in the hand when the model is swapped (#416).
+  Scripting
+  - Fixed: a script that ran the same += or -= twice (in a loop, or every
+    frame) crashed, and += on transform.position or this.hp did nothing (#490).
+  Editor
+  - Script Editor: Ctrl+Z undoes Format, Rename, Replace All and Reload, and
+    the view stays where it was (#445).
+  - The Plugins menu stays usable with more than one plugin installed (#479).
+
+v2.836.0
+  How to try it
+  - Open the editor, pick the Third Person template, and press the green
+    Play triangle (Ctrl+P). WASD moves, the mouse looks, Space jumps.
+  - For the sandbox, pick Sandbox. Dig with the left mouse button, fill
+    with the right, jump or swim up with Space, swim down with Ctrl, and
+    throw what you are holding with G.
+  - The new screens are under Create > UI: UI Showcase, UI Options,
+    UI Notify, UI Controls, UI HUD, and UI Color. Open one, then press Play.
+
+  Multiplayer
+  - When a character leaves, the server frees that player so they can
+    spawn again (#401).
+  - After a hitch, the server catches up the inputs it missed instead of
+    leaving the player behind (#403).
+  - Ticks, transform checks, a pinned host, and animation clip speed are
+    checked more carefully (#407).
+  - A shot rewinds only as far as the hit claim allows (#408).
+  - Messages can be sent in order, or as a latest-only stream (#423).
+  - Owned objects send a smaller update when only the position changed
+    (#427), and objects that are far away are not sent at all (#428).
+
+  Animation and characters
+  - If a state's clip is missing, the character holds the last pose, or
+    plays a fallback clip when one is set (#404, #459).
+  - A jump holds its last frame instead of starting over (#410).
+  - Walking and running crossfade once as the speed changes (#419).
+  - Full-body IK puts the body back, turns the limbs, and eases toward
+    the pose (#414).
+
+  World and sandbox
+  - Filling the ground with the right mouse button no longer zooms the
+    camera (#439).
+  - You can swim in the sandbox lake. Props float or sink based on how
+    dense they are (#448).
+  - Hold G to throw what you are holding, along where the camera looks
+    (#443).
+
+  Scripting
+  - The arrow keys count as movement, the same as WASD (#454).
+  - Pressing Play runs the script you are editing, even if you have not
+    saved it yet (#455).
+  - Scripts can use ??, ?., and ??= (#456), default and named arguments
+    (#465), and plain classes made with new (#458).
+  - Subscribe to an event with += and unsubscribe with -= (#474).
+  - Each scene keeps its own action-list variables (#462).
+  - A script error names the line and the column (#460).
+  - Drag a component or a field from the Inspector onto the visual script
+    (#475). The node list can be filtered by the pin you are connecting
+    (#473), and every node is written up (#463).
+  - In the Script Editor: Rename, Find References, Format, and
+    autocomplete that reads the code the way the language does (#444).
+
+  In-game UI
+  - Four built-in looks: Dark, Light, Sci-fi, and Fantasy. Open
+    Create > UI > UI Showcase (#452).
+  - Sliders can snap and show a label, health bars can be split into
+    chunks with a damage trail, and buttons can ease and show an icon.
+    Create > UI > UI Options (#457).
+  - Toast messages and a styled confirm dialog. Create > UI > UI Notify
+    (#466).
+  - Dropdowns can search, scrolling glides and springs back, tabs can
+    close, tooltips can be rich text, and a text field can be more than
+    one line. Create > UI > UI Controls (#470).
+  - Crosshairs that kick open and ease back, ring and pie meters, and a
+    grid of slots. Create > UI > UI HUD (#472).
+  - A color picker made of swatches and a chip that shows the current
+    color. Create > UI > UI Color (#476).
+
+  Examples
+  - Brick Breaker is a new template you can open and play (#477).
+
+v2.835.0
+  Animation and characters
+  - Imported humanoids play their own crouch and prone clips, so the head
+    no longer pokes through low ceilings (#385).
+  - Joint limits (hinge, ball and twist) on IK bones, editable in the
+    inspector (#396).
+  - Chain IK turns its bones instead of stretching them, respecting each
+    joint's limits (#398).
+  - Foot IK turns the leg bones, so skinned legs bend at the knee, and it
+    follows leg-length changes and each foot's own sole (#412).
+  - Foot IK ground checks ignore the character itself, held items and
+    triggers, and cost less (#413).
+  - Look At and Aim IK reach their target at any frame rate, and blend
+    cleanly with the animator (#418, #433).
+  - The sandbox character's hands sit at his sides, gestures point the right
+    way, and the first-person arm no longer snaps up (#430).
+  - The Animator inspector's preview plays with the Animation window
+    closed (#429).
+  Movement and camera
+  - Switch between first and third person while playing: V on the keyboard
+    or Back on a gamepad, with a smooth camera move (#434).
+  - Fixed: double jumps at the top of a jump, infinite jumps in 2D, and the
+    first-person view bobbing on a moving lift (#409).
+  - The shooter climbs stairs, door sills of 1–4 cm count as steps (#411),
+    and steps whose tread sits above the floor can be climbed (#436).
+  World and sandbox
+  - Voxel digging leaves a floor you can't fall through and only rebuilds
+    the part you dug, so it's faster (#440).
+  - Heightmap digging stops at a floor, only edits under the brush, and
+    aims correctly on moved or scaled terrain (#437).
+  - The sandbox lake sits in the valleys instead of under the hills (#438).
+  Inventory
+  - Keep your bag between scenes, one recipe system with timed crafting,
+    and more sort modes (#367).
+  - Equipment slots, sockets, armor and defence, and backpacks you wear
+    (#378).
+  - Items equipped in the main hand are held in the character's hands, and
+    pickups can go straight to the hands (#383).
+  - Inventory events, inv_* OkayScript calls, and give / take / has item
+    actions (#387).
+  Editor
+  - Scene Manager window: open, create, rename, duplicate and delete scenes
+    and set the build order (View > Panels > Scene Manager) (#415).
+  - Script Editor: the outline, F12 and Ctrl+Click find every function and
+    type in a script (#442).
+  Multiplayer
+  - NetworkObject, NetworkTransform, SyncVar and per-object RPCs for C++,
+    OkayScript and visual script (#431).
+  - A network simulator (latency, jitter, loss, duplication) and a
+    per-object traffic panel in the editor (#432).
+  - Server-authoritative movement claims each player's character on the
+    server (#400), dedicated servers take --authoritative or
+    `authoritative = true` in server.cfg (#406), and writing to an unowned
+    scene object is refused without kicking the player (#405).
+
+v2.834.0
+  Animation and characters
+  - Crawling goes four ways, and lying down and getting up play real
+    get-up and drop moves instead of snapping; stance crossfades follow
+    the Animator's stance times (#371).
+  - Crouch and prone work on every movement controller: first and third
+    person, top-down, click-to-move and the shooter (#375).
+  - Limb IK turns the arm or leg bones instead of moving joints, so a
+    skinned mesh bends with it, blends smoothly by weight, and the elbow or
+    knee no longer flips as the limb straightens (#388, #395).
+  - Two copies of the same imported character each find their own bones
+    for IK, instead of the second grabbing the first's (#395).
+  - Holding: the body leans and adjusts for what it carries, and a heavy
+    load slows the player down (#389).
+  - Fixed: a held object no longer drops out of the hands when the
+    character goes prone, crawls, gets up or drops down (#397).
+  - Fixed: with Auto-recenter Camera on, strafing or backing up no longer
+    spins the third-person camera; it still settles in behind a forward
+    run (#399).
+  Inventory
+  - World pickups and drops, using the item in your hand, encumbrance
+    (an over-full bag slows you down, opt-in) and loot tables (#359).
+  In-game UI
+  - Free anchors and pivot on every UI element (UIFrame), with old layouts
+    converted automatically (#381).
+  - A modal stack, context menus and a key-binding field (#386).
+  - Two-way gamepad navigation and touch input (#391).
+  Scripting
+  - Typed OkayScript gains lambdas, Func / Action and LINQ-style list
+    methods (#379).
+  Multiplayer and voice
+  - Voice calls work on the new relay hub, and the relay caps sessions per
+    address (#393).
+  Multiplayer security (anti-cheat)
+  - Bans keep players out: a banned account or machine gets no session
+    ticket, so no ticket-checking server lets it in (#350).
+  - Tickets are bound to one server, one session and one connection, so a
+    stolen ticket can't be replayed elsewhere (#360).
+  - The anti-cheat SQL: nobody can lift their own ban, and only listed
+    server accounts can file server kicks (#392). Apply docs/sql/anticheat.sql
+    and redeploy the session-ticket function to use these.
+  - Joins check encryption first, then the password and sign-in, with
+    per-address attempt limits that back off up to 5 minutes (#365).
+  - Budgets and strikes survive a reconnect, and a kicked player waits out a
+    growing cooldown before rejoining (#363).
+  - SyncVar, message and spawn size limits per client (#368).
+  - Safer defaults: a broken anti-cheat config refuses joins instead of
+    running open, and a plaintext session cookie stops spoofed leaves when
+    encryption is off (#384).
+  - Lag compensation can't be stretched by a client faking a long round
+    trip (#376).
+  - Pings only from players, over-rate messages left unacknowledged, press
+    limits, and dead pawns can't shoot (#390).
+  - Trusted anti-cheat keys ship in the launcher only; the release warns
+    when built without them (#394).
+
+v2.833.0
+  Animation and characters
+  - Stance changes are smooth: going between standing, crouching and prone
+    eases the body, the collider, the speed and the camera together over
+    0.25 s (stand/crouch), 0.5 s (crouch/prone) and 0.8 s (prone to stand),
+    and changing your mind halfway carries on from where the body is. The
+    times can be changed on the Animator (#364).
+  - Fixed: a player pushing into a wall no longer walks in place (#366).
+  - Fixed: a landing or gesture no longer plays a second time as it fades
+    into the next animation (#380).
+  - Fixed: rotations close to straight up or down no longer flip for a
+    frame in animation blends (#370).
+  - Characters can pick up and hold objects with their hands, on the
+    built-in Character and on imported humanoids. Holding styles: pistol,
+    rifle, box, flashlight, sword, cup and heavy, chosen automatically from
+    the object's name, size and weight, with fingers closing around the
+    grip on rigs that have finger bones (#362, #377).
+  Inventory
+  - Items have definitions in the project's items.okayitems: name,
+    description, icon, stack size, weight, rarity, category, equip slot,
+    use action and drop prefab. Inventories store the item's id, so
+    renaming an item no longer breaks scenes. Old scenes load unchanged
+    (#358).
+  In-game UI
+  - The UI is cached between frames and drawn in a few batches, so large
+    menus cost far less CPU (#361).
+  - New: flex rows and columns on the Layout Group, UI Mask (clips its
+    children, both drawing and clicks), horizontal and two-way scrolling,
+    and a List View that only builds the rows on screen (#374).
+  Scripting
+  - The typed C#-style OkayScript gains ??, ??= and ?., plain classes made
+    with new, List<T>, Dictionary<K, V> and do / while (#354, #369).
+  Multiplayer security
+  - With the anti-cheat on, a networked object nobody owns now belongs to
+    the server: a client can't take a scene door or a pickup by moving it.
+    For objects any player may grab, like a ball, tick Network Sync >
+    "Players can claim it" (#372).
+  - A hit claim's origin is checked against where the server knows the
+    shooter was, and a client that goes quiet can no longer bank one long
+    jump to shoot from (#355).
+  Build
+  - Release tags now point at the commit the release was built from (#373).
+  - CI cancels a pull request's older run when it gets a new push (#382).
+  Note: #354, #355, #361 and #362 merged while 2.832.0 was building, so
+  the 2.832.0 tag's generated notes list them, but they ship in 2.833.0.
+
 v2.832.0
   Animation
   - Every built-in player now has a visible Animator with a default humanoid

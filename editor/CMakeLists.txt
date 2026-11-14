@@ -49,19 +49,40 @@ target_include_directories(okay_imgui SYSTEM PUBLIC
 target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
-add_executable(okay-editor main.cpp EditorState.cpp
+add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
+    TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
+    NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
+    DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
+    BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
+    LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
+    SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
+    VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
+    SceneManagerPanel.cpp                                              # Scene Manager window
+    NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
+    UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
+    InspectorPanel.cpp InspectorModel.cpp PrefabEdit.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
+    ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
+    UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
+    LocalizationWindow.cpp                                             # the Localization window (string table)
+    LocalizationTools.cpp                                              # grid, check, scan and preview the window draws (ImGui-free)
+    ContentEditors.cpp                                                 # Items, Loot & Recipes (.okayitems, .okayloot, .okayrecipes)
+    ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings
+    ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
+    ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
+    VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
+    ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
+    ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
+    ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})
-target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-    ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd)
-set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c
-    PROPERTIES COMPILE_OPTIONS "-w")
+target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 # The vendored widget isn't -Wall/-Wextra clean; silence its warnings only.
 set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
 target_link_libraries(okay-editor PRIVATE okay::engine okay_imgui ${OKAY_SDL_LIB})
@@ -70,6 +91,7 @@ if(WIN32)
     # Explorer / shortcut icon (same icon as the launcher, so they match).
     enable_language(RC)
     target_sources(okay-editor PRIVATE okayspace.rc)
+    okay_win_version(okay-editor "OkaySpace Editor" "OkayEngine.exe")
     target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)
     # dbghelp: the crash handler resolves each backtrace frame to a function name
     # (and file:line where available) so okay_crash.txt is human-readable.

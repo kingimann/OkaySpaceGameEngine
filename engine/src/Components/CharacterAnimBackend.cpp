@@ -25,9 +25,16 @@ void MixIn(std::vector<Vec3>& pose, Vec3& root, float& total, const std::vector<
 }
 
 // The built-in `anim` number a state stands for, by its name ("Walk" = 2,
-// "Land" = 1), or -1.
+// "Land" = 1, "Crawl" = 7). Death, roll, sit and swim are 20..23: they are
+// not Character::anim values (those stay 1..19 for old peers) and travel as
+// the action id instead. -1 = not a published state.
 int StateNumber(const std::string& state) {
-    if (state == "Land") return 1;
+    if (state == "Land" || state == "GetUp") return 1;
+    if (state == "Crawl" || state == "Drop") return 7;
+    if (state == "Death" || state == "DeadHold" || state.rfind("Death_", 0) == 0 || state.rfind("DeadHold_", 0) == 0) return 20;
+    if (state == "Roll" || state == "Dodge" || state == "Roll_F" || state.rfind("Dodge_", 0) == 0) return 21;
+    if (state == "Sit" || state == "SitDown" || state == "StandUp") return 22;
+    if (state == "Swim" || state.rfind("Swim_", 0) == 0) return 23;
     return Character::BuiltinAnimIndex(state);
 }
 } // namespace
@@ -110,6 +117,11 @@ void CharacterAnimBackend::ResetBlendPhase(float p) {
     m_fromStart = true;
 }
 
+void CharacterAnimBackend::RestartBlendPhase() {
+    m_carry = false;   // a one-shot must not inherit the gait cycle
+    ResetBlendPhase(0.0f);
+}
+
 void CharacterAnimBackend::SetTime(float t) {
     if (m_cur.blend) return;
     const float len = ClipLength(m_cur.clip);
@@ -159,14 +171,18 @@ bool CharacterAnimBackend::BlendMany(float dt, const std::vector<int>& clips, co
     for (float& w : p.weights) w /= sum;
     p.cycle = cycle / sum;
     p.rate = m_speed;
+    p.loop = m_loop;
     // One shared phase: every clip samples the same fraction of its cycle, so the
-    // footfalls line up through the blend.
+    // footfalls line up through the blend. A one-shot holds its last frame; wrapping
+    // it would sample the start pose on the frame the clip ends.
     const float prev = p.phase;
-    p.phase = frac01(p.phase + dt * m_speed / std::fmax(p.cycle, 1e-4f));
+    float next = p.phase + dt * m_speed / std::fmax(p.cycle, 1e-4f);
+    if (!p.loop) p.phase = next >= 1.0f ? 1.0f : (next < 0.0f ? 0.0f : next);
+    else p.phase = frac01(next);
     const float len = ClipLength(dom);
-    if (m_speed > 0.0f && len > 0.0f) {   // the dominant clip's events over this frame's window
+    if (m_speed > 0.0f && len > 0.0f && p.phase != prev) {   // the dominant clip's events over this frame's window
         if (p.phase < prev) { FireWindow(dom, prev * len, len); m_fromStart = true; FireWindow(dom, 0.0f, p.phase * len); }
-        else FireWindow(dom, prev * len, p.phase * len);
+        else FireWindow(dom, prev * len, p.phase >= 1.0f ? len : p.phase * len);
     }
     return true;
 }
@@ -184,7 +200,12 @@ void CharacterAnimBackend::FireWindow(int clip, float t0, float t1) {
 }
 
 void CharacterAnimBackend::Step(Playing& p, float dt) const {
-    if (p.blend) { p.phase = frac01(p.phase + dt * p.rate / std::fmax(p.cycle, 1e-4f)); return; }
+    if (p.blend) {
+        if (!p.loop && p.phase >= 1.0f) return;   // a fading one-shot holds its end pose
+        const float next = p.phase + dt * p.rate / std::fmax(p.cycle, 1e-4f);
+        p.phase = p.loop ? frac01(next) : std::fmin(next, 1.0f);
+        return;
+    }
     const float len = ClipLength(p.clip);
     p.time += dt * p.rate;
     if (len > 0.0f) p.time = p.loop ? frac01(p.time / len) * len : std::fmin(p.time, len);   // a one-shot fading out holds its end
@@ -259,16 +280,38 @@ void CharacterAnimBackend::Advance(float dt) {
             root = fromRoot + (root - fromRoot) * u;
         }
     }
+    if (m_mirror && !pose.empty()) {
+        Character::MirrorPose(pose);
+        root.x = -root.x;
+    }
+    if (m_rootMotion == 0) root = Vec3{0, 0, 0};
     m_have = !pose.empty();
     m_pose = std::move(pose); m_root = root;
     m_final = false; m_dt = dt;
     Character* ch = Body();
     if (!ch) return;
     if (m_have && ch->GetPoseSource() != this) ch->SetPoseSource(this);
-    // `anim` reads the state playing.
+    // `anim` reads the state playing. 1..19 are the built-in poses an old
+    // client already understands. 20..23 are actions: the legacy anim stays
+    // put, and the action id is what a new proxy plays.
     if (m_sm && !m_off) {
         const int n = StateNumber(m_sm->Current());
-        if (n > 0) ch->anim = n;
+        if (n > 0 && n <= 19) ch->anim = n;
+        const int action = n >= 20 ? n - 19 : 0;   // 1 death, 2 roll, 3 sit, 4 swim
+        if (m_sentAction < 0) m_sentAction = action;
+        else if (action != m_sentAction) {
+            m_sentAction = action;
+            ++ch->netActionSeq;
+        }
+        ch->netActionId = action;
+        float param = 0.0f;
+        if (action == 1) param = m_sm->GetFloat("deathDir");
+        else if (action == 2) param = m_sm->GetFloat("dodgeDir");
+        else if (action == 3) {
+            param = m_sm->GetFloat("sitType");
+            if (m_sm->Current() == "StandUp") param += 10.0f;
+        } else if (action == 4) param = m_sm->GetFloat("swimSpeed");
+        ch->netActionParam = param;
         m_published = ch->anim;
     }
 }
@@ -278,36 +321,50 @@ void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
     Character* ch = Body();
     if (!ch) return;
     const int a = ch->anim;
-    if (a != m_published) {   // written from outside: go to that state and stay
-        if (a == 0) m_off = true;
-        else {
+    // The value already sitting on the body (default idle, or the controller's
+    // pick on the frames before this machine has published) is not an outside
+    // write. Treating it as one forces a looping state and never lets go, so
+    // speed and stance stop driving locomotion.
+    const bool startup = m_published < 0;
+    if (startup || a != m_published) {
+        if (a == 0) {
+            m_off = true;
+            m_forced = false;
+        } else {
             const AnimStateMachine::State* to = nullptr;
             for (const auto& st : sm.states) if (StateNumber(st.name) == a) { to = &st; break; }
             if (to) {
                 m_off = false;
-                m_forced = true;
+                if (!startup) {
+                    m_forced = true;
+                    // A looping gesture (and a blend tree) stays until anim is written
+                    // again. A one-shot lets go when the clip finishes.
+                    m_forcedLoops = to->loop || to->blendTree;
+                }
                 if (to->name != sm.Current()) {
                     // The graph's own blend into that state, if it has one.
-                    float blend = 0.2f;
-                    const AnimStateMachine::State* cur = nullptr;
-                    for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
-                    bool found = false;
-                    if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
-                    if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
-                    sm.GoTo(to->name, m_published < 0 ? 0.0f : blend);
+                    // Startup snaps: nothing has been shown yet.
+                    float blend = 0.0f;
+                    if (!startup) {
+                        blend = 0.2f;
+                        const AnimStateMachine::State* cur = nullptr;
+                        for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
+                        bool found = false;
+                        if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
+                        if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
+                    }
+                    sm.GoTo(to->name, blend);
                 }
             }
         }
         m_published = a;
-    } else if (m_moved) {
+    } else if (m_forced && !m_forcedLoops && ClipFinished()) {
         m_forced = false;
     }
-    m_moved = false;
     sm.hold = m_forced || ch->AnimHeld();
 }
 
 void CharacterAnimBackend::Move(const Movement& m) {
-    m_moved = true;
     if (!m_sm) return;
     m_sm->SetFloat("speed", m.speed);
     m_sm->SetBool("run", m.run);
@@ -316,6 +373,9 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
+    // Declared or not: a swim clip the animator adds can transition on this.
+    // Until that clip exists the graph stays on idle / walk (airTime stays 0).
+    m_sm->SetBool("swim", m.swim);
 }
 
 void CharacterAnimBackend::Gait(float x, float z, float speed) {
@@ -323,6 +383,24 @@ void CharacterAnimBackend::Gait(float x, float z, float speed) {
     m_sm->SetFloat("gaitX", x);
     m_sm->SetFloat("gaitZ", z);
     m_sm->SetFloat("gaitSpeed", speed);
+}
+
+bool CharacterAnimBackend::AnimatorOn() const {
+    return m_machine && m_machine->enabled;
+}
+
+void CharacterAnimBackend::ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) {
+    if (pose.empty()) return;
+    // This frame still shows the built-in pose. The next Advance eases into the clip.
+    m_fromPose = pose;
+    m_fromRoot = root;
+    m_fromLive = false;
+    m_fadeT = 0.0f;
+    m_fadeDur = seconds > 1e-3f ? seconds : 0.0f;
+    m_pose = pose;
+    m_root = root;
+    m_have = true;
+    m_final = true;
 }
 
 bool CharacterAnimBackend::Live() const {
@@ -340,17 +418,27 @@ bool CharacterAnimBackend::AnimatorPose(std::vector<Vec3>& pose, Vec3& root) {
 }
 
 void CharacterAnimBackend::PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                                     const std::string& maskBone, float amount) {
+                                     const std::string& maskBone, float amount, bool additive,
+                                     const std::vector<std::string>* moreBones) {
     Character* ch = Body();
     if (!ch || !m_have || amount <= 0.0f) return;
-    // The mask bone and every bone under it ("" = the whole body, root included).
+    // The mask bone and every bone under it, plus each extra root's subtree
+    // ("" and no extras = the whole body, root included).
     const std::vector<Character::Bone> sk = ch->Skeleton();
-    std::vector<char> in(sk.size(), maskBone.empty() ? 1 : 0);
-    if (!maskBone.empty()) {
-        const int mb = Character::BoneIndex(maskBone);
-        if (mb < 0) return;
-        for (int b = 0; b < (int)sk.size(); ++b)
-            for (int a = b; a >= 0; a = sk[a].parent) if (a == mb) { in[b] = 1; break; }
+    std::vector<std::string> roots;
+    if (!maskBone.empty()) roots.push_back(maskBone);
+    if (moreBones) for (const std::string& b : *moreBones) if (!b.empty()) roots.push_back(b);
+    std::vector<char> in(sk.size(), roots.empty() ? 1 : 0);
+    if (!roots.empty()) {
+        for (const std::string& bone : roots) {
+            const int mb = Character::BoneIndex(bone);
+            if (mb < 0) continue;
+            for (int b = 0; b < (int)sk.size(); ++b)
+                for (int a = b; a >= 0; a = sk[a].parent) if (a == mb) { in[b] = 1; break; }
+        }
+        bool hit = false;
+        for (char c : in) if (c) { hit = true; break; }
+        if (!hit) return;   // none of the mask bones exist: drive nothing
     }
     std::vector<Vec3> lp; Vec3 lr; float total = 0.0f;
     for (std::size_t k = 0; k < clipTimes.size() && k < weights.size(); ++k) {
@@ -360,10 +448,20 @@ void CharacterAnimBackend::PoseLayer(const std::vector<std::pair<int, float>>& c
         MixIn(lp, lr, total, c->Sample(t), c->SampleRoot(t), weights[k]);
     }
     if (lp.empty()) return;
+    if (m_mirror) {
+        Character::MirrorPose(lp);
+        lr.x = -lr.x;
+    }
     const float u = std::fmin(amount, 1.0f);
-    for (std::size_t b = 0; b < m_pose.size() && b < lp.size() && b < in.size(); ++b)
-        if (in[b]) m_pose[b] = AnimClip::BlendEuler(m_pose[b], lp[b], u);
-    if (!in.empty() && in[0]) m_root = m_root + (lr - m_root) * u;   // the layer carries the hips
+    for (std::size_t b = 0; b < m_pose.size() && b < lp.size() && b < in.size(); ++b) {
+        if (!in[b]) continue;
+        if (additive) m_pose[b] = m_pose[b] + lp[b] * u;   // clip is an offset from rest
+        else          m_pose[b] = AnimClip::BlendEuler(m_pose[b], lp[b], u);
+    }
+    if (!in.empty() && in[0]) {
+        if (additive) m_root = m_root + lr * u;
+        else          m_root = m_root + (lr - m_root) * u;   // the layer carries the hips
+    }
 }
 
 void CharacterAnimBackend::AddPostPose(const void* owner, std::function<void(float)> fn) {

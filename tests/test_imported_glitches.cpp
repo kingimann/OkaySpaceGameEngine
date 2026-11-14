@@ -3,6 +3,7 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include <cmath>
 #include <cstdio>
 
 using namespace okay;
@@ -117,6 +118,64 @@ int main() {
             int jumpFrames = 0;
             for (int i = 0; i < 300; ++i) { r.Step(dt, {'W'}); jumpFrames += ma->CurrentName() == ma->jumpClip; }
             CHECK(jumpFrames == 0);   // was the jump clip at every curb
+        }
+    }
+
+    // ---- Model clips: crouch and prone play the model's own stance clips (the
+    // model used to stay upright while the collider shrank, head through the
+    // ceiling), crossfaded over the stance times, with the get-up from prone.
+    {
+        righarness::Rig r = righarness::PlayableFromFile("mixamo_t_stance_clips.glb");
+        ModelAnimator* ma = nullptr;
+        if (r) for (const auto& up : r.scene->Objects())
+            if (up->IsSelfOrDescendantOf(r.model)) if ((ma = up->GetComponent<ModelAnimator>())) break;
+        CHECK(ma != nullptr);
+        Transform* hips = r.Bone(0);
+        CHECK(hips != nullptr);
+        if (ma && hips) {
+            CHECK(ma->idleClip == "Idle" && ma->walkClip == "Walk" && ma->runClip == "Run");
+            CHECK(ma->crouchClip == "Crouch Idle");
+            CHECK(ma->crouchWalkClip == "Crouched Walking");
+            CHECK(ma->proneClip == "Prone Idle");
+            CHECK(ma->crawlClip == "Crawling");
+            CHECK(ma->getUpClip == "Getting Up");
+            CHECK(ma->jumpClip.empty() && ma->fallClip.empty() && ma->landClip.empty());   // "Standing To Crouched" is no state
+            float last = 0.0f, worst = 0.0f;
+            auto run = [&](std::vector<char> first, std::vector<char> keys, int frames) {
+                for (int i = 0; i < frames; ++i) {
+                    r.Step(dt, i == 0 ? first : keys);
+                    float y = hips->Position().y;
+                    worst = std::fmax(worst, std::fabs(y - last));
+                    last = y;
+                }
+            };
+            r.Step(dt, {}, 60);
+            const float stand = last = hips->Position().y;
+            run({Input::KeyCtrl}, {}, 40);
+            CHECK(ma->StanceClips() == 1 && ma->CurrentName() == "Crouch Idle");
+            CHECK(hips->Position().y < stand - 0.25f);
+            run({'W'}, {'W'}, 40);
+            CHECK(ma->CurrentName() == "Crouched Walking");
+            run({'z'}, {}, 60);
+            CHECK(ma->StanceClips() == 2 && ma->CurrentName() == "Prone Idle");
+            CHECK(hips->Position().y < stand - 0.6f);
+            run({'W'}, {'W'}, 40);
+            CHECK(ma->CurrentName() == "Crawling");
+            run({}, {}, 10);
+            run({'z'}, {}, 3);
+            CHECK(ma->CurrentName() == "Getting Up");
+            run({}, {}, 90);
+            CHECK(ma->StanceClips() == 0 && ma->CurrentName() == "Idle");
+            CHECK(std::fabs(hips->Position().y - stand) < 0.05f);
+            std::printf("  stance changes: biggest hips move %.3f m per frame\n", worst);
+            CHECK(worst < 0.05f);   // eased, never snapped
+
+            std::string text = SceneSerializer::Serialize(*r.scene);
+            Scene s2("load");
+            CHECK(SceneSerializer::Deserialize(s2, text));
+            ModelAnimator* m2 = nullptr;
+            for (const auto& up : s2.Objects()) if ((m2 = up->GetComponent<ModelAnimator>())) break;
+            CHECK(m2 && m2->crouchClip == "Crouch Idle" && m2->crawlClip == "Crawling" && m2->getUpClip == "Getting Up");
         }
     }
 

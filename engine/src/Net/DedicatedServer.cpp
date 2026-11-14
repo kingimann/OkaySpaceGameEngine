@@ -6,9 +6,11 @@
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Account/Account.hpp"
+#include "okay/Platform/Account/AccountService.hpp"   // Sha256Hex: the cache is keyed by a token's hash
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/TickPacer.hpp"
 #include "okay/Core/Game.hpp"
 
 #include <atomic>
@@ -87,6 +89,17 @@ std::string Uptime(double secs) {
 }
 } // namespace
 
+std::string KickReporter::EvidenceFor(const NetworkManager::AntiCheatKick& k) const {
+    if (k.evidence.empty()) return {};
+    EvidenceBundle b;
+    if (!EvidenceBundle::Parse(k.evidence, b)) return {};
+    if (!includeIdentifiers) { b.account.clear(); b.address.clear(); }
+    if (b.action.empty()) b.action = k.banRequested ? "ban" : "kick";
+    if (b.risk <= 0.0f) b.risk = k.risk;
+    const std::string json = b.ToJson(okayac::backend::kMaxEvidenceBytes);
+    return okayac::backend::ValidEvidence(json) ? json : std::string();
+}
+
 bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
     if (k.userId.empty() || !m_send) return false;   // anonymous: nobody to name
     if (auto it = m_lastByUser.find(k.userId); it != m_lastByUser.end() && now - it->second < 3600.0) return false;
@@ -98,9 +111,9 @@ bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
         if (kinds.find(kind) == std::string::npos) kinds += (kinds.empty() ? "" : ", ") + kind;
         details += kind + (r.detail.empty() ? std::string() : ": " + r.detail) + "\n";
     }
-    const std::string reason = "[server check] kicked by the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
+    const std::string reason = std::string("[server check] ") + (k.banRequested ? "ban requested by" : "kicked by") + " the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
     okayac::backend::Request q;
-    if (!okayac::backend::FileReport(k.userId, m_game, reason, "player: " + k.name + "\n" + details, "", q)) return false;
+    if (!okayac::backend::FileServerKick(k.userId, m_game, reason, "player: " + k.name + "\n" + details, q, nullptr, EvidenceFor(k))) return false;
     m_lastByUser[k.userId] = now;
     m_sent.push_back(now);
     m_send(q.path, q.method, q.body, q.header);
@@ -136,6 +149,7 @@ const char* DedicatedServerUsage() {
         "  --host-key FILE        sign joins with the identity seed in FILE (clients can pin it)\n"
         "  --report-kicks         file anti-cheat kicks of signed-in players for admin review\n"
         "  --fixed-tick           run the network on a fixed tick at --tick (clients send once a tick)\n"
+        "  --authoritative        the server moves players from their inputs (no scene edit)\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -191,6 +205,7 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
         }
         else if (k == "report_kicks") out.reportKicks = truthy(v);
         else if (k == "fixed_tick") out.fixedTick = truthy(v);
+        else if (k == "authoritative") out.authoritative = truthy(v);
         else if (k == "host_key") {
             std::string why;
             if (!LoadHostKey(v, out.hostKeySeed, why)) return bad("host_key: " + why);
@@ -320,6 +335,8 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
             out.reportKicks = true;
         } else if (a == "--fixed-tick") {
             out.fixedTick = true;
+        } else if (a == "--authoritative") {
+            out.authoritative = true;
         } else if (a == "--host-key") {
             if (!value(v) || v.empty()) return fail("--host-key needs a file");
             std::string why;
@@ -423,8 +440,8 @@ struct AsyncTokenCheck::Impl {
     Verify verify;
     float cacheSeconds = 300.0f;
     Lock lock;
-    std::map<std::string, Entry> cache;
-    std::deque<std::string> queue;
+    std::map<std::string, Entry> cache;               // by SHA-256 of the token, not the token itself
+    std::deque<std::pair<std::string, std::string>> queue;   // (token, its hash)
     bool stop = false;
 #if defined(_WIN32)
     HANDLE thread = nullptr;
@@ -435,12 +452,13 @@ struct AsyncTokenCheck::Impl {
 
     void Run() {
         for (;;) {
-            std::string token;
+            std::string token, key;
             {
                 Guard g(lock);
                 while (!stop && queue.empty()) lock.wait();
                 if (stop) return;
-                token = queue.front();
+                token = std::move(queue.front().first);
+                key = std::move(queue.front().second);
                 queue.pop_front();
             }
             std::string uid;
@@ -448,7 +466,7 @@ struct AsyncTokenCheck::Impl {
             try { ok = verify && verify(token, uid); } catch (...) { ok = false; }
             Guard g(lock);
             const double now = NowSeconds();
-            cache[token] = Entry{ok ? 1 : 0, ok ? uid : std::string(), now};
+            cache[key] = Entry{ok ? 1 : 0, ok ? uid : std::string(), now};
             // Forget long-expired answers so a long-running server doesn't grow forever.
             for (auto it = cache.begin(); it != cache.end();)
                 it = (it->second.state >= 0 && now - it->second.at > cacheSeconds * 4) ? cache.erase(it) : std::next(it);
@@ -478,9 +496,10 @@ AsyncTokenCheck::~AsyncTokenCheck() {
 
 int AsyncTokenCheck::Check(const std::string& token, std::string& outUserId) {
     if (token.empty()) return 0;   // anonymous: rejected when sign-in is required
+    const std::string key = account::detail::Sha256Hex(token);
     Guard g(m->lock);
     const double now = NowSeconds();
-    auto it = m->cache.find(token);
+    auto it = m->cache.find(key);
     if (it != m->cache.end()) {
         if (it->second.state < 0) return -1;   // the worker is on it
         if (now - it->second.at <= m->cacheSeconds) {
@@ -488,8 +507,11 @@ int AsyncTokenCheck::Check(const std::string& token, std::string& outUserId) {
             return it->second.state;
         }
     }
-    m->cache[token] = Impl::Entry{-1, std::string(), now};
-    m->queue.push_back(token);
+    // Every new token is a web request: a flood of them waits no longer than
+    // a short queue, the rest are told to come back.
+    if (m->queue.size() >= kMaxQueued) return -2;
+    m->cache[key] = Impl::Entry{-1, std::string(), now};
+    m->queue.emplace_back(token, key);
     m->lock.notify();
     return -1;
 }
@@ -534,13 +556,22 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         net->SetJoinCheck([a](const std::string& token, std::string& uid) { return a->Check(token, uid); });
     }
 
-    Game::Reset();
+    // A new session: Reset() plus time scale 1. The server steps Time itself by a fixed tick, and its options
+    // carry no time scale, so a scale left from an earlier run in this process (a test, an embedding host)
+    // would only be stale state that slows the world. A scene script's Start() below may still set its own.
+    Game::BeginSession();
     scene.Start();
     // The command line's .okayac wins over a scene's AntiCheatConfig (which
     // applied its own at Start).
     if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
+    if (net->anticheat.settings.enabled && !net->anticheat.settings.ticketKey.empty() && net->anticheat.settings.ticketAudience.empty()) {
+        // Without one, a ticket for any other server would let its holder in.
+        std::fprintf(stderr, "[server] the anti-cheat rules set a ticketKey but no ticketAudience (this server's id in tickets); not starting\n");
+        return 2;
+    }
     if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
     if (opts.fixedTick) net->netTickRate = opts.tickRate;
+    if (opts.authoritative) net->authoritativeMovement = true;
     // --report-kicks: the account this machine is signed in to files them, and
     // says so, so whoever reviews them knows which server sent them.
     std::shared_ptr<KickReporter> kickReporter;
@@ -560,13 +591,19 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
                 std::printf("[server] anti-cheat kick of %s reported for review\n", k.name.c_str());
         });
     }
+    if (opts.encryption && !net::SecureChannel::Available()) {
+        std::fprintf(stderr, "[server] encryption is on, but this server was built without libsodium (--no-encryption to run unencrypted)\n");
+        return 2;
+    }
     if (!net->StartServer(opts.port)) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;
     }
     if (!g_configPath.empty()) std::printf("[server] settings from %s\n", g_configPath.c_str());
-    std::printf("[server] \"%s\" listening on UDP %u \xC2\xB7 up to %d players \xC2\xB7 %.0f Hz%s%s%s\n",
+    std::printf("[server] \"%s\" listening on UDP %u \xC2\xB7 up to %d players \xC2\xB7 tick %.0f Hz%s%s%s%s%s\n",
                 opts.name.c_str(), (unsigned)net->ServerPort(), opts.maxPlayers, opts.tickRate,
+                opts.fixedTick ? " (fixed)" : "",
+                net->authoritativeMovement ? ", authoritative movement" : "",
                 opts.requireAuth ? " \xC2\xB7 sign-in required" : "",
                 opts.password.empty() ? "" : " \xC2\xB7 password",
                 opts.encryption ? " \xC2\xB7 encrypted" : "");
@@ -604,10 +641,16 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     double lastBeat = 0.0;
 
     using clock = std::chrono::steady_clock;
-    const auto tick = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / opts.tickRate));
     const float dt = 1.0f / opts.tickRate;
     const auto started = clock::now();
-    auto next = started;
+    // The pacing arithmetic this loop always had (a tick is due a tick after the last one was
+    // due; a tick more than 4 late is not caught up), as Core/TickPacer so it is tested with a
+    // made-up clock. The game advances one `dt` per tick, never the real elapsed time.
+    TickPacer pacer(opts.tickRate);
+    pacer.Start(0);
+    const auto sinceStartNs = [&started] {
+        return (std::int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - started).count();
+    };
     double lastStatus = 0.0, busySum = 0.0; long busyTicks = 0;
     std::map<std::uint32_t, std::string> known;   // roster last tick (for join/leave lines)
     int reportsSeen = FinishedMatchReports();
@@ -655,11 +698,8 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
         if (opts.maxRuntime > 0.0f && up >= opts.maxRuntime) break;
 
         // Fixed rate: sleep to the next tick (catch up without a spiral if we fall behind).
-        next += tick;
-        const auto t1 = clock::now();
-        if (next < t1 - tick * 4) next = t1;
-        const auto wait = next - clock::now();
-        if (wait > clock::duration::zero()) {
+        const auto wait = std::chrono::nanoseconds(pacer.FinishTick(sinceStartNs()));
+        if (wait > std::chrono::nanoseconds::zero()) {
 #if defined(_WIN32)
             Sleep((DWORD)std::chrono::duration_cast<std::chrono::milliseconds>(wait).count());
 #else

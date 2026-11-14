@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Components/UIPanel.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -15,6 +16,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/CaptionOverlay.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -25,11 +27,16 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/UIWorldContext.hpp"
+#include "okay/UI/UIFocus.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <vector>
@@ -58,33 +65,76 @@ struct UIRect {
     Vec2*     position = nullptr;   // the widget's editable offset (pixels)
     Vec2*     sizePtr  = nullptr;   // the widget's editable size, or null (text)
     Vec2      size{0.0f, 0.0f};
+    UIFrame*  frame = nullptr;      // set when the widget is placed by a UIFrame
+
+    /// Resolve against a w x h parent with `pos` / `sz` standing in for the
+    /// position and size (callers pass Canvas-scaled values): through the UIFrame
+    /// when there is one, else the anchor preset.
+    void ResolveWith(const Vec2& pos, const Vec2& sz, float w, float h, Vec2& o, Vec2& outSize) const {
+        if (frame) frame->Resolve(pos, sz, w, h, o, outSize);
+        else       ResolveAnchorRect(anchor, pos, sz, w, h, o, outSize);
+    }
+    Vec2 OriginWith(const Vec2& pos, const Vec2& sz, float w, float h) const {
+        Vec2 o, s2; ResolveWith(pos, sz, w, h, o, s2);
+        return o;
+    }
+    /// Does it stretch across an axis of its parent (so position / size are margins there)?
+    bool Stretches() const { return frame ? (frame->StretchesX() || frame->StretchesY()) : AnchorIsStretch(anchor); }
 
     /// Absolute top-left pixel of the widget on a canvas of the given size (honors
     /// stretch anchors, which derive their origin from canvas-relative margins).
     Vec2 Origin(float canvasW, float canvasH) const {
-        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
+        Vec2 o, sz; ResolveWith(*position, size, canvasW, canvasH, o, sz);
         return o;
     }
     /// The widget's effective size on a canvas of the given size — equal to `size`
     /// for fixed anchors, derived from the canvas for stretch anchors.
     Vec2 EffectiveSize(float canvasW, float canvasH) const {
-        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
+        Vec2 o, sz; ResolveWith(*position, size, canvasW, canvasH, o, sz);
         return sz;
     }
     /// Whether a point (canvas pixels) falls inside the widget's rect.
     bool Contains(const Vec2& p, float canvasW, float canvasH) const {
-        Vec2 o, sz; ResolveAnchorRect(anchor, *position, size, canvasW, canvasH, o, sz);
+        Vec2 o, sz; ResolveWith(*position, size, canvasW, canvasH, o, sz);
         return p.x >= o.x && p.y >= o.y &&
                p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 };
+
+/// Keep a UIFrame and its widget's own position / size / anchor fields in step:
+/// a value someone wrote to a widget field since the last call (a script, a tween,
+/// an inspector) moves the frame; then the frame's values are written back. So the
+/// frame is the one source of truth and no write is ever lost. `legacy` is the
+/// widget's own handle; on return it points at the frame.
+inline void UIFrameSync(UIFrame* f, UIRect& legacy) {
+    if (!legacy.position) return;
+    if (f->mirrored) {
+        if (legacy.position->x != f->mirrorPos.x || legacy.position->y != f->mirrorPos.y) f->position = *legacy.position;
+        if (legacy.sizePtr && (legacy.sizePtr->x != f->mirrorSize.x || legacy.sizePtr->y != f->mirrorSize.y)) f->size = *legacy.sizePtr;
+        if (legacy.anchorPtr && *legacy.anchorPtr != f->mirrorAnchor) f->ApplyPreset(*legacy.anchorPtr);
+    }
+    *legacy.position = f->position;
+    if (legacy.sizePtr) *legacy.sizePtr = f->size;
+    const UIAnchor preset = f->Preset();
+    if (legacy.anchorPtr) *legacy.anchorPtr = preset;
+    f->mirrorPos = f->position; f->mirrorSize = f->size; f->mirrorAnchor = preset;
+    f->mirrored = true;
+    legacy.frame = f;
+    legacy.position = &f->position;
+    if (legacy.sizePtr) legacy.sizePtr = &f->size;
+    legacy.size = f->size;
+    legacy.anchor = preset;
+}
 
 /// Resolve the UI rect of a GameObject, if it carries any screen-space widget.
 /// Box widgets are checked before text so a labelled control reports its box.
 inline UIRect GetUIRect(GameObject* go) {
     UIRect r;
     if (!go) return r;
-    if (auto* b = go->GetComponent<UIButton>())          { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
+    if (auto* j = go->GetComponent<VirtualJoystick>())   { r.valid = true; r.anchor = j->anchor; r.anchorPtr = &j->anchor; r.position = &j->position; r.sizePtr = &j->size; r.size = j->size; }
+    else if (auto* d = go->GetComponent<TouchDPad>())    { r.valid = true; r.anchor = d->anchor; r.anchorPtr = &d->anchor; r.position = &d->position; r.sizePtr = &d->size; r.size = d->size; }
+    else if (auto* tb = go->GetComponent<TouchButton>()) { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
+    else if (auto* b = go->GetComponent<UIButton>())     { r.valid = true; r.anchor = b->anchor; r.anchorPtr = &b->anchor;  r.position = &b->position;  r.sizePtr = &b->size;  r.size = b->size; }
     else if (auto* p = go->GetComponent<UIPanel>())       { r.valid = true; r.anchor = p->anchor; r.anchorPtr = &p->anchor;  r.position = &p->position;  r.sizePtr = &p->size;  r.size = p->size; }
     else if (auto* im = go->GetComponent<UIImage>())      { r.valid = true; r.anchor = im->anchor; r.anchorPtr = &im->anchor; r.position = &im->position; r.sizePtr = &im->size; r.size = im->size; }
     else if (auto* ri = go->GetComponent<UIRawImage>())   { r.valid = true; r.anchor = ri->anchor; r.anchorPtr = &ri->anchor; r.position = &ri->position; r.sizePtr = &ri->size; r.size = ri->size; }
@@ -99,6 +149,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
+    else if (auto* kb = go->GetComponent<UIKeybindField>()) { r.valid = true; r.anchor = kb->anchor; r.anchorPtr = &kb->anchor; r.position = &kb->position; r.sizePtr = &kb->size; r.size = kb->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
     else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
@@ -116,7 +167,26 @@ inline UIRect GetUIRect(GameObject* go) {
             r.sizePtr = &tr->size; r.size = tr->size;   // box: selectable + resizable
         }
     }
+    if (r.valid)
+        if (auto* f = go->GetComponent<UIFrame>()) UIFrameSync(f, r);
     return r;
+}
+
+/// Give a widget a UIFrame that places it exactly where its anchor preset does (same
+/// anchors, pivot, position and size: the same pixels at every canvas size). Returns
+/// the frame (the existing one if it has one), or null for objects without an
+/// editable widget rect.
+inline UIFrame* ConvertToUIFrame(GameObject* go) {
+    if (!go) return nullptr;
+    if (auto* f = go->GetComponent<UIFrame>()) return f;
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.position || !r.sizePtr) return nullptr;
+    auto* f = go->AddComponent<UIFrame>();
+    f->ApplyPreset(r.anchor);
+    f->position = *r.position;
+    f->size = *r.sizePtr;
+    GetUIRect(go);   // settle the mirror now (identical values), so later widget writes move the frame
+    return f;
 }
 
 /// Does this GameObject carry any screen-space UI widget?
@@ -132,6 +202,7 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* r = go->GetComponent<UIRating>())   return r->IsFocused();
     if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
     if (auto* tb = go->GetComponent<UITabs>())    return tb->IsFocused();
+    if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->IsFocused();
     return false;
 }
 
@@ -197,13 +268,13 @@ inline bool UISelfDesignRect(GameObject* go, GameObject* root, Vec2& o, Vec2& sz
         if (GameObject* parent = OwningUIParent(go)) {
             Vec2 po, ps;
             if (UISelfDesignRect(parent, root, po, ps)) {
-                Vec2 local; ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, sz);
+                Vec2 local; r.ResolveWith(*r.position, r.size, ps.x, ps.y, local, sz);
                 o = po + local;
                 return true;
             }
         }
     }
-    o = ResolveAnchor(r.anchor, *r.position, sz, 0.0f, 0.0f);   // root: centered on its 3D point
+    o = r.OriginWith(*r.position, sz, 0.0f, 0.0f);   // root: centered on its 3D point
     return true;
 }
 
@@ -263,6 +334,25 @@ inline bool UIHidden(GameObject* go) {
     if (cv && !cv->visible) return true;
     for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent())
         if (t->gameObject && !t->gameObject->active) return true;
+    return false;
+}
+
+/// A focus ring is only for a widget the player can still use. Hiding the menu
+/// (an inactive ancestor) or disabling the control drops the ring even when the
+/// focus flag was set the frame the widget closed.
+inline bool UIShowsFocusRing(GameObject* go) {
+    // A click hides the ring; keyboard, gamepad and script focus show it.
+    if (!UIFocus::RingVisible()) return false;
+    if (!go || !go->active || UIHidden(go)) return false;
+    auto on = [](auto* c) { return c && c->enabled && c->IsFocused(); };
+    if (auto* b = go->GetComponent<UIButton>())   return on(b);
+    if (auto* t = go->GetComponent<UIToggle>())   return on(t);
+    if (auto* s = go->GetComponent<UISlider>())   return on(s);
+    if (auto* p = go->GetComponent<UIStepper>())  return on(p);
+    if (auto* r = go->GetComponent<UIRating>())   return on(r);
+    if (auto* d = go->GetComponent<UIDropdown>()) return on(d);
+    if (auto* tb = go->GetComponent<UITabs>())    return on(tb);
+    if (auto* kb = go->GetComponent<UIKeybindField>()) return on(kb);
     return false;
 }
 
@@ -402,6 +492,13 @@ enum : int {
     K_Crosshair,
     K_FocusRing,    // keyboard/gamepad focus ring (any focused widget)
     K_Tooltip,
+    K_Keybind,      // UIKeybindField
+    K_ModalDim,     // an open UIModal's backdrop (drawn first in its raised group)
+    K_ContextMenu,  // an open UIContextMenu (drawn last, in screen pixels)
+    K_Caption,      // CaptionOverlay: subtitle and sound-caption lines
+    K_TouchStick,   // virtual joystick (on top, so a thumb can always reach it)
+    K_TouchPad,     // on-screen directional pad
+    K_TouchButton,  // on-screen action button
     K_Count
 };
 } // namespace uilayers
@@ -411,7 +508,8 @@ inline const char* UILayerName(int kind) {
     static const char* const kNames[uilayers::K_Count] = {
         "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
-        "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip"};
+        "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
+        "keybind", "modal dim", "context menu", "captions", "virtual stick", "d-pad", "touch button"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -437,6 +535,9 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIToggle>())         add(K_Toggle);
     if (g->GetComponent<UITabs>())           add(K_Tabs);
     if (g->GetComponent<UIButton>())         add(K_Button);
+    if (g->GetComponent<VirtualJoystick>())  add(K_TouchStick);
+    if (g->GetComponent<TouchDPad>())        add(K_TouchPad);
+    if (g->GetComponent<TouchButton>())      add(K_TouchButton);
     if (g->GetComponent<TextRenderer>())     add(K_Text);
     if (g->GetComponent<WorldUI>())          add(K_WorldUI);
     if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
@@ -444,6 +545,10 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<Crosshair>())        add(K_Crosshair);
     if (IsUIFocused(g))                      add(K_FocusRing);
     if (g->GetComponent<UITooltip>())        add(K_Tooltip);
+    if (g->GetComponent<UIKeybindField>())   add(K_Keybind);
+    if (g->GetComponent<UIModal>())          add(K_ModalDim);
+    if (g->GetComponent<UIContextMenu>())    add(K_ContextMenu);
+    if (g->GetComponent<CaptionOverlay>())   add(K_Caption);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -469,12 +574,17 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIRating>())         return K_Rating;
     if (go->GetComponent<UIToggle>())         return K_Toggle;
     if (go->GetComponent<UITabs>())           return K_Tabs;
+    if (go->GetComponent<VirtualJoystick>())  return K_TouchStick;
+    if (go->GetComponent<TouchDPad>())        return K_TouchPad;
+    if (go->GetComponent<TouchButton>())      return K_TouchButton;
     if (go->GetComponent<UIButton>())         return K_Button;
     if (go->GetComponent<WorldUI>())          return K_WorldUI;
     if (go->GetComponent<UIDropdown>())       return K_Dropdown;
     if (go->GetComponent<UIInputField>())     return K_Input;
     if (go->GetComponent<Crosshair>())        return K_Crosshair;
+    if (go->GetComponent<CaptionOverlay>())   return K_Caption;
     if (go->GetComponent<UITooltip>())        return K_Tooltip;
+    if (go->GetComponent<UIKeybindField>())   return K_Keybind;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }
@@ -566,13 +676,13 @@ inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2&
     if (GameObject* parent = OwningUIParent(go)) {
         Vec2 po, ps;
         if (UIDesignRect(parent, dW, dH, po, ps)) {
-            Vec2 local; ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, size);
+            Vec2 local; r.ResolveWith(*r.position, r.size, ps.x, ps.y, local, size);
             origin = po + local;
             origin = origin - UIScrollBelowParent(go);
             return true;
         }
     }
-    ResolveAnchorRect(r.anchor, *r.position, r.size, dW, dH, origin, size);
+    r.ResolveWith(*r.position, r.size, dW, dH, origin, size);
     origin = origin - UIScrollBelowParent(go);
     return true;
 }
@@ -627,14 +737,14 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
         Vec2 po, ps;                                  // resolve inside the parent's rect
         if (GetUIScreenRect(parent, screenW, screenH, po, ps)) {
             Vec2 local;                               // stretch anchors derive size from ps
-            ResolveAnchorRect(r.anchor, scaledPos, scaledSize, ps.x, ps.y, local, size);
+            r.ResolveWith(scaledPos, scaledSize, ps.x, ps.y, local, size);
             origin = po + local;
             origin = origin - UIScrollBelowParent(go) * s;
             if (outScale) *outScale = s;
             return true;
         }
     }
-    ResolveAnchorRect(r.anchor, scaledPos, scaledSize, screenW, screenH, origin, size);
+    r.ResolveWith(scaledPos, scaledSize, screenW, screenH, origin, size);
     // Widgets inside a Scroll View move up as it scrolls.
     origin = origin - UIScrollBelowParent(go) * s;
     if (outScale) *outScale = s;
@@ -652,7 +762,7 @@ inline float ScrollViewContentHeight(GameObject* sv) {
         if (!c || !c->gameObject || !c->gameObject->active) continue;
         UIRect r = GetUIRect(c->gameObject);
         if (!r.valid || !r.position) continue;
-        Vec2 local = ResolveAnchor(r.anchor, *r.position, r.size, svr.size.x, svr.size.y);
+        Vec2 local = r.OriginWith(*r.position, r.size, svr.size.x, svr.size.y);
         maxBottom = local.y + r.size.y > maxBottom ? local.y + r.size.y : maxBottom;
     }
     return maxBottom;
@@ -668,7 +778,7 @@ inline float ScrollViewContentWidth(GameObject* sv) {
         if (!c || !c->gameObject || !c->gameObject->active) continue;
         UIRect r = GetUIRect(c->gameObject);
         if (!r.valid || !r.position) continue;
-        Vec2 local = ResolveAnchor(r.anchor, *r.position, r.size, svr.size.x, svr.size.y);
+        Vec2 local = r.OriginWith(*r.position, r.size, svr.size.x, svr.size.y);
         maxRight = local.x + r.size.x > maxRight ? local.x + r.size.x : maxRight;
     }
     return maxRight;
@@ -716,11 +826,11 @@ inline Vec2 UIResolveOrigin(GameObject* go, float screenW, float screenH) {
             // child against it would jump the child toward a corner (mismatch vs hit-test).
             Vec2 ps = UIResolveSize(parent, screenW, screenH);
             Vec2 local, sz;
-            ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, sz);
+            r.ResolveWith(*r.position, r.size, ps.x, ps.y, local, sz);
             return UIResolveOrigin(parent, screenW, screenH) + local;
         }
     }
-    Vec2 o, sz; ResolveAnchorRect(r.anchor, *r.position, r.size, screenW, screenH, o, sz);
+    Vec2 o, sz; r.ResolveWith(*r.position, r.size, screenW, screenH, o, sz);
     return o;
 }
 
@@ -737,7 +847,7 @@ inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
         Vec2 o, sz; sa->Resolve(screenW, screenH, co, cs, o, sz);
         return sz;
     }
-    if (!AnchorIsStretch(r.anchor)) return r.size;   // fast path: fixed anchors keep size
+    if (!r.Stretches()) return r.size;   // fast path: fixed anchors keep size
     float cw = screenW, ch = screenH;
     if (GameObject* parent = OwningUIParent(go)) {
         UIRect pr = GetUIRect(parent);
@@ -746,7 +856,7 @@ inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
             cw = ps.x; ch = ps.y;
         }
     }
-    Vec2 o, sz; ResolveAnchorRect(r.anchor, *r.position, r.size, cw, ch, o, sz);
+    Vec2 o, sz; r.ResolveWith(*r.position, r.size, cw, ch, o, sz);
     return sz;
 }
 
@@ -767,6 +877,12 @@ inline Vec2 UITextDrawOrigin(GameObject* go, const TextRenderer* tr, float scree
 inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
     Vec2 o, sz;
     if (!GetUIScreenRect(go, screenW, screenH, o, sz)) return false;
+    if (UIFrameTransformed(go)) {
+        Vec2 local;
+        if (!UIFramePointToLocal(go, p, screenW, screenH, local)) return false;
+        const float e = 0.05f;   // a click on the rotated edge still counts
+        return local.x >= -e && local.y >= -e && local.x <= sz.x + e && local.y <= sz.y + e;
+    }
     return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
 }
 
@@ -808,11 +924,82 @@ inline bool UIClipContains(GameObject* go, const Vec2& p, float screenW, float s
     return true;
 }
 
+/// Does `a` come before `b` in hierarchy pre-order (a parent before its children,
+/// earlier siblings first, root objects in scene order)? Used to tell which of two
+/// widgets is drawn on top when their canvas and layer tie.
+inline bool UIPreOrderBefore(GameObject* a, GameObject* b) {
+    if (!a || !b || a == b || !a->transform || !b->transform) return false;
+    std::vector<Transform*> ca, cb;
+    for (Transform* t = a->transform; t; t = t->Parent()) ca.push_back(t);
+    for (Transform* t = b->transform; t; t = t->Parent()) cb.push_back(t);
+    std::reverse(ca.begin(), ca.end());
+    std::reverse(cb.begin(), cb.end());
+    std::size_t i = 0;
+    while (i < ca.size() && i < cb.size() && ca[i] == cb[i]) ++i;
+    if (i == ca.size()) return true;             // a is an ancestor of b
+    if (i == cb.size()) return false;            // b is an ancestor of a
+    if (i == 0) {                                // different roots: scene order
+        Scene* sc = a->scene();
+        if (!sc) return false;
+        for (const auto& o : sc->Objects()) {
+            if (o->transform == ca[0]) return true;
+            if (o->transform == cb[0]) return false;
+        }
+        return false;
+    }
+    for (Transform* c : ca[i - 1]->Children()) {
+        if (c == ca[i]) return true;
+        if (c == cb[i]) return false;
+    }
+    return false;
+}
+
+/// Is `a` drawn over `b`? The same order the renderer uses: owning Canvas sort order, then
+/// the uiDrawOrder override (else the widget's type layer), then hierarchy pre-order.
+inline bool UIDrawsAbove(GameObject* a, GameObject* b) {
+    if (!a || !b || a == b) return false;
+    const int sa = CanvasSortOrder(a), sb = CanvasSortOrder(b);
+    if (sa != sb) return sa > sb;
+    const int ea = a->uiDrawOrder != 0 ? a->uiDrawOrder : UIDefaultLayer(a);
+    const int eb = b->uiDrawOrder != 0 ? b->uiDrawOrder : UIDefaultLayer(b);
+    if (ea != eb) return ea > eb;
+    return UIPreOrderBefore(b, a);
+}
+
+/// Is `go` an ancestor of (or the same object as) `child`?
+inline bool UIIsSelfOrAncestor(GameObject* go, GameObject* child) {
+    for (Transform* t = child ? child->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject == go) return true;
+    return false;
+}
+
+/// Is the point `p` covered by a pointer-blocking panel drawn above `go`? (A panel with
+/// `blocksPointer` on that contains the point, is shown, and is not `go` or one of its
+/// ancestors.)
+inline bool UIPointerBlockedByPanel(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    Scene* sc = go ? go->scene() : nullptr;
+    if (!sc) return false;
+    for (const auto& o : sc->Objects()) {
+        if (!o->active || o.get() == go) continue;
+        auto* pn = o->GetComponent<UIPanel>();
+        if (!pn || !pn->blocksPointer || !pn->enabled) continue;
+        if (UIIsSelfOrAncestor(o.get(), go)) continue;      // a widget on the panel is not blocked by it
+        if (UIHidden(o.get())) continue;
+        if (!UIDrawsAbove(o.get(), go)) continue;
+        if (UIScreenContains(o.get(), p, screenW, screenH)) return true;
+    }
+    return false;
+}
+
 /// The host's `UIWorld().clipContains`: clip hover, presses and releases to the
 /// visible part of a widget, but not a drag in progress (a slider or scrollbar
 /// keeps tracking when the pointer leaves its scroll view).
 inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    if (UIModal::Blocks(go)) return false;   // an open modal takes all input
+    if (UIContextMenu::OpenMenuAt(go, p)) return false;   // under an open menu (the menu handles its own clicks)
+    if (UIDropdown::HoldsClick(go)) return false;         // an open dropdown list is on top
     if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
+    if (UIPointerBlockedByPanel(go, p, screenW, screenH)) return false;   // covered by a blocking panel
     return UIClipContains(go, p, screenW, screenH);
 }
 

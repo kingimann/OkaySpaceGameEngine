@@ -2,6 +2,8 @@
 // Pin types for visual-script nodes and the graph checker that runs before
 // Play and before a build. One table here describes every node type's data
 // pins; the editor colours pins from it and refuses wires it says can't work.
+#include "okay/VisualScript/VsPinType.hpp"
+#include "okay/VisualScript/VsDecl.hpp"
 #include <string>
 #include <vector>
 
@@ -9,16 +11,6 @@ namespace okay { class Scene; }
 
 namespace okay::vs {
 
-/// What a data pin carries. Stored as one letter per pin in the node table.
-enum class PinType : char {
-    Any = 'A',     ///< anything (variables, events, Select, Equals...)
-    Number = 'N',
-    Bool = 'B',
-    Text = 'T',
-    Vec3 = 'V',
-    Object = 'O',  ///< an object reference, or a name typed into the pin
-    List = 'L',
-};
 
 /// A node type's pins: whether it has an exec input, then one PinType letter per
 /// data input / output (a "Target" input is already appended where the node has one).
@@ -36,9 +28,15 @@ PinType ConstType(const std::string& arg);
 PinType OutputType(const std::string& type, int pin, const std::string& arg = "");
 PinType InputType(const std::string& type, int pin);
 
+/// Pin types that come from declared variables: Get Var / Get Scene Var / Get Global Var
+/// give the variable's declared type, and Set / Add Var take it. Any when `type` isn't one of
+/// those or the name isn't declared with a type. `elem` gets a List / Map's element type.
+PinType DeclOutType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls, PinType* elem = nullptr);
+PinType DeclInType(const std::string& type, const std::string& arg, int pin, const std::vector<VarDecl>& decls);
+
 /// Can a value of type `from` feed an input of type `to` and mean something?
-/// Number <-> Bool, anything -> Text, Object <-> Text (by name), Object -> Bool
-/// (still exists?) and Any either way are fine; the rest is refused.
+/// Number <-> Bool, Vector3 <-> Color, anything -> Text, Object <-> Text (by name),
+/// Object -> Bool (still exists?) and Any either way are fine; the rest is refused.
 bool PinCompatible(PinType from, PinType to);
 const char* PinTypeName(PinType t);
 /// What to use instead when `from` can't feed `to` ("" when there's no tip).
@@ -47,7 +45,7 @@ std::string ConversionHint(PinType from, PinType to);
 /// A visual-script function's signature, written in its Function node's text
 /// field: `Damage(amount: Number, who: Object) -> left: Number, dead: Bool`
 /// (no parameters: `Reset()`; returns are optional; a type may be left out
-/// and is then Any). Types: Number, Bool, Text, Vector3, Object, List, Any.
+/// and is then Any). Types: Number, Bool, Text, Vector3, Color, Object, List, Map, Any.
 struct FunctionSig {
     std::string name;
     struct Pin { std::string name; PinType type = PinType::Any; };
@@ -60,10 +58,14 @@ std::string FunctionNameOf(const std::string& signatureText);
 
 /// One problem found in a graph. `node` is the node's id in the file/editor
 /// (-1 for the whole graph); `severity` 0 = error (it won't work), 1 = warning.
+/// `pin` is the data pin the problem is about (-1 = the whole node); `pinDir`
+/// 0 = an input pin, 1 = an output pin. The editor draws that pin red.
 struct VsIssue {
     int severity = 0;
     int node = -1;
     std::string message;
+    int pin = -1;
+    int pinDir = 0;
 };
 /// Check a graph (OkayVS text): wires between pins that don't fit, nodes no
 /// event ever reaches, events that do nothing, variables read but never set,

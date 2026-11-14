@@ -12,9 +12,15 @@
 // movement arrives as the machine's parameters (speed, run, crouch, prone,
 // airTime, verticalSpeed from a movement controller; gaitX, gaitZ, gaitSpeed
 // every frame). `anim` keeps working: it reads the state playing (by name:
-// "Walk" is 2), and a write from outside (a script, the network, a controller
-// that sets it itself) moves the machine to that state and keeps it there until
-// a movement controller reports again.
+// "Walk" is 2). The value already on the body when the machine starts (the
+// default idle, or a controller's first pick before anything has been
+// published) is not a hold, so locomotion keeps driving. A later write from
+// outside (a script, the network, a controller that sets it itself) moves the
+// machine to that state and keeps it there until `anim` is written again,
+// including 0. A one-shot (non-looping, not a blend tree) also lets go when
+// its clip finishes. A looping gesture stays the whole time, even while the
+// body moves. A controller that writes `anim` itself still changes state,
+// because that write is a new value.
 // ---------------------------------------------------------------------------
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
@@ -50,21 +56,28 @@ public:
     /// A blend tree entered from another one at offset 0 carries on at the same
     /// phase, so the feet stay in step (walk -> run -> crouch-walk).
     void  ResetBlendPhase(float p = 0.0f) override;
+    /// A one-shot blend (death, dive) starts at 0 instead of inheriting the gait.
+    void  RestartBlendPhase() override;
     bool  BlendClips(float dt, int A, int B, float w) override;
     bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) override;
     void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                    const std::string& maskBone, float amount) override;
+                    const std::string& maskBone, float amount, bool additive = false,
+                    const std::vector<std::string>* moreBones = nullptr) override;
     void  AddPostPose(const void* owner, std::function<void(float)> fn) override;
     void  RemovePostPose(const void* owner) override;
     void  FireEvent(const std::string& name) override;
     void  SetStateMachine(const Component* sm) override { m_machine = sm; }
     void  Advance(float dt) override;
     void  BeginFrame(AnimStateMachine& sm) override;
+    void  SetMirror(bool on) override { m_mirror = on; }
+    void  SetRootMotion(int mode) override { m_rootMotion = mode; }
 
     bool  AnimatorPose(std::vector<Vec3>& pose, Vec3& root) override;
     bool  Live() const override;
     void  Move(const Movement& m) override;
     void  Gait(float x, float z, float speed) override;
+    bool  AnimatorOn() const override;
+    void  ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) override;
 
 private:
     /// What one side of a crossfade plays.
@@ -90,9 +103,10 @@ private:
     GameObject* m_owner;
     const Component* m_machine = nullptr;            // the state machine playing through us
     AnimStateMachine* m_sm = nullptr;                // the same, for its parameters and state
-    int   m_published = -1;                          // the `anim` we last wrote (-1 = none yet)
-    bool  m_forced = false;                          // an outside `anim` write holds the state ...
-    bool  m_moved = false;                           // ... until a movement controller reports again
+    int   m_published = -1;                          // the `anim` we last wrote (-1 = not yet; the starting value is not a hold)
+    int   m_sentAction = -1;                         // last action id published on Character::netActionId
+    bool  m_forced = false;                          // a later outside `anim` write holds the state until anim changes
+    bool  m_forcedLoops = false;                     // that state loops or is a blend tree: it does not end with the clip
     bool  m_off = false;                             // `anim` 0: the body holds its own pose
     bool  m_carry = false;                           // the tree just left, for ResetBlendPhase ...
     float m_carryPhase = 0.0f;                       // ... and its phase
@@ -113,6 +127,8 @@ private:
     bool  m_have = false;                            // a pose was made
     bool  m_final = true;                            // the post-pose hooks ran on it
     float m_dt = 0.0f;
+    bool  m_mirror = false;                          // the current state plays mirrored
+    int   m_rootMotion = -1;                         // -1 keep the clip root, 0 strip it, 1 keep it
 };
 
 } // namespace okay

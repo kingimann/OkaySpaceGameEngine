@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Animation/HumanoidBones.hpp"
 // ---------------------------------------------------------------------------
 // FootIK — plant a biped's feet on the ground. Each frame it raycasts down
 // under each foot and moves the foot by how far that ground sits above (or,
@@ -8,7 +9,11 @@
 // animation's own steps are left alone. Blendable via `weight`.
 //
 // Assign the leg-bone Transforms (hips/knee/foot for each leg). Bone lengths are
-// learned from the rig on the first solve. Knees bend toward the body's forward.
+// read from the pose every frame (a rescale or a height change just works). In
+// a parented leg (knee under hip, foot under knee) the bones TURN: lengths stay
+// exact at any weight and a skinned leg bends with them. Unparented joints are
+// moved to the solved positions instead. Knees keep the animation's bend and
+// ease toward the toes as the leg straightens (IKPole).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -17,8 +22,12 @@
 #include "okay/Math/TwoBoneIK.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Math/JointLimit.hpp"
+#include "okay/Components/IKRestore.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/IKBones.hpp"
 #include <cmath>
 #include <string>
 
@@ -26,7 +35,7 @@ namespace okay {
 
 class FootIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 85; }   // after animation, before holding (90) and the body solvers
     // Left leg chain.
     Transform* leftHip = nullptr;  Transform* leftKnee = nullptr;  Transform* leftFoot = nullptr;
     // Right leg chain.
@@ -50,6 +59,9 @@ public:
     float groundY    = 0.0f;   ///< fallback ground height when not raycasting
     float maxRayUp   = 0.6f;   ///< how far above the foot to start the ray
     float maxRayDown = 0.8f;   ///< how far below the foot the ground may be
+    /// Collider layers the feet stand on. The character's own colliders and
+    /// triggers never count as ground.
+    std::uint32_t groundMask = Physics3D::kAllLayers;
 
     // ---- Pelvis adjustment (plant on uneven ground) ----
     Transform* pelvis = nullptr;   ///< the hips/root bone to shift
@@ -61,9 +73,29 @@ public:
     float minKneeBend = 0.0f;      ///< min interior knee angle (deg); 0 = no limit
     float maxKneeBend = 178.0f;    ///< max knee angle (deg) — keeps knees from locking straight
     bool  alignToGround = false;   ///< tilt the planted foot to match the ground slope
-    Vec3  footUpAxis = Vec3::Up;   ///< the foot bone's local "up" (sole normal)
-    bool  orient = false;          ///< also rotate the thigh/shin bones to follow the planted
-                                   ///< knee/foot, so leg meshes bend with the joints
+    /// Also probe the ground under the toes and the heel. On a stair edge the
+    /// foot then rests on the higher step and tilts over the edge instead of
+    /// sinking its toes into it; a slope tilts the sole from heel to toe.
+    bool  stepProbes = false;
+    float toeReach  = 0.12f;       ///< the toes this far ahead of the ankle, along the foot
+    float heelReach = 0.05f;       ///< the heel this far behind
+    /// Each foot bone's local "up" (sole normal): footUpAxis for the left foot,
+    /// footUpAxisR for the right. Left at Up (the default), a foot's axis is read
+    /// from its own rest pose when the bones resolve, so both soles of a mirrored
+    /// rig lie flat without a shared constant.
+    Vec3  footUpAxis = Vec3::Up;
+    Vec3  footUpAxisR = Vec3::Up;
+    /// Joints that aren't parented in a chain: also rotate the thigh/shin bones to
+    /// follow the planted knee/foot. A parented leg always turns (legacy there).
+    bool  orient = false;
+    /// Set by the loader for files saved before orient's migration: Start() turns
+    /// orient on when this drives a Character's part rig. Runtime only.
+    bool  orientMigrate = false;
+    /// Optional limits around each bone's rest pose (JointLimit.hpp). Default None.
+    /// They only keep the IK from pushing a bone out of range: an animated pose
+    /// that's already outside it is left alone. A knee Hinge only stops twist
+    /// (min/maxKneeBend decide the bend).
+    IKJointLimit hipLimit, kneeLimit;
 
     // ---- Foot locking (no sliding) ----
     /// While the animation has a foot planted (barely moving, on the ground), pin it
@@ -75,30 +107,25 @@ public:
     float lockRelease = 0.3f;      ///< let go once the animated foot is this far from the pin
     /// Whether each foot is pinned right now (0 left, 1 right) — for debugging / UI.
     bool FootLocked(int leg) const { return leg == 0 ? m_leg[0].locked : m_leg[1].locked; }
+    /// This frame's planted sole (editor gizmo). False until a solve has run.
+    bool FootPlanted(int leg) const { return leg == 0 ? m_leg[0].planted : m_leg[1].planted; }
+    Vec3 FootPlantPos(int leg) const { return leg == 0 ? m_leg[0].plantPos : m_leg[1].plantPos; }
+    /// Drop both pins and keep them off for `seconds` (a turn-in-place step).
+    void ReleaseLocks(float seconds) {
+        if (seconds > m_lockHold) m_lockHold = seconds;
+        m_leg[0].locked = m_leg[1].locked = false;
+        m_leg[0].lockW = m_leg[1].lockW = 0.0f;
+    }
+    bool LockSuppressed() const { return m_lockHold > 0.0f; }
 
     void Start() override {
-        m_touched = 0;   // bones may be re-resolved below: forget the old ones
+        m_restore.Clear();   // bones may be re-resolved below: forget the old ones
+        m_pole[0].Reset(); m_pole[1].Reset();
         Scene* s = GetScene();
         if (!s) return;
         // Bones resolve inside this character first (two copies of one model share
         // bone names), then anywhere in the scene.
-        Transform* top = transform;
-        while (top && top->Parent()) top = top->Parent();
-        auto inTree = [&](const std::string& n) -> Transform* {
-            if (!top) return nullptr;
-            std::vector<Transform*> stack{top};
-            while (!stack.empty()) {
-                Transform* t = stack.back(); stack.pop_back();
-                if (t->gameObject && t->gameObject->name == n) return t;
-                for (Transform* c : t->Children()) stack.push_back(c);
-            }
-            return nullptr;
-        };
-        auto R = [&](Transform*& t, const std::string& n) {
-            if (t || n.empty()) return;
-            t = inTree(n);
-            if (!t) if (GameObject* g = s->Find(n)) t = g->transform;
-        };
+        auto R = [&](Transform*& t, const std::string& n) { if (!t) t = ResolveBone(s, gameObject, n); };
         R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
         R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
         R(pelvis, pelvisName);
@@ -109,54 +136,32 @@ public:
         // Rebuilding from the Character every Start makes it survive save/reload and also
         // "just work" when you drop FootIK onto a Character by hand.
         if (!leftFoot || !rightFoot) WireFromCharacter();
+        CaptureSoleAxes();
+        if (orientMigrate) {
+            // Before orient's migration, a Character's part rig (joints that aren't
+            // a parented chain) loaded with it off and its leg parts came apart.
+            if (gameObject && gameObject->GetComponent<Character>()) orient = true;
+            orientMigrate = false;
+        }
     }
 
-    /// Detect humanoid leg bones by NAME among `root`'s descendants (Mixamo
-    /// "LeftUpLeg/LeftLeg/LeftFoot", thigh/shin/calf variants, l_/_l suffixes)
-    /// and fill the *Name fields. Returns how many of the six leg bones matched
-    /// (Start() resolves the names to transforms). Mirrors the editor's
-    /// Auto-Detect so the character-swap can wire foot IK with no clicks.
-    int DetectHumanoidBones(Scene& s, GameObject* root) {
-        if (!root) return 0;
-        auto lower = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
-        std::string hipL, kneeL, footL, hipR, kneeR, footR, pel;
-        for (const auto& up : s.Objects()) {
-            GameObject* g = up.get();
-            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-            std::string nm = lower(g->name);
-            auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
-            auto endsW = [&](const char* k) {
-                std::size_t kl = std::char_traits<char>::length(k);
-                return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
-            };
-            bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
-            bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
-            if (!isLeft && !isRight) {
-                if (pel.empty() && (has("hips") || has("pelvis"))) pel = g->name;
-                continue;
-            }
-            int part = -1;
-            if (has("foot") || has("ankle")) part = 2;
-            else if (has("upleg") || has("upperleg") || has("thigh") || has("hip")) part = 0;
-            else if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) part = 1;
-            if (part < 0) continue;
-            std::string& slot = isLeft ? (part == 0 ? hipL : part == 1 ? kneeL : footL)
-                                       : (part == 0 ? hipR : part == 1 ? kneeR : footR);
-            if (slot.empty()) slot = g->name;
-        }
-        int found = (int)(!hipL.empty()) + (int)(!kneeL.empty()) + (int)(!footL.empty()) +
-                    (int)(!hipR.empty()) + (int)(!kneeR.empty()) + (int)(!footR.empty());
-        if (found > 0) {
-            leftHipName = hipL;   leftKneeName = kneeL;   leftFootName = footL;
-            rightHipName = hipR;  rightKneeName = kneeR;  rightFootName = footR;
-            if (!pel.empty()) pelvisName = pel;
-            leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
-            m_touched = 0;
-            rightHip = rightKnee = rightFoot = nullptr;
-            pelvis = nullptr;
-            m_init = false;   // learn the new legs' lengths
-        }
-        return found;
+    /// Detect the leg bones (and pelvis) under `root` with the shared humanoid
+    /// mapper (Animation/HumanoidBones.hpp) and fill the *Name fields. Returns
+    /// how many of the six leg bones matched: 0 when the legs aren't two thigh ->
+    /// shin -> foot chains below the hips (`why` says what's wrong). Start()
+    /// resolves the names to transforms.
+    int DetectHumanoidBones(Scene&, GameObject* root, std::string* why = nullptr) {
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(root);
+        if (!m.legsOk) { if (why) *why = m.why; return 0; }
+        auto nm = [&](int b) { return m.bone[b]->name; };
+        leftHipName = nm(humanoid::LThigh);   leftKneeName = nm(humanoid::LShin);   leftFootName = nm(humanoid::LFoot);
+        rightHipName = nm(humanoid::RThigh);  rightKneeName = nm(humanoid::RShin);  rightFootName = nm(humanoid::RFoot);
+        if (m.bone[humanoid::Hips]) pelvisName = nm(humanoid::Hips);
+        leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
+        rightHip = rightKnee = rightFoot = nullptr;
+        pelvis = nullptr;
+        m_restore.Clear();
+        return m.LegBones();
     }
 
     // Wire the six leg bones (+ pelvis) from a Character's part rig by bone index.
@@ -165,7 +170,7 @@ public:
         Character* pc = gameObject->GetComponent<Character>();
         if (!pc) return;
         if (!pc->PartsBuilt()) { pc->separateParts = true; pc->BuildParts(); }
-        m_touched = 0;
+        m_restore.Clear();
         auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
         // Bone indices (Character.cpp): hips=0; L thigh/shin/foot=9/10/11; R=12/13/14.
         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
@@ -177,11 +182,13 @@ public:
     // written it. Imported rigs create their per-node Animators lazily (at Play
     // start), which lands them after FootIK in the Update order — solving in
     // Update let those Animators clobber the correction the same frame.
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
-        RestorePose();
+        if (m_lockHold > 0.0f) m_lockHold = std::max(0.0f, m_lockHold - dt);
+        m_restore.Restore();   // last frame's corrections off before anything reads the pose
+        m_leg[0].planted = m_leg[1].planted = false;
         if (EffWeight() <= 0.0f) return;
-        if (!m_init) { Learn(); m_init = true; }
-        Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
+        const Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
         // Corrections are smoothed as persistent offsets (frame-rate independent
         // exponential ease) and re-applied on top of the animated pose each frame
@@ -197,14 +204,48 @@ public:
         // no Character — the ModelAnimator's own air state.
         const ModelAnimator* anim = (!body && gameObject) ? gameObject->GetComponent<ModelAnimator>() : nullptr;
         const bool air = body ? (body->anim == 5 || body->anim == 18) : (anim && anim->InAir());
+        m_air = air;
         if (adjustPelvis && pelvis) AdjustPelvis(s, k, floorY, air);
-        SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt, floorY, air);
-        SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt, floorY, air);
-        for (int i = 0; i < m_touched; ++i) {
-            m_saved[i].pos = m_saved[i].t->localPosition;
-            m_saved[i].rot = m_saved[i].t->localRotation;
-        }
+        SolveLeg(0, leftHip,  leftKnee,  leftFoot,  pole, s, k, dt, floorY, air);
+        SolveLeg(1, rightHip, rightKnee, rightFoot, pole, s, k, dt, floorY, air);
+        m_restore.Commit();
     }
+
+    /// Something later this frame (FullBodyIK's body pull) moved the hips: put the
+    /// feet back where this frame's solve planted them. No new rays: the legs are
+    /// solved again from the moved hips to the same foot spots.
+    void ResolveLegs() {
+        Transform* hip[2] = {leftHip, rightHip}; Transform* knee[2] = {leftKnee, rightKnee};
+        Transform* foot[2] = {leftFoot, rightFoot};
+        const Quat character = transform ? transform->Rotation() : Quat::Identity;
+        for (int leg = 0; leg < 2 && !m_air; ++leg) {
+            const LegState& L = m_leg[leg];
+            Transform *h = hip[leg], *kn = knee[leg], *ft = foot[leg];
+            if (!L.planted || !h || !kn || !ft) continue;
+            const Vec3 hipP = h->Position(), oldMid = kn->Position(), oldEnd = ft->Position();
+            const float upLen = (oldMid - hipP).Magnitude(), loLen = (oldEnd - oldMid).Magnitude();
+            if (!Finite(hipP) || upLen < 1e-5f || loLen < 1e-5f || (oldEnd - L.plantPos).SqrMagnitude() < 1e-10f) continue;
+            const Vec3 bendDir = m_pole[leg].Direction(hipP, oldMid, oldEnd, Quat::Identity, IKPoleMode::Auto,
+                                                       ToeDir(ft, character * Vec3::Forward), nullptr);
+            Vec3 mid, end;
+            SolveTwoBoneIK(hipP, upLen, loLen, L.plantPos, bendDir, mid, end, minKneeBend, maxKneeBend);
+            if (!Finite(mid) || !Finite(end)) continue;
+            m_restore.Touch(h); m_restore.Touch(kn); m_restore.Touch(ft);
+            if (IsUnder(kn, h) && IsUnder(ft, kn)) {
+                h->SetRotation(AimBone(h, oldMid, mid));
+                kn->SetRotation(AimBone(kn, ft->Position(), end));
+            } else {
+                kn->SetPosition(mid);
+                ft->SetPosition(end);
+            }
+            ft->SetRotation(L.plantRot);
+        }
+        m_restore.Commit();
+    }
+    /// The bones this solver has written this frame (another solver that moves
+    /// them afterwards and calls ResolveLegs registers its write here, so both
+    /// writes come off together next frame).
+    IKRestore& Restorer() { return m_restore; }
 
 private:
     struct LegState {
@@ -213,57 +254,75 @@ private:
         Vec3  lockPos;
         float lockW = 0.0f;      ///< eased lock weight
         Vec3  prevAnim; bool havePrev = false;
+        float tiltW = 0.0f;      ///< eased slope tilt (fades out on a ray miss instead of popping)
+        Vec3  normal = Vec3::Up; ///< the last ground normal hit under this foot
+        bool  planted = false;   ///< this frame's foot spot, for ResolveLegs
+        Vec3  plantPos; Quat plantRot;
     };
+    bool m_air = false;
+    float m_lockHold = 0.0f;   // seconds left with the foot pins forced off
     LegState m_leg[2];
     float m_pelvisOff = 0.0f;
+    IKRestore m_restore;          ///< pelvis + each leg's bones (local space; see IKRestore.hpp)
+    IKPole m_pole[2];             ///< each knee's bend direction, eased as the leg straightens
+    IKJointFrame m_hipFrame[2], m_kneeFrame[2];
+    Vec3 m_upAuto[2] = {Vec3::Up, Vec3::Up};          ///< each sole's axis off its rest pose
+    const Transform* m_upFor[2] = {nullptr, nullptr}; ///< the foot it was read from
 
-    // Bones moved this frame (pelvis + 3 per leg): the animated local pose before
-    // the move, and what was written. Kept in LOCAL space so moving the body
-    // doesn't hide that a bone still holds last frame's correction.
-    struct Saved { Transform* t; Vec3 prePos, pos; Quat preRot, rot; };
-    Saved m_saved[7];
-    int   m_touched = 0;
-
-    // Note a bone's animated pose before this frame first moves it.
-    void Touch(Transform* t) {
-        for (int i = 0; i < m_touched; ++i) if (m_saved[i].t == t) return;
-        if (m_touched < 7) m_saved[m_touched++] = {t, t->localPosition, t->localPosition,
-                                                   t->localRotation, t->localRotation};
+    /// Each sole's local up, from the foot's rest rotation (when it's resolved).
+    void CaptureSoleAxes() {
+        Transform* feet[2] = {leftFoot, rightFoot};
+        for (int i = 0; i < 2; ++i) {
+            if (!feet[i] || m_upFor[i] == feet[i]) continue;
+            const Vec3 a = feet[i]->Rotation().Inverse() * Vec3::Up;
+            m_upAuto[i] = Finite(a) ? SafeNormalize(a, Vec3::Up) : Vec3::Up;
+            m_upFor[i] = feet[i];
+        }
     }
-    // Take last frame's corrections back off wherever the animation didn't
-    // rewrite the bone (a rotation-only retarget never rewrites positions; a
-    // static rig rewrites nothing), so they never pile up.
-    void RestorePose() {
-        for (int i = 0; i < m_touched; ++i) {
-            Saved& b = m_saved[i];
-            const Vec3& p = b.t->localPosition; const Quat& q = b.t->localRotation;
-            if (p.x == b.pos.x && p.y == b.pos.y && p.z == b.pos.z) b.t->localPosition = b.prePos;
-            if (q.x == b.rot.x && q.y == b.rot.y && q.z == b.rot.z && q.w == b.rot.w) b.t->localRotation = b.preRot;
-        }
-        m_touched = 0;
-    }
-
-    void Learn() {
-        if (leftHip && leftKnee && leftFoot) {
-            m_lUp = (leftKnee->Position() - leftHip->Position()).Magnitude();
-            m_lLo = (leftFoot->Position() - leftKnee->Position()).Magnitude();
-        }
-        if (rightHip && rightKnee && rightFoot) {
-            m_rUp = (rightKnee->Position() - rightHip->Position()).Magnitude();
-            m_rLo = (rightFoot->Position() - rightKnee->Position()).Magnitude();
-        }
+    Vec3 SoleAxis(int leg) const {
+        const Vec3& set = leg == 0 ? footUpAxis : footUpAxisR;
+        const bool isDefault = set.x == 0.0f && set.y == 1.0f && set.z == 0.0f;
+        return isDefault ? m_upAuto[leg] : set;
     }
 
     float GroundAt(Scene* s, const Vec3& foot, Vec3* outNormal = nullptr) {
         if (outNormal) *outNormal = Vec3::Up;
         if (useRaycast && s) {
             Vec3 origin{foot.x, foot.y + maxRayUp, foot.z};
+            const Transform* root = CharacterRootOf(transform);
+            Physics3D::IgnoreHierarchy own(root ? root->gameObject : gameObject);
             RaycastHit3D hit = s->physics3D().Raycast(*s, origin, Vec3{0, -1, 0},
-                                                      maxRayUp + maxRayDown, gameObject);
-            if (hit.hit) { if (outNormal) *outNormal = hit.normal; return hit.point.y; }
+                                                      maxRayUp + maxRayDown, gameObject, groundMask, false);
+            if (hit.hit && Finite(hit.point)) {
+                if (outNormal) *outNormal = Finite(hit.normal) ? hit.normal : Vec3::Up;
+                return hit.point.y;
+            }
             return foot.y - 1e6f;       // nothing under the foot -> don't lift
         }
         return groundY;
+    }
+
+    /// Toe and heel rays: the foot rests on the highest of its three contacts (a
+    /// stair edge under the toes lifts the whole foot) and its sole tilts from
+    /// the heel contact to the toe contact. A probe that finds no ground in
+    /// range is left out, and so is a contact more than kMaxStep above the one
+    /// under the ankle: that is a wall, not a step.
+    static constexpr float kMaxStep = 0.35f;
+    void ProbeStep(Scene* s, Transform* foot, const Vec3& pole, const Vec3& animFoot, float& g, Vec3& normal) {
+        const Vec3 toe = SafeNormalize(ToeDir(foot, pole), Vec3::Zero);
+        if (toe.SqrMagnitude() < 0.5f) return;
+        const Vec3 toeAt = animFoot + toe * toeReach, heelAt = animFoot - toe * heelReach;
+        const float gt = GroundAt(s, toeAt), gh = GroundAt(s, heelAt);
+        auto usable = [&](float h) { return std::isfinite(h) && h >= animFoot.y - maxRayDown && h - g <= kMaxStep; };
+        const bool okT = usable(gt), okH = usable(gh);
+        if (okT && okH) {
+            const Vec3 along{toeAt.x - heelAt.x, gt - gh, toeAt.z - heelAt.z};
+            Vec3 n = Vec3::Cross(along, Vec3::Cross(Vec3::Up, along));
+            if (n.y < 0.0f) n = n * -1.0f;
+            normal = SafeNormalize(n, normal);
+        }
+        if (okT) g = Mathf::Max(g, gt);
+        if (okH) g = Mathf::Max(g, gh);
     }
 
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
@@ -289,36 +348,41 @@ private:
         consider(leftFoot); consider(rightFoot);
         float want = any ? Mathf::Clamp(Mathf::Min(off, 0.0f), -maxPelvisShift, maxPelvisShift) * EffWeight() : 0.0f;
         m_pelvisOff += (want - m_pelvisOff) * ease;
-        Touch(pelvis);
+        if (!std::isfinite(m_pelvisOff) || !Finite(animP)) { m_pelvisOff = 0.0f; return; }
+        m_restore.Touch(pelvis);
         pelvis->SetPosition(animP + Vec3{0, m_pelvisOff, 0});
     }
 
-    // Which way the knee bends: the way the animation already bends it; a
-    // straight leg toward the toes (the foot's child joint), else `fallback`.
-    // A fixed axis alone folded imported characters' knees backwards: they
-    // face -Z, the opposite of this object's forward.
-    static Vec3 KneePole(const Vec3& hip, const Vec3& knee, Transform* foot, const Vec3& fallback) {
-        Vec3 f = foot->Position(), ax = f - hip;
-        float len2 = ax.SqrMagnitude();
-        if (len2 > 1e-10f) {
-            Vec3 bend = (knee - hip) - ax * (Vec3::Dot(knee - hip, ax) / len2);
-            if (bend.SqrMagnitude() > 1e-4f * len2) return bend;   // bent by over 1% of the leg
-        }
+    // Where a straight knee points: toward the toes, the foot's child joint
+    // farthest from it across the ground (a heel joint sits closer than the toe
+    // tip on every rig, whichever way the model faces), else `fallback`. A fixed
+    // axis alone folded imported characters' knees backwards: they face -Z, the
+    // opposite of this object's forward.
+    static Vec3 ToeDir(Transform* foot, const Vec3& fallback) {
+        const Vec3 f = foot->Position();
+        Vec3 best; float bestD = 1e-8f;
         for (Transform* c : foot->Children()) {
+            if (!c) continue;
             Vec3 toe = c->Position() - f;
             toe.y = 0.0f;
-            if (toe.SqrMagnitude() > 1e-8f) return toe;
+            const float d = toe.SqrMagnitude();
+            if (d > bestD && Finite(toe)) { best = toe; bestD = d; }
         }
-        return fallback;
+        return bestD > 1e-8f ? best : fallback;
     }
 
-    void SolveLeg(LegState& L, Transform* hip, Transform* knee, Transform* foot,
-                  float upLen, float loLen, const Vec3& pole, Scene* s,
+    void SolveLeg(int leg, Transform* hip, Transform* knee, Transform* foot, const Vec3& pole, Scene* s,
                   float ease, float dt, float floorY, bool air) {
-        if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
-        Vec3 animFoot = foot->Position();   // as the animation placed it (see RestorePose)
+        if (!hip || !knee || !foot) return;
+        LegState& L = m_leg[leg];
+        const Vec3 hipP = hip->Position(), oldMid = knee->Position(), animFoot = foot->Position();
+        // Lengths off this frame's pose (as the animation placed it, see Restore).
+        const float upLen = (oldMid - hipP).Magnitude(), loLen = (animFoot - oldMid).Magnitude();
+        if (!Finite(hipP) || !Finite(oldMid) || !Finite(animFoot) || upLen < 1e-5f || loLen < 1e-5f) return;
         Vec3 normal;
         float g = GroundAt(s, animFoot, &normal);
+        if (!std::isfinite(g)) return;
+        if (stepProbes) ProbeStep(s, foot, pole, animFoot, g, normal);
         float targetY = g + footOffset;
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
@@ -328,8 +392,9 @@ private:
         float wantLift = apply ? want : 0.0f;
         L.lift += (wantLift - L.lift) * ease;
 
-        // Foot locking: pin a planted foot where it landed.
-        if (footLock && dt > 0.0f) {
+        // Foot locking: pin a planted foot where it landed. A turn step holds this off.
+        if (m_lockHold > 0.0f) { L.locked = false; L.lockW = 0.0f; }
+        else if (footLock && dt > 0.0f) {
             float spd = 0.0f;
             if (L.havePrev) { Vec3 d = animFoot - L.prevAnim; d.y = 0.0f; spd = d.Magnitude() / dt; }
             L.prevAnim = animFoot; L.havePrev = true;
@@ -349,43 +414,94 @@ private:
             target.x += (L.lockPos.x - target.x) * L.lockW;
             target.z += (L.lockPos.z - target.z) * L.lockW;
         }
-        if ((target - animFoot).SqrMagnitude() < 1e-8f) return;   // nothing to correct
-
-        Touch(hip); Touch(knee); Touch(foot);
-
-        Vec3 oldMid = knee->Position(), oldEnd = foot->Position();
-        Vec3 mid, end;
-        SolveTwoBoneIK(hip->Position(), upLen, loLen, target, KneePole(hip->Position(), oldMid, foot, pole),
-                       mid, end, minKneeBend, maxKneeBend);
-        Vec3 newMid = Vec3::Lerp(oldMid, mid, EffWeight());
-        Vec3 newEnd = Vec3::Lerp(oldEnd, end, EffWeight());
-        // Optional: rotate the thigh (hip->knee) and shin (knee->foot) bones so a
-        // leg mesh skinned to them bends with the joints, not just the joints
-        // moving. Done before pinning positions; see LimbIK for the rationale.
-        if (orient) {
-            Vec3 oldUp = oldMid - hip->Position(), newUp = newMid - hip->Position();
-            if (oldUp.SqrMagnitude() > 1e-8f && newUp.SqrMagnitude() > 1e-8f)
-                hip->SetRotation(Quat::FromToRotation(oldUp, newUp) * hip->Rotation());
-            Vec3 curMid = knee->Position(), curEnd = foot->Position();
-            Vec3 oldLo = curEnd - curMid, newLo = newEnd - newMid;
-            if (oldLo.SqrMagnitude() > 1e-8f && newLo.SqrMagnitude() > 1e-8f)
-                knee->SetRotation(Quat::FromToRotation(oldLo, newLo) * knee->Rotation());
+        // The slope tilt eases in and out (a ray miss or a step off a ramp fades it).
+        const bool tilt = alignToGround && std::fabs(wantLift) > 1e-3f && normal.SqrMagnitude() > 1e-6f && Finite(normal);
+        if (tilt) L.normal = normal.Normalized();
+        L.tiltW += ((tilt ? 1.0f : 0.0f) - L.tiltW) * ease;
+        if (!Finite(target)) return;
+        const float w = EffWeight();
+        if ((target - animFoot).SqrMagnitude() >= 1e-8f && !SolveLegBones(leg, hip, knee, foot, hipP, oldMid, animFoot,
+                                                                              upLen, loLen, target, pole, w)) return;
+        // Tilt the foot so its sole follows the ground slope.
+        if (L.tiltW > 1e-3f) {
+            const Vec3 up = SafeNormalize(foot->Rotation() * SoleAxis(leg), Vec3::Up);
+            const Quat desired = (Quat::FromToRotation(up, L.normal) * foot->Rotation()).Normalized();
+            if (Finite(desired)) { m_restore.Touch(foot); foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, w * L.tiltW)); }
         }
-        knee->SetPosition(newMid);
-        foot->SetPosition(newEnd);
-
-        // Tilt the foot so its sole follows the ground slope (only while a
-        // correction is actually in play — never tilt a mid-air swing foot).
-        if (alignToGround && std::fabs(wantLift) > 1e-3f && normal.SqrMagnitude() > 1e-6f) {
-            Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
-            Quat tilt = Quat::FromToRotation(up, normal.Normalized());
-            Quat desired = (tilt * foot->Rotation()).Normalized();
-            foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, EffWeight()));
-        }
+        L.planted = true; L.plantPos = foot->Position(); L.plantRot = foot->Rotation();
     }
 
-    bool  m_init = false;
-    float m_lUp = 0, m_lLo = 0, m_rUp = 0, m_rLo = 0;
+    /// Turn (or, unparented, move) the leg bones onto `target`. False when the
+    /// solve broke and the leg was put back.
+    bool SolveLegBones(int leg, Transform* hip, Transform* knee, Transform* foot, const Vec3& hipP, const Vec3& oldMid,
+                       const Vec3& animFoot, float upLen, float loLen, const Vec3& target, const Vec3& pole, float w) {
+        // The knee keeps the animation's bend, easing toward the toes as the leg
+        // straightens (no flip at a fixed threshold).
+        const Vec3 bendDir = m_pole[leg].Direction(hipP, oldMid, animFoot, Quat::Identity, IKPoleMode::Auto,
+                                                   ToeDir(foot, pole), nullptr);
+        Vec3 mid, end;
+        SolveTwoBoneIK(hipP, upLen, loLen, target, bendDir, mid, end, minKneeBend, maxKneeBend);
+        if (!Finite(mid) || !Finite(end)) return false;
+
+        m_restore.Touch(hip); m_restore.Touch(knee); m_restore.Touch(foot);
+        if (IsUnder(knee, hip) && IsUnder(foot, knee)) {
+            // A parented leg TURNS: the thigh toward the solved knee, then the shin
+            // (as turned by its parent) toward the solved foot. Rotations blend by
+            // the weight, so lengths stay exact; the foot keeps its animated angle.
+            const Quat rHip = hip->Rotation(), rKnee = knee->Rotation(), rFoot = foot->Rotation();
+            const Quat lHip = hip->localRotation, lKnee = knee->localRotation;
+            CaptureFrames(leg, hip, knee, foot, hipP, mid, end);
+            hip->SetRotation(AimBone(hip, oldMid, mid));
+            ClampIK(hip, lHip, m_hipFrame[leg], hipLimit, false);
+            knee->SetRotation(AimBone(knee, foot->Position(), end));
+            ClampIK(knee, lKnee, m_kneeFrame[leg], kneeLimit, kneeLimit.type == IKJointLimit::Type::Hinge);
+            const Quat kneeSolved = knee->Rotation();
+            BlendWorldRotation(hip, rHip, hip->Rotation(), w);
+            BlendWorldRotation(knee, rKnee, kneeSolved, w);
+            foot->SetRotation(rFoot);
+            if (!Finite(hip->localRotation) || !Finite(knee->localRotation)) {   // never leave a broken leg
+                hip->SetRotation(rHip); knee->SetRotation(rKnee); foot->SetRotation(rFoot);
+                return false;
+            }
+        } else {
+            // Joints that aren't a parented chain are moved to the solve.
+            const Vec3 newMid = Vec3::Lerp(oldMid, mid, w), newEnd = Vec3::Lerp(animFoot, end, w);
+            if (orient) {
+                // Rotate the thigh and shin parts so they follow the moved joints
+                // (root to tip, re-reading the shin after the thigh turns).
+                Vec3 oldUp = oldMid - hipP, newUp = newMid - hipP;
+                if (oldUp.SqrMagnitude() > 1e-8f && newUp.SqrMagnitude() > 1e-8f)
+                    hip->SetRotation(Quat::FromToRotation(oldUp, newUp) * hip->Rotation());
+                Vec3 curMid = knee->Position(), curEnd = foot->Position();
+                Vec3 oldLo = curEnd - curMid, newLo = newEnd - newMid;
+                if (oldLo.SqrMagnitude() > 1e-8f && newLo.SqrMagnitude() > 1e-8f)
+                    knee->SetRotation(Quat::FromToRotation(oldLo, newLo) * knee->Rotation());
+            }
+            knee->SetPosition(newMid);
+            foot->SetPosition(newEnd);
+        }
+
+        return true;
+    }
+
+    /// Rest frames for this leg's limits, (re)captured when the bones change.
+    void CaptureFrames(int leg, Transform* hip, Transform* knee, Transform* foot,
+                       const Vec3& hipP, const Vec3& mid, const Vec3& end) {
+        if (!hipLimit.Active() && !kneeLimit.Active()) return;
+        if (!m_hipFrame[leg].CapturedFor(hip)) m_hipFrame[leg].Capture(hip, knee, foot);
+        if (!m_kneeFrame[leg].CapturedFor(knee)) m_kneeFrame[leg].Capture(knee, foot, nullptr);
+        if (!m_hipFrame[leg].hasHinge)  m_hipFrame[leg].SetHingeFromBend(hipP, mid, end);
+        if (!m_kneeFrame[leg].hasHinge) m_kneeFrame[leg].SetHingeFromBend(hipP, mid, end);
+    }
+
+    /// Clamp what the IK wrote to `lim` — unless the animated pose was already
+    /// outside it: a limit stops the IK pushing a bone out of range, it never
+    /// fights the animation's own pose (a deep crouch, a kick).
+    static void ClampIK(Transform* b, const Quat& animLocal, const IKJointFrame& fr, const IKJointLimit& lim, bool bendFree) {
+        if (!lim.Active()) return;
+        if (Quat::Angle(ApplyLimit(animLocal, fr, lim, bendFree), animLocal) > 0.5f) return;
+        b->localRotation = ApplyLimit(b->localRotation, fr, lim, bendFree);
+    }
 };
 
 } // namespace okay

@@ -56,6 +56,11 @@ struct ItemDefinition {
     std::string useAction;          ///< e.g. "Eat", "Drink", "Heal" (empty = not usable)
     float useAmount = 0.0f;
     std::string worldPrefab;        ///< what dropping it spawns (.okayprefab)
+    /// Optional sprite-sheet icon. `atlas` is the sheet path; the UV rect is in 0..1.
+    /// Empty atlas = a whole-image icon (the `icon` path, or <folder><id>.png).
+    std::string atlas;
+    float au0 = 0, av0 = 0, au1 = 1, av1 = 1;
+    bool hasAtlas = false;
     std::vector<std::pair<std::string, std::string>> custom;   ///< game-specific fields
     std::vector<std::string> legacyNames;   ///< old item names that load as this id
     bool loose = false;             ///< made automatically for an unknown name (not saved)
@@ -82,8 +87,13 @@ public:
     /// The definition with this id, or null.
     const ItemDefinition* Find(const std::string& id) const;
     ItemDefinition* FindMutable(const std::string& id);
+    /// A real definition (not a loose stand-in made for a name nobody defined).
+    bool IsDefined(const std::string& id) const;
+    /// Plain-English problems: two items sharing an id, or ids that match once case is ignored.
+    std::vector<std::string> Issues() const;
     /// The id an item string means: an id as-is, else a legacy name or display name of
-    /// a definition, else (registering a loose definition) the string itself.
+    /// a definition, else (registering a loose definition) the string itself. Surrounding
+    /// whitespace is ignored, and so is case when that picks exactly one definition.
     std::string Resolve(const std::string& nameOrId);
     /// Resolve() then return its definition (never null for a non-empty string).
     const ItemDefinition* Def(const std::string& nameOrId);
@@ -96,6 +106,8 @@ public:
     std::deque<ItemDefinition>& Items() { return m_items; }
     /// Ids used by more than one definition (shown as a warning in the editor).
     std::vector<std::string> DuplicateIds() const;
+    /// Ids that match another id once case is ignored ("Wood" and "wood").
+    std::vector<std::string> CaseConflicts() const;
 
     /// The per-stack limit for `item` in a container whose own limit is `container`
     /// (0 = unlimited): the smaller of the two non-zero limits.
@@ -109,5 +121,14 @@ private:
 /// The icon to draw for `item`: its definition's icon, else <folder><id>.png, else ""
 /// (no folder and no icon = draw the name instead).
 std::string ItemIconPath(const std::string& folder, const std::string& item);
+
+/// Where to sample an item's icon. `atlas` means `path` is a sheet and the UV rect
+/// (0..1) is the cell; otherwise the whole image is used.
+struct ItemIconRef {
+    std::string path;
+    float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+    bool atlas = false;
+};
+ItemIconRef ItemIconOf(const std::string& folder, const std::string& item);
 
 } // namespace okay

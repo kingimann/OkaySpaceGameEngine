@@ -1,7 +1,11 @@
 # OkayScript
 
+> New here? This page is the language guide. The per-area function list
+> (networking, Steam, JSON, collections, timers, physics events) is in
+> [scripting_reference.md](scripting_reference.md). All docs: [README.md](README.md).
+
 OkayScript is the engine's built-in scripting language — a small, dependency-free
-language that ships in every build (no Lua/C# toolchain required). It's its own
+language that ships in every build (no external toolchain required). It's its own
 tiny language, designed so you write almost nothing and still do a lot.
 
 The whole point is minimal code:
@@ -33,7 +37,23 @@ normal scene lifecycle.
 
 Scripts read like C#, and every piece of syntax does something. A script's
 fields and functions **are** the component: there is no class or base type to
-write. New scripts start like this:
+write. A new script starts empty, with just the two
+functions you almost always want:
+
+```csharp
+// Runs once, before the first frame.
+void Start()
+{
+}
+
+// Runs every frame.
+void Update()
+{
+}
+```
+
+Fill them in as you go. A fuller example, with an Inspector field, movement
+from the keyboard and a coroutine:
 
 ```csharp
 // Attach this script to an object. Its fields and functions are the component.
@@ -81,7 +101,7 @@ IEnumerator Hop()
 | `var x = ...;` | A variable that can hold anything. Vector3, List, Dictionary and other types also hold anything of their kind. |
 | `const` / `readonly` | Can't change after it's set: assigning again is an error. |
 | `static int alive;` | One value shared by every object running this script (for example a count of all enemies). |
-| `void Hit(int dmg)` | Typed parameters convert their argument (`Hit(7.9)` gets 7). `int Score()` converts what it returns. A `void` function can't return a value. |
+| `void Hit(int dmg, int bonus = 2)` | Typed parameters convert their argument (`Hit(7.9)` gets 7). A parameter can have a default, and those come last: `Hit(5)` uses 2 for `bonus`. Call with names: `Hit(bonus: 4, dmg: 1)`. `int Score()` converts what it returns. A `void` function can't return a value. |
 | `IEnumerator Blink()` + `yield return ...` | A coroutine: runs across frames, pausing at each `yield`. Start it with `StartCoroutine(Blink())`. |
 | `enum State { Idle, Run }` | Named values: `State.Run`, `switch (state)`. |
 
@@ -114,10 +134,10 @@ each one with a warning saying what to delete:
 | Collections | `List<T>`, `Dictionary<K,V>`, arrays `int[]` (`new int[3]`, `new[] {1, 2}`, `{1, 2, 3}`), `int a = 1, b = 2;` |
 | Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized` |
 | Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (var kv in d)` |
-| Lambdas | `x => x * 2`, `(a, b) => { ... }` with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
-| Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
+| Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
+| Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)` (`WaitForSecondsRealtime` ignores time scale), `yield return new WaitUntil(() => cond)`, `yield return new WaitWhile(() => cond)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
 | Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
-| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
+| Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Time.sessionTime/sessionFrameCount/unscaledDeltaTime/fps/paused`, `Time.HitStop/SlowMotion/RampTimeScale`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
 Objects are referenced by name under the hood, so `GameObject.Find("Enemy")`
 returns a reference you can pass to `Destroy`, compare with `null`, or read
@@ -155,7 +175,8 @@ What's supported:
   familiar code often pastes in unchanged.
 - **Dot properties**: `transform.position` / `.localPosition` / `.localScale`
   (and `.x/.y/.z`), `transform.eulerAngles.z`, `Time.deltaTime` / `Time.time` /
-  `Time.timeScale`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
+  `Time.timeScale` / `Time.unscaledDeltaTime` / `Time.sessionTime` /
+  `Time.sessionFrameCount` / `Time.fps` / `Time.paused`, `gameObject.name` / `.activeSelf` / `.tag`, `Screen.width/height`,
   `Input.mousePosition.x/y`, `Mathf.PI`, `Random.value`, `Vector3.zero/one/up/...`.
   Readable and assignable (`transform.position.x = 5;`).
 - **Dot methods**: `Input.GetKey/GetKeyDown/GetKeyUp/GetAxis/GetMouseButton...`,
@@ -202,7 +223,8 @@ What's supported:
 - **`Vector3.Angle(a, b)`** (`vec_angle`) — angle in degrees between two vectors;
   `Vector2.Lerp` / `Vector3.LerpUnclamped` map onto `vec_lerp`; and
   `Input.GetButton/GetButtonDown/GetButtonUp` are accepted (same as the key
-  checks).
+  checks). Touch gestures are `gesture("tap")`, `gesture("swipe up")`,
+  `pinch_scale()`, `twist_degrees()` and `is_touch_screen()` (see `docs/input.md`).
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).
@@ -229,6 +251,8 @@ What's supported:
   - `break` and `continue` inside loops
 - **Ternary:** `cond ? a : b`
 - **Functions:** `function name(a, b) { return a + b; }`
+  A later parameter can have a default (`function heal(hp, bonus = 2)`), and a
+  call can name them (`heal(bonus: 4, hp: 1)`). Lambdas too: `(x = 3) => x + 1`.
 - **Arrays:** `var a = [1, 2, 3];` — index with `a[0]`, assign `a[1] = 9`,
   append with `a[count(a)] = x` or `push(a, x)`, remove with `pop(a)`, length
   via `count(a)`. Arrays are shared by reference. Make an empty one with
@@ -252,9 +276,26 @@ sprite (or 2D collider) bounds under the cursor, using the main camera.
 | `on_mouse_down()` / `on_mouse_up()` | The left button is pressed / released over it |
 | `on_click()` | A full press-and-release on the same object (or a UI Button press) |
 | `on_change()` / `on_toggle()` | A sibling UI Slider is dragged / UI Toggle is clicked |
+| `on_spline_end(which)` | A Spline Follower on the object reaches an end of its curve (`which` is `"end"` or `"start"`) |
 
 The older `on_trigger()` and `on_collision()` names still work — they're treated
 as the *enter* handlers.
+
+Subscribe without replacing the function. `+=` adds a listener and `-=` removes
+one. The right-hand side is a function name or a lambda. A number on the right
+is still ordinary math (`score += 1`). `OnClick` and `on_click` are the same
+event. `raise("OnHurt", 3)` runs the listeners on this script (and a function
+named `OnHurt`, if there is one).
+
+```
+function AddBonus(n) { print("BONUS " + n); }
+function start() {
+    OnHurt += (n) => { print("HURT " + n); };
+    OnHurt += AddBonus;
+    raise("OnHurt", 3);    // HURT 3, then BONUS 3
+    OnHurt -= AddBonus;
+}
+```
 
 Inside a collision or trigger handler these describe the touch:
 
@@ -357,18 +398,34 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `stop()` | zero this object's Rigidbody velocity |
 | `is_moving()` / `face_velocity()` | is the Rigidbody2D moving / turn to its heading |
 | `set_timescale(x)` / `timescale()` | global speed (0 = pause, 0.5 = slow-mo) |
+| `session_time()` / `session_unscaled_time()` / `session_frame_count()` | game seconds / real seconds / frames since this Play began (`time()` and `frame_count()` keep counting across Plays; these start from 0 each time) |
+| `unscaled_dt()` | real seconds of the last frame: not slowed by `set_timescale`, a hit stop or a pause (animate a menu with it) |
+| `is_paused()` | 1 while the game is paused (a menu, a cutscene, the pause button) |
+| `push_pause(reason)` / `pop_pause(reason)` / `is_paused_by(reason)` | pause with a reason of your own (`"dialogue"`, `"shop"`): the game stays paused until every reason is let go, so two scripts that pause never resume each other (`pause_game(bool)` is the one shared "manual" reason) |
+| `fps()` | real frames per second over the last half second (a pause or slow motion does not change it, a stall shows) |
+| `hitch_count()` | frames that took over a tenth of a second since this Play began |
+| `hit_stop(seconds [, scale])` | a freeze frame (scale 0, the default) or a brief slow-down for an impact; real time, ends by itself, composes with `set_timescale` |
+| `slow_motion(scale, seconds)` | bullet time: `slow_motion(0.2, 2)` runs at a fifth speed for two real seconds, then back to normal |
+| `ramp_timescale(target, seconds)` | ease the time scale to `target` over `seconds` real seconds, in a straight line |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
 | `destroy()` | destroy this script's own GameObject |
 | `activate(name)` / `deactivate(name)` | show/hide another object by name |
 | `exists(name)` / `is_active(name)` | query another object by name |
 | `set_parent(name)` / `detach()` / `has_parent()` | parent this object under another / unparent / query (pickups, mounts) |
+| `child_count(name)` / `get_child(name, i)` / `parent_of(name)` | children of a named object (child name by index) / its parent's name, `""` if none |
+| `hurt(name, n)` / `heal(name, n)` / `add_xp(name, n)` | damage / heal / XP on a named object's `Stats` or `SurvivalStats` (fires `on_death`, `on_level_up`) |
+| `get_hp(name)` / `get_max_hp(name)` / `is_dead(name)` | read health / death state of a named object |
+| `set_light_intensity(name, v)` / `set_light_range(name, v)` / `set_light_angle(name, deg)` / `set_light_color(name, r, g, b)` | tune a named object's Light component |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
 | `dist_to(name)` | 2D distance from this object to a named object (enemy AI, doors) |
 | `dist3_to(name)` | full 3D distance to a named object |
 | `move_toward3(name, speed)` | move toward a named object in 3D by speed*dt (chase/homing) |
 | `look_at3(name)` | rotate forward (+Z) to face a named object in 3D |
 | `spawn3(prefab, x, y, z)` | instantiate a prefab at a 3D position |
+| `pool_get(prefab, x, y [, z])` | like `spawn` / `spawn3`, from the scene's pool for that prefab: an idle object is reused (reset, its scripts start again), else one is made. Returns true on success |
+| `pool_release()` | give this script's object back to its pool (it is destroyed when it did not come from one); a bullet's own script ends with it |
+| `pool_prewarm(prefab, n)` / `pool_idle(prefab)` | make `n` idle objects ahead of time (returns how many are idle) / how many are idle |
 | `set_scale3(x, y, z)` / `set_scale(s)` | set per-axis or uniform scale |
 | `scale_x()` / `scale_y()` / `scale_z()` | read this object's scale |
 | `set_rot3(x, y, z)` | set absolute 3D euler rotation (degrees) |
@@ -377,6 +434,23 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `npc_stop(name)` | cancel an `npc_goto` order |
 | `npc_busy(name)` | true while the NPC is still walking to its ordered point |
 | `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
+| `nav_move_to(x, y, z)` | send this object's Nav Mesh Agent walking to a world point over the baked navmesh (`nav_move_to("Name", x, y, z)` for another object); see [navigation.md](navigation.md) |
+| `nav_stop()` | stop the Nav Mesh Agent where it is |
+| `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
+| `nav_remaining()` | path length left to the destination (0 when idle) |
+| `nav_path_exists(x, y, z)` | 1 when a walkable route leads from this object to the point (`nav_path_exists(fx, fy, fz, tx, ty, tz)` between two points); needs no agent |
+| `nav_path_length(x, y, z)` | length of that route, -1 when there is none (also takes the six-number form) |
+| `nav_point_walkable(x, y, z[, maxDist])` | 1 when the baked navmesh has ground within `maxDist` (default 1) of the point |
+| `nav_nearest_point(x, y, z[, maxDist])` | the closest walkable point on the baked navmesh as a vector (`maxDist` default 50); the point itself when none is in range |
+| `bt_set(key, value)` | write a value into this object's Behavior Tree blackboard (`bt_set("Name", key, value)` for another object); see [behavior_trees.md](behavior_trees.md) |
+| `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
+| `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
+| `bt_stop()` | stop the tree; running tasks are aborted and the NPC stops |
+| `spline_point(name, t)` | the world point a fraction `t` (0..1) of the way along a named object's Spline, by length (`spline_point(t)` for this object's); see [splines.md](splines.md) |
+| `spline_length(name)` | that Spline's length in world units |
+| `follower_set_speed(speed)` | set this object's Spline Follower speed (`follower_set_speed("Name", speed)` for another object) |
+| `line_set_points(points)` | replace this object's Line Renderer points with an array of vectors, or several vectors (`line_set_points("Name", ...)`) |
+| `trail_clear()` | remove this object's Trail Renderer trail at once (`trail_clear("Name")`) |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |
@@ -398,6 +472,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `look_at(name)` | rotate (about Z) so local +X faces a named object (turrets, aiming) |
 | `cam_x()` / `cam_y()` / `set_cam(x, y)` / `move_cam(dx, dy)` | read/move the main camera (follow, cutscenes) |
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |
+| `camera_follow("name"[, smoothing])` | the main camera eases after that object (adds a Camera Follow if needed; `""` stops); higher smoothing is snappier, 0 snaps |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |
@@ -406,6 +481,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `raycast_all3(ox,oy,oz, dx,dy,dz[, dist])` / `raycast_all(ox,oy,dx,dy[, dist])` | every object the ray passes through, nearest first (a list of names; `ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3(o.., d.., r[, dist])` / `box_cast3(c.., half.., d..[, dist])` / `capsule_cast3(a.., b.., r, d..[, dist])` | thick casts: the first thing the shape touches (details via `ray3_*`) |
+| `box_cast(cx, cy, hx, hy, dx, dy[, dist [, layers [, ignore_triggers [, angle]]]])` / `capsule_cast(ax, ay, bx, by, r, dx, dy[, dist])` | flat casts: the first thing a box or capsule touches (details via `ray_*`; angle is degrees) |
+| `overlap_box(cx, cy, hx, hy)` / `overlap_capsule(ax, ay, bx, by, r)` | names of the objects inside a flat box or capsule |
 | `overlap_sphere3(c.., r)` / `overlap_box3(c.., half..)` / `overlap_capsule3(a.., b.., r)` | names of the objects inside a shape |
 | `layer_mask("Default", "Enemy", 3)` | a layers value for the queries |
 | `overlap(x, y)` | true if a collider contains the point |
@@ -417,6 +494,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `velocity_x()` / `velocity_y()` | read this object's Rigidbody2D velocity |
 | `set_velocity(x, y)` / `set_vx(x)` / `set_vy(y)` | set its velocity (jump, dash, top-down move) |
 | `add_force(x, y)` / `add_impulse(x, y)` | apply a continuous force / instant momentum |
+| `add_explosion_force(cx, cy, force, radius[, up])` | shove this 2D body away from a point; the push fades to nothing at `radius` |
 | `set_image(path)` | set this object's UIImage texture (swap icons/states) |
 | `set_interactable(bool)` | enable/disable this object's UIButton (grey out menu entries) |
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |
@@ -480,6 +558,26 @@ Absolute paths (`/…`, `C:\…`) and `..` are refused: the call returns false (
 the default you passed) and the Console says why. In an exported game, saves
 and prefs go into the game's own save folder; files a game saved beside itself
 before that still load.
+
+### Rendering: post-processing, fog, weather, time of day
+
+The scene's look (the Lighting panel's Post-processing, Sky, Fog and Weather
+sections, see [rendering.md](rendering.md)) at runtime:
+
+| Function | Effect |
+| --- | --- |
+| `post_set(name, value)` | one post-processing value: `"exposure"`, `"tonemap"` (0 none / 1 ACES / 2 filmic, or the name), `"bloom"`, `"bloom_threshold"`, `"bloom_intensity"`, `"bloom_radius"`, `"grading"`, `"temperature"`, `"tint"`, `"saturation"`, `"contrast"`, `"vignette"`, `"vignette_smoothness"`, `"fxaa"`, `"ssao"`, `"ssao_radius"`, `"ssao_intensity"`, `"dof"`, `"dof_focus"`, `"dof_range"` (0 / 1 for switches); false for an unknown name |
+| `fog_set(on[, "#rrggbb"][, start, end][, mode[, density]])` | fog on/off, its colour, the linear start / end, and a mode (`"linear"`, `"exponential"`, `"height"`) with its density |
+| `weather_set(preset[, intensity])` | `"none"`, `"rain"`, `"snow"` or `"storm"` at an intensity 0..1; cross-fades over the scene's fade time |
+| `time_of_day([hours])` | the Day/Night Cycle's clock (0..24); with an argument sets it. -1 when the scene has none |
+
+```cs
+post_set("bloom", 1);
+post_set("exposure", 1.2);
+fog_set(true, "#c8d8e6", 20, 90);
+weather_set("rain", 0.6);
+if (time_of_day() > 20) weather_set("storm", 0.9);
+```
 
 ### Math
 `abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign
@@ -546,6 +644,7 @@ Smoothly animate this object over time. Every tween:
 | `tween_text("Hello!", dur[, "done"])` | type this object's text out letter by letter |
 | `tween_var("name", to, dur[, ease][, "done"])` | tween one of the script's own variables |
 | `tween_call(seconds, "fn")` | call a function after a delay |
+| `tween_prop("Light.intensity", to, dur[, ease][, "done"])` | tween any property of this object by path (`Light.intensity`, `Camera.zoom`, `Transform.scale.y`, `SpriteRenderer.color.a`; see docs/properties.md); a number for a float or integer property |
 
 **Set up** a tween. Each of these returns the id, so they nest, e.g.
 `tween_loops(tween_scale(1.2, 0.4), -1, "yoyo")`:
@@ -553,10 +652,14 @@ Smoothly animate this object over time. Every tween:
 | Function | Effect |
 | --- | --- |
 | `tween_delay(id, s)` | wait before starting |
-| `tween_ease(id, "out_back")` | change the ease |
-| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever) |
+| `tween_ease(id, "out_back")` | change the ease; also takes a curve as text: `"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"` (the ease argument of `tween_move` and the others takes the same) |
+| `tween_loops(id, n[, "restart" \| "yoyo" \| "incremental"])` | repeat (`-1` = forever; a NaN plays once; a count past two billion is two billion, not "forever") |
 | `tween_speed(id, x)` | play faster or slower |
 | `tween_unscaled(id)` | ignore the time scale (pause menus) |
+| `tween_clock(id, "ui")` | follow a named clock channel (`"game"`, `"ui"`, `"cinematic"`, or your own) instead of scene time; `""` goes back |
+| `tween_tag(id, "menu")` | give it a group label, for the `_tag` functions below |
+| `tween_speed_based(id)` | the duration you gave is a speed in units a second: it lasts distance / speed (moves, scales, colours; not rotations or punches) |
+| `tween_decay(id, rate)` | how a punch or shake dies away: `0` is a straight fade, `6` is snappy |
 | `tween_from(id)` | play from the end value back to the current one (intros) |
 | `tween_relative(id)` | treat the end value as an offset |
 | `tween_set_id(id, "name")` | name it, for the `_id` functions below |
@@ -574,7 +677,10 @@ Smoothly animate this object over time. Every tween:
 - **By name, anywhere in the scene:** `tween_kill_id("name")`,
   `tween_pause_id("name")`, `tween_play_id("name")` and
   `tween_restart_id("name")`. These also start a **Tween Animation** component
-  with that Id.
+  with that Id. `tween_rewind_id("name")` puts them back at the start.
+- **By tag, anywhere in the scene:** `tween_kill_tag("tag"[, complete])`,
+  `tween_pause_tag("tag")`, `tween_play_tag("tag")` and `tween_complete_tag("tag")`
+  (the tag is set with `tween_tag(id, "tag")`; many tweens can share one).
 
 **Sequences** run tweens one after another, or together:
 
@@ -584,8 +690,10 @@ Smoothly animate this object over time. Every tween:
 | `seq_append(seq, id)` | play after everything already in it |
 | `seq_join(seq, id)` | play together with the last appended tween |
 | `seq_insert(seq, time, id)` | play at a time |
+| `seq_prepend(seq, id)` | play before everything already in it |
 | `seq_interval(seq, s)` / `seq_prepend_interval(seq, s)` | a pause at the end / start |
 | `seq_callback(seq, "fn")` / `seq_insert_callback(seq, time, "fn")` | call a function at that point |
+| `seq_join_callback(seq, "fn")` | call a function when the last appended tween starts |
 
 A sequence's id works with every setup and control function above (loops,
 delay, pause...).
@@ -608,11 +716,19 @@ function start() {
 function arrived() { tween_punch_scale(0.3, 0.25); }    // pop on arrival
 ```
 
+`ease_curve(t, "OutBack")` gives the eased value of `t` (0 to 1) for any ease the tween functions
+take by name or as curve text (`"cubic-bezier(0.4, 0, 0.2, 1)"`, `"steps(4)"`, `"ease-in-out"`), for
+animating something by hand: `x = lerp(a, b, ease_curve(t, "out_back"))`. Text it does not know is a straight
+line, and a NaN `t` counts as 0 (the `ease_in` ... `ease_bounce` functions do the same).
+
 **Without code:** add a **Tween Animation** component (Add Component →
 Animation). Pick what to animate (move, scale, rotate, fade, colour, UI position
 or size, punch, shake, jump), plus the end value, duration, delay, ease and loops.
 It plays when the scene starts, or with `tween_play_id("Id")`. **Preview**
-plays it in the editor and puts the object back afterwards.
+plays it in the editor and puts the object back afterwards. It also has the settings of the
+tween functions above that have no field of their own in the first rows: a **clock** channel and a
+curve as text for the ease, **speed based** (the duration is a speed), **decay** (how a punch or shake dies away) and a
+**tag** (so `tween_kill_tag("tag")` and its friends reach it).
 
 From C++, `okay::DOTween::Move / Scale / Rotate / PunchScale / ShakePosition /
 Jump / Path / Fade / Text ...` return a tween you can chain:
@@ -638,7 +754,7 @@ a basic inventory.
 
 ### Scriptable Objects (Data Assets)
 Reusable `.okaydata` files of named fields (item/enemy/level definitions,
-config). Create with **Project → New Data Asset**.
+config). Create one by right-clicking in the Project panel: **Create → Data Asset**.
 
 | Function | Effect |
 | --- | --- |
@@ -682,6 +798,8 @@ they all call the same function, so use whichever reads best to you:
 | `call_later(secs, "fn")` | `after` |
 | `repeat_every(secs, "fn")` | `every` |
 | `time_elapsed()` / `frame_time()` | `time` / `dt` / `Time.time` / `Time.deltaTime` |
+| `Time.HitStop(s, scale)` / `Time.SlowMotion(scale, s)` / `Time.RampTimeScale(target, s)` | `hit_stop` / `slow_motion` / `ramp_timescale` |
+| `Time.PushPause(r)` / `Time.PopPause(r)` / `Time.IsPausedBy(r)` | `push_pause` / `pop_pause` / `is_paused_by` |
 | `set_tint(r,g,b)` | `set_color` |
 | `set_sprite("img.png")` | `set_texture` |
 | `set_background_color(r,g,b)` | `set_bg` |
@@ -838,6 +956,62 @@ Reading a missing key, adding a key that's already there, an index outside a
 list, or changing a list or dictionary inside a `foreach` over it stops the
 callback with an error naming the line.
 
+### Lambdas, Func and Action
+
+A lambda is a small function written where it's used: `x => x * 2`,
+`(a, b) => a - b`, `() => { ... }`. Its type comes from where it goes:
+`Func<int, bool>` takes an int and gives a bool, and `Action<int>` takes an int
+and gives nothing. Lambdas can be kept in variables and fields and called later.
+
+```csharp
+class Button { public Action onClick; }
+
+class Menu : Behaviour {
+    Func<float, float> half = x => x / 2;
+    int clicks;
+
+    void Start() {
+        Button play = new Button();
+        play.onClick = () => clicks++;
+        play.onClick?.Invoke();          // nothing happens while it's null
+        play.onClick();                  // same as Invoke()
+    }
+}
+```
+
+- A lambda uses the variables around it, not copies: changes on either side show
+  on the other, even after the method that made it has returned. A variable
+  declared inside a loop (including a `foreach` variable) is a new one each time
+  round, so lambdas made in the loop each keep their own. A `for` loop's own
+  counter is one variable for the whole loop.
+- `var` can't hold a lambda (write the `Func` or `Action` type). A lambda can't
+  use `break` or `continue` to reach a loop around it.
+- A lambda made by a script that has since been destroyed stops the callback
+  with an error if it's called.
+
+### LINQ-style methods
+
+Lists and arrays have the usual query methods. Each gives a new `List` (or a
+single value) and leaves the original alone.
+
+```csharp
+List<Enemy> near = enemies.Where(e => e.distance < 10).OrderBy(e => e.distance).ToList();
+Enemy closest = enemies.OrderBy(e => e.distance).FirstOrDefault();
+int alive = enemies.Count(e => e.health > 0);
+float total = enemies.Sum(e => e.damage);
+```
+
+- `Where`, `Select`, `OrderBy`, `OrderByDescending`, `ToList` (and `ToArray`
+  for arrays).
+- `First`, `FirstOrDefault`, `Last`, `LastOrDefault`, `Any`, `All` and `Count`,
+  with or without a condition.
+- `Sum`, `Min`, `Max` and `Average`, of the numbers or of what a lambda picks.
+- On a `List` only: `Find`, `FindAll`, `FindIndex`, `Exists`, `RemoveAll`,
+  `ForEach`, and `Sort((a, b) => a.score - b.score)`.
+- `First`, `Last`, `Min`, `Max` and `Average` of an empty list stop the callback
+  with an error (use the `OrDefault` forms when it may be empty). An int `Sum`
+  too big for an int is an error, not a wrong number.
+
 ### do / while
 
 `do { ... } while (condition);` runs the body once before it checks.
@@ -915,7 +1089,6 @@ foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to f
 
 ## Other backends
 
-OkayScript is the default, but the engine also supports **Lua** and **C#**
-backends when built with `-DOKAY_WITH_LUA=ON` / `-DOKAY_WITH_CSHARP=ON`, and a
+OkayScript is the engine's text scripting language, alongside a
 node-based **visual scripting** graph (see [visual_scripting.md](visual_scripting.md)).
 Scripts can be edited in the in-engine Script Editor panel or in an external IDE.

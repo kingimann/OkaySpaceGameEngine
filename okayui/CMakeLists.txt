@@ -17,7 +17,7 @@ endif()
 
 # The Direct3D 11 backend (src/OkayUI_D3D11.cpp) is guarded by #if defined(_WIN32),
 # so it compiles to nothing off Windows and never affects the Linux/SDL build.
-add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp)
+add_library(okay_ui STATIC src/OkayUI.cpp src/OkayUI_FontAtlas.cpp src/OkayUI_D3D11.cpp src/OkayUICodeEdit.cpp src/OkayUIDock.cpp src/OkayUIDockLayout.cpp src/OkayUIColor.cpp src/OkayUIPlots.cpp src/OkayUIText.cpp)
 target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
@@ -44,6 +44,13 @@ if(WIN32)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
+# Backend check tools: write the render-test scenes as draw data plus the software reference picture, and (Windows, or Wine) draw
+# them with the Direct3D 11 backend and compare. See docs/own_ui_toolkit.md, the render interface section.
+if(WIN32)
+    add_executable(okayui_render_d3d11_check tools/okayui_render_d3d11_check.cpp)
+    target_link_libraries(okayui_render_d3d11_check PRIVATE okay_ui_render d3d11)
+endif()
+
 # ---- Headless harness: software backend, tests, demo ---------------------------------------
 # OkayUI's draw list (OkayUI::GetDrawData) rasterised on the CPU into an RGBA bitmap, so the toolkit
 # is tested with no window, GPU or display: behaviour tests (synthetic mouse, keys and text fed to
@@ -54,22 +61,36 @@ add_library(okay_ui_soft STATIC soft/OkayUI_Soft.cpp soft/OkayUI_SoftPainter.cpp
 target_include_directories(okay_ui_soft PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/soft)
 target_link_libraries(okay_ui_soft PUBLIC okay_ui)
 
+# ---- Render interface and backends (OkayUIRender.hpp): own code, off by default, wired into nothing ----------------------
+# One interface from OkayUI's draw data to a backend, a validator for it, and the backends: software (the reference),
+# okay::platform::Painter, OpenGL 3.3 core / ES 3.0 (entry points through a get-proc function, no link-time GL), Direct3D 11
+# (Windows). The editor and launcher still draw through Dear ImGui; nothing links this yet except its tests.
+add_library(okay_ui_render STATIC render/OkayUIRender.cpp render/OkayUIRender_Soft.cpp render/OkayUIRender_Painter.cpp
+            render/OkayUIRender_GL.cpp render/OkayUIRender_D3D11.cpp)
+target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
+
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench)
         add_executable(test_${t} tests/test_${t}.cpp)
-        target_link_libraries(test_${t} PRIVATE okay_ui_soft)
+        target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         target_compile_definitions(test_${t} PRIVATE OKAYUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
         add_test(NAME ${t} COMMAND test_${t})
         # No window, no GPU: make sure SDL never tries to open a display.
         set_tests_properties(${t} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     endforeach()
+    # The OpenGL and performance tests make a GL context with EGL through dlopen (no link-time GL).
+    target_link_libraries(test_okayui_render_gl PRIVATE ${CMAKE_DL_LIBS})
+    target_link_libraries(test_okayui_render_bench PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # Renders a window of widgets to a PNG: okayui_headless_demo [out.png] [classic|launcher]
+    add_executable(okayui_render_dump tools/okayui_render_dump.cpp)
+    target_link_libraries(okayui_render_dump PRIVATE okay_ui_render)
+    target_include_directories(okayui_render_dump PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     add_executable(okayui_headless_demo demo/okayui_headless_demo.cpp)
     target_link_libraries(okayui_headless_demo PRIVATE okay_ui_soft)
     target_include_directories(okayui_headless_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

@@ -94,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".md2"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -460,6 +460,12 @@ constexpr bool kOwnLwoDefault = true;
 constexpr bool kOwnLwoDefault = false;
 #endif
 
+#ifdef OKAY_OWN_MD2_DEFAULT
+constexpr bool kOwnMd2Default = true;
+#else
+constexpr bool kOwnMd2Default = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -477,6 +483,8 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_X3D",     "X3D",     kOwnX3dDefault},       // 13
     {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
     {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
+    {"",                 "",        false},                // 16: kept for the Blender reader (own-blend-reader branch); no extension maps here
+    {"OKAY_OWN_MD2",     "MD2",     kOwnMd2Default},       // 17
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -499,6 +507,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".x3d") return 13;
     if (e == ".dxf") return 14;
     if (e == ".lwo") return 15;
+    if (e == ".md2") return 17;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -624,8 +633,9 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 12 ? ReadAmfFile(path, out, &e1, flatten)
                   : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
                   : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
-                  : ReadLwoFile(path, out, &e1);   // 15
-        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
+                  : s == 15 ? ReadLwoFile(path, out, &e1)
+                  : ReadMd2File(path, out, &e1);   // 17
+        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B flattens itself
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;

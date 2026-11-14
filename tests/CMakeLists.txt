@@ -3040,6 +3040,28 @@ target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 
+# Batch C own readers (MD2 / MD3 / IRRMESH / B3D / DirectX .x): one test per reader on SYNTHETIC fixtures built in memory
+# (tests/batchc_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources only,
+# no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_BATCHC_FUZZ_ITERS raises the sweep).
+foreach(_fmt md2)
+    string(SUBSTRING ${_fmt} 0 1 _f0)
+    string(TOUPPER ${_f0} _F0)
+    string(SUBSTRING ${_fmt} 1 -1 _frest)
+    add_executable(test_${_fmt}_reader test_${_fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${_F0}${_frest}Reader.cpp)
+    target_include_directories(test_${_fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${_fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${_fmt}_reader COMMAND test_${_fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+add_executable(test_batchc_hostile test_batchc_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchc_hostile PROPERTIES TIMEOUT 600)
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

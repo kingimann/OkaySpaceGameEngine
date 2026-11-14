@@ -187,6 +187,12 @@ bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, Import
 /// Cameras, lights and shapes are plain empty nodes; vertex colours, extra mapping channels, other material maps and
 /// texture transforms are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
 bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MD2 (Quake II model, binary): the first frame of the vertex animation as one static part (vertices welded on
+/// position and texture coordinate, smooth normals generated, winding reversed to counter clockwise, v flipped), the
+/// first skin name as the texture. The root node turns Z-up into Y-up. Further frames (vertex animation, which the engine
+/// has no clip type for), the stored normals and the OpenGL command list are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes the skin path).
+bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -200,6 +206,7 @@ bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

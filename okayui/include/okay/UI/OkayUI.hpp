@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 // ---------------------------------------------------------------------------
 // OkayUI — a tiny immediate-mode UI toolkit that draws THROUGH SDL_Renderer, the
 // very same pipeline Dear ImGui uses in the editor. Because it shares that
@@ -400,6 +401,23 @@ bool Checkbox(const char* label, bool* value);
 bool ToggleSwitch(const char* label, bool* value);
 bool RadioButton(const char* label, int* value, int option);
 bool SliderFloat(const char* label, float* value, float minV, float maxV);
+/// SliderFlags (Dear ImGui's values). A slider with a printf-style `format` ("%.2f", "%.0f Hz", "%d%%", "-") shows the value over the groove and rounds what
+/// the mouse sets to the format's decimals; the one conversion must be f e g (floats) or d i u (ints), any other format is ignored and the
+/// plain look is kept. Slider_Logarithmic spaces [min, max] by ratio (1 to 100 puts 10 in the middle; ranges that touch or cross 0 work, the
+/// small end being the smallest step the format shows); it needs min < max. Slider_AlwaysClamp is accepted: typed and dragged values are
+/// always clamped to a range. Slider_NoInput turns off Ctrl+click typing.
+enum SliderFlags : int { Slider_None = 0, Slider_AlwaysClamp = 1 << 4, Slider_Logarithmic = 1 << 5, Slider_NoRoundToFormat = 1 << 6, Slider_NoInput = 1 << 7 };
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format, int flags = 0);
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char* format, int flags = 0);
+/// Where `v` sits in [minV, maxV] as 0..1, and the reverse: the mapping the logarithmic sliders and drags use (`decimals` sets the smallest
+/// step near zero: 10^-decimals; 3 when unsure). Linear when `logarithmic` is false. Non-finite input gives 0.
+float SliderRatioFromValue(float v, float minV, float maxV, bool logarithmic, int decimals = 3);
+float SliderValueFromRatio(float t, float minV, float maxV, bool logarithmic, int decimals = 3);
+/// `format` applied to one number the way the widgets do (a restricted printf: flags, width, precision, one conversion, "%%"). False when the
+/// format is not usable (the buffer then holds ""). `isInt` picks the integer conversions.
+bool FormatNumber(char* buf, int cap, const char* format, double v, bool isInt);
+/// Decimals a float format shows (the precision; 6 for a bare "%f"), 0 for an integer conversion, `dflt` for a format with none.
+int FormatDecimals(const char* format, int dflt);
 /// An integer slider over [minV, maxV]. Edits *value in place; true on change.
 bool SliderInt(const char* label, int* value, int minV, int maxV);
 /// A vertical slider `w`*`h` tall — drag the handle up/down over [minV, maxV].
@@ -495,8 +513,12 @@ void AlignTextToFramePadding();
 /// Drag-to-scrub a float: hold and move the cursor left/right to change *v by
 /// `speed` per pixel. If minV < maxV the value is clamped. Returns true on change.
 bool DragFloat(const char* label, float* v, float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
+/// With a format and SliderFlags (see SliderFloat). Slider_Logarithmic needs min < max and moves the value by ratio: a pixel of drag moves it by
+/// speed / (max - min) of the log scale.
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format, int flags = 0);
 /// Drag-to-scrub an int (same idea). minV < maxV clamps. Returns true on change.
 bool DragInt(const char* label, int* v, float speed = 0.25f, int minV = 0, int maxV = 0);
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char* format, int flags = 0);
 /// Two, three or four drag cells in one row that share one label (an inspector's Position / Rotation / Scale
 /// fields). Each cell scrubs like DragFloat; minV < maxV clamps every cell. True on any frame a cell changed.
 bool DragFloat2(const char* label, float v[2], float speed = 0.1f, float minV = 0.0f, float maxV = 0.0f);
@@ -700,6 +722,8 @@ enum TableFlags : int {
     Table_SortTristate = 32,  // ascending, descending, then unsorted
     Table_ScrollX      = 64,  // horizontal scrolling inside the outer size
     Table_ScrollY      = 128, // vertical scrolling inside the outer size
+    Table_Reorderable  = 256, // drag a header sideways to move the column (see the column notes above)
+    Table_Hideable     = 512, // right-click a header for a menu that shows and hides columns
 };
 enum TableColumnFlags : int {
     Col_None       = 0,
@@ -709,6 +733,9 @@ enum TableColumnFlags : int {
     Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
     Col_NoResize   = 16,      // the border on this column's right cannot be dragged
     Col_WidthStretch = 0,     // the default: `widthOrWeight` is a weight (Dear ImGui's name for it)
+    Col_NoReorder  = 32,      // this column stays where it is and others do not jump over it (Table_Reorderable)
+    Col_NoHide     = 64,      // the context menu cannot hide it (Table_Hideable)
+    Col_DefaultHide = 128,    // starts hidden (Table_Hideable), until a saved state or the user says otherwise
 };
 inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
 bool BeginTable(const char* id, int columns, TableFlags flags);
@@ -739,6 +766,24 @@ void TableSetScroll(float x, float y);
 bool TableSetColumnIndex(int column);
 int  TableGetColumnIndex();   // -1 before the first cell of a row
 int  TableGetRowIndex();      // -1 before the first row
+/// Column order and visibility (Table_Reorderable / Table_Hideable; call after the TableSetupColumn calls). Users reorder by dragging a header
+/// sideways and show or hide columns in the menu a right click on a header opens (a check box per column, "Reset order"); a column flagged
+/// Col_NoReorder stays put, Col_NoHide stays in the menu locked, and the last visible column cannot be hidden. The column NUMBER you pass to
+/// TableSetColumnIndex and the sort specs never changes: only where the column is drawn. A hidden column's cells still lay out (so ids stay
+/// stable) but draw nothing, and TableNextColumn returns true for them as before. The Set calls return false when they change nothing.
+bool TableGetColumnEnabled(int column);
+bool TableSetColumnEnabled(int column, bool enabled);
+int  TableGetColumnDisplayIndex(int column);                 // 0 is the leftmost shown position (hidden columns keep a place); -1 for a bad column
+bool TableSetColumnDisplayIndex(int column, int position);
+/// The current table's layout as text and back: column count, display order, hidden columns and widths in pixels (widths are shares:
+/// a table in a window of another size scales them to fit). SaveTableStates / LoadTableStates do the same for every table OkayUI remembers
+/// (up to 32), keyed by the table's id hash: write the text with your other settings and load it at start-up, before the tables are first
+/// drawn. A load keeps what it can: a state for another column count is refused, a broken order becomes the natural one. Table state that
+/// is loaded applies when the table next lays out.
+std::string TableSaveState();
+bool TableLoadState(const std::string& text);
+std::string SaveTableStates();
+bool LoadTableStates(const std::string& text);
 /// The row clipper is on by default (rows wholly outside the clip emit no geometry; the picture is identical); off only to compare or debug.
 void SetTableRowClipping(bool on);
 bool TableRowIsVisible();     // false while the current row is wholly outside the clip (the row clipper): its widgets still lay out but emit no geometry, so skip expensive cell content

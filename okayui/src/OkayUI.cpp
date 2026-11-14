@@ -340,8 +340,17 @@ struct TblStore {
     float rowH[kTblRows] = {};
     int sortN = 0; int sortCol[kTblSortKeys] = {}; bool sortDesc[kTblSortKeys] = {};
     bool dirty = false, inited = false;
+    // column layout the user chose (Table_Reorderable / Table_Hideable), kept with the table and saved by TableSaveState
+    int   n = 0;                          // columns the order and the hidden mask are for
+    bool  orderInit = false;
+    signed char order[16] = {};           // display order: order[d] is the column shown d-th
+    unsigned hidden = 0;                  // bit i: column i is hidden
+    float lastW[16] = {};                 // widths as of the last frame (what a save writes)
+    bool  hasPendW = false; float pendW[16] = {};   // widths loaded from text, applied once when the table next lays out
+    unsigned prevHidden = 0; bool prevValid = false;   // the hidden mask of the last layout: a column that just came back gets an average width
+    float pressX = 0.0f; bool moved = false;        // a header press that may turn into a column drag
 };
-TblStore g_tstore[8];
+TblStore g_tstore[32];
 TblStore* tblStoreFor(int id) {
     TblStore* free = nullptr; TblStore* oldest = &g_tstore[0];
     for (TblStore& t : g_tstore) {
@@ -382,6 +391,9 @@ struct TableState {
     float rowBgH = 0;                     // height of the band the current row's background got
     bool  rowCulled = false;              // the current row is wholly outside the visible clip: its geometry is skipped (the row clipper)
     LayoutState saved;                    // the parent layout, restored by EndTable of a scrolling box
+    int   order[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};   // display order (columns by position)
+    int   dpos[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};    // display position of each column
+    unsigned hidden = 0;                  // hidden columns (bit per column)
 };
 TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
@@ -1269,7 +1281,127 @@ bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label,
     return changed;
 }
 
+namespace {
+double lgEps(int decimals) { if (decimals < 0) decimals = 3; if (decimals > 9) decimals = 9; return std::pow(0.1, decimals); }
+double clampd(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// Position of v (>= 0 here) in [a, b] (0 < a < b) on a logarithmic scale.
+double posRatio(double v, double a, double b) { return v <= a ? 0.0 : (v >= b ? 1.0 : std::log(v / a) / std::log(b / a)); }
+double posValue(double t, double a, double b) { return t <= 0.0 ? a : (t >= 1.0 ? b : a * std::pow(b / a, t)); }
+} // namespace
+
+float SliderRatioFromValue(float v, float minV, float maxV, bool logarithmic, int decimals) {
+    if (!std::isfinite(v) || !std::isfinite(minV) || !std::isfinite(maxV) || minV == maxV) return 0.0f;
+    const bool flipped = maxV < minV;
+    double mn = flipped ? maxV : minV, mx = flipped ? minV : maxV;
+    const double vc = clampd(v, mn, mx);
+    double t;
+    const double eps = lgEps(decimals);
+    if (!logarithmic) t = (vc - mn) / (mx - mn);
+    else if (mn >= 0.0) {                       // 0 .. +: the low end is the smallest step a value can have
+        const double a = std::max(mn, eps), b = std::max(mx, eps * 2.0);
+        t = posRatio(std::max(vc, 0.0), a, b);
+    } else if (mx <= 0.0) {                     // - .. 0: the mirror image
+        const double a = std::max(-mx, eps), b = std::max(-mn, eps * 2.0);
+        t = 1.0 - posRatio(std::max(-vc, 0.0), a, b);
+    } else {                                    // crosses zero: each side is logarithmic, zero sits where the range puts it
+        const double zc = -mn / (mx - mn);
+        if (std::fabs(vc) <= eps || mx <= eps || -mn <= eps) t = (std::fabs(vc) <= eps) ? zc : (vc - mn) / (mx - mn);
+        else if (vc > 0.0) t = zc + (1.0 - zc) * posRatio(vc, eps, mx);
+        else t = zc - zc * posRatio(-vc, eps, -mn);
+    }
+    t = clampd(t, 0.0, 1.0);
+    return (float)(flipped ? 1.0 - t : t);
+}
+
+float SliderValueFromRatio(float t, float minV, float maxV, bool logarithmic, int decimals) {
+    if (!std::isfinite(minV) || !std::isfinite(maxV)) return 0.0f;
+    if (!std::isfinite(t)) t = 0.0f;
+    const bool flipped = maxV < minV;
+    double mn = flipped ? maxV : minV, mx = flipped ? minV : maxV;
+    double r = clampd(flipped ? 1.0 - (double)t : (double)t, 0.0, 1.0);
+    const double eps = lgEps(decimals);
+    double v;
+    if (r <= 0.0) v = mn;
+    else if (r >= 1.0) v = mx;
+    else if (!logarithmic) v = mn + r * (mx - mn);
+    else if (mn >= 0.0) v = posValue(r, std::max(mn, eps), std::max(mx, eps * 2.0));
+    else if (mx <= 0.0) v = -posValue(1.0 - r, std::max(-mx, eps), std::max(-mn, eps * 2.0));
+    else {
+        const double zc = -mn / (mx - mn);
+        if (mx <= eps || -mn <= eps) v = mn + r * (mx - mn);
+        else if (r > zc) v = r - zc < 1e-12 ? 0.0 : posValue((r - zc) / (1.0 - zc), eps, mx);
+        else if (r < zc) v = -posValue((zc - r) / zc, eps, -mn);
+        else v = 0.0;
+    }
+    return (float)clampd(v, mn, mx);
+}
+
+bool FormatNumber(char* buf, int cap, const char* format, double v, bool isInt) {
+    if (!buf || cap < 1) return false;
+    buf[0] = 0;
+    if (!format) return false;
+    std::string out; int convs = 0;
+    for (const char* p = format; *p;) {
+        if (*p != '%') { out += *p++; continue; }
+        ++p;
+        if (*p == '%') { out += '%'; ++p; continue; }
+        std::string spec = "%";
+        int nflags = 0;
+        while (*p && std::strchr("-+ #0", *p) && nflags < 5) { spec += *p++; ++nflags; }
+        int wd = 0; while (*p >= '0' && *p <= '9' && wd < 3) { spec += *p++; ++wd; }
+        if (*p == '.') { spec += *p++; int pd = 0; while (*p >= '0' && *p <= '9' && pd < 2) { spec += *p++; ++pd; } }
+        while (*p == 'l' || *p == 'h') ++p;                       // length modifiers are ignored: the value is a double / long long here
+        const char c = *p;
+        if (!c || ++convs > 1) return false;
+        ++p;
+        char tmp[128];
+        if (isInt) {
+            if (c != 'd' && c != 'i' && c != 'u') return false;
+            spec += "lld";
+            const double r = std::floor(v + 0.5);
+            std::snprintf(tmp, sizeof tmp, spec.c_str(), (long long)clampd(r, -9.0e18, 9.0e18));
+        } else {
+            if (!std::strchr("fFeEgG", c)) return false;
+            spec += c;
+            std::snprintf(tmp, sizeof tmp, spec.c_str(), v);
+        }
+        out += tmp;
+    }
+    std::snprintf(buf, (size_t)cap, "%s", out.c_str());
+    return true;
+}
+
+int FormatDecimals(const char* format, int dflt) {
+    if (!format) return dflt;
+    for (const char* p = format; *p; ++p) {
+        if (*p != '%') continue;
+        ++p;
+        if (*p == '%') continue;
+        while (*p && std::strchr("-+ #0123456789", *p)) ++p;
+        int prec = -1;
+        if (*p == '.') { ++p; prec = 0; while (*p >= '0' && *p <= '9') { if (prec < 100) prec = prec * 10 + (*p - '0'); ++p; } }
+        while (*p == 'l' || *p == 'h') ++p;
+        if (*p == 'f' || *p == 'F' || *p == 'e' || *p == 'E' || *p == 'g' || *p == 'G') return prec < 0 ? 6 : std::min(prec, 9);
+        return 0;   // an integer conversion
+    }
+    return dflt;
+}
+
+namespace {
+float roundDecimals(float v, int decimals) {
+    if (decimals < 0 || decimals > 9 || !std::isfinite(v)) return v;
+    const double k = std::pow(10.0, decimals);
+    return (float)(std::floor((double)v * k + 0.5) / k);
+}
+// The slider body: linear or logarithmic mapping, an optional rounding of what is set to `decimals` places.
+bool sliderCore(int id, float x, float y, float w, float h, float* value, float minV, float maxV, bool logarithmic, int decimals, int roundTo);
+} // namespace
+
 bool Slider(int id, float x, float y, float w, float h, float* value, float minV, float maxV) {
+    return sliderCore(id, x, y, w, h, value, minV, maxV, false, 3, -1);
+}
+namespace {
+bool sliderCore(int id, float x, float y, float w, float h, float* value, float minV, float maxV, bool logarithmic, int decimals, int roundTo) {
     if (!value || w <= 0.0f || maxV <= minV) return false;
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -1277,7 +1409,8 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
     bool changed = false;
     auto setFromMouse = [&]() {
         const float t  = clamp01((g_in.mouseX - x) / w);
-        const float nv = minV + t * (maxV - minV);
+        float nv = logarithmic ? SliderValueFromRatio(t, minV, maxV, true, decimals) : minV + t * (maxV - minV);
+        if (roundTo >= 0) nv = std::max(minV, std::min(maxV, roundDecimals(nv, roundTo)));
         if (nv != *value) { *value = nv; changed = true; }
     };
     if (g_active == id) {
@@ -1289,7 +1422,7 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
     }
 
     // Rounded groove, then the filled portion, then a circular handle.
-    const float t = clamp01((*value - minV) / (maxV - minV));
+    const float t = logarithmic ? SliderRatioFromValue(*value, minV, maxV, true, decimals) : clamp01((*value - minV) / (maxV - minV));
     if (g_look) {   // thin field-coloured groove, accent fill, white knob
         const float gy2 = y + h * 0.5f - 2.5f;
         rrect(x, gy2, w, 5.0f, 2.5f, g_theme.field);
@@ -1316,6 +1449,7 @@ bool Slider(int id, float x, float y, float w, float h, float* value, float minV
     fillCircle(hcx, y + h * 0.5f, hr - 1.5f, hc);
     return changed;
 }
+} // namespace
 
 void ProgressBar(float x, float y, float w, float h, float t) {
     t = clamp01(t);
@@ -2939,43 +3073,60 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 } // namespace
 
 namespace {
-bool SliderFloat_unmarked(const char* label, float* value, float minV, float maxV) {
+// The slider widgets. With no format and no flags they are exactly the plain sliders; a format ("%.2f", "%.0f Hz", "%d%%") also shows the value
+// over the groove and rounds what the mouse sets to the format's decimals (unless Slider_NoRoundToFormat); Slider_Logarithmic spaces the
+// range by ratio (see SliderRatioFromValue); Slider_NoInput turns off Ctrl+click typing. A format OkayUI cannot use (two conversions, %s) is
+// ignored and the plain look is kept.
+bool SliderFloatEx(const char* label, float* value, float minV, float maxV, const char* format, int flags, bool isInt) {
     if (!g_lay.active || !value) return false;
+    char shown[64]; const bool showValue = format && FormatNumber(shown, (int)sizeof shown, format, 0.0, isInt);
     const float h = rowH();
     const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
-    {   // Ctrl+click: type a number
+    const bool log = (flags & Slider_Logarithmic) && std::isfinite(minV) && std::isfinite(maxV) && minV < maxV;
+    const int decimals = isInt ? 0 : (showValue ? FormatDecimals(format, 3) : 3);
+    const int roundTo = (showValue && !(flags & Slider_NoRoundToFormat) && !isInt) ? decimals : -1;
+    if (!(flags & Slider_NoInput)) {   // Ctrl+click: type a number
         double typed = 0.0;
-        const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, false, (double)minV, (double)maxV, &typed);
+        const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, isInt, (double)minV, (double)maxV, &typed);
         if (e != 0) {
             if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
-            if (e == 2 && (float)typed != *value) { *value = (float)typed; return true; }
+            if (e == 2) { const float nv = roundTo >= 0 ? roundDecimals((float)typed, roundTo) : (float)typed; if (nv != *value) { *value = nv; return true; } }
             return false;
         }
     }
-    const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
+    const bool ch = sliderCore(hashLabel(label), x, y, ctrlW, h, value, minV, maxV, log, decimals, roundTo);
+    if (showValue) {
+        FormatNumber(shown, (int)sizeof shown, format, (double)*value, isInt);
+        const float tw = labelW(shown);
+        drawText(x + (ctrlW - tw) * 0.5f, y + (h - textH()) * 0.5f, shown, g_theme.textScale, g_theme.text);
+    }
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
     return ch;
 }
+bool SliderFloat_unmarked(const char* label, float* value, float minV, float maxV) { return SliderFloatEx(label, value, minV, maxV, nullptr, 0, false); }
 } // namespace
 bool SliderFloat(const char* label, float* value, float minV, float maxV) { const bool ch = SliderFloat_unmarked(label, value, minV, maxV); if (ch) noteEdit(g_lastId); return ch; }
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* format, int flags) { const bool ch = SliderFloatEx(label, value, minV, maxV, format, flags, false); if (ch) noteEdit(g_lastId); return ch; }
 
 namespace {
-bool SliderInt_unmarked(const char* label, int* value, int minV, int maxV) {
+bool SliderIntEx(const char* label, int* value, int minV, int maxV, const char* format, int flags) {
     if (!g_lay.active || !value) return false;
     float f = (float)*value;
-    // Reuse the float slider, then snap to the nearest integer.
-    bool ch = SliderFloat(label, &f, (float)minV, (float)maxV);
+    // Reuse the float slider (rounding to whole numbers), then snap to the nearest integer.
+    const bool ch = SliderFloatEx(label, &f, (float)minV, (float)maxV, format, flags, true);
     int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
     if (iv < minV) iv = minV;
     if (iv > maxV) iv = maxV;
     if (iv != *value) { *value = iv; return true; }
     return ch && false;   // value unchanged after snapping
 }
+bool SliderInt_unmarked(const char* label, int* value, int minV, int maxV) { return SliderIntEx(label, value, minV, maxV, nullptr, 0); }
 } // namespace
 bool SliderInt(const char* label, int* value, int minV, int maxV) { const bool ch = SliderInt_unmarked(label, value, minV, maxV); if (ch) noteEdit(g_lastId); return ch; }
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char* format, int flags) { const bool ch = SliderIntEx(label, value, minV, maxV, format, flags); if (ch) noteEdit(g_lastId); return ch; }
 
 bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
@@ -3385,7 +3536,11 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
 } // namespace
 
 namespace {
-bool DragFloat_unmarked(const char* label, float* v, float speed, float minV, float maxV) {
+// The drag widgets. A format shows the value in that form and rounds what a drag sets to its decimals (not with Slider_NoRoundToFormat);
+// Slider_Logarithmic (with min < max) moves the value by ratio: a pixel of drag changes the position on the log scale by speed / (max - min),
+// so a value near the small end moves in small steps and one near the big end in big ones. Slider_AlwaysClamp is what a range already does
+// here (a drag or a typed value is always clamped when min < max), so it changes nothing.
+bool DragFloatEx(const char* label, float* v, float speed, float minV, float maxV, const char* format, int flags) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
@@ -3394,32 +3549,43 @@ bool DragFloat_unmarked(const char* label, float* v, float speed, float minV, fl
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
-    {   // Ctrl+click: type a number
+    char shown[64]; const bool useFmt = format && FormatNumber(shown, (int)sizeof shown, format, 0.0, false);
+    const bool log = (flags & Slider_Logarithmic) && std::isfinite(minV) && std::isfinite(maxV) && minV < maxV;
+    const int decimals = useFmt ? FormatDecimals(format, 3) : 3;
+    const int roundTo = (useFmt && !(flags & Slider_NoRoundToFormat)) ? decimals : -1;
+    if (!(flags & Slider_NoInput)) {   // Ctrl+click: type a number
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
             if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
-            if (e == 2 && (float)typed != *v) { *v = (float)typed; return true; }
+            if (e == 2) { const float nv = roundTo >= 0 ? roundDecimals((float)typed, roundTo) : (float)typed; if (nv != *v) { *v = nv; return true; } }
             return false;
         }
     }
     float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
     bool changed = false;
-    if (delta != 0.0f) {
-        float nv = *v + delta * speed;
+    if (delta != 0.0f && std::isfinite(delta)) {
+        float nv;
+        if (log) nv = SliderValueFromRatio(SliderRatioFromValue(*v, minV, maxV, true, decimals) + delta * speed / (maxV - minV), minV, maxV, true, decimals);
+        else nv = *v + delta * speed;
         if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-        if (nv != *v) { *v = nv; changed = true; }
+        if (roundTo >= 0) nv = roundDecimals(nv, roundTo);
+        if (log && nv == *v && roundTo >= 0) { /* a step smaller than the rounding: wait for more motion */ }
+        if (nv != *v && std::isfinite(nv)) { *v = nv; changed = true; }
     }
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f", *v);
+    char buf[64];
+    if (useFmt) FormatNumber(buf, (int)sizeof buf, format, (double)*v, false); else std::snprintf(buf, sizeof(buf), "%.3f", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return changed;
 }
+bool DragFloat_unmarked(const char* label, float* v, float speed, float minV, float maxV) { return DragFloatEx(label, v, speed, minV, maxV, nullptr, 0); }
 } // namespace
 bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) { const bool ch = DragFloat_unmarked(label, v, speed, minV, maxV); if (ch) noteEdit(g_lastId); return ch; }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format, int flags) { const bool ch = DragFloatEx(label, v, speed, minV, maxV, format, flags); if (ch) noteEdit(g_lastId); return ch; }
 
 namespace {
-bool DragInt_unmarked(const char* label, int* v, float speed, int minV, int maxV) {
+bool DragIntEx(const char* label, int* v, float speed, int minV, int maxV, const char* format, int flags) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
@@ -3428,7 +3594,9 @@ bool DragInt_unmarked(const char* label, int* v, float speed, int minV, int maxV
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
     const bool inside = hit(x, y, ctrlW, h);
-    {   // Ctrl+click: type a number
+    char shown[64]; const bool useFmt = format && FormatNumber(shown, (int)sizeof shown, format, 0.0, true);
+    const bool log = (flags & Slider_Logarithmic) && minV < maxV;
+    if (!(flags & Slider_NoInput)) {   // Ctrl+click: type a number
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, true, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
@@ -3439,23 +3607,35 @@ bool DragInt_unmarked(const char* label, int* v, float speed, int minV, int maxV
     }
     float delta; dragBox(id, x, y, ctrlW, h, inside, delta);
     bool changed = false;
-    if (delta != 0.0f) {
-        g_dragAccum += delta * speed;          // accumulate sub-unit motion
-        int step = (int)g_dragAccum;
-        if (step != 0) {
-            g_dragAccum -= (float)step;
-            int nv = *v + step;
-            if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
-            if (nv != *v) { *v = nv; changed = true; }
+    if (delta != 0.0f && std::isfinite(delta)) {
+        if (log) {   // the accumulator holds the drag in ratio space until it moves the integer
+            g_dragAccum += delta * speed / (float)((double)maxV - (double)minV);
+            const float r = SliderRatioFromValue((float)*v, (float)minV, (float)maxV, true, 0) + g_dragAccum;
+            const float f = SliderValueFromRatio(r, (float)minV, (float)maxV, true, 0);
+            int nv = (int)std::floor((double)f + 0.5);
+            nv = std::max(minV, std::min(maxV, nv));
+            if (nv != *v) { *v = nv; changed = true; g_dragAccum = 0.0f; }
+        } else {
+            g_dragAccum += delta * speed;          // accumulate sub-unit motion
+            int step = (int)g_dragAccum;
+            if (step != 0) {
+                g_dragAccum -= (float)step;
+                int nv = *v + step;
+                if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                if (nv != *v) { *v = nv; changed = true; }
+            }
         }
     }
-    char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
+    char buf[64];
+    if (useFmt) FormatNumber(buf, (int)sizeof buf, format, (double)*v, true); else std::snprintf(buf, sizeof(buf), "%d", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     return changed;
 }
+bool DragInt_unmarked(const char* label, int* v, float speed, int minV, int maxV) { return DragIntEx(label, v, speed, minV, maxV, nullptr, 0); }
 } // namespace
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV) { const bool ch = DragInt_unmarked(label, v, speed, minV, maxV); if (ch) noteEdit(g_lastId); return ch; }
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char* format, int flags) { const bool ch = DragIntEx(label, v, speed, minV, maxV, format, flags); if (ch) noteEdit(g_lastId); return ch; }
 
 namespace {
 // One row of `n` (1..4) drag cells side by side that share one label (the vector fields of an inspector:
@@ -4282,15 +4462,17 @@ void EndColumns() {
 // ---- Tables --------------------------------------------------------------------
 namespace {
 // Left edge of column `i` (sum of prior column widths from the table origin), before any scrolling.
+inline bool tblHidden(int c) { return c >= 0 && c < 16 && ((g_tbl.hidden >> c) & 1u); }
 float tblColX(int i) {
     float cx = g_tbl.x0;
-    for (int k = 0; k < i && k < g_tbl.count; ++k) cx += *g_tbl.w[k];
+    const int dp = (i >= 0 && i < g_tbl.count) ? g_tbl.dpos[i] : g_tbl.count;
+    for (int d = 0; d < dp && d < g_tbl.count; ++d) { const int k = g_tbl.order[d]; if (!tblHidden(k)) cx += *g_tbl.w[k]; }
     return cx;
 }
 inline bool tblScrolls() { return g_tbl.scrollX || g_tbl.scrollY; }
-inline bool tblColFrozen(int i) { return g_tbl.scrollX && i < g_tbl.freezeCols; }
+inline bool tblColFrozen(int i) { return g_tbl.scrollX && g_tbl.dpos[i] < g_tbl.freezeCols; }
 // Where column `i` is on the screen.
-inline float tblRealX(int i) { return tblColX(i) - ((g_tbl.scrollX && i >= g_tbl.freezeCols) ? g_tbl.sx : 0.0f); }
+inline float tblRealX(int i) { return tblColX(i) - ((g_tbl.scrollX && g_tbl.dpos[i] >= g_tbl.freezeCols) ? g_tbl.sx : 0.0f); }
 constexpr float kBarThick = 10.0f;
 
 // Clip to a part of the scrolling box: the rows band (frozen rows: the whole box height; body rows: below the frozen rows), and the
@@ -4338,6 +4520,7 @@ void tblEnterCell() {
     const float pad = 4.0f;
     const float cx = tblRealX(g_tbl.index);
     tblCellClip(g_tbl.index);
+    g_cullRow = g_tbl.rowCulled || tblHidden(g_tbl.index);   // a hidden column's cells lay out (ids stay stable) but draw nothing
     g_lay.ox = cx + pad;
     g_lay.contentW = *g_tbl.w[g_tbl.index] - 2.0f * pad;
     if (g_lay.contentW < 8.0f) g_lay.contentW = 8.0f;
@@ -4347,10 +4530,38 @@ void tblEnterCell() {
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.cy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
 }
 
+// The order and the hidden columns of a flag-style table: the saved ones (when the table is Reorderable / Hideable), else the natural order
+// with the Col_DefaultHide columns hidden. A saved state that does not fit the table (another column count, a broken order) is dropped.
+void tblInitOrder() {
+    for (int i = 0; i < 16; ++i) { g_tbl.order[i] = i; g_tbl.dpos[i] = i; }
+    g_tbl.hidden = 0;
+    TblStore* st = g_tbl.store;
+    if (!st) return;
+    const bool reorder = (g_tbl.flags & Table_Reorderable) != 0, hide = (g_tbl.flags & Table_Hideable) != 0;
+    if (!st->orderInit || st->n != g_tbl.count) {
+        st->n = g_tbl.count; st->orderInit = true; st->hidden = 0;
+        for (int i = 0; i < 16; ++i) st->order[i] = (signed char)i;
+        for (int i = 0; i < g_tbl.nSetup && i < g_tbl.count; ++i) if (g_tbl.sFlags[i] & Col_DefaultHide) st->hidden |= 1u << i;
+    }
+    if (reorder) {
+        bool seen[16] = {false}; bool ok = true;
+        for (int d = 0; d < g_tbl.count; ++d) { const int c = st->order[d]; if (c < 0 || c >= g_tbl.count || seen[c]) { ok = false; break; } seen[c] = true; }
+        if (!ok) for (int i = 0; i < 16; ++i) st->order[i] = (signed char)i;
+        for (int d = 0; d < g_tbl.count; ++d) { g_tbl.order[d] = st->order[d]; g_tbl.dpos[st->order[d]] = d; }
+    }
+    if (hide) {
+        unsigned h = st->hidden & ((g_tbl.count >= 16) ? 0xFFFFu : ((1u << g_tbl.count) - 1u));
+        for (int i = 0; i < g_tbl.nSetup && i < g_tbl.count; ++i) if (g_tbl.sFlags[i] & Col_NoHide) h &= ~(1u << i);
+        const unsigned all = (g_tbl.count >= 16) ? 0xFFFFu : ((1u << g_tbl.count) - 1u);
+        if ((h & all) == all) h = 0;   // never hide every column
+        st->hidden = h; g_tbl.hidden = h;
+    }
+}
 // Size the columns of a flag-style table from its TableSetupColumn calls: fixed columns take their pixel width, the rest share what is left by weight.
 void tblFinishSetup() {
     if (g_tbl.setupDone) return;
     g_tbl.setupDone = true;
+    tblInitOrder();
     const float avail = g_tbl.scrollX && g_tbl.innerWidth > 0.0f ? g_tbl.innerWidth : g_tbl.fullW;
     float fixed = 0.0f, wsum = 0.0f; int nstretch = 0;
     for (int i = 0; i < g_tbl.count; ++i) {
@@ -4364,18 +4575,31 @@ void tblFinishSetup() {
         if (i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_WidthFixed) && g_tbl.sVal[i] > 0.0f) seed = g_tbl.sVal[i];
         else seed = rest * ((i < g_tbl.nSetup && g_tbl.sVal[i] > 0.0f) ? g_tbl.sVal[i] : 1.0f) / (wsum > 0.0f ? wsum : 1.0f);
         g_tbl.w[i] = floatState(g_tbl.id ^ (0x7100 + i), seed);
+        if (g_tbl.store && g_tbl.store->hasPendW && std::isfinite(g_tbl.store->pendW[i]) && g_tbl.store->pendW[i] >= 12.0f) *g_tbl.w[i] = g_tbl.store->pendW[i];   // widths loaded from a saved state
         if (*g_tbl.w[i] < 12.0f) *g_tbl.w[i] = 12.0f;
-        sum += *g_tbl.w[i];
+        if (!tblHidden(i)) sum += *g_tbl.w[i];
+    }
+    if (g_tbl.store) {
+        TblStore& st = *g_tbl.store;
+        st.hasPendW = false;
+        const unsigned all = (g_tbl.count >= 16) ? 0xFFFFu : ((1u << g_tbl.count) - 1u);
+        const unsigned back = st.prevValid ? (st.prevHidden & ~g_tbl.hidden & all) : 0u;
+        if (back) {   // a column shown again takes the average width of the others, so hiding and showing a column leaves the shares as they were
+            float tot = 0.0f; int n = 0;
+            for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i) && !((back >> i) & 1u)) { tot += *g_tbl.w[i]; ++n; }
+            if (n > 0) { const float avg = tot / (float)n; for (int i = 0; i < g_tbl.count; ++i) if ((back >> i) & 1u) { const float was = *g_tbl.w[i]; *g_tbl.w[i] = std::max(12.0f, avg); sum += *g_tbl.w[i] - was; } }
+        }
+        st.prevHidden = g_tbl.hidden; st.prevValid = true;
     }
     if (g_tbl.scrollX) {   // a box that scrolls sideways keeps its column widths
         g_tbl.contentW = sum;
         g_tbl.needH = sum > g_tbl.viewW + 0.5f;
         g_tbl.fullW = sum;
         g_tbl.frozenW = 0.0f;
-        for (int i = 0; i < g_tbl.freezeCols && i < g_tbl.count; ++i) g_tbl.frozenW += *g_tbl.w[i];
+        for (int d = 0; d < g_tbl.freezeCols && d < g_tbl.count; ++d) if (!tblHidden(g_tbl.order[d])) g_tbl.frozenW += *g_tbl.w[g_tbl.order[d]];
         if (g_tbl.frozenW > g_tbl.viewW * 0.9f) g_tbl.frozenW = 0.0f, g_tbl.freezeCols = 0;   // frozen columns that fill the box would leave nothing to scroll
     } else if (sum > 0.0f) {
-        const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) *g_tbl.w[i] *= f;
+        const float f = g_tbl.fullW / sum; for (int i = 0; i < g_tbl.count; ++i) if (!tblHidden(i)) *g_tbl.w[i] *= f;
     }
     // the sort keys: the DefaultSort columns the first time the table is seen
     if ((g_tbl.flags & Table_Sortable) && g_tbl.store && !g_tbl.store->inited) {
@@ -4407,6 +4631,69 @@ void tblSortClick(int col) {
     } else { t.sortN = 1; t.sortCol[0] = col; t.sortDesc[0] = pref; }
     t.dirty = true;
 }
+// Dragging a header sideways (Table_Reorderable): once the pointer has moved a few pixels the column swaps places with the visible
+// neighbour whose middle it has passed. A Col_NoReorder column neither moves nor is jumped over, and a column does not cross the
+// frozen-columns boundary. The new order is stored at once and used from the next layout.
+void tblHeaderReorder(float rowY, float hh) {
+    (void)hh; (void)rowY;
+    TblStore* st = g_tbl.store;
+    if (!st || !(g_tbl.flags & Table_Reorderable)) return;
+    for (int c = 0; c < g_tbl.count; ++c) {
+        if (g_active != (g_tbl.id ^ (0x7c00 + c)) || !g_in.mouseDown) continue;
+        if (c < g_tbl.nSetup && (g_tbl.sFlags[c] & Col_NoReorder)) return;   // a pinned column does not move
+        if (!st->moved && std::fabs(g_in.mouseX - st->pressX) > 4.0f) st->moved = true;
+        if (!st->moved) return;
+        int d = g_tbl.dpos[c];
+        auto frozenSide = [&](int pos) { return g_tbl.scrollX && g_tbl.freezeCols > 0 ? (pos < g_tbl.freezeCols ? 0 : 1) : 0; };
+        auto pinned = [&](int o) { return o < g_tbl.nSetup && (g_tbl.sFlags[o] & Col_NoReorder); };
+        int nd = -1;
+        for (int e = d - 1; e >= 0; --e) if (!tblHidden(g_tbl.order[e])) { nd = e; break; }   // the previous visible column
+        if (nd >= 0) {
+            const int o = g_tbl.order[nd];
+            if (g_in.mouseX < tblRealX(o) + *g_tbl.w[o] * 0.5f && !pinned(o) && frozenSide(nd) == frozenSide(d)) { std::swap(g_tbl.order[d], g_tbl.order[nd]); d = nd; nd = -2; }
+        }
+        if (nd != -2) {
+            nd = -1;
+            for (int e = d + 1; e < g_tbl.count; ++e) if (!tblHidden(g_tbl.order[e])) { nd = e; break; }   // the next visible column
+            if (nd >= 0) {
+                const int o = g_tbl.order[nd];
+                if (g_in.mouseX > tblRealX(o) + *g_tbl.w[o] * 0.5f && !pinned(o) && frozenSide(nd) == frozenSide(d)) std::swap(g_tbl.order[d], g_tbl.order[nd]);
+            }
+        }
+        for (int e = 0; e < g_tbl.count; ++e) { g_tbl.dpos[g_tbl.order[e]] = e; st->order[e] = (signed char)g_tbl.order[e]; }
+        return;
+    }
+}
+// The header's right-click menu (Table_Hideable / Table_Reorderable): a check box per column, and "Reset order".
+void tblHeaderMenu(float rowY, float hh) {
+    TblStore* st = g_tbl.store;
+    if (!st || !(g_tbl.flags & (Table_Hideable | Table_Reorderable))) return;
+    char pid[32]; std::snprintf(pid, sizeof pid, "##tblhdr%x", (unsigned)g_tbl.id);
+    const float fullL = g_tbl.scrollX ? g_tbl.ox : g_tbl.x0, fullW2 = g_tbl.scrollX ? g_tbl.viewW : g_tbl.fullW;
+    if (g_rReleased && !g_in.blocked && hit(fullL, rowY, fullW2, hh)) OpenPopup(pid);
+    if (!BeginPopup(pid)) return;
+    const unsigned all = (g_tbl.count >= 16) ? 0xFFFFu : ((1u << g_tbl.count) - 1u);
+    for (int d = 0; d < g_tbl.count; ++d) {
+        const int c = g_tbl.order[d];
+        if (!(g_tbl.flags & Table_Hideable)) break;
+        const bool noHide = c < g_tbl.nSetup && (g_tbl.sFlags[c] & Col_NoHide);
+        const bool lastOne = !tblHidden(c) && ((g_tbl.hidden | (1u << c)) & all) == all;   // hiding it would leave no column
+        bool shown = !tblHidden(c);
+        const char* lbl = (c < g_tbl.nSetup && g_tbl.sLabel[c] && g_tbl.sLabel[c][0]) ? g_tbl.sLabel[c] : "(column)";
+        PushID(c);
+        if (noHide || lastOne) { BeginDisabled(true); Checkbox(lbl, &shown); EndDisabled(); }
+        else if (Checkbox(lbl, &shown)) { if (shown) g_tbl.hidden &= ~(1u << c); else g_tbl.hidden |= 1u << c; st->hidden = g_tbl.hidden; }
+        PopID();
+    }
+    if (g_tbl.flags & Table_Reorderable) {
+        if ((g_tbl.flags & Table_Hideable)) Separator();
+        if (Selectable("Reset order", false)) {
+            for (int e = 0; e < 16; ++e) { g_tbl.order[e] = e; g_tbl.dpos[e] = e; st->order[e] = (signed char)e; }
+            CloseCurrentPopup();
+        }
+    }
+    EndPopup();
+}
 // The header bar with bold column labels (and sort arrows); moves the row cursor below it.
 void tblDrawHeader(const char* const* labels, bool interactive) {
     const float hh = rowH();
@@ -4417,18 +4704,27 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
     if (g_look) quad(fullL, rowY + hh - 1.0f, fullW2, 1.0f, pick(Col_TableBorderStrong, g_theme.border));   // hairline under dim headers
     else quad(fullL, rowY, fullW2, hh, pick(Col_TableHeaderBg, g_theme.bgDown));
     const Font* prevF = g_font; g_font = &kFontBold;
-    for (int i = 0; i < g_tbl.count; ++i) {
+    if (interactive) tblHeaderReorder(rowY, hh);
+    int lastVisible = -1;
+    for (int d = 0; d < g_tbl.count; ++d) if (!tblHidden(g_tbl.order[d])) lastVisible = g_tbl.order[d];
+    for (int d = 0; d < g_tbl.count; ++d) {
+        const int i = g_tbl.order[d];
+        if (tblHidden(i)) continue;
         const float cx = tblRealX(i), cw = *g_tbl.w[i];
         if (tblScrolls()) tblSetClip(true, tblColFrozen(i) ? 0 : 1);
         const bool sortable = interactive && (g_tbl.flags & Table_Sortable) && g_tbl.store && i < g_tbl.nSetup && !(g_tbl.sFlags[i] & Col_NoSort);
+        const bool movable = interactive && (g_tbl.flags & Table_Reorderable) && g_tbl.store && !(i < g_tbl.nSetup && (g_tbl.sFlags[i] & Col_NoReorder));
         bool hot = false, down = false;
-        if (sortable) {
+        if (sortable || movable) {
             const int hid = g_tbl.id ^ (0x7c00 + i);
-            const float hitW = cw - (i + 1 < g_tbl.count ? 4.0f : 0.0f);      // the border's resize handle keeps its few pixels
+            const float hitW = cw - (i != lastVisible ? 4.0f : 0.0f);      // the border's resize handle keeps its few pixels
             hot = hit(cx, rowY, hitW, hh);
             if (hot) g_hot = hid;
-            if (g_active == hid) { if (g_released) { if (hot) tblSortClick(i); g_active = 0; } else down = true; }
-            else if (hot && g_pressed) { g_active = hid; g_focusClaimed = true; down = true; }
+            if (g_active == hid) {
+                if (g_released) { if (hot && sortable && !(g_tbl.store && g_tbl.store->moved)) tblSortClick(i); g_active = 0; }
+                else down = true;
+            }
+            else if (hot && g_pressed) { g_active = hid; g_focusClaimed = true; down = true; if (g_tbl.store) { g_tbl.store->pressX = g_in.mouseX; g_tbl.store->moved = false; } }
             if (hot || down) quad(cx, rowY, cw, hh, pick(down ? Col_HeaderActive : Col_HeaderHovered, down ? g_theme.bgDown : g_theme.bgHover));
         }
         if (labels[i] && labels[i][0])
@@ -4445,6 +4741,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
     }
     g_font = prevF;
     (void)frozen;
+    if (interactive) tblHeaderMenu(rowY, hh);
     g_tbl.rowTop += hh;
     g_tbl.rowBottom = g_tbl.rowTop;
     g_tbl.rowStart = g_tbl.rowTop;
@@ -4523,8 +4820,7 @@ bool BeginTable(const char* id, int columns, TableFlags flags, Vec2 outerSize, f
     g_tbl.x0 = g_lay.ox; g_tbl.fullW = g_lay.contentW;
     g_tbl.rowTop = g_tbl.rowBottom = g_tbl.rowStart = g_tbl.headerBottom = g_tbl.topY = g_lay.cy;
     g_tbl.flags = (int)flags; g_tbl.rowIndex = -1; g_tbl.nSetup = 0; g_tbl.setupDone = false;
-    if (flags & Table_Sortable) { g_tbl.store = tblStoreFor(tid); g_tbl.store->lastFrame = g_frameCount; }
-    else if (flags & Table_RowBg) { g_tbl.store = tblStoreFor(tid); g_tbl.store->lastFrame = g_frameCount; }
+    if (flags & (Table_Sortable | Table_RowBg | Table_Reorderable | Table_Hideable)) { g_tbl.store = tblStoreFor(tid); g_tbl.store->lastFrame = g_frameCount; }
     g_tbl.scrollX = (flags & Table_ScrollX) != 0; g_tbl.scrollY = (flags & Table_ScrollY) != 0;
     if (g_tbl.scrollX || g_tbl.scrollY) {
         g_tbl.pSX = floatState(tid ^ 0x7800, 0.0f); g_tbl.pSY = floatState(tid ^ 0x7801, 0.0f);
@@ -4612,6 +4908,138 @@ bool TableSetColumnIndex(int column) {
 int TableGetColumnIndex() { return g_tbl.active ? g_tbl.index : -1; }
 int TableGetRowIndex() { return g_tbl.active ? g_tbl.rowIndex : -1; }
 
+// ---- column order and visibility (Table_Reorderable / Table_Hideable) ---------------------------------------------------------
+bool TableGetColumnEnabled(int column) {
+    if (!g_tbl.active || column < 0 || column >= g_tbl.count) return false;
+    tblFinishSetup();
+    return !tblHidden(column);
+}
+bool TableSetColumnEnabled(int column, bool enabled) {
+    if (!g_tbl.active || !g_tbl.store || !(g_tbl.flags & Table_Hideable) || column < 0 || column >= g_tbl.count) return false;
+    tblFinishSetup();
+    const unsigned all = (g_tbl.count >= 16) ? 0xFFFFu : ((1u << g_tbl.count) - 1u);
+    unsigned h = g_tbl.hidden;
+    if (enabled) h &= ~(1u << column); else h |= 1u << column;
+    if ((h & all) == all) return false;   // the last visible column stays
+    g_tbl.hidden = h; g_tbl.store->hidden = h;
+    return true;
+}
+int TableGetColumnDisplayIndex(int column) {
+    if (!g_tbl.active || column < 0 || column >= g_tbl.count) return -1;
+    tblFinishSetup();
+    return g_tbl.dpos[column];
+}
+bool TableSetColumnDisplayIndex(int column, int position) {
+    if (!g_tbl.active || !g_tbl.store || !(g_tbl.flags & Table_Reorderable) || column < 0 || column >= g_tbl.count) return false;
+    tblFinishSetup();
+    position = std::max(0, std::min(position, g_tbl.count - 1));
+    int d = g_tbl.dpos[column];
+    while (d < position) { std::swap(g_tbl.order[d], g_tbl.order[d + 1]); ++d; }
+    while (d > position) { std::swap(g_tbl.order[d], g_tbl.order[d - 1]); --d; }
+    for (int e = 0; e < g_tbl.count; ++e) { g_tbl.dpos[g_tbl.order[e]] = e; g_tbl.store->order[e] = (signed char)g_tbl.order[e]; }
+    return true;
+}
+
+namespace {
+// Table state as text: "okaytables 1", then per table "table <id> <columns>", "order ...", "hidden <mask>", "width ...".
+void tblWriteBlock(std::string& out, int id, int n, const signed char* order, unsigned hidden, const float* w) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "table %d %d\norder", id, n); out += buf;
+    for (int i = 0; i < n; ++i) { std::snprintf(buf, sizeof buf, " %d", (int)order[i]); out += buf; }
+    std::snprintf(buf, sizeof buf, "\nhidden %u\nwidth", hidden); out += buf;
+    for (int i = 0; i < n; ++i) { std::snprintf(buf, sizeof buf, " %.6g", (double)w[i]); out += buf; }
+    out += "\n";
+}
+struct TblBlock { int id = 0, n = 0; signed char order[16] = {}; unsigned hidden = 0; float w[16] = {}; bool hasW = false; };
+// Parse every table block of `text`; anything damaged is repaired (a bad order becomes the natural one, hidden bits past the columns are
+// dropped, a width that is not a finite number is left out). Returns the number of blocks; fails (-1) when it is not table text at all.
+int tblParse(const std::string& text, TblBlock* out, int cap) {
+    if (text.size() > (1u << 20) || text.compare(0, 12, "okaytables 1") != 0) return -1;
+    int nb = 0;
+    TblBlock* cur = nullptr;
+    size_t pos = text.find('\n');
+    while (pos != std::string::npos && pos + 1 < text.size()) {
+        size_t end = text.find('\n', pos + 1);
+        const std::string line = text.substr(pos + 1, end == std::string::npos ? std::string::npos : end - pos - 1);
+        pos = end;
+        const char* p = line.c_str();
+        char* e = nullptr;
+        if (std::strncmp(p, "table ", 6) == 0) {
+            if (nb >= cap) break;
+            cur = &out[nb++]; *cur = TblBlock();
+            const long id = std::strtol(p + 6, &e, 10);
+            const long n = std::strtol(e, &e, 10);
+            cur->id = (int)id; cur->n = (int)std::max(1L, std::min(n, 16L));
+            for (int i = 0; i < 16; ++i) cur->order[i] = (signed char)i;
+        } else if (cur && std::strncmp(p, "order", 5) == 0) {
+            int vals[16]; int k = 0; p += 5;
+            while (k < 16) { const long v = std::strtol(p, &e, 10); if (e == p) break; vals[k++] = (int)v; p = e; }
+            bool ok = k == cur->n; bool seen[16] = {false};
+            for (int i = 0; ok && i < k; ++i) { if (vals[i] < 0 || vals[i] >= cur->n || seen[vals[i]]) ok = false; else seen[vals[i]] = true; }
+            if (ok) for (int i = 0; i < k; ++i) cur->order[i] = (signed char)vals[i];
+        } else if (cur && std::strncmp(p, "hidden", 6) == 0) {
+            const unsigned long v = std::strtoul(p + 6, &e, 10);
+            cur->hidden = (unsigned)(v & ((cur->n >= 16) ? 0xFFFFul : ((1ul << cur->n) - 1ul)));
+        } else if (cur && std::strncmp(p, "width", 5) == 0) {
+            p += 5;
+            for (int k = 0; k < cur->n; ++k) { const double v = std::strtod(p, &e); if (e == p) break; p = e; cur->w[k] = (std::isfinite(v) && v >= 12.0 && v <= 100000.0) ? (float)v : 0.0f; cur->hasW = true; }
+        }
+    }
+    return nb;
+}
+void tblApplyBlock(TblStore& st, const TblBlock& b) {
+    st.n = b.n; st.orderInit = true; st.hidden = b.hidden;
+    for (int i = 0; i < 16; ++i) st.order[i] = b.order[i];
+    st.hasPendW = b.hasW;
+    for (int i = 0; i < 16; ++i) st.pendW[i] = b.w[i];
+}
+} // namespace
+
+std::string TableSaveState() {
+    if (!g_tbl.active || !g_tbl.store) return std::string();
+    tblFinishSetup();
+    float w[16]; signed char ord[16];
+    for (int i = 0; i < g_tbl.count; ++i) { w[i] = *g_tbl.w[i]; ord[i] = (signed char)g_tbl.order[i]; }
+    std::string out = "okaytables 1\n";
+    tblWriteBlock(out, g_tbl.id, g_tbl.count, ord, g_tbl.hidden, w);
+    return out;
+}
+bool TableLoadState(const std::string& text) {
+    if (!g_tbl.active || !g_tbl.store) return false;
+    TblBlock b[1];
+    if (tblParse(text, b, 1) < 1 || b[0].n != g_tbl.count) return false;
+    tblApplyBlock(*g_tbl.store, b[0]);
+    if (g_tbl.setupDone) {   // already laid out this frame: apply to what the rest of the frame uses
+        for (int i = 0; i < 16; ++i) { g_tbl.order[i] = i; g_tbl.dpos[i] = i; }
+        g_tbl.hidden = 0;
+        tblInitOrder();
+        if (g_tbl.store->hasPendW) for (int i = 0; i < g_tbl.count; ++i) if (g_tbl.store->pendW[i] >= 12.0f) *g_tbl.w[i] = g_tbl.store->pendW[i];
+        g_tbl.store->hasPendW = false;
+    }
+    return true;
+}
+std::string SaveTableStates() {
+    std::string out = "okaytables 1\n";
+    for (const TblStore& t : g_tstore) {
+        if (!t.used || !t.orderInit || t.n < 1) continue;
+        float w[16];
+        for (int i = 0; i < 16; ++i) w[i] = t.lastW[i] >= 12.0f ? t.lastW[i] : 100.0f;
+        tblWriteBlock(out, t.id, t.n, t.order, t.hidden, w);
+    }
+    return out;
+}
+bool LoadTableStates(const std::string& text) {
+    static TblBlock blocks[64];
+    const int nb = tblParse(text, blocks, 64);
+    if (nb < 0) return false;
+    for (int i = 0; i < nb; ++i) {
+        TblStore* st = tblStoreFor(blocks[i].id);
+        st->lastFrame = g_frameCount;
+        tblApplyBlock(*st, blocks[i]);
+    }
+    return true;
+}
+
 void TableNextRow() {
     if (!g_lay.active || !g_tbl.active) return;
     tblFinishSetup();
@@ -4656,7 +5084,7 @@ void TableSetBgColor(TableBgTarget target, Color32 color, int column) {
     const float by = g_tbl.rowTop + g_tbl.shiftY;
     if (target == TableBg_CellBg) {
         const int col = column >= 0 ? column : g_tbl.index;
-        if (col < 0 || col >= g_tbl.count) return;
+        if (col < 0 || col >= g_tbl.count || tblHidden(col)) return;
         if (tblScrolls()) tblSetClip(g_tbl.rowFrozen, tblColFrozen(col) ? 0 : 1);
         quad(tblRealX(col), by, *g_tbl.w[col], g_tbl.rowBgH, c);
     } else if (target == TableBg_RowBg0 || target == TableBg_RowBg1) {
@@ -4671,6 +5099,7 @@ void EndTable() {
     if (!g_lay.active || !g_tbl.active) return;
     g_tbl.rowCulled = false; g_cullRow = false;
     tblFinishSetup();
+    if (g_tbl.store) for (int i = 0; i < g_tbl.count; ++i) g_tbl.store->lastW[i] = *g_tbl.w[i];   // what TableSaveState writes
     tblFinishRow();
     tblRememberRow();
     const float top = g_tbl.scrollX || g_tbl.scrollY ? g_tbl.oy : g_tbl.topY, bottom = g_tbl.rowBottom;
@@ -4691,21 +5120,26 @@ void EndTable() {
         // column borders and the resize handles (clipped to the box; a frozen border stays put)
         const float bTop = g_tbl.oy, bBot = g_tbl.oy + g_tbl.oh - hbar;
         PushClipRect(g_tbl.ox, bTop, g_tbl.viewW, std::max(0.0f, bBot - bTop));
-        for (int i = 1; i < g_tbl.count; ++i) {
-            const float bx = tblColX(i) - (i > g_tbl.freezeCols || !g_tbl.scrollX ? (g_tbl.scrollX ? sx : 0.0f) : 0.0f);
-            if (g_tbl.scrollX && i > g_tbl.freezeCols && (bx < g_tbl.ox + g_tbl.frozenW || bx > g_tbl.ox + g_tbl.viewW)) continue;   // scrolled under the frozen columns or out of the box
+        for (int d = 1; d < g_tbl.count; ++d) {
+            const int i = g_tbl.order[d];
+            if (tblHidden(i)) continue;
+            int prev = -1;
+            for (int e = d - 1; e >= 0; --e) if (!tblHidden(g_tbl.order[e])) { prev = g_tbl.order[e]; break; }
+            if (prev < 0) continue;
+            const float bx = tblColX(i) - (g_tbl.dpos[i] > g_tbl.freezeCols || !g_tbl.scrollX ? (g_tbl.scrollX ? sx : 0.0f) : 0.0f);
+            if (g_tbl.scrollX && g_tbl.dpos[i] > g_tbl.freezeCols && (bx < g_tbl.ox + g_tbl.frozenW || bx > g_tbl.ox + g_tbl.viewW)) continue;   // scrolled under the frozen columns or out of the box
             quad(bx - 0.5f, bTop, 1.0f, std::min(bBot - bTop, std::max(0.0f, g_tbl.rowBottom - g_tbl.oy)), pick(Col_TableBorderStrong, g_theme.border));
             const int hid = g_tbl.id ^ (0x7b00 + i);
             const float grab = 4.0f;
-            const bool over = !(g_tbl.flags & Table_NoResize) && !(g_tbl.sFlags[i - 1] & Col_NoResize) && hit(bx - grab, bTop, grab * 2.0f, std::max(0.0f, bBot - bTop));
+            const bool over = !(g_tbl.flags & Table_NoResize) && !(g_tbl.sFlags[prev] & Col_NoResize) && hit(bx - grab, bTop, grab * 2.0f, std::max(0.0f, bBot - bTop));
             if (over) g_hot = hid;
             if (g_active == hid) {
                 if (!g_in.mouseDown) g_active = 0;
                 else {
                     float dx = g_mouseDX;
-                    float a = *g_tbl.w[i - 1] + dx, b2 = *g_tbl.w[i] - dx;
-                    if (g_tbl.scrollX) { if (a >= 20.0f) *g_tbl.w[i - 1] = a; }   // sideways boxes just grow the column
-                    else if (a >= 20.0f && b2 >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b2; }
+                    float a = *g_tbl.w[prev] + dx, b2 = *g_tbl.w[i] - dx;
+                    if (g_tbl.scrollX) { if (a >= 20.0f) *g_tbl.w[prev] = a; }   // sideways boxes just grow the column
+                    else if (a >= 20.0f && b2 >= 20.0f) { *g_tbl.w[prev] = a; *g_tbl.w[i] = b2; }
                 }
             } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
         }
@@ -4751,19 +5185,24 @@ void EndTable() {
     }
 
     // Column borders + draggable resize handles (applied next frame).
-    for (int i = 1; i < g_tbl.count; ++i) {
+    for (int d = 1; d < g_tbl.count; ++d) {
+        const int i = g_tbl.order[d];
+        if (tblHidden(i)) continue;
+        int prev = -1;
+        for (int e = d - 1; e >= 0; --e) if (!tblHidden(g_tbl.order[e])) { prev = g_tbl.order[e]; break; }
+        if (prev < 0) continue;
         float bx = tblColX(i);
         quad(bx - 0.5f, top, 1.0f, bottom - top, pick(Col_TableBorderStrong, g_theme.border));
         const int hid = g_tbl.id ^ (0x7b00 + i);
         const float grab = 4.0f;
-        const bool over = !(g_tbl.flags & Table_NoResize) && !(g_tbl.sFlags[i - 1] & Col_NoResize) && hit(bx - grab, top, grab * 2.0f, bottom - top);
+        const bool over = !(g_tbl.flags & Table_NoResize) && !(g_tbl.sFlags[prev] & Col_NoResize) && hit(bx - grab, top, grab * 2.0f, bottom - top);
         if (over) g_hot = hid;
         if (g_active == hid) {
             if (!g_in.mouseDown) g_active = 0;
             else {
                 float dx = g_mouseDX;
-                float a = *g_tbl.w[i - 1] + dx, b = *g_tbl.w[i] - dx;
-                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[i - 1] = a; *g_tbl.w[i] = b; }
+                float a = *g_tbl.w[prev] + dx, b = *g_tbl.w[i] - dx;
+                if (a >= 20.0f && b >= 20.0f) { *g_tbl.w[prev] = a; *g_tbl.w[i] = b; }
             }
         } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
     }

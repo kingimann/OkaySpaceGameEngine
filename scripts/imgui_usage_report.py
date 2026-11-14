@@ -117,7 +117,9 @@ KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "si
 def type_covered(name, idents):
     """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
     if name in ("ImVec2", "ImVec4"):
-        return "Vec2" in idents if name == "ImVec2" else False
+        return ("Vec2" if name == "ImVec2" else "Vec4") in idents
+    if name.startswith("ImDrawFlags_"):
+        return "DrawFlags_" + name[len("ImDrawFlags_"):] in idents
     if name == "ImU32":
         return "Color32" in idents
     if name in ("ImDrawList",):
@@ -131,6 +133,12 @@ def type_covered(name, idents):
         m = re.match(r"(Col|StyleVar|Cond|Dir|MouseCursor|Key)_(\w+)", base)
         if m:
             cands += [base, m.group(1) + "_" + m.group(2)]
+        m = re.match(r"((?:[A-Z][a-z0-9]*)+)Flags_(\w+)", base)
+        if m:   # CamelCase prefix words in turn: TabItemFlags_SetSelected -> Tab_SetSelected, TabItem_SetSelected
+            words = re.findall(r"[A-Z][a-z0-9]*", m.group(1))
+            cands += ["".join(words[:k]) + "_" + m.group(2) for k in range(1, len(words) + 1)]
+        if base.startswith("TableColumnFlags_"):
+            cands += ["Col_" + base[len("TableColumnFlags_"):]]
         if base.startswith("Key_"):
             cands += ["KeyId_" + base[4:]]
         return any(c in idents for c in cands)

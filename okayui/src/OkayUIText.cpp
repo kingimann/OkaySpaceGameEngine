@@ -112,6 +112,7 @@ bool InputTextMultiline(const char* label, char* buf, int cap, Vec2 size, unsign
             changed = true;
         }
     }
+    if (changed) MarkItemEdited();   // IsItemEdited / IsItemDeactivatedAfterEdit see it
     return changed;
 }
 

@@ -982,7 +982,18 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.text && in.text[0] && !ctrl) {
         std::string t = sanitize(in.text);
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
-        if (!t.empty()) { InsertText(t.c_str()); any = true; }
+        if (!t.empty()) {
+            if (overwrite_ && !readOnly_ && !HasSelection()) {   // overwrite: each typed character takes the place of the one after the caret (never a line break)
+                for (size_t i = 0; i < t.size();) {
+                    const size_t n = nextIdx(t, i) - i;
+                    const std::string& line = lines_[(size_t)caret_.line];
+                    if (caret_.col < (int)line.size()) setCaretKeep(CodePos{caret_.line, nextIdx(line, caret_.col)}, caret_);
+                    InsertText(t.substr(i, n).c_str());
+                    i += n;
+                }
+            } else InsertText(t.c_str());
+            any = true;
+        }
     }
     if (comp_.active) {   // composing: the input method owns Backspace, the arrows, Enter and Escape
         if (any) lastActivity_ = GetTime();
@@ -994,8 +1005,12 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.cut) { Cut(); any = true; }
     if (in.paste) { Paste(); any = true; }
     if (in.enter) { NewLine(); any = true; }
-    if (in.backspace) { Backspace(ctrl); any = true; }
-    if (in.del) { DeleteForward(ctrl); any = true; }
+    if (in.backspace) { if (io.keyAlt && !ctrl && !shift) Undo(); else Backspace(ctrl); any = true; }   // Alt+Backspace undoes, as in ImGuiColorTextEdit
+    if (in.del) { if (shift && !ctrl) Cut(); else DeleteForward(ctrl); any = true; }                    // Shift+Delete cuts
+    if (IsKeyPressed(KeyId_Insert, false)) {                                                           // Ctrl+Insert copies, Shift+Insert pastes, Insert toggles overwrite
+        if (ctrl && !shift) Copy(); else if (shift && !ctrl) Paste(); else if (!ctrl && !shift) overwrite_ = !overwrite_;
+        any = true;
+    }
     if (in.left) { Move(ctrl ? CodeMove_WordLeft : CodeMove_Left, shift); any = true; }
     if (in.right) { Move(ctrl ? CodeMove_WordRight : CodeMove_Right, shift); any = true; }
     if (in.up) { Move(CodeMove_Up, shift); any = true; }
@@ -1233,6 +1248,30 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         }
         flush();
         if (compHere && !insDone) { drawPreedit(); insDone = true; }
+        if (showWhitespace_) {   // spaces as dots, tabs as arrows, in a faint colour
+            const Color32 wc = ColorMulAlpha(pal_.lineNumber, 0.55f);
+            int wcol = 0;
+            for (int p = 0; p < len; p = nextIdx(s, p)) {
+                const char ch = s[(size_t)p];
+                if (ch == '\t') {
+                    const int nc = nextTab(wcol, tabSize_);
+                    const float xa = xOf(wcol) + 2.0f, xb = xOf(nc) - 2.0f, ym = y + lineH_ * 0.5f;
+                    if (xb > xa && xb >= view_.x && xa <= vend.x) {
+                        dl.AddLine(Vec2{xa, ym}, Vec2{xb, ym}, wc, 1.0f);
+                        dl.AddLine(Vec2{xb - 3.0f, ym - 3.0f}, Vec2{xb, ym}, wc, 1.0f);
+                        dl.AddLine(Vec2{xb - 3.0f, ym + 3.0f}, Vec2{xb, ym}, wc, 1.0f);
+                    }
+                    wcol = nc;
+                    continue;
+                }
+                if (ch == ' ') {
+                    const float xm = xOf(wcol) + charW_ * 0.5f;
+                    if (xm >= view_.x - 1.0f && xm <= vend.x + 1.0f) dl.AddRectFilled(Vec2{xm - 1.0f, y + lineH_ * 0.5f - 1.0f}, Vec2{xm + 1.0f, y + lineH_ * 0.5f + 1.0f}, wc);
+                }
+                ++wcol;
+                if (xOf(wcol) > vend.x) break;
+            }
+        }
         // error underlines
         for (const CodeMarker& m : markers_) {
             if (m.line != l) continue;
@@ -1264,7 +1303,10 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         if (cp.line >= first && cp.line <= last) {
             const double t = GetTime() - lastActivity_;
             const bool vis = !Style().caretBlink || t < 0.0 || std::fmod(t, 1.0) < 0.5;
-            if (vis) dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + 2.0f, cyp + lineH_ - 1.0f}, pal_.caret);
+            if (vis) {
+                if (overwrite_ && !comp_.active) dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + charW_, cyp + lineH_ - 1.0f}, ColorMulAlpha(pal_.caret, 0.6f));   // a block over the cell that typing replaces
+                else dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + 2.0f, cyp + lineH_ - 1.0f}, pal_.caret);
+            }
         }
         const float lx = std::min(std::max(cxp, view_.x), std::max(view_.x, vend.x - 2.0f));
         const float ly = std::min(std::max(cyp, view_.y), std::max(view_.y, vend.y - lineH_));

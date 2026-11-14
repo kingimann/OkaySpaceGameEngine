@@ -41,6 +41,10 @@ public:
         case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
             if (e.button.button == SDL_BUTTON_LEFT) m_leftTap = true;
             else if (e.button.button == SDL_BUTTON_RIGHT) m_rightTap = true;
+            else if (e.button.button == SDL_BUTTON_MIDDLE) { m_middleTap = true; m_middleHeld = true; }   // the middle button's state is kept here (callers pass left and right)
+            break;
+        case SDL_MOUSEBUTTONUP:
+            if (e.button.button == SDL_BUTTON_MIDDLE) m_middleHeld = false;
             break;
         case SDL_MOUSEWHEEL: {
             float y = (float)e.wheel.y;
@@ -92,7 +96,7 @@ public:
     OkayUI::Input Build(float mouseX, float mouseY, bool leftDown, bool rightDown, bool blocked, bool deliverKeys) {
         OkayUI::Input in;
         in.mouseX = mouseX; in.mouseY = mouseY;
-        in.mouseDown = leftDown || m_leftTap; in.rightDown = rightDown || m_rightTap; in.blocked = blocked;
+        in.mouseDown = leftDown || m_leftTap; in.rightDown = rightDown || m_rightTap; in.middleDown = m_middleHeld || m_middleTap; in.blocked = blocked;
         in.wheel = m_wheel;
         if (deliverKeys) {
             std::memcpy(m_out, m_text, sizeof(m_out));
@@ -107,7 +111,7 @@ public:
         m_up = m_down = m_copy = m_cut = m_paste = false;
         m_text[0] = 0;
         m_wheel = 0.0f;
-        m_leftTap = m_rightTap = false;
+        m_leftTap = m_rightTap = m_middleTap = false;
         m_back = m_del = m_left = m_right = m_home = m_end = m_enter = m_escape = m_selectAll = false;
         return in;
     }
@@ -138,7 +142,7 @@ private:
     char  m_text[64] = {0};
     char  m_out[64] = {0};
     float m_wheel = 0.0f;
-    bool  m_leftTap = false, m_rightTap = false;   // a button went down since the last frame (even if it is already up again)
+    bool  m_leftTap = false, m_rightTap = false, m_middleTap = false, m_middleHeld = false;   // a button went down since the last frame (even if it is already up again); the middle one is also tracked while held
     bool  m_back = false, m_del = false, m_left = false, m_right = false, m_home = false, m_end = false;
     bool  m_enter = false, m_escape = false, m_selectAll = false, m_shift = false;
 };

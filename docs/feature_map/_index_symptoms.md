@@ -138,6 +138,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
+| a long list is slow | [40.8](40-okayui-library.md#408-gap-step-32-calls-the-launcher-and-editor-use-that-okayui-lacked-and-the-gap-report) Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
 | a look changes in one system and not the other | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
@@ -176,6 +177,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a parent cycle is refused | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a parented object does not collide | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a party member doesn't follow the leader | [17.3](17-launcher-platform.md#173-friends-following-parties) Friends, following, parties |
+| a password shows as text | [40.8](40-okayui-library.md#408-gap-step-32-calls-the-launcher-and-editor-use-that-okayui-lacked-and-the-gap-report) Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report |
 | a pasted C# script is accepted but has no effect | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a pasted join link does nothing | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | a path ignores the road | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
@@ -193,6 +195,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a plugin panel does not appear | [24.2](20-35-planned.md#242-editor-extensions) Editor extensions |
 | a plugin panel does not draw | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
 | a point light casts no shadow | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| a ported panel needs a call OkayUI does not have | [40.8](40-okayui-library.md#408-gap-step-32-calls-the-launcher-and-editor-use-that-okayui-lacked-and-the-gap-report) Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report |
 | a pose pops at a key | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | a PR waits for a verdict | [19.3](19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) QA workflow, rig sweep test |
 | a prebuilt screen overlaps another | [12.7](12-ingame-ui.md#127-themes-and-the-launcher-matching-ui-kit) Themes and the launcher-matching UI kit |
@@ -285,6 +288,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
+| a tooltip with widgets in it does not draw | [40.8](40-okayui-library.md#408-gap-step-32-calls-the-launcher-and-editor-use-that-okayui-lacked-and-the-gap-report) Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report |
 | a trail looks flat or jagged | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | a translated text is cut off | [1.16](01-core-scene.md#116-localization-tools) Localization tools |
 | a translucent line is darker at its corners | [40.7](40-okayui-library.md#407-draw-list-cursor-item-state-and-disabled-blocks) Draw list, cursor, item state and disabled blocks |

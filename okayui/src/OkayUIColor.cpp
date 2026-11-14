@@ -229,6 +229,7 @@ bool ColorPicker4(const char* label, float rgba[4], int flags) {
     } else {
         for (int i = 0; i < 4; ++i) st.last[i] = c[i];
     }
+    if (changed) MarkItemEdited();
     return changed;
 }
 
@@ -237,6 +238,7 @@ bool ColorPicker3(const char* label, float rgb[3], int flags) {
     float c[4] = {rgb[0], rgb[1], rgb[2], 1.0f};
     const bool changed = ColorPicker4(label, c, flags | ColorEdit_NoAlpha);
     if (changed) { rgb[0] = c[0]; rgb[1] = c[1]; rgb[2] = c[2]; }
+    if (changed) MarkItemEdited();
     return changed;
 }
 

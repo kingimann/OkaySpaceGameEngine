@@ -146,3 +146,27 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
 - **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
+
+### 40.8 Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report
+- **What:** the next batch of Dear ImGui calls closed in OkayUI, picked from the ranked gap report: password and filtered text fields, edit tracking (`IsItemEdited`, `IsItemDeactivatedAfterEdit`), ImGui-style child windows with flags, hover and focus flags with delays, the middle mouse button, `GetStyle`, tooltips made of widgets, a context popup on a window, window focus and background alpha, a list clipper, rounded rectangles by flag, polygons and textured quads in the draw list, and a few overlooked helpers; plus the ranked gap report itself. Everything is off by default and not wired into the editor or launcher.
+- **Parts:**
+  - 40.8.1 Text field flags - `okayui/src/OkayUI.cpp` - `InputText_Password` (dots, no copy or cut), `InputText_CharsDecimal`, `CharsHexadecimal`, `CharsNoBlank`, `CharsUppercase`
+  - 40.8.2 Edit tracking - `okayui/src/OkayUI.cpp` - `IsItemEdited`, `IsItemDeactivatedAfterEdit`, `MarkItemEdited`
+  - 40.8.3 Child windows - `okayui/src/OkayUI.cpp` - `BeginChild(id, size, ChildFlags, windowFlags)`: borders, padding, auto height, negative sizes, no scroll bar
+  - 40.8.4 Hover, focus, mouse - `okayui/src/OkayUI.cpp` - `IsItemHovered(flags)` with delays and disabled items, `IsWindowHovered(flags)`, `IsWindowFocused(flags)`, `IsAnyItemHovered`, `Input::middleDown`, `GetMouseDragDelta`, `Shortcut`
+  - 40.8.5 Tooltips, popups, windows - `okayui/src/OkayUI.cpp` - `BeginTooltip`/`EndTooltip`, `BeginItemTooltip`, `SetItemTooltip`, `BeginPopupContextWindow`, `SetNextWindowFocus`, `SetNextWindowBgAlpha`, `SetWindowPos`, `SetWindowSize`, `GetMousePosOnOpeningCurrentPopup`
+  - 40.8.6 Lists and layout - `okayui/src/OkayUI.cpp` - `ListClipper`, `GetStyle` (read-only copy), `CalcItemWidth`, `PushMultiItemsWidths`, `GetCursorStartPos`, `GetWindowContentRegionMin`
+  - 40.8.7 Draw list additions - `okayui/src/OkayUI.cpp` - `AddRectFlags`, `AddRectFilledFlags` (per-corner rounding), `AddNgon`, `AddNgonFilled`, `AddImageRounded`, `AddImageQuad`, `DrawFlags`
+  - 40.8.8 Gap report - `scripts/okayui_gap_report.py`, `docs/okayui_gap_report.md` - every ImGui call family with call sites and a Done, Partial or Missing status with the proof file
+  - 40.8.9 CodeEdit parity - `okayui/src/OkayUICodeEdit.cpp` - overwrite mode (Insert), Ctrl+Insert, Shift+Insert, Shift+Delete, Alt+Backspace, show whitespace
+- **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUIText.cpp`, `okayui/src/OkayUIColor.cpp`, `okayui/include/okay/UI/OkayUICodeEdit.hpp`, `okayui/src/OkayUICodeEdit.cpp`, `okayui/tests/test_okayui_gaps.cpp`, `scripts/okayui_gap_report.py`, `scripts/imgui_usage_report.py`
+- **API:** `OkayUI::BeginChild(id, Vec2, ChildFlags)`, `OkayUI::IsItemDeactivatedAfterEdit`, `OkayUI::BeginTooltip`, `OkayUI::ListClipper`, `OkayUI::GetStyle`, `OkayUI::DrawList::AddRectFlags`, `OkayUI::CodeEdit::SetOverwrite`
+- **Editor:** none (library only; the editor and launcher still call Dear ImGui)
+- **Docs:** `docs/own_ui_toolkit.md` (section 4.36), `docs/okayui_gap_report.md`, `docs/own_ui_code_editor.md`
+- **Tests:** `okayui_gaps`
+- **Status:** Partial - implemented and tested headless (pixels, behaviour, edit tracking, delays); never run in a real window; the remaining gaps are in the report
+- **Open:** `DockBuilder*` (21 uses), `FindWindowByName` and the ImGui internals, arbitrary fonts and icon fonts, `Shortcut` is simple (no chords of more than one key), logarithmic sliders, column reordering and hiding, folding and multiple cursors in `CodeEdit`, the host side of IME, middle button fed by the real host
+- **Related:** 40.1, 40.7
+- **Words:** gap report, ImGui port, password field, IsItemEdited, child flags, AutoResizeY, ListClipper, BeginTooltip, BeginPopupContextWindow, rounded corners, ImDrawFlags, overwrite mode
+- **Seen as:** a ported panel needs a call OkayUI does not have; a password shows as text; a tooltip with widgets in it does not draw; a long list is slow
+- **Ask me like:** "work on 40.8, what does the launcher still need"; "read docs/okayui_gap_report.md and close the top gap"

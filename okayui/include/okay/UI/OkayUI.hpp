@@ -37,7 +37,10 @@ enum KeyId : int {
     KeyId_0, KeyId_1, KeyId_2, KeyId_3, KeyId_4, KeyId_5, KeyId_6, KeyId_7, KeyId_8, KeyId_9,
     KeyId_F1, KeyId_F2, KeyId_F3, KeyId_F4, KeyId_F5, KeyId_F6, KeyId_F7, KeyId_F8, KeyId_F9, KeyId_F10, KeyId_F11, KeyId_F12,
     KeyId_Ctrl, KeyId_Shift, KeyId_Alt,
-    KeyId_COUNT
+    KeyId_COUNT,
+    // Dear ImGui's spellings of keys OkayUI already has (the same key, so a port keeps its names).
+    KeyId_UpArrow = KeyId_Up, KeyId_DownArrow = KeyId_Down, KeyId_LeftArrow = KeyId_Left, KeyId_RightArrow = KeyId_Right,
+    KeyId_KeypadEnter = KeyId_Enter
 };
 
 struct Input;
@@ -48,6 +51,7 @@ struct Input {
     float       mouseY    = 0.0f;
     bool        mouseDown = false;     // left mouse button held this frame
     bool        rightDown = false;     // right mouse button held this frame (context menus)
+    bool        middleDown = false;    // middle mouse button held this frame (IsMouseDown(2), panning)
     bool        blocked   = false;     // another layer (e.g. ImGui) owns the mouse -> ignore clicks
     // Keyboard (for TextField). The host forwards SDL_TEXTINPUT text and key edges
     // only when OkayUI should receive them (e.g. ImGui isn't capturing the keyboard).
@@ -175,6 +179,14 @@ enum InputTextFlags {
     InputText_EnterReturnsTrue = 1,   // return true when Enter is pressed instead of on every edit
     InputText_ReadOnly         = 2,   // selection and caret work, edits are ignored
     InputText_AutoSelectAll    = 4,   // clicking into the field selects all of its text
+    InputText_Password         = 8,   // the text is shown as dots (one per byte), copy and cut are off, no input method; at most 4096 bytes
+    InputText_CharsDecimal     = 16,  // only 0-9 . + - * /
+    InputText_CharsHexadecimal = 32,  // only 0-9 a-f A-F
+    InputText_CharsNoBlank     = 64,  // no space or tab
+    InputText_CharsUppercase   = 128, // a-z is typed as A-Z
+    // Accepted by InputText so ported code compiles; they change nothing here (a single-line field has no new line or tab to give, and
+    // there is no undo in a one-line field or resize callback): CtrlEnterForNewLine, AllowTabInput, NoUndoRedo, CallbackResize.
+    InputText_CtrlEnterForNewLine = 256, InputText_AllowTabInput = 512, InputText_NoUndoRedo = 1024, InputText_CallbackResize = 2048,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -295,6 +307,13 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 /// position. `w`/`h` <= 0 fill the remaining width / use a default height. Always pair
 /// with EndChild(). Returns true (visible) — call EndChild regardless.
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
+/// The ImGui-style child: `size` x <= 0 or y <= 0 count back from the free space (0 = all of it; -20 = all but 20 px), `childFlags` are
+/// ChildFlags, `windowFlags` takes Window_NoScrollbar (no bar drawn; the wheel still scrolls). Without Child_Borders the child has no
+/// background and no padding unless Child_AlwaysUseWindowPadding. Child_AutoResizeY makes it as tall as its content was on the last
+/// frame (one text row on the first); a positive size.y is then the least it gets. Child_AutoResizeX, Child_ResizeX/Y and the
+/// other ImGui child flags are accepted and ignored. Call EndChild whatever this returns.
+enum ChildFlags : int { Child_None = 0, Child_Borders = 1, Child_AlwaysUseWindowPadding = 2, Child_ResizeX = 4, Child_ResizeY = 8, Child_AutoResizeX = 16, Child_AutoResizeY = 32 };
+bool BeginChild(const char* id, Vec2 size, int childFlags, int windowFlags = 0);
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content
 /// allowed on the last frame (0 until the region has been laid out once). Both are 0 outside a child.
@@ -369,6 +388,8 @@ void TabBar(const char* const* labels, int count, int* current);
 /// The chosen tab is remembered per bar (the first one at the start; Tab_SetSelected on a tab chooses it). Only the chosen tab's
 /// BeginTabItem returns true. If the chosen tab disappears the first one is chosen. A bar does not nest inside another bar.
 enum TabItemFlags : int { Tab_None = 0, Tab_SetSelected = 1, Tab_Trailing = 2, Tab_NoTooltip = 4 /* accepted, there are no tab tooltips */ };
+/// Tab bar flags are accepted by `BeginTabBar(id, flags)` and ignored (tabs are never reordered by the user; wide bars shrink their tabs).
+enum TabBarFlags : int { TabBar_None = 0, TabBar_Reorderable = 1, TabBar_FittingPolicyResizeDown = 2, TabBar_FittingPolicyScroll = 4 };
 bool BeginTabBar(const char* id);
 bool BeginTabItem(const char* label, bool* open = nullptr, int flags = 0);
 void EndTabItem();
@@ -508,6 +529,9 @@ bool ArrowButton(const char* id, int dir);
 enum ColorEditFlags : int {
     ColorEdit_None = 0, ColorEdit_NoAlpha = 1, ColorEdit_NoPicker = 2, ColorEdit_NoInputs = 4, ColorEdit_NoLabel = 8,
     ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
+    // Dear ImGui names a port brings along. DisplayHex is Hex; AlphaBar is what the picker does anyway (NoAlphaBar turns it off); NoTooltip,
+    // Float and AlphaPreview are accepted and change nothing.
+    ColorEdit_DisplayHex = ColorEdit_Hex, ColorEdit_AlphaBar = 256, ColorEdit_NoTooltip = 512, ColorEdit_Float = 1024, ColorEdit_AlphaPreview = 2048,
 };
 /// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
@@ -546,6 +570,8 @@ enum TreeNodeFlags {
     TreeNode_SpanFullWidth = 64,     // the row, its highlight and its click area start at the window's content edge, under the indent
     TreeNode_NoTreePushOnOpen = 128, // an open node does not indent: no TreePop() for it
     TreeNode_Framed      = 256,      // drawn with a header-style background (the Col_Header colours)
+    TreeNode_SpanAvailWidth = TreeNode_SpanFullWidth,   // Dear ImGui's name for the nearest thing (OkayUI spans from the content edge)
+    TreeNode_AllowOverlap = 512,     // accepted, does nothing
 };
 /// TreeNode with flags (TreeNodeFlags).
 bool TreeNodeEx(const char* label, unsigned flags);
@@ -681,6 +707,8 @@ enum TableColumnFlags : int {
     Col_NoSort     = 2,       // a Sortable table's header click does not sort by this column
     Col_DefaultSort = 4,      // starts as a sort key
     Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
+    Col_NoResize   = 16,      // the border on this column's right cannot be dragged
+    Col_WidthStretch = 0,     // the default: `widthOrWeight` is a weight (Dear ImGui's name for it)
 };
 inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
 bool BeginTable(const char* id, int columns, TableFlags flags);
@@ -777,7 +805,9 @@ bool IsDragging();
 /// The older int-payload DragSource / DropTarget keep working next to this and share IsDragging().
 inline constexpr int kDragPayloadMax = 256;
 struct DragPayload { char type[33] = {0}; unsigned char data[kDragPayloadMax] = {0}; int size = 0; bool delivery = false; };
-enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1 };
+enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1,
+                           // accepted and ignored: the target outline is always drawn, and a source with no id or no preview tooltip needs no flag here
+                           DragDrop_AcceptNoDrawDefaultRect = 2, DragDrop_SourceAllowNullID = 4, DragDrop_SourceNoPreviewTooltip = 8 };
 bool BeginDragDropSource(int flags = 0);
 bool SetDragDropPayload(const char* type, const void* data, int size);
 void SetDragDropPreview(const char* text);
@@ -894,6 +924,28 @@ struct DrawList {
     void PathArcTo(Vec2 center, float radius, float a0, float a1, int segments = 0) const;
     void PathStroke(Color32 col, bool closed = false, float thickness = 1.0f) const;
     void PathFillConvex(Color32 col) const;
+    /// Rectangles with per-corner rounding: `flags` is DrawFlags (RoundCorners*; 0 rounds all four corners, RoundCornersNone none).
+    /// Same rules as AddRect: the outline is drawn inside the bounds. (Named apart from AddRect so an integer flag can never be taken for a
+    /// thickness.)
+    void AddRectFlags(Vec2 min, Vec2 max, Color32 col, float rounding, int flags = 0, float thickness = 1.0f) const;
+    void AddRectFilledFlags(Vec2 min, Vec2 max, Color32 col, float rounding, int flags = 0) const;
+    /// A regular polygon with `segments` (3 to 128) corners, the first one to the right of the centre.
+    void AddNgon(Vec2 center, float radius, Color32 col, int segments, float thickness = 1.0f) const;
+    void AddNgonFilled(Vec2 center, float radius, Color32 col, int segments) const;
+    /// A texture on a rectangle with rounded corners (the texture follows the shape; main batch like AddImage; the software test
+    /// backend skips it). `rounding` 0 is AddImage.
+    void AddImageRounded(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags = 0) const;
+    /// A texture on four arbitrary corners (clockwise from the top-left; the uv are for the first and the third corner, so the picture
+    /// is a skewed rectangle).
+    void AddImageQuad(SDL_Texture* tex, Vec2 a, Vec2 b, Vec2 c, Vec2 d, Vec2 uvA = Vec2{0.0f, 0.0f}, Vec2 uvB = Vec2{1.0f, 0.0f},
+                      Vec2 uvC = Vec2{1.0f, 1.0f}, Vec2 uvD = Vec2{0.0f, 1.0f}, Color32 tint = 0xffffffffu) const;
+};
+/// Draw flags, with Dear ImGui's values for the ones that exist there. Closed is what AddPolyline's `closed` takes.
+enum DrawFlags : int {
+    DrawFlags_None = 0, DrawFlags_Closed = 1,
+    DrawFlags_RoundCornersTopLeft = 16, DrawFlags_RoundCornersTopRight = 32, DrawFlags_RoundCornersBottomLeft = 64, DrawFlags_RoundCornersBottomRight = 128,
+    DrawFlags_RoundCornersTop = 16 | 32, DrawFlags_RoundCornersBottom = 64 | 128, DrawFlags_RoundCornersLeft = 16 | 64, DrawFlags_RoundCornersRight = 32 | 128,
+    DrawFlags_RoundCornersAll = 16 | 32 | 64 | 128, DrawFlags_RoundCornersNone = 256,
 };
 const DrawList& GetWindowDrawList();
 const DrawList& GetForegroundDrawList();
@@ -997,7 +1049,7 @@ MouseCursor GetMouseCursor();
 /// the UI wants the mouse (pointer over a window or a widget is active) or the keyboard (a text field has focus), so the host knows
 /// not to also give them to the game.
 struct IO {
-    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[2] = {false, false};
+    Vec2 mousePos, mouseDelta, displaySize; float mouseWheel = 0.0f; bool mouseDown[3] = {false, false, false};
     bool keyCtrl = false, keyShift = false, keyAlt = false;
     bool wantCaptureMouse = false, wantCaptureKeyboard = false, wantTextInput = false;
     float deltaTime = 1.0f / 60.0f;
@@ -1075,5 +1127,132 @@ Vec4 ColorConvertU32ToFloat4(Color32 c);
 Color32 ColorConvertFloat4ToU32(Vec4 c);
 void ColorConvertRGBtoHSV(float r, float g, float b, float* h, float* s, float* v);
 void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b);
+
+// ---- Gap step 32: what the launcher and the editor call that OkayUI did not have ------------------------------------------------
+// Named after the Dear ImGui calls they stand in for, with OkayUI's own types (Vec2, Color32, Vec4); every difference is written at the
+// declaration. docs/okayui_gap_report.md ranks what is still missing.
+
+/// Mouse buttons for IsMouseDown / IsMouseClicked / IsMouseReleased / IsItemClicked / GetMouseDragDelta. The middle button needs
+/// Input::middleDown from the host.
+enum MouseButton : int { MouseButton_Left = 0, MouseButton_Right = 1, MouseButton_Middle = 2 };
+
+/// What the last item changed. IsItemEdited: its value changed on this very call (the widgets that return true: checkbox, radio, switch,
+/// sliders, drags, combo, colour editors, number and text fields, multi-line text). IsItemDeactivatedAfterEdit: it was edited and has now let
+/// go: a slider or drag released, a check box or combo clicked, a text field ended by Enter, Escape or a click elsewhere. Both are false
+/// for items that have no id. MarkItemEdited() is for widgets written outside OkayUI.cpp (the colour picker, CodeEdit).
+bool IsItemEdited();
+bool IsItemDeactivatedAfterEdit();
+void MarkItemEdited();
+
+/// Flags for IsItemHovered(flags), IsWindowHovered(flags). The default (0) is stricter than the flagless IsItemHovered(): it is false while
+/// another item is held (a drag). AllowWhenDisabled answers inside BeginDisabled too (for tooltips on a greyed-out button).
+/// AllowWhenBlockedByActiveItem ignores a held item. DelayShort (0.15 s) and DelayNormal (0.4 s) need the pointer to have been on the item
+/// that long. For windows, AnyWindow is "the pointer is over any window"; ChildWindows and RootWindow change nothing (a child here is part of
+/// its window). AllowWhenBlockedByPopup, AllowWhenOverlapped, Stationary and NoSharedDelay are accepted and ignored.
+enum HoveredFlags : int {
+    Hovered_None = 0, Hovered_ChildWindows = 1, Hovered_RootWindow = 2, Hovered_AnyWindow = 4, Hovered_AllowWhenBlockedByPopup = 8,
+    Hovered_AllowWhenBlockedByActiveItem = 32, Hovered_AllowWhenOverlapped = 128, Hovered_AllowWhenDisabled = 256,
+    Hovered_RootAndChildWindows = 3, Hovered_Stationary = 1 << 12, Hovered_DelayNormal = 1 << 13, Hovered_DelayShort = 1 << 14, Hovered_NoSharedDelay = 1 << 15,
+};
+enum FocusedFlags : int { Focused_None = 0, Focused_ChildWindows = 1, Focused_RootWindow = 2, Focused_AnyWindow = 4, Focused_RootAndChildWindows = 3 };
+bool IsItemHovered(int hoveredFlags);
+bool IsWindowHovered(int hoveredFlags);
+bool IsWindowFocused(int focusedFlags);
+/// The pointer is over any widget (one that registered an id, this frame, so far).
+bool IsAnyItemHovered();
+
+/// Width the next full-width item would get (a pending SetNextItemWidth / PushItemWidth, else what is left on the line).
+float CalcItemWidth();
+/// Where the content starts, relative to the window (or child): the padding and the title bar. GetWindowContentRegionMin is the same for
+/// the whole window (its top-left content corner); both ignore scrolling.
+Vec2 GetCursorStartPos();
+Vec2 GetWindowContentRegionMin();
+
+/// The style numbers a port reads (Dear ImGui's ImGuiStyle fields of these names), taken from the theme and the layout as they are now.
+/// A copy: changing it changes nothing (use PushStyleVar or Style()).
+struct StyleView {
+    Vec2 WindowPadding, FramePadding, ItemSpacing, ItemInnerSpacing;
+    float Alpha = 1.0f, ScrollbarSize = 0.0f, WindowRounding = 0.0f, FrameRounding = 0.0f, ChildRounding = 0.0f, WindowBorderSize = 1.0f, FrameBorderSize = 1.0f;
+};
+StyleView GetStyle();
+
+/// A tooltip made of widgets: `if (BeginTooltip()) { Text(...); Separator(); ...; EndTooltip(); }`. It follows the pointer (flipping to stay
+/// on screen), sits on top of everything, is as wide as its widest item (from the previous frame) and never takes input. Returns false
+/// outside a window or while the pointer belongs to another layer; call EndTooltip only when it returned true.
+bool BeginTooltip();
+void EndTooltip();
+/// BeginTooltip when the last item is hovered with DelayNormal (so the box is not a flicker).
+bool BeginItemTooltip();
+/// SetTooltip when the last item is hovered (no delay, as ImGui's SetItemTooltip).
+void SetItemTooltip(const char* fmt, ...);
+
+/// Popup flags for BeginPopupContextWindow. MouseButtonRight (1) is the default; NoOpenOverItems keeps it from opening over a widget.
+/// AnyPopupId and AnyPopupLevel are for IsPopupOpen in ImGui and are accepted here and ignored.
+enum PopupFlags : int { Popup_MouseButtonLeft = 0, Popup_MouseButtonRight = 1, Popup_MouseButtonMiddle = 2, Popup_NoOpenOverItems = 32, Popup_AnyPopupId = 128, Popup_AnyPopupLevel = 256 };
+/// Opens the popup `id` where the pointer is when the button goes up over the current window (or child), then behaves as BeginPopup.
+/// `id` null names it after the window.
+bool BeginPopupContextWindow(const char* id = nullptr, int popupFlags = Popup_MouseButtonRight);
+
+/// The next Begin takes focus and comes to the front.
+void SetNextWindowFocus();
+/// Multiply the alpha of the next window's body and its frame line (0 clear, 1 as is); the title bar and the widgets are not touched.
+void SetNextWindowBgAlpha(float alpha);
+/// Move / resize the current window (it takes effect from the next frame, like dragging it) or the named one.
+void SetWindowPos(Vec2 pos);
+void SetWindowSize(Vec2 size);
+void SetWindowPos(const char* title, Vec2 pos);
+void SetWindowSize(const char* title, Vec2 size);
+
+/// How far the pointer has moved since `button` went down, once that is more than `lockThreshold` pixels (default 4); (0, 0) before that or when the
+/// button is up. ResetMouseDragDelta makes the current position the new origin.
+Vec2 GetMouseDragDelta(int button = 0, float lockThreshold = -1.0f);
+void ResetMouseDragDelta(int button = 0);
+
+/// BeginCombo with flags: Combo_NoPreview shows no text in the box; the height and arrow flags are accepted and ignored.
+enum ComboFlags : int { Combo_None = 0, Combo_PopupAlignLeft = 1, Combo_HeightSmall = 2, Combo_HeightRegular = 4, Combo_HeightLarge = 8, Combo_HeightLargest = 16, Combo_NoArrowButton = 32, Combo_NoPreview = 64 };
+bool BeginCombo(const char* label, const char* preview, int comboFlags);
+
+/// The payload being dragged right now (typed drag and drop), or null when nothing is: a target can look before it accepts.
+const DragPayload* GetDragDropPayload();
+/// A drop target on a rectangle that is not the last item (BeginDragDropTarget is for the last item). `id` is accepted for Dear ImGui's sake.
+/// Then AcceptDragDropPayload / EndDragDropTarget as usual.
+bool BeginDragDropTargetCustom(Rect bounds, unsigned id);
+
+/// Buttons for InvisibleButton: which mouse buttons click it (none given means the left one). A right or middle click fires on release over it,
+/// after the press went down on it.
+enum ButtonFlags : int { Button_MouseButtonLeft = 1, Button_MouseButtonRight = 2, Button_MouseButtonMiddle = 4 };
+bool InvisibleButton(const char* id, float w, float h, int buttonFlags);
+
+/// Keyboard shortcut: `Shortcut(Mod_Ctrl | Mod_Shift, KeyId_S)` is true on the frame S goes down with exactly those modifiers held (`repeat`: and
+/// again while held). A text field with the keyboard blocks shortcuts that have no Ctrl or Alt in them (they are typing).
+enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4 };
+bool Shortcut(int mods, KeyId key, bool repeat = false);
+
+/// Where the pointer was when the popup being drawn was opened (the pointer's position when no popup is open).
+Vec2 GetMousePosOnOpeningCurrentPopup();
+/// Give the next `count` (1 to 16) items one share each of `totalWidth` (PopItemWidth after each, as in Dear ImGui).
+void PushMultiItemsWidths(int count, float totalWidth);
+/// How far a tree node's children are indented (the arrow and its gap).
+float GetTreeNodeToLabelSpacing();
+/// BeginTabBar with flags (accepted and ignored).
+bool BeginTabBar(const char* id, int tabBarFlags);
+
+/// Sort direction, as in the table sort specs (`descending` there is `dir == SortDirection_Descending`).
+enum SortDirection : int { SortDirection_None = 0, SortDirection_Ascending = 1, SortDirection_Descending = 2 };
+
+/// Lays out a long list while drawing only the rows that can be seen (a list of fixed-height rows):
+///     ListClipper clip; clip.Begin(count, itemHeight);
+///     while (clip.Step()) for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) { Row(i); }
+///     clip.End();
+/// `itemHeight` is the row height with spacing (<= 0: GetTextLineHeightWithSpacing()). Rows outside the clip rectangle become one
+/// empty block of the right height, so scrolling and the scroll bar see the full list. The visible range is a row more on each side.
+struct ListClipper {
+    int DisplayStart = 0, DisplayEnd = 0;
+    void Begin(int itemsCount, float itemHeight = -1.0f);
+    bool Step();
+    void End();
+private:
+    int count_ = 0, stage_ = 0; float itemH_ = 0.0f, startY_ = 0.0f;
+};
 
 } // namespace OkayUI

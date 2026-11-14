@@ -30,7 +30,7 @@ ed.SetMarkers({{line, colStart, colEnd, "unknown name 'x'"}});   // compile erro
 
 `Draw` reads the frame's input itself (mouse, wheel, typed text, key edges, `ctrl` and `shift`), edits, draws only the visible lines, and returns true when the text changed. Every editing operation is also a public method (`InsertText`, `Backspace`, `NewLine`, `Tab`, `Undo`, `Move`, `FindNext`, ...), so the editor can be driven and tested with no input at all.
 
-Keys the widget acts on while it has the keyboard: typed text; Enter; Backspace and Delete (with Ctrl: by word); Left, Right, Up, Down (Ctrl: by word on Left and Right); Home (first non-blank, then column 0) and End (Ctrl: start and end of text); PageUp and PageDown; Tab and Shift+Tab; Ctrl+A; Ctrl+C, Ctrl+X, Ctrl+V (as the host's `Input::copy`, `cut`, `paste` edges); Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; Escape drops the selection. Shift extends the selection on every movement key. Find, replace and go-to-line are methods; the dialog (Ctrl+F, Ctrl+G) is the caller's.
+Keys the widget acts on while it has the keyboard: typed text (replacing the next character in overwrite mode, toggled with Insert); Ctrl+Insert, Shift+Insert, Shift+Delete and Alt+Backspace as in the library; Enter; Backspace and Delete (with Ctrl: by word); Left, Right, Up, Down (Ctrl: by word on Left and Right); Home (first non-blank, then column 0) and End (Ctrl: start and end of text); PageUp and PageDown; Tab and Shift+Tab; Ctrl+A; Ctrl+C, Ctrl+X, Ctrl+V (as the host's `Input::copy`, `cut`, `paste` edges); Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; Escape drops the selection. Shift extends the selection on every movement key. Find, replace and go-to-line are methods; the dialog (Ctrl+F, Ctrl+G) is the caller's.
 
 Mouse: click places the caret, Shift+click extends, drag selects (and scrolls when the pointer leaves the view), double click selects a word, triple click a line, a click on the line numbers selects the line, a click in the narrow column left of the numbers toggles a breakpoint, the wheel scrolls three lines (Shift+wheel sideways), both scroll bars can be dragged or clicked.
 
@@ -63,6 +63,9 @@ The list is from `grep "te\." editor/main.cpp` (the script editor's calls) plus 
 | `RowHeight`, `CharWidth`, `TextStartX`, `ContentOrigin`, `CaretScreenPosBelow`, `ScreenToCoords` | HAVE | `LineHeight`, `CharWidth`, `GutterWidth` / `ViewRect`, `PosToScreen`, `CaretScreenPosBelow`, `ScreenToPos` |
 | `SetHandleKeyboardInputs` (the autocomplete popup owns the keys) | HAVE | `SetHandleKeyboardInput` |
 | Read-only mode | HAVE | `SetReadOnly`: moving, selecting and copying work, nothing else |
+| Overwrite mode (Insert key), block caret | HAVE (step 32) | `SetOverwrite`, the Insert key; typed text replaces the character after the caret, never a line break |
+| Ctrl+Insert (copy), Shift+Insert (paste), Shift+Delete (cut), Alt+Backspace (undo) | HAVE (step 32) | the same keys as the library; read-only blocks the editing ones |
+| Show whitespace | HAVE (step 32) | `SetShowWhitespace` (off by default; the script editor turns it off as well) |
 | Find next and previous, highlight all | HAVE (new) | `SetFind`, `FindNext`, `FindPrev`, `FindCount`, every match in view is tinted |
 | Replace, replace all | HAVE (new) | `ReplaceCurrent`, `ReplaceAll` (one undo step) |
 | Bracket matching | HAVE (new) | `MatchBracket`; the pair is drawn when the caret is next to one; brackets in strings and comments are skipped |
@@ -118,7 +121,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 - **Auto-close brackets and quotes**, **auto-dedent when typing `}`**, **toggle comment (Ctrl+/)**, **move line up and down**, **duplicate line**: not in the library the script editor uses either, or done by the editor itself on top of the API (`FormatOkayScript`, comment toggle in `editor/main.cpp` work on the text through `SetSelection`, `InsertText`).
 - **Autocomplete popup and the hover tooltip**: the editor draws them itself (they use `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`.
 - **Drag and drop of selected text**, **drop of files onto the editor**.
-- **Show whitespace**, **minimap**, **indent guides**, **matching word highlight**.
+- **Minimap**, **indent guides**, **matching word highlight**. (Show whitespace is done, step 32.)
 - **Replace across several lines of the needle** (a find text with a newline matches nothing).
 - **Mouse cursor shape** is set (`MouseCursor_TextInput` over the text) but, like the rest of OkayUI, only the host shows it.
 - **Not verified**: a real window on screen with the SDL_Renderer or Direct3D 11 backend (only the headless draw-list rasteriser was used; it skips textured quads, so the launcher look's Roboto glyphs are not in the golden), Windows and macOS builds, a real keyboard (host key repeat, dead keys, layouts), the real system clipboard, the editor's script editor actually running on it.

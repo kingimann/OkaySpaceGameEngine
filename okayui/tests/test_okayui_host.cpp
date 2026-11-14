@@ -61,6 +61,18 @@ int main() {
         CHECK(r.rightDown && !r.mouseDown);
         SDL_Event m = d; m.button.button = SDL_BUTTON_MIDDLE; c.Feed(m);      // other buttons are not OkayUI's
         CHECK(!c.Build(5, 5, false, false, false, false).mouseDown);
+        // the middle button: down while held, one frame for a click that was over before the frame, up after its release
+        InputCollector c2;
+        SDL_Event md; std::memset(&md, 0, sizeof(md)); md.type = SDL_MOUSEBUTTONDOWN; md.button.button = SDL_BUTTON_MIDDLE;
+        SDL_Event mu = md; mu.type = SDL_MOUSEBUTTONUP;
+        c2.Feed(md);
+        CHECK(c2.Build(0, 0, false, false, false, false).middleDown);
+        CHECK(c2.Build(0, 0, false, false, false, false).middleDown);         // still held
+        c2.Feed(mu);
+        CHECK(!c2.Build(0, 0, false, false, false, false).middleDown);
+        c2.Feed(md); c2.Feed(mu);
+        CHECK(c2.Build(0, 0, false, false, false, false).middleDown);         // a quick click is not lost
+        CHECK(!c2.Build(0, 0, false, false, false, false).middleDown);
     }
     {   // keys are dropped, not kept, when OkayUI may not have them: nothing arrives a frame late
         InputCollector c;

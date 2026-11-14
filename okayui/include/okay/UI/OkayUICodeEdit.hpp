@@ -165,6 +165,13 @@ public:
     void SetAutoIndent(bool b) { autoIndent_ = b; }
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
+    /// Overwrite mode (the Insert key toggles it, as in ImGuiColorTextEdit): typed text replaces the character after the caret instead of
+    /// pushing it along (never a line break; with a selection typing replaces the selection as always). The caret is drawn as a block.
+    void SetOverwrite(bool b) { overwrite_ = b; }
+    bool Overwrite() const { return overwrite_; }
+    /// Show spaces as faint dots and tabs as faint arrows (off by default; the script editor turns it off as well).
+    void SetShowWhitespace(bool b) { showWhitespace_ = b; }
+    bool ShowWhitespace() const { return showWhitespace_; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
     void SetPalette(const CodePalette& p) { pal_ = p; }
     const CodePalette& Palette() const { return pal_; }
@@ -278,7 +285,7 @@ private:
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
-    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
+    bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true, overwrite_ = false, showWhitespace_ = false;
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
     CodePalette pal_;

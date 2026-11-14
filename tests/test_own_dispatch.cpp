@@ -1,12 +1,13 @@
 // The import seam routes every own-reader format to ITS reader. All own backends are switched ON at run time
 // (SetImportBackend), then one tiny fixture of each opt-in slot kind (.dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d
-// .ase .3mf .amf .x3d .dxf .lwo .blend .md2 .md3 .irrmesh .b3d .x) goes through ImportModelData. A model is accepted only if it says backend "own"
+// .ase .3mf .amf .x3d .dxf .lwo .blend .md2 .md3 .irrmesh .b3d .x .ac .mesh.xml .xgl .irr .nff) goes through ImportModelData. A model is accepted only if it says backend "own"
 // and has geometry (or clips for the animation-only files). For the batch B formats and Blender the result must also equal
 // what the format's own Read*File gives directly, so a wrong arm in the dispatch chain (a format absorbed by the last arm)
 // fails here. Fixtures: tests/data/models, or built in memory.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batchc_fixtures.hpp"
+#include "batchd_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
@@ -77,6 +78,11 @@ int main() {
     WriteFile(dir / "t.irrmesh", fx::BuildIrrMesh());
     WriteFile(dir / "t.b3d", fx::BuildB3d());
     WriteFile(dir / "t.x", fx::BuildXText());
+    WriteFile(dir / "t.ac", fx::BuildAc3d());
+    WriteFile(dir / "t.mesh.xml", fx::BuildOgreXml());
+    WriteFile(dir / "t.xgl", fx::BuildXgl());
+    WriteFile(dir / "t.irr", fx::BuildIrrScene());
+    WriteFile(dir / "t.nff", fx::BuildNff());
     WriteFile(dir / "t.3mf", ThreeMf());
     WriteFile(dir / "t.amf", kAmf);
     WriteFile(dir / "t.x3d", kX3d);
@@ -90,6 +96,7 @@ int main() {
         {kDir + "scene.ase", true}, {(dir / "t.3mf").string(), true}, {(dir / "t.amf").string(), true}, {(dir / "t.x3d").string(), true},
         {(dir / "t.dxf").string(), true}, {(dir / "t.lwo").string(), true}, {kDir + "blend_attr_41.blend", true},
         {(dir / "t.md2").string(), true}, {(dir / "t.md3").string(), true}, {(dir / "t.irrmesh").string(), true}, {(dir / "t.b3d").string(), true}, {(dir / "t.x").string(), true},
+        {(dir / "t.ac").string(), true}, {(dir / "t.mesh.xml").string(), true}, {(dir / "t.xgl").string(), true}, {(dir / "t.irr").string(), true}, {(dir / "t.nff").string(), true},
     };
     for (const Case& c : cases) {
         ImportedModel m; std::string err;
@@ -141,6 +148,19 @@ int main() {
         const std::string path = (dir / d.file).string();
         CHECK(ImportModelData(path, a, ImportBackend::Own, false, &err) && d.read(path, b, &err));
         CHECK(Verts(a) == Verts(b) && Tris(a) == d.tris && Tris(b) == d.tris && a.nodes.size() == b.nodes.size() && a.clips.size() == b.clips.size());
+    }
+    // batch D (slots 22 to 26): each must equal what its own Read*File gives (the dispatch test of these five in more depth is test_own_dispatch_d.cpp)
+    const DirectC directD[] = {
+        {"t.ac", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadAc3dFile(p, m, e); }, 5},
+        {"t.mesh.xml", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadOgreXmlFile(p, m, e); }, 3},
+        {"t.xgl", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadXglFile(p, m, e); }, 6},
+        {"t.nff", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadNffFile(p, m, e); }, 111},
+    };
+    for (const DirectC& d : directD) {
+        ImportedModel a, b; std::string err;
+        const std::string path = (dir / d.file).string();
+        CHECK(ImportModelData(path, a, ImportBackend::Own, false, &err) && d.read(path, b, &err));
+        CHECK(Verts(a) == Verts(b) && Tris(a) == d.tris && Tris(b) == d.tris && a.nodes.size() == b.nodes.size());
     }
     {
         ImportedModel a, b; std::string err;

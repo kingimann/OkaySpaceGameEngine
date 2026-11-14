@@ -47,6 +47,10 @@ Left out on purpose: the `InputArbiter` class and `Interactor` component (built 
 
 Tests: `tests/test_ui_input_guard.cpp` (lean, top-down fire), `tests/test_inventory_ops.cpp` (layout scale, fit, scroll).
 
+## Typed scripts and visual scripts (7b)
+
+`engine/src/Script/ApiInventory.cpp` gives typed scripts (`class Name : Behaviour`) the `Inventory`, `Equipment`, `Crafting` and `GridInventory` components and the static `Items` helpers (`Add`, `Remove`, `Has`, `Count`, `SlotItem`, `TransferTo`, `Drop`, `Equip`, `Craft`, `RollLoot`, `SpawnPickup` and more). The visual-script nodes are generated from the same table, so `docs/engine_api.md` lists them (regenerate it with `OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types`). They call the same `InventoryOps` code as the OkayScript `inv_*` functions. Test: `tests/test_inventory_script_api.cpp`. The scripting class name must not be an engine type name (for example `Quest`).
+
 ## Not done
 
 * **Networked slot <-> grid moves.** `ToGrid` / `FromGrid` are local operations: they send no `inv/*` request. A client must not use them against a host-owned bag until a request for them exists in `NetInventory`.

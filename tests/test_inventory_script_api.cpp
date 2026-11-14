@@ -43,7 +43,7 @@ int main() {
         auto* sc = hero->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
         std::string err;
         CHECK(sc->LoadSource(
-            "class Quest : Behaviour {\n"
+            "class InvApiTest : Behaviour {\n"
             "    public int left; public bool ok; public bool four; public int keys;\n"
             "    public bool removedNo; public string slot0; public int slot0n; public bool set;\n"
             "    public int moved; public string name; public string cat; public bool equipped; public string worn;\n"

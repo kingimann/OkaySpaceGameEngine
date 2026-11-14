@@ -321,6 +321,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | after dying I restart the whole level | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | aim cursor offset from the crosshair | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
 | alignment tools are greyed out | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
+| ambient occlusion looking wrong or missing on Windows (the pass is unrun) | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | an Actions list does nothing | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an admin page is empty for a normal user | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
 | an agent gives up on a path | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
@@ -662,7 +663,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | metal looks like plastic | [26.4](20-35-planned.md#264-pbr) PBR |
 | MinGW configure can't find windres | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
 | minimap shows nothing or the wrong area | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
-| missing SSAO on Windows | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | missing translation shows the key | [31.1](20-35-planned.md#311-translation-tables) Translation tables |
 | model dark, inside out or without textures | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | model faces the wrong way after rigging | [30.2](20-35-planned.md#302-rig-generation) Rig generation |
@@ -710,9 +710,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | no search | [57.1](43-proposals.md#571-static-documentation-site) Static documentation site |
+| no shadows at all until Per-pixel lighting is on | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sign the game saved | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
-| no soft shadows from point lights | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | no sound in a call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | no warning before building | [33.2](20-35-planned.md#332-scene-validation) Scene validation |

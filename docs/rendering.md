@@ -31,14 +31,19 @@ What the scene's Post-processing section actually draws:
 |---|---|---|---|---|
 | Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | no |
 | Vignette amount | yes | yes | yes | yes |
-| Ambient occlusion in this section, and depth of field | yes | no | no | no |
+| Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | no |
+| Depth of field | yes | no | no | no |
 
 Fog is drawn on all four. The vignette amount is an overlay when the post chain
 itself does not run, so it still shows on Direct3D 12 and the software renderer.
-Sun shadows are drawn on all four. Spot and point light shadows are not drawn
-on Direct3D 12 or the software renderer; the Light Inspector says so under
-Cast Shadows. The separate Ambient Occlusion switch in Build Settings is drawn
-by OpenGL and the software renderer, not by Direct3D 11 or 12.
+Sun shadows are drawn on all four. Spot and point light shadows are drawn on
+OpenGL, Direct3D 11 and the software renderer, and not on Direct3D 12; the Light
+Inspector says so under Cast Shadows. The software renderer draws shadows (sun,
+spot and point) only with Per-pixel lighting on. The separate Ambient Occlusion
+switch in Build Settings is drawn by OpenGL and the software renderer, and by
+Direct3D 11 while the post chain runs. The Direct3D 11 pass is new and has not
+been run on a GPU. Direct3D 12 is a preview with no post-processing. For the
+full list, see [render_status.md](render_status.md).
 
 The *Rendering (Lighting & Post FX)* section below these is the editor's own
 process-wide switches (shadow quality, the software renderer's effects). It is
@@ -58,7 +63,7 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 | **Colour Grading** | **Temperature** (cool ↔ warm) and **Tint** white balance, **Saturation**, **Contrast**, and per-channel **Lift** (blacks), **Gamma** (mid-tones), **Gain** (whites). |
 | **Vignette** | Darkens the edges and corners, with a **Smoothness** for how far in it reaches. 0 = off. The post chain draws it when it runs; otherwise it is an overlay that looks the same on every renderer. |
 | **Anti-aliasing (FXAA)** | A luma-driven edge filter on the finished frame. |
-| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. OpenGL only. |
+| **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. OpenGL, and Direct3D 11 (new, unrun on a GPU). |
 | **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL only. |
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a

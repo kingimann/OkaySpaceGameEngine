@@ -606,6 +606,8 @@ target_sources(okay_engine PRIVATE
     src/Scene/WorldGrid.cpp
     src/Scene/WorldChunk.cpp
     src/Scene/StreamingSource.cpp
+    src/Scene/CellLoader.cpp
+    src/Scene/PartitionStreamer.cpp
 )
 # Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)

@@ -180,12 +180,13 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 45.1.1 Streamer component - `Components/WorldStreamer` - loads cells named `<prefix>_<x>_<z>.okayprefab` within a radius of the camera; hysteresis between load and unload radius
   - 45.1.2 Additive scene merge - `Scene/SceneSerializer` - `MergeFromText` with an offset places scene "chunks" side by side
   - 45.1.3 Cell editor - `-` - not built (cells are written by hand today)
-- **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`
+  - 45.1.4 Partition foundation - `Scene/WorldGrid`, `Scene/WorldChunk`, `Scene/StreamingSource`, `Scene/PartitionStreamer`, `Scene/CellLoader` - cell addressing, a checksummed chunk file per cell, `SplitScene` (objects go to the cell of their origin), many streaming sources, a budgeted loader, stable guids and saved cell state; library only, no editor window, not wired into the scene loop (see `docs/foundations/world_streaming.md`)
+- **Code:** `Components/WorldStreamer`, `Scene/SceneSerializer`, `Scene/WorldGrid`, `Scene/WorldChunk`, `Scene/StreamingSource`, `Scene/PartitionStreamer`, `Scene/CellLoader`
 - **API:** `WorldStreamer` (`cellSize`, `loadRadius`, `unloadRadius`, `folder`, `prefix`), `SyncNow`, `LoadedCells`
 - **Editor:** WorldStreamer Inspector section
-- **Docs:** `docs/scene_management.md`
-- **Tests:** `worldstreamer`
-- **Status:** Partial - runtime streaming works; authoring is manual.
+- **Docs:** `docs/scene_management.md`, `docs/foundations/world_streaming.md`
+- **Tests:** `worldstreamer`, `world_grid`, `world_chunk`, `world_streamer`
+- **Status:** Partial - runtime streaming works; authoring is manual. The splitter exists as a function (`SplitScene`) but there is no editor command.
 - **Exists today:** The streamer, as above. It assumes each cell prefab already holds objects at final world positions.
 - **Suggested priority:** Medium - open worlds are a stated goal of the terrain tools; this is the missing workflow.
 - **Open:** first step: "Split scene into cells" (grid size, object assignment by position, writes cell prefabs and a manifest) and a Scene view overlay of cell borders; overlaps 27.4 on the runtime side.
@@ -219,6 +220,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 45.3.1 Navmesh - `AI/NavMeshSurface` - bake and queries on loaded geometry; no per-cell navmesh
   - 45.3.2 Saves - `Core/SaveGame` - save the whole scene; state of unloaded cells is not kept (see 35.3)
   - 45.3.3 Agents far away - `Components/NavMeshAgent` - agents in unloaded cells do not exist
+  - 45.3.4 Cell state in saves - `Scene/PartitionStreamer` - `CaptureState` / `WriteState` keep the changed state of cells that are streamed out (tests `world_streamer`); `SaveSystem::CaptureScene` still records an unloaded Saveable object as destroyed, so do not put `Saveable` on streamed objects yet
 - **Code:** `AI/NavMeshSurface`, `Core/SaveGame`, `Components/NavMeshAgent`
 - **API:** none
 - **Editor:** none

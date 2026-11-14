@@ -1,7 +1,7 @@
 # World streaming (foundation)
 
 Status: design page for the large-world streaming foundation. Phase 1 code lives in
-`engine/include/okay/Scene/WorldPartition*.hpp` (namespace `okay::worldpart`). Everything here is
+`engine/include/okay/Scene/` (`WorldGrid`, `WorldChunk`, `StreamingSource`, `CellLoader`, `PartitionStreamer`; namespace `okay::worldpart`). Everything here is
 optional and off unless a game adds the pieces. No existing scene, default or renderer changes.
 
 ## What we are copying, and what we are not

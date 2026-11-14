@@ -353,7 +353,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 |---|---|---|---|
 | [45.1](feature_map/43-proposals.md#451-cell-authoring-and-baking) | Cell authoring and baking | Partial | first step: "Split scene into cells" (grid size, object assignment by position, writes cell prefabs and a manifest) and a Scene... |
 | [45.2](feature_map/43-proposals.md#452-large-world-coordinates) | Large world coordinates | Planned | first step: measure where jitter starts in a test scene; then a floating-origin option that shifts the whole scene back when the... |
-| [45.3](feature_map/43-proposals.md#453-streaming-aware-systems) | Streaming-aware systems | Planned | first step: per-cell navmesh bake stored with the cell and stitched at load; cell-level state records for saves. |
+| [45.3](feature_map/43-proposals.md#453-streaming-aware-systems) | Streaming-aware systems | Planned | first step: per-cell navmesh bake stored with the cell and stitched at load. Cell state for saves is built in `PartitionStreamer` (library); still open: `SaveSystem` marks unloaded Saveable objects as destroyed, no physics, navmesh, audio or network-id hooks. |
 | [45.4](feature_map/43-proposals.md#454-distant-scenery) | Distant scenery | Planned | first step: merged low-detail meshes per cell ("hierarchical LOD") using the simplifier; billboard impostors for trees. |
 
 ### 46. Replay system

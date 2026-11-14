@@ -2764,7 +2764,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
         out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed   // appended (guarded)
-            << " " << (inv->keepOnSceneLoad ? 1 : 0);
+            << " " << (inv->keepOnSceneLoad ? 1 : 0)
+            << " " << (inv->enforceWeight ? 1 : 0);   // appended (guarded on read)
         out << "\n";
     }
     for (auto* pk : go->GetComponents<ItemPickup>()) {
@@ -6857,6 +6858,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             inv->slowWhenOverWeight = (slow != 0);
                             in >> std::ws;   // optional keep-on-scene-load
                             if (std::isdigit(in.peek())) { int keep = 0; in >> keep; inv->keepOnSceneLoad = (keep != 0); }
+                            in >> std::ws;   // optional enforced weight limit
+                            if (std::isdigit(in.peek())) { int ew = 0; in >> ew; inv->enforceWeight = (ew != 0); }
                         }
                     }
                 } else if (field == "lootsource") {

@@ -1292,7 +1292,7 @@ private:
             for (const std::string& h : SplitHeaders(extraHeader)) hdrs.push_back(h);
             if (!bodyFile.empty())     hdrs.push_back("Content-Type: " + bodyType);
             else if (!jsonBody.empty()) hdrs.push_back("Content-Type: application/json");
-            okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile);
+            okay::http::Result nr = okay::http::Request(method, url, hdrs, bodyFile.empty() ? jsonBody : std::string(), bodyFile, {}, timeoutSec > 0 ? timeoutSec * 1000 : 0);
             if (nr.reached) {
                 ApiResponse out;
                 out.status = nr.status; out.body = std::move(nr.body);

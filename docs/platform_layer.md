@@ -54,6 +54,35 @@ Call sites moved in this change (each commit builds):
    once at load; SDL used to convert at the device.
 3. Controllers: `Input/SdlGamepad.hpp` became `Input/PlatformGamepad.hpp` (`FeedPad`, `PadSet`; no SDL types); the editor and player open pads through the backend.
 
+## Inventory: every `SDL_` call in editor/, launcher/, shared/ and player/ (measured on this branch)
+
+Counted with `grep -rhoE "\bSDL_[A-Za-z0-9_]+"` over `*.cpp`, `*.hpp` and `*.h` in each folder (identifier tokens, so types
+and constants count too; one call can be several tokens; "about N" figures are rounded estimates from the same grep, not exact). Totals: editor 521 (before the moves below), launcher 963,
+shared 56, player 117. "Seam" means the call is an `okay::platform` call; "Not behind" means the program still calls SDL.
+
+| Area (this document's sections) | editor | launcher | shared | player | State |
+|---|---|---|---|---|---|
+| Time: `SDL_GetTicks`, `SDL_GetTicks64` | **moved** (4 sites) | none | none | **moved** (1 site) | Behind the seam (`okay::platform::TicksMs()`). The editor mixed both clocks before (a save timestamp read SDL, its reader read the seam); now one clock. |
+| Clipboard: `SDL_Get/SetClipboardText` | **moved** (Play mode) | none | **moved** (`PlatformClipboard.hpp` replaces `SdlClipboard.hpp`) | **moved** | Behind the seam. The editor asks the sdl2 backend explicitly (its window is SDL's); the player asks `Default()`. Editor's own copy buttons use Dear ImGui, not this. |
+| Displays: `SDL_GetNumVideoDisplays`, `GetDisplayBounds`, `GetCurrentDisplayMode`, `GetNumDisplayModes`, `GetDisplayMode`, `GetDisplayName` | none | `GetNumVideoDisplays`, `GetDisplayUsableBounds` (not behind) | **moved** (the monitor list, `ListMonitors`) | via shared | Monitor list behind the seam (`Backend::DisplayCount / GetDisplayInfo / DisplayModes`, implemented for sdl2 now; Win32 had the first two). Not behind: the launcher's usable-bounds clamp, editor `SDL_GetDisplayDPI`, `SDL_GetWindowDisplayIndex/Mode`. |
+| Display changes: `SDL_SetWindowFullscreen`, `SetWindowDisplayMode`, `GetClosestDisplayMode`, `SetWindowBordered/Size/Position/Icon` | none | none | `SdlDisplays.cpp` `Apply` (SDL window) | via shared | Not behind: they act on an `SDL_Window*`; needs the window class in the seam first. |
+| Cursor: `SDL_ShowCursor` | **moved** (1 site) | none | none | none | Behind the seam (through the sdl2 backend). `SDL_SetRelativeMouseMode` (4 sites), `SDL_WarpMouseInWindow` (2), `SDL_GetRelativeMouseState`, `SDL_GetMouseState`, `SDL_GetGlobalMouseState` (launcher) are not behind. |
+| Text input: `SDL_StartTextInput`, `SDL_TEXTINPUT`, `SDL_TEXTEDITING` | `StartTextInput` **moved**; the event read stays on `SDL_Event` | `SDL_TEXTINPUT/EDITING` event reads | none | none | Start call behind the seam; the events themselves are read from `SDL_Event` (ImGui's SDL backend consumes them too). |
+| File drop: `SDL_DROPFILE`, `DROPBEGIN`, `DROPCOMPLETE`, `SDL_EventState` | 4 | 5 | none | none | Not behind: both programs read `SDL_Event` in their loops. The seam has `EventType::DropFile` (sdl2 and Win32 produce it; the own X11 backend has no drop target). |
+| Windows: `Create/DestroyWindow`, `Show/Hide/Raise/Restore/MinimizeWindow`, `GetWindowFlags/Size/Position/ID`, `SetWindow*`, `FlashWindow`, `SetWindowInputFocus`, `GetWindowWMInfo`, `SDL_SetWindowsMessageHook` | about 40 | about 60 | the display helper above | 0 (player window is the seam's) | Not behind (the player's is). Launcher's WM-info and message hook are Win32-only taskbar/flash code. |
+| GL context: `SDL_GL_*` | 25 | 0 | 0 | 0 | Not behind (the editor creates its own GL context; the player's is on the seam). |
+| Events: `SDL_Event`, `PollEvent`, `PumpEvents`, `PushEvent`, `SDL_QUIT`, `KEYDOWN/UP`, `MOUSE*`, `FINGER*`, `CONTROLLERDEVICE*` | main loops | main loop | 0 | 0 | Not behind (player's is). Needs Dear ImGui's platform backend replaced first. |
+| Keyboard: `SDL_GetKeyboardState`, `SDL_SCANCODE_*`, `SDL_GetScancodeFromKey` | about 60 tokens | 0 | 0 | 0 | Not behind (same numbering as `okay::platform::Key`, so a later move is mechanical). |
+| 2D drawing: `SDL_Renderer`, `SDL_Texture`, `SDL_Surface`, `SDL_Create/Update/DestroyTexture`, `SDL_Render*`, `SDL_Vertex`, `SDL_Color`, `SDL_Rect`, `SDL_FRect`, `SDL_FPoint` | about 330 | about 70 | about 25 (colour/rect/vertex value types) | about 105 (value types only; drawing is `platform::Painter`) | Player: behind (`Painter`). Editor and launcher: not behind; they draw through `SDL_Renderer` and ImGui's SDL backends. |
+| Audio: `SDL_LoadWAV`, `SDL_FreeWAV`, `SDL_AudioSpec`, `SDL_AUDIO_*`, `SDL_AUDIODRIVER`, `SDL_INIT_AUDIO` | `SDL_INIT_AUDIO` | 3 WAV loads + format macros (voice chat) | 0 | 0 | Not behind: the WAV loader is a file reader, not a device call (needs an own WAV reader). |
+| Threads, mutex, atomics: `SDL_CreateThread` (69), `SDL_LockMutex` (177), `SDL_UnlockMutex` (183), `SDL_CreateMutex` (59), `SDL_DetachThread` (54), `SDL_WaitThread` (17), `SDL_Atomic*` (about 40) | 0 | about 600 tokens | 0 | 0 | **Not in the seam at all and not in any section above.** The biggest single block of SDL left; it is plain `std::thread` / `std::mutex` / `std::atomic` territory (the engine already uses std threads), so it is the largest pure-mechanical removal, but it is 68 thread sites in `launcher/main.cpp` and wants its own change and a run on a real launcher. |
+| Process and system: `SDL_Init`, `InitSubSystem`, `Quit`, `WasInit`, `SetHint`, `GetError`, `GetBasePath`, `ShowSimpleMessageBox`, `SDL_free`, `SDL_strdup`, `SDL_VERSION*`, `SDL_MAIN_HANDLED`, `SDL_SetMainReady` | about 30 | about 15 | few | 3 | Mostly not behind. The seam has `Init`, `BasePath`, `ShowErrorBox`, `SetPerMonitorDpiAware` (the launcher/editor still call SDL for these). |
+| Touch: `SDL_GetNumTouchDevices` | 2 | 0 | 0 | 1 | Not behind (no seam call for it yet). |
+
+Moved in this branch: time, clipboard, monitor list, cursor visibility, text-input start. Tests:
+`tests/test_platform_seam.cpp`, run under Xvfb against `sdl2` and `own` (`platform_seam_sdl2`, `platform_seam_own`).
+On the own X11 backend the monitor list is empty ("this backend cannot say"), and drop events cannot be tested.
+
 ## Stage 2: the player's window, events, input and GL context moved onto the seam
 
 Stage 1 (above) put timers, audio devices and controllers behind `okay::platform` and wrote the window, event and GL API
@@ -115,15 +144,16 @@ New API (every addition has a default, so a backend that cannot do it says so; b
 |---|---|---|---|
 | `WindowDesc::fullscreen`, `maximized`; `Window::IsFullscreen` | yes | yes (`_NET_WM_STATE`; needs a window manager to show) | yes |
 | `Window::SetIcon(rgba, w, h)` | yes | yes (`_NET_WM_ICON`) | no (returns false) |
-| `Window::RefreshRateHz()` | yes | no (0 = unknown; no RandR) | no (0) |
-| `Backend::RelativeMouseState` | yes | yes (summed from motion events) | yes |
-| `Backend::ModState`, `KeyForChar` | yes | `ModState` yes; `KeyForChar` follows the X keymap | `ModState` yes; `KeyForChar` assumes a US layout |
+| `Window::RefreshRateHz()`, `Window::DisplayDpi()` | yes (`RefreshRateHz` only) | no (0 = unknown; no RandR; DPI 96) | yes (`EnumDisplaySettings`, `GetDpiForWindow`) |
+| `Backend::DisplayCount`, `GetDisplayInfo` (position, size, work area, DPI, refresh, name, primary) | no (default: 0) | no (default: 0) | yes (`EnumDisplayMonitors`) |
+| `Backend::RelativeMouseState` | yes | yes (summed from motion events) | yes (raw input, `WM_INPUT`) |
+| `Backend::ModState`, `KeyForChar` | yes | `ModState` yes; `KeyForChar` follows the X keymap | `ModState` yes; `KeyForChar` follows the current layout (`VkKeyScanW`) |
 | `Backend::IsCursorShown` | yes | yes | yes |
 | Touch events (`FingerDown/Motion/Up`) | yes | never fired | never fired |
 | `Event::wheelFlipped` | yes | never set | never set |
 | `ShowErrorBox` | yes | no (returns false, text goes to stderr) | yes (`MessageBoxW`) |
 | `SetPerMonitorDpiAware` | yes (hint) | nothing to do | yes |
-| `BasePath`, `PrefPath`, `PreferredLocales`, `Log` | SDL's | shared implementation in `Platform.cpp` (`/proc/self/exe`, `$XDG_DATA_HOME`, `$LANGUAGE`/`$LANG`) | shared implementation (Win32 calls), not run on Windows |
+| `BasePath`, `PrefPath`, `PreferredLocales`, `Log` | SDL's | shared implementation in `Platform.cpp` (`/proc/self/exe`, `$XDG_DATA_HOME`, `$LANGUAGE`/`$LANG`) | shared implementation (wide Win32 calls: `%APPDATA%`, `GetUserPreferredUILanguages`); run under Wine only |
 
 ### Known behaviour differences (small, deliberate or unavoidable)
 
@@ -143,8 +173,8 @@ New API (every addition has a default, so a backend that cannot do it says so; b
   ready. The editor and launcher still need it moved in, plus an own ImGui platform backend.)
 * IME composition, display queries, window flashing, WAV loading, the tray-icon hook, system cursors, Wayland, touch and refresh
   rate on the own backend (see the tables).
-* Windows (own and sdl2 side by side) and the Emscripten web build of the player were not built or run here; the changed Platform
-  sources pass `-fsyntax-only` with MinGW; `player/main.cpp` itself was compiled on Linux only.
+* Windows (own and sdl2 side by side) and the Emscripten web build of the player were not built or run in stage 2; `player/main.cpp`
+  itself was compiled on Linux only. The own Win32 backend has since been cross-compiled and run under Wine, see "Windows" below.
 
 ## Stage 3: a 2D painter, so the player can run on the own backend (own code, NOT READY, off by default)
 
@@ -215,8 +245,8 @@ calling `DrawSplashStyled(SDL_Renderer*, ...)`, which wraps their renderer in th
 * Texture size is limited to 16384 x 16384. The software painter has no render targets.
 * OkayUI fallback fonts and `OkayUI::Image` work through the painter; a texture made by another painter is ignored.
 * Not fixed here: X11 shared memory (`XShm`; plain `XPutImage` is used), damage tracking (the whole frame is sent each frame),
-  16-bit and indexed X visuals (`PresentPixels` returns false), a big-endian X server, HiDPI on the own backend, Win32 run time (only
-  syntax-checked with MinGW).
+  16-bit and indexed X visuals (`PresentPixels` returns false), a big-endian X server, HiDPI on the own backend, Win32 run time (stage 3 time; the Win32
+  backend has since run under Wine, see "Windows").
 
 ### Tests
 
@@ -300,16 +330,53 @@ code that does not need `SDL_Renderer`.
 Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), XDND file drop (`EventType::DropFile`
 never fires), touch, DPI / multi-monitor queries, window icons, IME composition display, PulseAudio-native or PipeWire-native audio.
 
-### Windows (compiles, untested)
+### Windows (cross-compiled, run under Wine, never run on real Windows)
 
-`OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
-`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.** No audio device
-(`OpenAudio` returns null).
+`OwnWin32.cpp` (window, events, input, clipboard, GL, XInput, DPI, monitors), `OwnWin32Audio.cpp` (waveOut / waveIn),
+`Win32Logic.hpp` and `PlatformText.hpp` (pure logic), `AudioRing.hpp` (pure queue). Features: Win32 windows (`CS_OWNDC`, clip
+styles for GL, minimum size through `WM_GETMINMAXINFO`, desktop fullscreen that lifts the size limit and restores a maximised
+window), per-monitor DPI (`SetPerMonitorDpiAware` with fallbacks, `WM_DPICHANGED`, `AdjustWindowRectExForDpi`), keyboard by scan
+code, `WM_CHAR` text with surrogate pairing, raw mouse for relative mode, clipboard (own message-only owner window, CR LF
+conversion, retry when another program holds it), WGL (modern context with legacy fallback), `StretchDIBits` painter, XInput with
+hot-plug events, `timeBeginPeriod(1)`, window class registered in `Init` and unregistered with the backend.
 
-### macOS (not written)
+What was fixed in this pass (found by reading the file against the Win32 contracts or by the cross-compile and Wine run):
 
-Needs Objective-C++ (Cocoa, NSOpenGLContext/Metal, CoreAudio, GameController). It cannot even be syntax-checked with the
-MinGW cross-compiler, so nothing was written rather than writing code that was never compiled.
+| Defect in the first draft | Fix |
+|---|---|
+| `OpenClipboard(nullptr)`: `EmptyClipboard` then leaves no owner and `SetClipboardData` fails (documented); no CR LF conversion; no retry; unguarded `GlobalLock` | message-only owner window, CRLF both ways, 10 tries, null checks, size-bounded read |
+| `WM_CHAR`: a high surrogate followed by an ordinary character stayed stored and was glued to the next pair; a lone low surrogate went to `WideCharToMultiByte` | `Utf16Assembler` (orphans become U+FFFD once, nothing stays stored); also `WM_UNICHAR`, and no beep for Alt+letter |
+| Relative mouse: cursor warped to the window centre on every move (lossy, and used the foreground window of ANY process); `ShowCursor` counter unbalanced between relative mode and `ShowCursor()` | raw input (`WM_INPUT`, relative and absolute flags), cursor confined with `ClipCursor` and hidden through `WM_SETCURSOR`, no use of the process-wide counter |
+| `MouseState` used `GetForegroundWindow()` (could be another program's window) and ignored swapped buttons and X buttons | focused window of ours, `SM_SWAPBUTTON`, X1/X2 |
+| `SetCapture` / `ReleaseCapture` per button (releasing one button dropped capture while another was held); `clicks` always 1 | capture while any button is held; `ClickCounter` (double-click time and distance, 32-bit clock wrap) |
+| XInput: no hot-plug events at all; `XInputGetState` on all four slots on every query; `LoadLibrary` retried every call when the DLL is missing; instance id reused by a re-plugged pad; rumble duration ignored | `PadTracker`: Added/Removed events, empty slots probed once a second, connected slots read at most once per millisecond per slot, increasing instance ids, timed rumble, stale pad objects read as disconnected |
+| Window pixel format set a second time after `DestroyGLContext` (fails: once per window); contexts leaked on the failure paths | reuse the format, release on every failure path |
+| Timers: `Sleep` at the default 15.6 ms granularity; `TicksMs` multiplied before dividing (overflow after months at 10 MHz) | `timeBeginPeriod(1)` balanced in `Shutdown` / destructor; split arithmetic |
+| Window class never unregistered; `PrefPath` used ANSI `getenv` / `CreateDirectoryA` (non-ASCII user names broke it) and forbidden characters in org / app; locales were only the default locale | `UnregisterClassW` in the destructor; wide APIs, characters replaced; `GetUserPreferredUILanguages` |
+| `KeyForChar` assumed a US layout; `IsKeyDown` knew 40 keys | `VkKeyScanW` + `MapVirtualKeyW`; `VkForKey` covers every `Key` |
+| fullscreen on a monitor larger than the primary was clamped by the default maximum track size; centring used the primary monitor; `DragQueryFileW` into a `MAX_PATH` buffer | `WM_GETMINMAXINFO` fills the monitor rectangle; centring on the window's monitor; length-queried buffer |
+| No audio, no monitor or DPI queries | `OwnWin32Audio.cpp`; `DisplayCount`, `GetDisplayInfo`, `Window::DisplayDpi` |
+
+What was run, and where (details in the verification section below): the pure logic natively on Linux (also under ASan and
+UBSan); the whole backend, cross-compiled with MinGW at `-Wall -Wextra -Wpedantic` with no warnings, under Wine 9.0 headless
+on Xvfb with `tests/test_platform_win32.cpp`.
+
+Known limits of the Windows backend that no test here could reach: window dragging and resizing run Windows' modal loop inside
+`DispatchMessage`, so no events are delivered to the app until it ends; IME composition display is not handled (finished
+characters arrive as `WM_CHAR`); no touch; no window icon (`SetIcon` returns false); `KpEnter` and `Return` share `VK_RETURN`, so
+`IsKeyDown(KpEnter)` is true while either is held; waveOut device names are cut to 31 characters by Windows; waveOut is used instead
+of WASAPI (works everywhere, higher latency, no exclusive mode); `PresentPixels` and a GL context on the same window must not
+be mixed.
+
+### macOS (only the pure logic is written)
+
+Needs Objective-C++ (Cocoa, NSOpenGLContext/Metal, CoreAudio, GameController). There is no macOS toolchain here and the MinGW cross
+compiler cannot compile Objective-C, so **no Objective-C was written**: code that was never compiled is not committed.
+What exists is the part that is plain C++ and testable on Linux: `MacLogic.hpp` (the `kVK_*` virtual key code table to `Key`,
+`NSEventModifierFlags` to `Mod`, scroll delta to notches) and the UTF-16 helpers in `PlatformText.hpp` (`NSEvent.characters` is UTF-16).
+The table follows Apple's published `kVK_*` values and is checked for consistency (injective, all 26 letters and 10 digits present,
+known entries), not against a real keyboard. Not written: window, `NSEvent` loop, GL / Metal context, pasteboard, CoreAudio,
+GameController, Retina scale handling, and the mapping of F13 to F15 for PrintScreen / ScrollLock / Pause (placed by position, unverified).
 
 ## Tests
 
@@ -318,6 +385,9 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
+
+| `platform_pure` | the pure logic of the own Windows and macOS backends: UTF-8 / UTF-16 conversion (malformed input, lone surrogates), the `WM_CHAR` surrogate assembler, clipboard CR LF, Win32 scan-code and virtual-key tables, DPI arithmetic, double-click counting, raw-mouse accumulation (relative and absolute), XInput mapping, the hot-plug tracker (instance ids, probe schedule), the macOS key table, the audio ring (883 checks) | nothing |
+| `platform_win32` (Windows targets only) | the Win32 backend against the real API: timers (1 ms sleeps), `BasePath`, `PrefPath` with non-ASCII `%APPDATA%`, windows (title, size, minimum size, position, show / hide, fullscreen and restore, close and quit events, two windows), monitors and DPI, clipboard (round trip, CR LF on the wire, 1 MiB, foreign text, not left open), keyboard through `SendInput` (scan codes, extended keys, modifiers), `WM_CHAR` surrogates and `KEYEVENTF_UNICODE`, mouse (absolute, buttons, double click, capture, wheel in client coordinates), relative mouse through raw input, cursor counter untouched, WGL (clear colour read back, destroy and re-create on the same window, thread release), `StretchDIBits` pixels read back, XInput poll cost, audio device listing. Cases the host cannot support print `SKIP` and are listed in the summary | Windows, or MinGW + Wine (`xvfb-run wine64 test_platform_win32.exe`, `LC_ALL=C.UTF-8` so Wine can name non-ASCII files) |
 
 Also `platform_gamepad`: the controller -> `Input` bridge (`PlatformGamepad.hpp`) driven by a fake `Gamepad`.
 

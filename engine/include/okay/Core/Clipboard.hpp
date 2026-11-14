@@ -1,7 +1,7 @@
 #pragma once
 // Text the game can copy and paste. The engine keeps a memory clipboard so tests
 // and a headless run never touch the operating system. The player and editor Play
-// mode install an SDL clipboard (shared/SdlClipboard.hpp) on top of this. That
+// mode install an SDL clipboard (shared/PlatformClipboard.hpp) on top of this. That
 // path calls SDL directly. It does not go through okay::platform.
 #include <cstddef>
 #include <string>

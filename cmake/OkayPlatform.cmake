@@ -42,9 +42,9 @@ function(okay_add_platform_library)
 
     # --- own backend ----------------------------------------------------------------
     if(WIN32)
-        list(APPEND _srcs src/Platform/OwnWin32.cpp)
+        list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
-        list(APPEND _libs user32 gdi32 opengl32 shell32)
+        list(APPEND _libs user32 gdi32 opengl32 shell32 winmm)   # winmm: timeBeginPeriod, waveOut / waveIn
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND _srcs src/Platform/OwnLinux.cpp src/Platform/OwnLinuxX11.cpp
                           src/Platform/OwnLinuxAudio.cpp src/Platform/OwnLinuxEvdev.cpp)

@@ -10,7 +10,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
-#include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"      // OS clipboard for games (through okay::platform)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
@@ -1280,7 +1280,7 @@ int main(int argc, char** argv) {
     }
     // Games copy and paste through SDL. The memory clipboard stays the default
     // everywhere else (tests, a headless run), so this does not turn okay::platform on.
-    static okay::SdlClipboard s_osClipboard;
+    static okay::PlatformClipboard s_osClipboard;
     okay::InstallGameClipboard(&s_osClipboard);
 
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
@@ -2091,11 +2091,7 @@ int main(int argc, char** argv) {
             if (ow > 0 && oh > 0) UICanvas::Set((float)ow, (float)oh);
             if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
             TouchControls::Sample(scene);
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
         }
         InputActions::Tick();   // after every device is fed, including the on-screen controls
 

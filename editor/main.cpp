@@ -77,7 +77,7 @@
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
-#include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
 
 #include <numeric>
 #include <algorithm>
@@ -46851,7 +46851,7 @@ static void SavePrefabCmd(EditorState& ed) {
     std::string err, warn;
     if (!ed.SavePrefab(&err, &warn)) { g_lastSaveError = err; ConsoleLog(err, 2); ShowErrorPopup("Couldn't save the prefab", err + "\n\nNothing was lost: your edits are still open."); return; }
     g_lastSaveError.clear();
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved prefab " + std::filesystem::path(ed.PrefabPath()).filename().string() + ". Instances in the scene update when you go Back.");
     if (!warn.empty()) ConsoleLog(warn, 1);
 }
@@ -48428,7 +48428,7 @@ int main(int argc, char** argv) {
         // Play reads and writes the operating-system clipboard. Stopping Play puts
         // the memory clipboard back, so a headless self-test never calls SDL for it.
         {
-            static okay::SdlClipboard s_playClipboard;
+            static okay::PlatformClipboard s_playClipboard(okay::platform::Get(okay::platform::BackendKind::Sdl2));   // the editor window is SDL
             static bool s_playClipboardOn = false;
             if (ed.isPlaying()) {
                 if (!s_playClipboardOn) { okay::InstallGameClipboard(&s_playClipboard); s_playClipboardOn = true; }
@@ -48493,7 +48493,7 @@ int main(int argc, char** argv) {
             const bool confined = Cursor::IsConfined() && !gameModal && !g_gameCursorReleased;
             bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased && !confined;
             static Vec2 s_gameVMouse{0, 0};
-            SDL_ShowCursor(capture ? SDL_DISABLE : SDL_ENABLE);
+            okay::platform::Get(okay::platform::BackendKind::Sdl2)->ShowCursor(!capture);   // the SDL window's cursor
             if (capture) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
@@ -48573,11 +48573,7 @@ int main(int argc, char** argv) {
                 UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
             if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
             TouchControls::Sample(ed.scene());
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
             InputActions::Tick();
         } else if (ed.isPlaying()) {
             // Playing, but a text field has the keyboard. Do not feed the game,
@@ -49678,7 +49674,7 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
-        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
+        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) okay::platform::Get(okay::platform::BackendKind::Sdl2)->StartTextInput();
 #endif
         if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
             static int shotFrames = 0;

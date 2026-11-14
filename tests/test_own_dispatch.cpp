@@ -124,8 +124,8 @@ int main() {
         ImportedModel a, b; std::string err;
         CHECK(ImportModelData(kDir + "blend_attr_41.blend", a, ImportBackend::Own, false, &err) && ReadBlendFile(kDir + "blend_attr_41.blend", b, &err, false));
         CHECK(a.parts.size() == 2 && a.parts.size() == b.parts.size() && Verts(a) == Verts(b) && a.backend == "own");
-        // and the blend file is not flattened a second time (a flattened model has one part)
-        ImportedModel f; CHECK(ImportModelData(kDir + "blend_attr_41.blend", f, ImportBackend::Own, true, &err) && f.parts.size() == 1);
+        // flattening collapses the node tree to one root and keeps the two parts
+        ImportedModel f; CHECK(ImportModelData(kDir + "blend_attr_41.blend", f, ImportBackend::Own, true, &err) && f.nodes.size() == 1 && f.parts.size() == 2);
     }
 
     SetImportBackend("*", ImportBackend::Default);

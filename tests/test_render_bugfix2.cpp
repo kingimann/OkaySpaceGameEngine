@@ -87,5 +87,23 @@ int main() {
         CHECK_NEAR(mr->mesh.vertices[0].y, 5.0f, 1e-3f);
     }
 
+    RUN_SUITE("tile colliders: rebuilding replaces them and saving leaves them out");
+    {
+        Scene scene("Tiles");
+        GameObject* g = scene.CreateGameObject("G");
+        auto* tm = g->AddComponent<Tilemap>();
+        tm->Resize(4, 1);
+        for (int x = 0; x < 4; ++x) tm->SetTile(x, 0, 1);
+        auto* tc = g->AddComponent<TilemapCollider2D>();
+        scene.Start();
+        CHECK(SceneSerializer::Serialize(scene).find("TileCollider") == std::string::npos);   // generated, not saved
+        tc->Build();                                  // e.g. after the map was edited
+        scene.Update(0.016f);                         // the old boxes are freed at the end of the frame
+        int boxes = 0;
+        for (const auto& o : scene.Objects()) if (o->name == "TileCollider") ++boxes;
+        CHECK(boxes == 1);
+        CHECK(tc->ColliderCount() == 1);
+    }
+
     TEST_MAIN_RESULT();
 }

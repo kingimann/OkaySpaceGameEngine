@@ -4,6 +4,8 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Physics/Collider2D.hpp"
+#include <unordered_set>
+#include <vector>
 
 namespace okay {
 
@@ -23,6 +25,11 @@ public:
         Scene* scene = gameObject->scene();
         float ts = map->tileSize;
 
+        // Building again (the map was edited) replaces the old boxes instead of stacking new ones on them.
+        for (GameObject* old : m_boxes) if (old) scene->Destroy(old);
+        m_boxes.clear();
+        m_count = 0;
+
         for (int y = 0; y < map->Height(); ++y) {
             int x = 0;
             while (x < map->Width()) {
@@ -33,14 +40,21 @@ public:
 
                 Vec3 origin = transform ? transform->Position() : Vec3::Zero;
                 GameObject* col = scene->CreateGameObject("TileCollider");
+                col->transient = true;   // rebuilt from the map on every Start: never saved with the scene
                 col->transform->localPosition = {
                     origin.x + (start + run * 0.5f) * ts,
-                    origin.y + (y + 0.5f) * ts, 0.0f};
+                    origin.y + (y + 0.5f) * ts, origin.z};
                 auto* bc = col->AddComponent<BoxCollider2D>();
                 bc->size = {run * ts, ts}; // no Rigidbody2D -> static solid
+                m_boxes.push_back(col);
                 ++m_count;
             }
         }
+    }
+
+    /// Forget boxes that something else destroyed, so a later Build never touches a dead object.
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        for (GameObject*& b : m_boxes) if (b && dying.count(b)) b = nullptr;
     }
 
     /// Number of collider boxes generated (after merging).
@@ -48,6 +62,7 @@ public:
 
 private:
     int m_count = 0;
+    std::vector<GameObject*> m_boxes;
 };
 
 } // namespace okay

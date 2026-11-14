@@ -73,8 +73,8 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **API:** `Scene::fixedTimeStep`, `Scene::UseFixedStepPhysics`, `Scene::SetPhysicsStepsPerSecond`, `Scene::SetSmoothPhysics`, `Scene::SetProjectPhysicsRate`, `Scene::interpolatePhysics`, `Scene::PhysicsAlpha`, `Scene::kDefaultFixedStep`; script `physics_steps`, `set_physics_steps`, `physics_smooth`, `set_physics_smooth`; `Time.physicsSteps`, `Time.smoothPhysics`
 - **Editor:** Project Settings > Physics: Steps per second, Smooth the motion. The Rigidbody 3D inspector says when a body is parented. Play and a build use the project rate (50 and smooth on when the project never set one)
 - **Docs:** `docs/physics.md`
-- **Tests:** `fixed_step`, `rigidbody_step_parent`
-- **Status:** Works - the step rate is a project setting (default 50, the old rate) that scripts can read and set; interpolation draws between steps at any frame rate; covered by `fixed_step` and `rigidbody_step_parent`
+- **Tests:** `fixed_step`, `rigidbody_step_parent`, `turn_interpolation`
+- **Status:** Works - the step rate is a project setting (default 50, the old rate) that scripts can read and set; interpolation draws between steps at any frame rate; a body whose rotation game code sets every frame (a turning character) is still drawn at an even speed, covered by `turn_interpolation`; covered by `fixed_step` and `rigidbody_step_parent`
 - **Open:** a body moved by game code jumps with no blending (by design, per the header)
 - **Related:** 1.1, 6.1, 6.2, 16.2
 - **Words:** fixed timestep, FixedUpdate, interpolation, physics rate, PoseHistory, PhysicsAlpha, catch-up, 50 Hz

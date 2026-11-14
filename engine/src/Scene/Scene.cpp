@@ -544,15 +544,21 @@ bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
 // in-between one). If game code moved it since, it was teleported: keep that.
 // A parent moving does not count: the local pose the solver wrote is still there,
 // and restoring it carries the body with the parent.
+// Turning does not count either. A character script sets its body's rotation every
+// Update (before this runs); if that cancelled the restore, the next step would start
+// from the drawn mid-step position and the body would move a different distance every
+// frame. So a rotation-only change still gets the physics POSITION back, the game's
+// rotation is kept, and ShowPose draws it as set (no blend) while game code owns it.
+// Only a position change beyond tolerance is a teleport and clears the history.
 void RestorePose(Transform* t, PoseHistory& h) {
+    h.rotByGame = false;
     if (!h.valid) return;
     if (h.shownLocalValid) {
-        const bool moved =
-            (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f ||
-            std::fabs(Quat::Dot(t->localRotation, h.shownLocalRot)) < 1.0f - 1e-6f;
+        const bool moved = (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f;
         if (moved) { h.valid = false; h.shownLocalValid = false; return; }
+        h.rotByGame = std::fabs(Quat::Dot(t->localRotation, h.shownLocalRot)) < 1.0f - 1e-6f;
         t->localPosition = h.physLocal;
-        t->localRotation = h.physLocalRot;
+        if (!h.rotByGame) t->localRotation = h.physLocalRot;
         return;
     }
     if (SamePose(t, h.shownPos, h.shownRot)) { t->SetPosition(h.curPos); t->SetRotation(h.curRot); }
@@ -588,7 +594,7 @@ void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
         h.shownRot = Quat::Slerp(h.prevRot, h.curRot, alpha);
     }
     t->SetPosition(h.shownPos);
-    t->SetRotation(h.shownRot);
+    if (!h.rotByGame) t->SetRotation(h.shownRot);   // else keep the rotation game code set
     h.shownLocal = t->localPosition;
     h.shownLocalRot = t->localRotation;
     h.shownLocalValid = true;

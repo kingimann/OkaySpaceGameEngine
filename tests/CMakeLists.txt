@@ -2866,6 +2866,22 @@ add_executable(test_net_lossy test_net_lossy.cpp)
 target_link_libraries(test_net_lossy PRIVATE okay::engine)
 add_test(NAME net_lossy COMMAND test_net_lossy)
 
+add_executable(test_net_build_sync test_net_build_sync.cpp)
+target_link_libraries(test_net_build_sync PRIVATE okay::engine)
+add_test(NAME net_build_sync COMMAND test_net_build_sync)
+
+add_executable(test_net_quest_sync test_net_quest_sync.cpp)
+target_link_libraries(test_net_quest_sync PRIVATE okay::engine)
+add_test(NAME net_quest_sync COMMAND test_net_quest_sync)
+
+add_executable(test_net_life_late test_net_life_late.cpp)
+target_link_libraries(test_net_life_late PRIVATE okay::engine)
+add_test(NAME net_life_late COMMAND test_net_life_late)
+
+add_executable(test_net_build_quest_lossy test_net_build_quest_lossy.cpp)
+target_link_libraries(test_net_build_quest_lossy PRIVATE okay::engine)
+add_test(NAME net_build_quest_lossy COMMAND test_net_build_quest_lossy)
+
 add_executable(test_net_fuzz test_net_fuzz.cpp)
 target_link_libraries(test_net_fuzz PRIVATE okay::engine)
 add_test(NAME net_fuzz COMMAND test_net_fuzz)

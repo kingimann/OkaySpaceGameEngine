@@ -2587,6 +2587,23 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endforeach()
 endif()
 
+# The pure logic of the own Windows / macOS backends (UTF-16, key tables, DPI math, click counting, raw mouse,
+# XInput mapping, hot-plug tracking, audio ring): no display and no OS, so it runs on every host.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_pure test_platform_pure.cpp)
+    target_include_directories(test_platform_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_pure COMMAND test_platform_pure)
+endif()
+# The own Win32 backend against the real Win32 API. Built only for Windows targets; a MinGW cross build runs it
+# through CMAKE_CROSSCOMPILING_EMULATOR (e.g. wine, headless under xvfb-run) when that is set.
+if(WIN32)
+    add_executable(test_platform_win32 test_platform_win32.cpp)
+    target_link_libraries(test_platform_win32 PRIVATE okay::platform)
+    target_include_directories(test_platform_win32 PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_win32 COMMAND test_platform_win32)
+    set_tests_properties(platform_win32 PROPERTIES TIMEOUT 180)
+endif()
+
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
 # the X server holds. Own code, not ready, off by default; the test only checks it.
 if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

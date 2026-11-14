@@ -84,6 +84,9 @@
 #include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -9563,6 +9566,73 @@ void RegisterBuiltinComponentSerializers() {
         k.f("angle", d->maxAngle); k.f("lift", d->lift);
     };
     ComponentSerializerRegistry::Register(std::move(dec));
+
+    ComponentSerializerRegistry::Entry gridAgent;
+    gridAgent.name = "gridpath2d";
+    gridAgent.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridPathAgent2D* a : go.GetComponents<GridPathAgent2D>()) {
+            if (!a) continue;
+            out << "  gridpath2d";
+            KvOut k{out};
+            k.str("map", a->mapName)("speed", a->speed)("stop", a->stopDistance)
+             .b("diag", a->allowDiagonal).b("smooth", a->smoothPath).b("costs", a->useCosts)
+             ("repath", a->repathInterval);
+            out << "\n";
+        }
+    };
+    gridAgent.read = [](GameObject& go, std::istream& in) {
+        auto* a = go.AddComponent<GridPathAgent2D>();
+        KvIn k(in);
+        k.str("map", a->mapName); k.f("speed", a->speed); k.f("stop", a->stopDistance);
+        k.b("diag", a->allowDiagonal); k.b("smooth", a->smoothPath); k.b("costs", a->useCosts);
+        k.f("repath", a->repathInterval);
+    };
+    ComponentSerializerRegistry::Register(std::move(gridAgent));
+
+    ComponentSerializerRegistry::Entry gridCost;
+    gridCost.name = "gridcost2d";
+    gridCost.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridCostLayer* c : go.GetComponents<GridCostLayer>()) {
+            if (!c) continue;
+            out << "  gridcost2d";
+            KvOut k{out};
+            k("road", c->roadTile)("roadc", c->roadCost)("mud", c->mudTile)("mudc", c->mudCost)
+             .str("extra", c->ExtraTiles()).str("cells", c->CellText());
+            out << "\n";
+        }
+    };
+    gridCost.read = [](GameObject& go, std::istream& in) {
+        auto* c = go.AddComponent<GridCostLayer>();
+        KvIn k(in);
+        k.i("road", c->roadTile); k.f("roadc", c->roadCost);
+        k.i("mud", c->mudTile); k.f("mudc", c->mudCost);
+        std::string extra, cells;
+        k.str("extra", extra); k.str("cells", cells);
+        c->SetExtraTiles(extra);
+        c->SetCellText(cells);
+    };
+    ComponentSerializerRegistry::Register(std::move(gridCost));
+
+    ComponentSerializerRegistry::Entry gridBlock;
+    gridBlock.name = "gridblock2d";
+    gridBlock.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridObstacle2D* o : go.GetComponents<GridObstacle2D>()) {
+            if (!o) continue;
+            out << "  gridblock2d";
+            KvOut k{out};
+            k.str("map", o->mapName)("wide", o->cellsWide)("tall", o->cellsTall).b("block", o->blocks);
+            out << "\n";
+        }
+    };
+    gridBlock.read = [](GameObject& go, std::istream& in) {
+        auto* o = go.AddComponent<GridObstacle2D>();
+        KvIn k(in);
+        k.str("map", o->mapName); k.i("wide", o->cellsWide); k.i("tall", o->cellsTall);
+        k.b("block", o->blocks);
+        if (o->cellsWide < 1) o->cellsWide = 1;
+        if (o->cellsTall < 1) o->cellsTall = 1;
+    };
+    ComponentSerializerRegistry::Register(std::move(gridBlock));
 
     ComponentSerializerRegistry::Entry stick;
     stick.name = "virtualjoystick";

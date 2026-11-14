@@ -96,6 +96,9 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -5888,6 +5891,82 @@ struct OkayScriptVM::Impl {
         b["nav_remaining"] = [navOf](std::vector<Value>& a) {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
+        };
+        // ---- 2D grid paths: the Grid Path Agent on this object (or a named one) ----
+        // grid_move_to(x, y) walks to the cell that contains that world point.
+        // grid_move_cell(x, y) walks to that cell. A leading name picks another object.
+        auto gridOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GridPathAgent2D* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<GridPathAgent2D>() : nullptr;
+        };
+        auto namedObject = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GameObject* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g;
+        };
+        b["grid_move_to"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n || a.size() < i + 2) return Value{0.0f};
+            n->SetDestination(a[i].AsFloat(), a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_move_cell"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n || a.size() < i + 2) return Value{0.0f};
+            n->SetCell((int)a[i].AsFloat(), (int)a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_stop"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n) return Value{0.0f};
+            n->Stop(); return Value{1.0f};
+        };
+        b["grid_arrived"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            return Value{n && n->Arrived() ? 1.0f : 0.0f};
+        };
+        b["grid_set_tile_cost"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 2) return Value{0.0f};
+            auto* c = g->GetComponent<GridCostLayer>();
+            if (!c) c = g->AddComponent<GridCostLayer>();
+            c->SetTileCost((int)a[i].AsFloat(), a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_set_cell_cost"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 3) return Value{0.0f};
+            auto* c = g->GetComponent<GridCostLayer>();
+            if (!c) c = g->AddComponent<GridCostLayer>();
+            c->SetCellCost((int)a[i].AsFloat(), (int)a[i + 1].AsFloat(), a[i + 2].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_block"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 2) return Value{0.0f};
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) o = g->AddComponent<GridObstacle2D>();
+            o->Place((int)a[i].AsFloat(), (int)a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_clear"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g) return Value{0.0f};
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) return Value{0.0f};
+            o->Clear();
+            return Value{1.0f};
         };
         // ---- Navmesh queries (no agent needed) ----------------------------------
         // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to

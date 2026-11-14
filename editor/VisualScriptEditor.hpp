@@ -341,6 +341,9 @@ inline const std::vector<VsDef>& Registry() {
         {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
         {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"GridMoveTo",   "Walk the Grid",  CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        {"GridStop",     "Stop Grid Walk", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"GridArrived",  "Grid Arrived",   CAT_DATA, false, {}, {}, {"Arrived"}, 0, nullptr},
         // --- Behavior trees (Behavior Tree Runner) ---
         {"BtSet",        "Set Blackboard", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "key"},
         {"BtGet",        "Get Blackboard", CAT_DATA, false, {}, {}, {"Value"}, 1, "key"},
@@ -2015,6 +2018,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
     else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
+    else if (t=="GridMoveTo")  out += ind + "grid_move_to(" + in(0, "0") + ", " + in(1, "0") + ")\n";
+    else if (t=="GridStop")    out += ind + "grid_stop()\n";
     else if (t=="BtSet")       out += ind + "bt_set(" + q(arg("x")) + ", " + in(0) + ")\n";
     else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
     else if (t=="SetLinePoints") out += ind + "line_set_points(" + in(0, "[]") + ")\n";

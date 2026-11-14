@@ -1422,3 +1422,11 @@ node 1496 Fn.ui_get_scale
 node 1497 Fn.ui_set_rotation
 node 1498 Fn.ui_set_scale
 node 1499 Fn.ui_set_focus
+node 1500 Fn.grid_arrived
+node 1501 Fn.grid_block
+node 1502 Fn.grid_clear
+node 1503 Fn.grid_move_cell
+node 1504 Fn.grid_move_to
+node 1505 Fn.grid_set_cell_cost
+node 1506 Fn.grid_set_tile_cost
+node 1507 Fn.grid_stop

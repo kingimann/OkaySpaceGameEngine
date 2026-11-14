@@ -438,6 +438,14 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `nav_stop()` | stop the Nav Mesh Agent where it is |
 | `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
 | `nav_remaining()` | path length left to the destination (0 when idle) |
+| `grid_move_to(x, y)` | walk this object's Grid Path Agent to the cell that contains that world point (`grid_move_to("Name", x, y)` for another object); see [navigation.md](navigation.md) |
+| `grid_move_cell(x, y)` | the same, to a tile cell instead of a world point |
+| `grid_stop()` | stop the grid walk and drop the path |
+| `grid_arrived()` | 1 once the last cell was reached |
+| `grid_set_tile_cost(id, cost)` | price a tile number on this object's Grid Movement Costs (0 blocks it; adds the component if it is missing) |
+| `grid_set_cell_cost(x, y, cost)` | price one cell the same way |
+| `grid_block(x, y)` | block that cell with this object's Grid Obstacle (adds one if it is missing). Agents whose path used it plan again |
+| `grid_clear()` | stop that obstacle blocking cells |
 | `nav_path_exists(x, y, z)` | 1 when a walkable route leads from this object to the point (`nav_path_exists(fx, fy, fz, tx, ty, tz)` between two points); needs no agent |
 | `nav_path_length(x, y, z)` | length of that route, -1 when there is none (also takes the six-number form) |
 | `nav_point_walkable(x, y, z[, maxDist])` | 1 when the baked navmesh has ground within `maxDist` (default 1) of the point |

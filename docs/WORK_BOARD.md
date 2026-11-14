@@ -143,6 +143,7 @@ Nothing user-visible, nothing default.
 | Item, loot-table and recipe editors | John | `john/item-loot-recipe-editors` |
 | Safety-net tests for lightmap bake, touch scroll, item tooltips, loading layout, death lock and gamepad feed; pause menu pushes an input context | John | `john/untested-features-tests` |
 | Audio import settings apply on load; FLAC decoding | John | `john/audio-import-flac` (#786) |
+| 2D grid path costs, smoothing and moving obstacles | John | `john/pathfinding2d-weights` |
 
 ## Free (unclaimed, safe small tasks)
 

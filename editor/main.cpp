@@ -12597,6 +12597,10 @@ void DrawScriptDocs() {
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
         fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
+        fapi("grid_move_to(x, y) / grid_move_cell(x, y)", "walk this object's Grid Path Agent to a world point or a tile cell");
+        fapi("grid_stop() / grid_arrived()", "stop the grid walk / 1 once the cell was reached");
+        fapi("grid_set_tile_cost(id, cost) / grid_set_cell_cost(x, y, cost)", "price a tile or one cell (mud, road). 0 blocks it");
+        fapi("grid_block(x, y) / grid_clear()", "block a cell with this object's Grid Obstacle, or stop blocking");
         fapi("bt_set(\"key\", value) / bt_get(\"key\")", "write / read this object's Behavior Tree blackboard (bt_set(\"Name\", key, value) for another object)");
         fapi("bt_run(\"Assets/Guard.okaybt\") / bt_stop()", "load and start a behavior tree on this object / stop it; on_bt_event(name) hears Send Event tasks");
         fapi("spline_point(\"n\", t) / spline_length(\"n\")", "a point t (0-1) along a Spline / its length");
@@ -13043,6 +13047,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "set_light_intensity","set_light_range","set_light_angle","set_light_color",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining","nav_path_exists","nav_path_length","nav_point_walkable","nav_nearest_point",
+        "grid_move_to","grid_move_cell","grid_stop","grid_arrived","grid_set_tile_cost","grid_set_cell_cost","grid_block","grid_clear",
         "bt_set","bt_get","bt_run","bt_stop",
         "spline_point","spline_length","follower_set_speed","line_set_points","trail_clear",
         "spawner_start","spawner_stop","spawner_alive",
@@ -13160,6 +13165,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_path_exists","nav_path_exists(x, y, z)"}, {"nav_path_length","nav_path_length(x, y, z)"}, {"nav_point_walkable","nav_point_walkable(x, y, z, maxDist)"}, {"nav_nearest_point","nav_nearest_point(x, y, z, maxDist)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
+        {"grid_move_to","grid_move_to(x, y)"}, {"grid_move_cell","grid_move_cell(x, y)"}, {"grid_stop","grid_stop()"}, {"grid_arrived","grid_arrived()"},
+        {"grid_set_tile_cost","grid_set_tile_cost(id, cost)"}, {"grid_set_cell_cost","grid_set_cell_cost(x, y, cost)"}, {"grid_block","grid_block(x, y)"}, {"grid_clear","grid_clear()"},
         {"bt_set","bt_set(\"key\", value)"}, {"bt_get","bt_get(\"key\")"}, {"bt_run","bt_run(\"file.okaybt\")"}, {"bt_stop","bt_stop()"},
         {"spline_point","spline_point(\"name\", t)"}, {"spline_length","spline_length(\"name\")"},
         {"follower_set_speed","follower_set_speed(speed)"}, {"line_set_points","line_set_points(points)"}, {"trail_clear","trail_clear()"},
@@ -36557,6 +36564,58 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
         }
     }
+    if (auto* gp = dynamic_cast<GridPathAgent2D*>(curComp)) {
+        if (CompHeader("Grid Path Agent", gp, &toRemove)) {
+            char mb[64];
+            std::strncpy(mb, gp->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+            if (ImGui::InputText("Which tilemap##gp", mb, sizeof(mb))) { gp->mapName = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the tilemap to walk. Leave empty to use the first tilemap in the scene.");
+            if (ImGui::DragFloat("Walk speed##gp", &gp->speed, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast it walks, in world units per second.");
+            if (ImGui::DragFloat("Stop this close##gp", &gp->stopDistance, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close to the last cell counts as arrived.");
+            if (ImGui::Checkbox("Allow diagonal steps##gp", &gp->allowDiagonal)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also step diagonally. A diagonal step never squeezes between two walls.");
+            if (ImGui::Checkbox("Smooth the path##gp", &gp->smoothPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straighten the route wherever the line of sight is clear, so it is not a staircase of cells.");
+            if (ImGui::Checkbox("Pay for mud and roads##gp", &gp->useCosts)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Grid Movement Costs on the tilemap. Off: only empty tiles are open, and every step costs the same.");
+            if (ImGui::DragFloat("Plan again every (seconds)##gp", &gp->repathInterval, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How often to plan again. A new obstacle on the route plans again at once.");
+            ImGui::TextDisabled("Walks empty tiles. Walls are any other tile until costs are on.");
+            if (ImGui::SmallButton("Remove##gp")) toRemove = gp;
+        }
+    }
+    if (auto* gc = dynamic_cast<GridCostLayer*>(curComp)) {
+        if (CompHeader("Grid Movement Costs", gc, &toRemove)) {
+            if (ImGui::DragInt("Road tile number##gc", &gc->roadTile, 0.1f, 0, 4095)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is a road. Empty tiles are number 0 and cost 1.");
+            if (ImGui::DragFloat("Road cost (lower is cheaper)##gc", &gc->roadCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto a road is. 1 is normal. 0 blocks the tile.");
+            if (ImGui::DragInt("Mud tile number##gc", &gc->mudTile, 0.1f, 0, 4095)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is mud.");
+            if (ImGui::DragFloat("Mud cost (higher is slower)##gc", &gc->mudCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
+            ImGui::TextDisabled("The agent pays these only when Pay for mud and roads is on.");
+            if (ImGui::SmallButton("Remove##gc")) toRemove = gc;
+        }
+    }
+    if (auto* go2 = dynamic_cast<GridObstacle2D*>(curComp)) {
+        if (CompHeader("Grid Obstacle", go2, &toRemove)) {
+            char mb[64];
+            std::strncpy(mb, go2->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+            if (ImGui::InputText("Which tilemap##gob", mb, sizeof(mb))) { go2->mapName = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the tilemap. Leave empty for the first tilemap in the scene.");
+            if (ImGui::DragInt("How many cells across##gob", &go2->cellsWide, 0.1f, 1, 256)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width of the blocked rectangle, in cells, starting at this object's cell.");
+            if (ImGui::DragInt("How many cells down##gob", &go2->cellsTall, 0.1f, 1, 256)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Height of the blocked rectangle, in cells.");
+            if (ImGui::Checkbox("Block the path##gob", &go2->blocks)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
+            ImGui::TextDisabled("Move this object to slide the blocked cells.");
+            if (ImGui::SmallButton("Remove##gob")) toRemove = go2;
+        }
+    }
     if (auto* al = dynamic_cast<ActionList*>(curComp)) {
         ImGui::PushID(al);
         // Behaviours are built in the Visual Script graph now (one graph editor).
@@ -40082,6 +40141,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }

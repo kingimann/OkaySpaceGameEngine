@@ -79,6 +79,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Agent avoidance (52.5.1)
 - Agent movement (9.2.1)
 - agent radius (9.1)
+- Agent, costs and obstacles (9.3.3)
 - Agents far away (45.3.3)
 - Aggregate script time (55.3.1)
 - aggro (9.5)

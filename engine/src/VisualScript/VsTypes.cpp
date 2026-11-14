@@ -160,6 +160,9 @@ const Row kRows[] = {
         {"NavMoveTo", true, "V", ""},
         {"NavStop", true, "", ""},
         {"NavArrived", false, "", "B"},
+        {"GridMoveTo", true, "NN", ""},
+        {"GridStop", true, "", ""},
+        {"GridArrived", false, "", "B"},
         // Story: dialogues, story variables, quests.
         {"StartDialogue", true, "", ""},
         {"SetStoryVar", true, "A", ""},

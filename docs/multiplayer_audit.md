@@ -212,6 +212,10 @@ Ranked by player-visible impact. Each has a regression test in
     go backwards, a per-player variable ends on its last write, flags that flip end on the last value, a client
     that joins in the middle of all of it ends with the server's state, and a death and respawn in quick
     succession (and a join while dead) end consistent.
+    All four new suites also ran clean under AddressSanitizer and UndefinedBehaviorSanitizer (leak check on; a
+    separate RelWithDebInfo build of the engine and the suites with `-fsanitize=address,undefined`). They were
+    repeated 8 to 25 times each in the normal build to look for flakes: one real bug (a joiner's quest snapshot
+    could lag the diffs) turned up that way and is fixed with a deterministic test.
 
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,

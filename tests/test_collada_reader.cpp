@@ -15,6 +15,22 @@
 
 using namespace okay;
 
+// setenv / unsetenv exist on POSIX only; the Windows C runtime has _putenv_s (an empty value removes the variable).
+static void TestSetEnv(const char* n, const char* v) {
+#ifdef _WIN32
+    _putenv_s(n, v);
+#else
+    setenv(n, v, 1);
+#endif
+}
+static void TestUnsetEnv(const char* n) {
+#ifdef _WIN32
+    _putenv_s(n, "");
+#else
+    unsetenv(n);
+#endif
+}
+
 static const std::string kDir = std::string(OKAY_SOURCE_DIR) + "/tests/data/models/";
 
 static bool HasNote(const ImportedModel& m, const char* needle) {
@@ -353,7 +369,7 @@ int main() {
     {
         CHECK(HasOwnReader(".dae") && HasOwnReader(".DAE"));
         // Default for .dae is off: with no Assimp in the build nothing reads it until it is switched on.
-        unsetenv("OKAY_OWN_COLLADA");
+        TestUnsetEnv("OKAY_OWN_COLLADA");
         SetImportBackend(".dae", ImportBackend::Default);
         ImportedModel m; std::string err;
 #ifdef OKAY_HAVE_ASSIMP
@@ -367,12 +383,12 @@ int main() {
         }
 #endif
         // Environment switch.
-        setenv("OKAY_OWN_COLLADA", "1", 1);
+        TestSetEnv("OKAY_OWN_COLLADA", "1");
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);
         CHECK(ImportableExtensions().find(".dae") != std::string::npos);
         CHECK(ImportModelData(kDir + "two_materials.dae", m, ImportBackend::Default, false, &err));
         CHECK(m.backend == "own" && m.parts.size() == 2);
-        setenv("OKAY_OWN_COLLADA", "0", 1);
+        TestSetEnv("OKAY_OWN_COLLADA", "0");
         CHECK(EffectiveImportBackend(".dae") != ImportBackend::Own);
         // Run-time switch beats the environment.
         CHECK(SetImportBackend(".dae", ImportBackend::Own));
@@ -400,7 +416,7 @@ int main() {
         // A bad file reports and fails cleanly.
         CHECK(!ImportModelData(kDir + "does_not_exist.dae", m, ImportBackend::Own, false, &err) && !err.empty());
         SetImportBackend(".dae", ImportBackend::Default);
-        unsetenv("OKAY_OWN_COLLADA");
+        TestUnsetEnv("OKAY_OWN_COLLADA");
         // "*" resets every own-reader format, .dae included.
         SetImportBackend("*", ImportBackend::Own);
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);

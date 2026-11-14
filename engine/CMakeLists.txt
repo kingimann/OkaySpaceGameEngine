@@ -82,6 +82,7 @@ add_library(okay_engine
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
+    src/Net/CheatDetect.cpp
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp

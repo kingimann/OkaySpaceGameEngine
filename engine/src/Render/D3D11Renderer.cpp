@@ -10,6 +10,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
 #include "okay/Render/DofMath.hpp"    // shared depth of field constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/SsaoMath.hpp"   // shared SSAO constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/Atmosphere.hpp"   // sky palette, fog modes, post settings
@@ -343,7 +344,7 @@ const char* kHLSL =
     "  float4 uGammaThresh;\n"                // xyz gamma, w bloom threshold
     "  float4 uGainRadius;\n"                 // xyz gain, w blur / downsample radius
     "  float4 uTexelDir;\n"                   // xy source texel, zw blur direction (uv)
-    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength
+    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength, w AO power; DoF: x focus, y range, z far; bloom bright-pass: w softness
     "  float4 uTopMode;\n"                    // Colour sky: xyz top, w mode (0 colour, 1 procedural)
     "  float4 uHorHp;\n"                      // xyz horizon, w horizon position
     "  float4 uBotStars;\n"                   // xyz bottom, w stars on
@@ -422,8 +423,9 @@ const char* kHLSL =
     "  if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
     "  return float4(col, 1.0);\n"
     "}\n"
+    OKAY_BLOOM_KNEE_SRC                                            // soft knee (PostQualityMath.hpp); uP7.w = softness, 0 = the old hard cut
     "float3 brightTap(float2 uv){ float3 c = uTex.Sample(uSampClamp, uv).rgb; float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
-    "  float k = max(l - uGammaThresh.w, 0.0) / max(l, 1e-4); return c * k; }\n"
+    "  float k = bloomK(l, uGammaThresh.w, uP7.w); return c * k; }\n"
     "float4 PSDown(PSQuad i) : SV_TARGET {\n"                      // bright-pass + 2x2 box downsample
     "  float2 o = uTexelDir.xy * uGainRadius.w;\n"
     "  float3 s = brightTap(i.uv + float2(-o.x, -o.y)) + brightTap(i.uv + float2(o.x, -o.y)) + brightTap(i.uv + float2(-o.x, o.y)) + brightTap(i.uv + float2(o.x, o.y));\n"
@@ -2020,6 +2022,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         pc.p7[0] = rsTop.post.ssao ? rsTop.post.ssaoRadius : SSAORadius();
         pc.p7[1] = ssao::kFar;
         pc.p7[2] = rsTop.post.ssao ? rsTop.post.ssaoIntensity : SSAOStrength();
+        pc.p7[3] = rsTop.post.ssao ? rsTop.post.ssaoPower : 1.0f;   // read by PSAoMul (PostQualityMath.hpp)
         uploadPc();
         { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
         c->OMSetRenderTargets(1, &aoSet->depth.rtv, aoSet->dsv);
@@ -2092,6 +2095,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const float bloomRadius = ps.bloom ? ps.bloomRadius : 1.0f;
         Impl::RT& bA = p->bloom[0]; Impl::RT& bB = p->bloom[1]; Impl::RT& bC = p->bloom[2]; Impl::RT& bD = p->bloom[3];
         if (bloomOn) {
+            pc.p7[3] = ps.bloom ? ps.bloomSoftness : 0.0f;   // read by PSDown's soft knee (PostQualityMath.hpp)
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = bloomThresh; pc.radius = 1.0f;
             pass(p->psDown, bA.rtv, bA.w, bA.h, frameSrv, nullptr, nullptr);
             for (int it = 0; it < 2; ++it) {

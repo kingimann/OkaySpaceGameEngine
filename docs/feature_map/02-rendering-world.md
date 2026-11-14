@@ -94,20 +94,20 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
 - **Parts:**
   - 2.5.1 Settings and chain order - `Scene/Scene` (PostSettings), `Render/Atmosphere` - exposure, tonemap (None, ACES, Filmic), bloom, grading (temperature, tint, saturation, contrast, lift/gamma/gain), vignette; chain: SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA, in an HDR target
-  - 2.5.2 GPU chain - `Render/GLRenderer`, `Render/D3D11Renderer` - OpenGL runs every effect; Direct3D 11 has bloom, tonemap, grading, vignette, FXAA, an SSAO pass and a depth of field pass (the last two compile-checked only, UNVERIFIED on a GPU); Direct3D 12 has none (see 38)
+  - 2.5.2 GPU chain - `Render/GLRenderer`, `Render/D3D11Renderer` - OpenGL runs every effect; Direct3D 11 has bloom, tonemap, grading, vignette, FXAA, an SSAO pass and a depth of field pass (the last two compile-checked only, UNVERIFIED on a GPU); Bloom Softness and Ambient Occlusion Power (`Render/PostQualityMath.hpp`) are shared by OpenGL and Direct3D 11 (CPU-tested maths, shaders unrun); Direct3D 12 has none (see 38)
   - 2.5.3 Software passes - `Render/SoftwareRenderer` - its own CPU SSAO, bloom, tonemap, colour grade, vignette and FXAA with process-wide switches, row-parallel
   - 2.5.4 Quality presets - `Core/DisplaySettings` - Low/Medium/High flips shadows, bloom, SSAO, FXAA and per-pixel lighting, and sets shadow map resolution, cascade count and shadow distance (Low 512/1/40 m, Medium 1024/2/60 m, High 2048/3/80 m)
 - **Code:** `Render/Atmosphere`, `Render/SoftwareRenderer`, `Scene/Scene`, `Core/DisplaySettings`
 - **API:** `Scene::RenderSettings::PostSettings`, `PostActive`, `TonemapACES`, `ExposureScale`, `BloomEnabled()`, `SSAOEnabled()`, script `post_set`
 - **Editor:** View > Lighting panel: Post-processing section and Look Preset; "Rendering (Lighting & Post FX)" holds the editor's own process-wide switches
 - **Docs:** `docs/rendering.md`
-- **Tests:** `post_sky`
+- **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player
-- **Ask me like:** "Add depth of field to the Direct3D 11 backend"; "Turn on bloom only for the Night preset"
+- **Ask me like:** "Check the Direct3D 11 depth of field on a real GPU"; "Turn on bloom only for the Night preset"
 
 ### 2.6 Terrain and water
 - **What:** World-building components: sculptable heightmap terrain, cave-capable voxel terrain, runtime digging, animated water with buoyancy, world streaming by cells, and 2D tilemaps.

@@ -11845,6 +11845,8 @@ static void DrawLookSections(EditorState& ed) {
             tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
             if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Softness##bloom", &post.bloomSoftness, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            tip("Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.");
         }
         if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
         if (post.grading) {
@@ -11872,6 +11874,8 @@ static void DrawLookSections(EditorState& ed) {
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
+            tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
         }
         if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
         DrawRendererNote(okay::RenderFeature::DepthOfField);

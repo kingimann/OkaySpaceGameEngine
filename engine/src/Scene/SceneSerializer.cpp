@@ -3907,7 +3907,8 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
                 same3(p.lift, q.lift) && same3(p.gamma, q.gamma) && same3(p.gain, q.gain) &&
                 p.vignetteSmooth == q.vignetteSmooth && p.fxaa == q.fxaa &&
                 p.ssao == q.ssao && p.ssaoRadius == q.ssaoRadius && p.ssaoIntensity == q.ssaoIntensity &&
-                p.dof == q.dof && p.dofFocus == q.dofFocus && p.dofRange == q.dofRange;
+                p.dof == q.dof && p.dofFocus == q.dofFocus && p.dofRange == q.dofRange &&
+                p.bloomSoftness == q.bloomSoftness && p.ssaoPower == q.ssaoPower;
             if (!postDefault)
                 out << "post " << p.exposure << " " << p.tonemap << " " << (p.bloom ? 1 : 0) << " "
                     << p.bloomThreshold << " " << p.bloomIntensity << " " << p.bloomRadius << " "
@@ -3918,6 +3919,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
                     << p.vignetteSmooth << " " << (p.fxaa ? 1 : 0) << " "
                     << (p.ssao ? 1 : 0) << " " << p.ssaoRadius << " " << p.ssaoIntensity << " "
                     << (p.dof ? 1 : 0) << " " << p.dofFocus << " " << p.dofRange << "\n";
+            // Newer quality settings live on their own line so older files and older readers are unaffected.
+            if (p.bloomSoftness != q.bloomSoftness || p.ssaoPower != q.ssaoPower)
+                out << "postq " << p.bloomSoftness << " " << p.ssaoPower << "\n";
             const auto& w = rs.weather; const auto& dw = d.weather;
             if (w.preset != dw.preset || w.intensity != dw.intensity || w.fade != dw.fade ||
                 !same3(w.wind, dw.wind) || !w.thunderSound.empty())
@@ -4308,6 +4312,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             p.bloom = bloom != 0; p.grading = grading != 0; p.fxaa = fxaa != 0; p.ssao = ssao != 0; p.dof = dof != 0;
             if (p.tonemap < 0 || p.tonemap > 2) p.tonemap = Scene::RenderSettings::PostSettings::TonemapACES;
             if (clear) scene.renderSettings.post = p;
+        } else if (token == "postq") {
+            float soft = 0.0f, power = 1.0f;
+            in >> soft >> power;
+            if (clear && in) {
+                scene.renderSettings.post.bloomSoftness = soft < 0.0f ? 0.0f : (soft > 1.0f ? 1.0f : soft);
+                scene.renderSettings.post.ssaoPower = power < 0.25f ? 0.25f : (power > 4.0f ? 4.0f : power);
+            }
         } else if (token == "weather") {
             Scene::RenderSettings::WeatherSettings w;
             in >> w.preset >> w.intensity >> w.fade >> w.wind.x >> w.wind.y >> w.wind.z;

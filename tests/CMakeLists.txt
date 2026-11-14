@@ -3142,3 +3142,6 @@ add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_C
 add_executable(test_dof_math test_dof_math.cpp)
 target_link_libraries(test_dof_math PRIVATE okay::engine)
 add_test(NAME dof_math COMMAND test_dof_math)
+add_executable(test_post_quality_math test_post_quality_math.cpp)
+target_link_libraries(test_post_quality_math PRIVATE okay::engine)
+add_test(NAME post_quality_math COMMAND test_post_quality_math)

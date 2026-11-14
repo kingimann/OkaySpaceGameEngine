@@ -6,6 +6,7 @@
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/Atmosphere.hpp"         // sky palette, fog modes, post settings
+#include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
@@ -912,9 +913,10 @@ const char* kSsaoFrag =
     "}\n";
 const char* kMulFrag =
     "#version 120\n"
-    "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
+    "uniform sampler2D uSrc; uniform float uStrength; uniform float uPower; varying vec2 vUV;\n"
     "void main(){\n"
     "  vec3 ao = texture2D(uSrc, vUV).rgb;\n"
+    "  if (uPower != 1.0) ao = pow(max(ao, vec3(0.0)), vec3(uPower));\n"          // PostQualityMath.hpp: AoCurve
     "  gl_FragColor = vec4(mix(vec3(1.0), ao, uStrength), 1.0);\n"  // blended DST_COLOR*src
     "}\n";
 } // namespace
@@ -950,7 +952,7 @@ bool GLRenderer::EnsureSsaoProgs() {
     m_usRadius = g.GetUniformLocation(m_ssaoProg, "uRadius");
     m_usFar = g.GetUniformLocation(m_ssaoProg, "uFar");
     m_umSrc = g.GetUniformLocation(m_mulProg, "uSrc");
-    m_umStrength = g.GetUniformLocation(m_mulProg, "uStrength");
+    m_umStrength = g.GetUniformLocation(m_mulProg, "uStrength"); m_umPower = g.GetUniformLocation(m_mulProg, "uPower");
     return true;
 }
 
@@ -1089,9 +1091,10 @@ const char* kSkyFrag =
 // Bright-pass + 2x2 box downsample (uThresh 0 = plain downsample).
 const char* kDownFrag =
     "#version 120\n"
-    "uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uThresh; uniform float uRadius; varying vec2 vUV;\n"
+    "uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uThresh; uniform float uRadius; uniform float uSoft; varying vec2 vUV;\n"
+    OKAY_BLOOM_KNEE_SRC                                                          // soft knee (PostQualityMath.hpp); uSoft 0 = the old hard cut
     "vec3 tap(vec2 uv){ vec3 c = texture2D(uSrc, uv).rgb; float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
-    "  float k = max(l - uThresh, 0.0) / max(l, 1e-4); return c * k; }\n"
+    "  float k = bloomK(l, uThresh, uSoft); return c * k; }\n"
     "void main(){ vec2 o = uTexel * uRadius;\n"
     "  vec3 s = tap(vUV + vec2(-o.x, -o.y)) + tap(vUV + vec2(o.x, -o.y)) + tap(vUV + vec2(-o.x, o.y)) + tap(vUV + vec2(o.x, o.y));\n"
     "  gl_FragColor = vec4(s * 0.25, 1.0); }\n";
@@ -1281,7 +1284,7 @@ bool GLRenderer::EnsurePostChain() {
         m_downProg = buildQuadProgram(kDownFrag);
         if (!m_downProg) return false;
         auto u = [&](const char* n) { return g.GetUniformLocation(m_downProg, n); };
-        m_udnSrc = u("uSrc"); m_udnTexel = u("uTexel"); m_udnThresh = u("uThresh"); m_udnRadius = u("uRadius");
+        m_udnSrc = u("uSrc"); m_udnTexel = u("uTexel"); m_udnThresh = u("uThresh"); m_udnRadius = u("uRadius"); m_udnSoft = u("uSoft");
     }
     return true;
 }
@@ -2284,9 +2287,10 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         DrawQuad();
     };
     // Multiply the AO onto a target (dst *= src).
-    auto multiplyAo = [&](unsigned int fbo, float strength) {
+    auto multiplyAo = [&](unsigned int fbo, float strength, float power) {
         quadPass(m_mulProg, fbo, w, h, m_ssaoTexA, m_umSrc);
         g.Uniform1f(m_umStrength, strength > 1.0f ? 1.0f : strength);
+        g.Uniform1f(m_umPower, power);
         g.Enable(GL_BLEND);
         g.BlendFunc(GL_DST_COLOR, GL_ZERO);
         DrawQuad();
@@ -2309,7 +2313,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Disable(GL_DEPTH_TEST);
         if (ssaoOn && haveDepth) {
             computeAo(ps.ssao ? ps.ssaoRadius : SSAORadius());
-            multiplyAo(m_resolveFbo, ps.ssao ? ps.ssaoIntensity : SSAOStrength());
+            multiplyAo(m_resolveFbo, ps.ssao ? ps.ssaoIntensity : SSAOStrength(), ps.ssao ? ps.ssaoPower : 1.0f);
         }
         // 2) Bloom: bright-pass to half res, blur, down to quarter, blur. Both
         //    levels are added in the uber pass (a wide soft glow + a tight one).
@@ -2322,6 +2326,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             quadPass(m_downProg, m_bloomFboA, m_bloomW, m_bloomH, m_resolveTex, m_udnSrc);
             g.Uniform2f(m_udnTexel, 1.0f / (float)w, 1.0f / (float)h);
             g.Uniform1f(m_udnThresh, bloomThresh);
+            g.Uniform1f(m_udnSoft, ps.bloom ? ps.bloomSoftness : 0.0f);
             g.Uniform1f(m_udnRadius, 1.0f);
             DrawQuad();
             for (int it = 0; it < 2; ++it) {
@@ -2335,6 +2340,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             quadPass(m_downProg, m_bloomFboC, qw, qh, m_bloomTexA, m_udnSrc);
             g.Uniform2f(m_udnTexel, 1.0f / (float)m_bloomW, 1.0f / (float)m_bloomH);
             g.Uniform1f(m_udnThresh, 0.0f);
+            g.Uniform1f(m_udnSoft, 0.0f);
             g.Uniform1f(m_udnRadius, 1.0f);
             DrawQuad();
             for (int it = 0; it < 2; ++it) {
@@ -2426,7 +2432,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         if (SSAOEnabled() && EnsurePostProgs() && EnsureSsaoProgs() && EnsureSsaoTargets(hw, hh)) {
             DrawLinearDepth(scene, vp, eye, ignore, viewFr);
             computeAo(SSAORadius());
-            multiplyAo(m_resolveFbo, SSAOStrength());
+            multiplyAo(m_resolveFbo, SSAOStrength(), 1.0f);
             g.Enable(GL_DEPTH_TEST);
             g.BindTexture(GL_TEXTURE_2D, 0);
             g.ClearColor(clearR, clearG, clearB, clearA);     // restore the caller's clear

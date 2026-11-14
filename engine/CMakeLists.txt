@@ -262,6 +262,10 @@ add_library(okay_engine
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp
+    src/Render/MaterialGraph.cpp
+    src/Render/MaterialGraphIO.cpp
+    src/Render/MaterialGraphEval.cpp
+    src/Render/MaterialGraphCodegen.cpp
     src/Optimize/MeshSimplify.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp

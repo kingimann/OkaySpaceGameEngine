@@ -3154,3 +3154,7 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+add_executable(test_material_graph test_material_graph.cpp)
+target_link_libraries(test_material_graph PRIVATE okay::engine)
+add_test(NAME material_graph COMMAND test_material_graph)

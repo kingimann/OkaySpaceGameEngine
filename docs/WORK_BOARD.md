@@ -145,6 +145,7 @@ Nothing user-visible, nothing default.
 | Audio import settings apply on load; FLAC decoding | John | `john/audio-import-flac` (#786) |
 | 2D grid path costs, smoothing and moving obstacles | John | `john/pathfinding2d-weights` |
 | In-game UI widgets: search bar, date and time picker, sandboxed file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | John | `john/ui-widgets-more` |
+| One shared AI perception check; minimap and turn-order docs | John | `john/perception-dedupe` |
 
 ## Free (unclaimed, safe small tasks)
 

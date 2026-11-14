@@ -74,9 +74,15 @@ Works on box/sphere colliders and heightmap terrain (max step 0.45, holes
 and cliffs are avoided). A stuck watchdog forces a fresh route whenever the
 NPC stops making progress for ~0.8 s (wedged on a corner or another NPC).
 
-Selecting an NPC in the Scene view now draws its **perception** too: a
+Selecting an NPC in the Scene view draws its **perception** too: a
 yellow sight-cone arc at eye height (Sight Range + Field Of View) and a
 blue circle for Hearing Range, so you can tune a guard's senses visually.
+That cone, the optional wall check and the hearing radius are the same
+check a behavior tree's Perception service uses, so the two agree when
+the numbers match. Each one keeps its own numbers: a new NPC starts with
+sight 8, a wide cone, line of sight off and hearing off, and a new
+Perception node starts with sight 12, a 120 degree cone, line of sight on
+and hearing 4.
 
 ### Ordering NPCs around from scripts
 

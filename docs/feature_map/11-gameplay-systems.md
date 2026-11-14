@@ -122,10 +122,10 @@ No open PR touches this area.
 - **Code:** `Components/Spawner`, `Components/TurnManager`, `Components/Minimap`, `editor/main.cpp` (Spawner, Turn Manager, Minimap rows)
 - **API:** `Spawner`, `SpawnOne`, `AliveCount`, `StartWaves`, `TurnManager`, `EndTurn`, `Minimap`, `MinimapBlip`, script `spawner_start`, `spawner_stop`, `spawner_alive`
 - **Editor:** Add Component > Gameplay > Spawner; RPG / Turn-Based > Turn Manager; UI > Minimap and Minimap Blip
-- **Docs:** `docs/npcs_and_crafting.md` (Spawner only)
+- **Docs:** `docs/minimap.md` (minimap and turn manager), `docs/npcs_and_crafting.md` (Spawner only)
 - **Tests:** `rpg`, `minimap`, `npc_crafting`
-- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`
-- **Open:** no docs for Turn Manager or Minimap; Spawner has no object pooling hook (see pooling in area 1.4); Minimap is 2D top-down only
+- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`. The minimap and the turn manager are written up in `docs/minimap.md`
+- **Open:** Spawner has no object pooling hook (see pooling in area 1.4); the minimap is a flat top-down picture (no tilted or perspective view)
 - **Related:** 9.5, 12.8, 1.4, 16.8
 - **Words:** spawner, enemy waves, wave spawner, spawn point, turn manager, turn-based, initiative, round, minimap, radar, blip, MinimapBlip
 - **Seen as:** nothing spawns; too many enemies pile up; the template object is visible in the scene; turns skip a unit; minimap shows nothing or the wrong area

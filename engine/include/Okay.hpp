@@ -231,6 +231,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/NavMeshBake.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/Perception.hpp"
 #include "okay/AI/BehaviorTree.hpp"
 
 // Starter scene templates

@@ -196,6 +196,7 @@ add_library(okay_engine
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
+    src/AI/Perception.cpp
     src/Core/ImageWrite.cpp
     src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp

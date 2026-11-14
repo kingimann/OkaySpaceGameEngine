@@ -2,6 +2,11 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ThreeMfReader.hpp"
+#include "okay/Render/AmfReader.hpp"
+#include "okay/Render/X3dReader.hpp"
+#include "okay/Render/DxfReader.hpp"
+#include "okay/Render/LwoReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
@@ -89,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -425,6 +430,36 @@ constexpr bool kOwnAseDefault = true;
 constexpr bool kOwnAseDefault = false;
 #endif
 
+#ifdef OKAY_OWN_3MF_DEFAULT
+constexpr bool kOwn3mfDefault = true;
+#else
+constexpr bool kOwn3mfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_AMF_DEFAULT
+constexpr bool kOwnAmfDefault = true;
+#else
+constexpr bool kOwnAmfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_X3D_DEFAULT
+constexpr bool kOwnX3dDefault = true;
+#else
+constexpr bool kOwnX3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_DXF_DEFAULT
+constexpr bool kOwnDxfDefault = true;
+#else
+constexpr bool kOwnDxfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LWO_DEFAULT
+constexpr bool kOwnLwoDefault = true;
+#else
+constexpr bool kOwnLwoDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -437,6 +472,11 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MD5",     "MD5",     kOwnMd5Default},       // 8
     {"OKAY_OWN_MS3D",    "MS3D",    kOwnMs3dDefault},       // 9
     {"OKAY_OWN_ASE",     "ASE",     kOwnAseDefault},       // 10
+    {"OKAY_OWN_3MF",     "3MF",     kOwn3mfDefault},       // 11
+    {"OKAY_OWN_AMF",     "AMF",     kOwnAmfDefault},       // 12
+    {"OKAY_OWN_X3D",     "X3D",     kOwnX3dDefault},       // 13
+    {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
+    {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -454,6 +494,11 @@ int OwnSlot(const std::string& ext) {
     if (e == ".md5mesh" || e == ".md5anim") return 8;
     if (e == ".ms3d") return 9;
     if (e == ".ase") return 10;
+    if (e == ".3mf") return 11;
+    if (e == ".amf") return 12;
+    if (e == ".x3d") return 13;
+    if (e == ".dxf") return 14;
+    if (e == ".lwo") return 15;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -574,8 +619,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 7 ? ReadSmdFile(path, out, &e1)
                   : s == 8 ? ReadMd5File(path, out, &e1)
                   : s == 9 ? ReadMs3dFile(path, out, &e1)
-                  : ReadAseFile(path, out, &e1);
-        if (good && flatten && s >= 6) FlattenImportedModel(out);
+                  : s == 10 ? ReadAseFile(path, out, &e1)
+                  : s == 11 ? Read3mfFile(path, out, &e1, flatten)
+                  : s == 12 ? ReadAmfFile(path, out, &e1, flatten)
+                  : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
+                  : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
+                  : ReadLwoFile(path, out, &e1);   // 15
+        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;

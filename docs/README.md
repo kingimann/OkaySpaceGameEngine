@@ -78,6 +78,11 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [model_corpus.md](model_corpus.md): real-file checks of our own model readers against the outside libraries, and the flip-readiness verdict.
 - [own_fbx_reader.md](own_fbx_reader.md), [own_3ds_reader.md](own_3ds_reader.md), [own_bvh_reader.md](own_bvh_reader.md): our own FBX, 3DS and BVH readers.
 - [own_off_reader.md](own_off_reader.md), [own_smd_reader.md](own_smd_reader.md), [own_md5_reader.md](own_md5_reader.md), [own_ms3d_reader.md](own_ms3d_reader.md), [own_ase_reader.md](own_ase_reader.md): our own OFF, SMD, MD5, MS3D and ASE readers.
+- [own_lwo_reader.md](own_lwo_reader.md): our own LWO reader.
+- [own_dxf_reader.md](own_dxf_reader.md): our own DXF reader.
+- [own_x3d_reader.md](own_x3d_reader.md): our own X3D reader.
+- [own_amf_reader.md](own_amf_reader.md): our own AMF reader.
+- [own_3mf_reader.md](own_3mf_reader.md): our own 3MF reader (it also describes the XML and zip readers that AMF and X3D share).
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.
 - [terrain_water.md](terrain_water.md): terrain and water.

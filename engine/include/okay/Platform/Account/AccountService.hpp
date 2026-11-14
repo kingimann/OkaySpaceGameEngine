@@ -713,8 +713,10 @@ public:
         return ApiTimed(path, method, jsonBody, extraHeader, 0);
     }
     /// Api with a time limit in seconds (0 = none, as Api). A request that is not answered in time comes back not-reached, so a caller
-    /// that must not hang (the join-time session ticket) can retry or give up. The limit is enforced by the curl fallback (Linux, macOS,
-    /// and Windows when the native client is off); the native Windows client keeps WinHTTP's own timeouts.
+    /// that must not hang (the join-time session ticket) can retry or give up. The limit is enforced by the own client (opt-in, Linux) and
+    /// by the curl path (Linux, macOS, and Windows when the native client is off). The native Windows client (WinHTTP) does not apply
+    /// it: it keeps its session timeouts, exactly as before. A request that may already have reached the server (the own client or
+    /// WinHTTP timed out after sending) comes back not-reached and is NOT re-sent through curl unless it is a GET or HEAD.
     ApiResponse ApiTimed(const std::string& path, const std::string& method, const std::string& jsonBody,
                          const std::string& extraHeader, int timeoutSec) const {
         if (!IsOnline() || !session_.loggedIn) return {};
@@ -1300,6 +1302,9 @@ private:
                 out.ok = out.status >= 200 && out.status < 300;
                 return out;
             }
+            // The request may have reached the server (timeout, reset or bad answer after the send): sending a POST,
+            // PUT, PATCH or DELETE again through curl could do the action twice. Report "not reached" instead.
+            if (nr.maybeSent && method != "GET" && method != "HEAD") return {};
         }
         std::error_code ec;
         fs::path dir   = fs::temp_directory_path(ec);

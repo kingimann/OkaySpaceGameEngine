@@ -3045,7 +3045,7 @@ set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 # no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
 # OKAY_BATCHC_FUZZ_ITERS raises the sweep).
 function(okay_batchc_reader_test fmt src)
-    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src} ${ARGN})
     target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
     target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -3054,11 +3054,14 @@ okay_batchc_reader_test(md2 Md2Reader.cpp)
 okay_batchc_reader_test(md3 Md3Reader.cpp)
 okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
 okay_batchc_reader_test(b3d B3dReader.cpp)
+# the .x reader unpacks MSZIP with the engine's own inflate
+okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrMeshReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XFileReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

@@ -137,4 +137,91 @@ inline std::string BuildB3d(const B3dOpts& o = {}) {
     return C("BB3D", I(1) + texs + brus + top);
 }
 
+
+// ---- DirectX .x ----
+// Text file (see the comments in the builder for every number). Material Red (diffuse 1 0.5 0.25 0.5, power 20, emissive
+// 0.4 0 0, texture tex\a.png) and Green (diffuse 0 1 0, power 5); Frame Root (matrix translation (1,2,3)) holding Bone1
+// (translation (0,1,4)), Bone2 (scale 2, translation (1,0,0)) and mesh Tri: 5 vertices (0,0,0) (2,0,0) (2,3,0) (0,3,0) (0,0,1),
+// 4 faces: triangle (0,1,2) [Red], quad (0,1,2,3) [Green], a degenerate triangle (0,0,4) and a face naming vertex 9;
+// normals (0,0,1) for the triangle and (0,0,-1) for the quad; skin weights Bone1: v0 1.0, v1 0.5, v2 0.25; Bone2: v1 0.5.
+// AnimTicksPerSecond 30; set Walk: Bone1 position keys (0,1,4) at 0 and (0,2,4) at 30, rotation keys identity and (w x y z) =
+// (h 0 h 0); Bone2 one matrix key (scale 2, translation (1,0,0)). Area 3 + 6 = 9, 3 triangles in 2 parts.
+struct XOpts { bool twoTop = false; };
+inline std::string BuildXText(const XOpts& o = {}) {
+    std::string s =
+        "xof 0303txt 0032\r\n"
+        "template Foo {\n <11111111-2222-3333-4444-555555555555>\n DWORD a;\n}\n"
+        "// a comment\nAnimTicksPerSecond {\n 30;\n}\n"
+        "Material Red {\n 1.0;0.5;0.25;0.5;;\n 20.0;\n 0.1;0.2;0.3;;\n 0.4;0.0;0.0;;\n TextureFilename {\n  \"tex\\\\a.png\";\n }\n}\n"
+        "Frame Root {\n FrameTransformMatrix {\n  1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,1.0,2.0,3.0,1.0;;\n }\n"
+        " Frame Bone1 {\n  FrameTransformMatrix { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,1,4,1;; }\n }\n"
+        " Frame Bone2 {\n  FrameTransformMatrix { 2,0,0,0, 0,2,0,0, 0,0,2,0, 1,0,0,1;; }\n }\n"
+        " Mesh Tri {\n  5;\n  0.0;0.0;0.0;,\n  2.0;0.0;0.0;,\n  2.0;3.0;0.0;,\n  0.0;3.0;0.0;,\n  0.0;0.0;1.0;;\n"
+        "  4;\n  3;0,1,2;,\n  4;0,1,2,3;,\n  3;0,0,4;,\n  3;0,1,9;;\n"
+        "  MeshNormals {\n   2;\n   0.0;0.0;1.0;,\n   0.0;0.0;-1.0;;\n   4;\n   3;0,0,0;,\n   4;1,1,1,1;,\n   3;0,0,0;,\n   3;0,0,0;;\n  }\n"
+        "  MeshTextureCoords {\n   5;\n   0.0;0.0;,\n   1.0;0.0;,\n   1.0;1.0;,\n   0.0;1.0;,\n   0.5;0.5;;\n  }\n"
+        "  MeshMaterialList {\n   2;\n   4;\n   0,1,0,0;;\n   { Red }\n   Material Green {\n    0.0;1.0;0.0;1.0;;\n    5.0;\n    0.0;0.0;0.0;;\n    0.0;0.0;0.0;;\n   }\n  }\n"
+        "  VertexDuplicationIndices {\n   5; 5; 0,1,2,3,4;\n  }\n"
+        "  SkinWeights {\n   \"Bone1\";\n   3;\n   0,1,2;\n   1.0,0.5,0.25;\n   1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,-1.0,-4.0,1.0;;\n  }\n"
+        "  SkinWeights {\n   \"Bone2\";\n   1;\n   1;\n   0.5;\n   1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;;\n  }\n"
+        " }\n}\n";
+    if (o.twoTop) s += "Frame Other {\n FrameTransformMatrix { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1;; }\n}\n";
+    s +=
+        "AnimationSet Walk {\n Animation A1 {\n  { Bone1 }\n"
+        "  AnimationKey {\n   2;\n   2;\n   0;3;0.0,1.0,4.0;;,\n   30;3;0.0,2.0,4.0;;;\n  }\n"
+        "  AnimationKey {\n   0;\n   2;\n   0;4;1.0,0.0,0.0,0.0;;,\n   30;4;0.7071068,0.0,0.7071068,0.0;;;\n  }\n }\n"
+        " Animation A2 {\n  { Bone2 }\n  AnimationKey {\n   4;\n   1;\n   0;16;2.0,0.0,0.0,0.0,0.0,2.0,0.0,0.0,0.0,0.0,2.0,0.0,1.0,0.0,0.0,1.0;;;\n  }\n }\n}\n";
+    return s;
+}
+
+// Binary writers: tokens as the DirectX SDK describes them.
+struct XBin {
+    std::string s;
+    bool f64 = false;
+    explicit XBin(bool f64_ = false) : f64(f64_) { s = std::string("xof 0303bin ") + (f64 ? "0064" : "0032"); }
+    XBin& T(unsigned t) { P16(s, t); return *this; }
+    XBin& Name(const std::string& n) { T(1); P32(s, (std::uint32_t)n.size()); s += n; return *this; }
+    XBin& Str(const std::string& n) { T(2); P32(s, (std::uint32_t)n.size()); s += n; T(20); return *this; }
+    XBin& Open() { return T(10); }
+    XBin& Close() { return T(11); }
+    XBin& Ints(const std::vector<int>& v) { T(6); P32(s, (std::uint32_t)v.size()); for (int x : v) P32(s, (std::uint32_t)x); return *this; }
+    XBin& Floats(const std::vector<double>& v) {
+        T(7); P32(s, (std::uint32_t)v.size());
+        for (double x : v) { if (f64) { std::uint64_t u; std::memcpy(&u, &x, 8); P32(s, (std::uint32_t)u); P32(s, (std::uint32_t)(u >> 32)); } else PF(s, (float)x); }
+        return *this;
+    }
+};
+// Binary file: a template (skipped), Frame Root { FrameTransformMatrix (translation (1,2,3)), Mesh M with 3 vertices (0,0,0)
+// (1,0,0) (0,1,0) and one face (0,1,2) }, written with separators between some tokens. Area 0.5.
+inline std::string BuildXBin(bool f64 = false, bool separators = true) {
+    XBin b(f64);
+    b.T(31).Name("Foo").Open().T(5); b.s.append(16, '\x11'); b.T(41).Name("a").T(20).Close();
+    b.Name("Frame").Name("Root").Open();
+    b.Name("FrameTransformMatrix").Open().Floats({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1});
+    if (separators) b.T(20);
+    b.Close();
+    b.Name("Mesh").Name("M").Open().Ints({3}).Floats({0, 0, 0, 1, 0, 0, 0, 1, 0});
+    if (separators) b.T(20);
+    b.Ints({1, 3, 0, 1, 2});
+    if (separators) b.T(20);
+    b.Close();   // mesh
+    b.Close();   // frame
+    return b.s;
+}
+// MSZIP text file: the body of BuildXText split in two blocks; the second block is one deflate match (3 bytes back) that
+// repeats the " }\n" the first block ends with (it needs the first block as its dictionary). The body is a one-frame mesh.
+inline std::string BuildXTzip(bool crossBlock = true) {
+    const std::string body1 = "Frame Root {\n Mesh M {\n  3;\n  0;0;0;,\n  1;0;0;,\n  0;1;0;;\n  1;\n  3;0,1,2;;\n }\n";
+    const std::string body2 = crossBlock ? std::string(" }\n") : std::string();
+    std::string s = "xof 0303tzip0032";
+    P32(s, (std::uint32_t)(16 + body1.size() + 3));
+    auto block = [&](std::size_t usize, const std::string& data) { P16(s, (unsigned)usize); P16(s, (unsigned)data.size() + 2); s += "CK"; s += data; };
+    block(body1.size(), DeflateLiterals(body1));
+    if (crossBlock) {
+        BitW w; w.Bits(1, 1); w.Bits(1, 2); w.Huff(1, 7); w.Huff(2, 5); w.Lit(256); w.Flush();   // length 3 (symbol 257), distance 3 (code 2), end
+        block(3, w.out);
+    } else block(0 + 0, std::string());
+    return s;
+}
+
 } // namespace fx

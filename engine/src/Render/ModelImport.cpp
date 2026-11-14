@@ -94,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".md2", ".md3", ".irrmesh", ".b3d"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".md2", ".md3", ".irrmesh", ".b3d", ".x"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -484,6 +484,12 @@ constexpr bool kOwnB3dDefault = true;
 constexpr bool kOwnB3dDefault = false;
 #endif
 
+#ifdef OKAY_OWN_X_DEFAULT
+constexpr bool kOwnXDefault = true;
+#else
+constexpr bool kOwnXDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -506,6 +512,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MD3",     "MD3",     kOwnMd3Default},       // 18
     {"OKAY_OWN_IRRMESH", "IRRMESH", kOwnIrrMeshDefault},   // 19
     {"OKAY_OWN_B3D",     "B3D",     kOwnB3dDefault},       // 20
+    {"OKAY_OWN_X",       "X",       kOwnXDefault},         // 21
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -532,6 +539,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".md3") return 18;
     if (e == ".irrmesh") return 19;
     if (e == ".b3d") return 20;
+    if (e == ".x") return 21;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -661,7 +669,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 17 ? ReadMd2File(path, out, &e1)
                   : s == 18 ? ReadMd3File(path, out, &e1)
                   : s == 19 ? ReadIrrMeshFile(path, out, &e1)
-                  : ReadB3dFile(path, out, &e1);   // 20
+                  : s == 20 ? ReadB3dFile(path, out, &e1)
+                  : ReadXFile(path, out, &e1);   // 21
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B flattens itself
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);

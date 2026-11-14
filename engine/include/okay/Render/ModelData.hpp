@@ -214,6 +214,15 @@ bool ReadIrrMeshBuffer(const std::string& text, const std::string& baseDir, Impo
 /// reversed. Vertex colours, further texture coordinate sets, texture and brush flags and effects are not read (reported in
 /// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
 bool ReadB3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// DirectX .x (text, binary, and MSZIP-compressed "tzip" / "bzip"; 32 and 64 bit floats): the frame tree as nodes, each
+/// mesh split into one part per material (vertices welded per position and normal, polygons fan-triangulated, normals as
+/// stored or smooth ones, the first texture coordinate set as written), materials (diffuse colour and alpha, emissive,
+/// power as shininess, texture and normal map file), skin weights (the four strongest per vertex, the offset matrix as
+/// the inverse bind) and each AnimationSet as one clip (rotation, scale, position and matrix keys at the file's
+/// AnimTicksPerSecond, 25 without one). DirectX is left-handed and writes matrices for row vectors: Z is mirrored and the
+/// winding reversed. Vertex colours, further texture coordinate sets, specular colour and shared (referenced) meshes
+/// are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadXBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -231,6 +240,7 @@ bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadMd3File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrMeshFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadB3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadXFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

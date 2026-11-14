@@ -189,11 +189,68 @@ static void B3d() {
     }
 }
 
+// ======================= DirectX .x =======================
+static bool ReadX(const std::string& b, ImportedModel& m, std::string& e) { return ReadXBuffer(b, "", m, &e); }
+static void X() {
+    const std::string text = fx::BuildXText(), bin32 = fx::BuildXBin(false, true), bin64 = fx::BuildXBin(true, false), tzip = fx::BuildXTzip(true);
+    for (const std::string* f : {&text, &bin32, &bin64, &tzip}) { ImportedModel m; std::string e; CHECK(ReadX(*f, m, e) && fx::Sane(m)); }
+    Sweep("x text", ReadX, text, Iters());
+    Sweep("x binary 32", ReadX, bin32, Iters());
+    Sweep("x binary 64", ReadX, bin64, Iters() / 2);
+    Sweep("x mszip", ReadX, tzip, Iters() / 2);
+    // every four-byte position of the binary and compressed files at integer and float extremes
+    for (const std::string* f : {&bin32, &bin64, &tzip}) {
+        EveryOffset(ReadX, *f, {0u, 1u, 2u, 3u, 255u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu, 0xFFFFFFFEu, 65536u, 65537u});
+        EveryOffset(ReadX, *f, {0x7FC00000u, 0x7F800000u, 0xFF800000u, 0x7F7FFFFFu, 0x5E000000u});
+    }
+    // text: every number-like field replaced by hostile numbers and hostile counts (each claim is far larger than the file)
+    const char* nums[] = {"nan", "inf", "-inf", "1e999", "1e308", "0x10", "--1", "1.2.3", "+", "e5", "4294967296", "-1", "99999999999999999999", "1.#QNAN", "99999999", "2147483648", "-2147483649", ""};
+    for (const char* n : nums) {
+        for (const char* from : {"5;\n  0.0;0.0;0.0;,", "4;\n  3;0,1,2;,", "2;\n   0.0;0.0;1.0;,", "   4;\n   3;0,0,0;", "   5;\n   0.0;0.0;,", "   3;\n   0,1,2;\n   1.0,0.5,0.25;", "   2;\n   2;\n   0;3;", "30;3;0.0,2.0,4.0", "   2;\n   4;\n   0,1,0,0", "AnimTicksPerSecond {\n 30;"}) {
+            const std::size_t p = text.find(from);
+            if (p == std::string::npos) continue;
+            const std::size_t q = std::min(text.size(), p + 1 + (from[0] == ' ' ? 3 : 0));
+            std::string s = text; s.replace(from[0] == ' ' ? p + 3 : p, 1, n); (void)q; Try(ReadX, s);
+        }
+        for (std::size_t o = 0; o + 1 < text.size(); o += 7) { std::string s = text; s.replace(o, 1, n); Try(ReadX, s); }
+    }
+    // hostile structure: deep frame nesting, a 1,000,000-deep unknown object, an unclosed string, long names, an enormous matrix list
+    { std::string s = "xof 0303txt 0032\n"; for (int i = 0; i < 150000; ++i) s += "Frame f {\n"; Try(ReadX, s); }
+    { std::string s = "xof 0303txt 0032\nFoo {\n"; for (int i = 0; i < 1000000; ++i) s += "{"; Try(ReadX, s); }
+    { std::string s = "xof 0303txt 0032\nFrame r {\n Mesh m {\n \"unclosed"; Try(ReadX, s); }
+    { std::string s = "xof 0303txt 0032\nFrame " + std::string(70000, 'n') + " {\n}\n"; Try(ReadX, s); }
+    { std::string s = "xof 0303txt 0032\nFrame r {\n FrameTransformMatrix {\n"; for (int i = 0; i < 200000; ++i) s += "1.0,"; s += ";;\n}\n}\n"; Try(ReadX, s); }
+    { std::string s = "xof 0303txt 0032\n"; for (int i = 0; i < 200000; ++i) s += "Material m" + std::to_string(i) + " { 1;1;1;1;; 1; 1;1;1;; 0;0;0;; }\n"; Try(ReadX, s); }
+    // a big valid mesh: 100,000 vertices, 100,000 triangles with normals and uv (text)
+    {
+        std::string s = "xof 0303txt 0032\nMesh m {\n100000;\n";
+        for (int i = 0; i < 100000; ++i) s += std::to_string(i % 300) + ";" + std::to_string(i / 300) + ";" + std::to_string(i % 7) + ";,\n";
+        s += ";\n100000;\n";
+        for (int i = 0; i < 100000; ++i) s += "3;" + std::to_string(i) + "," + std::to_string((i + 1) % 100000) + "," + std::to_string((i * 31 + 5) % 100000) + ";,\n";
+        s += ";\n}\n";
+        const double t0 = Now(); ImportedModel m; std::string e; const bool ok = ReadX(s, m, e);
+        CHECK(ok ? fx::Sane(m) : !e.empty());
+        std::fprintf(stderr, "  x text: 100,000 vertices and faces read (ok=%d) in %.2f s\n", (int)ok, Now() - t0);
+    }
+    // MSZIP bombs: 2,000 blocks that each unpack to 32,000 bytes from about 140; a block that unpacks to more than it says; a size that lies
+    {
+        std::string s = "xof 0303tzip0032"; fx::P32(s, 1000);
+        const std::string blk = fx::DeflateRepeat('x', 124);
+        for (int i = 0; i < 2000; ++i) { fx::P16(s, 124 * 258 + 1); fx::P16(s, (unsigned)blk.size() + 2); s += "CK"; s += blk; }
+        const double t0 = Now(); Try(ReadX, s);
+        std::fprintf(stderr, "  x mszip: 64 MB of unpacked data refused or read in %.2f s\n", Now() - t0);
+        std::string t = "xof 0303tzip0032"; fx::P32(t, 1000); fx::P16(t, 100); fx::P16(t, (unsigned)blk.size() + 2); t += "CK"; t += blk; Try(ReadX, t);
+        std::string u = "xof 0303tzip0032"; fx::P32(u, 1000); fx::P16(u, 0); fx::P16(u, 2); u += "CK"; Try(ReadX, u);
+        std::string v = "xof 0303tzip0032"; fx::P32(v, 0xFFFFFFFFu); Try(ReadX, v);
+    }
+}
+
 int main() {
     RUN_SUITE("batchc_hostile");
     Md2();
     Md3();
     Irr();
     B3d();
+    X();
     TEST_MAIN_RESULT();
 }

@@ -68,6 +68,11 @@ then this file gets updated. Keep this file short and true.
     general algorithms, in your own words and structure, and work out constants yourself and check them with tests.
     Ideas, algorithms and file formats are not copyrighted; code is. Say in the report and the docs what each new file
     was written from (its spec or paper). If code was copied or ported by mistake, rewrite it from scratch.
+    This covers everything in the repository, not only code: fonts, images, sounds, models, test data and test
+    vectors, shader text and documents. The owner wants nothing copyrighted at all. Third-party pieces that are already
+    here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stay only until our own replacement is ready,
+    each has a removal plan, and nothing new may be added. Never add a downloaded asset, font, dataset or library, and
+    never "fetch it at test time" as a way round this rule.
 
 ## Machine and agents
 

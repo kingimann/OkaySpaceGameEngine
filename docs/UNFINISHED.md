@@ -24,6 +24,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |
 | Six engine-API nodes: Input.DefineAction, Input.DefineDirection, Audio.SaveSettings, Rigidbody.AddTorque (covered by other suites); Input.Rumble and Fog.SetMode proven | Partly proven | Show nothing in a headless scene |
 | Photon, PlayFab and Custom net providers | C++ extension points only | Need the vendor SDKs and accounts; nothing in the editor selects them |
+| Play start hitch in the editor | `EditorState::Play()` still runs on the click frame: snapshot text, loading every AudioSource file (each source holds its own copy of the decoded clip), validating every visual script, and (in the editor) baking each NavMeshSurface with Bake Before Play | `tests/test_play_start_bench.cpp` times each step. Not done: skip the bake when nothing changed, share one decoded clip between sources, spread the work over frames. The GPU side (first draw of the Game view) cannot be measured headless |
 | Steamworks backend | Off by default | Needs Valve's proprietary SDK |
 | Glass UI theme | Visible, no real blur | The shared draw path cannot read the framebuffer back |
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |

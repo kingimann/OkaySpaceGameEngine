@@ -3,8 +3,8 @@
 // switched on; the model must say backend "own" and must equal what the format's own Read*File gives directly, so a wrong
 // arm in the dispatch chain (a format absorbed by the last arm) fails here. Also checked: the environment variable
 // OKAY_OWN_<FMT> and SetImportBackend switch a format on and off, ImportableExtensions follows, and flatten bakes the
-// node tree. (The batch A and B slots are checked by tests/test_own_dispatch.cpp once the Blender branch that adds it is
-// merged; the two are meant to become one file.)
+// node tree. The batch A and B slots and Blender are checked by tests/test_own_dispatch.cpp, which also lists these five
+// fixtures (one import and one equality check each); this file goes deeper on slots 17 to 21.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batchc_fixtures.hpp"

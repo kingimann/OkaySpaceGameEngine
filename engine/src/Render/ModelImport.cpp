@@ -94,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".md2", ".md3", ".irrmesh", ".b3d", ".x"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -490,6 +490,12 @@ constexpr bool kOwnXDefault = true;
 constexpr bool kOwnXDefault = false;
 #endif
 
+#ifdef OKAY_OWN_BLEND_DEFAULT
+constexpr bool kOwnBlendDefault = true;
+#else
+constexpr bool kOwnBlendDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -507,7 +513,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_X3D",     "X3D",     kOwnX3dDefault},       // 13
     {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
     {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
-    {"",                 "",        false},                // 16: kept for the Blender reader (own-blend-reader branch); no extension maps here
+    {"OKAY_OWN_BLEND",   "Blender", kOwnBlendDefault},     // 16
     {"OKAY_OWN_MD2",     "MD2",     kOwnMd2Default},       // 17
     {"OKAY_OWN_MD3",     "MD3",     kOwnMd3Default},       // 18
     {"OKAY_OWN_IRRMESH", "IRRMESH", kOwnIrrMeshDefault},   // 19
@@ -535,6 +541,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".x3d") return 13;
     if (e == ".dxf") return 14;
     if (e == ".lwo") return 15;
+    if (e == ".blend") return 16;
     if (e == ".md2") return 17;
     if (e == ".md3") return 18;
     if (e == ".irrmesh") return 19;
@@ -666,12 +673,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
                   : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
                   : s == 15 ? ReadLwoFile(path, out, &e1)
+                  : s == 16 ? ReadBlendFile(path, out, &e1, flatten)   // the Blender reader flattens by itself
                   : s == 17 ? ReadMd2File(path, out, &e1)
                   : s == 18 ? ReadMd3File(path, out, &e1)
                   : s == 19 ? ReadIrrMeshFile(path, out, &e1)
                   : s == 20 ? ReadB3dFile(path, out, &e1)
                   : ReadXFile(path, out, &e1);   // 21
-        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B flattens itself
+        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -690,7 +698,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const std::string x = ExtensionOf(path);
         const int xs = OwnSlot(x);
         const bool optIn = xs >= 3 && xs - 3 < (int)(sizeof(kOptIn) / sizeof(kOptIn[0]));
-        const char* nm = optIn ? kOptIn[xs - 3].name : nullptr;
+        const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
             *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +

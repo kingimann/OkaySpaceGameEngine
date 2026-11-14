@@ -622,5 +622,34 @@ int main() {
         fs::remove_all(base, ec);
     }
 
+    // ---- Play's snapshot is the scene as it is right now, even for an edit nobody announced (no PushUndo) ------------
+    {
+        Fresh();
+        EditorState ed;
+        GameObject* a = ed.scene().CreateGameObject("mover");
+        ed.Play();                                    // (the first Play of this scene: m_known was never refreshed by hand)
+        a->transform->localPosition = {9, 9, 9};      // the game moves it
+        ed.Stop();
+        GameObject* back = ed.scene().Find("mover");
+        CHECK(back != nullptr && back->transform->localPosition.x == 0.0f);   // Stop restored the pre-Play scene
+        back->transform->localPosition = {4, 0, 0};   // an edit made straight on the scene, never announced
+        ed.Play();
+        ed.scene().Find("mover")->transform->localPosition = {7, 7, 7};
+        ed.Stop();
+        CHECK(ed.scene().Find("mover")->transform->localPosition.x == 4.0f);  // the unannounced edit is in the snapshot
+    }
+
+    // ---- The first Play frame steps one 60 Hz frame, not the click frame's hitch -----------------------------------
+    {
+        Fresh();
+        EditorState ed;
+        Probe* p = AddProbe(ed);
+        ed.Play();
+        CHECK(ed.PlayFrame(0.4, false));              // the frame that held Play()'s own work: 400 ms measured
+        CHECK_NEAR(p->lastDt, 1.0 / 60.0, 1e-6);      // the game still steps a normal frame
+        CHECK(ed.PlayFrame(0.4, false));              // a later hitch is clamped as before (0.1 s)
+        CHECK_NEAR(p->lastDt, 0.1, 1e-6);
+    }
+
     TEST_MAIN_RESULT();
 }

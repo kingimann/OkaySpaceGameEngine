@@ -803,6 +803,11 @@ add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
+target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_play_start_bench PRIVATE okay::engine)
+add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
@@ -973,6 +978,11 @@ if(TARGET okay_ui)
     target_link_libraries(test_okayui PRIVATE okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
+
+# The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
+add_executable(test_ui_backend test_ui_backend.cpp)
+target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ui_backend COMMAND test_ui_backend)
 
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)
@@ -3012,6 +3022,21 @@ target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine
 target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
+# hand-computed values and through the import seam; the hostile test is standalone (reader + the in-tree inflate) so it can also be
+# built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_BLEND_FUZZ_ITERS raises the sweep.
+add_executable(test_blend_reader test_blend_reader.cpp)
+target_link_libraries(test_blend_reader PRIVATE okay::engine)
+target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_blend_hostile test_blend_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
 # Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
 # standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
 # inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
@@ -3103,3 +3128,9 @@ if(UNIX AND NOT APPLE)
     add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
     set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()
+
+# The import seam routes every opt-in own-reader format (slots 3-16) to its own reader (one tiny fixture each).
+add_executable(test_own_dispatch test_own_dispatch.cpp)
+target_link_libraries(test_own_dispatch PRIVATE okay::engine)
+target_compile_definitions(test_own_dispatch PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

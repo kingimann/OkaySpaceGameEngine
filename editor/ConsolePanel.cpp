@@ -5,10 +5,17 @@
 #include "EditorWidgets.hpp"
 #include "MainShared.hpp"
 #include "ProblemsPanel.hpp"
+#include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
 
 #include <cstdlib>
 #include <ctime>
 #include <set>
+
+#ifdef OKAY_HAVE_OKAYUI
+#include "OkayUIHost.hpp"        // the hosted region
+#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of it?
+#include "OkayUIScreens.hpp"     // the OkayUI port of this panel
+#endif
 
 namespace oked {
 
@@ -124,6 +131,45 @@ void ConsoleClear() {
     RefreshCounts();
 }
 
+#ifdef OKAY_HAVE_OKAYUI
+// The Console panel drawn by OkayUI (Edit > Preferences > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
+// is the dock tab, the title with the counts and the close box, and it hands its free area to OkayUI as one rectangle.
+namespace {
+okayuiscreens::ConsoleViewState g_okayView;
+}
+
+void DrawConsoleOkayUI(const char* title) {
+    g_model.SetPauseOnError(g_errorPause);
+    if (g_model.ConsumePauseRequest()) g_paused = true;
+    if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
+    if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImVec2 a = ImGui::GetContentRegionAvail();
+        a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
+        ImGui::InvisibleButton("##okayui_console", a);   // the rectangle: an ImGui item, so ImGui does not move or scroll the window under it
+        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);    // the wheel scrolls the OkayUI log, not the ImGui window
+        OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+        okayuiscreens::ConsoleHost host;
+        host.clearOnPlay = &g_clearConsoleOnPlay;
+        host.pauseOnError = &g_errorPause;
+        host.copyText = [](const std::string& s) { ImGui::SetClipboardText(s.c_str()); };
+        host.saveLog = [](const std::string& text) {
+            std::ofstream lf("console_log.txt");
+            lf << text;
+            ConsoleLog("Console saved to console_log.txt");
+        };
+        host.activateSource = [](const okay::ConsoleSource& s) { ActivateBoundConsoleSource(s); };
+        host.openScript = [](const std::string& path, int line) { OpenScriptFileInEditorAt(path, line); };
+        host.cleared = [] { RefreshCounts(); };
+        OkayUI::PushTextScale(g_uiScale);
+        okayuiscreens::DrawConsole(g_model, g_okayView, host, p.x, p.y, a.x, a.y);
+        OkayUI::PopTextScale();
+        RefreshCounts();
+    }
+    ImGui::End();
+}
+#endif
+
 void DrawConsole() {
     static char filter[96] = "";
     static bool autoScroll = true;
@@ -142,6 +188,17 @@ void DrawConsole() {
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
 
+#ifdef OKAY_HAVE_OKAYUI
+    // The opt-in OkayUI backend: the same panel, drawn by OkayUI inside this window. OkayUI draws over every ImGui window, so
+    // while an ImGui popup (a menu, a modal) is over the panel the Dear ImGui version below is drawn instead.
+    if (UseOkayUIBackend()) {
+        const ImGuiWindow* cw = ImGui::FindWindowByName(conTitle);
+        if (!cw || !okayuihost::PopupCoversRect(cw->Pos.x, cw->Pos.y, cw->Size.x, cw->Size.y)) {
+            DrawConsoleOkayUI(conTitle);
+            return;
+        }
+    }
+#endif
     if (ImGui::Begin(conTitle, &g_showConsole)) {
         const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
         const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
@@ -306,27 +363,9 @@ void DrawConsole() {
             ImGui::SameLine();
             if (ImGui::SmallButton("Copy##cdet")) ImGui::SetClipboardText(e.message.c_str());
             std::string spath;
-            int sline = e.source.line;
-            if (e.source.kind == okay::ConsoleSource::Kind::Script || e.source.kind == okay::ConsoleSource::Kind::Asset)
-                spath = e.source.path;
-            if (spath.empty()) {
-                for (const char* ex : {".okay", ".lua", ".cs"}) {
-                    std::size_t p = e.message.find(ex);
-                    if (p == std::string::npos) continue;
-                    std::size_t start = e.message.find_last_of(" \t'\"(,;", p);
-                    start = start == std::string::npos ? 0 : start + 1;
-                    spath = e.message.substr(start, p + std::strlen(ex) - start);
-                    break;
-                }
-            }
-            if (sline <= 0)
-                if (std::size_t lp = e.message.find("line "); lp != std::string::npos)
-                    sline = std::atoi(e.message.c_str() + lp + 5);
-            bool scriptish = false;
-            for (const char* ex : {".okay", ".lua", ".cs"})
-                if (spath.size() >= std::strlen(ex) && spath.compare(spath.size() - std::strlen(ex), std::strlen(ex), ex) == 0)
-                    scriptish = true;
-            if (scriptish && !spath.empty()) {
+            int sline = 0;
+            const bool scriptish = okayconsole::ScriptLink(e, spath, sline);   // shared with the OkayUI port of this panel
+            if (scriptish) {
                 ImGui::SameLine();
                 char ob[64];
                 std::snprintf(ob, sizeof(ob), sline > 0 ? "Open Script (line %d)##cdet" : "Open Script##cdet", sline);

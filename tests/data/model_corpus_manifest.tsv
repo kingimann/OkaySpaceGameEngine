@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf / blend rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -339,3 +339,31 @@ lwo	models/LWO/LWOB/sphere_with_mat_gloss_10pc.lwo	ok	area=63.5224	meshes=1	tris
 lwo	models/LWO/LWOB/sphere_with_mat_gloss_50pc.lwo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=266	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWS/simple_cube.lwo	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/invalid/empty.lwo	FAIL	LWO: the file is too short to be an LWO file
+b3d	models-nonbsd/B3D/dwarf2.b3d	ok	area=5863.1534	meshes=4	tris=1896	bones=46	skinned=4	clips=1	dur=15.083	mat=3	bbox=-25.672,0.029,-38.355,29.573,59.054,13.795	verts=1479	tex=3	nodes=47	uv=1	nrm=1
+b3d	models-nonbsd/B3D/turtle1.b3d	ok	area=1330.5760	meshes=9	tris=640	bones=24	skinned=9	clips=1	dur=6.250	mat=1	bbox=-12.579,0.187,-16.920,12.579,11.506,13.657	verts=445	tex=1	nodes=25	uv=1	nrm=1
+b3d	models/B3D/WusonBlitz.b3d	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=0	nodes=1	uv=1	nrm=1
+irrmesh	models/IRR/cellar.irrmesh	ok	area=327535.8682	meshes=2	tris=272	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-198.611,-40.792,-61.870,129.228,51.635,162.326	verts=816	tex=2	nodes=1	uv=1	nrm=1
+irrmesh	models/IRRMesh/cellar.irrmesh	ok	area=327535.8682	meshes=2	tris=272	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-198.611,-40.792,-61.870,129.228,51.635,162.326	verts=816	tex=2	nodes=1	uv=1	nrm=1
+irrmesh	models/IRRMesh/cellar_UTF16LE.irrmesh	ok	area=327535.8682	meshes=2	tris=272	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-198.611,-40.792,-61.870,129.228,51.635,162.326	verts=816	tex=2	nodes=1	uv=1	nrm=1
+irrmesh	models/IRRMesh/spider.irrmesh	ok	area=33275.8521	meshes=4	tris=1312	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-57.936,-42.234,-106.691,92.655,37.504,86.691	verts=1384	tex=4	nodes=1	uv=1	nrm=1
+irrmesh	models/IRRMesh/spider_UTF16LE.irrmesh	ok	area=33275.8521	meshes=4	tris=1312	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-57.936,-42.234,-106.691,92.655,37.504,86.691	verts=1384	tex=4	nodes=1	uv=1	nrm=1
+md2	models-nonbsd/MD2/dolphin.md2	ok	area=445381.8445	meshes=1	tris=500	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-142.000,-42.000,-374.818,141.000,353.000,515.182	verts=324	tex=1	nodes=1	uv=1	nrm=1
+md2	models-nonbsd/MD2/flag.md2	ok	area=2878.3197	meshes=1	tris=204	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.298,-0.000,-42.430,1.244,99.600,-0.100	verts=134	tex=0	nodes=1	uv=1	nrm=1
+md2	models-nonbsd/MD2/horse.md2	ok	area=9453.0805	meshes=1	tris=683	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-81.700,1.700,-11.875,42.800,84.766,12.900	verts=538	tex=0	nodes=1	uv=1	nrm=1
+md2	models/MD2/faerie.md2	ok	area=2478.7028	meshes=1	tris=654	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-16.814,-24.530,-12.083,3.272,27.438,14.131	verts=503	tex=0	nodes=1	uv=1	nrm=1
+md2	models/MD2/sydney.md2	ok	area=1643.0132	meshes=1	tris=679	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-7.735,-24.014,-10.103,5.501,30.943,11.989	verts=482	tex=0	nodes=1	uv=1	nrm=1
+md3	models-nonbsd/MD3/q3root/models/mapobjects/kt_kubalwagon/european_fnt_v2.md3	ok	area=88613.9819	meshes=5	tris=678	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-79.078,-0.031,-41.172,96.125,74.922,40.922	verts=703	tex=3	nodes=1	uv=1	nrm=1
+md3	models-nonbsd/MD3/watercan.md3	ok	area=1942.9624	meshes=1	tris=78	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.266,0.125,-16.422,16.906,21.203,-0.141	verts=92	tex=1	nodes=1	uv=1	nrm=1
+md3	models-nonbsd/MD3/watercan_dmg.md3	ok	area=1866.0170	meshes=1	tris=86	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.281,0.203,-16.734,16.828,21.156,-0.484	verts=98	tex=1	nodes=1	uv=1	nrm=1
+x	models-nonbsd/X/dwarf.x	ok	area=8442.9421	meshes=2	tris=1896	bones=40	skinned=2	clips=1	dur=2.200	mat=3	bbox=-30.794,0.019,-16.554,35.500,70.849,46.026	verts=1479	tex=3	nodes=46	uv=1	nrm=1
+x	models/IRR/assets/dwarf.x	ok	area=8442.9421	meshes=2	tris=1896	bones=40	skinned=2	clips=1	dur=2.200	mat=3	bbox=-30.794,0.019,-16.554,35.500,70.849,46.026	verts=1479	tex=3	nodes=46	uv=1	nrm=1
+x	models/X/BCN_Epileptic.X	ok	area=2.0697	meshes=3	tris=5126	bones=54	skinned=3	clips=1	dur=3.300	mat=0	bbox=-0.309,-0.276,-0.882,0.277,0.488,1.024	verts=3014	tex=0	nodes=58	uv=1	nrm=1
+x	models/X/Testwuson.X	ok	area=9.0258	meshes=1	tris=3732	bones=37	skinned=1	clips=3	dur=3.600	mat=0	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=3205	tex=0	nodes=40	uv=1	nrm=1
+x	models/X/anim_test.x	ok	area=68.7541	meshes=1	tris=840	bones=3	skinned=1	clips=1	dur=1.000	mat=1	bbox=-1.000,-5.000,-1.000,1.000,5.000,1.000	verts=1720	tex=0	nodes=5	uv=1	nrm=1
+x	models/X/fromtruespace_bin32.x	ok	area=77.6315	meshes=1	tris=6656	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-7.447,-0.002,-3.043,4.673,6.027,0.061	verts=4132	tex=0	nodes=1	uv=1	nrm=1
+x	models/X/kwxport_test_cubewithvcolors.x	ok	area=5.8125	meshes=3	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-0.492,-0.492,-0.492,0.492,0.492,0.492	verts=24	tex=3	nodes=1	uv=1	nrm=1
+x	models/X/test.x	ok	area=16.1523	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.820,-0.680,-0.820,0.820,0.960,0.820	verts=24	tex=1	nodes=1	uv=1	nrm=1
+x	models/X/test_cube_binary.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=1	nrm=1
+x	models/X/test_cube_compressed.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=1	nrm=1
+x	models/X/test_cube_text.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=1	nrm=1
+x	models/invalid/empty.x	FAIL	X: file too short

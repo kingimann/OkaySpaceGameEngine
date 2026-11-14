@@ -94,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -460,6 +460,36 @@ constexpr bool kOwnLwoDefault = true;
 constexpr bool kOwnLwoDefault = false;
 #endif
 
+#ifdef OKAY_OWN_MD2_DEFAULT
+constexpr bool kOwnMd2Default = true;
+#else
+constexpr bool kOwnMd2Default = false;
+#endif
+
+#ifdef OKAY_OWN_MD3_DEFAULT
+constexpr bool kOwnMd3Default = true;
+#else
+constexpr bool kOwnMd3Default = false;
+#endif
+
+#ifdef OKAY_OWN_IRRMESH_DEFAULT
+constexpr bool kOwnIrrMeshDefault = true;
+#else
+constexpr bool kOwnIrrMeshDefault = false;
+#endif
+
+#ifdef OKAY_OWN_B3D_DEFAULT
+constexpr bool kOwnB3dDefault = true;
+#else
+constexpr bool kOwnB3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_X_DEFAULT
+constexpr bool kOwnXDefault = true;
+#else
+constexpr bool kOwnXDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -484,8 +514,13 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
     {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
     {"OKAY_OWN_BLEND",   "Blender", kOwnBlendDefault},     // 16
+    {"OKAY_OWN_MD2",     "MD2",     kOwnMd2Default},       // 17
+    {"OKAY_OWN_MD3",     "MD3",     kOwnMd3Default},       // 18
+    {"OKAY_OWN_IRRMESH", "IRRMESH", kOwnIrrMeshDefault},   // 19
+    {"OKAY_OWN_B3D",     "B3D",     kOwnB3dDefault},       // 20
+    {"OKAY_OWN_X",       "X",       kOwnXDefault},         // 21
 };
-constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
+constexpr int kOwnSlots = 24;   // slots 22 and 23 are free; raise this (and add rows above) when a reader needs a slot beyond 23
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -507,6 +542,11 @@ int OwnSlot(const std::string& ext) {
     if (e == ".dxf") return 14;
     if (e == ".lwo") return 15;
     if (e == ".blend") return 16;
+    if (e == ".md2") return 17;
+    if (e == ".md3") return 18;
+    if (e == ".irrmesh") return 19;
+    if (e == ".b3d") return 20;
+    if (e == ".x") return 21;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -633,8 +673,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
                   : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
                   : s == 15 ? ReadLwoFile(path, out, &e1)
-                  : ReadBlendFile(path, out, &e1, flatten);   // 16 (the Blender reader flattens by itself)
-        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
+                  : s == 16 ? ReadBlendFile(path, out, &e1, flatten)   // the Blender reader flattens by itself
+                  : s == 17 ? ReadMd2File(path, out, &e1)
+                  : s == 18 ? ReadMd3File(path, out, &e1)
+                  : s == 19 ? ReadIrrMeshFile(path, out, &e1)
+                  : s == 20 ? ReadB3dFile(path, out, &e1)
+                  : ReadXFile(path, out, &e1);   // 21
+        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;

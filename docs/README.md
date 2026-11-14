@@ -48,6 +48,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 ## Gameplay systems
 - [survival_kit.md](survival_kit.md): health, hunger, thirst, stamina, oxygen and temperature components.
 - [npcs_and_crafting.md](npcs_and_crafting.md): NPCs and crafting.
+- [inventory.md](inventory.md): Inventory status, moves between bags, weight limits and what is missing.
 - [navigation.md](navigation.md): navigation meshes and agents.
 - [volumes.md](volumes.md): box, sphere and cylinder zones: checkpoint, kill, force, fog and sound, drawn and resized in the Scene view.
 - [behavior_trees.md](behavior_trees.md): behavior trees for NPC AI.

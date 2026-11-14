@@ -329,8 +329,12 @@ code that does not need `SDL_Renderer`.
 * **Controllers: evdev** (`/dev/input/event*`, kernel header `linux/input.h` only): detection by `BTN_GAMEPAD` + `ABS_X`,
   Xbox-style mapping, normalised axes, triggers from axes or `BTN_TL2/TR2`, d-pad from hat or buttons, force-feedback rumble, hot-plug rescan once a second.
 
-Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), XDND file drop (`EventType::DropFile`
-never fires), touch, DPI / multi-monitor queries, window icons, IME composition display, PulseAudio-native or PipeWire-native audio.
+Added in the second gaps round (see `docs/own_platform_status.md` for what ran and what did not): XDND file drop receive,
+RandR monitor list and `Xft.dpi`, core-font cursor shapes, urgency hint, a plain message box, opt-in XIM preedit, clipboard by MIME type,
+a mapping table for evdev pads.
+
+Not written for Linux: Wayland (X11 only; under Wayland it runs through XWayland), touch, exclusive video modes, a global mouse position,
+INCR clipboard transfers, text drops, PulseAudio-native or PipeWire-native audio.
 
 ### Windows (cross-compiled, run under Wine, never run on real Windows)
 

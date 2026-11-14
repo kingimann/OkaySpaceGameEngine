@@ -310,7 +310,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [37.5](feature_map/37-platform-windowing.md#375-web-and-mobile-shims) | Web and mobile shims | Partial | Android and iOS projects are not in the repo; web has no networking; `docs/web_mobile.md` still says to read `SDL_FINGER*`... |
-| [37.10](feature_map/37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) | Own platform layer and SDL2 phase-out | Partial | helpers not wired into backends; no X11 drag and drop, monitor list, IME; Win32 never run on real Windows; no own Dear ImGui backend; editor and launcher still on SDL2 (`docs/own_platform_status.md`) |
+| [37.10](feature_map/37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) | Own platform layer and SDL2 phase-out | Partial | X11 drop / RandR / preedit / message box and the evdev pad table never run on a real desktop or real pads; Win32 never run on real Windows or with a real IME; no global mouse, no exclusive video modes; no own Dear ImGui backend; editor and launcher still on SDL2 (`docs/own_platform_status.md`) |
 
 ### 38. Render backends & GPU
 

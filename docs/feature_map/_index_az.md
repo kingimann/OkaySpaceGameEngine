@@ -5242,6 +5242,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 **X**
 
 - X11 (17.17, 37.10)
+- X11 and Win32 pieces (37.10.5)
 - X25519 (16.1)
 - Xbox (8.2, 56.4)
 - XChaCha20 (16.1)

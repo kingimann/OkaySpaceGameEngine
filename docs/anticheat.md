@@ -1072,13 +1072,19 @@ localhost); ctest skips it otherwise. Never point it at a live database.
 
 - ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
   the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
-  Otherwise a portable implementation in `shared/AntiCheatCrypto.hpp` is used:
-  a port of TweetNaCl's public-domain ed25519, plus the checks libsodium 1.0.18
-  makes before verifying: S must be canonical, R must not be a small-order
-  point, and the public key must be canonical and not small-order (so the
-  identity-key forgery TweetNaCl alone accepts is refused). The launcher always
-  uses the portable code, because it doesn't link the engine. Both are tested
-  against the RFC 8032 vectors and the small-order encodings on every build.
+  Otherwise (and with `-DOKAY_OWN_CRYPTO=ON`) `shared/AntiCheatCrypto.hpp` uses
+  `okay::crypto`, our own Ed25519 (`engine/src/Crypto/`, written from RFC 8032).
+  `shared/AntiCheatCrypto.hpp` itself holds no crypto code: the TweetNaCl-derived
+  port that used to be the fallback is deleted. `okay::crypto` makes the checks
+  libsodium 1.0.18 makes before verifying: S must be canonical, R must not be a
+  small-order point, and the public key must be canonical and not small-order
+  (so the identity-key forgery plain TweetNaCl accepts is refused). The launcher
+  links `okay_crypto` directly. **`okay::crypto` has not had its outside review
+  yet** (`CLAUDE.md` rule 18, `docs/crypto_review_package.md`), so a build
+  without libsodium relies on unreviewed code for this; libsodium stays the
+  preferred path where it is built. Both paths are tested against the RFC 8032
+  vectors and the small-order encodings on every build, and
+  `tests/test_anticheat_golden.cpp` pins what the old port answered.
 - SHA-256 is the engine's bundled implementation, the same one the official-game
   updater uses.
 

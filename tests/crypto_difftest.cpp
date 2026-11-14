@@ -1,5 +1,6 @@
-// Large differential test: okay::crypto against libsodium (every primitive) and against the TweetNaCl-derived port in
-// shared/AntiCheatCrypto.hpp (Ed25519 and SHA-512, the only things the port has), on millions of random AND structured inputs.
+// Large differential test: okay::crypto against libsodium (every primitive), on millions of random AND structured inputs.
+// (It used to compare against a TweetNaCl-derived port in shared/AntiCheatCrypto.hpp too; that port is deleted. What it
+// answered is pinned by tests/test_anticheat_golden.cpp.)
 //
 //   crypto_difftest [N]        N from the argument, else $OKAY_DIFF_N, else 1500 (the ctest smoke size). $OKAY_DIFF_SEED sets the seed.
 //
@@ -8,9 +9,8 @@
 //   X25519 base                                    N/10
 //   Ed25519 public key + sign + verify             N/2       ours vs libsodium, signatures must be byte-identical (deterministic)
 //   Ed25519 verify of mutated/structured inputs    N         ours vs libsodium (accept/reject), every bit of R,S,A, structured R,S,A
-//   Ed25519 vs the port: pk, sign, verify, weak    N/50      (the port is ~50 times slower)
 //   AEAD (both), every truncation and bit flip     N/40 messages, ~1000 opens each, ours vs libsodium
-//   SHA-256, SHA-512, BLAKE2b (all lengths/keys)   N         ours vs libsodium (SHA-512 also vs the port)
+//   SHA-256, SHA-512, BLAKE2b (all lengths/keys)   N         ours vs libsodium
 //   Poly1305 with edge-case keys and messages      N         ours vs libsodium
 //   Kx session keys                                N/20      ours vs libsodium crypto_kx
 // Every mismatch is printed (first 25 per category) and makes the exit status 1.
@@ -20,8 +20,6 @@
 // sign bit, non-canonical y encodings (y + p), runs of 0x00/0x7f/0x80/0xff, and one-bit and one-byte variants of all of them.
 #include <okay/Crypto/Crypto.hpp>
 #include <sodium.h>
-
-#include "AntiCheatCrypto.hpp"   // the port (portable::), compiled without sodium/own-crypto defines
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +33,6 @@
 
 namespace oc = okay::crypto;
 using Bytes = std::vector<std::uint8_t>;
-namespace port = okayac::ed25519::portable;
 
 static std::uint64_t g_s = 0x9e3779b97f4a7c15ull;
 static std::uint64_t Rnd64() {   // xorshift64*
@@ -264,53 +261,6 @@ static void DiffEd25519(long long n) {
     }
 }
 
-static void DiffEdPort(long long n) {
-    Cat* c = NewCat("ed25519 vs port");
-    Cat* cw = NewCat("ed25519 weak key vs port");
-    for (long long i = 0; i < n; ++i) {
-        const Bytes seed = (i % 8 == 0) ? Pick() : RndBytes(32), m = RndBytes(Rnd(200));
-        okayac::ed25519::Seed ps;
-        std::memcpy(ps.data(), seed.data(), 32);
-        const auto ppk = port::PublicKeyFromSeed(ps);
-        const auto psig = port::Sign(m.data(), m.size(), ps);
-        std::uint8_t opk[32], osk[64];
-        oc::Ed25519SeedKeypair(opk, osk, seed.data());
-        Bytes osig = Buf(64);
-        oc::Ed25519Sign(osig.data(), m.data(), m.size(), osk);
-        ++c->runs;
-        if (std::memcmp(opk, ppk.data(), 32)) Mismatch(c, "public key from seed %s", Hx(seed.data(), 32).c_str());
-        if (std::memcmp(osig.data(), psig.data(), 64)) Mismatch(c, "signature from seed %s", Hx(seed.data(), 32).c_str());
-        // verdicts on mutated inputs
-        for (int k = 0; k < 6; ++k) {
-            Bytes sg = osig, key(opk, opk + 32);
-            switch (k) {
-                case 0: break;
-                case 1: sg[Rnd(64)] ^= static_cast<std::uint8_t>(1u << Rnd(8)); break;
-                case 2: { const Bytes S = Pick(); std::memcpy(sg.data() + 32, S.data(), 32); break; }
-                case 3: { const Bytes R = Pick(); std::memcpy(sg.data(), R.data(), 32); break; }
-                case 4: key = Pick(); break;
-                default: key[Rnd(32)] ^= static_cast<std::uint8_t>(1u << Rnd(8)); break;
-            }
-            okayac::ed25519::Signature psg;
-            okayac::ed25519::PublicKey pkk;
-            std::memcpy(psg.data(), sg.data(), 64);
-            std::memcpy(pkk.data(), key.data(), 32);
-            const bool a = OurVerify(sg, m, key), b = port::Verify(m.data(), m.size(), psg, pkk);
-            ++c->runs;
-            if (a != b) Mismatch(c, "verdict case %d: ours %s, port %s: sig %s pk %s", k, a ? "accepts" : "rejects", b ? "accepts" : "rejects", Hx(sg.data(), 64).c_str(), Hx(key.data(), 32).c_str());
-        }
-    }
-    // weak-key classification is cheap: many more
-    for (long long i = 0; i < n * 20; ++i) {
-        const Bytes k = Pick();
-        okayac::ed25519::PublicKey pkk;
-        std::memcpy(pkk.data(), k.data(), 32);
-        const bool a = oc::Ed25519IsWeakKey(k.data()), b = port::IsWeakKey(pkk);
-        ++cw->runs;
-        if (a != b) Mismatch(cw, "key %s: ours %s port %s", Hx(k.data(), 32).c_str(), a ? "weak" : "ok", b ? "weak" : "ok");
-    }
-}
-
 // ---------------------------------------------------------------- AEAD
 static void DiffAead(long long msgs) {
     Cat* c = NewCat("aead");
@@ -384,7 +334,6 @@ static void DiffAead(long long msgs) {
 // ---------------------------------------------------------------- hashes and Poly1305
 static void DiffHash(long long n) {
     Cat* c = NewCat("hashes");
-    Cat* cp = NewCat("sha512 vs port");
     Cat* cm = NewCat("poly1305");
     for (long long i = 0; i < n; ++i) {
         std::size_t len = i < 700 ? static_cast<std::size_t>(i) : Rnd(3) == 0 ? Rnd(40) : Rnd(1000);   // every length 0..699 once
@@ -399,11 +348,6 @@ static void DiffHash(long long n) {
         oc::Sha512Hash(a, m.data(), m.size());
         crypto_hash_sha512(b, m.data(), m.size());
         if (std::memcmp(a, b, 64)) Mismatch(c, "sha512 len %zu", len);
-        if (i % 40 == 0) {
-            const auto pd = okayac::sha512::HashPortable(m.data(), m.size());
-            ++cp->runs;
-            if (std::memcmp(a, pd.data(), 64)) Mismatch(cp, "sha512 len %zu", len);
-        }
         // streaming in random chunks must equal one-shot
         {
             oc::Sha512 s5; oc::Sha256 s2;
@@ -450,7 +394,6 @@ int main(int argc, char** argv) {
     };
     DiffX25519(N); lap("x25519/kx");
     DiffEd25519(N); lap("ed25519");
-    DiffEdPort(N / 50 > 0 ? N / 50 : 1); lap("ed25519 port");
     DiffAead(N / 40 > 0 ? N / 40 : 1); lap("aead");
     DiffHash(N); lap("hashes");
     long long bad = 0, runs = 0;

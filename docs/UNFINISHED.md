@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **123** rows that are Partial or Planned.
+The feature map currently has **124** rows that are Partial or Planned.
 
 ## Audits
 
@@ -296,6 +296,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [37.5](feature_map/37-platform-windowing.md#375-web-and-mobile-shims) | Web and mobile shims | Partial | Android and iOS projects are not in the repo; web has no networking; `docs/web_mobile.md` still says to read `SDL_FINGER*`... |
+| [37.10](feature_map/37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) | Own platform layer and SDL2 phase-out | Partial | helpers not wired into backends; no X11 drag and drop, monitor list, IME; Win32 never run on real Windows; no own Dear ImGui backend; editor and launcher still on SDL2 (`docs/own_platform_status.md`) |
 
 ### 38. Render backends & GPU
 

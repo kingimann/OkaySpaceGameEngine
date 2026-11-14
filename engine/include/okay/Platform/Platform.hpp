@@ -87,6 +87,8 @@ enum class EventType {
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
+    DropBegin, DropComplete,   // bracket a group of DropFile events (one drop of N files). Pure helper: Platform/Exchange.hpp
+    TextEditing,       // IME composition: text = the uncommitted text (UTF-8), editStart / editLength = the caret / selection in it. No backend fires it yet
 };
 
 struct Event {
@@ -104,6 +106,7 @@ struct Event {
     float fx = 0.0f, fy = 0.0f;
     int width = 0, height = 0;
     int deviceId = 0;
+    int editStart = 0, editLength = 0;   // TextEditing
     std::string text;
 };
 
@@ -246,6 +249,9 @@ struct DisplayModeInfo {
     int width = 0, height = 0, refreshHz = 0;
 };
 
+/// System mouse cursor shapes (the set every OS has). Backends that cannot draw one return false from SetCursor.
+enum class CursorShape { Arrow, IBeam, Wait, Crosshair, Hand, SizeNS, SizeWE, SizeNWSE, SizeNESW, SizeAll, NotAllowed };
+
 struct InitFlags {
     bool video = true, audio = true, gamepad = true;
 };
@@ -284,6 +290,8 @@ public:
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// Change the system cursor shape over this app's windows. False = not supported by this backend (nothing changed).
+    virtual bool SetCursor(CursorShape shape) { (void)shape; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }

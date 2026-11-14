@@ -64,6 +64,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a component has no card or a field is missing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | a component's settings are lost after save and load | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a condition node always takes the false path | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
+| a controller is not recognised on Linux | [37.10](37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) Own platform layer (`okay::platform`) and the SDL2 phase-out |
 | a controller or the audio device behaves differently with the own backend | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
 | a coroutine stops early | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a crash loses work | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
@@ -483,6 +484,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | dragging an object into Project does not create what I expected | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |
 | dragging does not re-parent | [15.1](15-editor.md#151-hierarchy) Hierarchy |
 | dragging into the scene does nothing | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
+| dropped files do nothing on Linux | [37.10](37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) Own platform layer (`okay::platform`) and the SDL2 phase-out |
 | duplicate WorkshopItem compile error | [17.6](17-launcher-platform.md#176-marketplace-and-workshop) Marketplace and Workshop |
 | E picks up and opens the bag at once | [8.5](08-input.md#85-gameplay-input-blocking) Gameplay input blocking |
 | each component needs hand-written Inspector and serializer code | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
@@ -897,6 +899,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | testing a late level means playing from the start | [54.4](43-proposals.md#544-cheats-and-debug-commands) Cheats and debug commands |
 | text appears all at once | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
 | text does not update when the language changes | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
+| text in an IME does not show while composing | [37.10](37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) Own platform layer (`okay::platform`) and the SDL2 phase-out |
 | text is blurry at some sizes | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | text is blurry or too small | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | text is not drawn | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -975,6 +978,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor closed by itself | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the editor crashes or shows a black screen | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the editor exe is huge | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| the editor needs SDL2 to start | [37.10](37-platform-windowing.md#3710-own-platform-layer-okayplatform-and-the-sdl2-phase-out) Own platform layer (`okay::platform`) and the SDL2 phase-out |
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |

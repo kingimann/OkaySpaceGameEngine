@@ -2673,6 +2673,12 @@ if(NOT EMSCRIPTEN)
     target_include_directories(test_platform_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
     add_test(NAME platform_pure COMMAND test_platform_pure)
 endif()
+# Controller mapping database, event queue, clipboard / drop helpers and DPI maths: pure logic, runs on every host.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_gaps test_platform_gaps.cpp)
+    target_include_directories(test_platform_gaps PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_gaps COMMAND test_platform_gaps)
+endif()
 # The own Win32 backend against the real Win32 API. Built only for Windows targets; a MinGW cross build runs it
 # through CMAKE_CROSSCOMPILING_EMULATOR (e.g. wine, headless under xvfb-run) when that is set.
 if(WIN32)

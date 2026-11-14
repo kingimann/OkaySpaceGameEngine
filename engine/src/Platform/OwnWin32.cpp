@@ -389,6 +389,27 @@ public:
         return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
                            MB_OK | MB_ICONERROR | MB_SETFOREGROUND) != 0;
     }
+    static LPCSTR CursorResource(CursorShape s) {
+        switch (s) {
+        case CursorShape::IBeam: return IDC_IBEAM;
+        case CursorShape::Wait: return IDC_WAIT;
+        case CursorShape::Crosshair: return IDC_CROSS;
+        case CursorShape::Hand: return IDC_HAND;
+        case CursorShape::SizeNS: return IDC_SIZENS;
+        case CursorShape::SizeWE: return IDC_SIZEWE;
+        case CursorShape::SizeNWSE: return IDC_SIZENWSE;
+        case CursorShape::SizeNESW: return IDC_SIZENESW;
+        case CursorShape::SizeAll: return IDC_SIZEALL;
+        case CursorShape::NotAllowed: return IDC_NO;
+        default: return IDC_ARROW;
+        }
+    }
+    bool SetCursor(CursorShape shape) override {
+        if ((int)shape < 0 || (int)shape > (int)CursorShape::NotAllowed) return false;
+        m_shape = shape;
+        RefreshCursor();
+        return true;
+    }
     void ShowCursor(bool show) override {
         // No ShowCursor() counter calls: that counter is process-global and unbalanced calls leave the cursor
         // stuck hidden. WM_SETCURSOR hides it over our client area; SetCursor applies it right now.
@@ -631,7 +652,8 @@ public:
             return 0;
         }
         case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { ::SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT) { ::SetCursor(LoadCursorA(nullptr, CursorResource(b->m_shape))); return TRUE; }
             break;
         default: break;
         }
@@ -654,7 +676,7 @@ public:
         HWND f = ActiveHwnd();
         POINT p; RECT r;
         if (f && GetCursorPos(&p) && GetClientRect(f, &r) && ScreenToClient(f, &p) && PtInRect(&r, p))
-            SetCursor((m_cursorShown && !m_relative) ? LoadCursorA(nullptr, IDC_ARROW) : nullptr);
+            ::SetCursor((m_cursorShown && !m_relative) ? LoadCursorA(nullptr, CursorResource(m_shape)) : nullptr);
     }
     // Relative mode = raw mouse input to the focused window + the cursor confined to it and hidden. Returns false
     // when raw input could not be registered (the mode then does nothing; motion events stay absolute).
@@ -678,6 +700,7 @@ public:
 
     std::map<HWND, WinWindow*> m_wins;
     std::deque<Event> m_pending;
+    CursorShape m_shape = CursorShape::Arrow;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false, m_classRegistered = false, m_periodActive = false;
     bool m_rawRegistered = false, m_padsOn = true;
     HWND m_focus = nullptr, m_clipHwnd = nullptr;

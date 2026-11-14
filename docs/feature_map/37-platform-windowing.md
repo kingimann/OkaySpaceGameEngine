@@ -181,3 +181,23 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Words:** account, sign in, Supabase, friends, party, messages, chat, servers, channels, forums, Workshop, marketplace, profile, achievements, admin, PlayFab, leaderboard, offline mode
 - **Seen as:** cannot sign in; the friends list is empty; messages do not arrive; achievements are not shared with the launcher; an admin page is empty for a normal user
 - **Ask me like:** "add a sign-in button to my game"; "post a score to the PlayFab leaderboard"
+
+### 37.10 Own platform layer (`okay::platform`) and the SDL2 phase-out
+- **What:** Our own window, event, GL, audio, clipboard and controller layer with an sdl2 backend (default) and an own backend (Linux/X11, Win32), plus pure helpers for controller mapping files, the event queue, clipboard and drop data, and DPI maths. SDL2 stays; the apps still call it directly (editor and launcher almost entirely).
+- **Parts:**
+  - 37.10.1 Seam and backends - `Platform/Platform`, `engine/src/Platform/*` - `Backend`, `Window`, events, sdl2 and own backends
+  - 37.10.2 Controller mapping database - `engine/src/Platform/PadMapping.hpp` - SDL_GameControllerDB text parser, GUID match, raw-to-standard mapper; not wired to evdev yet
+  - 37.10.3 Event queue, clipboard and drop helpers - `engine/src/Platform/EventQueue.hpp`, `engine/src/Platform/Exchange.hpp` - bounded queue with merging, in-memory clipboard provider, URI-list parser, drop event builder
+  - 37.10.4 DPI and monitor maths - `engine/src/Platform/ScaleMath.hpp` - scale snapping, display for a rectangle, fit to work area
+- **Code:** `Platform/Platform`, `engine/src/Platform/PadMapping.hpp`, `engine/src/Platform/EventQueue.hpp`, `engine/src/Platform/Exchange.hpp`, `engine/src/Platform/ScaleMath.hpp`
+- **API:** `okay::platform::Backend`, `pad::MappingDb`, `EventQueue`, `ClipboardProvider`, `ParseUriList`, `scale::DisplayForRect`
+- **Editor:** none
+- **Docs:** `docs/own_platform_status.md`, `docs/platform_layer.md`
+- **Tests:** `platform_gaps`, `platform_pure`, `platform`, `platform_seam`
+- **Status:** Partial - the pure helpers are tested on Linux (123 checks, ASan and UBSan clean); the own Win32 backend has only run under Wine; macOS has no backend
+- **Open:** helpers not wired into the backends; no X11 drag and drop, monitor list or IME; Win32 untested on real Windows; no own Dear ImGui backend; editor and launcher still on SDL2 (`docs/own_platform_status.md` section 2)
+- **Related:** 37.1, 37.2, 8.4
+- **Words:** SDL2 removal, okay::platform, own backend, X11, Win32, gamepad mapping, SDL_GameControllerDB, event queue, drag and drop, IME, DPI, high DPI
+- **Seen as:** the editor needs SDL2 to start; dropped files do nothing on Linux; a controller is not recognised on Linux; text in an IME does not show while composing
+- **Ask me like:** "run the editor without SDL2"; "map my controller from a mapping file"
+

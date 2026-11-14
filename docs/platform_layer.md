@@ -6,6 +6,8 @@ seam now, what is not, and what was and was not tested.
 
 Header: `engine/include/okay/Platform/Platform.hpp`. Sources: `engine/src/Platform/`. CMake: `cmake/OkayPlatform.cmake`.
 
+See `docs/own_platform_status.md` for the current call-by-call status against SDL2 and what blocks the editor and launcher.
+
 ## Choosing a backend
 
 | | |

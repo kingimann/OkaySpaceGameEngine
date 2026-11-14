@@ -1214,10 +1214,23 @@ add_test(NAME loc_tools COMMAND test_loc_tools)
 
 # The Localization window's path onto those tools (editor/LocalizationTools, ImGui-free): a missing
 # key, a placeholder mismatch and a pseudo-locale preview, the same functions DrawLocalizationWindow calls.
-add_executable(test_loc_window test_loc_window.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp)
+add_executable(test_loc_window test_loc_window.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationIO.cpp)
 target_include_directories(test_loc_window PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_loc_window PRIVATE okay::engine)
 add_test(NAME loc_window COMMAND test_loc_window)
+
+# The window's import preview (the confirm step), JSON import / export, font coverage and right-to-left ordering.
+add_executable(test_loc_io test_loc_io.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationIO.cpp)
+target_include_directories(test_loc_io PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_loc_io PRIVATE okay::engine)
+target_compile_definitions(test_loc_io PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME loc_io COMMAND test_loc_io)
+
+# Thumbnails for fonts (a sample string in our own font code) and data assets (a generated page), no GPU.
+add_executable(test_thumb_font_data test_thumb_font_data.cpp)
+target_link_libraries(test_thumb_font_data PRIVATE okay::engine)
+target_compile_definitions(test_thumb_font_data PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME thumb_font_data COMMAND test_thumb_font_data)
 
 # Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
 add_executable(test_loc_runtime test_loc_runtime.cpp)

@@ -14,7 +14,7 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   and your favourite folders. All of it is read from the asset database (see `asset_database.md`), not from the disk.
 - **Look.** Grid or list (the button in the toolbar), and a tile-size slider; the **...** menu has Small, Medium and Large and shows
   how many assets are indexed and how long the last refresh took. Textures, audio (a waveform), models, mesh files, materials (a
-  sphere), prefabs and scenes get a real picture; a script or data file keeps its type icon. Pictures come from the database's
+  sphere), prefabs and scenes get a real picture; a font shows a sample string in itself and a data file (`.json`, `.okaydata`, `.okayloc`...) a generated page tile; a script keeps its type icon. Pictures come from the database's
   thumbnail cache: made on demand, a few milliseconds per frame (the icon shows until a picture is ready), kept in `.okay/thumbs`
   inside the project and used again next time, and made again when the file changes, or when a texture or mesh a prefab, scene
   or material uses changes.

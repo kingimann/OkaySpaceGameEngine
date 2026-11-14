@@ -1,4 +1,5 @@
 #include "LocalizationTools.hpp"
+#include "LocalizationIO.hpp"
 
 #include <algorithm>
 #include <set>
@@ -109,6 +110,14 @@ LocWindowPreview PreviewLocKey(const okay::StringTable& table, const std::string
     out.mirrored = preview.Rtl();
     if (!preview.TryGet(key, out.plain)) out.missing = true;
     out.text = preview.Get(key);
+    if (out.mirrored) {
+        // The same text without the plain reversal, reordered the way a reader sees it.
+        okay::LocPreview visual(table);
+        if (!language.empty() && !pseudoLanguage) visual.SetLanguage(language);
+        if (pseudo || pseudoLanguage) visual.SetPseudo(true);
+        visual.SetMirrorRtl(false);
+        out.visual = LocVisualOrder(visual.Get(key), true);
+    }
     return out;
 }
 

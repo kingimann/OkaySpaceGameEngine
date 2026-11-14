@@ -2,12 +2,14 @@
 // as keys x languages. Cells edit in place (the scene's localized text follows as
 // you type), a row per key with its note for translators, a bar per language
 // with how much of it is translated, search and filters, CSV import / export for
-// translators, a pseudo-localized preview to spot truncation, and Find in Scene
+// translators (with a preview of what changes and a confirm step), JSON import / export, a
+// font coverage check, a pseudo-localized preview to spot truncation, and Find in Scene
 // for the selected key. The grid, the check, the project scan and the preview
 // line come from LocalizationTools (LocTable, LocCheck, LocScan, LocPreview).
 // Also the toolbar's preview-language menu and the Inspector's Localized options.
 #include "LocalizationWindow.hpp"
 #include "LocalizationTools.hpp"
+#include "LocalizationIO.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol, SearchField
 #include "okay/Components/DialogueRunner.hpp"
@@ -208,6 +210,14 @@ std::string s_prevLanguage;    // the language to go back to from the pseudo pre
 // Popups.
 std::string s_newKey, s_newText, s_renameFrom, s_renameTo, s_newCode, s_newName, s_langEdit;
 bool s_openAddKey = false, s_openRename = false, s_openAddLang = false, s_openLang = false;
+// Import: the file is read and previewed first; nothing changes until the preview is confirmed.
+LocImportPreview s_importPreview;
+std::string s_importPath;
+bool s_openImport = false;
+// Font coverage: the language and the font to check, and the last report.
+LocFontView s_fontView;
+std::string s_fontLang, s_fontPath;
+bool s_openFonts = false;
 
 void SelectKey(const std::string& key) { s_selected = key; s_usesKey.clear(); }
 
@@ -511,11 +521,11 @@ void DrawSelected(EditorState& ed) {
     if (!LocWindowShowsPreview(shown)) return;
     const bool pseudo = shown == Localization::kPseudo;
     const LocWindowPreview preview = PreviewLocKey(Localization::Table(), s_selected, pseudo ? std::string() : shown, pseudo);
-    const char* previewLabel = preview.mirrored && !preview.pseudo ? "Mirrored preview" : "Pseudo preview";
+    const char* previewLabel = preview.mirrored && !preview.pseudo ? "Right-to-left preview" : "Pseudo preview";
     ImGui::TextDisabled("%s", previewLabel);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-FLT_MIN);
-    std::string shownText = preview.text;
+    std::string shownText = preview.visual.empty() ? preview.text : preview.visual;
     InputString("##locpreviewline", shownText, nullptr, ImGuiInputTextFlags_ReadOnly);
     if (ImGui::IsItemHovered()) {
         const char* tip = preview.pseudo && preview.mirrored
@@ -524,11 +534,13 @@ void DrawSelected(EditorState& ed) {
             : preview.pseudo
             ? "Pseudo-localized: accented letters and about a third more length, in markers.\n"
               "A placeholder such as {0} stays put. This line does not change the table."
-            : "Mirrored so a right-to-left language can be read here. The stored text is unchanged;\n"
-              "the Scene view still draws left to right.";
+            : "The text in the order a reader sees it for a right-to-left language: Latin words and digits keep\n"
+              "their order, brackets flip. The stored text is unchanged; the Scene view still draws left to right.";
         ImGui::SetTooltip("%s", tip);
     }
 }
+
+void ApplyImport(const EditorState& ed);
 
 void DrawPopups(EditorState& ed) {
     StringTable& t = Localization::Table();
@@ -536,6 +548,47 @@ void DrawPopups(EditorState& ed) {
     if (s_openRename) { ImGui::OpenPopup("Rename Key##loc"); s_openRename = false; }
     if (s_openAddLang) { ImGui::OpenPopup("Add Language##loc"); s_openAddLang = false; }
     if (s_openLang) { ImGui::OpenPopup("Language##loc"); s_openLang = false; }
+    if (s_openImport) { ImGui::OpenPopup("Confirm Import##loc"); s_openImport = false; }
+    if (s_openFonts) { ImGui::OpenPopup("Font Coverage##loc"); s_openFonts = false; }
+
+    if (ImGui::BeginPopupModal("Confirm Import##loc", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(s_importPath.c_str());
+        ImGui::TextUnformatted(s_importPreview.Summary().c_str());
+        for (const std::string& w : s_importPreview.warnings) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", w.c_str());
+        if (ImGui::BeginChild("##importlines", ImVec2(640, 240), true)) {
+            for (const std::string& line : s_importPreview.lines) ImGui::TextUnformatted(line.c_str());
+            if (s_importPreview.hiddenLines > 0) ImGui::TextDisabled("... and %d more", s_importPreview.hiddenLines);
+        }
+        ImGui::EndChild();
+        ImGui::TextDisabled("Apply is one step in this window's undo (Ctrl+Z).");
+        if (ImGui::Button("Apply", ImVec2(120, 0))) { ApplyImport(ed); ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) { s_importPreview = LocImportPreview(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopupModal("Font Coverage##loc", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        bool rerun = false;
+        std::string label = s_fontLang.empty() ? std::string("Every language") : s_fontLang;
+        if (ImGui::BeginCombo("Language", label.c_str())) {
+            if (ImGui::Selectable("Every language", s_fontLang.empty())) { s_fontLang.clear(); rerun = true; }
+            for (const LocLanguage& l : t.languages)
+                if (ImGui::Selectable(l.code.c_str(), s_fontLang == l.code)) { s_fontLang = l.code; rerun = true; }
+            ImGui::EndCombo();
+        }
+        if (InputString("Font file", s_fontPath, "empty = each language's own font")) rerun = false;
+        ImGui::SameLine();
+        if (ImGui::Button("Check")) rerun = true;
+        if (rerun) {
+            const std::string tp = TablePath(ed);
+            s_fontView = LocWindowFontCoverage(t, s_fontLang, s_fontPath, tp.empty() ? std::string() : fs::u8path(tp).parent_path().u8string());
+        }
+        ImGui::TextUnformatted(s_fontView.Summary().c_str());
+        if (ImGui::BeginChild("##fontlines", ImVec2(640, 220), true))
+            for (const std::string& line : s_fontView.lines) ImGui::TextUnformatted(line.c_str());
+        ImGui::EndChild();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 
     if (ImGui::BeginPopup("Add Key##loc")) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
@@ -649,43 +702,44 @@ void DrawPopups(EditorState& ed) {
     }
 }
 
-void ImportCsvFrom(const EditorState& ed, const std::string& p);
+void ImportFileFrom(const EditorState& ed, const std::string& p, LocImportFormat format);
 void ExportCsvTo(const std::string& p);
-void ImportCsv(const EditorState& ed) {
+void ExportJsonTo(const std::string& p);
+void ImportFile(const EditorState& ed, LocImportFormat format) {
     const EditorState* edp = &ed;
-    okay::filedialog::OpenOne("Import translations (CSV)", "", okay::filedialog::Filters("CSV", {"*.csv", "*.txt"}),
-        [edp](const std::string& p) { ImportCsvFrom(*edp, p); });
+    const bool json = format == LocImportFormat::Json;
+    okay::filedialog::OpenOne(json ? "Import translations (JSON)" : "Import translations (CSV)", "",
+        json ? okay::filedialog::Filters("JSON", {"*.json"}) : okay::filedialog::Filters("CSV", {"*.csv", "*.txt"}),
+        [edp, format](const std::string& p) { ImportFileFrom(*edp, p, format); });
 }
 
-void ImportCsvFrom(const EditorState& ed, const std::string& p) {
+// Read the file and work out what it would change. The confirm popup shows that; the table is
+// not touched until the owner presses Apply.
+void ImportFileFrom(const EditorState&, const std::string& p, LocImportFormat format) {
     std::ifstream f(fs::u8path(p), std::ios::binary);
     if (!f) { ConsoleLog("Localization: couldn't read " + p, 2); return; }
     std::stringstream ss;
     ss << f.rdbuf();
+    const std::string bytes = ss.str();
+    // A one-language JSON file ({"key": "text"}) is the language its file name says (fr.json).
+    const std::string language = fs::u8path(p).stem().u8string();
+    LocImportPreview preview = PreviewLocImport(Localization::Table(), bytes, format, language);
+    if (!preview.ok) { s_status = "Import failed: " + preview.error; ConsoleLog("Localization: couldn't import " + p + ": " + preview.error, 2); return; }
+    if (preview.NothingToDo()) { s_status = "Import changed nothing"; ConsoleLog("Localization: " + p + " changed nothing"); return; }
+    s_importPreview = std::move(preview);
+    s_importPath = p;
+    s_openImport = true;
+}
+
+void ApplyImport(const EditorState& ed) {
     StringTable& live = Localization::Table();
-    StringTable after = live;
-    std::string err;
-    int rows = 0;
-    if (!after.ImportCsv(ss.str(), &err, &rows)) { ConsoleLog("Localization: couldn't import " + p + ": " + err, 2); return; }
     const std::string before = live.Write();
-    if (after.Write() == before) {
-        s_status = "Import changed nothing";
-        ConsoleLog("Localization: " + p + " changed nothing");
-        return;
-    }
-    const LocDiff diff = LocDiffTables(live, after);
-    live = std::move(after);
+    if (!ApplyLocImport(live, s_importPreview)) return;
     Commit(ed, before);
-    std::string note = "Imported " + std::to_string(rows) + " rows";
-    auto add = [&](int n, const char* what) { if (n > 0) note += ", " + std::to_string(n) + " " + what; };
-    add((int)diff.filled.size(), "filled");
-    add((int)diff.changed.size(), "changed");
-    add((int)diff.addedKeys.size(), "new keys");
-    add((int)diff.addedLanguages.size(), "new languages");
-    add((int)diff.cleared.size(), "cleared");
-    if (diff.notesChanged) add(diff.notesChanged, "notes");
-    if (s_status.rfind("Saved ", 0) == 0 || s_status.rfind("No project", 0) == 0) s_status = note;
-    ConsoleLog("Localization: " + note + " from " + p);
+    const std::string note = s_importPreview.Summary();
+    if (s_status.rfind("Saved ", 0) == 0 || s_status.rfind("No project", 0) == 0 || s_status.rfind("Import", 0) == 0) s_status = note;
+    ConsoleLog("Localization: " + note + " from " + s_importPath);
+    s_importPreview = LocImportPreview();
 }
 
 void ExportCsv(const EditorState& ed) {
@@ -700,6 +754,20 @@ void ExportCsvTo(const std::string& p) {
     f << Localization::Table().ExportCsv();
     if (f) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
     else ConsoleLog("Localization: couldn't write " + p, 2);
+}
+
+void ExportJsonTo(const std::string& p) {
+    std::ofstream f(fs::u8path(p), std::ios::binary | std::ios::trunc);
+    f << ExportLocJson(Localization::Table());
+    if (f) ConsoleLog("Localization: exported " + std::to_string(Localization::Table().Size()) + " keys to " + p);
+    else ConsoleLog("Localization: couldn't write " + p, 2);
+}
+
+void ExportJson(const EditorState& ed) {
+    const std::string suggest = ed.projectDir().empty() ? std::string("strings.json")
+                              : (fs::u8path(ed.projectDir()) / "strings.json").u8string();
+    okay::filedialog::SaveOne("Export strings (JSON)", suggest, okay::filedialog::Filters("JSON", {"*.json"}),
+        [](const std::string& p) { ExportJsonTo(p); });
 }
 
 std::string FilterLabel() {
@@ -781,12 +849,27 @@ void DrawLocalizationWindow(EditorState& ed) {
     if (ImGui::Button("+ Key")) { s_newKey.clear(); s_newText.clear(); s_openAddKey = true; }
     Tip("Add a key and its text in the default language.");
     ImGui::SameLine();
-    if (ImGui::Button("Import CSV...")) ImportCsv(ed);
+    if (ImGui::Button("Import CSV...")) ImportFile(ed, LocImportFormat::Csv);
     Tip("Read a translator's spreadsheet (key, note, then a column per language code;\n"
-        "comma, semicolon or tab separated). New keys and languages are added; empty cells keep the text.");
+        "comma, semicolon or tab separated). A preview of what changes comes first.\n"
+        "New keys and languages are added; empty cells keep the text.");
     ImGui::SameLine();
     if (ImGui::Button("Export CSV...")) ExportCsv(ed);
     Tip("Write every key and language as a spreadsheet for translators (UTF-8).");
+    ImGui::SameLine();
+    if (ImGui::Button("Import JSON...")) ImportFile(ed, LocImportFormat::Json);
+    Tip("Read a JSON file: the whole table (as Export JSON writes it) or one language ({\"key\": \"text\"},\n"
+        "the file name, such as fr.json, says which language). A preview of what changes comes first.");
+    ImGui::SameLine();
+    if (ImGui::Button("Export JSON...")) ExportJson(ed);
+    Tip("Write every key and language as one JSON file.");
+    ImGui::SameLine();
+    if (ImGui::Button("Check Fonts...")) {
+        if (s_fontLang.empty()) s_fontLang = Localization::Language() == Localization::kPseudo ? std::string() : Localization::Language();
+        s_fontView = LocWindowFontCoverage(t, s_fontLang, s_fontPath, TablePath(ed).empty() ? std::string() : fs::u8path(TablePath(ed)).parent_path().u8string());
+        s_openFonts = true;
+    }
+    Tip("List the characters of a language's texts that its font cannot draw.");
     ImGui::SameLine();
     if (ImGui::Button("Add Dialogue & Quest Text")) {
         const int n = AddMissing(ed, StoryStrings(ed));

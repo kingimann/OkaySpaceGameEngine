@@ -2,9 +2,13 @@
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/Utf8.hpp"
+#include "okay/Core/ImportSettings.hpp"
+#include "okay/Graphics/TtfFont.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace okay {
 
@@ -162,6 +166,195 @@ Image ImageThumbnailGenerator::Render(const std::string& absolutePath, std::stri
     return img;
 }
 
+// --- Font and data generators ------------------------------------------------------------------
+
+namespace {
+
+void BlendPixel(Image& img, int x, int y, std::uint8_t r, std::uint8_t g, std::uint8_t b, int a) {
+    if (x < 0 || y < 0 || x >= img.Width() || y >= img.Height() || a <= 0) return;
+    std::uint8_t* p = img.Data() + (static_cast<std::size_t>(y) * img.Width() + x) * 4;
+    a = std::min(a, 255);
+    p[0] = static_cast<std::uint8_t>((p[0] * (255 - a) + r * a) / 255);
+    p[1] = static_cast<std::uint8_t>((p[1] * (255 - a) + g * a) / 255);
+    p[2] = static_cast<std::uint8_t>((p[2] * (255 - a) + b * a) / 255);
+    p[3] = 255;
+}
+
+void FillRect(Image& img, int x0, int y0, int x1, int y1, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+    for (int y = std::max(0, y0); y < std::min(img.Height(), y1); ++y)
+        for (int x = std::max(0, x0); x < std::min(img.Width(), x1); ++x) BlendPixel(img, x, y, r, g, b, 255);
+}
+
+// A card: top-down gradient and a border, fully opaque.
+Image MakeCard(int size, int r, int g, int b) {
+    Image img(size, size);
+    const int border = std::max(1, size / 32);
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            const bool edge = x < border || y < border || x >= size - border || y >= size - border;
+            const double shade = edge ? 0.6 : 1.0 - 0.25 * (static_cast<double>(y) / size);
+            std::uint8_t* p = img.Data() + (static_cast<std::size_t>(y) * size + x) * 4;
+            p[0] = static_cast<std::uint8_t>(r * shade);
+            p[1] = static_cast<std::uint8_t>(g * shade);
+            p[2] = static_cast<std::uint8_t>(b * shade);
+            p[3] = 255;
+        }
+    return img;
+}
+
+// Draw UTF-8 `text` with `f` (a face baked at its own height, scale 1) with the pen line's top at (x, y).
+void DrawFontText(Image& img, TtfFont& f, const std::string& text, float x, float y, std::uint8_t cr, std::uint8_t cg, std::uint8_t cb) {
+    f.Prepare(text);
+    const Image& atlas = f.Atlas();
+    if (!atlas.Valid()) return;
+    const float baseline = f.Ascent(f.BakeHeight());
+    float penX = x;
+    for (std::size_t i = 0; i < text.size();) {
+        const std::uint32_t cp = utf8::Next(text, i);
+        const TtfFont::Glyph* g = f.GlyphFor(cp);
+        if (!g) { penX += f.BakeHeight() * 0.5f; continue; }
+        const int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
+        const int dx = static_cast<int>(std::lround(penX + g->xoff));
+        const int dy = static_cast<int>(std::lround(y + baseline + g->yoff));
+        for (int yy = 0; yy < gh; ++yy)
+            for (int xx = 0; xx < gw; ++xx) {
+                const int ax = g->x0 + xx, ay = g->y0 + yy;
+                if (ax < 0 || ay < 0 || ax >= atlas.Width() || ay >= atlas.Height()) continue;
+                const int a = atlas.Data()[(static_cast<std::size_t>(ay) * atlas.Width() + ax) * 4 + 3];
+                BlendPixel(img, dx + xx, dy + yy, cr, cg, cb, a);
+            }
+        penX += g->xadvance;
+    }
+}
+
+} // namespace
+
+Image RenderFontThumbnail(const TtfFont& font, int size) {
+    if (!font.Valid()) return Image();
+    size = std::max(16, size);
+    static const char* const kProbes[] = {"Aa", "\xE3\x81\x82\xE3\x82\xA2", "\xE6\xBC\xA2\xE5\xAD\x97", "\xEA\xB0\x80\xEB\x82\x98",
+                                         "\xD0\x96\xD0\xB6", "\xCE\xB1\xCE\xA9", "\xD8\xB9\xD8\xA8", "\xD7\x90\xD7\x91", "0123"};
+    std::string big;
+    for (const char* probe : kProbes)
+        if (font.HasAll(probe)) { big = probe; break; }
+    if (big.empty()) return Image();
+    Image img = MakeCard(size, 38, 42, 56);
+    const float margin = size * 0.08f;
+    // The big sample: as tall as fits, shrunk until its width fits too.
+    float bigPx = size * 0.46f;
+    TtfFont* f = font.ForPixelHeight(bigPx);
+    while (bigPx > 8.0f && f->Measure(big.c_str(), f->BakeHeight()) > size - 2 * margin) {
+        bigPx *= 0.85f;
+        f = font.ForPixelHeight(bigPx);
+    }
+    f->Prepare(big);
+    const float bw = f->Measure(big.c_str(), f->BakeHeight());
+    DrawFontText(img, *f, big, (size - bw) * 0.5f, size * 0.10f, 245, 245, 250);
+    // A line of sample text below, when the font has it.
+    const std::string line = font.HasAll("Hamburgefonstiv 0123") ? "Hamburgefonstiv 0123" : (font.HasAll("0123456789") ? "0123456789" : std::string());
+    if (!line.empty()) {
+        float px = std::max(8.0f, size * 0.13f);
+        TtfFont* s = font.ForPixelHeight(px);
+        while (px > 6.0f && s->Measure(line.c_str(), s->BakeHeight()) > size - 2 * margin) {
+            px *= 0.9f;
+            s = font.ForPixelHeight(px);
+        }
+        const float lw = s->Measure(line.c_str(), s->BakeHeight());
+        DrawFontText(img, *s, line, (size - lw) * 0.5f, size * 0.74f, 215, 218, 235);
+    }
+    return img;
+}
+
+Image RenderFontThumbnailFile(const std::string& absolutePath, int size, std::string* error) {
+    std::error_code ec;
+    const auto bytes = fs::file_size(PathFromU8(absolutePath), ec);
+    if (ec) { if (error) *error = "cannot read " + absolutePath; return Image(); }
+    if (bytes > (32u << 20)) { if (error) *error = "font file too big for a thumbnail"; return Image(); }
+    TtfFont font;
+    if (!font.LoadFromFile(absolutePath, std::max(16.0f, size * 0.5f))) { if (error) *error = "not a readable font"; return Image(); }
+    Image img = RenderFontThumbnail(font, size);
+    if (!img.Valid() && error) *error = "the font has none of the sample characters";
+    return img;
+}
+
+Image MakeDataThumbnail(const std::string& absolutePath, int size, std::string* error) {
+    size = std::max(16, size);
+    std::ifstream in(PathFromU8(absolutePath), std::ios::binary);
+    if (!in) { if (error) *error = "cannot read " + absolutePath; return Image(); }
+    std::string head(4096, '\0');
+    in.read(&head[0], static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(std::max<std::streamsize>(0, in.gcount())));
+    Image img = MakeCard(size, 90, 100, 110);
+    const int m = std::max(2, size / 10);
+    const int top = m, bottom = size - m - std::max(8, size / 6);   // the extension strip is below
+    FillRect(img, m, top, size - m, bottom, 232, 234, 238);        // the page
+    int nonText = 0;
+    for (unsigned char c : head) if (c == 0 || (c < 9) || (c > 13 && c < 32)) ++nonText;
+    const bool binary = !head.empty() && nonText * 10 > static_cast<int>(head.size());
+    const int px0 = m + std::max(2, size / 16), px1 = size - m - std::max(2, size / 16);
+    if (binary) {
+        const int cells = 8;
+        const int cw = std::max(1, (px1 - px0) / cells), ch = std::max(1, (bottom - top - 2 * std::max(2, size / 16)) / cells);
+        for (int cy = 0; cy < cells; ++cy)
+            for (int cx = 0; cx < cells; ++cx) {
+                const std::size_t i = static_cast<std::size_t>(cy * cells + cx) * (head.size() / (cells * cells));
+                const int v = i < head.size() ? static_cast<unsigned char>(head[i]) : 255;
+                const int shade = 70 + (255 - v) / 2;
+                FillRect(img, px0 + cx * cw, top + std::max(2, size / 16) + cy * ch, px0 + (cx + 1) * cw - 1,
+                         top + std::max(2, size / 16) + (cy + 1) * ch - 1, static_cast<std::uint8_t>(shade),
+                         static_cast<std::uint8_t>(shade + 10), static_cast<std::uint8_t>(shade + 25));
+            }
+    } else {
+        const int rowH = std::max(3, size / 14);
+        int y = top + std::max(2, size / 16);
+        std::size_t pos = 0;
+        bool first = true;
+        while (y + rowH < bottom && pos < head.size()) {
+            std::size_t nl = head.find('\n', pos);
+            if (nl == std::string::npos) nl = head.size();
+            const std::size_t len = nl - pos;
+            const std::size_t indent = head.find_first_not_of(" \t", pos);
+            const int lead = indent == std::string::npos || indent > nl ? 0 : static_cast<int>(indent - pos);
+            pos = nl + 1;
+            if (len == 0) { y += rowH; continue; }      // a blank line is a gap
+            const int full = px1 - px0;
+            const int off = std::min(full / 3, lead * full / 40);
+            const int w = std::max(2, std::min(full - off, static_cast<int>(len) * full / 60));
+            if (first) FillRect(img, px0 + off, y, px0 + off + w, y + rowH - 1, 60, 90, 150);   // the first line reads as a title
+            else FillRect(img, px0 + off, y, px0 + off + w, y + rowH - 1, 120, 128, 140);
+            first = false;
+            y += rowH + std::max(1, rowH / 3);
+        }
+    }
+    std::string ext = fs::path(PathFromU8(absolutePath)).extension().string();
+    if (!ext.empty() && ext[0] == '.') ext.erase(0, 1);
+    for (char& ch : ext) if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+    if (ext.size() > 6) ext.resize(6);
+    if (!ext.empty()) {
+        const int scale = std::max(1, std::min((size - 2 * m) / (8 * static_cast<int>(ext.size())), size / 20));
+        const int tw = static_cast<int>(ext.size()) * 8 * scale;
+        const int ox = (size - tw) / 2, oy = bottom + std::max(1, (size - m - bottom - 8 * scale) / 2);
+        for (std::size_t i = 0; i < ext.size(); ++i)
+            for (int gy = 0; gy < 8; ++gy)
+                for (int gx = 0; gx < 8; ++gx) {
+                    if (!Font8x8::Pixel(ext[i], gx, gy)) continue;
+                    FillRect(img, ox + static_cast<int>(i) * 8 * scale + gx * scale, oy + gy * scale,
+                             ox + static_cast<int>(i) * 8 * scale + (gx + 1) * scale, oy + (gy + 1) * scale, 245, 245, 245);
+                }
+    }
+    return img;
+}
+
+bool FontThumbnailGenerator::Handles(const std::string& e) const { return e == "ttf" || e == "otf"; }
+Image FontThumbnailGenerator::Render(const std::string& absolutePath, std::string* error) {
+    return RenderFontThumbnailFile(absolutePath, m_size, error);
+}
+
+bool DataThumbnailGenerator::Handles(const std::string& e) const { return AssetTypeFromExtension(e) == AssetType::Data; }
+Image DataThumbnailGenerator::Render(const std::string& absolutePath, std::string* error) {
+    return MakeDataThumbnail(absolutePath, m_size, error);
+}
+
 namespace {
 // Adapts a callback to the generator interface.
 class FunctionGenerator final : public ThumbnailGenerator {
@@ -182,6 +375,8 @@ ThumbnailCache::ThumbnailCache(Options options) : m_opt(std::move(options)) {
     m_opt.size = std::max(16, m_opt.size);
     if (m_opt.imageGenerator) m_generators.push_back(std::make_shared<ImageThumbnailGenerator>());
     if (m_opt.audioGenerator) m_generators.push_back(std::make_shared<WaveformThumbnailGenerator>());
+    if (m_opt.fontGenerator) m_generators.push_back(std::make_shared<FontThumbnailGenerator>(m_opt.size));
+    if (m_opt.dataGenerator) m_generators.push_back(std::make_shared<DataThumbnailGenerator>(m_opt.size));
 }
 
 void ThumbnailCache::AddGenerator(std::shared_ptr<ThumbnailGenerator> generator) {

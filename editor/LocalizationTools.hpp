@@ -87,6 +87,10 @@ struct LocWindowPreview {
     std::string language;
     std::string text;     ///< as the window shows it (pseudo-localized and/or mirrored)
     std::string plain;    ///< the stored text, before pseudo-localization and mirroring
+    /// For a right-to-left language: `text` before mirroring, put in the order a reader sees it
+    /// (LocVisualOrder: Latin words and digits keep their order inside the right-to-left line).
+    /// Empty for a left-to-right language. The window shows this one for those languages.
+    std::string visual;
     bool pseudo = false;
     bool mirrored = false;
     bool missing = false; ///< neither the shown language nor the default has text

@@ -26,6 +26,23 @@ Image BoxDownscale(const Image& src, int maxSide);
 /// extension (upper case, up to 4 letters) in the 8x8 font. `error` tints it red.
 Image MakePlaceholderThumbnail(AssetType kind, const std::string& label, int size, bool error = false);
 
+class TtfFont;
+
+/// A tile that shows a font: a dark card with a large "Aa" and a line of sample text, drawn with
+/// our own font code (TtfFont) straight into the pixels, so it needs no window or GPU. A font
+/// with no Latin letters (a CJK-only face) shows the first of a few probe samples it can draw.
+/// An invalid font, or one that can draw none of them, gives an empty Image.
+Image RenderFontThumbnail(const TtfFont& font, int size);
+/// The same from a file; a missing, unreadable, over 32 MB or non-font file gives an empty Image
+/// and sets `error`.
+Image RenderFontThumbnailFile(const std::string& absolutePath, int size, std::string* error = nullptr);
+
+/// A generated tile for a data asset (okaydata, okayitems, okayloc, json, txt, bin...): a page
+/// whose rows are as long as the first lines of the file (text), or a grid of cells shaded by the
+/// first bytes (binary), with the extension below. The same file always gives the same tile.
+/// A missing file gives an empty Image and sets `error`.
+Image MakeDataThumbnail(const std::string& absolutePath, int size, std::string* error = nullptr);
+
 /// Turns an asset file into a picture. `Render` returns an invalid (empty) Image when it
 /// can not; it may return any size, the cache scales it down.
 class ThumbnailGenerator {
@@ -50,6 +67,26 @@ public:
     Image Render(const std::string& absolutePath, std::string* error) override;
 };
 
+/// ttf otf: RenderFontThumbnailFile at `size` pixels.
+class FontThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    explicit FontThumbnailGenerator(int size = 128) : m_size(size) {}
+    bool Handles(const std::string& extension) const override;
+    Image Render(const std::string& absolutePath, std::string* error) override;
+private:
+    int m_size;
+};
+
+/// The data extensions (AssetType::Data): MakeDataThumbnail at `size` pixels.
+class DataThumbnailGenerator final : public ThumbnailGenerator {
+public:
+    explicit DataThumbnailGenerator(int size = 128) : m_size(size) {}
+    bool Handles(const std::string& extension) const override;
+    Image Render(const std::string& absolutePath, std::string* error) override;
+private:
+    int m_size;
+};
+
 class ThumbnailCache {
 public:
     struct Options {
@@ -60,6 +97,8 @@ public:
         std::string tag = "1";                 ///< bump to invalidate every disk entry (generator changed)
         bool imageGenerator = true;            ///< register ImageThumbnailGenerator
         bool audioGenerator = true;            ///< register WaveformThumbnailGenerator
+        bool fontGenerator = true;             ///< register FontThumbnailGenerator (a sample string in the font)
+        bool dataGenerator = true;             ///< register DataThumbnailGenerator (a generated page tile)
     };
     struct Stats {
         std::size_t memoryHits = 0, diskHits = 0, generated = 0, placeholders = 0, failures = 0, evictions = 0, diskWrites = 0;

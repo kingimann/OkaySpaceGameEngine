@@ -259,10 +259,33 @@ false` leaves the installed fonts out, which gives the same answer on every mach
 * **Scan project** is `LocScanProject` (plus the open scene) for unused and undefined keys,
 * the selected key's preview line is `LocPreview`: pseudo-localization, and mirrored
   text for a right-to-left language,
-* CSV import still uses the string table's importer (so a column headed `FR` fills
-  `fr`) and then `LocDiffTables`, and the status line says what changed.
+* **Import CSV...** and **Import JSON...** read the file and call `PreviewLocImport`
+  (`editor/LocalizationIO`): the file is merged into a copy of the table and the
+  `LocDiff` is listed in a **Confirm Import** window (new languages and keys, filled,
+  changed and cleared texts, with the old and new text). Nothing changes until
+  **Apply**, which is one step in the window's undo; **Cancel** leaves the table alone.
+  A file over 32 MB, an empty file or one that does not parse is refused with the
+  reason. A column headed `FR` fills `fr`. A JSON file of one language
+  (`fr.json`: `{"key": "text"}`) is the language its file name says; the whole-table
+  form names its own.
+* **Export JSON...** writes `LocTable::ToJson` (every language and key, notes
+  included), which Import JSON reads back to the same table (tested).
+* **Check Fonts...** is `LocWindowFontCoverage`: pick a language (or every language)
+  and optionally one font file; it lists the characters no font draws, the ones only a
+  fallback font draws, and the texts no single font draws completely. Without a font
+  file it uses each language's own font from the table, then the built-in UI font
+  (installed system fonts are left out so the answer is the same on every machine).
+* The selected key's preview line for a right-to-left language is `LocVisualOrder`:
+  the text in the order a reader sees it. Right-to-left letters run right to left,
+  Latin words and digits keep their order inside the line, a `{placeholder}` stays
+  whole, brackets flip. It is a subset of the Unicode bidirectional algorithm written
+  from the public description: no embeddings or isolates, no weak rules for separators
+  inside numbers, and no Arabic shaping (letters are not joined). The older plain
+  reversal (`LocMirrorText`, a layout test) is still what `LocPreview` returns.
 
-Right-to-left text is still drawn left to right in the Scene view, unshaped; the
-mirrored preview only shows how a layout would behave. JSON import and export, a
-confirm step before applying a CSV, and the font coverage report are not in the
-window yet.
+Right-to-left text is still drawn left to right in the Scene view, unshaped.
+
+The logic of all of this is ImGui-free and tested by `test_loc_io` (JSON round trip,
+the preview and apply, hostile and malformed input, font coverage with the bundled
+DejaVu Sans, visual order). The buttons and popups in `LocalizationWindow.cpp` are
+compiled but were not run in a window.

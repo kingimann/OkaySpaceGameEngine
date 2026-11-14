@@ -234,7 +234,7 @@ first) return an empty image when they cannot; the result is scaled down with `B
 aware, never enlarges). The built-in `ImageThumbnailGenerator` handles `png jpg jpeg bmp tga gif psd hdr` through
 `Image::Load`. Types without a generator get a coloured placeholder tile with the extension; a failing generator
 (or an unreadable image) gets a red one, and the failure is remembered for that content so it is not retried every
-frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(guid)`, `Clear()`, `ClearDisk()` and
+frame. `FontThumbnailGenerator` (ttf, otf; `Options::fontGenerator`) draws "Aa" and a sample line with our own `TtfFont` straight into the tile (`RenderFontThumbnail`, no GPU; a bad font gets the red tile) and `DataThumbnailGenerator` (the `Data` extensions; `Options::dataGenerator`) makes a page tile from the first 4 KB of the file (`MakeDataThumbnail`: rows as long as the first lines, a shaded grid for binary, the extension). `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(guid)`, `Clear()`, `ClearDisk()` and
 `GetStats()` (memory hits, disk hits, generated, placeholders, failures, evictions) round it out.
 
 ## Not covered

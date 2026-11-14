@@ -156,6 +156,16 @@ status line says what the import did (filled, changed, new keys). A column
 headed `FR` or `pt_br` fills the table's `fr` or `pt-BR` instead of adding a second
 language, and the spreadsheet's "Unicode text" (UTF-16, tab separated) imports too.
 
+Import first shows a **Confirm Import** window that lists what would change (new keys and
+languages, filled, changed and cleared texts, old and new text side by side); **Apply** makes it
+one undo step and **Cancel** changes nothing. **Import JSON...** and **Export JSON...** do the same
+with JSON: the whole table, or one language per file (`fr.json` is `{"key": "text"}` for `fr`).
+**Check Fonts...** lists the characters of a language's texts that its font cannot draw. For a
+right-to-left language the preview line under the grid shows the text in reading order
+(right-to-left words reversed, Latin words and digits kept, brackets flipped); letters are not
+joined (no shaping) and the Scene view still draws left to right. See
+[localization_tools.md](localization_tools.md).
+
 ## Localized texts in the scene
 
 In the Inspector, **Text** (2D and 3D), **World UI**, **UI Button** (a button

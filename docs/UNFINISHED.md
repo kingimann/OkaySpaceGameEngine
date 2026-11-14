@@ -109,9 +109,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [1.11](feature_map/01-core-scene.md#111-asset-manager) | Asset manager | Partial | move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an... |
 | [1.12](feature_map/01-core-scene.md#112-asset-database) | Asset database | Partial | importers reading the remaining settings; GUID references inside scene files; build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no file watcher (the Project panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings... |
 | [1.13](feature_map/01-core-scene.md#113-object-pooling) | Object pooling | Partial | a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job |
-| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key)... |
+| [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | the Scene view does not mirror or reorder right-to-left text and Arabic letters are not joined (no shaping); `LocVisualOrder` has no embeddings or isolates; the import, JSON, font-check and right-to-left window code is compiled, not run |
 | [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
-| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread; one 128 px size scaled to the tile size; no pictures for fonts or data assets; a scene picture loads the whole scene... |
+| [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread (Large: the renderers use editor state and the main thread's GL context, and the cache has no lock); one 128 px size scaled to the tile size; a scene picture loads the whole scene |
 
 ### 3. 3D modeling & import
 
@@ -179,7 +179,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned)... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
 | [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
-| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets |
+| [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene |
 
 ### 21. Prefab system (Critical)
 
@@ -268,9 +268,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [31.1](feature_map/20-35-planned.md#311-translation-tables) | Translation tables | Partial | JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`... |
+| [31.1](feature_map/20-35-planned.md#311-translation-tables) | Translation tables | Partial | translation memory. JSON import and export and a confirm step before import are in the window. The window uses `LocTable`, `LocCheck` and `LocScan`... |
 | [31.2](feature_map/20-35-planned.md#312-font-fallback) | Font fallback | Partial | system fonts differ between machines, so a CJK game should ship its own font; RTL is drawn left to right. |
-| [31.3](feature_map/20-35-planned.md#313-language-previews) | Language previews | Partial | the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key. |
+| [31.3](feature_map/20-35-planned.md#313-language-previews) | Language previews | Partial | the Scene view layout does not mirror or reorder right-to-left languages. The Localization window shows the selected key in visual order (`LocVisualOrder`). |
 
 ### 32. Accessibility (High)
 

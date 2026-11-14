@@ -123,7 +123,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Project panel tiles and details strip
 - **Docs:** `docs/asset_database.md`
 - **Tests:** `asset_database`, `project_panel_db`
-- **Status:** Partial - the Project panel gets every picture from the shared cache (kept on disk, made again when the content changes); pictures are made on the main thread, inside a frame time budget.
+- **Status:** Partial - the Project panel gets every picture from the shared cache (kept on disk, made again when the content changes), now including fonts (a sample string) and data files (a generated tile); pictures are made on the main thread, inside a frame time budget.
 - **Exists today:** `Browser::Thumb` and the generators in `editor/main.cpp` (scene and prefab previews instantiate into a throwaway scene with scripts off); `GetPrimitiveThumb` still serves the Modeling panel. `ThumbnailCache` adds the disk cache, failure memory and the audio waveform generator.
 - **Work packages:**
   1. M - Project panel gets its pictures from `ThumbnailCache`, with the editor's renderers registered as generators for prefab, scene, model and mesh. Depends on: 20.1 package 2.
@@ -1170,16 +1170,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/localization.md`, `docs/localization_prefs_time.md`; `docs/localization_tools.md`
 - **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
-- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
-- **Exists today:** The window and file format (`docs/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys; JSON import and export and a confirm step before an import are in (logic tested as `loc_io`, window code compiled, not run).
+- **Exists today:** The window and file format (`docs/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and the confirm-before-import step are in `editor/LocalizationIO`.
 - **Work packages:**
   1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
   2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
-  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
-  4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
+  3. S - Done. Import preview: a CSV or JSON file is read first and a Confirm Import window lists what changes; Apply is one undo step. Depends on: package 1.
+  4. S - Done for the whole table and for one language per file (`fr.json`): Import JSON and Export JSON. Depends on: package 1.
   5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** translation memory and a machine-translation hook. JSON import and export and the confirm step before an import are in the window (`editor/LocalizationIO`). The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet
@@ -1221,7 +1221,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** toolbar language menu, Localization window "Pseudo-localize"
 - **Docs:** `docs/localization.md`; `docs/localization_tools.md`
 - **Tests:** `localization`; `loc_tools`, `loc_window`
-- **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers, and mirrored text for a right-to-left language) and does not change the table.
+- **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers) and, for a right-to-left language, the text in visual order (`LocVisualOrder`); it does not change the table.
 - **Exists today:** The Scene view follows the toolbar language, including pseudo-localization. The window's preview line is `LocPreview`. Layout does not mirror.
 - **Work packages:**
   1. S - Pseudo-localize options (expansion percent, markers) in the window, using `LocPseudoOptions`. Depends on: #574 (on main).

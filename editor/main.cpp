@@ -9710,11 +9710,13 @@ static void ProjectRegisterThumbGenerators() {
     g_pb->AddThumbGenerator(okay::ExtensionsOfType(okay::AssetType::Model), RenderModelImage);
     g_thumbGensFor = true;
 }
-// Types that can have a picture at all (a script or a data file never does: do not even ask).
+// Types that can have a picture at all (a script never does: do not even ask). A font shows a sample string, a data file a
+// generated page tile; both come from the cache's own generators.
 static bool ProjectHasThumb(const std::string& ext) {
     switch (okay::AssetTypeFromExtension(ext)) {
         case okay::AssetType::Texture: case okay::AssetType::Model: case okay::AssetType::Mesh: case okay::AssetType::Audio:
-        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab: return true;
+        case okay::AssetType::Material: case okay::AssetType::Scene: case okay::AssetType::Prefab:
+        case okay::AssetType::Font: case okay::AssetType::Data: return true;
         default: return false;
     }
 }

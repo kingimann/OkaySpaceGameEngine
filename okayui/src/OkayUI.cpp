@@ -5317,7 +5317,7 @@ bool IsItemHovered(int f) {
     if (!(f & Hovered_AllowWhenBlockedByActiveItem) && g_active != 0 && g_active != g_lastId) return false;   // another item is held: nothing else is hovered
     const double delay = (f & Hovered_DelayNormal) ? 0.40 : (f & Hovered_DelayShort) ? 0.15 : 0.0;
     if (delay > 0.0) {
-        const int key = g_lastId != 0 ? g_lastId : (int)(((unsigned)(g_lay.prevX * 8.0f) * 73856093u) ^ ((unsigned)(g_lay.prevY * 8.0f) * 19349663u)) | 1;
+        const int key = g_lastId != 0 ? g_lastId : (int)(((unsigned)clampPx(g_lay.prevX * 8.0f, 0) * 73856093u) ^ ((unsigned)clampPx(g_lay.prevY * 8.0f, 0) * 19349663u)) | 1;
         if (key != g_hovKey || g_hovFrame + 1 < g_frameCount) { g_hovKey = key; g_hovSince = g_clock; }   // a new item, or the pointer left it in between
         g_hovFrame = g_frameCount;
         return g_clock - g_hovSince >= delay;

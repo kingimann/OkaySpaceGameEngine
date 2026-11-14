@@ -1019,7 +1019,7 @@ int main() {
                         case 0: if (UI::BeginChild("c", UI::Vec2{F(), F()}, I(64), I(2) ? UI::Window_NoScrollbar : 0)) { UI::Text("child"); if (I(2)) UI::Button("b"); } UI::EndChild(); break;
                         case 1: UI::InputText("##i", buf, (int)sizeof buf, (unsigned)I(4096)); (void)UI::IsItemEdited(); (void)UI::IsItemDeactivatedAfterEdit(); break;
                         case 2: if (UI::BeginTooltip()) { UI::Text("tip"); if (I(2)) UI::Separator(); if (I(5)) UI::EndTooltip(); } break;   // sometimes left open
-                        case 3: { UI::ListClipper c; c.Begin(I(3) == 0 ? (int)F() : I(20000), F()); int guard = 0; while (c.Step() && guard++ < 3) for (int i = c.DisplayStart; i < c.DisplayEnd && i < c.DisplayStart + 200; ++i) UI::Text("r"); if (I(2)) c.End(); break; }
+                        case 3: { UI::ListClipper c; { const float cf = F(); c.Begin(I(3) == 0 ? (std::isfinite(cf) && std::fabs(cf) < 1e9f ? (int)cf : 5) : I(20000), F()); } int guard = 0; while (c.Step() && guard++ < 3) for (int i = c.DisplayStart; i < c.DisplayEnd && i < c.DisplayStart + 200; ++i) UI::Text("r"); if (I(2)) c.End(); break; }
                         case 4: (void)UI::IsItemHovered(I(1 << 16)); (void)UI::IsWindowHovered(I(8)); (void)UI::IsWindowFocused(I(8)); (void)UI::IsAnyItemHovered(); break;
                         case 5: if (UI::BeginPopupContextWindow(I(2) ? "ctx" : nullptr, I(300))) { UI::Selectable("x", false); UI::EndPopup(); } break;
                         case 6: { const UI::DrawList& dl = UI::GetForegroundDrawList(); dl.AddRectFlags(UI::Vec2{F(), F()}, UI::Vec2{F(), F()}, 0xff0000ffu, F(), I(512), F()); dl.AddRectFilledFlags(UI::Vec2{F(), F()}, UI::Vec2{F(), F()}, 0xff0000ffu, F(), I(512)); break; }

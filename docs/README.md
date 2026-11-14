@@ -16,6 +16,9 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [scene_diff_merge.md](scene_diff_merge.md): canonical scene text, structured diffs, three-way merge and format migration for version control.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [project_panel.md](project_panel.md): the Project panel.
+- [editor_undo.md](editor_undo.md): editor undo and redo.
+- [build_pipeline.md](build_pipeline.md): the build pipeline.
 - [platform_layer.md](platform_layer.md): the okay::platform seam over SDL2, our own Linux / Windows backends, the SDL audit and what is tested.
 - [project_upgrade.md](project_upgrade.md): the engine version a project was saved with, the upgrade question when an editor of another version opens it, safe upgrade with a full backup, restore, and the launcher's Versions folder.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
@@ -70,6 +73,15 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.
 - [audio.md](audio.md): the mixer, music and sound effects.
 
+## Models and importing
+- [model_import.md](model_import.md): which reader handles which model format, and the options that switch to our own readers.
+- [model_corpus.md](model_corpus.md): real-file checks of our own model readers against the outside libraries, and the flip-readiness verdict.
+- [own_fbx_reader.md](own_fbx_reader.md), [own_3ds_reader.md](own_3ds_reader.md), [own_bvh_reader.md](own_bvh_reader.md): our own FBX, 3DS and BVH readers.
+- [data_assets.md](data_assets.md): data assets and data packs.
+- [particles.md](particles.md): particles, lines and trails.
+- [terrain_water.md](terrain_water.md): terrain and water.
+- [display_settings.md](display_settings.md): display settings.
+
 ## Game UI
 - [game_ui.md](game_ui.md): game UI in the launcher's look.
 - [ui_runtime.md](ui_runtime.md): the twelve UI looks, widget roles, radio buttons, windows, damage numbers, dialogue box, UI Gallery and the script and C++ calls.
@@ -77,6 +89,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
 - [localization.md](localization.md): string tables, translators and fonts.
 - [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
+- [own_ui_toolkit.md](own_ui_toolkit.md): OkayUI, our own immediate-mode UI toolkit (off by default), its widgets and render backends.
+- [own_ui_code_editor.md](own_ui_code_editor.md): the OkayUI code-editor widget.
 - [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 
 ## Multiplayer, accounts and servers
@@ -89,6 +103,12 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [accounts.md](accounts.md): player accounts.
 - [anticheat.md](anticheat.md): anti-cheat.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
+- [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.
+- [account_data.md](account_data.md): download my data and delete my account.
+- [member_moderation.md](member_moderation.md): kick, ban and admins in community servers and group chats.
+- [password-reset.md](password-reset.md): the password reset page.
+- [multiplayer_audit.md](multiplayer_audit.md): what the multiplayer audit found, fixed and left open.
+- [crypto.md](crypto.md): our own crypto (off by default, not yet reviewed by outsiders).
 
 ## Core and scene
 - [scene_hierarchy_search.md](scene_hierarchy_search.md): active state that follows the hierarchy, find and search helpers, scene validation.
@@ -104,6 +124,11 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Working on the engine
 - [FEATURE_MAP.md](FEATURE_MAP.md): every system in the engine, where its code, tests and docs are, and what is still open (the pages live in [feature_map/](feature_map/)).
+- [unfinished_engine.md](unfinished_engine.md) and [unfinished_launcher.md](unfinished_launcher.md): plain-English lists of what is unfinished in the engine and the launcher.
+- [WORK_BOARD.md](WORK_BOARD.md): who is working on what.
+- [visual_scripting_nodes.md](visual_scripting_nodes.md), [visual_script_coverage.md](visual_script_coverage.md): the visual scripting nodes and how well they are covered.
+- [visual_script_clarity_audit.md](visual_script_clarity_audit.md), [visual_scripting_naming.md](visual_scripting_naming.md): audits of how clear the visual scripting nodes and their names are.
+- [../CLAUDE.md](../CLAUDE.md): the owner's standing rules for every session and agent (merging, CI, releases, secrets, own-code goal, disk).
 - [qa_workflow.md](qa_workflow.md): a developer and a QA session working together.
 - [../ROADMAP.md](../ROADMAP.md): releases and plans.
 - [archive/](archive/): old reports kept for history.

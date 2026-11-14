@@ -60,6 +60,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
+#include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
@@ -1947,6 +1948,15 @@ bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
     const std::string out = okay::restart::Utf8(outPath);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in); an unclear answer falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"};
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, out, sp);
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;   // a clear refusal (404, full disk): curl -f would fail the same way
+    }
+#endif
     // Arguments, not a shell line: a path with spaces, parentheses or '&' can't
     // be split or expanded the way the old quoted curl command was.
     const std::vector<std::string> curl = {

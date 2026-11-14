@@ -177,6 +177,7 @@ int main() {
             SceneLight::SetAmbient(0.15f);
             ApplySceneLight(s);
             PerPixelLighting() = ppl;
+            ShadowsUsePerPixel() = ppl;   // the flat path is the one with this switch off too
             Raster r; r.Resize(96, 96); r.Clear(0xFF000000u);
             RenderMeshes(r, s, vp, eye);
             *shadowPx = PixelAt(r, vp, Vec3{0.2f, 0, 1.6f});   // on the ground in front of the box, inside its shadow
@@ -193,6 +194,7 @@ int main() {
         CHECK(li1 == li0);                                // away from the shadow nothing changed
         CHECK(shF1 == shF0 && liF1 == liF0);              // the flat (per-vertex) path draws no shadows, as before
         PerPixelLighting() = false;
+        ShadowsUsePerPixel() = true;
     }
 
     ShadowsEnabled() = false;

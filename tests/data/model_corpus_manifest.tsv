@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf blend 3mf amf x3d dxf lwo md2 md3 irrmesh b3d x ac ogre xgl irr nff; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf / blend rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -367,3 +367,64 @@ x	models/X/test_cube_binary.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0
 x	models/X/test_cube_compressed.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=1	nrm=1
 x	models/X/test_cube_text.x	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=2	uv=1	nrm=1
 x	models/invalid/empty.x	FAIL	X: file too short
+# ac: own AC3D reader on the AC files of the same corpus (readers batch D); FAIL rows are the three files that hold only lines or no surfaces (nothing to draw), which Assimp reads as meshes without triangles
+ac	models/AC/SphereWithLight.ac	ok	area=0.0361	meshes=1	tris=17664	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.119,-0.064,0.003,-0.010,0.044,0.109	verts=9105	tex=1	nodes=4	uv=1	nrm=1
+ac	models/AC/SphereWithLight.acc	ok	area=0.0380	meshes=1	tris=264	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.122,-0.065,0.000,-0.007,0.044,0.112	verts=167	tex=1	nodes=4	uv=1	nrm=1
+ac	models/AC/SphereWithLightUvScaling4X.ac	ok	area=0.0360	meshes=1	tris=70656	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.119,-0.064,0.003,-0.010,0.043,0.109	verts=35873	tex=1	nodes=4	uv=1	nrm=1
+ac	models/AC/SphereWithLight_UTF16LE.ac	ok	area=0.0380	meshes=1	tris=264	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.122,-0.065,0.000,-0.007,0.044,0.112	verts=167	tex=1	nodes=4	uv=1	nrm=1
+ac	models/AC/SphereWithLight_UTF8BOM.ac	ok	area=0.0380	meshes=1	tris=264	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.122,-0.065,0.000,-0.007,0.044,0.112	verts=167	tex=1	nodes=4	uv=1	nrm=1
+ac	models/AC/Wuson.ac	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=11005	tex=0	nodes=3	uv=0	nrm=1
+ac	models/AC/Wuson.acc	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=3161	tex=0	nodes=3	uv=0	nrm=1
+ac	models/AC/closedLine.ac	FAIL	AC3D: no polygons in the file (only lines, points or empty objects)
+ac	models/AC/nosurfaces.ac	FAIL	AC3D: no polygons in the file (only lines, points or empty objects)
+ac	models/AC/openLine.ac	FAIL	AC3D: no polygons in the file (only lines, points or empty objects)
+ac	models/AC/sample_subdiv.ac	ok	area=12.9811	meshes=1	tris=245760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.622,-0.571,-1.601,0.782,0.770,1.394	verts=122882	tex=0	nodes=3	uv=0	nrm=1
+# ogre: own OGRE XML mesh reader (.mesh.xml only; the .material scripts next to each file give the textures)
+ogre	models-nonbsd/Ogre/OgreSDK/fish.mesh.xml	ok	area=34.8947	meshes=1	tris=815	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.964,-1.552,-2.213,3.406,1.525,1.237	verts=530	tex=1	nodes=1	uv=1	nrm=1
+ogre	models-nonbsd/Ogre/OgreSDK/ninja.mesh.xml	ok	area=25219.6177	meshes=2	tris=1008	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-30.535,0.141,-83.136,30.535,191.790,14.357	verts=842	tex=1	nodes=1	uv=1	nrm=1
+ogre	models-nonbsd/Ogre/OgreSDK/razor.mesh.xml	ok	area=29764.2994	meshes=1	tris=468	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-86.484,-13.859,-76.180,74.155,28.651,76.513	verts=588	tex=1	nodes=1	uv=1	nrm=1
+ogre	models/Ogre/TheThing/Mesh.mesh.xml	ok	area=1.3468	meshes=1	tris=2656	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.007,0.023,0.012,0.995,0.481,0.469	verts=1406	tex=1	nodes=1	uv=1	nrm=1
+# xgl: own XGL / ZGL reader
+xgl	models/XGL/BCN_Epileptic.zgl	ok	area=2.0697	meshes=3	tris=5126	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-0.309,-0.081,-1.024,0.277,0.297,0.790	verts=3014	tex=0	nodes=4	uv=1	nrm=1
+xgl	models/XGL/Spider_ascii.zgl	ok	area=56.9476	meshes=1	tris=1312	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.115,-4.000,-1.649,3.115,4.000,1.649	verts=2047	tex=0	nodes=2	uv=0	nrm=1
+xgl	models/XGL/Wuson.zgl	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2329	tex=0	nodes=2	uv=1	nrm=1
+xgl	models/XGL/cubes_with_alpha.zgl	ok	area=3300000.0635	meshes=5	tris=60	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-856.311,-55.101,-268.159,98.810,1227.141,248.438	verts=150	tex=0	nodes=6	uv=1	nrm=1
+xgl	models/XGL/sample_official.xgl	ok	area=12.0000	meshes=2	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.900,-0.500,0.000,0.000,1.400,1.000	verts=48	tex=0	nodes=3	uv=0	nrm=1
+xgl	models/XGL/sphere_with_mat_gloss_10pc.zgl	ok	area=635224.1823	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-215.000,-260.000,-210.000,215.000,250.000,210.000	verts=266	tex=0	nodes=2	uv=0	nrm=1
+xgl	models/XGL/wuson_dxf.zgl	ok	area=9.0266	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=3597	tex=0	nodes=2	uv=0	nrm=1
+# irr: own Irrlicht scene reader; the meshes a scene names (dwarf.x, cellar.irrmesh, spider.obj) are read through our own .x, .irrmesh and .obj readers
+irr	models/IRR/EpisodeII_TheDwarfesStrikeBack.irr	ok	area=4071.0913	meshes=12	tris=7632	bones=40	skinned=8	clips=0	dur=0.000	mat=6	bbox=-3.424,-17.099,-7.323,32.016,7.521,27.278	verts=6012	tex=3	nodes=194	uv=1	nrm=1
+irr	models/IRR/EpisodeII_TheDwarfesStrikeBack_UTF16LE.irr	ok	area=4071.0913	meshes=12	tris=7632	bones=40	skinned=8	clips=0	dur=0.000	mat=6	bbox=-3.424,-17.099,-7.323,32.016,7.521,27.278	verts=6012	tex=3	nodes=194	uv=1	nrm=1
+irr	models/IRR/EpisodeI_ANewDwarf.irr	ok	area=369750.5798	meshes=12	tris=9752	bones=40	skinned=10	clips=0	dur=0.000	mat=4	bbox=-195.278,-39.125,-65.203,132.561,53.302,158.993	verts=8211	tex=4	nodes=238	uv=1	nrm=1
+irr	models/IRR/EpisodeI_ANewDwarf_UTF16LE.irr	ok	area=369750.5798	meshes=12	tris=9752	bones=40	skinned=10	clips=0	dur=0.000	mat=4	bbox=-195.278,-39.125,-65.203,132.561,53.302,158.993	verts=8211	tex=4	nodes=238	uv=1	nrm=1
+irr	models/IRR/animMesh.irr	ok	area=8442.9421	meshes=2	tris=1896	bones=40	skinned=2	clips=0	dur=0.000	mat=2	bbox=-30.794,0.019,-16.554,35.500,70.849,46.026	verts=1479	tex=2	nodes=48	uv=1	nrm=1
+irr	models/IRR/animMesh_UTF16LE.irr	ok	area=8442.9421	meshes=2	tris=1896	bones=40	skinned=2	clips=0	dur=0.000	mat=2	bbox=-30.794,0.019,-16.554,35.500,70.849,46.026	verts=1479	tex=2	nodes=48	uv=1	nrm=1
+irr	models/IRR/box.irr	ok	area=600.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.000,-5.000,-5.000,5.000,5.000,5.000	verts=24	tex=1	nodes=2	uv=1	nrm=1
+irr	models/IRR/box_UTF16LE.irr	ok	area=600.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.000,-5.000,-5.000,5.000,5.000,5.000	verts=24	tex=1	nodes=2	uv=1	nrm=1
+irr	models/IRR/dawfInCellar_ChildOfCellar.irr	ok	area=575948.2950	meshes=4	tris=2168	bones=40	skinned=2	clips=0	dur=0.000	mat=4	bbox=-372.736,-42.997,-65.203,251.738,59.872,158.993	verts=2295	tex=4	nodes=50	uv=1	nrm=1
+irr	models/IRR/dawfInCellar_ChildOfCellar_UTF16LE.irr	ok	area=575948.2950	meshes=4	tris=2168	bones=40	skinned=2	clips=0	dur=0.000	mat=4	bbox=-372.736,-42.997,-65.203,251.738,59.872,158.993	verts=2295	tex=4	nodes=50	uv=1	nrm=1
+irr	models/IRR/dawfInCellar_SameHierarchy.irr	ok	area=338956.7202	meshes=4	tris=2168	bones=40	skinned=2	clips=0	dur=0.000	mat=4	bbox=-195.278,-44.500,-65.203,132.561,58.368,158.993	verts=2295	tex=4	nodes=50	uv=1	nrm=1
+irr	models/IRR/dawfInCellar_SameHierarchy_UTF16LE.irr	ok	area=338956.7202	meshes=4	tris=2168	bones=40	skinned=2	clips=0	dur=0.000	mat=4	bbox=-195.278,-44.500,-65.203,132.561,58.368,158.993	verts=2295	tex=4	nodes=50	uv=1	nrm=1
+irr	models/IRR/instancing.irr	ok	area=42214.7085	meshes=10	tris=9480	bones=40	skinned=10	clips=0	dur=0.000	mat=2	bbox=-65.075,34.851,-153.289,102.534,105.681,71.928	verts=7395	tex=2	nodes=237	uv=1	nrm=1
+irr	models/IRR/multipleAnimators.irr	ok	area=599.9999	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-10.349,-7.022,8.846,4.921,7.022,20.659	verts=24	tex=0	nodes=2	uv=1	nrm=1
+irr	models/IRR/multipleAnimators_UTF16LE.irr	ok	area=599.9999	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-10.349,-7.022,8.846,4.921,7.022,20.659	verts=24	tex=0	nodes=2	uv=1	nrm=1
+irr	models/IRR/scenegraphAnim.irr	ok	area=345727.5741	meshes=7	tris=3140	bones=40	skinned=2	clips=0	dur=0.000	mat=7	bbox=-156.218,5.954,-141.923,171.621,105.670,82.274	verts=2897	tex=5	nodes=58	uv=1	nrm=1
+irr	models/IRR/scenegraphAnimMod.irr	ok	area=345727.5741	meshes=7	tris=3140	bones=40	skinned=2	clips=0	dur=0.000	mat=7	bbox=-156.218,5.954,-141.923,171.621,105.670,82.274	verts=2897	tex=5	nodes=58	uv=1	nrm=1
+irr	models/IRR/scenegraphAnimMod_UTF16LE.irr	ok	area=345727.5741	meshes=7	tris=3140	bones=40	skinned=2	clips=0	dur=0.000	mat=7	bbox=-156.218,5.954,-141.923,171.621,105.670,82.274	verts=2897	tex=5	nodes=58	uv=1	nrm=1
+irr	models/IRR/scenegraphAnim_UTF16LE.irr	ok	area=345727.5741	meshes=7	tris=3140	bones=40	skinned=2	clips=0	dur=0.000	mat=7	bbox=-156.218,5.954,-141.923,171.621,105.670,82.274	verts=2897	tex=5	nodes=58	uv=1	nrm=1
+irr	models/IRR/sphere.irr	ok	area=308.6531	meshes=1	tris=480	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.667,-3.333,-8.333,8.333,6.667,1.667	verts=289	tex=1	nodes=2	uv=1	nrm=1
+irr	models/IRR/sphere_UTF16LE.irr	ok	area=308.6531	meshes=1	tris=480	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.667,-3.333,-8.333,8.333,6.667,1.667	verts=289	tex=1	nodes=2	uv=1	nrm=1
+# nff: own NFF reader (classic and Sense8)
+nff	models-nonbsd/NFF/NFFSense8/HOME4.NFF	ok	area=104514.4052	meshes=1	tris=12174	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=201.499,-325.562,564.495,340.446,-258.000,672.498	verts=25478	tex=0	nodes=1	uv=0	nrm=1
+nff	models-nonbsd/NFF/NFFSense8/cokecan.nff	ok	area=2831.1551	meshes=9	tris=28	bones=0	skinned=0	clips=0	dur=0.000	mat=9	bbox=-10.000,-37.000,-10.000,10.000,0.000,10.000	verts=64	tex=4	nodes=1	uv=1	nrm=1
+nff	models-nonbsd/NFF/NFFSense8/teapot.nff	ok	area=44.9005	meshes=1	tris=3752	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.000,-2.000,0.000,3.428,2.000,3.000	verts=11256	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/ManyEarthsNotJustOne.nff	ok	area=6.2750	meshes=10	tris=51200	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.811,-0.811,-0.500,0.811,0.811,0.711	verts=25620	tex=1	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/WithCamera.nff	ok	area=357.1594	meshes=4	tris=15362	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-7.000,-3.700,-7.000,7.000,5.000,7.000	verts=7690	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/cone.nff	ok	area=1715.5424	meshes=4	tris=11776	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-14.899,-14.899,-14.899,24.899,24.899,24.899	verts=6919	tex=3	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/cylinder.nff	ok	area=1532.0748	meshes=1	tris=1024	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-14.899,-14.899,-14.899,14.899,14.899,14.899	verts=1026	tex=1	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/dodecahedron.nff	ok	area=262.8656	meshes=1	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-4.671,-4.671,-4.671,4.671,4.671,4.671	verts=60	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/hexahedron.nff	ok	area=933.3334	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.887,-5.774,-11.547,2.887,5.774,11.547	verts=24	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/octahedron.nff	ok	area=173.2051	meshes=1	tris=8	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.000,-5.000,-5.000,5.000,5.000,5.000	verts=24	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/positionTest.nff	ok	area=2690.3634	meshes=15	tris=72704	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-8.000,-8.000,-5.000,68.000,8.000,5.000	verts=36894	tex=0	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/spheres.nff	ok	area=734.9215	meshes=4	tris=15380	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-3.000,-21.805,-4.805,8.000,8.000,11.000	verts=7698	tex=1	nodes=1	uv=0	nrm=1
+nff	models/NFF/NFF/tetrahedron.nff	ok	area=115.4700	meshes=1	tris=4	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.357,-4.082,-1.667,4.714,4.082,5.000	verts=12	tex=0	nodes=1	uv=0	nrm=1

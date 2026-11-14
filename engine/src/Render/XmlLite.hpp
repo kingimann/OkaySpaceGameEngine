@@ -68,8 +68,10 @@ inline bool AppendUtf8(std::string& dst, long cp) {
 inline bool Decode(std::string& dst, const std::string& s, std::size_t a, std::size_t b) {
     std::size_t i = a;
     while (i < b) {
-        const std::size_t amp = s.find('&', i);
-        if (amp == std::string::npos || amp >= b) { dst.append(s, i, b - i); return true; }
+        // searched inside [i, b) only: a find() to the end of the file for every text node would be quadratic on a file with no '&'
+        const void* hit = std::memchr(s.data() + i, '&', b - i);
+        const std::size_t amp = hit ? (std::size_t)(static_cast<const char*>(hit) - s.data()) : std::string::npos;
+        if (amp == std::string::npos) { dst.append(s, i, b - i); return true; }
         dst.append(s, i, amp - i);
         std::size_t e = amp + 1;
         const std::size_t lim = std::min(b, amp + 11);   // a reference is short: never scan further (a long run of '&' would be quadratic)

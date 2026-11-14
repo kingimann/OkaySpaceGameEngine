@@ -57,6 +57,11 @@ option(OKAY_OWN_MD3       "Read .md3 (Quake III Arena models) with our own MD3 r
 option(OKAY_OWN_IRRMESH   "Read .irrmesh (Irrlicht meshes) with our own IRRMESH reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRRMESH=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_B3D       "Read .b3d (Blitz3D models) with our own B3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_B3D=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_AC3D     "Read .ac / .acc / .ac3d (AC3D models) with our own AC3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AC3D=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OGRE=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 

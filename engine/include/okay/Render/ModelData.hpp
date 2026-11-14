@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -20,6 +20,7 @@
 #include "okay/Math/Mat4.hpp"
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -234,6 +235,39 @@ bool ReadB3dBuffer(const std::string& bytes, const std::string& baseDir, Importe
 /// are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
 bool ReadXBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
+/// AC3D (.ac, .acc, .ac3d; the "AC3Db" text format, UTF-8 or UTF-16): the OBJECT tree as nodes (loc, rot), one part per
+/// (poly object, material, shading) with its polygons triangulated, triangle strips (surface type 4) unrolled, per-vertex
+/// normals when the vertex lines carry them and smooth normals (the object's crease angle) for surfaces flagged shaded,
+/// the object's texture and texrep / texoff on the texture coordinates, MATERIAL rgb / emis / shi / trans as the material.
+/// Line surfaces, lights, `subdiv` (subdivision) and extra texture layers are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// OGRE XML mesh (.mesh.xml): one part per submesh (shared or own vertex buffers; position, normal and the first texture
+/// coordinate set; triangle lists, strips and fans as written), the submesh's material name, and from `materialScripts`
+/// (the text of .material files; ReadOgreXmlFile reads the ones next to the mesh) the first pass's diffuse, emissive and
+/// shininess and the first texture unit's texture. Skeletons, bone assignments, poses and morph animation, level of
+/// detail and vertex colours are not read (reported in `out.notes`). Coordinates, winding and texture coordinates as written.
+bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                       const std::vector<std::string>* materialScripts = nullptr);
+/// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
+/// material) on a node for each <OBJECT> that places it (<TRANSFORM> forward / up / position / scale), the <MAT> colours,
+/// shininess and alpha, normals and texture coordinates per face corner. Lines, patches, lights and textures are not read.
+bool ReadXglBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// The function a scene reader calls to read a mesh file another file names (a model path, already joined to the scene's
+/// folder). Returns false (with `err`) when it cannot. The import seam passes one that goes through ImportModelData.
+using IrrMeshLoader = std::function<bool(const std::string& path, ImportedModel& out, std::string* err)>;
+/// Irrlicht scene (.irr, XML; UTF-8 or UTF-16): the <node> tree with Position, Rotation (degrees, Rz * Ry * Rx) and Scale,
+/// "cube" and "sphere" nodes as meshes (with the node's first material), "mesh" and "animatedMesh" nodes through `loader`
+/// (without one they are skipped and named in `out.notes`). Cameras, lights, skyboxes, terrains and other nodes stay empty
+/// nodes; animators and the node materials of mesh nodes are not read.
+bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                        const IrrMeshLoader* loader = nullptr);
+/// NFF: Haines' Neutral File Format (polygons, patches, spheres and ellipsoids, cones and cylinders, tet / hex / oct / dod /
+/// ico solids, fill colours with a texture name, `tess`) and the Sense8 "nff" object files (a vertex list with `uv`,
+/// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
+/// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
+bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -252,6 +286,12 @@ bool ReadMd3File(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadIrrMeshFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadB3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadXFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadAc3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Reads the .material files next to the mesh to find the submeshes' materials.
+bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
+bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

@@ -42,7 +42,7 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::SceneSsao, B::Direct3D11, S::Yes}, {F::SceneSsao, B::Direct3D12, S::No},
 
         {F::DepthOfField, B::Software, S::No}, {F::DepthOfField, B::OpenGL, S::Yes},
-        {F::DepthOfField, B::Direct3D11, S::No}, {F::DepthOfField, B::Direct3D12, S::No},
+        {F::DepthOfField, B::Direct3D11, S::Yes}, {F::DepthOfField, B::Direct3D12, S::No},
 
         {F::ProceduralSkyDetail, B::Software, S::No}, {F::ProceduralSkyDetail, B::OpenGL, S::Yes},
         {F::ProceduralSkyDetail, B::Direct3D11, S::Yes}, {F::ProceduralSkyDetail, B::Direct3D12, S::No},

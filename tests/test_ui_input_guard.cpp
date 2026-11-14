@@ -144,6 +144,27 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- A top-down player does not shoot through an open bag or a text field. ---
+    {
+        Scene s("TDFire");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* c = p->AddComponent<TopDownController2D>();
+        c->fireButton = 0;
+        Input::FeedMouse({10, 10}, 1u);
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) != 0);
+        auto* bag = s.CreateGameObject("Bag")->AddComponent<InventoryUI>();
+        bag->open = true;
+        Input::FeedMouse({10, 10}, 1u);
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) == 0);
+        bag->open = false;
+        auto* field = s.CreateGameObject("Chat")->AddComponent<UIInputField>();
+        field->focused = true;
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) == 0);
+        field->focused = false;
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) != 0);
+        Input::FeedMouse({0, 0}, 0);
+    }
+
     // --- Settings screen bindings. ---
     {
         UICanvas::Set(1280, 720);

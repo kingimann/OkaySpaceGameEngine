@@ -3179,6 +3179,54 @@ target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchc_hostile PROPERTIES TIMEOUT 600)
 
+# Batch D own readers (AC3D / OGRE XML / XGL+ZGL / Irrlicht scene / NFF): one test per reader on SYNTHETIC fixtures built in memory
+# (tests/batchd_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources and the engine's
+# inflate only, no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_BATCHD_FUZZ_ITERS raises the sweep).
+function(okay_batchd_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src} ${ARGN})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_batchd_reader_test(ac3d Ac3dReader.cpp)
+okay_batchd_reader_test(ogre OgreXmlReader.cpp)
+# the XGL reader unpacks ZGL with the engine's own inflate
+okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+okay_batchd_reader_test(irr IrrSceneReader.cpp)
+okay_batchd_reader_test(nff NffReader.cpp)
+add_executable(test_batchd_hostile test_batchd_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Ac3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XglReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchd_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchd_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchd_hostile COMMAND test_batchd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchd_hostile PROPERTIES TIMEOUT 600)
+
+# Budgets, OGRE strips and fans, and where a scene may point (counting operator new inside; reader sources only).
+add_executable(test_batchd_budget test_batchd_budget.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Ac3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XglReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchd_budget PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchd_budget PROPERTIES TIMEOUT 300)
+
+# The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
+target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
+add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
@@ -3206,6 +3254,14 @@ add_test(NAME clipboard COMMAND test_clipboard)
 add_executable(test_own_http test_own_http.cpp)
 target_include_directories(test_own_http PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME own_http COMMAND test_own_http)
+# The inflate (OwnHttpInflate.hpp) on its own: derived tables, long codes, zip-bomb cap and peak heap, and a differential
+# run against Python's zlib (python3 optional: the test says SKIP; OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure).
+add_executable(test_own_http_inflate test_own_http_inflate.cpp)
+target_include_directories(test_own_http_inflate PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+find_package(Threads REQUIRED)
+target_link_libraries(test_own_http_inflate PRIVATE Threads::Threads)
+add_test(NAME own_http_inflate COMMAND test_own_http_inflate)
+set_tests_properties(own_http_inflate PROPERTIES TIMEOUT 240)
 if(UNIX AND NOT APPLE)
     add_executable(test_own_http_net test_own_http_net.cpp)
     target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)

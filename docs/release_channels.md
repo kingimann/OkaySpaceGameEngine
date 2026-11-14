@@ -40,6 +40,7 @@ Files at the root of the bucket:
 | `LTS.txt` | lts publish | The newest patch of the LTS line. Absent until a line is promoted. |
 | `NOTES-LTS.txt` | lts publish | Notes for the LTS patch. |
 | `versions.json` | every publish | The index below. A failure to update it only warns. |
+| `versions.json.sig` | every publish made with a signing key | The ed25519 signature of `versions.json` (see [Signed releases](#signed-releases)). |
 
 An LTS patch never writes `VERSION.txt` or `NOTES.txt`, never becomes GitHub's "latest release" (the in-app updater
 downloads `releases/latest/download/<name>`), and never prunes anything.
@@ -112,6 +113,27 @@ What an LTS accepts: crashes, data loss, security problems, and anything that st
 saving. Nothing else. One LTS line is supported at a time; promoting a new line makes the old one an ordinary line that is
 pruned like any other (its versions stay on GitHub).
 
+## Signed releases
+
+`versions.json` lists the SHA-256 of every file, so it is what an attacker who controls the bucket would change. Signing it
+closes that: the publish script signs the exact bytes with a private key that only the publisher holds, and a launcher or editor
+built with the matching **public** key refuses an index whose `versions.json.sig` is missing or does not verify. The channel
+heads (`VERSION.txt`, `LTS.txt`) carry no trust of their own: a version can only be installed when it has checksums in the
+signed index.
+
+Nothing is signed until you create a key. The owner steps, the rotation and the transition are in
+[updater.md, "Signed releases"](updater.md#signed-releases). In short:
+
+```bash
+python3 scripts/sign_index.py genkey      # prints OKAY_UPDATE_SIGNING_SEED=<private> and OKAY_UPDATE_TRUSTED_KEYS=<public>
+export OKAY_UPDATE_SIGNING_SEED=<private> # in the shell that runs the publish, never in a file or the repository
+scripts/publish-supabase.sh               # now also uploads versions.json.sig
+# and build the launcher with OKAY_UPDATE_TRUSTED_KEYS=<public> (repository variable of that name in release.yml)
+```
+
+Publishing a channel (latest or LTS) signs the same index, so both channels share one key. `REQUIRE_SIGNED=1` makes the publish
+script stop instead of uploading an unsigned index.
+
 ## Guard rails in the publish script
 
 - `CHANNEL=latest` refuses a version that is in the LTS line.
@@ -119,6 +141,9 @@ pruned like any other (its versions stay on GitHub).
   (the script says so).
 - Pruning never deletes a version of the current LTS line.
 - `DRY_RUN=1` runs these checks without uploading.
+- With `OKAY_UPDATE_SIGNING_SEED` set it signs `versions.json`, uploads `versions.json.sig`, reads both back from the bucket and
+  checks the published pair before `VERSION.txt` goes out. Unset: a warning and an unsigned index (`REQUIRE_SIGNED=1` stops instead).
+  With `bash -x` and a seed in the environment it refuses to run, because the trace would print the seed.
 
 ## What changed
 

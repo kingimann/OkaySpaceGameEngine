@@ -455,6 +455,75 @@ def bridge_scene():
     return sc.top()
 
 
+PBR_SETS = [
+    # (name, class id a, class id b, prefix, base colour prop, texture prop for the base colour, normal prop, extra props)
+    ('Physical', 0x3d6b1cec, 0xdeadc001, '3dsMax|Parameters|', 'base_color', 'bump_map', [('roughness', 0.3), ('metalness', 0.9), ('emission', 2.0)], 'emit_color'),
+    ('MetalRough', 0xd00f1e00, 0xbe77e500, '3dsMax|main|', 'basecolor', 'norm_map', [('roughness', 0.25), ('metalness', 1.0), ('useGlossiness', 2.0)], 'emit_color'),
+    ('SpecGloss', 0xd00f1e00, 0x01dbad33, '3dsMax|main|', 'basecolor', 'norm_map', [('glossiness', 0.8), ('useGlossiness', 1.0)], 'emit_color'),
+    ('Gltf', 0x38420192, 0x45fe4e1b, '3dsMax|', 'main|baseColor', 'main|normal', [('main|roughness', 0.6), ('main|metalness', 0.5)], 'main|emissionColor'),
+]
+
+
+def pbr_scene():
+    """One triangle per PBR property set a modelling tool writes (3ds Max Physical Material, the two 3ds Max PBR
+    materials, the 3ds Max glTF material), each with a base colour, roughness / glossiness, metalness, emission, a
+    base colour texture and a normal map plugged into the prefixed property; plus a classic Phong material. The
+    class ids are written the way the SDK does, as signed 32-bit integers (so 0xdeadc001 is negative)."""
+    sc = Scene(False)
+    def signed(v):
+        return v - (1 << 32) if v >= (1 << 31) else v
+    verts = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    for k, (name, ca, cb, pre, base, norm, extra, emit) in enumerate(PBR_SETS):
+        g = sc.geometry(name + 'Geo', geo_children(verts, [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+        m = sc.model(name, 0, t=(k * 2, 0, 0))
+        mid = sc.nid()
+        pl = [prop70('3dsMax|ClassIDa', 'int', 'Integer', '', signed(ca)), prop70('3dsMax|ClassIDb', 'int', 'Integer', '', signed(cb)),
+              prop70(pre + base, 'Color', '', 'A', 0.2, 0.4, 0.6), prop70(pre + emit, 'Color', '', 'A', 0.5, 0.25, 0.125)]
+        # a classic property that must NOT win over the PBR set
+        pl.append(prop70('DiffuseColor', 'Color', '', 'A', 0.9, 0.9, 0.9))
+        for pn, pv in extra:
+            pl.append(prop70(pre + pn, 'Number', '', 'A', pv))
+        sm = 'unknown'
+        sc.objects.append(N('Material', [L(mid), sc.nm('Material', name + 'Mat'), S('')], [N('Version', [I(102)]), N('ShadingModel', [S(sm)]), props70(*pl)]))
+        t0 = sc.texture(name + 'Albedo', 'C:\\art\\' + name + '_albedo.png')
+        t1 = sc.texture(name + 'Normal', 'C:\\art\\' + name + '_normal.png')
+        sc.connect(t0, mid, pre + ('base_color_map' if base == 'basecolor' else base + '_map' if base != 'main|baseColor' else base))
+        sc.connect(t1, mid, pre + norm)
+        sc.connect(g, m)
+        sc.connect(mid, m)
+    # control: the same class id on a material that says phong keeps the classic reading (ufbx's rule)
+    g = sc.geometry('PhongGeo', geo_children(verts, [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+    m = sc.model('Phong', 0, t=(20, 0, 0))
+    mid = sc.nid()
+    pl = [prop70('3dsMax|ClassIDa', 'int', 'Integer', '', signed(PBR_SETS[0][1])), prop70('3dsMax|ClassIDb', 'int', 'Integer', '', signed(PBR_SETS[0][2])),
+          prop70('3dsMax|Parameters|base_color', 'Color', '', 'A', 0.2, 0.4, 0.6), prop70('DiffuseColor', 'Color', '', 'A', 0.9, 0.8, 0.7),
+          prop70('ShininessExponent', 'Number', '', 'A', 25.0)]
+    sc.objects.append(N('Material', [L(mid), sc.nm('Material', 'PhongMat'), S('')], [N('Version', [I(102)]), N('ShadingModel', [S('phong')]), props70(*pl)]))
+    sc.connect(g, m); sc.connect(mid, m)
+    return sc.top()
+
+
+def orphan_video_scene(content):
+    """A texture whose connected Video has no picture while another Video (not connected to anything) carries it: matched
+    by file name. One triangle with a material that has the texture on DiffuseColor."""
+    sc = Scene(False)
+    g = sc.geometry('TriGeo', geo_children([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+    m = sc.model('Tri', 0)
+    mat = sc.material('M', (0.5, 0.5, 0.5))
+    tex = sc.texture('Map', 'C:\\art\\grid.png')
+    own = sc.nid()   # the video connected to the texture: same file name, no picture
+    sc.objects.append(N('Video', [L(own), sc.nm('Video', 'Map'), S('Clip')], [
+        N('Type', [S('Clip')]), N('FileName', [S('C:\\art\\grid.png')]), N('RelativeFilename', [S('grid.png')])]))
+    sc.connect(own, tex)
+    v = sc.nid()
+    sc.objects.append(N('Video', [L(v), sc.nm('Video', 'Map'), S('Clip')], [
+        N('Type', [S('Clip')]), N('FileName', [S('C:\\art\\grid.png')]), N('RelativeFilename', [S('grid.png')]), N('Content', [R(content)])]))
+    sc.connect(tex, mat, 'DiffuseColor')
+    sc.connect(g, m)
+    sc.connect(mat, m)
+    return sc.top()
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -474,6 +543,8 @@ def main():
     write_ascii(os.path.join(out, 'rig_ascii.fbx'), rig_scene(True), 7400)
     write_binary(os.path.join(out, 'takes_bin.fbx'), takes_scene(), 7400)
     write_binary(os.path.join(out, 'bridge_bin.fbx'), bridge_scene(), 7400, compress=False)
+    write_binary(os.path.join(out, 'orphan_video_bin.fbx'), orphan_video_scene(png), 7400, compress=False)
+    write_binary(os.path.join(out, 'pbr_bin.fbx'), pbr_scene(), 7400, compress=False)
     for f in sorted(os.listdir(out)):
         print(f, os.path.getsize(os.path.join(out, f)))
 

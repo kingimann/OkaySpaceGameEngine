@@ -7,6 +7,7 @@
 #ifndef OKAY_STANDALONE_TEST
 #include "okay/Render/ModelImport.hpp"
 #endif
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -77,6 +78,22 @@ static std::string Box2(bool textured, int proj = 5, int axis = 0, float wrapW =
     return Form("LWO2", c);
 }
 static bool Near(float a, float b, float e = 1e-4f) { return std::fabs(a - b) < e; }
+// One surface "S" with a projected colour image map over any points and triangles (file coordinates).
+static std::string ProjMesh(int proj, int axis, const std::vector<std::array<float, 3>>& pts, const std::vector<std::array<int, 3>>& tris,
+                            float wrapW = 1.0f, float wrapH = 1.0f) {
+    std::string pb; for (const auto& p : pts) for (int k = 0; k < 3; ++k) BF(pb, p[(std::size_t)k]);
+    std::string pol = "FACE"; for (const auto& t : tris) { B16(pol, 3); for (int k = 0; k < 3; ++k) BVX(pol, (std::uint32_t)t[(std::size_t)k]); }
+    std::string c = Tags({"S"}) + Layr(0, "L") + Chunk("PNTS", pb) + Chunk("POLS", pol) + PtagSurf(std::vector<unsigned>(tris.size(), 0));
+    std::string head; BS0(head, "\x80"); head += Sub("CHAN", "COLR");
+    std::string pj; B16(pj, (unsigned)proj);
+    std::string ax; B16(ax, (unsigned)axis);
+    std::string ww; BF(ww, wrapW); B16(ww, 0);
+    std::string wh; BF(wh, wrapH); B16(wh, 0);
+    const std::string blok = Sub("IMAP", head) + Sub("PROJ", pj) + Sub("IMAG", [] { std::string s; BVX(s, 1); return s; }()) + Sub("AXIS", ax) + Sub("WRPW", ww) + Sub("WRPH", wh);
+    std::string clip; B32(clip, 1); clip += Sub("STIL", [] { std::string s; BS0(s, "map.tga"); return s; }());
+    c += Chunk("CLIP", clip) + Surf2("S", Sub("COLR", F3(1, 1, 1)) + Sub("BLOK", blok));
+    return Form("LWO2", c);
+}
 static double Volume(const ImportedModel& m) {
     double v = 0;
     for (const ImportedPart& p : m.parts) for (std::size_t i = 0; i + 2 < p.mesh.triangles.size(); i += 3) {
@@ -254,6 +271,66 @@ int main() {
                     if (tp->mesh.vertices[i].y < tp->mesh.vertices[bottom].y) bottom = i;
                 }
                 CHECK(tp->mesh.uvs[top].y < tp->mesh.uvs[bottom].y);
+            } }
+        // ---- hand-computed projected UVs (positions are the engine's: the reader negates the file's z) ----
+        // Cylindrical about Z, a band of 8 points: angle = atan2(y, x) as a fraction of a turn plus half a turn, so
+        // +X -> 0.5, +Y -> 0.75, -X -> 1.0 (the seam: 0 or 1), -Y -> 0.25; V = height, stored as 1 - v.
+        {   const std::vector<std::array<float, 3>> band = {{1, 0, 0}, {0, 1, 0}, {-1, 0, 0}, {0, -1, 0}, {1, 0, 1}, {0, 1, 1}, {-1, 0, 1}, {0, -1, 1}};
+            std::vector<std::array<int, 3>> tris;
+            for (int i = 0; i < 4; ++i) { const int j = (i + 1) % 4; tris.push_back({i, j, j + 4}); tris.push_back({i, j + 4, i + 4}); }
+            CHECK(Read(ProjMesh(1, 2, band, tris), m, err) && m.parts.size() == 1);
+            if (m.parts.size() == 1) {
+                const Mesh& pm = m.parts[0].mesh;
+                bool ok = !pm.uvs.empty(), seam0 = false, seam1 = false;
+                for (std::size_t i = 0; i < pm.vertices.size(); ++i) {
+                    const Vec3& p = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                    if (!Near(t.y, -p.z)) ok = false;                         // file z 0 -> stored 0, file z 1 -> stored 1
+                    if (p.x > 0.5f && !Near(t.x, 0.5f)) ok = false;
+                    if (p.y > 0.5f && !Near(t.x, 0.75f)) ok = false;
+                    if (p.y < -0.5f && !Near(t.x, 0.25f)) ok = false;
+                    if (p.x < -0.5f) { if (Near(t.x, 0.0f)) seam0 = true; else if (Near(t.x, 1.0f)) seam1 = true; else ok = false; }
+                }
+                CHECK(ok);
+                CHECK(seam0 && seam1);   // the -X column is split: 0 for the triangles towards -Y, 1 for those towards +Y
+                for (std::size_t t = 0; t + 2 < pm.triangles.size(); t += 3) {   // no triangle spans the whole image
+                    float lo = 9, hi = -9;
+                    for (int k = 0; k < 3; ++k) { const float u = pm.uvs[(std::size_t)pm.triangles[t + (std::size_t)k]].x; lo = std::min(lo, u); hi = std::max(hi, u); }
+                    CHECK(hi - lo <= 0.5001f);
+                }
+            } }
+        // Spherical about Z on an octahedron: the poles are on the axis, so their U is the turn's start, 0.5 (Z); latitude
+        // -90 / 0 / +90 degrees gives v 0 / 0.5 / 1, stored as 1 - v. The pole fans are big triangles but are not seam-mended
+        // unless they really cross the seam.
+        {   const std::vector<std::array<float, 3>> oct = {{1, 0, 0}, {0, 1, 0}, {-1, 0, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            std::vector<std::array<int, 3>> tris;
+            for (int i = 0; i < 4; ++i) { const int j = (i + 1) % 4; tris.push_back({i, j, 4}); tris.push_back({j, i, 5}); }
+            CHECK(Read(ProjMesh(2, 2, oct, tris), m, err) && m.parts.size() == 1);
+            if (m.parts.size() == 1) {
+                const Mesh& pm = m.parts[0].mesh;
+                bool ok = !pm.uvs.empty(), sawPole = false;
+                for (std::size_t i = 0; i < pm.vertices.size(); ++i) {
+                    const Vec3& p = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                    if (std::fabs(p.z) > 0.5f) {   // a pole: file z = +1 is engine z = -1, latitude -90 degrees, v 0, stored 1
+                        sawPole = true;
+                        if (!Near(t.x, 0.5f) || !Near(t.y, p.z < 0 ? 1.0f : 0.0f)) ok = false;
+                    } else {
+                        if (!Near(t.y, 0.5f)) ok = false;
+                        if (p.x > 0.5f && !Near(t.x, 0.5f)) ok = false;
+                        if (p.y > 0.5f && !Near(t.x, 0.75f)) ok = false;
+                        if (p.y < -0.5f && !Near(t.x, 0.25f)) ok = false;
+                        if (p.x < -0.5f && !Near(t.x, 0.0f) && !Near(t.x, 1.0f)) ok = false;
+                    }
+                }
+                CHECK(ok && sawPole);
+            } }
+        // Planar about X on a quad that is flat in z (file z = 2): U comes from z, which has no extent, so U is 0; V from y.
+        {   const std::vector<std::array<float, 3>> quad = {{0, 0, 2}, {1, 0, 2}, {1, 3, 2}, {0, 3, 2}};
+            CHECK(Read(ProjMesh(0, 0, quad, {{0, 1, 2}, {0, 2, 3}}), m, err) && m.parts.size() == 1);
+            if (m.parts.size() == 1) {
+                const Mesh& pm = m.parts[0].mesh;
+                bool ok = !pm.uvs.empty();
+                for (std::size_t i = 0; i < pm.vertices.size(); ++i) if (!Near(pm.uvs[i].x, 0.0f) || !Near(pm.uvs[i].y, 1.0f - pm.vertices[i].y / 3.0f)) ok = false;
+                CHECK(ok);
             } }
         // cubic projection: the texture is kept, no UVs, a note
         CHECK(Read(Box2(true, 3), m, err) && HasNote(m, "cubic or front"));

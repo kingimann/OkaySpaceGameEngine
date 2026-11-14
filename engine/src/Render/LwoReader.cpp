@@ -81,8 +81,10 @@ struct Layer {
 //   - spherical: u is the same angle (times the width wrap amount); v is the latitude, from -90 degrees (0) to +90
 //     degrees (1), times the height wrap amount.
 // A triangle that straddles the seam where the angle jumps from a full turn back to 0 would smear the whole image across
-// itself; its corners that sit on the far side of the seam are moved onto the seam on the side most of the triangle is
-// on, so the values never leave 0 .. wrap.
+// itself. Whether it straddles is decided from the three gaps between its U values around the circle: if the gap that
+// runs through the seam is the largest, the triangle sits on one side and is left alone (a big triangle, such as a pole
+// fan, is not touched); otherwise the corners on one side of the largest gap are moved onto the seam (the low ones up to
+// `wrap` or the high ones down to 0, whichever moves them less), so the values never leave 0 .. wrap.
 namespace proj {
 
 struct Axes { int a, p, q; };
@@ -98,10 +100,10 @@ inline double Coord(const Vec3& v, int i) { return i == 0 ? v.x : i == 1 ? v.y :
 struct Box {
     double low[3] = {0, 0, 0}, high[3] = {0, 0, 0};
     double Mid(int i) const { return 0.5 * (low[i] + high[i]); }
-    // Where `x` sits across the box along axis i, 0 .. 1; a flat box (no extent) puts everything in the middle.
+    // Where `x` sits across the box along axis i, 0 .. 1; a flat box (no extent) gives 0, as this reader always did.
     double Across(double x, int i) const {
         const double extent = high[i] - low[i];
-        return extent > 1e-20 ? (x - low[i]) / extent : 0.5;
+        return extent > 1e-20 ? (x - low[i]) / extent : 0.0;
     }
 };
 
@@ -116,7 +118,8 @@ inline Box BoxOf(const std::vector<Vec3>& pos) {
 
 constexpr double kTurn = 6.283185307179586476925;   // 2 pi
 
-// The angle around the main axis as a fraction of a turn, 0 .. 1 (a point on the axis itself gets 0). Where the turn
+// The angle around the main axis as a fraction of a turn, 0 .. 1. A point on the axis itself (a sphere's pole) has angle
+// 0, so it gets the turn's starting value (0.5 for X and Z, 0 for Y), as this reader always did. Where the turn
 // starts and which way it runs is fixed per axis so that images land where this reader has always put them (measured on
 // the real cylindrical and spherical files in docs/model_corpus.md, every corner the same):
 // (positions here are the engine's, the file's Z already mirrored):
@@ -132,7 +135,6 @@ inline TurnRule TurnRuleFor(int mainAxis) {
 inline double TurnFraction(const Vec3& v, const Box& b, const Axes& ax) {
     const TurnRule rule = TurnRuleFor(ax.a);
     const double across = Coord(v, rule.across) - b.Mid(rule.across), up = Coord(v, rule.up) - b.Mid(rule.up);
-    if (across == 0.0 && up == 0.0) return 0.0;
     double f = std::atan2(rule.upSign * up, rule.acrossSign * across) / kTurn + rule.start;   // -0.5 .. 1.0
     f -= std::floor(f);
     return f >= 1.0 ? 0.0 : f;
@@ -149,15 +151,20 @@ inline double LatitudeFraction(const Vec3& v, const Box& b, const Axes& ax) {
 
 // Keeps a seam-straddling triangle on one side of the seam (see above). `u` holds the triangle's three values, 0 .. wrap.
 inline void MendSeam(double u[3], double wrap) {
-    const double half = 0.5 * wrap;
-    const double lo = std::min(u[0], std::min(u[1], u[2])), hi = std::max(u[0], std::max(u[1], u[2]));
-    if (hi - lo <= half) return;   // no jump inside this triangle
-    int nearHigh = 0;
-    for (int k = 0; k < 3; ++k) if (u[k] > half) ++nearHigh;
-    for (int k = 0; k < 3; ++k) {
-        if (nearHigh >= 2 && u[k] <= half) u[k] = wrap;   // most of it is just below a full turn: pull the rest up to the seam
-        if (nearHigh < 2 && u[k] > half) u[k] = 0.0;      // most of it is just past 0: pull the rest down to the seam
-    }
+    int lo = 0, mid = 1, hi = 2;   // corner numbers sorted by U
+    if (u[lo] > u[mid]) std::swap(lo, mid);
+    if (u[mid] > u[hi]) std::swap(mid, hi);
+    if (u[lo] > u[mid]) std::swap(lo, mid);
+    const double gapLow = u[mid] - u[lo], gapHigh = u[hi] - u[mid], gapSeam = u[lo] + wrap - u[hi];
+    if (gapSeam >= gapLow && gapSeam >= gapHigh) return;   // the triangle does not cross the seam
+    // The largest gap splits the corners into a low group (just past 0) and a high group (just before a full turn). Move
+    // one group onto the seam: the low group up to `wrap`, or the high group down to 0, whichever moves the values less
+    // (a corner that lies on the seam moves by nothing).
+    const bool splitLow = gapLow >= gapHigh;                  // low group: {lo}; else {lo, mid}
+    const double costUp = splitLow ? u[lo] : u[lo] + u[mid];
+    const double costDown = splitLow ? (wrap - u[mid]) + (wrap - u[hi]) : wrap - u[hi];
+    if (costUp <= costDown) { u[lo] = wrap; if (!splitLow) u[mid] = wrap; }
+    else { u[hi] = 0.0; if (splitLow) u[mid] = 0.0; }
 }
 
 } // namespace proj

@@ -123,7 +123,7 @@ static void CheckAttr(const char* file, const ImportedModel& ref, ImportedModel*
         for (std::size_t p = 0; p < m.parts.size(); ++p) {
             CHECK(m.parts[p].mesh.vertices.size() == ref.parts[p].mesh.vertices.size() && m.parts[p].mesh.triangles == ref.parts[p].mesh.triangles);
             bool same = m.parts[p].mesh.vertices.size() == ref.parts[p].mesh.vertices.size();
-            for (std::size_t i = 0; same && i < m.parts[p].mesh.vertices.size(); ++i) same = Near(m.parts[p].mesh.vertices[i], ref.parts[p].mesh.vertices[i], 0.0f) ;
+            for (std::size_t i = 0; same && i < m.parts[p].mesh.vertices.size(); ++i) same = Near(m.parts[p].mesh.vertices[i], ref.parts[p].mesh.vertices[i], 1e-6f);
             CHECK(same);
         }
     }

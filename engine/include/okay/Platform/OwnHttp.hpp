@@ -559,6 +559,9 @@ struct FetchHooks {
 
 struct FetchResult {
     bool        ok = false;       ///< a final response was read completely
+    /// A connection was opened and the request may have reached the server (set immediately before every write of request bytes). A failure with
+    /// this set is NOT a clean "not reached": callers must not send a POST, PUT, PATCH or DELETE again by another route.
+    bool        requestSent = false;
     Err         err = Err::None;
     std::string message;
     Response    response;
@@ -605,6 +608,39 @@ inline bool RequestedRangeStart(const std::vector<Header>& headers, uint64_t& st
     return false;
 }
 
+/// What a "Range" request header asks for, so a 206 can be checked against it.
+struct RangeSpec {
+    enum Kind { None, From, Bounded, Suffix, Unverifiable } kind = None;   ///< Unverifiable: multi-range or a form we cannot parse
+    uint64_t first = 0, last = 0;   ///< From: first. Bounded: first..last. Suffix: first = N (the last N bytes)
+};
+
+inline RangeSpec ParseRangeRequest(const std::vector<Header>& headers) {
+    RangeSpec rs;
+    for (const Header& h : headers) {
+        if (!detail::IEq(h.name, "range")) continue;
+        rs.kind = RangeSpec::Unverifiable;
+        std::string v = detail::Trim(h.value);
+        if (!detail::IPrefix(v, "bytes=")) return rs;
+        v = v.substr(6);
+        size_t dash = v.find('-');
+        if (dash == std::string::npos || v.find(',') != std::string::npos || v.find('-', dash + 1) != std::string::npos) return rs;
+        auto num = [](const std::string& t, uint64_t& o) {
+            if (t.empty() || t.size() > 18) return false;
+            o = 0; for (unsigned char c : t) { if (c < '0' || c > '9') return false; o = o * 10 + (c - '0'); }
+            return true;
+        };
+        std::string a = v.substr(0, dash), b = v.substr(dash + 1);
+        uint64_t x = 0, y = 0;
+        if (a.empty()) { if (!num(b, x) || x == 0) return rs; rs.kind = RangeSpec::Suffix; rs.first = x; return rs; }
+        if (!num(a, x)) return rs;
+        if (b.empty()) { rs.kind = RangeSpec::From; rs.first = x; return rs; }
+        if (!num(b, y) || y < x) return rs;
+        rs.kind = RangeSpec::Bounded; rs.first = x; rs.last = y;
+        return rs;
+    }
+    return rs;
+}
+
 inline bool SensitiveHeader(const std::string& name) {
     std::string n = detail::Lower(name);
     for (const char* k : {"auth", "key", "token", "secret", "cookie", "password", "session"})
@@ -634,6 +670,8 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
         std::string wire;
         if (!BuildRequest(method, url, headers, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip)) return bad(e, msg);
+        // Rule: set requestSent immediately before EVERY Write of request bytes (fresh and reused connections alike).
+        res.requestSent = true;
         if (!st->Write(wire.data(), wire.size(), e)) return bad(e == Err::None ? Err::Io : e, "write failed");
         Reader rd(*st);
         Response head;
@@ -667,14 +705,24 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             continue;
         }
         // A Range request: a 206 must be the part we asked for (never a different slice, never unasked).
-        uint64_t wantStart = 0; bool haveRange = false;
-        const bool rangeOk = RequestedRangeStart(headers, wantStart, haveRange);
+        const RangeSpec want = ParseRangeRequest(headers);
         if (head.status == 206) {
             uint64_t a = 0, b = 0, t = 0;
             const std::string* cr = head.Get("content-range");
-            if (!haveRange) return bad(Err::BadResponse, "206 answer to a request without Range");
+            if (want.kind == RangeSpec::None) return bad(Err::BadResponse, "206 answer to a request without Range");
+            if (const std::string* ct = head.Get("content-type"))
+                if (detail::IPrefix(detail::Trim(*ct), "multipart/byteranges")) return bad(Err::BadResponse, "multipart/byteranges answer refused");
+            if (want.kind == RangeSpec::Unverifiable) return bad(Err::BadResponse, "206 to a Range we cannot verify (multi-range or malformed)");
             if (!cr || !ParseContentRange(*cr, a, b, t)) return bad(Err::BadResponse, "206 without a valid Content-Range");
-            if (rangeOk && a != wantStart) return bad(Err::BadResponse, "Content-Range does not start where asked");
+            if (want.kind == RangeSpec::Suffix) {
+                // bytes=-N: the last N bytes. The size must be known, the slice must end at the last byte and be at most N long.
+                if (t == 0) return bad(Err::BadResponse, "suffix Range answered without a known total size");
+                if (b != t - 1) return bad(Err::BadResponse, "Content-Range does not end at the last byte");
+                if (b - a + 1 > want.first) return bad(Err::BadResponse, "Content-Range is longer than the suffix asked for");
+            } else {
+                if (a != want.first) return bad(Err::BadResponse, "Content-Range does not start where asked");
+                if (want.kind == RangeSpec::Bounded && b > want.last) return bad(Err::BadResponse, "Content-Range ends after the end asked for");
+            }
             if (const std::string* cl = head.Get("content-length")) {
                 uint64_t n = 0; bool digits = !cl->empty() && cl->size() < 19;
                 for (unsigned char c : *cl) { if (c < '0' || c > '9') digits = false; else n = n * 10 + (c - '0'); }

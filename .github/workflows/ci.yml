@@ -300,6 +300,43 @@ jobs:
       - name: Test
         run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
 
+  # Our own HTTP client (docs/own_http_client.md) with the CMake option on. NOT required for merging and the
+  # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client
+  # does not link the engine). OKAY_REQUIRE_TLS_TESTS=1 makes a skipped TLS case (no libssl, no openssl program)
+  # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests
+  # under ASan and UBSan.
+  own-http:
+    name: Own HTTP client (OKAY_OWN_HTTP=ON, TLS tests required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev openssl libssl-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-http -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_HTTP=ON \
+            -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+          # the option must reach the engine as a compile definition
+          grep -q 'OKAY_OWN_HTTP=1' build-http/build.ninja
+
+      - name: Build
+        run: cmake --build build-http -j2 --target test_own_http test_own_http_net
+
+      - name: Test (a skipped TLS case fails)
+        env:
+          OKAY_REQUIRE_TLS_TESTS: "1"
+        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_net)$'
+
+      - name: Sanitizers (ASan + UBSan)
+        env:
+          OKAY_REQUIRE_TLS_TESTS: "1"
+        run: scripts/own_http_sanitized.sh 100000
+
   # Cross-compile the Windows editor + player (the release build) and the
   # visual-scripting and mesh file tests, for the windows-export job to run on real Windows.
   windows-cross:
@@ -481,8 +518,27 @@ jobs:
   web-build:
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest
+    # The build takes 12 to 20 minutes with a warm cache. A run that is still going after 40 minutes is a stalled runner,
+    # not a slow build: fail it so a re-run starts on a fresh machine instead of occupying a slot for hours.
+    timeout-minutes: 40
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 1G
+      OKAY_WEB_CCACHE: "1"
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install ccache
+        run: sudo apt-get install -y --no-install-recommends ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-web-${{ github.sha }}
+          restore-keys: |
+            ccache-web-
 
       # Pull in Emscripten. This runner has network, so Emscripten's SDL2 port is
       # fetched + cached here (the one online step the web build needs).

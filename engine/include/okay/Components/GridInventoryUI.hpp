@@ -89,6 +89,7 @@ public:
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
     GridInventory* dragInv = nullptr;  ///< container the dragged item came from (cross-bag drags)
     int   dragIndex = -1;     ///< item being dragged within dragInv, or -1
+    float scroll = 0.0f;      ///< pixels the bags are scrolled when they do not fit (runtime, not saved)
     int   grabX = 0, grabY = 0;   ///< grabbed cell offset within the item
     bool  dragRotated = false;    ///< the held item is turned 90°; applied only by a successful drop
 

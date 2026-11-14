@@ -916,6 +916,9 @@ Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
 | List Sort | in place, smallest first; Descending true for largest first. Numbers sort as numbers, text alphabetically; a mixed list sorts by kind (numbers, bools, text, vectors, colours, objects, lists, maps) and is stable |
 | List Reverse / List Clear | in place |
 | List Copy | a new list; Deep copies nested lists and maps |
+| List Append (List, Other) | adds every item of Other to the end of List; appending a list to itself doubles it |
+| List Slice (List, Start, Count) | a new list of Count items from Start (nothing wired into Count: everything from Start). Start 0 to the length is fine; past the end, or a negative / NaN Count, is reported and the slice is empty. Count past the end stops at the end |
+| List Pop | removes the last item and gives it back (Item, Popped). An empty list is not an error: Popped is false |
 | For Each | walk a list (existing; the loop walks a snapshot) |
 
 ### Maps
@@ -925,6 +928,8 @@ Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
 | New Map, Map Set, Map Get (Value, Found), Map Has, Map Remove, Map Keys, Map Values, For Each Map | as before; keys sort, so a run is repeatable |
 | Map Clear / Map Count | empty it / how many entries |
 | Map Copy | a new map; Deep copies nested lists and maps |
+| Map Get Or (Map, Key, Default) | the value under Key, or Default when the key is missing |
+| Map Merge (Into, From) | copies every entry of From into Into; a key in both takes From's value |
 
 A missing key is not an error: Map Get gives Found false.
 

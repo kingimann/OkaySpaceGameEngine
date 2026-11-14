@@ -1,0 +1,4 @@
+okaybt 1
+name Long
+root 0
+node 0 Wait parent=-1 x=0 y=0 name=Long min=30

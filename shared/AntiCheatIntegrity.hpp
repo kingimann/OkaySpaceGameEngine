@@ -279,7 +279,7 @@ inline bool ParseKeyList(const std::string& text, std::vector<ed25519::PublicKey
         if (tok.size() != 64 || !FromHex(tok, b) || b.size() != 32) return false;
         ed25519::PublicKey k{};
         std::copy(b.begin(), b.end(), k.begin());
-        if (ed25519::portable::IsWeakKey(k)) return false;
+        if (ed25519::IsWeakKey(k)) return false;
         keys.push_back(k);
         tok.clear();
         return true;

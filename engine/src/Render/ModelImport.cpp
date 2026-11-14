@@ -88,9 +88,11 @@ std::string ImportableExtensions() {
 #endif
         return out;
     }();
-    if ((" " + list + " ").find(" .dae ") == std::string::npos && EffectiveImportBackend(".dae") == ImportBackend::Own)
-        return list + " .dae";
-    return list;
+    std::string res = list;
+    for (const char* opt : {".dae", ".3ds", ".bvh"})
+        if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
+            res += std::string(" ") + opt;
+    return res;
 }
 
 static std::string Lower(std::string s) {
@@ -202,13 +204,7 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (g.indexed) {
-            for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
-        } else {
-            for (int i = 0; i + 2 < pn; i += 3) {
-                mesh.triangles.push_back(base + i); mesh.triangles.push_back(base + i + 1); mesh.triangles.push_back(base + i + 2);
-            }
-        }
+        for (int v : g.tri) mesh.triangles.push_back(base + v);
     }
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
@@ -388,22 +384,36 @@ constexpr bool kOwnColladaDefault = true;
 #else
 constexpr bool kOwnColladaDefault = false;
 #endif
+#ifdef OKAY_OWN_3DS_DEFAULT
+constexpr bool kOwn3dsDefault = true;
+#else
+constexpr bool kOwn3dsDefault = false;
+#endif
+#ifdef OKAY_OWN_BVH_DEFAULT
+constexpr bool kOwnBvhDefault = true;
+#else
+constexpr bool kOwnBvhDefault = false;
+#endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae; -1 = no own reader.
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
     if (e == ".stl") return 1;
     if (e == ".ply") return 2;
     if (e == ".dae") return 3;
+    if (e == ".3ds") return 4;
+    if (e == ".bvh") return 5;
     return -1;
 }
-std::atomic<int> g_backendChoice[4] = {{0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
 
-// Our Collada reader is opt-in: run-time SetImportBackend, else OKAY_OWN_COLLADA=0/1, else the CMake option.
-bool OwnColladaOptedIn() {
-    bool v = kOwnColladaDefault;
-    if (const char* e = std::getenv("OKAY_OWN_COLLADA")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
+// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+bool OwnOptedIn(int slot) {
+    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
+    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+    if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
 
@@ -441,8 +451,8 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s == 3) {   // Collada: off by default; Assimp reads it when the build has it
-        if (OwnColladaOptedIn()) return ImportBackend::Own;
+    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+        if (OwnOptedIn(s)) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
     if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
@@ -453,6 +463,14 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
+    // Our reader rejects a second `element vertex`. Assimp still loads that file,
+    // and the default choice would hand it to Assimp after our reader said no.
+    // The two blocks then contribute normals and UVs that do not line up with
+    // positions. Refuse the file before either backend runs.
+    if (ext == ".ply" && PlyFileDeclaresDuplicateVertex(path)) {
+        if (err) *err = "PLY declares more than one vertex element";
+        return false;
+    }
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Assimp) {
 #ifdef OKAY_HAVE_ASSIMP
@@ -467,7 +485,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
-                                                                                                         : ReadColladaFile(path, out, &e1, flatten);
+                  : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
+                  : ReadBvhFile(path, out, &e1);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -482,9 +501,15 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (err) *err = e1;
         return false;
     }
-    if (err) *err = ExtensionOf(path) == ".dae"
-        ? "no Collada reader enabled: our own reader is off by default (set OKAY_OWN_COLLADA=1, build with -DOKAY_OWN_COLLADA=ON, or call SetImportBackend(\".dae\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON"
-        : "no reader for this format in this build";
+    if (err) {
+        const std::string x = ExtensionOf(path);
+        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
+        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        if (nm)
+            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+        else *err = "no reader for this format in this build";
+    }
     return false;
 }
 
@@ -539,7 +564,8 @@ void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
 } // namespace
 
 GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
-    if (model.parts.empty()) return nullptr;
+    // A skeleton-only model (BVH motion capture) has nodes and clips but no mesh.
+    if (model.parts.empty() && (model.nodes.empty() || model.clips.empty())) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
 
     if (model.nodes.empty()) {
@@ -756,14 +782,14 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const ufbx_string* s : {&tex->filename, &tex->relative_filename, &tex->absolute_filename}) {
         if (!s->length) continue;
-        fs::path p(UfbxStr(*s));
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
-        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
-        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).string();
+        const fs::path p = fs::u8path(UfbxStr(*s));
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).u8string();
+        if (fs::exists(dir / "textures" / p.filename(), ec)) return (dir / "textures" / p.filename()).u8string();
     }
     if (tex->content.size > 0 && tex->content.data) {
         std::string ext = fs::path(UfbxStr(tex->filename)).extension().string();
@@ -771,13 +797,13 @@ std::string FbxTexturePath(const ufbx_texture* tex, const std::string& modelPath
             const unsigned char* d = (const unsigned char*)tex->content.data;
             ext = (tex->content.size > 2 && d[0] == 0xFF && d[1] == 0xD8) ? ".jpg" : ".png";
         }
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data, (std::streamsize)tex->content.size);
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -1127,7 +1153,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
             std::string cn = UfbxStr(st->name);
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();   // Mixamo: the file name says what it is
+                cn = std::filesystem::u8path(path).stem().u8string();   // Mixamo: the file name says what it is
                 if (sc->anim_stacks.count > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;
@@ -1202,29 +1228,29 @@ std::string OwnTexturePath(const fbx::Texture* tex, const std::string& modelPath
     if (!tex) return {};
     namespace fs = std::filesystem;
     std::error_code ec;
-    const fs::path dir = fs::path(modelPath).parent_path();
+    const fs::path dir = fs::u8path(modelPath).parent_path();
     for (const std::string* s : {&tex->fileName, &tex->relativeFileName}) {
         if (s->empty()) continue;
-        fs::path p(*s);
-        if (fs::exists(p, ec)) return p.string();
-        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        const fs::path p = fs::u8path(*s);
+        if (fs::exists(p, ec)) return p.u8string();
+        if (fs::exists(dir / p, ec)) return (dir / p).u8string();
         // Windows paths in the file ("C:\art\x.png") on a POSIX host: use the part after the last separator.
         std::string base = *s; const std::size_t sl = base.find_last_of("/\\"); if (sl != std::string::npos) base = base.substr(sl + 1);
         if (!base.empty()) {
-            if (fs::exists(dir / base, ec)) return (dir / base).string();
-            if (fs::exists(dir / "textures" / base, ec)) return (dir / "textures" / base).string();
+            if (fs::exists(dir / fs::u8path(base), ec)) return (dir / fs::u8path(base)).u8string();
+            if (fs::exists(dir / "textures" / fs::u8path(base), ec)) return (dir / "textures" / fs::u8path(base)).u8string();
         }
     }
     if (!tex->content.empty()) {
         std::string ext = fs::path(tex->fileName).extension().string();
         if (ext.empty()) ext = (tex->content.size() > 2 && tex->content[0] == 0xFF && tex->content[1] == 0xD8) ? ".jpg" : ".png";
-        const fs::path out = dir / (fs::path(modelPath).stem().string() + "_tex" + std::to_string(serial) + ext);
+        fs::path out = dir / fs::u8path(modelPath).stem(); out += "_tex" + std::to_string(serial) + ext;
         if (!fs::exists(out, ec)) {
             std::ofstream of(out, std::ios::binary);
             if (!of) return {};
             of.write((const char*)tex->content.data(), (std::streamsize)tex->content.size());
         }
-        return out.string();
+        return out.u8string();
     }
     return {};
 }
@@ -1461,7 +1487,7 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
             std::string cn = fc.name;
             { std::size_t bar = cn.find_last_of('|'); if (bar != std::string::npos) cn = cn.substr(bar + 1); }
             if (cn.empty() || cn == "mixamo.com" || cn[0] == '(' || cn.rfind("Take ", 0) == 0 || cn.rfind("Scene", 0) == 0) {
-                cn = std::filesystem::path(path).stem().string();
+                cn = std::filesystem::u8path(path).stem().u8string();
                 if (sc.clips.size() > 1) cn += "_" + std::to_string(ma->clips.size());
             }
             clip.name = cn;
@@ -1550,6 +1576,22 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
+    if (const JVal* asset = doc.root.Find("asset"))
+        if (const JVal* ver = asset->Find("version"))
+            if (ver->type == JVal::Str && !ver->str.empty() && ver->str[0] == '1') {
+                Log::Error("model import '", path, "': glTF ", ver->str, " is not supported (only glTF 2.0); re-export the model as glTF 2.0");
+                if (ok) *ok = false;
+                return nullptr;
+            }
+    // A file that cannot be read without an extension we do not have would import as an empty scene: say so instead.
+    if (const JVal* req = doc.root.Find("extensionsRequired"))
+        for (const JVal& e : req->arr)
+            if (e.type == JVal::Str && (e.str == "KHR_draco_mesh_compression" || e.str == "EXT_meshopt_compression")) {
+                Log::Error("model import '", path, "': the glTF needs the extension ", e.str, ", which is not supported");
+                if (ok) *ok = false;
+                return nullptr;
+            }
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
@@ -1882,6 +1924,25 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
                 ++ai;
             }
             ma->active = 0; ma->autoPlay = true;
+        }
+    }
+    // Nodes that name a mesh but nothing came out (the .bin file is missing, the data is malformed, only points or lines):
+    // the import failed, it did not produce an empty model.
+    {
+        bool wantsMesh = false;
+        for (int i = 0; i < nodeCount && !wantsMesh; ++i) wantsMesh = nodes->arr[i].Find("mesh") != nullptr;
+        bool anyTriangles = false;
+        for (const auto& up : scene.Objects()) {
+            GameObject* g = up.get();
+            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
+            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (mr->mesh.TriangleCount() > 0) { anyTriangles = true; break; } }
+            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (sm->bind.TriangleCount() > 0) { anyTriangles = true; break; } }
+        }
+        if (wantsMesh && !anyTriangles) {
+            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file, malformed accessors, or only points and lines)");
+            scene.Destroy(root);
+            if (ok) *ok = false;
+            return nullptr;
         }
     }
     NormalizeImportedClips(root);

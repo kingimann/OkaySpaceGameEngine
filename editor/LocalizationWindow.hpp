@@ -3,7 +3,9 @@
 // keys x languages with inline editing, the languages and how complete each is,
 // search and filters, CSV import / export, a pseudo-localized preview and Find in
 // Scene; the toolbar's preview-language menu; the Inspector's Localized options;
-// and the string-table files Build Game ships.
+// and the string-table files Build Game ships. The grid, missing-key report,
+// placeholder check, project scan and preview line are LocalizationTools.hpp
+// (LocTable, LocCheck, LocScan, LocPreview).
 #include "EditorState.hpp"
 #include <string>
 

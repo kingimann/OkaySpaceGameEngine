@@ -405,6 +405,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
+            base == "OnSwipe" ||
             base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
@@ -420,6 +421,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (auto cov = MakeCoverageNode(type, args)) return cov;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
+        type == "OnTap" || type == "OnDoubleTap" || type == "OnLongPress" || type == "OnSwipe" ||
+        type == "OnPinch" || type == "OnRotate" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
         type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
@@ -576,6 +579,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "KeyDown") { if (!need(1)) return nullptr; return std::make_unique<KeyDownNode>(args[0].empty() ? ' ' : Input::KeyFromName(args[0])); }
     if (type == "MouseX") return std::make_unique<MouseXNode>();
     if (type == "MouseY") return std::make_unique<MouseYNode>();
+    if (type == "GestureSwipeDirection") return std::make_unique<GestureSwipeDirectionNode>();
+    if (type == "GesturePinchScale") return std::make_unique<GesturePinchScaleNode>();
+    if (type == "GestureTwist") return std::make_unique<GestureTwistNode>();
     // Transform getters.
     if (type == "GetPosition") return std::make_unique<GetPositionNode>();
     if (type == "GetX") return std::make_unique<GetAxisNode>(0);
@@ -649,6 +655,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // Audio / physics / tween.
     if (type == "PlaySound")   return std::make_unique<PlaySoundNode>();
     if (type == "AddForce")    return std::make_unique<AddForceNode>();
+    if (type == "AddExplosionForce") return std::make_unique<AddExplosionForceNode>();
     if (type == "AddImpulse")  return std::make_unique<AddImpulseNode>();
     if (type == "SetVelocity") return std::make_unique<SetVelocityNode>();
     if (type == "VelX")        return std::make_unique<VelAxisNode>(0);
@@ -663,6 +670,10 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "RaycastAll3D")    return std::make_unique<RaycastAll3DNode>(layers);
         if (type == "OverlapSphere3D") return std::make_unique<Overlap3DNode>(false, layers);
         if (type == "OverlapBox3D")    return std::make_unique<Overlap3DNode>(true, layers);
+        if (type == "BoxCast2D")       return std::make_unique<BoxCast2DNode>(layers);
+        if (type == "CapsuleCast2D")   return std::make_unique<CapsuleCast2DNode>(layers);
+        if (type == "OverlapBox2D")    return std::make_unique<OverlapBox2DNode>(layers);
+        if (type == "OverlapCapsule2D") return std::make_unique<OverlapCapsule2DNode>(layers);
         if (type == "ContactPoint")    return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Point);
         if (type == "ContactNormal")   return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Normal);
         if (type == "ImpactSpeed")     return std::make_unique<ContactInfoNode>(ContactInfoNode::What::Speed);

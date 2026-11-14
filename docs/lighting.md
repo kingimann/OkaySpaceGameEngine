@@ -114,3 +114,7 @@ Highlights (specular) take each light's colour and intensity.
   cascades, no spot or point shadows). The Light Inspector says so under Cast
   Shadows: "Spot and point light shadows are not drawn on Direct3D 12."
 - At most 16 lights are shaded per frame on the GPU (the first 16 Light objects).
+
+## Global illumination (baked probes)
+
+The engine has a CPU baker that gives bounced light as a grid of light probes. It is not used by any renderer yet. See `docs/foundations/global_illumination.md`.

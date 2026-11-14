@@ -56,15 +56,16 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.3.4 Lightmap bake - `Render/Lightmap` - `BakeFaceLighting` writes lighting, shadows and ambient occlusion into a static mesh's per-face colours; editor Bake Lighting button
   - 2.3.5 Day and night - `Components/DayNightCycle` - 24 h clock rotates the sun, tints and dims it, eases ambient, blends the camera sky; publishes `hour`; `SetTime`, `AddHours`
   - 2.3.6 Flashlight - `Components/Flashlight` - toggleable spot light that shines where the camera looks (key F by default) for caves and dark rooms; spawns a child Light and saves with the scene (tested inside `terrain`)
-- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
-- **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
+  - 2.3.7 Global illumination foundation - `Render/GiBvh`, `Render/GiSH`, `Render/LightProbeVolume`, `Render/GiBaker` - CPU BVH ray tracer, path-tracing baker, L2 spherical-harmonic light probe volume with trilinear sampling, ambient lookup and checksummed binary save; not wired into any renderer or the editor
+- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/Lightmap`, `Render/GiBvh`, `Render/GiSH`, `Render/LightProbeVolume`, `Render/GiBaker`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
+- **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `GiBake`, `LightProbeVolume`, `ProbeAmbientAt`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
-- **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
-- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`
+- **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`, `docs/foundations/global_illumination.md`
+- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`, `gi_probes`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
-- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
+- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp); the probe volume and baker (2.3.7) have no editor UI, no shader sampling, no reflection probes and no probe-in-wall repair, and the GPU use is unwritten (docs/foundations/global_illumination.md)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
-- **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night
+- **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night, global illumination, GI, light probe, reflection probe, spherical harmonics, bounce light
 - **Seen as:** shadows look wrong, blocky or shimmer; a point light casts no shadow; the scene is too dark; sunrise does not change the sky; a flashlight does not light the ground
 - **Ask me like:** "Why is my second sun not casting shadows?"; "Run the day/night clock faster and show the hour on the HUD"
 

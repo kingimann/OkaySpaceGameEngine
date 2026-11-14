@@ -25,6 +25,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | OFF | 5 | `models/OFF` (3) and `models/invalid` (2): a cube, a 3,205-vertex figure, an invalid one, an empty file, one that claims 353 billion vertices (readers batch A) |
 | SMD | 4 | `models/SMD` (3: a one-triangle file, a 3,732-triangle figure with one bone, a 896-triangle prop) and `models/invalid` (1 empty file) |
 | MD5 | 5 | `.md5mesh` 4 (`SimpleCube`, `Bob`, `BoarMan`, one empty file) and `.md5anim` 1 (`Bob`, 140 frames at 24 per second, 33 joints) |
+| MS3D | 4 | `Wuson` (3,732 triangles), `jeep1` (7 groups, 2,032 triangles), `twospheres` and `twospheres_withmats`; none has joints |
 
 ## Running it
 
@@ -138,6 +139,8 @@ Same corpus, same Assimp v5.4.3 sources, rebuilt with the OFF, SMD, MD5, MS3D, A
 **SMD** (`docs/own_smd_reader.md`): all three files read by both. Triangle counts (1, 896, 3,732) and surface areas (0.5000, 1202.6489 against our 1202.6491, 9.0258) agree. The bounding boxes agree once Assimp's still-Z-up result is turned the way our root node turns it ((x, y, z) to (x, z, -y)). Assimp's vertex counts are unwelded (11,196 on Wuson against our 2,117). All three carry only a bind pose (no animation frames, no rotated bones with weights to speak of), so the Euler order and the animation path are checked on synthetic fixtures only. The winding of the real files agrees with their vertex normals (3,730 of 3,732 triangles on Wuson), so it is kept as written.
 
 **MD5** (`docs/own_md5_reader.md`): `SimpleCube`, `Bob` (with its `Bob.md5anim`) and `BoarMan` read by both. Triangle counts (12, 1,027, 2,812), surface areas (24,576.0073 against Assimp's 24,576.0005; 6,832.9236 against 6,832.9229; 2,146.1729 against 2,146.1725: float rounding of the weighted vertex sums), bounding boxes (Assimp turns Z-up exactly as our root node does) and clip length (5.792 s) agree. Bob's 33 joint tracks have 140 position keys and 140 rotation keys each in both; first and last keys agree to four decimals on 31 tracks, and on the other two differ by one unit in the fourth decimal or by the sign of zero. `BoarMan` has 13 empty meshes (ours skips them and says so). Assimp counts only joints that carry weights as bones (32 on Bob), ours counts every joint (33). Read on its own, `Bob.md5anim` gives Assimp a 200-triangle stick-figure mesh, ours the skeleton and the clip. Vertex counts differ because ours are welded (875 against 3,081 on Bob). `empty.md5mesh`: both refuse.
+
+**MS3D** (`docs/own_ms3d_reader.md`): all four read by both with equal mesh counts (1, 7, 2, 2), triangle counts (3,732, 2,032, 240, 240), surface areas (9.0258, 755.1954, 122,847.3647, 122,847.3647) and bounding boxes. Assimp's vertex counts are unwelded (11,196 on Wuson against our 2,117). **None of the four files has a joint**, so the skeleton, the weights (including the unverified percent scale of the version 4 extra block), the keys and the `rest * key` composition are checked on synthetic fixtures only.
 
 ## What this does not show
 

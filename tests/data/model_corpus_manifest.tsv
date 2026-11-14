@@ -213,3 +213,8 @@ md5	models-nonbsd/MD5/BoarMan.md5mesh	ok	area=2146.1729	meshes=1	tris=2812	bones
 md5	models-nonbsd/MD5/Bob.md5mesh	ok	area=6832.9236	meshes=6	tris=1027	bones=33	skinned=6	clips=1	dur=5.792	mat=6	bbox=-42.881,0.081,-13.140,42.200,67.138,11.960	verts=875	tex=5	nodes=34	uv=1	nrm=1
 # md5anim: own MD5 reader on an md5anim read alone (skeleton and clip, no mesh)
 md5anim	models-nonbsd/MD5/Bob.md5anim	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=1	dur=5.792	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=34	uv=0	nrm=0
+# ms3d: own MS3D reader (readers batch A); none of these four files has joints
+ms3d	models/MS3D/Wuson.ms3d	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=0	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/jeep1.ms3d	ok	area=755.1954	meshes=7	tris=2032	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.529,-0.011,-8.537,5.529,7.629,8.109	verts=1948	tex=1	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/twospheres.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/twospheres_withmats.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1

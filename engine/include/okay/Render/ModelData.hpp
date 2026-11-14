@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -172,6 +172,14 @@ bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, Imported
 /// clockwise, texture coordinates kept as written); the animation is one clip at the file's frameRate. With only an animation, the nodes come from
 /// its hierarchy and base frame. Shader names that are not image files set no texture. `baseDir` ends with a slash or is empty.
 bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MS3D (MilkShape 3D, binary, versions 3 and 4): one skinned part per group (vertices welded on position, normal
+/// and texture coordinate; normals and UVs come per triangle corner), materials (diffuse and emissive colour,
+/// shininess, texture; the transparency goes into the diffuse alpha), the joint hierarchy as nodes, up to four joint
+/// weights per vertex (the version 4 extra-weight block when present), and one clip ("animation") from the joints' rotation
+/// and translation keys. Y-up like the engine; units, winding and texture coordinates are kept as written.
+/// Comments, ambient / specular colours and smoothing groups are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -183,12 +191,13 @@ bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// `path` is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 

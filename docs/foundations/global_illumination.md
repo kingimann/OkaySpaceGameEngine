@@ -137,3 +137,13 @@ These are for one developer, including tests and docs, and assume a GPU is avail
 - Interpolation is continuous across cell borders.
 - The same seed gives byte-identical output.
 - Visual quality is not tested here. It needs a renderer, and is unverified.
+
+## Provenance
+
+All new files were written from scratch in this repository, from published algorithms and maths, with no code, comments or tables copied or ported from another project.
+
+- `GiBvh.hpp`: Moller-Trumbore ray/triangle test (Moller and Trumbore 1997), slab ray/box test, binned surface-area-heuristic BVH build (the general technique from the ray-tracing literature).
+- `GiSH.hpp`: real spherical harmonic basis and the irradiance (cosine convolution) formula of Ramamoorthi and Hanrahan, "An Efficient Representation for Irradiance Environment Maps" (2001). The constants are checked numerically in `TestShConstants` (orthonormality and agreement with a brute-force cosine integral).
+- `LightProbeVolume.hpp`: trilinear interpolation; CRC-32 (the standard published polynomial); our own binary layout.
+- `GiBaker.hpp`: Monte Carlo path tracing with cosine-weighted bounces, next-event estimation and Russian roulette (Kajiya 1986, standard texts). The random generator is our own: a counter plus an xor-shift/multiply mixer whose two multipliers are the fractional bits of sqrt(2)-1 and sqrt(3)-1 and whose step is the fractional bits of the golden ratio, all computed by us; its quality is tested in `TestRng`.
+- `tests/test_gi_probes.cpp`: written from scratch.

@@ -23,17 +23,17 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 
 | Feature | Software | OpenGL | Direct3D 11 | Direct3D 12 | Proof (file: function) |
 |---|---|---|---|---|---|
-| Lit materials (lights, texture, normal, gloss, AO maps) | Partial | Done | Done | Done | Software: per-pixel only when Per-pixel lighting is on, `Raster::TrianglePhong`; GL: `kFrag`; D3D11: `PSMain` in `kHLSL`; D3D12: same HLSL copy (`kHLSL12`) |
-| Sun shadows | Partial | Done | Done | Done | Software: `RenderShadowMap` + `ShadowFactor`, drawn on the per-pixel path only; GL/D3D11: `PlanShadows` (`ShadowSetup.hpp`); D3D12: `ComputeDirectionalShadowVP` |
+| Lit materials (lights, texture, normal, gloss, AO maps) | Partial | Done | Done | Done | Software: per-pixel when Per-pixel lighting is on, or while a shadow map exists (`ShadowsUsePerPixel`), else per vertex; `Raster::TrianglePhong`; GL: `kFrag`; D3D11: `PSMain` in `kHLSL`; D3D12: same HLSL copy (`kHLSL12`) |
+| Sun shadows | Done | Done | Done | Done | Software: `RenderShadowMap` + `ShadowFactor`, drawn by default (the per-pixel path is chosen automatically while a shadow map exists); GL/D3D11: `PlanShadows` (`ShadowSetup.hpp`); D3D12: `ComputeDirectionalShadowVP` |
 | Sun shadow cascades | Done | Done | Done | Missing | Software: `ShadowCascades()`; GL/D3D11: `PlanShadows`; D3D12 draws one map and reads only `ShadowDistance` |
-| Spot, point and area light shadows | Partial | Done | Done | Missing | Software: `RenderLocalShadowMaps` + `LocalShadowFactor` (new, per-pixel path only); GL: `localShadow` in `kFrag`; D3D11: `localShadow` in `kHLSL`; D3D12: `lsh = 1.0` for every non-sun light |
-| Ambient occlusion (SSAO) | Partial | Done | Partial | Missing | Software: `ApplySSAO` (process switch only, a different algorithm); GL: `kSsaoFrag`, `computeAo`; D3D11: `PSAo` pass added in this change (UNVERIFIED); D3D12: no code |
-| Tonemap and exposure | Partial | Done | Done | Missing | Software: `ApplyToneMap` (process switch only); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
-| Bloom | Partial | Done | Done | Missing | Software: `ApplyBloom` (process switch only); GL: `kBrightFrag` + `kBlurFrag`; D3D11: `PSDown` + `PSBlur`; D3D12: none |
-| Vignette | Partial | Done | Done | Partial | GL/D3D11: in the uber pass, with smoothness. Software and D3D12: the host (editor or player) paints the amount; smoothness is ignored (`PostVignetteHandled`) |
-| Colour grading | Partial | Done | Done | Missing | Software: `ApplyColorGrade` (process switch only); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
+| Spot, point and area light shadows | Done | Done | Done | Missing | Software: `RenderLocalShadowMaps` + `LocalShadowFactor` (same automatic per-pixel path); GL: `localShadow` in `kFrag`; D3D11: `localShadow` in `kHLSL`; D3D12: `lsh = 1.0` for every non-sun light |
+| Ambient occlusion (SSAO) | Partial | Done | Partial | Missing | Software: `ApplySSAO` (process switch only, the scene's SSAO switch is not read; a different algorithm); GL: `kSsaoFrag`, `computeAo`; D3D11: `PSAo` pass added in this change (UNVERIFIED); D3D12: no code |
+| Tonemap and exposure | Done | Done | Done | Missing | Software: `ApplyScenePost` (scene exposure, curve and tonemap switch, plus the process switch); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
+| Bloom | Done | Done | Done | Missing | Software: `ApplyBloom`, run when the scene's Bloom or the process switch is on (the scene's threshold is clamped to 0.95: no HDR); GL: `kBrightFrag` + `kBlurFrag`; D3D11: `PSDown` + `PSBlur`; D3D12: none |
+| Vignette | Done | Done | Done | Partial | GL/D3D11: in the uber pass, with smoothness. Software: `ApplyScenePost`, same maths and smoothness, sets `PostVignetteHandled` so the host skips its overlay. D3D12: the host paints the amount; smoothness is ignored |
+| Colour grading | Done | Done | Done | Missing | Software: `ApplyScenePost` (temperature, tint, saturation, contrast, lift/gamma/gain) and `ApplyColorGrade` (process switch); GL: `kUberFrag`; D3D11: `PSUber`; D3D12: none |
 | Depth of field | Missing | Done | Missing | Missing | GL: `kDofFrag`; the others: no code |
-| Anti-aliasing (FXAA) | Partial | Done | Done | Missing | Software: `ApplyFXAA` (process switch); GL: `kFxaaFrag`; D3D11: `PSFxaa`; D3D12: none |
+| Anti-aliasing (FXAA) | Done | Done | Done | Missing | Software: `ApplyFXAA` (scene's FXAA switch or the process switch; a different, cheaper algorithm); GL: `kFxaaFrag`; D3D11: `PSFxaa`; D3D12: none |
 | MSAA | Missing | Done | Done | Done | GL: `EnsureTargets(samples)`; D3D11: `EnsureTargets` clamps to what the device supports; D3D12: `Impl::msaa` picks up to 4x. Software has no MSAA |
 | Fog | Done | Done | Done | Done | Software: `FogFactor` in `RenderMeshes`; GL and D3D11/D3D12 HLSL: same maths in the mesh shader |
 | Sky | Partial | Done | Done | Partial | GL: `kSkyFrag`; D3D11: `PSSky`; Software and D3D12: a plain gradient from `EffectiveSkyColors` (no disc, halo, clouds, stars) |
@@ -44,17 +44,17 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 
 ## Notes that matter
 
-- **Software renderer, per-pixel only.** Sun shadows, spot and point shadows, reflections and rim light are all drawn only on the per-pixel lighting path. That path is **off by default** (`PerPixelLighting()` is false). With it off, the software renderer shades per vertex and draws no shadows at all. This is why the table says Partial for the software shadows.
-- **Software renderer ignores the scene's post settings.** Its bloom, tonemap, grading and FXAA read the process-wide switches (Build Settings and the Rendering panel) and not the scene's Post-processing section.
+- **Software shadows now work by default.** Shadows are only sampled on the per-pixel lighting path, and `PerPixelLighting()` is still off by default. So a new switch, `ShadowsUsePerPixel()` (default **on**), makes a mesh that receives shadows take the per-pixel path while the frame has a shadow map (a sun or a spot/point light that casts, with Shadows on). With no shadow-casting light, nothing changes and the cheap path stays. To go back: set `ShadowsUsePerPixel()` to false (the per-vertex frame, no shadows) or turn Shadows off. I picked this over drawing shadows on the vertex path because vertex shading cannot show a shadow edge smaller than a triangle (a big floor would be wrong), and the per-pixel code is already tested. Cost, measured here (4 core CPU shared with other jobs, 640x360, 41 meshes, one sun shadow, `tests/test_software_default_shadows.cpp`): about 38 to 42 ms per frame against 31 ms per vertex without shadows (1.2 to 1.3 times). Not measured: a big imported model, or a weak CPU.
+- **Software now reads the scene's Post-processing section** for the parts that are cheap on a CPU: exposure, the tonemap curve (None, ACES, Filmic) and the scene's Tonemap switch, colour grading (temperature, tint, saturation, contrast, lift, gamma, gain), the vignette with its smoothness, Bloom and FXAA (`PlanScenePost`, `ApplyScenePost`). Fog was already read. The frame is 8-bit and shaded in display space, so these curves act on 0..1 values and will not match the GPU pixel for pixel (no HDR, no linear lighting). **Still not read by software:** the scene's Ambient Occlusion switch (only the process switch works) and Depth of field. Depth of field was **not attempted**: it needs a per-pixel depth blur and the software depth buffer is held at the supersampled size; it is left for a later change.
 - **Ambient occlusion has no normals** (the same on OpenGL and the new Direct3D 11 pass): it compares depths only, so a floor seen at a slant darkens a little by itself. The unit test measures about 0.72 on open floor against 0.69 in a box crease. Radius and Intensity control how strong it looks.
 - **Direct3D 11 is now level with OpenGL on ambient occlusion, on paper.** The pass was added in this change. It compiles under MinGW. It has never run on a GPU. Treat it as UNVERIFIED until someone with Windows looks at a frame. It runs only when the post chain runs and an Ambient Occlusion switch is on (the scene's post.ssao, or the Build Settings switch).
 - **Direct3D 12 is a preview.** No post-processing, one sun shadow map, no spot or point shadows, CPU skinning. Build Settings now says so.
-- **Depth of field is OpenGL only.**
+- **Depth of field is OpenGL only.** Software depth of field was skipped on purpose (see above).
 - **Every GPU frame is read back** to the CPU. That is a cost per frame. The profiler's "GPU ms" is CPU wall time.
 
 ## Who is behind on what
 
-- Software is behind OpenGL on: depth of field, MSAA, GPU skinning, the scene's post settings, the sky disc and clouds. It is ahead on one thing: it is the only one with automated pixel tests.
+- Software is behind OpenGL on: depth of field, the scene's SSAO switch, MSAA, GPU skinning, the sky disc and clouds. It is ahead on one thing: it is the only one with automated pixel tests.
 - OpenGL is the reference for the GPU side. It misses nothing in the table except real swap-chain presentation.
 - Direct3D 11 is behind OpenGL on depth of field only (and its new ambient occlusion pass is unrun).
 - Direct3D 12 is behind on almost everything after the mesh pass. Do not ship a game on it expecting the D3D11 look.
@@ -69,8 +69,29 @@ The machine-readable version of the "ignored switch" part is `engine/include/oka
 | Direct3D 11 ambient occlusion pass | Compile-checked with `x86_64-w64-mingw32-g++ -fsyntax-only` | Not run. No Windows, no GPU. UNVERIFIED |
 | Direct3D 12 honest labels (Build Settings, `RendererFeatures.hpp`, header comment) | `tests/test_renderer_features.cpp` | n/a |
 
+## What was done in the second render change
+
+| Change | Checked how | Not checked |
+|---|---|---|
+| Software shadows on by default (`ShadowsUsePerPixel`) | `tests/test_software_default_shadows.cpp`: a default frame has the shadow, the switch gives back the old frame bit for bit, a mesh that does not receive shadows keeps the cheap path, a timing line | Big scenes, slow CPUs |
+| Software reads the scene post (`ApplyScenePost`) | `tests/test_software_scene_post.cpp`: neutral scene equals the old tonemap pixel for pixel; exposure, curves, grading, vignette coverage, bloom and FXAA switches through `RenderMeshes` | Visual match to the GPU frame |
+| Post-chain HLSL moved to `D3DPostHLSL.hpp` (text identical to what D3D11 had; D3D11 now includes it) | The literals were compared by script before and after; `tests/test_d3d_post_hlsl.cpp`; MinGW `-fsyntax-only` on D3D11 and D3D12 | Not compiled by `D3DCompile`, not run: UNVERIFIED |
+
+## Direct3D 12 post chain: the plan (not started)
+
+D3D12 draws the mesh pass only. To give it the D3D11 post look, in order:
+
+1. **Shared shader text (done in this change).** `engine/include/okay/Render/D3DPostHLSL.hpp` holds `PSDown`, `PSBlur`, `PSUber` and `PSFxaa` as the macro `OKAY_POST_HLSL`. D3D11 uses it today. `SsaoMath.hpp` (`OKAY_SSAO_HLSL`) is already shared the same way. The vertex shader `VSQuad`, the `PSQuad` struct, `aces()`, the sampler and the constants are still in `kHLSL` in `D3D11Renderer.cpp`; `PSSky` (sky pass) is there too.
+2. **Move the rest of the full-screen shader text** (`PSQuad`, `VSQuad`, the post constants and `aces`) into the same header, so D3D12 does not need a copy. Verify with a text test like `test_d3d_post_hlsl.cpp`.
+3. **Root signature.** D3D12 needs a root signature for the quad passes: one descriptor table of three SRVs (t0 frame, t1 bloom A, t2 bloom C), one static clamp sampler, and a root constant buffer holding the same `uP0..uP2`, `uLiftAspect`, `uGainRadius`, `uGammaThresh`, `uTexelDir` layout as D3D11's constant buffer. Compile with shader model 5.1 (`ps_5_1`, as `kHLSL12` does). A register space is not needed.
+4. **Targets.** A resolved single-sample HDR colour target (D3D12 already resolves MSAA), two half-resolution bloom targets and a quarter pair, a ping-pong pair, and an output RGBA8 target. These mirror `EnsurePostTargets` in D3D11. Transition barriers between every pass are the new work compared with D3D11.
+5. **Frame wiring.** Call the chain only when `PostActive(rs)` is true, copy `Impl` pass order from `D3D11Renderer.cpp` (bright pass, blur x2, quarter, blur x2, uber, FXAA), set `PostVignetteHandled()`, and read back the output target.
+6. **Then** `RendererFeatures.hpp` rows for D3D12 can change to Yes, with the test and this page updated. That must wait for a real Windows GPU run: until a frame is looked at, the rows stay No.
+
+What cannot be done here: compile the HLSL (`D3DCompile` is Windows only), run D3D12, or check barriers. Only `x86_64-w64-mingw32-g++ -fsyntax-only` is possible.
+
 ## Next three renderer items
 
-1. Turn the software renderer's per-pixel path on by default (or make shadows work on the vertex path), then read the scene's Post-processing section so it matches the GPU renderers. This is the biggest gap for people who see the software frame.
-2. Put the new D3D11 ambient occlusion in front of a real Windows GPU and fix what the first frame shows. Then do the same review for depth of field on D3D11.
-3. Direct3D 12 post chain: share the D3D11 post shaders and targets instead of copying them a second time, or park D3D12 for good and say so.
+1. Put the new D3D11 ambient occlusion in front of a real Windows GPU and fix what the first frame shows. Then do the same review for depth of field on D3D11.
+2. Direct3D 12 post chain: steps 2 to 6 of the plan above, or park D3D12 for good and say so.
+3. Software: the scene's Ambient Occlusion switch, and a cheap depth of field (a depth-driven blur on the downsampled frame).

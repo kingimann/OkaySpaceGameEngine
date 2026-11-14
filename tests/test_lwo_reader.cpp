@@ -298,6 +298,44 @@ int main() {
                     CHECK(hi - lo <= 0.5001f);
                 }
             } }
+        // Cylindrical about Z with WRPH = 2, WRPW = 1: V is scaled by the height wrap like the old reader did. Same band as above:
+        // WRPH 1 gives stored V = -z (0 or 1, i.e. v = 1 - stored = 1 at engine z 0 and 0 at engine z -1); with WRPH 2 v doubles, so
+        // the stored values are 1 - 2 * v = -1 (engine z 0) and 1 (engine z -1). U is unchanged (WRPW = 1).
+        {   const std::vector<std::array<float, 3>> band = {{1, 0, 0}, {0, 1, 0}, {-1, 0, 0}, {0, -1, 0}, {1, 0, 1}, {0, 1, 1}, {-1, 0, 1}, {0, -1, 1}};
+            std::vector<std::array<int, 3>> tris;
+            for (int i = 0; i < 4; ++i) { const int j = (i + 1) % 4; tris.push_back({i, j, j + 4}); tris.push_back({i, j + 4, i + 4}); }
+            CHECK(Read(ProjMesh(1, 2, band, tris, 1.0f, 2.0f), m, err) && m.parts.size() == 1);
+            if (m.parts.size() == 1) {
+                const Mesh& pm = m.parts[0].mesh;
+                bool ok = !pm.uvs.empty(), sawLow = false, sawHigh = false;
+                for (std::size_t i = 0; i < pm.vertices.size(); ++i) {
+                    const Vec3& p = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                    if (p.z > -0.5f) { sawLow = true; if (!Near(t.y, -1.0f)) ok = false; }
+                    else { sawHigh = true; if (!Near(t.y, 1.0f)) ok = false; }
+                    if (p.x > 0.5f && !Near(t.x, 0.5f)) ok = false;
+                    if (p.y > 0.5f && !Near(t.x, 0.75f)) ok = false;
+                    if (p.y < -0.5f && !Near(t.x, 0.25f)) ok = false;
+                }
+                CHECK(ok && sawLow && sawHigh);
+            } }
+        // Cylindrical about Y: a point on the axis has no angle (atan2 of two zeros, maybe signed): its U must be the turn's start for Y,
+        // 0 (mod 1: seam mending may give 1), whichever zero sign atan2 sees; a signed-zero slip would give 0.5. A ring of 4 points at y = 0 and one on the axis at y = 1.
+        {   const std::vector<std::array<float, 3>> pts = {{1, 0, 0}, {0, 0, 1}, {-1, 0, 0}, {0, 0, -1}, {0, 1, 0}};
+            const std::vector<std::array<int, 3>> tris = {{0, 1, 4}, {1, 2, 4}, {2, 3, 4}, {3, 0, 4}};
+            CHECK(Read(ProjMesh(1, 1, pts, tris), m, err) && m.parts.size() == 1);
+            if (m.parts.size() == 1) {
+                const Mesh& pm = m.parts[0].mesh;
+                bool ok = !pm.uvs.empty(), sawAxis = false;
+                for (std::size_t i = 0; i < pm.vertices.size(); ++i) {
+                    const Vec3& p = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                    if (std::fabs(p.x) < 0.5f && std::fabs(p.z) < 0.5f && p.y > 0.5f) {
+                        sawAxis = true;
+                        const float f = t.x - std::floor(t.x);
+                        if (!(Near(f, 0.0f) || Near(f, 1.0f))) ok = false;   // 0 or 1 (seam mending may add a turn), never 0.5 or a NaN
+                    }
+                }
+                CHECK(ok && sawAxis);
+            } }
         // Spherical about Z on an octahedron: the poles are on the axis, so their U is the turn's start, 0.5 (Z); latitude
         // -90 / 0 / +90 degrees gives v 0 / 0.5 / 1, stored as 1 - v. The pole fans are big triangles but are not seam-mended
         // unless they really cross the seam.

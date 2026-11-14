@@ -14,13 +14,16 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.1.3 Empty-space context menu - `editor/main.cpp` - create empty, sprite, cube, camera, light, 3D objects and UI widgets, Select All, Deselect, Expand/Collapse All, Sort A-Z
   - 15.1.4 Rig and character entries - `editor/main.cpp` - Use Built-in Animations, Map Humanoid Bones, Rig Model (Humanoid), Add IK Target on model roots
   - 15.1.5 Scene merge drops - `editor/main.cpp` - drop a `.okayscene` on the Hierarchy to merge it into the open scene
+  - 15.1.6 Filtered search - `editor/main.cpp`, `editor/InspectorModel.*` (`HierFilter`) - words must all match (name, tag or kind word); `t:tag`, `c:component`, `l:layer`, `is:off|locked|static|prefab`, `-word` to exclude, and `Parent/Child` path search (`Scene::FindAllByPath`)
+  - 15.1.7 Drag and drop - `editor/main.cpp`, `editor/InspectorModel.*` - reparent and reorder by dropping on the middle (child) or top or bottom edge (before or after) of a row, with a drop indicator; multi-selection moves together; prefabs, models and pictures from the Project panel can be dropped on a row or on empty space (one undo step each)
+  - 15.1.8 Eye and lock toggles - `editor/main.cpp` (`HierEye`, `HierLock`) - per-row active (eye) and lock buttons at the row's right edge
 - **Code:** `editor/main.cpp` (`DrawHierarchy`), `editor/EditorState.*`
 - **API:** menu View > Panels > Hierarchy; shortcuts for rename, duplicate, delete, focus
 - **Editor:** Hierarchy panel
 - **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click)
 - **Tests:** `editor` (selftest)
-- **Status:** Works - used by every session; the GUI is not unit-tested
-- **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate) and the Hierarchy panel does not call `Validate` or `FindByPath` yet; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
+- **Status:** Works - used by every session; the GUI is not unit-tested; the undo menu entries, shortcuts and History panel are compiled but not run (`docs/editor_undo.md`: "The GUI was not run for this change"); the filter and drop rules are tested headless (`inspector_model`)
+- **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate); the Hierarchy search calls `FindAllByPath` for `Parent/Child` paths, and the panel still does not call `Validate`; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
 - **Related:** 15.2, 1.3, 1.6, 21
 - **Words:** Hierarchy, hierarchy panel, pin (Hierarchy), scene tree, parenting, drag to parent, group, prefab save, order, sort, search, filter
 - **Seen as:** an object is missing from the tree; dragging does not re-parent; the context menu lacks an entry; the search shows nothing; selection jumps
@@ -36,13 +39,17 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.2.5 Inspectors in their own files - `editor/NavigationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/SplineTools.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*` - split-out inspector bodies called from the main loop
   - 15.2.6 Character Model panel - `editor/main.cpp` (`CharacterModelPanel` ~7269-7390, auto-rig ~7391-7642) - swap model by drag and drop, Rig Model onto the humanoid skeleton
   - 15.2.7 Shared pickers and fields - `editor/main.cpp` (~24195-25415) - object, asset, variable and tag pickers, key bind combo, tween preview, particle gradient and curve editors
+  - 15.2.8 Reference fields - `editor/InspectorPanel.*` (`AssetField`, `ObjectField`, ObjectRef properties) - drag and drop, picker and clear for asset and object references
+  - 15.2.9 Component menu: Copy Values, Paste Values, Reset - `editor/InspectorPanel.*` - per-component rows in the header menu
+  - 15.2.10 Prefab override UI - `editor/InspectorPanel.*`, `editor/PrefabEdit.*` (logic in `PrefabTools`) - read the differences of an instance, Revert and Apply per property or whole, with undo and updating the other instances (21.4)
+  - 15.2.11 Play-mode note - `editor/InspectorPanel.cpp` (`DrawPlayModeNote`) - while playing, the Inspector says changes made there are not saved
 - **Code:** `editor/main.cpp`, `editor/EditorWidgets.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`
 - **API:** View > Panels > Inspector; Add Component button under the component list
 - **Editor:** Inspector panel
 - **Docs:** `docs/editor.md` (Add Component, Component headers)
 - **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character)
-- **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`
-- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); nothing found yet for editing component values during Play and keeping them (planned area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
+- **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`; the editor-wide undo hooks that watch Inspector fields (`WatchEditUndo`) are compiled but not run in the GUI (`docs/editor_undo.md`); the model behind them is tested headless
+- **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); values edited during Play are discarded when Play stops, on purpose (the Inspector shows a note, `DrawPlayModeNote`); keeping them is a planned feature (area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
 - **Related:** 15.10, 12.10, 13.4, 14.1, 21, 34
 - **Words:** Inspector, Add Component, component header, enable checkbox, Remove Component, tag, static, Character Model panel, Rig Model, script fields, component search
 - **Seen as:** a component has no card or a field is missing; Add Component search cannot find a component; values reset after editing; the Inspector is slow with many components

@@ -193,6 +193,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
+add_executable(test_inventory_moves test_inventory_moves.cpp)
+target_link_libraries(test_inventory_moves PRIVATE okay::engine)
+add_test(NAME inventory_moves COMMAND test_inventory_moves)
+
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
@@ -1766,6 +1771,10 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
+target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
+target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)
@@ -2913,3 +2922,18 @@ target_link_libraries(test_clipboard PRIVATE okay::engine)
 target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clipboard COMMAND test_clipboard)
+
+# Our own HTTP/1.1 client (docs/own_http_client.md). The pure layer (parser, builder, redirects) is tested and
+# fuzzed over in-memory streams; the transports (TCP, CONNECT proxy, OpenSSL loaded with dlopen) are tested against
+# local servers, `openssl s_server` and throw-away certificates from tests/scripts/gen_http_test_certs.sh.
+# Header-only: neither links the engine. The TLS cases skip (and say so) when libssl or the openssl program is missing.
+add_executable(test_own_http test_own_http.cpp)
+target_include_directories(test_own_http PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME own_http COMMAND test_own_http)
+if(UNIX AND NOT APPLE)
+    add_executable(test_own_http_net test_own_http_net.cpp)
+    target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_own_http_net PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+    add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
+    set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+endif()

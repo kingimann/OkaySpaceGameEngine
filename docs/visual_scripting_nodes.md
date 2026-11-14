@@ -6237,6 +6237,92 @@ A new map with the same entries. Deep also copies lists and maps inside it; with
 
 **Example:** Wire Map Copy's Copy output into another node's input. It has no flow of its own.
 
+### List Append
+
+`ListAppend`
+
+Adds every item of Other to the end of List. Appending a list to itself doubles it.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Append runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Append finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Other | in | List | The Other input of List Append. It is a List. Unwired, this is an empty list. | an empty list |
+
+**Example:** Put List Append after an event such as On Start or On Update, and wire a value into List.
+
+### List Slice
+
+`ListSlice`
+
+A new list with Count items starting at Start (nothing wired into Count means everything from Start). Start past the end of the list is reported.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Start | in | Number | Where the effect begins, in world units from the camera. It is a Number. Unwired, this is 0. | 0 |
+| Count | in | Number | How many. It is a Number. Unwired, this is 0. | 0 |
+| Slice | out | List | What List Slice produces on Slice. It is a List. Wire it into an input that expects a List. | — |
+
+**Example:** Wire List Slice's Slice output into another node's input. It has no flow of its own.
+
+### List Pop
+
+`ListPop`
+
+Removes the last item of a list and gives it back. On an empty list Popped is false and nothing changes.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. List Pop runs when a wire reaches this pin. | — |
+| flow | out | Flow | After List Pop finishes, the flow continues from here to the next step. | — |
+| List | in | List | The list to read or change. It is a List. Unwired, this is an empty list. | an empty list |
+| Item | out | Any | The current list entry. It is an Any. Wire it into an input that expects an Any. | — |
+| Popped | out | Bool | What List Pop produces on Popped. It is a Bool. Wire it into an input that expects a Bool. | — |
+
+**Example:** Put List Pop after an event such as On Start or On Update, and wire a value into List.
+
+### Map Get Or
+
+`MapGetOr`
+
+The value stored under Key, or Default when the map has no such key.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| Map | in | Map | The Map input of Map Get Or. It is a Map. Unwired, this is an empty map. | an empty map |
+| Key | in | Text | The Key input of Map Get Or. It is a Text. Unwired, this is empty text. | empty text |
+| Default | in | Any | Used when nothing has been saved under this key yet. It is an Any. Unwired, this is nothing. | nothing |
+| Value | out | Any | The value that was read. It is an Any. Wire it into an input that expects an Any. | — |
+
+**Example:** Wire Map Get Or's Value output into another node's input. It has no flow of its own.
+
+### Map Merge
+
+`MapMerge`
+
+Copies every entry of From into Into. A key in both takes the value from From.
+
+**Requires:** No component is required. It only computes a value from its inputs.
+
+| Pin | Direction | Type | Meaning | Default |
+| --- | --- | --- | --- | --- |
+| flow | in | Flow | The flow arrives here. Map Merge runs when a wire reaches this pin. | — |
+| flow | out | Flow | After Map Merge finishes, the flow continues from here to the next step. | — |
+| Into | in | Map | The Into input of Map Merge. It is a Map. Unwired, this is an empty map. | an empty map |
+| From | in | Map | The angle you are coming from, in degrees. It is a Map. Unwired, this is an empty map. | an empty map |
+
+**Example:** Put Map Merge after an event such as On Start or On Update, and wire a value into Into.
+
 ### New Struct
 
 `StructNew`

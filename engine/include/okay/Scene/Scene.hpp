@@ -350,14 +350,22 @@ public:
     /// frame rate, so a game behaves the same at 30 and 240 FPS (frame time left
     /// over carries to the next frame). 0 = one step per frame, sized to the frame.
     /// The player, the editor's Play mode and the dedicated server use
-    /// kDefaultFixedStep (scripts' FixedUpdate rate); a bare Scene keeps 0.
+    /// kDefaultFixedStep (scripts' FixedUpdate rate) unless the project set another
+    /// rate; a bare Scene keeps 0.
     float fixedTimeStep = 0.0f;
     static constexpr float kDefaultFixedStep = 1.0f / 50.0f;
-    /// Fixed steps plus interpolation: how games run.
-    void UseFixedStepPhysics(bool on = true) {
-        fixedTimeStep = on ? kDefaultFixedStep : 0.0f;
-        interpolatePhysics = on;
-    }
+    /// Fixed steps plus interpolation: how games run. A project rate set with
+    /// SetProjectPhysicsRate replaces the 50 Hz default; turning it off is unchanged.
+    void UseFixedStepPhysics(bool on = true);
+    /// Steps per second (1 / fixedTimeStep). 0 means one step per frame.
+    /// Values outside 1..500 are pulled into that range; 0 or less turns the fixed step off.
+    void SetPhysicsStepsPerSecond(float stepsPerSecond);
+    float PhysicsStepsPerSecond() const;
+    void SetSmoothPhysics(bool on) { interpolatePhysics = on; }
+    bool SmoothPhysics() const { return interpolatePhysics; }
+    /// What Play and a built game start from. 50 and smooth-on match UseFixedStepPhysics
+    /// before any project set a rate, so old scenes stay the same until this is called.
+    static void SetProjectPhysicsRate(float stepsPerSecond, bool smooth);
     /// The most frame time physics catches up on in one frame, so a long hitch
     /// can't snowball into ever more steps.
     float maxPhysicsCatchUp = 1.0f / 3.0f;

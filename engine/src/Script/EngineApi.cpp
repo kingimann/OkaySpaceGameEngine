@@ -33,12 +33,16 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UINavigation.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
@@ -811,6 +815,193 @@ EngineApi Build() {
             "Move keyboard and gamepad focus here, show the focus ring, and scroll it into view."));
         api.types.push_back(std::move(bt));
     }
+    // App widgets. Each method is a visual-script node. Value changes raise on_change.
+    {
+        ApiType w; w.name = "UISearchBar"; w.isComponent = true;
+        w.doc = "A search field over a list. on_change fires when the text or the chosen row changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISearchBar>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UISearchBar* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UISearchBar>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Search Bar", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetQuery", {tString}, {"text"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetQuery(S(a[0])); return Value{}; },
+            "Show only the items that contain this text. Fires OnValueChanged when it changes."));
+        w.methods.push_back(method("Clear", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Clear(); return Value{}; },
+            "Empty the search and clear the chosen row."));
+        ApiMethod n = method("MatchCount", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->MatchCount()}; },
+            "How many items match the search.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIDateTimePicker"; w.isComponent = true;
+        w.doc = "A date and time. Invalid days are pulled back to a real calendar day. on_change fires when it changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIDateTimePicker>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIDateTimePicker* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIDateTimePicker>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Date and Time", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetDate", {tInt, tInt, tInt}, {"year", "month", "day"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetDate(I(a[0]), I(a[1]), I(a[2])); return Value{};
+            }, "Set the date. 31 February becomes the last day of February."));
+        w.methods.push_back(method("SetTime", {tInt, tInt}, {"hour", "minute"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetTime(I(a[0]), I(a[1])); return Value{};
+            }, "Set the clock. Hours stay in 0 to 23 and minutes in 0 to 59."));
+        ApiMethod n = method("Text", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Text()}; },
+            "The date and time as text, such as 2026-02-28 14:05.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIFilePicker"; w.isComponent = true;
+        w.doc = "A file list that can only open inside one folder. on_submit fires when a file is chosen.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIFilePicker>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIFilePicker* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIFilePicker>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI File Picker", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetRoot", {tString}, {"folder"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRoot(S(a[0])); return Value{}; },
+            "The only folder this picker may open."));
+        w.methods.push_back(method("Open", {tString}, {"name"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Open(S(a[0])); return Value{}; },
+            "Enter a folder or choose a file in the folder on screen. Paths that leave the folder do nothing."));
+        ApiMethod n = method("Selected", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->selected}; },
+            "The chosen file, relative to the folder. Empty when none is chosen.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIAccordion"; w.isComponent = true;
+        w.doc = "Stacked headings that open and close. on_change fires when one opens or closes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIAccordion>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIAccordion* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIAccordion>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Accordion", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("Toggle", {tInt}, {"index"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Toggle(I(a[0])); return Value{}; },
+            "Open or close one section. The first section is 0."));
+        w.methods.push_back(method("SetExpanded", {tInt, tBool}, {"index", "open"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetExpanded(I(a[0]), std::get<bool>(a[1])); return Value{};
+            }, "Open or close one section."));
+        ApiMethod n = method("IsExpanded", {tInt}, {"index"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->IsExpanded(I(a[0]))}; },
+            "True when that section is open.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIBreadcrumbs"; w.isComponent = true;
+        w.doc = "A path such as Home / Library / Books. Choosing a crumb drops the ones after it.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIBreadcrumbs>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIBreadcrumbs* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIBreadcrumbs>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Breadcrumbs", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetPath", {tString}, {"path"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetPath(S(a[0])); return Value{}; },
+            "Replace the path. Folders are separated by /."));
+        w.methods.push_back(method("Select", {tInt}, {"index"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Select(I(a[0])); return Value{}; },
+            "Keep this crumb and drop the ones after it. The first crumb is 0."));
+        ApiMethod n = method("Path", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Path()}; },
+            "The path, folders separated by /.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIPagination"; w.isComponent = true;
+        w.doc = "Page buttons. The page stays inside 1 to the page count. on_change fires when the page changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIPagination>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIPagination* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIPagination>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Pagination", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetPage", {tInt}, {"page"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetPage(I(a[0])); return Value{}; },
+            "Show this page. Numbers outside 1 to the page count are pulled back in."));
+        w.methods.push_back(method("Next", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Next(); return Value{}; },
+            "Go to the next page. The last page stays put."));
+        w.methods.push_back(method("Previous", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Previous(); return Value{}; },
+            "Go to the previous page. The first page stays put."));
+        w.methods.push_back(method("SetTotal", {tInt, tInt}, {"items", "perPage"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetTotal(I(a[0]), I(a[1])); return Value{}; },
+            "Set how many items there are and how many fit on a page, then fix the page count."));
+        ApiMethod n = method("Page", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Page()}; },
+            "The page on screen, starting at 1.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UISkeleton"; w.isComponent = true;
+        w.doc = "Grey bars shown while something is still loading.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISkeleton>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UISkeleton* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UISkeleton>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Skeleton", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("SetLoading", {tBool}, {"on"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetLoading(std::get<bool>(a[0])); return Value{};
+            }, "True shows the loading bars. False clears them."));
+        ApiMethod n = method("IsLoading", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->loading}; },
+            "True while the loading bars are showing.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIBottomSheet"; w.isComponent = true;
+        w.doc = "A panel that slides up from the bottom. on_change fires when it opens or closes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIBottomSheet>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIBottomSheet* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* x = g->GetComponent<UIBottomSheet>();
+            if (!x) throw RuntimeError("'" + g->name + "' has no UI Bottom Sheet", c.loc);
+            return x;
+        };
+        w.methods.push_back(method("Open", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Open(); return Value{}; },
+            "Slide the sheet open."));
+        w.methods.push_back(method("Close", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Close(); return Value{}; },
+            "Slide the sheet closed."));
+        w.methods.push_back(method("Toggle", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Toggle(); return Value{}; },
+            "Open it if it is closed, or close it if it is open."));
+        ApiMethod n = method("IsOpen", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsOpen()}; },
+            "True while the sheet is open.");
+        n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
     // ---- Input ----
     {
         ApiType in; in.name = "Input"; in.isStatic = true; in.doc = "Keyboard, mouse and gamepad.";
@@ -915,6 +1106,24 @@ EngineApi Build() {
             "Seconds since the last frame (inside FixedUpdate: the fixed step)."));
         t.staticProps.push_back(ro("fixedDeltaTime", tFloat, [](const Value&, CallContext& c) { return Value{c.fixedDeltaTime}; },
             "The FixedUpdate step in seconds."));
+        t.staticProps.push_back(prop("physicsSteps", tFloat,
+            [](const Value&, CallContext& c) {
+                Scene* s = c.self ? c.self->scene() : nullptr;
+                return Value{s ? s->PhysicsStepsPerSecond() : 0.0f};
+            },
+            [](const Value&, const Value& v, CallContext& c) {
+                if (Scene* s = c.self ? c.self->scene() : nullptr) s->SetPhysicsStepsPerSecond(F(v));
+            },
+            "How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame."));
+        t.staticProps.push_back(prop("smoothPhysics", tBool,
+            [](const Value&, CallContext& c) {
+                Scene* s = c.self ? c.self->scene() : nullptr;
+                return Value{s ? s->SmoothPhysics() : false};
+            },
+            [](const Value&, const Value& v, CallContext& c) {
+                if (Scene* s = c.self ? c.self->scene() : nullptr) s->SetSmoothPhysics(std::get<bool>(v));
+            },
+            "Draw bodies between physics steps so motion stays smooth at any frame rate."));
         t.staticProps.push_back(ro("time", tFloat, [](const Value&, CallContext&) { return Value{Time::ElapsedTime()}; },
             "Seconds since the game started."));
         t.staticProps.push_back(ro("frameCount", tInt, [](const Value&, CallContext&) { return Value{(std::int32_t)Time::FrameCount()}; },
@@ -1244,6 +1453,86 @@ EngineApi Build() {
             [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->Destination()}; },
             "The point it was last sent to."));
         api.types.push_back(std::move(na));
+    }
+    // ---- 2D grid path agent, costs and obstacles ----
+    {
+        ApiType ag; ag.name = "GridPathAgent2D"; ag.isComponent = true;
+        ag.doc = "Walks the object over a 2D tilemap. Empty tiles are open until Pay for mud and roads is on. The object needs a Grid Path Agent.";
+        ag.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridPathAgent2D>() : nullptr; };
+        auto agentOf = [](const Value& self, CallContext& c) -> GridPathAgent2D* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* a = g->GetComponent<GridPathAgent2D>();
+            if (!a) throw RuntimeError("'" + g->name + "' has no Grid Path Agent (add one in the Inspector)", c.loc);
+            return a;
+        };
+        ag.methods.push_back(method("SetDestination", {tFloat, tFloat}, {"x", "y"}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>& a, CallContext& c) { agentOf(s, c)->SetDestination(F(a[0]), F(a[1])); return Value{}; },
+            "Plan a path to the cell that contains this world point, and start walking."));
+        ag.methods.push_back(method("SetCell", {tInt, tInt}, {"x", "y"}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>& a, CallContext& c) { agentOf(s, c)->SetCell(I(a[0]), I(a[1])); return Value{}; },
+            "Plan a path to this cell, and start walking."));
+        ag.methods.push_back(method("Stop", {}, {}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { agentOf(s, c)->Stop(); return Value{}; },
+            "Stop where it is and drop the path."));
+        ApiMethod arrived = method("Arrived", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->Arrived()}; },
+            "True once the last cell was reached.");
+        arrived.pure = true; ag.methods.push_back(std::move(arrived));
+        ApiMethod hasPath = method("HasPath", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->HasPath()}; },
+            "True while it is walking a path.");
+        hasPath.pure = true; ag.methods.push_back(std::move(hasPath));
+        ag.props.push_back(prop("speed", tFloat,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->speed}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->speed = std::max(0.0f, F(v)); },
+            "How fast it walks, in world units per second."));
+        ag.props.push_back(prop("allowDiagonal", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->allowDiagonal}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->allowDiagonal = std::get<bool>(v); },
+            "Also step diagonally. A diagonal step never squeezes between two walls."));
+        ag.props.push_back(prop("smoothPath", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->smoothPath}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->smoothPath = std::get<bool>(v); },
+            "Straighten the route wherever the line of sight is clear."));
+        ag.props.push_back(prop("useCosts", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->useCosts}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->useCosts = std::get<bool>(v); },
+            "Pay the tilemap's movement costs. Off keeps every open cell the same price."));
+        api.types.push_back(std::move(ag));
+
+        ApiType cost; cost.name = "GridCostLayer"; cost.isComponent = true;
+        cost.doc = "Prices for a 2D tilemap: a road is cheap, mud is slow, and 0 blocks the tile. A Grid Path Agent pays them when Pay for mud and roads is on.";
+        cost.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridCostLayer>() : nullptr; };
+        auto costOf = [](const Value& self, CallContext& c) -> GridCostLayer* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* layer = g->GetComponent<GridCostLayer>();
+            if (!layer) throw RuntimeError("'" + g->name + "' has no Grid Movement Costs (add one in the Inspector)", c.loc);
+            return layer;
+        };
+        cost.methods.push_back(method("SetTileCost", {tInt, tFloat}, {"tile", "cost"}, tVoid,
+            [costOf](const Value& s, std::vector<Value>& a, CallContext& c) { costOf(s, c)->SetTileCost(I(a[0]), F(a[1])); return Value{}; },
+            "Set the price of one tile number. 0 or less makes that tile a wall. Agents on that tile plan again."));
+        cost.methods.push_back(method("SetCellCost", {tInt, tInt, tFloat}, {"x", "y", "cost"}, tVoid,
+            [costOf](const Value& s, std::vector<Value>& a, CallContext& c) { costOf(s, c)->SetCellCost(I(a[0]), I(a[1]), F(a[2])); return Value{}; },
+            "Set the price of one cell, on top of its tile. 0 or less blocks it."));
+        api.types.push_back(std::move(cost));
+
+        ApiType block; block.name = "GridObstacle2D"; block.isComponent = true;
+        block.doc = "Blocks cells on a 2D tilemap. An agent whose path runs through them plans a new route at once.";
+        block.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<GridObstacle2D>() : nullptr; };
+        auto blockOf = [](const Value& self, CallContext& c) -> GridObstacle2D* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) throw RuntimeError("'" + g->name + "' has no Grid Obstacle (add one in the Inspector)", c.loc);
+            return o;
+        };
+        block.methods.push_back(method("Place", {tInt, tInt}, {"x", "y"}, tVoid,
+            [blockOf](const Value& s, std::vector<Value>& a, CallContext& c) { blockOf(s, c)->Place(I(a[0]), I(a[1])); return Value{}; },
+            "Block cells starting at this cell. Agents whose path used one of them plan again."));
+        block.methods.push_back(method("Clear", {}, {}, tVoid,
+            [blockOf](const Value& s, std::vector<Value>&, CallContext& c) { blockOf(s, c)->Clear(); return Value{}; },
+            "Stop blocking cells."));
+        api.types.push_back(std::move(block));
     }
     // ---- Dialogue / Story / Quest ----
     {

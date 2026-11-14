@@ -22,7 +22,7 @@ you *have* forwarded, etc.):
 ```
 okayspace-relay                       # listens on UDP 45100
 okayspace-relay 50000                 # custom port
-okayspace-relay --legacy-hello=off    # refuse version-1/2 hellos (see below)
+okayspace-relay --legacy-hello=on     # accept version-1/2 hellos again (off by default, see below)
 ```
 
 It prints the bound port and then forwards quietly. One relay handles many
@@ -140,26 +140,15 @@ The relay is on the internet, so it doesn't trust its peers:
   relay instead where you can.
 
 **Legacy hellos.** Version-1 and -2 hellos carry no cookie. The relay still
-accepts them while `--legacy-hello` is on (the default for now; this is step 1 of
-issue #733 and the default is not changed here), and once a minute, while any
-arrive, logs how many ("N legacy (version 1/2) hellos in the last minute; M legacy
-peers registered; hellos so far v1=.. v2=.. v3=.. v4=.."). `RelayServer` exposes the
-same numbers: `LegacyHellos()` (v1/v2 hellos from new senders), `LegacyPeers()` (peers
-registered right now that speak v1/v2) and `HellosByVersion(v)`. Switch to
-`--legacy-hello=off` once `LegacyPeers()` stays 0 and the v1/v2 counts stop growing:
-those hellos are refused with `RelayRefused{version}`.
-
-Every client this repository ships now speaks version 4. The game's `NetworkManager`
-and the launcher's voice calls build their hello with the one shared builder,
-`okay/Net/RelayHello.hpp` (`BuildRelayHello`: cookie, nonce, padding) and check each
-welcome with `ParseRelayWelcome` (it must echo the nonce). A voice call uses the
-`RelayHub` role. It falls back to a version-1 hello only after six unanswered
-version-4 hellos (a relay older than version 3 never answers one), and only then
-accepts a welcome without the echo; a relay that refuses it ends the call with a
-"update the launcher" message. Older launchers and games already in the field still
-send version 1 or 2 hellos until players update, which is why the default stays on.
-A version-3 game talks to a version-2 relay unchanged: the older relay ignores the
-cookie and padding.
+refuses them by default (`--legacy-hello=off`) with `RelayRefused{version}`,
+because anyone can forge the source address of a cookie-less hello. Games too
+old to send a cookie can be let in again with `--legacy-hello=on`; the relay then
+logs how many arrived each minute ("N legacy (version 1/2) hellos in the last
+minute"). (The `RelayServer` class itself still defaults to on, for embedding
+and tests; only the standalone program changed.) The launcher's voice calls speak version 3 (they fall
+back to version 1 only against a relay older than that), so turning legacy
+hellos off doesn't cut them off. A version-3 game talks to a version-2 relay
+unchanged: the older relay ignores the cookie and padding.
 
 Peers without a version byte (version 1: older games, and older launchers'
 voice calls, where every member announces the host role) still work. They get the

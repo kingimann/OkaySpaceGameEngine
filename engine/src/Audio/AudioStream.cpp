@@ -2,7 +2,9 @@
 // buffer AudioStream. (The OGG decoder wrapper lives in AudioDecode.cpp; the decoder is VorbisStream.)
 #include "okay/Audio/AudioStream.hpp"
 #include "okay/Audio/AudioByteSource.hpp"
+#include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Core/ImportSidecar.hpp"
 #include "AudioInternal.hpp"
 
 #include <algorithm>
@@ -128,6 +130,56 @@ private:
     std::uint64_t pos_ = 0;
 };
 
+class FlacPcmDecoder : public PcmDecoder {
+public:
+    bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
+        if (!flac_.Open(std::move(src), error)) return false;
+        sampleRate = flac_.SampleRate();
+        channels = flac_.Channels();
+        totalFrames = flac_.TotalFrames();
+        return channels >= 1 && channels <= 8 && sampleRate > 0;
+    }
+    std::size_t Read(float* dst, std::size_t maxFrames) override { return flac_.Read(dst, maxFrames); }
+    bool Seek(std::int64_t frame) override { return flac_.Seek(frame); }
+    std::size_t MemoryBytes() const override { return sizeof(*this) + flac_.MemoryBytes(); }
+private:
+    FlacStream flac_;
+};
+
+/// Averages a stereo (or wider) decoder down to one channel.
+class ForceMonoDecoder : public PcmDecoder {
+public:
+    bool Open(std::unique_ptr<PcmDecoder> inner) {
+        if (!inner || inner->channels < 2) return false;
+        inner_ = std::move(inner);
+        sampleRate = inner_->sampleRate;
+        channels = 1;
+        totalFrames = inner_->totalFrames;
+        return true;
+    }
+    std::size_t Read(float* dst, std::size_t maxFrames) override {
+        const int ch = inner_->channels;
+        std::size_t done = 0;
+        tmp_.resize(kChunk * static_cast<std::size_t>(ch));
+        while (done < maxFrames) {
+            const std::size_t n = std::min(maxFrames - done, kChunk);
+            const std::size_t got = inner_->Read(tmp_.data(), n);
+            if (got == 0) break;
+            DownmixToMono(tmp_.data(), got, ch, dst + done);
+            done += got;
+        }
+        return done;
+    }
+    bool Seek(std::int64_t frame) override { return inner_->Seek(frame); }
+    std::size_t MemoryBytes() const override {
+        return sizeof(*this) + (inner_ ? inner_->MemoryBytes() : 0) + tmp_.capacity() * sizeof(float);
+    }
+private:
+    static constexpr std::size_t kChunk = 1024;
+    std::unique_ptr<PcmDecoder> inner_;
+    std::vector<float> tmp_;
+};
+
 class Mp3PcmDecoder : public PcmDecoder {
 public:
     bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
@@ -144,7 +196,7 @@ private:
     Mp3Stream mp3_;
 };
 
-std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, std::string* error) {
+std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, std::string* error, bool downmix) {
     unsigned char head[12] = {0};
     const std::size_t got = src->Read(0, head, 12);
     std::string err;
@@ -153,14 +205,23 @@ std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, st
         std::unique_ptr<WavPcmDecoder> w(new WavPcmDecoder);
         if (w->Open(src, &err)) d = std::move(w);
     } else if (got >= 4 && std::memcmp(head, "OggS", 4) == 0) {
-        {
-        std::unique_ptr<PcmDecoder> o = MakeOggDecoder(src, &err);
-        d = std::move(o);
-    }
+        d = MakeOggDecoder(src, &err);
+    } else if (got >= 4 && std::memcmp(head, "fLaC", 4) == 0) {
+        std::unique_ptr<FlacPcmDecoder> f(new FlacPcmDecoder);
+        if (f->Open(src, &err)) d = std::move(f);
     } else {
         std::unique_ptr<Mp3PcmDecoder> m(new Mp3PcmDecoder);
         if (m->Open(src, &err)) d = std::move(m);
-        else err = "unsupported audio file (use WAV, OGG or MP3)";
+        else {
+            // FLAC with an ID3 tag in front does not start with fLaC.
+            std::unique_ptr<FlacPcmDecoder> f(new FlacPcmDecoder);
+            if (f->Open(src, &err)) d = std::move(f);
+            else err = "unsupported audio file (use WAV, OGG, MP3 or FLAC)";
+        }
+    }
+    if (d && d->channels > 1 && (downmix || d->channels > 2)) {
+        std::unique_ptr<ForceMonoDecoder> mono(new ForceMonoDecoder);
+        if (mono->Open(std::move(d))) d = std::move(mono);
     }
     if (!d && error) *error = err;
     return d;
@@ -190,7 +251,8 @@ std::shared_ptr<AudioStream> AudioStream::OpenFile(const std::string& path, std:
     auto src = AudioByteSource::FromFile(path, error);
     if (!src) return nullptr;
     std::string err;
-    auto dec = audio_detail::MakeDecoder(src, &err);
+    const bool mono = ReadAudioImportOptions(path).forceMono;
+    auto dec = audio_detail::MakeDecoder(src, &err, mono);
     std::shared_ptr<AudioStream> s(new AudioStream);
     if (!dec || !s->Init(std::move(dec))) {
         if (error) *error = err.empty() ? "not a readable audio file" : err;
@@ -204,7 +266,7 @@ std::shared_ptr<AudioStream> AudioStream::OpenMemory(std::shared_ptr<const std::
     if (!bytes || bytes->empty()) { if (error) *error = "no audio data"; return nullptr; }
     auto src = AudioByteSource::FromMemory(bytes);
     std::string err;
-    auto dec = audio_detail::MakeDecoder(src, &err);
+    auto dec = audio_detail::MakeDecoder(src, &err, false);
     std::shared_ptr<AudioStream> s(new AudioStream);
     if (!dec || !s->Init(std::move(dec))) {
         if (error) *error = err.empty() ? "not a readable audio file" : err;

@@ -65,11 +65,13 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
+    UIInspectorWidgetsMore.cpp                                         # search, date, files, accordion, crumbs, pages, skeleton, sheet
     InspectorPanel.cpp InspectorModel.cpp PrefabEdit.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     ExampleScenes.cpp                                                  # File > Examples scenes saved into the project
     UIRuntimeTools.cpp                                                 # UI themes, runtime UI widgets, File > Examples > UI Gallery
     LocalizationWindow.cpp                                             # the Localization window (string table)
+    WeaponEditor.cpp                                                   # the Weapons window (weapon definitions)
     LocalizationTools.cpp                                              # grid, check, scan and preview the window draws (ImGui-free)
     ContentEditors.cpp                                                 # Items, Loot & Recipes (.okayitems, .okayloot, .okayrecipes)
     ProjectBrowser.cpp ProjectPanelUI.cpp                              # the Project panel: folder model + safe file operations, name prompt / delete confirm / import settings

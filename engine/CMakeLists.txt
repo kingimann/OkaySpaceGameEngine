@@ -125,6 +125,9 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Combat/WeaponBook.cpp
+    src/Components/MeleeAttacker.cpp
+    src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
     src/Inventory/InventoryPersistence.cpp
@@ -187,7 +190,9 @@ add_library(okay_engine
     src/Audio/AudioStream.cpp
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
+    src/Audio/FlacDecoder.cpp
     src/AI/Pathfinding.cpp
+    src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
     src/AI/NavMeshCarve.cpp
@@ -196,6 +201,7 @@ add_library(okay_engine
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
+    src/AI/Perception.cpp
     src/Core/ImageWrite.cpp
     src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp
@@ -215,6 +221,7 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
@@ -235,6 +242,16 @@ add_library(okay_engine
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp
     src/Render/BvhReader.cpp
+    src/Render/OffReader.cpp
+    src/Render/SmdReader.cpp
+    src/Render/Md5Reader.cpp
+    src/Render/Ms3dReader.cpp
+    src/Render/AseReader.cpp
+    src/Render/ThreeMfReader.cpp
+    src/Render/AmfReader.cpp
+    src/Render/X3dReader.cpp
+    src/Render/DxfReader.cpp
+    src/Render/LwoReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -311,6 +328,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
+
+# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
+    target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
 
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
@@ -472,6 +495,13 @@ if(OKAY_USE_ASSIMP)
         GIT_TAG        v5.4.3
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(assimp)
+    # MinGW-w64 13 (the Ubuntu 26.04 runner) defaults __MSVCRT_VERSION__ to 0x600. Assimp's
+    # DefaultIOStream.cpp then takes its old-CRT branch and calls _fstat32, which the 64-bit msvcrt
+    # import library does not export (link error "undefined reference to __imp__fstat32"). Older
+    # MinGW headers defaulted to 0x700, which picks _fstat64. Say 0x700 for Assimp only.
+    if(MINGW AND TARGET assimp)
+        target_compile_definitions(assimp PRIVATE __MSVCRT_VERSION__=0x700)
+    endif()
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
     target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp
@@ -517,6 +547,38 @@ if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
+# Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_OFF)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
+endif()
+# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_SMD)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
+endif()
+# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MD5)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
+endif()
+# Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MS3D)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
+endif()
+# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_ASE)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
+endif()
+# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
+foreach(_fmt 3MF AMF X3D DXF LWO)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
+    endif()
+endforeach()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

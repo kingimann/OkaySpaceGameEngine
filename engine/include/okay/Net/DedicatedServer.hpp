@@ -85,6 +85,13 @@ public:
     /// File `k` (at `nowSeconds`); false when it isn't (anonymous, throttled, malformed).
     bool File(const NetworkManager::AntiCheatKick& k, double nowSeconds);
     static constexpr int kPerHour = 20;
+    /// The kick's evidence bundle (k.evidence) rides on the report, re-written with its
+    /// account and address cleared unless this is true (it is off: the bundle's own
+    /// BundleOptions already leave them out; this is the second lock). At most 16 KiB;
+    /// a bundle that doesn't parse is left off and the report is still filed.
+    bool includeIdentifiers = false;
+    /// The evidence JSON File() would attach for `k` ("" = none).
+    std::string EvidenceFor(const NetworkManager::AntiCheatKick& k) const;
 private:
     std::string m_game;
     Sender m_send;

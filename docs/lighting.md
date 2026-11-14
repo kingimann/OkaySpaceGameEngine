@@ -107,6 +107,8 @@ Highlights (specular) take each light's colour and intensity.
 - Only the first Directional light casts shadows; other directional lights
   light the scene unshadowed.
 - The software renderer (used when no GPU is available) has sun shadows only —
-  no spot/point light shadows. The opt-in Direct3D 12 backend has a single sun
-  shadow map (no cascades, no spot/point shadows).
+  no spot or point light shadows. The opt-in Direct3D 12 backend has a single sun
+  shadow map (no cascades, no spot or point shadows). The Light Inspector says
+  so under Cast Shadows: "Spot and point light shadows are not drawn on
+  Direct3D 12 or the software renderer."
 - At most 16 lights are shaded per frame on the GPU (the first 16 Light objects).

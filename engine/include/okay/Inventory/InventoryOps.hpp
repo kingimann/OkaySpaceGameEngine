@@ -74,5 +74,17 @@ InvResult Move(GridInventory* src, int index, GridInventory* dst, int x, int y, 
 /// Split `n` off grid item `index` into the first free spot.
 InvResult Split(GridInventory* inv, int index, int n);
 
+/// Hotbar/slot bag -> grid bag: move `amount` (0 = the whole stack) of slot `si` to cell
+/// (x,y) of `dst` (turned 90 degrees when `rotated`). The footprint and weight come from
+/// the item definition and the stack keeps its instance data (durability, uid). Merges onto
+/// a matching stack there, never swaps. Rejected, with nothing changed, for a bad slot, a
+/// negative amount, a spot that is out of bounds or taken, or an enforced weight limit.
+/// Partial when only some fit (stack size or weight). Unique (uid) items only move whole.
+/// Not sent to a networked host: it is a local operation (see docs/inventory.md).
+InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool rotated = false, int amount = 0);
+/// Grid bag -> slot bag: move `amount` (0 = all) of grid item `index` to slot `di` of `dst`
+/// when that slot is empty or holds the same item (merges up to the stack size). Never swaps.
+InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int amount = 0, int dstSlots = 0);
+
 } // namespace InventoryOps
 } // namespace okay

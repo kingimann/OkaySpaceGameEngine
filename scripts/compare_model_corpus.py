@@ -25,6 +25,11 @@ def load(path):
         out[c[1]] = (c[2], kv, c[3] if c[2] != "ok" and len(c) > 3 else "")
     return out
 
+# 3MF and AMF are Z-up: our reader puts the Z-up to Y-up rotation (x, y, z) -> (x, z, -y) on the root node, Assimp keeps the file's axes.
+# Rows of those files have Assimp's box turned the same way before the comparison.
+def zup_box(bt):
+    return [bt[0], bt[2], -bt[4], bt[3], bt[5], -bt[1]]
+
 def main():
     a = [x for x in sys.argv[1:] if not x.startswith("--")]
     tol_area = 0.01; tol_bbox = 0.01
@@ -51,6 +56,7 @@ def main():
             ao, at = float(o[1]["area"]), float(t[1]["area"])
             if abs(ao - at) > tol_area * max(abs(at), 1e-9) + 1e-6: d.append(f"area ours={ao:.4f} assimp={at:.4f}")
             bo = [float(x) for x in o[1]["bbox"].split(",")]; bt = [float(x) for x in t[1]["bbox"].split(",")]
+            if p.lower().endswith((".3mf", ".amf")): bt = zup_box(bt)
             size = max(max(bt[3 + i] - bt[i] for i in range(3)), 1e-9)
             if any(abs(bo[i] - bt[i]) > tol_bbox * size + 1e-4 for i in range(6)): d.append(f"bbox ours={o[1]['bbox']} assimp={t[1]['bbox']}")
             if abs(float(o[1]["dur"]) - float(t[1]["dur"])) > 0.01: d.append(f"dur ours={o[1]['dur']} assimp={t[1]['dur']}")

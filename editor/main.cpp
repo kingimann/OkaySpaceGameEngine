@@ -18,9 +18,11 @@
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
+#include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
 #include "okay/Core/BuildInfo.hpp"
@@ -67,6 +69,7 @@
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
+#include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
@@ -3129,12 +3132,13 @@ void LoadProjectSettingsFrom(const std::string& dir) {
     okay::ProjectLists::Reset();
     g_settingsProjectDir = dir;
     std::string text;
-    if (okayproj::ReadText(ProjectSettingsFile(dir), text)) { ParseProjectSettings(g_project, text); return; }
-    if (!dir.empty() && okayproj::ReadText(okayproj::SettingsFileName(), text)) {
+    if (okayproj::ReadText(ProjectSettingsFile(dir), text)) ParseProjectSettings(g_project, text);
+    else if (!dir.empty() && okayproj::ReadText(okayproj::SettingsFileName(), text)) {
         ParseProjectSettings(g_project, text);
         std::error_code ec;
         if (std::filesystem::is_directory(dir, ec)) SaveProjectSettingsTo(dir);
     }
+    okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
 }
 // Give a layer a name (empty = back to the default), save the project file, or say why not in `err`. Shared by the
 // right-click rename in the layer lists and the Tags and Layers section of Project Settings.
@@ -4235,6 +4239,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "volume=" << opt.masterVolume << "\n";
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "physics_hz=" << g_project.physicsHz << "\n";
+        cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
         cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
@@ -5036,6 +5042,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
         {"Items, Loot & Recipes", "Items, Loot & Recipes", &g_showItemDatabase, "Editors & Tools", PI_Package},
+        {"Weapons",       "Weapons",                   &g_showWeapons,       "Editors & Tools", PI_Package},
         {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
@@ -6137,6 +6144,17 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("App")) {
+        if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
+        if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
+        if (ImGui::MenuItem("File Picker"))        addUI("File Picker", oked::BuildUIFilePicker);
+        if (ImGui::MenuItem("Accordion"))          addUI("Accordion",   oked::BuildUIAccordion);
+        if (ImGui::MenuItem("Breadcrumbs"))        addUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
+        if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
+        if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
+        if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
+        ImGui::EndMenu();
+    }
     // Launcher-look building blocks: each is a small ready-styled group you can
     // restyle. They go inside the selected panel/card when there is one.
     if (ImGui::BeginMenu("Kit (launcher look)")) {
@@ -6582,6 +6600,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
             ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes.");
+            ImGui::MenuItem("Weapons", nullptr, &g_showWeapons);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these.");
             ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
             ImGui::EndMenu();
@@ -10468,6 +10488,8 @@ void DrawProject(EditorState& ed) {
             RequestLoad(ed, full);
         } else if (ext == ".okayprefab") {
             OpenPrefabMode(ed, full);   // double-click: edit the prefab on its own (right-click > Place in Scene puts a copy in the scene)
+        } else if (ext == ".okayweapon") {
+            OpenWeaponFile(full);
         } else if (ext == ".okaydata") {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
@@ -12566,6 +12588,8 @@ void DrawScriptDocs() {
         fapi("add_impulse(...) / add_impulse3(...)", "instant velocity change");
         fapi("jump(v)", "set upward velocity (2D or 3D body)");
         fapi("set_gravity(x,y) / set_gravity3(x,y,z)", "change world gravity");
+        fapi("physics_steps() / set_physics_steps(n)", "read or set physics steps per second");
+        fapi("physics_smooth() / set_physics_smooth(on)", "draw bodies between physics steps");
     }
 
     if (sec("Input")) {
@@ -12596,6 +12620,10 @@ void DrawScriptDocs() {
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
         fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
+        fapi("grid_move_to(x, y) / grid_move_cell(x, y)", "walk this object's Grid Path Agent to a world point or a tile cell");
+        fapi("grid_stop() / grid_arrived()", "stop the grid walk / 1 once the cell was reached");
+        fapi("grid_set_tile_cost(id, cost) / grid_set_cell_cost(x, y, cost)", "price a tile or one cell (mud, road). 0 blocks it");
+        fapi("grid_block(x, y) / grid_clear()", "block a cell with this object's Grid Obstacle, or stop blocking");
         fapi("bt_set(\"key\", value) / bt_get(\"key\")", "write / read this object's Behavior Tree blackboard (bt_set(\"Name\", key, value) for another object)");
         fapi("bt_run(\"Assets/Guard.okaybt\") / bt_stop()", "load and start a behavior tree on this object / stop it; on_bt_event(name) hears Send Event tasks");
         fapi("spline_point(\"n\", t) / spline_length(\"n\")", "a point t (0-1) along a Spline / its length");
@@ -12634,6 +12662,14 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("ui_set_search(\"n\", text) / ui_search_query(\"n\") / ui_search_count(\"n\")", "filter a search bar; read the text; how many rows match (on_change, on_submit)");
+        fapi("ui_set_date(\"n\", y, m, d) / ui_set_time(\"n\", h, min) / ui_date_text(\"n\")", "set a date (invalid days are pulled back) or a time; read it");
+        fapi("ui_file_set_root(\"n\", folder) / ui_file_open(\"n\", name) / ui_file_selected(\"n\")", "sandboxed file picker: the only folder, open a row, the chosen file");
+        fapi("ui_accordion_toggle(\"n\", i) / ui_accordion_open(\"n\", i)", "open or close a section; is it open");
+        fapi("ui_breadcrumb_select(\"n\", i) / ui_breadcrumb_path(\"n\")", "keep that crumb and drop the ones after it; read the path");
+        fapi("ui_set_page(\"n\", page) / ui_page(\"n\") / ui_page_count(\"n\")", "show a page (pulled back into range); read the page and the page count");
+        fapi("ui_set_loading(\"n\", on)", "show or hide a skeleton placeholder");
+        fapi("ui_sheet_open(\"n\") / ui_sheet_close(\"n\") / ui_sheet_open_state(\"n\")", "open or close a bottom sheet; is it open");
         fapi("ui_get_rotation(\"n\") / ui_set_rotation(\"n\", degrees)", "read / turn a UI frame, clockwise degrees around its pivot");
         fapi("ui_get_scale(\"n\") / ui_set_scale(\"n\", x, y)", "read / set a UI frame's width and height scale (one number sets both)");
         fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
@@ -13042,6 +13078,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "set_light_intensity","set_light_range","set_light_angle","set_light_color",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining","nav_path_exists","nav_path_length","nav_point_walkable","nav_nearest_point",
+        "grid_move_to","grid_move_cell","grid_stop","grid_arrived","grid_set_tile_cost","grid_set_cell_cost","grid_block","grid_clear",
         "bt_set","bt_get","bt_run","bt_stop",
         "spline_point","spline_length","follower_set_speed","line_set_points","trail_clear",
         "spawner_start","spawner_stop","spawner_alive",
@@ -13159,6 +13196,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_path_exists","nav_path_exists(x, y, z)"}, {"nav_path_length","nav_path_length(x, y, z)"}, {"nav_point_walkable","nav_point_walkable(x, y, z, maxDist)"}, {"nav_nearest_point","nav_nearest_point(x, y, z, maxDist)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
+        {"grid_move_to","grid_move_to(x, y)"}, {"grid_move_cell","grid_move_cell(x, y)"}, {"grid_stop","grid_stop()"}, {"grid_arrived","grid_arrived()"},
+        {"grid_set_tile_cost","grid_set_tile_cost(id, cost)"}, {"grid_set_cell_cost","grid_set_cell_cost(x, y, cost)"}, {"grid_block","grid_block(x, y)"}, {"grid_clear","grid_clear()"},
         {"bt_set","bt_set(\"key\", value)"}, {"bt_get","bt_get(\"key\")"}, {"bt_run","bt_run(\"file.okaybt\")"}, {"bt_stop","bt_stop()"},
         {"spline_point","spline_point(\"name\", t)"}, {"spline_length","spline_length(\"name\")"},
         {"follower_set_speed","follower_set_speed(speed)"}, {"line_set_points","line_set_points(points)"}, {"trail_clear","trail_clear()"},
@@ -17203,6 +17242,7 @@ void HandleShortcuts(EditorState& ed) {
         else if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
+        else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -17211,6 +17251,7 @@ void HandleShortcuts(EditorState& ed) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
         else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, true)) ConsoleLog("Redo (items, loot and recipes)"); }
+        else if (WeaponEditorFocused() && WeaponEditorUndo(true)) ConsoleLog("Redo (weapons)");
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
@@ -19062,7 +19103,15 @@ static void DrawTagsAndLayersSettings(EditorState& ed) {
 // quick "apply to current scene" for physics/rendering.
 void DrawProjectSettings(EditorState& ed) {
     if (!g_showProjectSettings) return;
-    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_PROJECT")) {
+        // A floating window becomes its own viewport and is missing from a
+        // renderer screenshot. Dock it into the Inspector, which is on screen.
+        if (ImGuiWindow* insp = ImGui::FindWindowByName("Inspector"))
+            if (insp->DockId) ImGui::SetNextWindowDockID(insp->DockId, ImGuiCond_Always);
+        ImGui::SetNextWindowFocus();
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    }
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
         ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -19075,9 +19124,34 @@ void DrawProjectSettings(EditorState& ed) {
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
             ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::DragFloat("Steps per second##ps", &g_project.physicsHz, 1.0f, 1.0f, 240.0f, "%.0f")) {
+                if (g_project.physicsHz < 1.0f) g_project.physicsHz = 1.0f;
+                if (g_project.physicsHz > 500.0f) g_project.physicsHz = 500.0f;
+                okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
+                if (ed.isPlaying()) {
+                    ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
+                    ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
+                }
+                SaveProjectSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How many times a second physics runs. 50 is the usual rate.\n"
+                                  "A drop lands in the same place at a low frame rate and a high one.\n"
+                                  "Saved with the project.");
+            if (ImGui::Checkbox("Smooth the motion##ps", &g_project.smoothPhysics)) {
+                okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
+                if (ed.isPlaying()) ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
+                SaveProjectSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
+                                  "so motion stays smooth when the frame rate and the step rate differ.");
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
+                ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
+                ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
                 ed.dirty = true; ConsoleLog("Applied project physics to the scene");
             }
         }
@@ -20260,6 +20334,15 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
             if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
+            ImGui::Separator();
+            if (ImGui::MenuItem("Search Bar"))    mkUI("Search Bar", oked::BuildUISearchBar);
+            if (ImGui::MenuItem("Date and Time")) mkUI("Date and Time", oked::BuildUIDateTimePicker);
+            if (ImGui::MenuItem("File Picker"))   mkUI("File Picker", oked::BuildUIFilePicker);
+            if (ImGui::MenuItem("Accordion"))     mkUI("Accordion", oked::BuildUIAccordion);
+            if (ImGui::MenuItem("Breadcrumbs"))   mkUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
+            if (ImGui::MenuItem("Pagination"))    mkUI("Pagination", oked::BuildUIPagination);
+            if (ImGui::MenuItem("Skeleton"))      mkUI("Skeleton", oked::BuildUISkeleton);
+            if (ImGui::MenuItem("Bottom Sheet"))  mkUI("Bottom Sheet", oked::BuildUIBottomSheet);
             ImGui::Separator();
             // 3D UI: standalone in-world objects (WorldSpaceUI), separate from 2D UI.
             if (ImGui::BeginMenu("3D UI (in-world)")) {
@@ -30795,6 +30878,50 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
+            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
+                using namespace okay::detectui;
+                DetectSettings& d = s.detect;
+                static std::map<const void*, ObserveMemory> observeMem;   // what observe mode replaced, per component
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("Behavioural checks and a risk score for cheats that send possible-looking messages. Off by default. "
+                                    "Game-specific detectors (speed, flight, weapons, abilities, economy) stay off until given their numbers.");
+                ImGui::PopTextWrapPos();
+                if (ImGui::Checkbox("Enabled##acd", &d.enabled)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("detect.enabled: the master switch. Off: every detector is a no-op and nothing is stored.");
+                bool observe = IsObserveMode(d);
+                if (ImGui::Checkbox("Observe mode (no kicks or bans)##acd", &observe)) { SetObserveMode(d, observe, observeMem[ac]); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets kickAt, banAt, shadowAt and rateLimitAt to 0: the detectors still score and keep their evidence "
+                                                              "(log / flag only), but nothing is done to a player. Run real matches this way first, read the evidence, then raise a "
+                                                              "threshold or lower a weight for any detector that scored an honest player. Untick to bring the old values back.");
+                if (d.enabled && observe) ImGui::TextDisabled("Observing: no player is kicked, restricted or reported for a ban.");
+                const char* group = "";
+                for (const Field& f : Fields()) {
+                    if (std::strcmp(group, f.group) != 0) { group = f.group; ImGui::SeparatorText(group); }
+                    char lbl[96]; std::snprintf(lbl, sizeof(lbl), "%s##acd_%s", f.label, f.key);
+                    bool changed = false;
+                    if (f.i) { int v = d.*f.i; changed = ImGui::DragInt(lbl, &v, f.speed, (int)f.lo, (int)f.hi, f.fmt); if (changed) d.*f.i = v; }
+                    else { float v = d.*f.f; changed = ImGui::DragFloat(lbl, &v, f.speed, f.lo, f.hi, f.fmt); if (changed) d.*f.f = v; }
+                    if (changed) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("detect.%s: %s", f.key, f.tip);
+                }
+                ImGui::SeparatorText("All detect.* lines");
+                // The same lines the .okayac file and the scene hold: weapons, abilities, economy counters, weights and every key above.
+                static const void* textOwner = nullptr; static char text[8192]; static std::string textErr;
+                if (textOwner != ac || !ImGui::IsAnyItemActive()) {   // refill unless the box is being typed in
+                    if (textOwner != ac) textErr.clear();
+                    textOwner = ac;
+                    std::snprintf(text, sizeof(text), "%s", ToText(d).c_str());
+                }
+                ImGui::InputTextMultiline("##acdtext", text, sizeof(text), ImVec2(-1, 110));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
+                if (ImGui::SmallButton("Apply text##acd")) {
+                    std::string err;
+                    if (FromText(d, text, &err)) { textErr.clear(); ed.dirty = true; textOwner = nullptr; }
+                    else textErr = err;
+                }
+                if (!textErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", textErr.c_str()); }
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
         }
     }
@@ -31875,6 +32002,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            if (go->transform && go->transform->Parent())
+                ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
+            else
+                ImGui::TextDisabled("Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -35116,21 +35247,73 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* c = dynamic_cast<MeleeAttacker*>(curComp)) {
         if (CompHeader("Melee Attacker", c, &toRemove)) {
-            ImGui::TextDisabled("Hits NPCs in a cone in front on attack input.");
+            ImGui::TextDisabled("Swings on the attack key. A hit lands on health, survival health, stats or an NPC inside the arc, and only while the hit window is open.");
+            if (WeaponReferenceField("Weapon##melee", c->weapon, c->weaponFile, false)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A melee weapon from the list. Empty uses the numbers below, or the weapon tied to the held item.");
+            if (!c->weapon.empty() || !c->weaponFile.empty())
+                ImGui::TextDisabled("The weapon replaces these numbers while it is set.");
             if (ImGui::DragFloat("Damage##melee", &c->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
-            oked::FieldTip("Damage##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much health one hit removes.");
             if (ImGui::DragFloat("Range##melee", &c->range, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            oked::FieldTip("Range##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the swing reaches.");
             if (ImGui::DragFloat("Arc##melee", &c->arc, 1.0f, 1.0f, 360.0f, "%.0f deg")) ed.dirty = true;
-            oked::FieldTip("Arc##melee");
-            if (ImGui::DragFloat("Cooldown##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
-            oked::FieldTip("Cooldown##melee");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How wide the swing is, in degrees. 360 hits all around.");
+            if (ImGui::DragFloat("Time between swings##melee", &c->cooldown, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds before another swing can start.");
+            if (ImGui::DragFloat("Swing time##melee", &c->swingTime, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the swing lasts. 0 lands the hit at once.");
+            if (ImGui::DragFloat("Hit window opens##melee", &c->hitStart, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds into the swing when a hit can land.");
+            if (ImGui::DragFloat("Hit window closes##melee", &c->hitEnd, 0.01f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds into the swing when the hit closes.");
+            if (ImGui::DragFloat("Knockback##melee", &c->knockback, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard a hit pushes a body away.");
+            if (ImGui::DragInt("Combo hits##melee", &c->comboSteps, 0.1f, 1, 20)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many hits belong to one chain. 1 is a single swing.");
+            if (ImGui::Checkbox("Use a hit box##melee", &c->useHitbox)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box in front of the fighter, instead of the cone.");
             char k[2] = { c->attackKey, 0 };
-            if (ImGui::InputText("Attack Key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
-            oked::FieldTip("Attack Key##melee");
-            if (ImGui::Checkbox("Left Mouse Too##melee", &c->useMouse)) ed.dirty = true;
-            oked::FieldTip("Left Mouse Too##melee");
+            if (ImGui::InputText("Attack key##melee", k, sizeof(k))) { c->attackKey = k[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that starts a swing.");
+            if (ImGui::Checkbox("Also use the left mouse button##melee", &c->useMouse)) ed.dirty = true;
             if (ImGui::SmallButton("Remove##melee")) toRemove = c;
+        }
+    }
+    if (auto* gun = dynamic_cast<RangedWeapon*>(curComp)) {
+        if (CompHeader("Ranged Weapon", gun, &toRemove)) {
+            ImGui::TextDisabled("Fires on a rate, spends the rounds in the gun, and reloads from the spare rounds.");
+            if (WeaponReferenceField("Weapon##gun", gun->weapon, gun->weaponFile, true)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A gun from the list. Empty uses the numbers below, or the weapon tied to the held item.");
+            if (!gun->weapon.empty() || !gun->weaponFile.empty())
+                ImGui::TextDisabled("The weapon replaces these numbers while it is set.");
+            if (ImGui::DragFloat("Damage##gun", &gun->damage, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much health one shot removes.");
+            if (ImGui::DragFloat("Shots per second##gun", &gun->fireRate, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the gun can fire.");
+            if (ImGui::DragFloat("Range##gun", &gun->range, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far an instant shot reaches.");
+            if (ImGui::DragInt("Rounds in the gun##gun", &gun->magazine, 0.2f, 0, 100000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many rounds the gun holds. 0 means it never reloads.");
+            if (ImGui::DragInt("Spare rounds##gun", &gun->reserve, 0.2f, -1, 1000000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rounds waiting for the next reload. -1 means they never run out.");
+            if (ImGui::DragFloat("Reload time##gun", &gun->reloadTime, 0.01f, 0.0f, 30.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to refill the gun.");
+            if (ImGui::DragFloat("Knockback##gun", &gun->knockback, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard a shot pushes a body.");
+            if (ImGui::Checkbox("Instant shot##gun", &gun->hitscan)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: the shot lands at once. Off: it spawns a projectile.");
+            if (ImGui::Checkbox("Reload when empty##gun", &gun->autoReload)) ed.dirty = true;
+            char fk[2] = { gun->fireKey, 0 };
+            if (ImGui::InputText("Fire key##gun", fk, sizeof(fk))) { gun->fireKey = fk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that fires. Leave it blank for no key.");
+            char rk[2] = { gun->reloadKey, 0 };
+            if (ImGui::InputText("Reload key##gun", rk, sizeof(rk))) { gun->reloadKey = rk[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The key that reloads.");
+            if (ed.isPlaying())
+                ImGui::TextDisabled("%d rounds in the gun, %s spare%s", gun->Rounds(),
+                    gun->Spare() < 0 ? "unlimited" : std::to_string(gun->Spare()).c_str(),
+                    gun->IsReloading() ? ", reloading" : "");
+            if (ImGui::SmallButton("Remove##gun")) toRemove = gun;
         }
     }
     if (auto* c = dynamic_cast<Spawner*>(curComp)) {
@@ -36512,6 +36695,58 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ft")) toRemove = ft;
         }
     }
+    if (auto* gp = dynamic_cast<GridPathAgent2D*>(curComp)) {
+        if (CompHeader("Grid Path Agent", gp, &toRemove)) {
+            char mb[64];
+            std::strncpy(mb, gp->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+            if (ImGui::InputText("Which tilemap##gp", mb, sizeof(mb))) { gp->mapName = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the tilemap to walk. Leave empty to use the first tilemap in the scene.");
+            if (ImGui::DragFloat("Walk speed##gp", &gp->speed, 0.05f, 0.0f, 10000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast it walks, in world units per second.");
+            if (ImGui::DragFloat("Stop this close##gp", &gp->stopDistance, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close to the last cell counts as arrived.");
+            if (ImGui::Checkbox("Allow diagonal steps##gp", &gp->allowDiagonal)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also step diagonally. A diagonal step never squeezes between two walls.");
+            if (ImGui::Checkbox("Smooth the path##gp", &gp->smoothPath)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straighten the route wherever the line of sight is clear, so it is not a staircase of cells.");
+            if (ImGui::Checkbox("Pay for mud and roads##gp", &gp->useCosts)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Grid Movement Costs on the tilemap. Off: only empty tiles are open, and every step costs the same.");
+            if (ImGui::DragFloat("Plan again every (seconds)##gp", &gp->repathInterval, 0.05f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How often to plan again. A new obstacle on the route plans again at once.");
+            ImGui::TextDisabled("Walks empty tiles. Walls are any other tile until costs are on.");
+            if (ImGui::SmallButton("Remove##gp")) toRemove = gp;
+        }
+    }
+    if (auto* gc = dynamic_cast<GridCostLayer*>(curComp)) {
+        if (CompHeader("Grid Movement Costs", gc, &toRemove)) {
+            if (ImGui::DragInt("Road tile number##gc", &gc->roadTile, 0.1f, 0, 4095)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is a road. Empty tiles are number 0 and cost 1.");
+            if (ImGui::DragFloat("Road cost (lower is cheaper)##gc", &gc->roadCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto a road is. 1 is normal. 0 blocks the tile.");
+            if (ImGui::DragInt("Mud tile number##gc", &gc->mudTile, 0.1f, 0, 4095)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which tile number is mud.");
+            if (ImGui::DragFloat("Mud cost (higher is slower)##gc", &gc->mudCost, 0.05f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard one step onto mud is. Higher makes the path go around it. 0 blocks the tile.");
+            ImGui::TextDisabled("The agent pays these only when Pay for mud and roads is on.");
+            if (ImGui::SmallButton("Remove##gc")) toRemove = gc;
+        }
+    }
+    if (auto* go2 = dynamic_cast<GridObstacle2D*>(curComp)) {
+        if (CompHeader("Grid Obstacle", go2, &toRemove)) {
+            char mb[64];
+            std::strncpy(mb, go2->mapName.c_str(), sizeof(mb) - 1); mb[sizeof(mb) - 1] = '\0';
+            if (ImGui::InputText("Which tilemap##gob", mb, sizeof(mb))) { go2->mapName = mb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the tilemap. Leave empty for the first tilemap in the scene.");
+            if (ImGui::DragInt("How many cells across##gob", &go2->cellsWide, 0.1f, 1, 256)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width of the blocked rectangle, in cells, starting at this object's cell.");
+            if (ImGui::DragInt("How many cells down##gob", &go2->cellsTall, 0.1f, 1, 256)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Height of the blocked rectangle, in cells.");
+            if (ImGui::Checkbox("Block the path##gob", &go2->blocks)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: these cells are walls. An agent already walking through them plans a new route. Other agents keep theirs.");
+            ImGui::TextDisabled("Move this object to slide the blocked cells.");
+            if (ImGui::SmallButton("Remove##gob")) toRemove = go2;
+        }
+    }
     if (auto* al = dynamic_cast<ActionList*>(curComp)) {
         ImGui::PushID(al);
         // Behaviours are built in the Visual Script graph now (one graph editor).
@@ -36562,7 +36797,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Stream##audio", &a->stream)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play the file in small pieces as it plays instead of loading it whole.\n"
                                                           "Use it for long music and ambience: it takes a fixed small amount of memory\n"
-                                                          "however long the file is. Takes effect when the file loads (Play, or Load here).");
+                                                          "however long the file is. Takes effect when the file loads (Play, or Load here).\n"
+                                                          "A file set to \"Read it while it plays\" in its import settings does that\n"
+                                                          "even when this box is off.");
             if (ImGui::Button("Beep"))  a->clip = AudioClip::Sine(440.0f, 0.3f);
             ImGui::SameLine();
             if (ImGui::Button("Noise")) a->clip = AudioClip::Noise(0.3f);
@@ -36581,11 +36818,12 @@ void DrawInspector(EditorState& ed) {
             // Browse for an audio file and load it now so Play previews it in-editor.
             if (oked::TipButton("Browse...", "...##audiobrowse")) {
                 EditorState* edp = &ed; auto* ap = a;
-                okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, ap](const std::string& p) {
+                okay::filedialog::OpenOne("Choose an audio file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3, FLAC)", {"*.wav", "*.ogg", "*.mp3", "*.flac"}), [edp, ap](const std::string& p) {
                     ap->clipPath = p; edp->dirty = true;
                     std::string werr;
-                    if (ap->stream ? ap->OpenStream(p, &werr) : ap->clip.Load(p, &werr)) ConsoleLog((ap->stream ? "Streaming " : "Loaded ") + p);
-                    else ConsoleLog("Audio load failed: " + werr, 2);
+                    const okay::AudioAttach how = okay::AttachAudioFile(*ap, p, &werr);
+                    if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+                    else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + p);
                 });
             }
             ImGui::SameLine(0, 4);
@@ -36594,12 +36832,13 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Load##audiowavload")) {   // preview a typed/dropped path
                     std::string werr;
-                    if (a->stream ? a->OpenStream(a->clipPath, &werr) : a->clip.Load(a->clipPath, &werr)) ConsoleLog((a->stream ? "Streaming " : "Loaded ") + a->clipPath);
-                    else ConsoleLog("Audio load failed: " + werr, 2);
+                    const okay::AudioAttach how = okay::AttachAudioFile(*a, a->clipPath, &werr);
+                    if (how == okay::AudioAttach::Failed) ConsoleLog("Audio load failed: " + werr, 2);
+                    else ConsoleLog(std::string(how == okay::AudioAttach::Stream ? "Streaming " : "Loaded ") + a->clipPath);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
-            ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
+            ImGui::TextDisabled("WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
                                 a->IsStreaming() ? "stream" : "clip", a->clip.channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             oked::FieldTip("3D (spatial)");
@@ -36663,7 +36902,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine(0, 4);
                 if (oked::TipSmallButton("Browse...", "...")) {
                     EditorState* edp = &ed; auto* mpp = mp; const std::size_t ti = (std::size_t)i;
-                    okay::filedialog::OpenOne("Choose a music file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3)", {"*.wav", "*.ogg", "*.mp3"}), [edp, mpp, ti](const std::string& f) {
+                    okay::filedialog::OpenOne("Choose a music file", "", okay::filedialog::Filters("Audio (WAV, OGG, MP3, FLAC)", {"*.wav", "*.ogg", "*.mp3", "*.flac"}), [edp, mpp, ti](const std::string& f) {
                         if (ti < mpp->tracks.size()) { mpp->tracks[ti] = f; edp->dirty = true; }
                     });
                 }
@@ -38345,6 +38584,7 @@ void DrawInspector(EditorState& ed) {
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawMoreUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     oked::DrawRuntimeUIComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
@@ -40030,9 +40270,13 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Crafting>(), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
             if (item(!go->GetComponent<CraftingMenu>(), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeleeAttacker>(), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<RangedWeapon>(), "Ranged Weapon (gun)")) { go->AddComponent<RangedWeapon>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
+            if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
@@ -40149,6 +40393,14 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIToast>(), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
             if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISearchBar>(), "UI Search Bar")) { go->AddComponent<UISearchBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDateTimePicker>(), "UI Date and Time")) { go->AddComponent<UIDateTimePicker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFilePicker>(), "UI File Picker")) { go->AddComponent<UIFilePicker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAccordion>(), "UI Accordion")) { go->AddComponent<UIAccordion>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBreadcrumbs>(), "UI Breadcrumbs")) { go->AddComponent<UIBreadcrumbs>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
@@ -48657,6 +48909,10 @@ int main(int argc, char** argv) {
                 g_showSceneSettings = true;
                 if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Lighting");
             }
+            if (std::getenv("OKAY_UI_PROJECT")) {
+                g_showProjectSettings = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Project Settings");
+            }
             // OKAY_UI_BUILD=1 opens Build Settings (pair with OKAY_UI_BUILDSEC). OKAY_UI_SPOTLIGHT=1
             // adds a spot light and selects it, so a screenshot can show the Cast Shadows note.
             if (std::getenv("OKAY_UI_BUILD") && s_focusFrames == 40) g_showBuildGame = true;
@@ -48692,6 +48948,7 @@ int main(int argc, char** argv) {
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
             ContentEditorsDevHooks(ed); // OKAY_UI_CONTENT / OKAY_UI_CONTENT_TAB / OKAY_UI_CONTENT_DIR
+            WeaponEditorDevHooks(ed);   // OKAY_UI_WEAPONS / OKAY_UI_WEAPONS_FILE
             SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             LevelDevHooks(ed);        // OKAY_UI_LEVEL / LEVELTOOL / LEVELVIEW / LEVELSEL
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
@@ -49218,6 +49475,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
         { OKAY_PROFILE("UI.ContentEditors"); DrawContentEditors(ed); }
+        { OKAY_PROFILE("UI.Weapons"); if (g_showWeapons) DrawWeaponEditor(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
         // Make Playable Character is queued from the Project panel, which draws
         // after the Inspector. A drop onto a player is queued from the Hierarchy,

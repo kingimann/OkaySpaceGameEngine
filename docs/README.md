@@ -51,7 +51,9 @@ Pages are grouped by what you are trying to do. New here? Start with
 ## Gameplay systems
 - [survival_kit.md](survival_kit.md): health, hunger, thirst, stamina, oxygen and temperature components.
 - [npcs_and_crafting.md](npcs_and_crafting.md): NPCs and crafting.
+- [inventory.md](inventory.md): Inventory status, moves between bags, weight limits and what is missing.
 - [navigation.md](navigation.md): navigation meshes and agents.
+- [physics.md](physics.md): hinge limits for doors and levers, moving mesh colliders, and 2D box and capsule casts.
 - [volumes.md](volumes.md): box, sphere and cylinder zones: checkpoint, kill, force, fog and sound, drawn and resized in the Scene view.
 - [behavior_trees.md](behavior_trees.md): behavior trees for NPC AI.
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.
@@ -76,6 +78,12 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [model_import.md](model_import.md): which reader handles which model format, and the options that switch to our own readers.
 - [model_corpus.md](model_corpus.md): real-file checks of our own model readers against the outside libraries, and the flip-readiness verdict.
 - [own_fbx_reader.md](own_fbx_reader.md), [own_3ds_reader.md](own_3ds_reader.md), [own_bvh_reader.md](own_bvh_reader.md): our own FBX, 3DS and BVH readers.
+- [own_off_reader.md](own_off_reader.md), [own_smd_reader.md](own_smd_reader.md), [own_md5_reader.md](own_md5_reader.md), [own_ms3d_reader.md](own_ms3d_reader.md), [own_ase_reader.md](own_ase_reader.md): our own OFF, SMD, MD5, MS3D and ASE readers.
+- [own_lwo_reader.md](own_lwo_reader.md): our own LWO reader.
+- [own_dxf_reader.md](own_dxf_reader.md): our own DXF reader.
+- [own_x3d_reader.md](own_x3d_reader.md): our own X3D reader.
+- [own_amf_reader.md](own_amf_reader.md): our own AMF reader.
+- [own_3mf_reader.md](own_3mf_reader.md): our own 3MF reader (it also describes the XML and zip readers that AMF and X3D share).
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.
 - [terrain_water.md](terrain_water.md): terrain and water.
@@ -83,6 +91,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Game UI
 - [game_ui.md](game_ui.md): game UI in the launcher's look.
+- [minimap.md](minimap.md): the corner map (blips, zoom, heading-up, a map you draw) and turn order.
 - [ui_runtime.md](ui_runtime.md): the twelve UI looks, widget roles, radio buttons, windows, damage numbers, dialogue box, UI Gallery and the script and C++ calls.
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
@@ -127,6 +136,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [WORK_BOARD.md](WORK_BOARD.md): who is working on what.
 - [visual_scripting_nodes.md](visual_scripting_nodes.md), [visual_script_coverage.md](visual_script_coverage.md): the visual scripting nodes and how well they are covered.
 - [visual_script_clarity_audit.md](visual_script_clarity_audit.md), [visual_scripting_naming.md](visual_scripting_naming.md): audits of how clear the visual scripting nodes and their names are.
+- [../CLAUDE.md](../CLAUDE.md): the owner's standing rules for every session and agent (merging, CI, releases, secrets, own-code goal, disk).
 - [qa_workflow.md](qa_workflow.md): a developer and a QA session working together.
 - [../ROADMAP.md](../ROADMAP.md): releases and plans.
 - [archive/](archive/): old reports kept for history.

@@ -28,9 +28,17 @@ them.
 ## Player attacks (Melee Attacker)
 
 *Add Component ▸ Gameplay ▸ Melee Attacker.* On attack input (`attackKey`, default F,
-and/or left mouse) it hits every NPC within `range` inside a `arc`-degree cone in
-front for `damage`, on a `cooldown`. Broadcasts `player_attack`. `Swing()` is exposed
-for custom inputs/scripts.
+and/or left mouse) it hits whatever is inside `range` and the `arc`-degree cone in
+front: a Health component, survival health, RPG stats, or an NPC. A weapon from
+**View > Editors & Tools > Weapons** replaces those numbers and gives the swing a hit
+window, a combo and knockback. See `docs/weapons.md`. Broadcasts `player_attack`.
+`Swing()` is exposed for custom inputs/scripts.
+
+## Guns (Ranged Weapon)
+
+*Add Component ▸ Gameplay ▸ Ranged Weapon (gun).* Fires on a rate, spends the rounds
+in the gun, and reloads from the spare rounds. The same weapon list supplies the
+numbers. An instant shot hurts the first health it reaches. See `docs/weapons.md`.
 
 ## Spawner (enemy waves / loot)
 
@@ -39,6 +47,16 @@ a blueprint at play) and spawns copies near itself every `interval` seconds, kee
 at most `maxAlive` of its own spawns alive and stopping after `totalToSpawn`
 (0 = endless). Spawns land within `spawnRadius`. `SpawnOne()` and `AliveCount()` are
 exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
+
+## Items, loot tables and recipes
+
+**Window > Items, Loot & Recipes** (also **View > Editors & Tools > Items, Loot & Recipes**) is one window with three tabs. You can list, search, add, duplicate, delete and edit:
+
+- **Items**, saved as the project's `items.okayitems`.
+- **Loot tables** (`.okayloot`): each entry has a weight and a quantity range. **Roll** previews a drop with the same roll the game uses.
+- **Recipes** (`.okayrecipes`): ingredients, outputs, extra outputs and crafting time, plus the bench tag and the unlock flag the file already stores.
+
+An item name is a dropdown of items you have defined. A name that is not one of them is called out in plain English. Ctrl+Z and Ctrl+Y undo these edits while the window has focus. Double-click a `.okayitems`, `.okayloot` or `.okayrecipes` file in the Project panel to open it here. A Loot Source or a Crafting component can jump to its file.
 
 ## Crafting menu (auto UI)
 
@@ -74,9 +92,15 @@ Works on box/sphere colliders and heightmap terrain (max step 0.45, holes
 and cliffs are avoided). A stuck watchdog forces a fresh route whenever the
 NPC stops making progress for ~0.8 s (wedged on a corner or another NPC).
 
-Selecting an NPC in the Scene view now draws its **perception** too: a
+Selecting an NPC in the Scene view draws its **perception** too: a
 yellow sight-cone arc at eye height (Sight Range + Field Of View) and a
 blue circle for Hearing Range, so you can tune a guard's senses visually.
+That cone, the optional wall check and the hearing radius are the same
+check a behavior tree's Perception service uses, so the two agree when
+the numbers match. Each one keeps its own numbers: a new NPC starts with
+sight 8, a wide cone, line of sight off and hearing off, and a new
+Perception node starts with sight 12, a 120 degree cone, line of sight on
+and hearing 4.
 
 ### Ordering NPCs around from scripts
 

@@ -2,6 +2,11 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ThreeMfReader.hpp"
+#include "okay/Render/AmfReader.hpp"
+#include "okay/Render/X3dReader.hpp"
+#include "okay/Render/DxfReader.hpp"
+#include "okay/Render/LwoReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
@@ -89,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -395,7 +400,87 @@ constexpr bool kOwnBvhDefault = true;
 constexpr bool kOwnBvhDefault = false;
 #endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
+#ifdef OKAY_OWN_OFF_DEFAULT
+constexpr bool kOwnOffDefault = true;
+#else
+constexpr bool kOwnOffDefault = false;
+#endif
+
+#ifdef OKAY_OWN_SMD_DEFAULT
+constexpr bool kOwnSmdDefault = true;
+#else
+constexpr bool kOwnSmdDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MD5_DEFAULT
+constexpr bool kOwnMd5Default = true;
+#else
+constexpr bool kOwnMd5Default = false;
+#endif
+
+#ifdef OKAY_OWN_MS3D_DEFAULT
+constexpr bool kOwnMs3dDefault = true;
+#else
+constexpr bool kOwnMs3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_ASE_DEFAULT
+constexpr bool kOwnAseDefault = true;
+#else
+constexpr bool kOwnAseDefault = false;
+#endif
+
+#ifdef OKAY_OWN_3MF_DEFAULT
+constexpr bool kOwn3mfDefault = true;
+#else
+constexpr bool kOwn3mfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_AMF_DEFAULT
+constexpr bool kOwnAmfDefault = true;
+#else
+constexpr bool kOwnAmfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_X3D_DEFAULT
+constexpr bool kOwnX3dDefault = true;
+#else
+constexpr bool kOwnX3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_DXF_DEFAULT
+constexpr bool kOwnDxfDefault = true;
+#else
+constexpr bool kOwnDxfDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LWO_DEFAULT
+constexpr bool kOwnLwoDefault = true;
+#else
+constexpr bool kOwnLwoDefault = false;
+#endif
+
+// Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
+// A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
+struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
+constexpr OptInFormat kOptIn[] = {
+    {"OKAY_OWN_COLLADA", "COLLADA", kOwnColladaDefault},   // 3
+    {"OKAY_OWN_3DS",     "3DS",     kOwn3dsDefault},       // 4
+    {"OKAY_OWN_BVH",     "BVH",     kOwnBvhDefault},       // 5
+    {"OKAY_OWN_OFF",     "OFF",     kOwnOffDefault},       // 6
+    {"OKAY_OWN_SMD",     "SMD",     kOwnSmdDefault},       // 7
+    {"OKAY_OWN_MD5",     "MD5",     kOwnMd5Default},       // 8
+    {"OKAY_OWN_MS3D",    "MS3D",    kOwnMs3dDefault},       // 9
+    {"OKAY_OWN_ASE",     "ASE",     kOwnAseDefault},       // 10
+    {"OKAY_OWN_3MF",     "3MF",     kOwn3mfDefault},       // 11
+    {"OKAY_OWN_AMF",     "AMF",     kOwnAmfDefault},       // 12
+    {"OKAY_OWN_X3D",     "X3D",     kOwnX3dDefault},       // 13
+    {"OKAY_OWN_DXF",     "DXF",     kOwnDxfDefault},       // 14
+    {"OKAY_OWN_LWO",     "LWO",     kOwnLwoDefault},       // 15
+};
+constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
@@ -404,16 +489,26 @@ int OwnSlot(const std::string& ext) {
     if (e == ".dae") return 3;
     if (e == ".3ds") return 4;
     if (e == ".bvh") return 5;
+    if (e == ".off") return 6;
+    if (e == ".smd") return 7;
+    if (e == ".md5mesh" || e == ".md5anim") return 8;
+    if (e == ".ms3d") return 9;
+    if (e == ".ase") return 10;
+    if (e == ".3mf") return 11;
+    if (e == ".amf") return 12;
+    if (e == ".x3d") return 13;
+    if (e == ".dxf") return 14;
+    if (e == ".lwo") return 15;
     return -1;
 }
-std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
 
 // Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
 // variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
 bool OwnOptedIn(int slot) {
-    bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
-    const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
-    if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
+    bool v = kOptIn[slot - 3].cmakeDefault;
+    if (const char* e = std::getenv(kOptIn[slot - 3].var)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
 
@@ -429,6 +524,39 @@ bool AssimpReadsExt(const std::string& ext) {
 #else
     (void)ext; return false;
 #endif
+}
+
+// The one-static-mesh mode for the readers added after Collada / 3DS: every node's transform (the root's Z-up to Y-up
+// turn included) is baked into the vertices and normals of the parts on it, skins and clips are dropped and one root
+// node is left, as Assimp's pre-transform step does. (A skinned part at its bind pose is the mesh seen through its
+// root, so the baked result is the bind pose.)
+void FlattenImportedModel(ImportedModel& m) {
+    std::vector<Mat4> world(m.nodes.size());
+    for (std::size_t i = 0; i < m.nodes.size(); ++i) {
+        const ImportedNode& n = m.nodes[i];
+        const Mat4 l = Mat4::TRS(n.position, n.rotation, n.scale);
+        world[i] = (n.parent >= 0 && (std::size_t)n.parent < i) ? world[(std::size_t)n.parent] * l : l;
+    }
+    for (ImportedPart& p : m.parts) {
+        const Mat4 w = (p.node >= 0 && (std::size_t)p.node < world.size()) ? world[(std::size_t)p.node] : Mat4::Identity();
+        const Mat4 inv = w.Inverse();
+        for (Vec3& v : p.mesh.vertices) v = w.MultiplyPoint(v);
+        for (Vec3& n : p.mesh.normals) {   // normals go through the inverse transpose
+            const Vec3 t{inv.at(0, 0) * n.x + inv.at(0, 1) * n.y + inv.at(0, 2) * n.z,
+                         inv.at(1, 0) * n.x + inv.at(1, 1) * n.y + inv.at(1, 2) * n.z,
+                         inv.at(2, 0) * n.x + inv.at(2, 1) * n.y + inv.at(2, 2) * n.z};
+            n = t.Normalized();
+        }
+        const float det = w.at(0, 0) * (w.at(1, 1) * w.at(2, 2) - w.at(2, 1) * w.at(1, 2)) - w.at(1, 0) * (w.at(0, 1) * w.at(2, 2) - w.at(2, 1) * w.at(0, 2)) +
+                          w.at(2, 0) * (w.at(0, 1) * w.at(1, 2) - w.at(1, 1) * w.at(0, 2));
+        if (det < 0.0f) for (std::size_t i = 0; i + 2 < p.mesh.triangles.size(); i += 3) std::swap(p.mesh.triangles[i + 1], p.mesh.triangles[i + 2]);   // a mirror turns the winding
+        p.bones.clear(); p.jointIdx.clear(); p.jointWt.clear();
+        p.node = 0;
+    }
+    ImportedNode root;
+    root.name = m.nodes.empty() ? std::string("root") : m.nodes[0].name;
+    m.nodes.assign(1, root);
+    m.clips.clear();
 }
 
 } // namespace
@@ -486,7 +614,18 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
-                  : ReadBvhFile(path, out, &e1);
+                  : s == 5 ? ReadBvhFile(path, out, &e1)
+                  : s == 6 ? ReadOffFile(path, out, &e1)
+                  : s == 7 ? ReadSmdFile(path, out, &e1)
+                  : s == 8 ? ReadMd5File(path, out, &e1)
+                  : s == 9 ? ReadMs3dFile(path, out, &e1)
+                  : s == 10 ? ReadAseFile(path, out, &e1)
+                  : s == 11 ? Read3mfFile(path, out, &e1, flatten)
+                  : s == 12 ? ReadAmfFile(path, out, &e1, flatten)
+                  : s == 13 ? ReadX3dFile(path, out, &e1, flatten)
+                  : s == 14 ? ReadDxfFile(path, out, &e1, flatten)
+                  : ReadLwoFile(path, out, &e1);   // 15
+        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -503,8 +642,10 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     }
     if (err) {
         const std::string x = ExtensionOf(path);
-        const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
-        const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        const int xs = OwnSlot(x);
+        const bool optIn = xs >= 3 && xs - 3 < (int)(sizeof(kOptIn) / sizeof(kOptIn[0]));
+        const char* nm = optIn ? kOptIn[xs - 3].name : nullptr;
+        const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
             *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
                    "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";

@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -155,6 +155,38 @@ bool Read3dsBuffer(const std::string& bytes, const std::string& baseDir, Importe
 /// composed in the file's channel order. Units are kept (BVH has none); the Y-up right-handed
 /// convention of the common exporters is assumed.
 bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// OFF (Object File Format, text): one mesh part from `OFF` / `NOFF` / `STOFF` (and `C` variants) files: vertices,
+/// optional per-vertex normals and texture coordinates, polygons of any size (convex ones fanned, concave ones ear
+/// clipped). Smooth normals are generated when the file has none. Colors, `4OFF` and `nOFF` are not read (reported in
+/// `out.notes`, or an error for the last two). Units, axes and texture coordinates are kept as written.
+bool ReadOffBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
+/// skinned part per material (up to four bone weights per vertex, vertices welded, v flipped), the bind pose from the
+/// first frame and, when the file has several frames, one clip ("animation", 30 frames per second assumed). Euler
+/// angles follow Valve's convention. Vertex animation (flex) sections are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes the material names, which are the texture files).
+bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MD5 (id Tech 4 / Doom 3): `meshText` is an md5mesh, `animText` an md5anim (either may be empty, not both). The joints
+/// become nodes under a root that turns Z-up into Y-up; each mesh is one skinned part (vertices computed at the bind
+/// pose from the weights, four strongest joints per vertex, smooth normals generated, winding reversed to counter
+/// clockwise, texture coordinates kept as written); the animation is one clip at the file's frameRate. With only an animation, the nodes come from
+/// its hierarchy and base frame. Shader names that are not image files set no texture. `baseDir` ends with a slash or is empty.
+bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MS3D (MilkShape 3D, binary, versions 3 and 4): one skinned part per group (vertices welded on position, normal
+/// and texture coordinate; normals and UVs come per triangle corner), materials (diffuse and emissive colour,
+/// shininess, texture; the transparency goes into the diffuse alpha), the joint hierarchy as nodes, up to four joint
+/// weights per vertex (the version 4 extra-weight block when present), and one clip ("animation") from the joints' rotation
+/// and translation keys. Y-up like the engine; units, winding and texture coordinates are kept as written.
+/// Comments, ambient / specular colours and smoothing groups are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// ASE (3ds Max ASCII Scene Export, text; UTF-8 or UTF-16 with a byte order mark): one part per object and material
+/// (sub-materials by face material id; vertices welded; normals from MESH_NORMALS or built from the smoothing groups),
+/// diffuse colour and bitmap, the node hierarchy from NODE_PARENT / NODE_TM and the position / rotation / scale sample
+/// tracks as one clip (TCB and Bezier keys read as plain keys). The root node turns Z-up into Y-up; v is flipped.
+/// Cameras, lights and shapes are plain empty nodes; vertex colours, extra mapping channels, other material maps and
+/// texture transforms are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
+bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -162,12 +194,18 @@ bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// `path` is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
+bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 

@@ -455,6 +455,12 @@ to *start Y / ignore / only*: **radius** (above 0 it's a sphere cast), **layers*
 (the same layer list) and **skip triggers**. Stored as the trailing tokens `r:`,
 `lm:` and `nt:1`. The Actions trigger list also has **On Trigger Stay**.
 
+**2D sweeps and blasts.** **Box Cast** and **Capsule Cast** sweep a flat shape and
+return the first hit the same way a raycast does. **Overlap Rectangle** and
+**Overlap Capsule** name what is already inside. **Add Explosion Force** shoves
+this object's 2D body away from a point; the push fades to nothing at the
+radius, and a kinematic or static body is left alone. See [physics](physics.md).
+
 **Physics debug view.** *View ▸ Scene Overlays ▸ Physics Debug* (or the **Physics**
 checkbox on the Game view toolbar) draws colliders (green solid, blue trigger,
 grey asleep), this frame's contact points with their normals (red) and, with
@@ -910,6 +916,9 @@ Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
 | List Sort | in place, smallest first; Descending true for largest first. Numbers sort as numbers, text alphabetically; a mixed list sorts by kind (numbers, bools, text, vectors, colours, objects, lists, maps) and is stable |
 | List Reverse / List Clear | in place |
 | List Copy | a new list; Deep copies nested lists and maps |
+| List Append (List, Other) | adds every item of Other to the end of List; appending a list to itself doubles it |
+| List Slice (List, Start, Count) | a new list of Count items from Start (nothing wired into Count: everything from Start). Start 0 to the length is fine; past the end, or a negative / NaN Count, is reported and the slice is empty. Count past the end stops at the end |
+| List Pop | removes the last item and gives it back (Item, Popped). An empty list is not an error: Popped is false |
 | For Each | walk a list (existing; the loop walks a snapshot) |
 
 ### Maps
@@ -919,6 +928,8 @@ Indexes count from 0; NaN, infinity and absurdly large indexes count as outside.
 | New Map, Map Set, Map Get (Value, Found), Map Has, Map Remove, Map Keys, Map Values, For Each Map | as before; keys sort, so a run is repeatable |
 | Map Clear / Map Count | empty it / how many entries |
 | Map Copy | a new map; Deep copies nested lists and maps |
+| Map Get Or (Map, Key, Default) | the value under Key, or Default when the key is missing |
+| Map Merge (Into, From) | copies every entry of From into Into; a key in both takes From's value |
 
 A missing key is not an error: Map Get gives Found false.
 

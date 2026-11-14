@@ -300,9 +300,9 @@ void DrawDialogs() {
 }
 
 // ---- import settings ------------------------------------------------------------------------------
-// Only settings that an importer really reads are shown: a texture's largest side (the renderer's texture cache) and
-// a model's scale (when the editor adds it to a scene). The other keys in the meta are stored but unused, so there is
-// no control for them.
+// Only settings that an importer really reads are shown. A texture's largest side, a model's scale and normals,
+// and an audio file's loading and channel mix. Quality is not shown: audio is not re-encoded, so that number
+// cannot change the sound (it stays in the file so an older settings file still round-trips).
 
 namespace {
 struct ImportEdit {
@@ -332,7 +332,7 @@ constexpr bool kShowTextureSamplerSettings = false;
 bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     (void)browser;
     const okay::AssetType k = okay::AssetTypeFromPath(assetPath);
-    return k == okay::AssetType::Texture || k == okay::AssetType::Model;
+    return k == okay::AssetType::Texture || k == okay::AssetType::Model || k == okay::AssetType::Audio;
 }
 
 bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
@@ -387,6 +387,17 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             ImGui::Checkbox("Import animations", &e.model.importAnimations);
             ImGui::TextDisabled("Off: no clips, rest pose.");
             ImGui::TextDisabled("Used when the model is next added to a scene.");
+            break;
+        }
+        case ok::AssetType::Audio: {
+            int mode = e.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
+            if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
+                e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
+                                             : ok::AudioImportSettings::LoadMode::Decode;
+            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
+            ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
+            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
+            ImGui::TextDisabled("Used the next time the file is loaded.");
             break;
         }
         default: return false;

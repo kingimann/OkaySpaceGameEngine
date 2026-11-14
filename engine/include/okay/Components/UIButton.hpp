@@ -32,7 +32,8 @@ public:
     /// Localized: a string-table key whose text replaces `label` in the current language.
     LocalizedText loc;
     /// Optional TTF/OTF font for the label (e.g. "Assets/MyFont.ttf"). Empty = the
-    /// built-in 8x8 bitmap font.
+    /// scene UI font: the built-in TrueType face, or the 8x8 bitmap when the scene
+    /// picks the pixel-art font.
     std::string fontPath;
     /// Optional icon image drawn inside the button, left of the label (PNG/JPG;
     /// bundled by Build Game). `iconSize` is its square size in pixels (0 hides

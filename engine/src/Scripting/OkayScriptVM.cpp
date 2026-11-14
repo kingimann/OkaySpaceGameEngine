@@ -1,5 +1,6 @@
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -96,12 +97,19 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/Crafting.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
@@ -2105,6 +2113,14 @@ Value Runtime::GetDotted(const std::string& name, bool& ok) {
     // The step of a FixedUpdate and the real frame time were both answered with this frame's SCALED delta
     // (so Time.unscaledDeltaTime read 0 in a pause and half of itself at timeScale 0.5).
     if (name == "Time.fixedDeltaTime")      return Value{Time::FixedDeltaTime()};
+    if (name == "Time.physicsSteps") {
+        Scene* sc = g ? g->scene() : nullptr;
+        return Value{sc ? sc->PhysicsStepsPerSecond() : 0.0f};
+    }
+    if (name == "Time.smoothPhysics") {
+        Scene* sc = g ? g->scene() : nullptr;
+        return Value{sc ? sc->SmoothPhysics() : false};
+    }
     if (name == "Time.unscaledDeltaTime")   return Value{Time::UnscaledDeltaTime()};
     if (name == "Time.unscaledTime")        return Value{(float)Time::UnscaledTime()};
     // Since this Play began (the game's clocks that Time.time and Time.frameCount are the process's own).
@@ -2233,6 +2249,14 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
         if (Has(base) && IsClassInstance(Get(base))) { SetMember(Get(base), field, v, true); return true; }
     }
     if (name == "Time.timeScale") { Time::SetTimeScale(v.AsFloat()); return true; }
+    if (name == "Time.physicsSteps") {
+        if (Scene* sc = g ? g->scene() : nullptr) sc->SetPhysicsStepsPerSecond(v.AsFloat());
+        return true;
+    }
+    if (name == "Time.smoothPhysics") {
+        if (Scene* sc = g ? g->scene() : nullptr) sc->SetSmoothPhysics(v.AsBool());
+        return true;
+    }
     // rb.velocity = ... on a GetComponent<T>() reference held in a variable.
     if (auto dot = name.find('.'); dot != std::string::npos && name.find('.', dot + 1) == std::string::npos) {
         const std::string base = name.substr(0, dot);
@@ -4851,6 +4875,109 @@ struct OkayScriptVM::Impl {
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
+        // App widgets. A missing object is a no-op so a graph can call them safely.
+        b["ui_search_query"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) return Value{w->query};
+            return Value{std::string{}};
+        };
+        b["ui_set_search"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) w->SetQuery(a[1].AsString());
+            return Value{};
+        };
+        b["ui_search_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISearchBar>()) return Value{(float)w->MatchCount()};
+            return Value{0.0f};
+        };
+        b["ui_set_date"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 4) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>())
+                    w->SetDate(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()), SafeInt(a[3].AsFloat()));
+            return Value{};
+        };
+        b["ui_set_time"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>())
+                    w->SetTime(SafeInt(a[1].AsFloat()), SafeInt(a[2].AsFloat()));
+            return Value{};
+        };
+        b["ui_date_text"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIDateTimePicker>()) return Value{w->Text()};
+            return Value{std::string{}};
+        };
+        b["ui_file_set_root"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) w->SetRoot(a[1].AsString());
+            return Value{};
+        };
+        b["ui_file_open"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) w->Open(a[1].AsString());
+            return Value{};
+        };
+        b["ui_file_selected"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIFilePicker>()) return Value{w->selected};
+            return Value{std::string{}};
+        };
+        b["ui_accordion_toggle"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIAccordion>()) w->Toggle(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_accordion_open"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIAccordion>()) return Value{w->IsExpanded(SafeInt(a[1].AsFloat()))};
+            return Value{false};
+        };
+        b["ui_breadcrumb_select"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBreadcrumbs>()) w->Select(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_breadcrumb_path"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBreadcrumbs>()) return Value{w->Path()};
+            return Value{std::string{}};
+        };
+        b["ui_page"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->Page()};
+            return Value{0.0f};
+        };
+        b["ui_page_count"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) return Value{(float)w->PageCount()};
+            return Value{0.0f};
+        };
+        b["ui_set_page"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIPagination>()) w->SetPage(SafeInt(a[1].AsFloat()));
+            return Value{};
+        };
+        b["ui_set_loading"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UISkeleton>()) w->SetLoading(a[1].AsBool());
+            return Value{};
+        };
+        b["ui_sheet_open"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) w->Open();
+            return Value{};
+        };
+        b["ui_sheet_close"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) w->Close();
+            return Value{};
+        };
+        b["ui_sheet_open_state"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* w = g->GetComponent<UIBottomSheet>()) return Value{w->IsOpen()};
+            return Value{false};
+        };
         // Rotation (degrees, clockwise on screen) and scale (width, height) of a UI frame.
         // One scale number sets both axes. A widget with no frame gets one when you set these.
         auto uiFrame = [sceneOf](const std::string& name, bool create) -> UIFrame* {
@@ -5889,6 +6016,82 @@ struct OkayScriptVM::Impl {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
         };
+        // ---- 2D grid paths: the Grid Path Agent on this object (or a named one) ----
+        // grid_move_to(x, y) walks to the cell that contains that world point.
+        // grid_move_cell(x, y) walks to that cell. A leading name picks another object.
+        auto gridOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GridPathAgent2D* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<GridPathAgent2D>() : nullptr;
+        };
+        auto namedObject = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GameObject* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g;
+        };
+        b["grid_move_to"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n || a.size() < i + 2) return Value{0.0f};
+            n->SetDestination(a[i].AsFloat(), a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_move_cell"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n || a.size() < i + 2) return Value{0.0f};
+            n->SetCell((int)a[i].AsFloat(), (int)a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_stop"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            if (!n) return Value{0.0f};
+            n->Stop(); return Value{1.0f};
+        };
+        b["grid_arrived"] = [gridOf](std::vector<Value>& a) {
+            std::size_t i = 0; GridPathAgent2D* n = gridOf(a, i);
+            return Value{n && n->Arrived() ? 1.0f : 0.0f};
+        };
+        b["grid_set_tile_cost"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 2) return Value{0.0f};
+            auto* c = g->GetComponent<GridCostLayer>();
+            if (!c) c = g->AddComponent<GridCostLayer>();
+            c->SetTileCost((int)a[i].AsFloat(), a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_set_cell_cost"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 3) return Value{0.0f};
+            auto* c = g->GetComponent<GridCostLayer>();
+            if (!c) c = g->AddComponent<GridCostLayer>();
+            c->SetCellCost((int)a[i].AsFloat(), (int)a[i + 1].AsFloat(), a[i + 2].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_block"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g || a.size() < i + 2) return Value{0.0f};
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) o = g->AddComponent<GridObstacle2D>();
+            o->Place((int)a[i].AsFloat(), (int)a[i + 1].AsFloat());
+            return Value{1.0f};
+        };
+        b["grid_clear"] = [namedObject](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = namedObject(a, i);
+            if (!g) return Value{0.0f};
+            auto* o = g->GetComponent<GridObstacle2D>();
+            if (!o) return Value{0.0f};
+            o->Clear();
+            return Value{1.0f};
+        };
         // ---- Navmesh queries (no agent needed) ----------------------------------
         // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to
         // the point (nav_path_exists(fx, fy, fz, tx, ty, tz) between two points);
@@ -6555,6 +6758,40 @@ struct OkayScriptVM::Impl {
         b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);
             return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["weapon_swing"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* m = go ? go->GetComponent<MeleeAttacker>() : nullptr;
+            if (!m) return Value{0.0f};
+            m->Swing();
+            return Value{1.0f};
+        };
+        b["weapon_fire"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            return Value{g && g->Fire() ? 1.0f : 0.0f};
+        };
+        b["weapon_reload"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            if (!g) return Value{0.0f};
+            g->Reload();
+            return Value{1.0f};
+        };
+        b["weapon_ammo"] = [selfObj](std::vector<Value>&) {
+            GameObject* go = selfObj();
+            auto* g = go ? go->GetComponent<RangedWeapon>() : nullptr;
+            return Value{(float)(g ? g->Rounds() : 0)};
+        };
+        b["weapon_set"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go || a.empty()) return Value{0.0f};
+            const std::string id = a[0].AsString();
+            bool any = false;
+            if (auto* m = go->GetComponent<MeleeAttacker>()) { m->weapon = id; any = true; }
+            if (auto* g = go->GetComponent<RangedWeapon>()) { g->weapon = id; any = true; }
+            if (auto* s = go->GetComponent<TopDownShooterController>()) { s->weapon = id; any = true; }
+            return Value{any ? 1.0f : 0.0f};
         };
         b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
             const int dir = a.empty() ? 0 : dirArg(a[0]);
@@ -9257,6 +9494,24 @@ struct OkayScriptVM::Impl {
         b["ray3_ny"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.ny}; };
         b["ray3_nz"]     = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.nz}; };
         b["ray3_dist"]   = [this](std::vector<Value>&) -> Value { return Value{rt.lastHit3D.dist}; };
+        b["physics_steps"] = [this](std::vector<Value>&) {
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            return Value{sc ? sc->PhysicsStepsPerSecond() : 0.0f};
+        };
+        b["set_physics_steps"] = [this](std::vector<Value>& a) {
+            if (Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr)
+                sc->SetPhysicsStepsPerSecond(a.empty() ? 50.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["physics_smooth"] = [this](std::vector<Value>&) {
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            return Value{sc ? sc->SmoothPhysics() : false};
+        };
+        b["set_physics_smooth"] = [this](std::vector<Value>& a) {
+            if (Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr)
+                sc->SetSmoothPhysics(a.empty() ? true : a[0].AsBool());
+            return Value{};
+        };
         b["set_gravity3"] = [this](std::vector<Value>& a) {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
                 rt.host->gameObject->scene()->physics3D().gravity =

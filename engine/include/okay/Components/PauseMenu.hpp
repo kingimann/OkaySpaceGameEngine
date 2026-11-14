@@ -12,6 +12,7 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Core/Localization.hpp"
 #include <string>
@@ -27,8 +28,14 @@ namespace okay {
 /// freezes and the cursor is freed to click), drives the audio mixer (the player's
 /// settings are saved with their prefs), and
 /// Quit asks the host to exit. Buttons also work with keyboard/gamepad navigation.
+/// While the menu is open it pushes the input context from InputContextName() in
+/// Block mode, so gameplay actions (Jump, Move, …) do not fire. Raw keys are
+/// unchanged, which is why Escape still toggles the menu. The context is popped
+/// when the menu closes, including when something else unpauses the game.
 class PauseMenu : public Behaviour {
 public:
+    /// The input context this menu pushes while it is open.
+    static const char* InputContextName() { return "Pause"; }
     char  toggleKey = 27;                 ///< key that toggles pause (27 = Escape)
     std::string title = "Paused";
     std::string hint  = "Press Esc to resume";
@@ -92,7 +99,15 @@ public:
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
         bool paused = Game::Paused();
-        if (paused != m_shown) { SetOverlayActive(paused); m_shown = paused; if (paused) SyncSliders(); }
+        if (paused != m_shown) {
+            SetOverlayActive(paused);
+            m_shown = paused;
+            if (paused) SyncSliders();
+            // Something else paused or unpaused. Match the overlay, the capture
+            // flag and the input context, so an external unpause does not leave
+            // gameplay actions blocked.
+            SyncInputCapture(paused);
+        }
         if (paused) {
             Cursor::Capture(false);            // free the cursor so the buttons are clickable
             Input::SetUICaptured(true);        // the world ignores clicks/keys behind the menu
@@ -112,16 +127,20 @@ public:
     void OnDestroy() override {
         // The UI lives in the scene now (editable + serialized), so DON'T destroy it
         // here — just drop our references and never leave the game frozen.
+        const bool release = m_shown || Game::Paused();
         m_objects.clear(); m_root = nullptr; m_built = false; m_shown = false;
         m_resume = nullptr; m_restart = nullptr; m_menu = nullptr; m_quit = nullptr; m_volume = nullptr;
         m_music = nullptr; m_effects = nullptr;
-        if (Game::Paused()) { Game::SetPaused(false); Input::SetUICaptured(false); }
+        if (release) {
+            if (Game::Paused()) Game::SetPaused(false);
+            SyncInputCapture(false);
+        }
     }
 
     /// Open/close the pause menu programmatically (e.g. from a HUD button).
     void Toggle() { Game::Paused() ? Resume() : Pause(); }
     void Pause()  { EnsureBuilt(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true; SyncSliders();
-                    Cursor::Capture(false); Input::SetUICaptured(true); }
+                    Cursor::Capture(false); SyncInputCapture(true); }
 
     /// Create the editable pause-menu UI (Canvas, panels, buttons, slider) as real
     /// child objects if it isn't there yet — call this from the editor when the
@@ -135,7 +154,7 @@ public:
         return m_root;
     }
     bool HasUI() const { return FindUIRoot() != nullptr; }
-    void Resume() { Game::SetPaused(false); SetOverlayActive(false); m_shown = false; Input::SetUICaptured(false); }
+    void Resume() { Game::SetPaused(false); SetOverlayActive(false); m_shown = false; SyncInputCapture(false); }
 
 private:
     std::vector<GameObject*> m_objects;   ///< every overlay object (toggled together)
@@ -149,6 +168,13 @@ private:
     UISlider* m_effects = nullptr;
     bool      m_built   = false;
     bool      m_shown   = false;
+
+    /// Block gameplay actions while the menu is up, and give them back when it closes.
+    void SyncInputCapture(bool paused) {
+        Input::SetUICaptured(paused);
+        if (paused) InputActions::PushContext(InputContextName(), InputActions::ContextMode::Block);
+        else InputActions::PopContext(InputContextName());
+    }
 
     // The existing UI root (a child "PauseMenu UI"), if the editable menu is already
     // in the scene — so Play reuses it instead of spawning a new one.

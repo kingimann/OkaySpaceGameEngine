@@ -11,6 +11,7 @@
 // files, which wrote six digits, still load. Unknown lines are ignored, so a file written by a newer
 // editor loads in an older one.
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -354,6 +355,10 @@ struct ProjectSettings {
     int   defaultWidth  = 1280, defaultHeight = 720;
     float gravity2D[2]  = {0.0f, -9.81f};
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
+    /// Physics steps per second while Play or a build runs. 50 is the old fixed step.
+    float physicsHz     = 50.0f;
+    /// Draw bodies between those steps. On, so motion stays smooth at any frame rate.
+    bool  smoothPhysics = true;
     float ambient       = 0.30f;
     bool  skybox        = true;
     // ---- Editor loading screen (per-project splash customization) ----
@@ -376,6 +381,8 @@ inline std::string WriteProjectSettings(const ProjectSettings& s, const std::str
     f << "height=" << s.defaultHeight << "\n";
     f << "gravity2d=" << FloatText(s.gravity2D[0]) << " " << FloatText(s.gravity2D[1]) << "\n";
     f << "gravity3d=" << v3(s.gravity3D) << "\n";
+    f << "physics_hz=" << FloatText(s.physicsHz) << "\n";
+    f << "physics_smooth=" << (s.smoothPhysics ? 1 : 0) << "\n";
     f << "ambient=" << FloatText(s.ambient) << "\n";
     f << "skybox=" << (s.skybox ? 1 : 0) << "\n";
     f << "splash_logo=" << s.splashLogo << "\n";
@@ -400,6 +407,16 @@ inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, co
     else if (k == "height")  s.defaultHeight = std::atoi(v.c_str());
     else if (k == "gravity2d") { float a = s.gravity2D[0], b = s.gravity2D[1]; std::sscanf(v.c_str(), "%f %f", &a, &b); s.gravity2D[0] = a; s.gravity2D[1] = b; }
     else if (k == "gravity3d") f3(s.gravity3D);
+    else if (k == "physics_hz") {
+        char* end = nullptr;
+        float h = std::strtof(v.c_str(), &end);
+        if (end != v.c_str() && std::isfinite(h)) {
+            if (h < 1.0f) h = 1.0f;
+            if (h > 500.0f) h = 500.0f;
+            s.physicsHz = h;
+        }
+    }
+    else if (k == "physics_smooth") s.smoothPhysics = std::atoi(v.c_str()) != 0;
     else if (k == "ambient") s.ambient = (float)std::atof(v.c_str());
     else if (k == "skybox")  s.skybox = std::atoi(v.c_str()) != 0;
     else if (k == "splash_logo") std::snprintf(s.splashLogo, sizeof(s.splashLogo), "%s", v.c_str());

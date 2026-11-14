@@ -394,7 +394,7 @@ void RegisterColliders3D() {
 
 void RegisterAudioSource() {
     PropertyBuilder<AudioSource> b("AudioSource", "audio", "Audio");
-    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("Audio file to play (WAV, OGG or MP3)")
+    b.AddAssetPath("clipPath", &AudioSource::clipPath, "audio").Tooltip("Audio file to play (WAV, OGG, MP3 or FLAC)")
      .AddFloat("volume", &AudioSource::volume).Range(0, 1, 0.01)
      .AddFloat("pitch", &AudioSource::pitch).Range(0.01, 8, 0.01).Tooltip("Speed and pitch together")
      .AddFloat("pan", &AudioSource::pan).Range(-1, 1, 0.01).Tooltip("-1 left, 0 centre, 1 right")

@@ -24,7 +24,8 @@ The rest of this page: subtitles and captions, colour vision support,
 controller and keyboard navigation of UI, a controls-screen model with conflict
 detection, and one settings object a player sets once and the whole game honours.
 Everything is plain C++ (`#include <Okay.hpp>`). `CaptionOverlay` draws the shared
-caption lines. The navigation helpers still draw nothing, so a game's UI decides how those look.
+caption lines. The focus ring is drawn by the UI renderer (see Focus ring below). The
+navigation helpers only choose which widget is focused.
 
 | Header | What it has |
 |---|---|

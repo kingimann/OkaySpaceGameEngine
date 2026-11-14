@@ -1,5 +1,61 @@
 OkaySpace Game Engine — Changelog
 
+v2.870.0
+  Multiplayer and anti-cheat
+  - The relay program now refuses old game versions that do not send the
+    safety cookie. This stops fake packets from filling the relay. A server
+    owner can allow old games again with --legacy-hello=on.
+  - Anti-cheat: a kick report can carry the evidence behind it. The launcher
+    admin pages show linked accounts and evidence, and the editor has a
+    Detection engine section with a master switch and an observe mode.
+
+  Inventory
+  - Fixed a bug where inventory slots grew wrongly when sent over the
+    network. The weight limit is now enforced. Bags and chests scale with the
+    screen and scroll with the mouse wheel when they are tall.
+  - The top-down fire button no longer shoots through an open bag or menu.
+    Lean keys step aside when a chest or bag wants the same key.
+
+  Scripting
+  - Visual script: new List Append, List Slice, List Pop, Map Get Or and Map
+    Merge nodes. Typed scripts can pass arguments to events.
+
+  Importing models
+  - A texture path in a model's material file that points to an absolute
+    location is now ignored, so a downloaded model cannot point the engine at
+    files elsewhere on the computer.
+
+  Behind the scenes
+  - Fixed the Windows build on the newest build tools, and fixed four tests
+    that failed on the build servers. The web build is faster and times out
+    instead of hanging.
+
+v2.869.0
+  Anti-cheat
+  - A server-side detection engine can watch for speed hacks, flying,
+    no-clip, aim bots, rapid fire, item duplication and message floods. It
+    is off until a game turns it on, and it has an observe mode that only
+    records. Existing games are not affected.
+
+  Importing models
+  - Concave faces in OBJ and PLY files are triangulated properly instead of
+    being fanned, which fixed warped surfaces.
+  - PLY files with a free-text header line load. glTF files with strips,
+    fans or a bad index load what they can, and a glTF with no usable mesh
+    now says so instead of importing an empty model.
+  - On Windows, model files in folders with non-English names load. Files
+    with decimal commas in a different language setting no longer break.
+  - FBX files from 3ds Max keep their PBR material values.
+
+  Launcher
+  - Removed a setting that did nothing. The offline What's New page no
+    longer shows an outdated list.
+
+  Behind the scenes (off by default, nothing changes for players)
+  - OkayUI, our own interface toolkit, gained window stacking, colour
+    widgets, tables that skip off-screen rows, plots and drawing backends.
+    The editor and launcher still use Dear ImGui.
+
 v2.868.0
   Accounts and anti-cheat
   - Joining a server that needs a session ticket now asks the account

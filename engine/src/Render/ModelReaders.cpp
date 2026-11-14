@@ -64,7 +64,7 @@ std::string Trim(const std::string& s) {
 std::string ResolveTexturePath(std::string tp, const std::string& baseDir) {
     for (char& c : tp) if (c == '\\') c = '/';
     const bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    if (abs) return tp;
+    if (abs) return {};   // an absolute path would point the engine at any file on the machine (#753): drop it
     // Stay inside the model's own directory tree: an untrusted model must not be able to point the
     // engine at any file on the machine ("map_Kd ../../../../etc/passwd" used to be kept verbatim).
     // The ".."s are resolved here; one that climbs out of the model's directory drops the texture.

@@ -74,7 +74,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** from the component-library request, none found as components: radio group, search bar, date picker, time picker, file picker. Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`)
+- **Open:** from the component-library request, none found as components: radio group. Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -99,7 +99,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Tabs section), `docs/engine_api.md`
 - **Tests:** `ui_tabs`, `ui_overlays`, `ui_layout_containers`, `ui_extra`, `ui_nav_touch`, `ui_input_guard`, `item_dragdrop` (world drag and drop)
 - **Status:** Works - modals, context menu, keybind, virtual list, horizontal scroll and the new tabs came with the UI plan P1 PRs (ROADMAP: #381, #386, #391); toast and slot grid have no tests of their own
-- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); missing from the library request: accordion, breadcrumbs, pagination, skeleton loader, bottom sheet/drawer, data table, tree view, carousel, radial menu, kill feed
+- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); accordion, breadcrumbs, pagination, skeleton and bottom sheet are `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UISkeleton` and `UIBottomSheet`. Still missing from the library request: data table, tree view, carousel, radial menu, kill feed
 - **Related:** 12.12, 12.5, 11.1, 12.7
 - **Words:** list view, scroll view, scroll, tabs, tab bar, modal, dialog, popup, context menu, right-click menu, tooltip, toast, notification, slot grid, drag and drop, drop target
 - **Seen as:** a long list is slow or drops rows; tabs do not switch pages or overflow; a dialog lets clicks through to widgets behind it; Escape does not close a modal; a tooltip runs off the screen or never shows; scrolling with a finger does not work
@@ -173,7 +173,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
 - **Docs:** `docs/game_ui.md` (Loading screens)
-- **Tests:** `loading_screen`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
+- **Tests:** `loading_screen`, `loading_screen_layout`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
 - **Status:** Works - implemented and tested (headless loading logic, pause freeze and quit flag, pause card at three aspects)
 - **Open:** no known gaps; save-slot UI components (area 35) are not here
 - **Related:** 12.7, 7.4, 1.8, 35
@@ -194,7 +194,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Phones and tablets), `docs/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
-- **Open:** `UITouchScroll` still has no test by name. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/input.md`)
+- **Open:** `UITouchScroll` is covered by `ui_touch_scroll`. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/input.md`)
 - **Related:** 12.1, 8.4, 18.2
 - **Words:** mobile, phone, tablet, safe area, notch, portrait, landscape, touch, emulator, device frame, resolution
 - **Seen as:** UI is tiny or cropped on a phone; buttons sit under the notch; finger scrolling does not work; the device preview shows the wrong insets

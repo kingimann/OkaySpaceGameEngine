@@ -38,6 +38,9 @@ The **UI** button on the Scene toolbar switches to the UI editing view. Its
 | **Kit (launcher look)** | Ready-styled building blocks: Card, Heading, List Row, Badge, Avatar, Divider, Primary / Secondary / Danger / Ghost buttons, Switch, Spinner and Notification. |
 | **Prebuilt Screens** | Whole screens. **Menus:** Main Menu, Pause Menu, Settings, Confirm Dialog, Loading Screens (see below). **In game:** HUD, Health Bar, Dialog Box, Notification, Shop, Game Over. **Multiplayer:** Lobby, Scoreboard, Leaderboard, Matchmaking. |
 
+The minimap (blips, zoom, a map you draw, the big map) is written up in
+[minimap.md](minimap.md).
+
 Select a panel or card first and new widgets and kit pieces go **inside** it.
 Otherwise they go on the scene's Canvas, which is created if it's missing.
 Everything you add is ordinary objects, so you can drag, resize, restyle or
@@ -74,6 +77,23 @@ Screens lay out against a 1280×720 canvas that **scales with the screen**, so
 they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
+
+## Turning and scaling a frame
+
+A **UI Frame** has **Rotation** and **Scale** in the Inspector, on top of its anchors.
+
+**Rotation** is degrees clockwise around the pivot. **Scale** is a width multiplier and a height multiplier: 1 and 1 leaves the size alone, and two different numbers stretch the frame. Children turn and scale with the frame. Clicks follow the turned, scaled shape, including picking the widget in the editor.
+
+A scene saved before these fields loads with no turn and a scale of 1.
+
+```
+ui_set_rotation("Badge", 28)
+ui_set_scale("Badge", 1.45, 0.65)
+ui_get_rotation("Badge")
+ui_get_scale("Badge")
+```
+
+The same calls are the visual-script nodes `Fn.ui_set_rotation`, `Fn.ui_get_rotation`, `Fn.ui_set_scale` and `Fn.ui_get_scale`.
 
 ## Text fields
 

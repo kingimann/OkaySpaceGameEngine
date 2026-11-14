@@ -5,6 +5,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Get started
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
+- [provenance_audit.md](provenance_audit.md): audit of code that may have been copied or ported from other projects (rule 19a), with findings, limits and owner questions.
 - [own_code_roadmap.md](own_code_roadmap.md): the plan to replace and remove every third-party library, with the criteria each must meet.
 - [crypto_review_package.md](crypto_review_package.md): what an outside security reviewer needs to review our own crypto.
 - [crypto_review_request.md](crypto_review_request.md): the request to send a reviewer, what we ask and give, how to pick one, and the owner's checklist.

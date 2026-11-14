@@ -78,3 +78,5 @@ installer and the release archives carry that file, as the OFL requires the noti
 - **Sample models:** none are downloaded or bundled. The old sample-model entries were removed.
 
 If you add a library, add it to this page with its licence and how it is obtained.
+
+Code provenance: [provenance_audit.md](provenance_audit.md) lists what may have been copied or ported from other projects (rule 19a), how serious each case is, and what to rewrite first. Scan tool: `scripts/provenance_scan.py`.

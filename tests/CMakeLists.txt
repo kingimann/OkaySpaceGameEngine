@@ -193,6 +193,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
+add_executable(test_inventory_moves test_inventory_moves.cpp)
+target_link_libraries(test_inventory_moves PRIVATE okay::engine)
+add_test(NAME inventory_moves COMMAND test_inventory_moves)
+
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
@@ -1766,6 +1771,10 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
+target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
+target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)

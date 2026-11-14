@@ -36,7 +36,7 @@ code=$?
 pass=$(grep -c 'WARNING:  PASS' "$T/out")
 fail=$(grep -c 'WARNING:  FAIL' "$T/out")
 grep 'WARNING:  FAIL\|ERROR' "$T/out"
-if [ "$code" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$pass" -lt 70 ]; then
+if [ "$code" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$pass" -lt 82 ]; then
     echo "anticheat_sql: $pass passed, $fail failed (psql exit $code)"; exit 1
 fi
 echo "anticheat_sql: ok ($pass checks)"

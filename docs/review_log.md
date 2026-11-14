@@ -62,6 +62,19 @@ verified by anyone.
 
 Nothing copied-looking was found in these branches. That comes from reading and cannot prove the code is original.
 
+## 5. Second Claude's branches: reverb, LWO UVs, Terragen (internal agent re-check)
+
+Read-only re-check of the fixes the second Claude made after its first review. Nothing was built or run by the
+reviewer; test counts are the author's claims.
+
+| Finding | Where | Status |
+|---|---|---|
+| Reverb: no problems found; level held to 0.05 dB against the old reverb; not listened to on speakers | `claude2/reverb-own-tuning` (PR #860) | Ready; unverified by ear |
+| LWO UVs: cylinder V lost the `WRPH` scale, so "placement kept identical" was not true; one code comment still said "derived from geometry" | `claude2/lwo-uv-rewrite` | Fixed on `claude/lwo-fix` (owner accepted keeping the old placement for now, 2026-11-14); test being added |
+| Terragen: `-DOKAY_OWN_TER=ON` did nothing (a merge dropped TER from the CMake loop) | `claude2/own-reader-terragen` | Fixed on `claude/terragen-fix`; proof being added |
+
+Not checked: Windows, the full test suite, any listening test.
+
 ## What no review has covered
 
 - Anything on real Windows or macOS; real servers, real network shares, real PlayFab.

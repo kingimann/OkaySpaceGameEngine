@@ -66,14 +66,13 @@ fs::path MakeGame(const char* name) {
 }
 
 void TestSha512() {
-    RUN_SUITE("SHA-512 (ed25519's hash: the backend in use, and the portable code)");
+    RUN_SUITE("SHA-512 (ed25519's hash, from okay::crypto)");
     const auto d0 = sha512::Hash(nullptr, 0);
     CHECK(ToHex(d0.data(), d0.size()) ==
           "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
           "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e");
     const std::string abc = "abc";
     const auto d1 = sha512::Hash((const std::uint8_t*)abc.data(), abc.size());
-    CHECK(d1 == sha512::HashPortable((const std::uint8_t*)abc.data(), abc.size()));   // backend and portable code agree
     CHECK(ToHex(d1.data(), d1.size()) ==
           "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
           "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
@@ -116,18 +115,12 @@ void TestRfc8032() {
         const auto msg = Hex(v.msg);
         const auto want = Arr<64>(v.sig);
         const auto pk = Arr<32>(v.pk);
-        // The portable code is checked on every build (it's what the launcher and
-        // a no-sodium build use)...
-        CHECK(ed25519::portable::PublicKeyFromSeed(seed) == pk);
-        CHECK(ed25519::portable::Sign(msg.data(), msg.size(), seed) == want);
-        CHECK(ed25519::portable::Verify(msg.data(), msg.size(), want, pk));
-        // ...and the backend in use (libsodium when the build has it) agrees.
+        // The backend in use (libsodium when the build has it, otherwise okay::crypto) must give the RFC's answers.
         CHECK(ed25519::PublicKeyFromSeed(seed) == pk);
         CHECK(ed25519::Sign(msg.data(), msg.size(), seed) == want);
         CHECK(ed25519::Verify(msg.data(), msg.size(), want, pk));
         auto bad = want; bad[5] ^= 1;
         CHECK(!ed25519::Verify(msg.data(), msg.size(), bad, pk));
-        CHECK(!ed25519::portable::Verify(msg.data(), msg.size(), bad, pk));
     }
     std::cout << "  ed25519 backend: " << ed25519::Backend() << "\n";
 }
@@ -149,7 +142,6 @@ void TestThrowawayKeys() {
     unsigned carry = 0;
     for (int i = 0; i < 32; ++i) { carry += (unsigned)mal[32 + i] + L[i]; mal[32 + i] = (std::uint8_t)carry; carry >>= 8; }
     CHECK(!ed25519::Verify(msg, mal, pk));
-    CHECK(!ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), mal, pk));
     Wipe(seed.data(), seed.size());
     Wipe(other.data(), other.size());
     bool zero = true;
@@ -417,7 +409,6 @@ void TestSmallOrder() {
     ed25519::PublicKey ident{}; ident[0] = 1;              // y = 1: the identity point
     ed25519::Signature sig{}; sig[0] = 1;                  // R = identity, S = 0
     const std::string msg = "anything at all";
-    CHECK(!ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), sig, ident));
     CHECK(!ed25519::Verify(msg, sig, ident));
     // Every encoding of a small-order point (libsodium's blocklist), with and without the sign bit.
     const char* small[] = {
@@ -433,8 +424,7 @@ void TestSmallOrder() {
         for (int sign = 0; sign < 2; ++sign) {
             ed25519::PublicKey k = Arr<32>(h);
             if (sign) k[31] |= 0x80;
-            CHECK(ed25519::portable::IsWeakKey(k));
-            CHECK(ed25519::IsWeakKey(k));                            // the backend in use (okay::crypto with OKAY_OWN_CRYPTO)
+            CHECK(ed25519::IsWeakKey(k));                            // the backend in use (libsodium or okay::crypto)
             std::vector<ed25519::PublicKey> keys;
             CHECK(!ParseKeyList(ToHex(k.data(), k.size()), keys));   // can't be built in as trusted
             // A signature whose R is small-order is refused too, whatever the key.
@@ -442,7 +432,6 @@ void TestSmallOrder() {
             const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(s);
             ed25519::Signature forged{};
             std::copy(k.begin(), k.end(), forged.begin());
-            CHECK(!ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), forged, pk));
             CHECK(!ed25519::Verify((const std::uint8_t*)msg.data(), msg.size(), forged, pk));
             Wipe(s.data(), s.size());
         }
@@ -451,10 +440,9 @@ void TestSmallOrder() {
     for (int i = 0; i < 20; ++i) {
         ed25519::Seed s = ThrowawaySeed();
         const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(s);
-        CHECK(!ed25519::portable::IsWeakKey(pk));
         CHECK(!ed25519::IsWeakKey(pk));
         const ed25519::Signature sg = ed25519::Sign(msg, s);
-        CHECK(ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), sg, pk));
+        CHECK(ed25519::Verify(msg, sg, pk));
         std::vector<ed25519::PublicKey> keys;
         CHECK(ParseKeyList(ToHex(pk.data(), pk.size()), keys) && keys.size() == 1);
         Wipe(s.data(), s.size());

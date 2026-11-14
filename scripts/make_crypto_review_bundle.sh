@@ -62,6 +62,7 @@ files=(
     engine/src/Net/NetworkManager.cpp
     engine/src/Net/RelayServer.cpp
     # the other crypto code in the tree (section 1, second table); read-only, not built here
+    # (shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto now; the TweetNaCl-derived port is deleted)
     shared/AntiCheatCrypto.hpp
     shared/AntiCheatChecks.hpp
     engine/include/okay/Platform/Account/AccountService.hpp
@@ -85,6 +86,7 @@ files=(
     tests/test_net_crypto_sodium.cpp
     tests/bench_crypto.cpp
     tests/test_anticheat_integrity.cpp
+    tests/test_anticheat_golden.cpp
     # scripts
     scripts/crypto_ct_matrix.sh
     scripts/crypto_fuzz_sanitized.sh
@@ -185,13 +187,15 @@ WY=(-DOKAY_WYCHEPROOF_DEFAULT_DIR="\"$ROOT/tests/wycheproof\"")
 if [ $have_sodium = 1 ]; then
     build test_crypto_wycheproof "${BASE[@]}" "${WY[@]}" -DOKAY_WY_SODIUM "${SODIUM_CF[@]}" tests/test_crypto_wycheproof.cpp "${CORE[@]}" "${SODIUM_LD[@]}" && run test_crypto_wycheproof
     build test_crypto_sodium_xcheck "${BASE[@]}" "${SODIUM_CF[@]}" tests/test_crypto_sodium_xcheck.cpp "${CORE[@]}" "${SODIUM_LD[@]}" && run test_crypto_sodium_xcheck
-    build crypto_difftest "${BASE[@]}" -Ishared "${SODIUM_CF[@]}" tests/crypto_difftest.cpp "${CORE[@]}" "${SODIUM_LD[@]}" && run crypto_difftest 1500
+    build crypto_difftest "${BASE[@]}" "${SODIUM_CF[@]}" tests/crypto_difftest.cpp "${CORE[@]}" "${SODIUM_LD[@]}" && run crypto_difftest 1500
     build test_net_crypto_sodium "${BASE[@]}" -Itests "${SODIUM_CF[@]}" tests/test_net_crypto_sodium.cpp "${CORE[@]}" "${SODIUM_LD[@]}" && run test_net_crypto_sodium
 else
     build test_crypto_wycheproof "${BASE[@]}" "${WY[@]}" tests/test_crypto_wycheproof.cpp "${CORE[@]}" && run test_crypto_wycheproof
     note "SKIPPED  libsodium cross-checks and the differential test (libsodium-dev / pkg-config not found)"
 fi
 build test_net_crypto_own "${BASE[@]}" -Itests tests/test_net_crypto_own.cpp "${CORE[@]}" && run test_net_crypto_own
+# The anti-cheat Ed25519 and SHA-512 wrapper (shared/AntiCheatCrypto.hpp) against a transcript recorded from the old TweetNaCl-derived port
+build test_anticheat_golden "${BASE[@]}" -Itests -Ishared tests/test_anticheat_golden.cpp "${CORE[@]}" && run test_anticheat_golden
 build fuzz_crypto_smoke "${BASE[@]}" tests/fuzz_crypto.cpp "${CORE[@]}" && run fuzz_crypto_smoke 300
 build fuzz_net_crypto_smoke "${BASE[@]}" -DOKAY_OWN_CRYPTO -DOKAY_NET_CRYPTO tests/fuzz_net_crypto.cpp engine/src/Net/SessionTicket.cpp "${CORE[@]}" && run fuzz_net_crypto_smoke 300
 if [ $have_py = 1 ]; then
@@ -270,8 +274,8 @@ The script prints PASS, FAIL or SKIPPED for each check and keeps full logs in \`
 |---|---|
 | \`engine/include/okay/Crypto/\`, \`engine/src/Crypto/\` | The library under review (\`docs/crypto_review_package.md\` section 1, first table) |
 | \`engine/include/okay/Net/\`, \`engine/src/Net/\` | The seam (\`NetCrypto.hpp\`), \`SecureChannel\`, \`SessionTicket\` (these build standalone), and \`NetworkManager\` and \`RelayServer\` as read-only context for the protocol questions |
-| \`shared/\`, \`engine/include/okay/Platform/Account/\` | The other crypto code in scope: the TweetNaCl-derived port, the hand-written HMAC, the extra SHA-256 copies. Read-only here; they need the rest of the engine to build |
-| \`tests/\` | Known-answer, field, Wycheproof, differential, cross-check, constant-time and fuzz harnesses, and \`tests/wycheproof/\` (third-party vectors, Apache-2.0, unmodified, data not code under review). \`test_anticheat_integrity.cpp\` is included to read; it needs the engine to build |
+| \`shared/\`, \`engine/include/okay/Platform/Account/\` | The other crypto code in scope: the thin anti-cheat wrapper \`AntiCheatCrypto.hpp\` (the TweetNaCl-derived port is deleted), the hand-written HMAC, the extra SHA-256 copies. Read-only here; they need the rest of the engine to build |
+| \`tests/\` | Known-answer, field, Wycheproof, differential, cross-check, constant-time and fuzz harnesses, and \`tests/wycheproof/\` (third-party vectors, Apache-2.0, unmodified, data not code under review). \`test_anticheat_integrity.cpp\` is included to read; it needs the engine to build. \`test_anticheat_golden.cpp\` builds standalone and checks the anti-cheat wrapper against a recorded transcript |
 | \`scripts/\` | The constant-time matrix and sanitizer fuzz scripts (run from this root), the backend test script (needs the full repository), and the script that made this bundle |
 | \`docs/\` | The review package and request, \`crypto.md\`, the roadmap and the anti-cheat guide |
 | \`reviewer/run_evidence.sh\` | Builds and runs the evidence with a plain compiler |

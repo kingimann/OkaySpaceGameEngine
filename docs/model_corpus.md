@@ -22,6 +22,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | OBJ | 28 | `models/OBJ` (23), `models-nonbsd/OBJ` (2), `models/invalid` (3): groups, `usemtl`, concave polygons, point and line elements, vertex colours, UTF-16 |
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
+| 3MF | 1 | one box, a deflate-compressed package |
 
 ## Running it
 
@@ -32,7 +33,7 @@ OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 - `model_corpus` reads every manifest row with the reader named in it. A file recorded as read must still read with the same mesh, triangle, bone, skinned-mesh, clip and material counts; a file recorded as failing must still fail (a fix therefore shows up as a manifest change).
 - `fbx_reader` (`tests/test_fbx_reader.cpp`) additionally imports every real `.fbx` through ufbx and through our reader and compares them the way it does for our own fixtures: object, mesh, joint, vertex, triangle and clip counts, names, bounding box, surface area, skin weights, inverse binds, clip samples.
 - Without `OKAY_MODEL_CORPUS` both tests run only on our fixtures and `model_corpus` prints "skipped".
-- `test_model_corpus --one|--list|--fbxdump|--fbxdiff|--fbxclips|--keys ...` print what the readers found, for comparing with another importer. `--list` takes the readers `fbx-own`, `dae`, `3ds`, `bvh`, `obj`, `stl`, `ply` and `gltf` (`.gltf` and `.glb`). For `obj`, `stl`, `ply` and `gltf` a row also carries `tex` (distinct texture files over all materials), `nodes`, `uv` and `nrm` (1 when some mesh has per-vertex UVs or normals); glTF sizes are the file's own (the importer's auto-scale of very large or tiny models is undone).
+- `test_model_corpus --one|--list|--fbxdump|--fbxdiff|--fbxclips|--keys ...` print what the readers found, for comparing with another importer. `--list` takes the readers `fbx-own`, `dae`, `3ds`, `bvh`, `obj`, `stl`, `ply` and `gltf` (`.gltf` and `.glb`); the batch-B readers `3mf`, `amf`, `x3d`, `dxf` and `lwo` take the same arguments. For `obj`, `stl`, `ply` and `gltf` a row also carries `tex` (distinct texture files over all materials), `nodes`, `uv` and `nrm` (1 when some mesh has per-vertex UVs or normals); glTF sizes are the file's own (the importer's auto-scale of very large or tiny models is undone).
 - The Assimp side of the glTF/OBJ/STL/PLY comparison: `scripts/assimp_corpus_dump.cpp` prints Assimp's view of a file in the same TSV shape (meshes, triangles, area, bounding box, materials, distinct textures, nodes, animations and their length, UV and normal presence; only `aiProcess_Triangulate` is applied), and `scripts/compare_model_corpus.py ours.tsv assimp.tsv` lists the differences. It does not print two differences that are by design: Assimp adds a default material to a file whose meshes have none (its material count is one higher), and our readers generate normals a file lacks (Assimp leaves them absent). Build Assimp with only the importers needed: `cmake -DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=OFF -DASSIMP_BUILD_OBJ_IMPORTER=ON -DASSIMP_BUILD_STL_IMPORTER=ON -DASSIMP_BUILD_PLY_IMPORTER=ON -DASSIMP_BUILD_GLTF_IMPORTER=ON -DASSIMP_NO_EXPORT=ON` on the same v5.4.3 checkout.
 
 ## Results
@@ -112,6 +113,14 @@ Bugs the real files found, all fixed with a regression test (`tests/test_model_r
 3. **glTF ignored the primitive `mode`.** Triangle strips and fans were read as plain triangle lists (wrong triangles), lines and points were read as triangles (`IncorrectVertexArrays/Cube.gltf` had twice the triangles, a points primitive produced 341 triangles). Strips and fans are now expanded (alternating strip winding, degenerate triangles dropped), points and lines are left out, and trailing indices that do not make a whole triangle are dropped.
 4. **A glTF triangle with an out-of-range index rejected the whole primitive**; only that triangle is dropped now (Assimp does the same).
 5. **A glTF with unreadable meshes imported as an empty scene with `ok = true`** (missing `.bin`, Draco or meshopt compression, only points or lines). It now fails with a one-line error, as Assimp does; glTF 1.0 gets its own message.
+
+### 3MF, AMF, X3D, DXF and LWO (own readers vs Assimp)
+
+The batch-B readers were run on every file of their formats under `test/models` and `test/models-nonbsd` of the same Assimp v5.4.3 checkout and compared with Assimp built from those sources (`scripts/assimp_corpus_dump.cpp` with only the 3MF, AMF, X3D, DXF and LWO importers, `scripts/compare_model_corpus.py`; the rows are in the manifest). Assimp's test files for these formats are few and small: the only real-world evidence there is. Everything the files do not exercise is tested on synthetic fixtures built in memory and labelled as such in each reader's page.
+
+#### 3MF
+
+One real file (`models/3MF/box.3mf`, a 10 x 20 x 30 millimetre box in a deflate-compressed package). Ours reads it and equals Assimp 5.4.3 on meshes, triangles, surface area and bounding box (Assimp's box turned the same Z-up way: `compare_model_corpus.py` does it for `.3mf` and `.amf`). Assimp keeps 8 shared vertices, ours has 24 (the 90 degree edges stay sharp). Details and what is **not** verified (no real file with colours, textures or extensions exists in the tree) in `docs/own_3mf_reader.md`.
 
 ### Sanitizers and valgrind (engine-linked tests)
 

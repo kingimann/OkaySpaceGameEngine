@@ -233,6 +233,7 @@ add_library(okay_engine
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp
     src/Render/BvhReader.cpp
+    src/Render/ThreeMfReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -515,6 +516,13 @@ if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
+# Our own 3MF readers (batch B), same opt-in rules as 3DS: default OFF.
+foreach(_fmt 3MF)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
+    endif()
+endforeach()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

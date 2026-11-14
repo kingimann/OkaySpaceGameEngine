@@ -2,6 +2,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Render/ThreeMfReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
@@ -89,7 +90,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".3mf"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -395,7 +396,27 @@ constexpr bool kOwnBvhDefault = true;
 constexpr bool kOwnBvhDefault = false;
 #endif
 
-// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh; -1 = no own reader.
+// Our own readers added in batch B (3MF, AMF, X3D, DXF, LWO): same opt-in rules as 3DS, kept in one table so each has
+// its own slot (11 and up; 6..10 are used by the readers added in parallel). Environment variable OKAY_OWN_<FMT>.
+#ifdef OKAY_OWN_3MF_DEFAULT
+constexpr bool kOwn3mfDefault = true;
+#else
+constexpr bool kOwn3mfDefault = false;
+#endif
+struct BatchBFormat { const char* ext; const char* name; const char* env; bool dflt; };
+constexpr int kBatchBFirstSlot = 11;
+const BatchBFormat kBatchB[] = {
+    {".3mf", "3MF", "OKAY_OWN_3MF", kOwn3mfDefault},   // slot 11
+};
+constexpr int kBatchBCount = (int)(sizeof(kBatchB) / sizeof(kBatchB[0]));
+bool ReadBatchBFile(int slot, const std::string& path, ImportedModel& out, std::string* err, bool flatten) {
+    switch (slot - kBatchBFirstSlot) {
+    case 0: return Read3mfFile(path, out, err, flatten);
+    default: return false;
+    }
+}
+
+// 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 11.. = the batch-B table above; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
     const std::string e = Lower(ext);
     if (e == ".obj") return 0;
@@ -404,15 +425,17 @@ int OwnSlot(const std::string& ext) {
     if (e == ".dae") return 3;
     if (e == ".3ds") return 4;
     if (e == ".bvh") return 5;
+    for (int i = 0; i < kBatchBCount; ++i) if (e == kBatchB[i].ext) return kBatchBFirstSlot + i;
     return -1;
 }
-std::atomic<int> g_backendChoice[6] = {{0}, {0}, {0}, {0}, {0}, {0}};   // ImportBackend per own-reader format
+std::atomic<int> g_backendChoice[kBatchBFirstSlot + kBatchBCount] = {};   // ImportBackend per own-reader format
 
 // Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
 // variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
 bool OwnOptedIn(int slot) {
     bool v = slot == 3 ? kOwnColladaDefault : slot == 4 ? kOwn3dsDefault : kOwnBvhDefault;
     const char* name = slot == 3 ? "OKAY_OWN_COLLADA" : slot == 4 ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+    if (slot >= kBatchBFirstSlot) { v = kBatchB[slot - kBatchBFirstSlot].dflt; name = kBatchB[slot - kBatchBFirstSlot].env; }
     if (const char* e = std::getenv(name)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
 }
@@ -486,6 +509,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         std::string e1;
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
+                  : s >= kBatchBFirstSlot ? ReadBatchBFile(s, path, out, &e1, flatten)
                   : ReadBvhFile(path, out, &e1);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
@@ -505,6 +529,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const std::string x = ExtensionOf(path);
         const char* nm = x == ".dae" ? "COLLADA" : x == ".3ds" ? "3DS" : x == ".bvh" ? "BVH" : nullptr;
         const char* var = x == ".dae" ? "OKAY_OWN_COLLADA" : x == ".3ds" ? "OKAY_OWN_3DS" : "OKAY_OWN_BVH";
+        for (int i = 0; i < kBatchBCount; ++i) if (x == kBatchB[i].ext) { nm = kBatchB[i].name; var = kBatchB[i].env; }
         if (nm)
             *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
                    "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";

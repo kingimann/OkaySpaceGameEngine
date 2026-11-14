@@ -1,4 +1,5 @@
 #include "okay/Components/UIDialogueBox.hpp"
+#include "okay/Core/Subtitles.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -65,6 +66,7 @@ void UIDialogueBox::Show(const std::string& speaker, const std::string& text,
         }
     Refresh();
     Fire("on_dialogue_line");
+    if (!text.empty()) CaptionManager::Main().Say(speaker, text);
 }
 
 void UIDialogueBox::Refresh() {

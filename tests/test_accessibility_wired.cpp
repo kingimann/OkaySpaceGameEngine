@@ -180,9 +180,11 @@ int main() {
         ui->wrap = true; ui->pixelSize = 1.0f; ui->size = {300, 100};
         Accessibility::SetTextScale(1.0f);
         std::string scratch;
-        const int rows1 = (int)std::count(ui->DisplayText(scratch).begin(), ui->DisplayText(scratch).end(), '\n');
+        const std::string wrapped1 = ui->DisplayText(scratch);
+        const int rows1 = (int)std::count(wrapped1.begin(), wrapped1.end(), '\n');
         Accessibility::SetTextScale(2.0f);
-        const int rows2 = (int)std::count(ui->DisplayText(scratch).begin(), ui->DisplayText(scratch).end(), '\n');
+        const std::string wrapped2 = ui->DisplayText(scratch);
+        const int rows2 = (int)std::count(wrapped2.begin(), wrapped2.end(), '\n');
         CHECK(rows2 > rows1);                                         // bigger text wraps onto more lines
         Accessibility::Reset();
     }

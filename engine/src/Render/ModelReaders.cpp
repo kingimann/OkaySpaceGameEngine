@@ -1,8 +1,12 @@
 // Our own model readers: OBJ (+MTL), STL (ascii + binary), PLY (ascii + binary).
 // Every reader works on an in-memory buffer, bounds-checks every read, and fails
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
+#include "FileOpen.hpp"
+#include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
+#include "PolygonTriangulate.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -21,7 +25,7 @@ constexpr std::size_t kMaxMtlBytes  = 16u * 1024u * 1024u;
 bool Fail(std::string* err, const char* msg) { if (err) *err = msg; return false; }
 
 bool ReadAllBytes(const std::string& path, std::size_t cap, std::string& out, std::string* err) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) return Fail(err, "cannot open file");
     out.clear();
     char buf[65536];
@@ -60,7 +64,28 @@ std::string Trim(const std::string& s) {
 std::string ResolveTexturePath(std::string tp, const std::string& baseDir) {
     for (char& c : tp) if (c == '\\') c = '/';
     const bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    return abs ? tp : baseDir + tp;
+    if (abs) return tp;
+    // Stay inside the model's own directory tree: an untrusted model must not be able to point the
+    // engine at any file on the machine ("map_Kd ../../../../etc/passwd" used to be kept verbatim).
+    // The ".."s are resolved here; one that climbs out of the model's directory drops the texture.
+    std::vector<std::string> parts;
+    std::size_t i = 0;
+    while (i < tp.size()) {
+        std::size_t a = i;
+        while (a < tp.size() && tp[a] != '/') ++a;   // one path component
+        const std::string comp = tp.substr(i, a - i);
+        i = a + 1;
+        if (comp.empty() || comp == ".") continue;
+        if (comp == "..") {
+            if (parts.empty()) return {};
+            parts.pop_back();
+            continue;
+        }
+        parts.push_back(comp);
+    }
+    std::string out;
+    for (const std::string& p : parts) { if (!out.empty()) out += '/'; out += p; }
+    return baseDir + out;
 }
 
 // The file name of a texture statement ("map_Kd -s 1 1 1 wood.png"): skip the
@@ -71,7 +96,7 @@ std::string MtlTextureName(const std::string& rest) {
     auto word = [&]() { std::size_t a = i; while (i < rest.size() && !IsSpace(rest[i])) ++i; return rest.substr(a, i - a); };
     auto isNumber = [](const std::string& w) {
         if (w.empty()) return false;
-        char* e = nullptr; std::strtod(w.c_str(), &e); return e && *e == '\0';
+        char* e = nullptr; detail::StrToD(w.c_str(), &e); return e && *e == '\0';
     };
     for (;;) {
         skipWs();
@@ -109,16 +134,16 @@ void ParseMtl(const std::string& text, const std::string& baseDir, std::vector<I
         if (!cur) continue;
         auto num3 = [&](float& a, float& b, float& c) {
             const char* s = rest.c_str(); char* q = nullptr;
-            a = std::strtof(s, &q); if (q == s) return false; s = q;
-            b = std::strtof(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
-            s = q; c = std::strtof(s, &q); if (q == s) return false;
+            a = detail::StrToF(s, &q); if (q == s) return false; s = q;
+            b = detail::StrToF(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
+            s = q; c = detail::StrToF(s, &q); if (q == s) return false;
             return Finite(a) && Finite(b) && Finite(c);
         };
         if (key == "kd")      { float r, g, b; if (num3(r, g, b)) { cur->hasDiffuse = true; cur->diffuse = Color(r, g, b, 1.0f); } }
         else if (key == "ke") { float r, g, b; if (num3(r, g, b)) { cur->hasEmissive = true; cur->emissive = Color(r, g, b, 1.0f); } }
-        else if (key == "ns") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
-        else if (key == "pm") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
-        else if (key == "pr") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
+        else if (key == "ns") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
+        else if (key == "pm") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
+        else if (key == "pr") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
         else if (key == "map_kd") { std::string t = MtlTextureName(rest); if (!t.empty()) cur->texture = ResolveTexturePath(t, baseDir); }
         else if (key == "map_bump" || key == "bump" || key == "norm") {
             std::string t = MtlTextureName(rest);
@@ -150,7 +175,7 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     auto readF = [&](const char*& c, bool& bad) -> float {
         while (c < end && (*c == ' ' || *c == '\t' || *c == '\r')) ++c;
         if (c >= end || *c == '\n') return 0.0f;
-        char* q = nullptr; float v = std::strtof(c, &q);
+        char* q = nullptr; float v = detail::StrToF(c, &q);
         if (q == c) { bad = true; ++c; return 0.0f; }   // junk: always advance
         c = q; if (!Finite(v)) bad = true; return v;
     };
@@ -263,6 +288,8 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
         }
         std::unordered_map<CKey, int, CKeyHash> remap;
         std::vector<int> idx;
+        std::vector<Vec3> ring;
+        std::vector<std::array<int, 3>> tris;
         for (std::size_t fi = 0; fi < faceStart.size(); ++fi) {
             if (faceMat[fi] != order[pi]) continue;
             const std::size_t b = faceStart[fi], e = fi + 1 < faceStart.size() ? faceStart[fi + 1] : corners.size();
@@ -280,8 +307,12 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                 }
                 idx.push_back(it->second);
             }
-            for (std::size_t i = 2; i < idx.size(); ++i)
-                part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[i - 1], idx[i]});
+            if (idx.size() == 3) { part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[1], idx[2]}); continue; }
+            // quads and larger: convex polygons fan from the first corner; concave ones are ear clipped (a fan covers the notch)
+            ring.resize(idx.size());
+            for (std::size_t i = 0; i < idx.size(); ++i) ring[i] = part.mesh.vertices[(std::size_t)idx[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[(std::size_t)t[0]], idx[(std::size_t)t[1]], idx[(std::size_t)t[2]]});
         }
     }
     return true;
@@ -378,7 +409,7 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
     auto num = [&](float& v) -> bool {
         while (p < end && IsSpace(*p)) ++p;
         if (p >= end) return false;
-        char* q = nullptr; v = std::strtof(p, &q);
+        char* q = nullptr; v = detail::StrToF(p, &q);
         if (q == p || !Finite(v)) return false;
         p = q; return true;
     };
@@ -460,7 +491,7 @@ struct PlyStream {
         if (fmt == PlyFormat::Ascii) {
             while (p < end && IsSpace(*p)) ++p;
             if (p >= end) return false;
-            char* q = nullptr; v = std::strtod(p, &q);
+            char* q = nullptr; v = detail::StrToD(p, &q);
             if (q == p) return false;
             p = q; return true;
         }
@@ -532,6 +563,14 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
             if (elems.size() >= 64) return Fail(err, "too many PLY elements");
             char* q = nullptr; unsigned long long c = std::strtoull(w[2].c_str(), &q, 10);
             if (!q || *q != '\0' || w[2][0] == '-') return Fail(err, "bad PLY element count");
+            // A second `element vertex` is not another slice of one vertex list.
+            // Reading it used to keep the first block's normal bytes on the second
+            // block's vertices, or concatenate a different property subset so
+            // normals and UVs no longer lined up with positions. Refuse it here,
+            // before any vertex is written.
+            if (w[1] == "vertex")
+                for (const PlyElement& prev : elems)
+                    if (prev.name == "vertex") return Fail(err, "PLY declares more than one vertex element");
             PlyElement e; e.name = w[1]; e.count = c; elems.push_back(std::move(e));
         } else if (w[0] == "property") {
             if (elems.empty()) return Fail(err, "PLY property before any element");
@@ -545,14 +584,15 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                 if (pr.type == PlyType::None) return Fail(err, "unknown PLY property type");
             } else return Fail(err, "bad PLY property line");
             elems.back().props.push_back(std::move(pr));
-        } else return Fail(err, "unknown PLY header line");
+        }   // any other header line is ignored, as an unknown keyword (some exporters write free text without "comment")
     }
     if (!haveFormat) return Fail(err, "PLY has no format line");
     if (!haveEnd) return Fail(err, "PLY header never ends");
 
     PlyStream st{p, end, fmt};
     Mesh mesh;
-    std::vector<std::uint32_t> faceIdx;   // triangulated, validated at the end
+    std::vector<std::uint32_t> faceIdx;   // every polygon's corners back to back, validated at the end
+    std::vector<std::uint32_t> faceLen;   // corners of each polygon
     bool sawVertex = false, hasN = false, hasUV = false;
     constexpr std::size_t kMaxFaceVerts = 65535;
 
@@ -565,8 +605,8 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
         const bool isVertex = el.name == "vertex", isFace = el.name == "face";
         int ix = -1, iy = -1, iz = -1, inx = -1, iny = -1, inz = -1, iu = -1, iv = -1, ifaceList = -1;
         if (isVertex) {
-            // A second vertex element would leave the normals / UVs of the two blocks
-            // out of step with the vertex list (hasN true, fewer normals than vertices).
+            // Header parsing rejects this first. This is the write-site guard: a
+            // second block must not append positions onto normals/UVs from the first.
             if (sawVertex) return Fail(err, "PLY declares more than one vertex element");
             for (std::size_t k = 0; k < el.props.size(); ++k) {
                 const std::string& n = el.props[k].name; int ki = (int)k;
@@ -624,15 +664,31 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                     mesh.uvs.push_back(t);
                 }
             } else if (isFace && poly.size() >= 3) {
-                for (std::size_t i = 2; i < poly.size(); ++i) { faceIdx.push_back(poly[0]); faceIdx.push_back(poly[i - 1]); faceIdx.push_back(poly[i]); }
+                faceLen.push_back((std::uint32_t)poly.size());
+                faceIdx.insert(faceIdx.end(), poly.begin(), poly.end());
             }
         }
     }
     if (!sawVertex) return Fail(err, "PLY has no vertex element");
     if (faceIdx.empty()) return Fail(err, "PLY has no faces");
     for (std::uint32_t i : faceIdx) if (i >= mesh.vertices.size()) return Fail(err, "PLY face index out of range");
-    mesh.triangles.assign(faceIdx.begin(), faceIdx.end());
+    {   // triangles: convex polygons fan from their first corner, concave ones are ear clipped
+        std::vector<Vec3> ring; std::vector<std::array<int, 3>> tris;
+        std::size_t at = 0;
+        for (std::uint32_t len : faceLen) {
+            const std::uint32_t* f = faceIdx.data() + at; at += len;
+            if (len == 3) { mesh.triangles.insert(mesh.triangles.end(), {(int)f[0], (int)f[1], (int)f[2]}); continue; }
+            ring.resize(len);
+            for (std::uint32_t i = 0; i < len; ++i) ring[i] = mesh.vertices[f[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) mesh.triangles.insert(mesh.triangles.end(), {(int)f[t[0]], (int)f[t[1]], (int)f[t[2]]});
+        }
+    }
     if (!hasN) mesh.ComputeSmoothNormals();   // what Assimp's GenSmoothNormals does for the same file
+    // Normals cover every position (authored, or the smooth fill above). UVs are
+    // all or nothing: a short list would be read as belonging to the wrong vertices.
+    if (mesh.normals.size() != mesh.vertices.size()) return Fail(err, "PLY normals do not cover every vertex");
+    if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.vertices.size()) return Fail(err, "PLY UVs do not cover every vertex");
     out.parts.resize(1);
     out.parts[0].mesh = std::move(mesh);
     return true;
@@ -650,6 +706,64 @@ bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err) 
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err) {
     std::string d; if (!ReadAllBytes(path, kMaxFileBytes, d, err)) return false;
     return ReadPlyBuffer(d, out, err);
+}
+
+bool PlyFileDeclaresDuplicateVertex(const std::string& path) {
+    std::FILE* fp = detail::OpenRead(path);
+    if (!fp) return false;
+    std::string pending;
+    pending.reserve(8192);
+    char buf[4096];
+    int vertexElems = 0;
+    int headerLines = 0;
+    bool sawMagic = false;
+    bool done = false;
+    bool duplicate = false;
+    auto words = [](const std::string& l) {
+        std::vector<std::string> w; std::size_t i = 0;
+        while (i < l.size()) {
+            while (i < l.size() && IsSpace(l[i])) ++i;
+            std::size_t a = i;
+            while (i < l.size() && !IsSpace(l[i])) ++i;
+            if (i > a) w.push_back(l.substr(a, i - a));
+        }
+        return w;
+    };
+    auto take = [&](std::string line) {
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!sawMagic) {
+            if (Trim(line).empty()) return;
+            sawMagic = true;
+            if (Trim(line) != "ply") done = true;
+            return;
+        }
+        if (++headerLines > 4096) { done = true; return; }
+        std::vector<std::string> w = words(line);
+        if (w.empty() || w[0] == "comment" || w[0] == "obj_info") return;
+        if (w[0] == "end_header") { done = true; return; }
+        if (w[0] == "element" && w.size() == 3 && w[1] == "vertex" && ++vertexElems > 1) {
+            duplicate = true;
+            done = true;
+        }
+    };
+    std::size_t got = 0;
+    while (!done && got < 1024u * 1024u) {
+        std::size_t n = std::fread(buf, 1, sizeof(buf), fp);
+        if (n == 0) break;
+        got += n;
+        pending.append(buf, n);
+        std::size_t start = 0;
+        for (;;) {
+            std::size_t nl = pending.find('\n', start);
+            if (nl == std::string::npos) { pending.erase(0, start); break; }
+            take(pending.substr(start, nl - start));
+            start = nl + 1;
+            if (done) break;
+        }
+    }
+    if (!done && !pending.empty()) take(pending);
+    std::fclose(fp);
+    return duplicate;
 }
 
 } // namespace okay

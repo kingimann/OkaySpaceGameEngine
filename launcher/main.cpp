@@ -18,8 +18,10 @@
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
 #include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
@@ -435,18 +437,10 @@ long long HeadSize(const std::string& url) {
     std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
                       "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
     RunCmd(cmd, true);
-    long long total = 0;
     std::ifstream f(hdr);
-    std::string line;
-    while (std::getline(f, line)) {
-        std::string low = line;
-        for (char& c : low) c = (char)std::tolower((unsigned char)c);
-        if (low.rfind("content-length:", 0) == 0) {
-            try { total = std::stoll(line.substr(15)); } catch (...) {}
-        }
-    }
+    std::string dump((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close(); fs::remove(hdr, ec);
-    return total;
+    return okay::netguard::ParseLastContentLength(dump);
 }
 
 struct DlItem {
@@ -467,16 +461,25 @@ long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
 }
 
+// Hard cap for launcher downloads (2 GiB): a malicious or wrong URL must not
+// be able to fill the user's disk. Enforced both as a curl flag and against
+// the HEAD-probed Content-Length.
+static constexpr long long kMaxDownloadBytes = 2ll << 30;
+
 int DlWorker(void* data) {
     DlItem* d = static_cast<DlItem*>(data);
     auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
     set([&]{ d->status = 1; });
     long long total = HeadSize(d->url);
     set([&]{ d->total = total; });
+    // HeadSize is a hard limit, not just a progress hint: refuse to download
+    // anything that already announced itself larger than the cap.
+    if (total > kMaxDownloadBytes) { set([&]{ d->status = 3; }); return 0; }
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
+                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
     set([&]{ d->proc = p; });
@@ -688,13 +691,8 @@ long long RemoteSize(const std::string& url) {
         for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
         auto p = low.find("content-length:");
         if (p != std::string::npos) {
-            long long v = 0; bool any = false;
-            for (std::size_t i = p + 15; i < line.size(); ++i) {
-                char d = line[i];
-                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
-                else if (any) break;
-            }
-            if (any) sz = v;
+            const long long v = okay::netguard::ParseContentLengthLine(line);
+            if (v > 0) sz = v;
         }
     }
     f.close(); fs::remove(hf, ec);
@@ -714,7 +712,7 @@ int DlMonitorThread(void* p) {
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
     DlMonitor d; d.url = url; d.out = out;
     SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
     SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
@@ -2946,7 +2944,10 @@ static int LinkPreviewWorker(void*) {
         url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
         SDL_UnlockMutex(g_lpMutex);
         LinkPreview lp; lp.state = 2;
-        if (ShellSafeUrl(url)) {
+        // SSRF guard: never fetch a link whose host resolves to a private,
+        // loopback or link-local address (chat links come from other people).
+        if (ShellSafeUrl(url) &&
+            okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
@@ -4973,6 +4974,24 @@ struct VoiceClip {
     float bars[kVoiceBars] = {};
     std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    VoiceClip() = default;
+    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
+    // released at load, so there is no SDL buffer left for this destructor to free (#718).
+    ~VoiceClip() = default;
+    VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
+    VoiceClip& operator=(const VoiceClip&) = delete;
+    VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
+    VoiceClip& operator=(VoiceClip&& o) noexcept {
+        if (this != &o) {
+            ok = o.ok; pcm = o.pcm; len = o.len; spec = o.spec;
+            secs = o.secs; bytesPerSec = o.bytesPerSec;
+            for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
+            owned = std::move(o.owned); fast = std::move(o.fast);
+            // pcm pointed into o.owned; vector move transfers that buffer, so the pointer stays valid.
+            o.pcm = nullptr; o.len = 0; o.ok = false;
+        }
+        return *this;
+    }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
 // The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
@@ -4982,6 +5001,10 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
+    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
+    // and frees it before this runs, so the bytes are read from `owned` and the
+    // old vector storage is released when it is replaced. SDL_FreeWAV here would
+    // free that storage a second time (#718).
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -10844,6 +10867,7 @@ static void MpRemember(const okay::JoinLink& l) {   // history: direct servers o
 // ---- Joining -------------------------------------------------------------------
 static std::string g_mpPassLink;  static bool g_mpPassReq = false;   // ask for a password, then join
 static std::string g_mpPickLink;  static bool g_mpPickReq = false;   // "which of your games is this?"
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene);   // (defined with the anti-cheat ban code below)
 static void MpLaunch(const okay::JoinLink& in) {
     okay::JoinLink l = in;
     const std::string link = l.Format();
@@ -10862,6 +10886,9 @@ static void MpLaunch(const okay::JoinLink& in) {
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
     if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
+    // A server that needs a session ticket: ask the ticket service first (off the UI thread). A banned answer refreshes the ban banner and
+    // the game is not started; "required" without an answer doesn't start it either. When it passes, this runs again and goes through.
+    if (TicketPreflightHolds(l, g->scene)) return;
     if (SpawnTracked(player, "\"" + g->scene + "\" --join \"" + link + "\"", "game:" + g->title, g->title)) {
         RecordPlayed(g->scene);
         SavePrefs();
@@ -13609,6 +13636,92 @@ static void PumpAcMyBans(bool signedIn) {
 }
 
 
+// ---- Session tickets before a join: the ban check + "no ticket, no join" --------------------------------------------------------
+// okay_tickets.cfg (next to the launcher, or next to the game's scene) turns this on (shared/TicketClient.hpp). The launcher asks the ticket
+// service on a worker thread before it starts a game to join a server: a banned answer refreshes my bans (the banner shows why) and the game
+// is not started; with `mode required` any failure stops the start too (the game would refuse to join anyway, this just says why now).
+// The game does the real, connection-bound request itself (player/main.cpp); this one is only the early answer, and its ticket is dropped.
+static SDL_mutex* g_tkMutex = nullptr;
+static volatile bool g_tkBusy = false;
+static std::string g_tkLink;                               // the link being checked (guarded)
+static std::string g_tkOkLink;                             // a link whose check passed: the next MpLaunch of it goes through (UI thread)
+static bool g_tkDone = false, g_tkBanned = false, g_tkAllow = false; static std::string g_tkMsg;   // the worker's answer (guarded)
+static okayac::ticket::Config TicketConfigFor(const std::string& scene) {
+    okayac::ticket::Config c = okayac::ticket::LoadConfig((fs::path(g_exeDir) / okayac::ticket::kConfigName).string());
+    if (c.mode == okayac::ticket::Mode::Off && !scene.empty()) {
+        std::error_code ec;
+        const fs::path beside = fs::path(scene).parent_path() / okayac::ticket::kConfigName;
+        if (fs::is_regular_file(beside, ec)) c = okayac::ticket::LoadConfig(beside.string());
+    }
+    return c;
+}
+struct TkJob { okayac::ticket::Config cfg; okay::JoinLink link; };
+static int TicketPreflightWorker(void* p) {
+    std::unique_ptr<TkJob> j(static_cast<TkJob*>(p));
+    bool allow = true, banned = false; std::string msg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okayac::ticket::Options opt;
+        opt.refreshSignIn = [&a] { return a.ReloadSessionToken(); };
+        okayac::ticket::Client client([&a](const okayac::backend::Request& r) {
+            const okay::account::ApiResponse x = a.ApiTimed(r.path, r.method, r.body, r.header, 8);
+            okayac::ticket::Reply out; out.reached = x.reached; out.status = x.status; out.body = x.body; return out;
+        }, opt);
+        okayac::ticket::Hooks hk;
+        hk.hwHash = [] { return okayac::MachineHash(); };
+        hk.signedIn = [&a] { return a.IsLoggedIn() && a.IsOnline(); };
+        okayac::ticket::JoinTarget t;
+        if (j->link.Relayed()) { t.relayed = true; t.relayCode = j->link.code; }
+        else { const std::string h = j->link.addr; const std::size_t c = h.rfind(':'); t.host = c == std::string::npos ? h : h.substr(0, c); t.port = c == std::string::npos ? 0 : (std::uint16_t)std::atoi(h.c_str() + c + 1); }
+        const okayac::ticket::Decision d = okayac::ticket::Decide(j->cfg, client, hk, t, "");
+        allow = d.allow; banned = d.outcome == okayac::ticket::Outcome::Banned; msg = d.message;
+    } catch (...) { allow = j->cfg.mode != okayac::ticket::Mode::Required; if (!allow) msg = "Couldn't check the session ticket."; }
+    SDL_LockMutex(g_tkMutex);
+    g_tkAllow = allow; g_tkBanned = banned; g_tkMsg = msg; g_tkDone = true;
+    SDL_UnlockMutex(g_tkMutex);
+    g_tkBusy = false;
+    return 0;
+}
+// True when the start must wait for (or stop at) the ticket check. Called by MpLaunch; false = go ahead.
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) {
+    if (!g_tkMutex) g_tkMutex = SDL_CreateMutex();
+    const std::string link = l.Format();
+    if (g_tkOkLink == link) { g_tkOkLink.clear(); return false; }            // checked a moment ago
+    okayac::ticket::Config cfg = TicketConfigFor(scene);
+    if (cfg.mode == okayac::ticket::Mode::Off || g_pollCfgDir.empty()) return false;
+    const long now = (long)std::time(nullptr);
+    for (const auto& b : g_acMyBans)                                         // already known: no need to ask
+        if (b.until == 0 || b.until > now) {
+            Toast("You can't join: this account has an anti-cheat ban (see the banner at the top).", 2);
+            return true;
+        }
+    if (g_tkBusy) { Toast("One moment\xE2\x80\xA6", 0); return true; }
+    g_tkBusy = true;
+    SDL_LockMutex(g_tkMutex); g_tkLink = link; g_tkDone = false; SDL_UnlockMutex(g_tkMutex);
+    TkJob* job = new TkJob{cfg, l};
+    Toast("Checking your session\xE2\x80\xA6", 0);
+    if (SDL_Thread* t = SDL_CreateThread(TicketPreflightWorker, "okay-ticket", job)) SDL_DetachThread(t);
+    else { g_tkBusy = false; delete job; return cfg.mode == okayac::ticket::Mode::Required; }
+    return true;
+}
+// Every frame: act on the worker's answer.
+static void PumpTicketPreflight() {
+    if (!g_tkMutex) return;
+    bool done = false, allow = false, banned = false; std::string msg, link;
+    SDL_LockMutex(g_tkMutex);
+    if (g_tkDone) { done = true; allow = g_tkAllow; banned = g_tkBanned; msg = g_tkMsg; link = g_tkLink; g_tkDone = false; }
+    SDL_UnlockMutex(g_tkMutex);
+    if (!done) return;
+    if (banned) {
+        AcMeQueue(new AcMeJob);   // refresh ac_my_bans: the banner at the top of every page shows the reason and the appeal
+        Toast("You can't join: this account or machine has an anti-cheat ban. Details are at the top of the page.", 2);
+        return;
+    }
+    if (!allow) { Toast(msg.empty() ? std::string("Couldn't get a session ticket, so the game was not started.") : msg, 2); return; }
+    okay::JoinLink l;
+    if (okay::JoinLink::Parse(link, l)) { g_tkOkLink = link; MpLaunch(l); }
+}
+
 // Banner + appeal for my active anti-cheat ban, at the top of every page.
 static void DrawAcBanBanner() {
     const long now = (long)std::time(nullptr);
@@ -15741,11 +15854,9 @@ static int GifSearchWorker(void*) {
                         g.preview = urlIn("\"tinygif\"");
                         g.full = urlIn("\"gif\":");
                         g.desc = okay::Messages::Field(o, "content_description");
-                        std::size_t tp = o.find("\"tinygif\"");
-                        if (tp != std::string::npos) {
-                            std::size_t d = o.find("\"dims\"", tp);
-                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
-                        }
+                        // start after the format the preview uses: the first "dims" in the object may belong to another one
+                        const std::size_t tg = o.find("\"tinygif\"");
+                        okay::netguard::ParseGifDims(o, tg, g.w, g.h);   // bounds-checked; npos-safe
                         if (!g.preview.empty()) out.push_back(g);
                     }
                 } else if (c == ']' && depth == 0) break;
@@ -18645,6 +18756,7 @@ int main(int argc, char** argv) {
         PumpBlocks(account);
         PumpPrivacy(account);
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
+        PumpTicketPreflight();
         PumpTokenRefresh(account);
         if (tab == 11 && g_myRank == 0) tab = 0;   // lost the role
 

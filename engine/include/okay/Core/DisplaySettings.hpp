@@ -1,24 +1,9 @@
 #pragma once
+#include "okay/Core/DisplayModes.hpp"
 #include <string>
 #include <vector>
 
 namespace okay {
-
-/// How the game window is shown. A host maps it to its windowing library (for SDL:
-/// Windowed = 0, Borderless = SDL_WINDOW_FULLSCREEN_DESKTOP, Fullscreen = SDL_WINDOW_FULLSCREEN
-/// with the display mode of `DisplaySettings::EffectiveResolution()`).
-enum class WindowMode { Windowed = 0, Borderless = 1, Fullscreen = 2 };
-
-/// A window or display size in pixels.
-struct DisplayResolution {
-    int width = 0;
-    int height = 0;
-    bool Valid() const { return width > 0 && height > 0; }
-    float Aspect() const { return height > 0 ? (float)width / (float)height : 0.0f; }
-    std::string Label() const { return std::to_string(width) + " x " + std::to_string(height); }
-    bool operator==(const DisplayResolution& o) const { return width == o.width && height == o.height; }
-    bool operator!=(const DisplayResolution& o) const { return !(*this == o); }
-};
 
 /// What a quality level sets in the renderer's shared switches (declared in
 /// Render/SoftwareRenderer.hpp, read by the software path and by the OpenGL and Direct3D
@@ -49,8 +34,8 @@ struct QualityPreset {
 ///  * the quality preset is applied only once the player chose one (SetQuality, or a saved
 ///    `video.quality`), so a game's own render settings (Build Settings) stay in force until then.
 struct DisplaySettings {
-    static constexpr int kMinWidth = 640, kMinHeight = 360;
-    static constexpr int kMaxWidth = 16384, kMaxHeight = 16384;
+    static constexpr int kMinWidth = kDisplayMinWidth, kMinHeight = kDisplayMinHeight;
+    static constexpr int kMaxWidth = kDisplayMaxWidth, kMaxHeight = kDisplayMaxHeight;
     static constexpr int kQualityLevels = 3;
 
     // ---- Window mode ----
@@ -99,6 +84,44 @@ struct DisplaySettings {
     /// the listed size nearest to it; Borderless = the desktop's size when known, else the chosen
     /// size. Invalid (0 x 0) when nothing is chosen and the desktop is unknown: keep the host's size.
     static DisplayResolution EffectiveResolution();
+
+    // ---- Monitors and refresh ----
+    /// The list a host supplied (the player's SDL helper). Empty until then.
+    static const std::vector<DisplayMonitor>& Monitors();
+    /// Replace the list. Each monitor's modes are filtered and sorted. Does not change the
+    /// chosen mode and does not bump Generation(); call ResolveSaved() to match a save.
+    static void SetMonitors(const std::vector<DisplayMonitor>& monitors);
+    /// -1 when no monitor was chosen. Otherwise an index into Monitors().
+    static int MonitorIndex();
+    static const std::string& MonitorName();
+    static void SetMonitorIndex(int index);
+    /// Choose by name (any case, surrounding spaces ignored). False when no monitor has that name.
+    static bool SetMonitorName(const std::string& name);
+    /// Modes of one monitor, or an empty list. `index` is into Monitors().
+    static const std::vector<DisplayMode>& MonitorModes(int index);
+    /// 0 when no rate was chosen.
+    static int RefreshHz();
+    static void SetRefreshHz(int hz);
+    /// Rates for the chosen size on the chosen monitor (the first monitor when none is chosen).
+    static std::vector<int> RefreshRates();
+    static std::vector<int> RefreshRatesForResolution(int width, int height);
+    /// After the monitors are known: if the saved monitor or mode is gone, pick a connected
+    /// one (see ResolveDisplay). An unconfirmed "keep these settings?" from last time is
+    /// discarded. Bumps Generation() when the applied choice changes.
+    static void ResolveSaved();
+    /// The size, monitor and mode a host should put on the window right now.
+    static DisplayApply CurrentApply();
+
+    // ---- "Keep these settings?" ----
+    static bool TrialActive();
+    static float TrialSecondsLeft();
+    /// Remember the current choice as the one to restore, and start the clock (10 seconds
+    /// when `seconds` is not positive). A clock that is already running is left as it is.
+    static void BeginTrial(float seconds = 10.f);
+    static void KeepTrial();
+    static void RevertTrial();
+    /// Count down. When the time runs out the previous choice is restored and Generation() bumps.
+    static void TickTrial(float dt);
 
     // ---- VSync ----
     static bool VSync();

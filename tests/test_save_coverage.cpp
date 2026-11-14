@@ -60,6 +60,7 @@ using namespace okay;
     X(UIInputField) X(UIKeybindField) X(UILayoutGroup) X(UIListView) X(UIMask) X(UIModal) X(UIPanel) \
     X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
+    X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VirtualCamera) X(VisualScriptComponent) \
     X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
     X(WorldUI)
@@ -210,6 +211,40 @@ int main() {
             }
         }
         CHECK(SceneSerializer::Serialize(b) == text);                 // and it is stable
+        // A negative pitch must not make the loader drop the audio's optional
+        // mixer fields: the gate peeked for digits only, '-' failed it, the rest
+        // of the line was left on the stream, and the next save wrote the source
+        // wrong (pitch 1, and whatever followed the line leaked into it).
+        {
+            Scene n("n");
+            GameObject* g = n.CreateGameObject("Negative pitch");
+            auto* au = g->AddComponent<AudioSource>();
+            au->clipPath = "tone.wav";
+            au->volume = 0.8f;
+            au->pitch = -1.0f;
+            au->pan = -0.5f;
+            au->spatial = true;
+            au->minDistance = 2.0f; au->maxDistance = 30.0f;
+            au->group = AudioGroup::Voice;
+            au->rolloff = AudioRolloff::Inverse;
+            const std::string text = SceneSerializer::Serialize(n);
+            Scene r("r");
+            std::vector<std::string> warnings;
+            CHECK(SceneSerializer::Deserialize(r, text, nullptr, &warnings));
+            CHECK(warnings.empty());
+            GameObject* back = r.Find("Negative pitch");
+            CHECK(back != nullptr);
+            if (back) {
+                auto* got = back->GetComponent<AudioSource>();
+                CHECK(got != nullptr);
+                if (got) {
+                    CHECK(got->clipPath == "tone.wav" && got->volume == 0.8f && got->pitch == -1.0f);
+                    CHECK(got->pan == -0.5f && got->spatial && got->minDistance == 2.0f && got->maxDistance == 30.0f);
+                    CHECK(got->group == AudioGroup::Voice && got->rolloff == AudioRolloff::Inverse);
+                }
+            }
+            CHECK(SceneSerializer::Serialize(r) == text);             // and the reload saves the same thing
+        }
         // One of a type still writes exactly what it always did (no extra record, same text as the old format).
         Scene one("one");
         GameObject* g1 = one.CreateGameObject("One");

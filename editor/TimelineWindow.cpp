@@ -1,8 +1,9 @@
 // The Timeline window: the cutscene editor for .okayseq sequences. The track
-// list sits on the left (camera, transform, animation, audio and event tracks,
-// each bound to a scene object), their shots, keys and cues on a shared ruler in
-// the middle (zoom with the wheel, pan with the middle button, drag to move,
-// double-click to add), and the selection's fields on the right. Outside Play
+// list sits on the left (camera, letterbox, shake, fade, transform, animation,
+// audio, event and nested-sequence tracks), their shots, keys and cues on a
+// shared ruler in the middle (zoom with the wheel, pan with the middle button,
+// drag to move, double-click to add), and the selection's fields on the right.
+// Outside Play
 // the playhead previews the sequence live: the tracked objects and the main
 // camera follow it in the Scene and Game views, and everything goes back when
 // the preview stops. Record keys whatever the gizmo or the Inspector changes.
@@ -36,9 +37,9 @@ bool g_showTimeline = false;
 namespace {
 
 constexpr float kRulerH = 22.0f, kRowH = 26.0f, kPad = 8.0f;
-constexpr float kLeftW = 230.0f, kRightW = 310.0f;
+constexpr float kLeftW = 268.0f, kRightW = 400.0f;
 
-enum class Kind { None = -1, Camera = 0, Transform, Animation, Audio, Events };
+enum class Kind { None = -1, Camera = 0, Transform, Animation, Audio, Events, Letterbox, Shake, Fade, Nest };
 
 // The selection: an entry (a shot, a key time, a cue or an event) on a track.
 // Transform keys select by time, so every channel keyed there moves together.
@@ -76,6 +77,8 @@ struct State {
     bool scrubbing = false;
     std::string shotFrom;          // "Shot from object": the object picked
     SeqOverlay overlay; bool overlayValid = false;
+    SeqLibrary lib;                // nested sequences, loaded from the cue paths
+    unsigned libVersion = 0;       // matches `version` once `lib` is current
 };
 State& S() { static State s; return s; }
 bool g_focused = false;
@@ -104,6 +107,10 @@ const char* KindName(Kind k) {
     case Kind::Animation: return "Animation";
     case Kind::Audio: return "Audio";
     case Kind::Events: return "Events";
+    case Kind::Letterbox: return "Letterbox bars";
+    case Kind::Shake: return "Camera shake";
+    case Kind::Fade: return "Screen fade";
+    case Kind::Nest: return "Nested";
     default: return "";
     }
 }
@@ -115,6 +122,10 @@ ImU32 KindColor(Kind k) {
     case Kind::Animation: return IM_COL32(240, 160, 80, 255);
     case Kind::Audio: return IM_COL32(230, 210, 90, 255);
     case Kind::Events: return IM_COL32(200, 130, 230, 255);
+    case Kind::Letterbox: return IM_COL32(176, 184, 198, 255);
+    case Kind::Shake: return IM_COL32(220, 96, 96, 255);
+    case Kind::Fade: return IM_COL32(120, 150, 230, 255);
+    case Kind::Nest: return IM_COL32(70, 186, 168, 255);
     default: return IM_COL32(200, 200, 200, 255);
     }
 }
@@ -122,10 +133,14 @@ ImU32 KindColor(Kind k) {
 std::vector<Row> Rows(const Sequence& seq) {
     std::vector<Row> rows;
     if (seq.cameraTrack) rows.push_back({Kind::Camera, 0, "Camera"});
+    if (seq.letterbox.on) rows.push_back({Kind::Letterbox, 0, "Letterbox bars"});
+    if (seq.shake.on) rows.push_back({Kind::Shake, 0, "Camera shake"});
+    if (seq.fade.on) rows.push_back({Kind::Fade, 0, "Screen fade"});
     for (int i = 0; i < (int)seq.transforms.size(); ++i) rows.push_back({Kind::Transform, i, seq.transforms[(std::size_t)i].object});
     for (int i = 0; i < (int)seq.animations.size(); ++i) rows.push_back({Kind::Animation, i, seq.animations[(std::size_t)i].object});
     for (int i = 0; i < (int)seq.audio.size(); ++i) rows.push_back({Kind::Audio, i, seq.audio[(std::size_t)i].object});
     for (int i = 0; i < (int)seq.events.size(); ++i) rows.push_back({Kind::Events, i, seq.events[(std::size_t)i].name});
+    for (int i = 0; i < (int)seq.nests.size(); ++i) rows.push_back({Kind::Nest, i, seq.nests[(std::size_t)i].name});
     return rows;
 }
 
@@ -150,6 +165,11 @@ std::vector<float> AllTimes(const Sequence& seq) {
     for (const auto& tr : seq.animations) for (const auto& c : tr.cues) out.push_back(c.time);
     for (const auto& tr : seq.audio) for (const auto& c : tr.cues) out.push_back(c.time);
     for (const auto& tr : seq.events) for (const auto& e : tr.events) out.push_back(e.time);
+    for (const auto& k : seq.letterbox.keys) out.push_back(k.time);
+    for (const auto& k : seq.shake.strength) out.push_back(k.time);
+    for (const auto& k : seq.shake.frequency) out.push_back(k.time);
+    for (const auto& k : seq.fade.keys) out.push_back(k.time);
+    for (const auto& tr : seq.nests) for (const auto& c : tr.cues) out.push_back(c.time);
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -198,6 +218,10 @@ bool SelValid(const State& s) {
     case Kind::Animation: return e.track >= 0 && e.track < (int)q.animations.size() && e.index >= 0 && e.index < (int)q.animations[(std::size_t)e.track].cues.size();
     case Kind::Audio:     return e.track >= 0 && e.track < (int)q.audio.size() && e.index >= 0 && e.index < (int)q.audio[(std::size_t)e.track].cues.size();
     case Kind::Events:    return e.track >= 0 && e.track < (int)q.events.size() && e.index >= 0 && e.index < (int)q.events[(std::size_t)e.track].events.size();
+    case Kind::Letterbox: return q.letterbox.on;
+    case Kind::Shake:     return q.shake.on;
+    case Kind::Fade:      return q.fade.on;
+    case Kind::Nest:      return e.track >= 0 && e.track < (int)q.nests.size() && e.index >= 0 && e.index < (int)q.nests[(std::size_t)e.track].cues.size();
     default: return false;
     }
 }
@@ -211,8 +235,37 @@ float SelTime(const State& s) {
     case Kind::Animation: return s.seq.animations[(std::size_t)e.track].cues[(std::size_t)e.index].time;
     case Kind::Audio:     return s.seq.audio[(std::size_t)e.track].cues[(std::size_t)e.index].time;
     case Kind::Events:    return s.seq.events[(std::size_t)e.track].events[(std::size_t)e.index].time;
+    case Kind::Letterbox: return e.time;
+    case Kind::Shake:     return e.time;
+    case Kind::Fade:      return e.time;
+    case Kind::Nest:      return s.seq.nests[(std::size_t)e.track].cues[(std::size_t)e.index].time;
     default: return 0.0f;
     }
+}
+
+void MoveFloatKeys(std::vector<SeqFloatKey>& keys, float from, float to) {
+    const int at = Sequence::FloatKeyAt(keys, from);
+    if (at < 0) return;
+    SeqFloatKey k = keys[(std::size_t)at];
+    keys.erase(keys.begin() + at);
+    const int landing = Sequence::FloatKeyAt(keys, to);
+    if (landing >= 0) keys.erase(keys.begin() + landing);
+    k.time = to;
+    std::size_t i = 0;
+    while (i < keys.size() && keys[i].time < to) ++i;
+    keys.insert(keys.begin() + (std::ptrdiff_t)i, k);
+}
+void MoveColorKeys(std::vector<SeqColorKey>& keys, float from, float to) {
+    const int at = Sequence::ColorKeyAt(keys, from);
+    if (at < 0) return;
+    SeqColorKey k = keys[(std::size_t)at];
+    keys.erase(keys.begin() + at);
+    const int landing = Sequence::ColorKeyAt(keys, to);
+    if (landing >= 0) keys.erase(keys.begin() + landing);
+    k.time = to;
+    std::size_t i = 0;
+    while (i < keys.size() && keys[i].time < to) ++i;
+    keys.insert(keys.begin() + (std::ptrdiff_t)i, k);
 }
 
 void SetSelTime(State& s, float t) {
@@ -224,6 +277,10 @@ void SetSelTime(State& s, float t) {
     case Kind::Animation: SetTimeOf(s.seq.animations[(std::size_t)e.track].cues, e.index, t); break;
     case Kind::Audio:     SetTimeOf(s.seq.audio[(std::size_t)e.track].cues, e.index, t); break;
     case Kind::Events:    SetTimeOf(s.seq.events[(std::size_t)e.track].events, e.index, t); break;
+    case Kind::Letterbox: MoveFloatKeys(s.seq.letterbox.keys, e.time, t); e.time = t; break;
+    case Kind::Shake:     MoveFloatKeys(s.seq.shake.strength, e.time, t); MoveFloatKeys(s.seq.shake.frequency, e.time, t); e.time = t; break;
+    case Kind::Fade:      MoveColorKeys(s.seq.fade.keys, e.time, t); e.time = t; break;
+    case Kind::Nest:      SetTimeOf(s.seq.nests[(std::size_t)e.track].cues, e.index, t); break;
     default: break;
     }
 }
@@ -238,6 +295,16 @@ void DeleteSel(State& s) {
     case Kind::Animation: { auto& v = s.seq.animations[(std::size_t)e.track].cues; v.erase(v.begin() + e.index); break; }
     case Kind::Audio:     { auto& v = s.seq.audio[(std::size_t)e.track].cues; v.erase(v.begin() + e.index); break; }
     case Kind::Events:    { auto& v = s.seq.events[(std::size_t)e.track].events; v.erase(v.begin() + e.index); break; }
+    case Kind::Letterbox: { const int i = Sequence::FloatKeyAt(s.seq.letterbox.keys, e.time); if (i >= 0) s.seq.letterbox.keys.erase(s.seq.letterbox.keys.begin() + i); break; }
+    case Kind::Shake: {
+        const int a = Sequence::FloatKeyAt(s.seq.shake.strength, e.time);
+        if (a >= 0) s.seq.shake.strength.erase(s.seq.shake.strength.begin() + a);
+        const int b = Sequence::FloatKeyAt(s.seq.shake.frequency, e.time);
+        if (b >= 0) s.seq.shake.frequency.erase(s.seq.shake.frequency.begin() + b);
+        break;
+    }
+    case Kind::Fade: { const int i = Sequence::ColorKeyAt(s.seq.fade.keys, e.time); if (i >= 0) s.seq.fade.keys.erase(s.seq.fade.keys.begin() + i); break; }
+    case Kind::Nest: { auto& v = s.seq.nests[(std::size_t)e.track].cues; v.erase(v.begin() + e.index); break; }
     default: break;
     }
     e = Sel{};
@@ -252,6 +319,10 @@ void RemoveTrack(State& s, Kind k, int track) {
     case Kind::Animation: s.seq.animations.erase(s.seq.animations.begin() + track); break;
     case Kind::Audio:     s.seq.audio.erase(s.seq.audio.begin() + track); break;
     case Kind::Events:    s.seq.events.erase(s.seq.events.begin() + track); break;
+    case Kind::Letterbox: s.seq.letterbox = SeqLetterboxTrack{}; break;
+    case Kind::Shake:     s.seq.shake = SeqShakeTrack{}; break;
+    case Kind::Fade:      s.seq.fade = SeqFadeTrack{}; break;
+    case Kind::Nest:      s.seq.nests.erase(s.seq.nests.begin() + track); break;
     default: break;
     }
     s.sel = Sel{}; s.rowKind = Kind::None; s.rowTrack = -1;
@@ -293,6 +364,14 @@ void AddTrack(EditorState& ed, Kind k, bool subtitles) {
     case Kind::Events: {
         SeqEventTrack tr; tr.name = subtitles ? "Subtitles" : "Events";
         s.seq.events.push_back(tr); s.rowTrack = (int)s.seq.events.size() - 1;
+        break;
+    }
+    case Kind::Letterbox: s.seq.letterbox.on = true; s.rowTrack = 0; break;
+    case Kind::Shake:     s.seq.shake.on = true; s.rowTrack = 0; break;
+    case Kind::Fade:      s.seq.fade.on = true; s.rowTrack = 0; break;
+    case Kind::Nest: {
+        SeqNestTrack tr; tr.name = "Nested";
+        s.seq.nests.push_back(tr); s.rowTrack = (int)s.seq.nests.size() - 1;
         break;
     }
     default: break;
@@ -352,6 +431,46 @@ void AddEntry(EditorState& ed, Kind k, int track, float t) {
         s.sel = {Kind::Events, track, (int)i, t};
         break;
     }
+    case Kind::Letterbox: {
+        const bool existed = Sequence::FloatKeyAt(s.seq.letterbox.keys, t) >= 0;
+        float v = s.seq.letterbox.keys.empty() ? 0.12f : 0.0f;
+        Sequence::FloatAt(s.seq.letterbox.keys, t, v);
+        const int i = Sequence::SetFloatKey(s.seq.letterbox.keys, t, v);
+        if (!existed && i >= 0) s.seq.letterbox.keys[(std::size_t)i].ease = Ease::SineInOut;
+        s.sel = {Kind::Letterbox, 0, -1, t};
+        break;
+    }
+    case Kind::Shake: {
+        const bool existed = Sequence::FloatKeyAt(s.seq.shake.strength, t) >= 0;
+        float v = s.seq.shake.strength.empty() ? 0.6f : 0.0f;
+        Sequence::FloatAt(s.seq.shake.strength, t, v);
+        const int i = Sequence::SetFloatKey(s.seq.shake.strength, t, v);
+        if (!existed && i >= 0) s.seq.shake.strength[(std::size_t)i].ease = Ease::SineInOut;
+        if (s.seq.shake.frequency.empty()) {
+            Sequence::SetFloatKey(s.seq.shake.frequency, t, 14.0f);
+            s.seq.shake.frequency.back().ease = Ease::Linear;
+        }
+        s.sel = {Kind::Shake, 0, -1, t};
+        break;
+    }
+    case Kind::Fade: {
+        const bool existed = Sequence::ColorKeyAt(s.seq.fade.keys, t) >= 0;
+        Color c{0.0f, 0.0f, 0.0f, s.seq.fade.keys.empty() ? 0.85f : 0.0f};
+        Sequence::ColorAt(s.seq.fade.keys, t, c);
+        if (s.seq.fade.keys.empty()) c = {0.0f, 0.0f, 0.0f, 0.85f};
+        const int i = Sequence::SetColorKey(s.seq.fade.keys, t, c);
+        if (!existed && i >= 0) s.seq.fade.keys[(std::size_t)i].ease = Ease::SineInOut;
+        s.sel = {Kind::Fade, 0, -1, t};
+        break;
+    }
+    case Kind::Nest: {
+        auto& v = s.seq.nests[(std::size_t)track].cues;
+        SeqNestCue c; c.time = t;
+        std::size_t i = 0; while (i < v.size() && v[i].time <= t) ++i;
+        v.insert(v.begin() + (std::ptrdiff_t)i, c);
+        s.sel = {Kind::Nest, track, (int)i, t};
+        break;
+    }
     default: break;
     }
     s.rowKind = k; s.rowTrack = track;
@@ -359,11 +478,38 @@ void AddEntry(EditorState& ed, Kind k, int track, float t) {
 }
 
 // ---- The preview ------------------------------------------------------------------
-std::string ObjectsKey(const Sequence& seq) {
+std::string ObjectsKey(const Sequence& seq, const SeqLibrary& lib) {
     std::string k;
-    for (const auto& tr : seq.transforms) { k += tr.object; k += '\n'; }
+    std::vector<const Sequence*> seen;
+    auto walk = [&](auto&& self, const Sequence& s) -> void {
+        for (const Sequence* p : seen) if (p == &s) return;
+        seen.push_back(&s);
+        for (const auto& tr : s.transforms) { k += tr.object; k += '\n'; }
+        for (const auto& n : s.nests)
+            for (const auto& c : n.cues) {
+                k += c.path; k += '@'; k += std::to_string(c.time); k += '\n';
+                if (const Sequence* ch = lib.Find(c.path)) self(self, *ch);
+            }
+    };
+    walk(walk, seq);
     return k;
 }
+
+void ReloadLibrary(const EditorState& ed) {
+    State& s = S();
+    s.lib.Clear();
+    if (!s.seq.nests.empty()) {
+        std::string from = s.path;
+        if (from.empty()) {
+            const std::string dir = ed.projectDir().empty() ? std::string(".") : ed.projectDir();
+            from = (std::filesystem::path(dir) / "sequence.okayseq").string();
+        }
+        s.lib.LoadFrom(s.seq, from);
+    }
+    s.libVersion = s.version;
+}
+
+float Dur(const State& s) { return s.seq.Duration(&s.lib); }
 
 void TakeSnaps(Scene& scene) {
     State& s = S();
@@ -386,11 +532,12 @@ void PreviewTick(EditorState& ed) {
     State& s = S();
     Scene& scene = ed.scene();
     if (ed.isPlaying()) { if (s.binding.Bound()) ReleasePreview(); return; }
-    const std::string key = ObjectsKey(s.seq);
+    if (s.libVersion != s.version) ReloadLibrary(ed);
+    const std::string key = ObjectsKey(s.seq, s.lib);
     if (s.binding.Bound() && (s.binding.scene() != &scene || s.boundStructure != scene.StructureVersion() || s.boundObjects != key))
         ReleasePreview();   // the objects changed under it: start over from what is there now
     if (!s.binding.Bound()) {
-        s.binding.Bind(scene, s.seq);
+        s.binding.Bind(scene, s.seq, &s.lib);
         s.boundStructure = scene.StructureVersion();
         s.boundObjects = key;
     }
@@ -419,11 +566,11 @@ void PreviewTick(EditorState& ed) {
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) s.recGesture = false;
     if (s.lastApplied != s.t || s.appliedVersion != s.version || s.snaps.empty()) {
-        s.binding.Apply(s.seq, s.t);
+        s.binding.Apply(s.seq, s.t, &s.lib);
         s.lastApplied = s.t; s.appliedVersion = s.version;
         TakeSnaps(scene);
     }
-    s.overlay = s.seq.OverlayAt(s.t);
+    s.overlay = s.seq.OverlayAt(s.t, &s.lib);
     s.overlayValid = true;
 }
 
@@ -447,6 +594,25 @@ bool DoOpen(const std::string& path) {
     s.undo.clear(); s.redo.clear(); ++s.version;
     s.t = 0.0f; s.playing = false; s.sel = Sel{}; s.rowKind = Kind::None; s.rowTrack = -1;
     s.view = AnimTimeView{};
+    s.libVersion = 0;   // the next preview loads nested sequences
+    if (const char* tt = std::getenv("OKAY_UI_TIMELINE_TIME")) s.t = std::max(0.0f, std::strtof(tt, nullptr));
+    if (const char* sel = std::getenv("OKAY_UI_TIMELINE_SELECT")) {
+        auto lastFloat = [](const std::vector<SeqFloatKey>& keys) { return keys.empty() ? 0.0f : keys.back().time; };
+        if (std::strcmp(sel, "letterbox") == 0 && s.seq.letterbox.on) {
+            s.rowKind = Kind::Letterbox; s.rowTrack = 0;
+            if (!s.seq.letterbox.keys.empty()) s.sel = {Kind::Letterbox, 0, -1, lastFloat(s.seq.letterbox.keys)};
+        } else if (std::strcmp(sel, "shake") == 0 && s.seq.shake.on) {
+            s.rowKind = Kind::Shake; s.rowTrack = 0;
+            const float t = s.seq.shake.strength.empty() ? 0.0f : s.seq.shake.strength.back().time;
+            if (!s.seq.shake.strength.empty()) s.sel = {Kind::Shake, 0, -1, t};
+        } else if (std::strcmp(sel, "fade") == 0 && s.seq.fade.on) {
+            s.rowKind = Kind::Fade; s.rowTrack = 0;
+            if (!s.seq.fade.keys.empty()) s.sel = {Kind::Fade, 0, -1, s.seq.fade.keys.back().time};
+        } else if (std::strcmp(sel, "nest") == 0 && !s.seq.nests.empty() && !s.seq.nests[0].cues.empty()) {
+            s.rowKind = Kind::Nest; s.rowTrack = 0;
+            s.sel = {Kind::Nest, 0, 0, s.seq.nests[0].cues[0].time};
+        }
+    }
     g_showTimeline = true;
     return true;
 }
@@ -578,6 +744,25 @@ template <class E> bool KindCombo(const char* label, E& value, const char* const
     return changed;
 }
 
+void Help(const char* text) {
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+}
+
+bool ColorField(const char* label, Color& c, bool alpha) {
+    float a[4] = {c.r, c.g, c.b, c.a};
+    const bool changed = alpha ? ImGui::ColorEdit4(label, a, ImGuiColorEditFlags_Float)
+                               : ImGui::ColorEdit3(label, a, ImGuiColorEditFlags_Float);
+    if (ImGui::IsItemActivated()) BeginEdit();
+    if (changed) { c.r = a[0]; c.g = a[1]; c.b = a[2]; if (alpha) c.a = a[3]; Touch(); }
+    return changed;
+}
+
 // The time field every entry starts with.
 void TimeField(State& s) {
     float t = SelTime(s);
@@ -598,7 +783,10 @@ void DrawTracks(EditorState& ed, const std::vector<Row>& rows) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         dl->AddRectFilled(ImVec2(p.x, p.y + 4.0f), ImVec2(p.x + 4.0f, p.y + kRowH - 4.0f), KindColor(r.kind), 2.0f);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
-        std::string label = r.kind == Kind::Camera || r.kind == Kind::Events ? r.label
+        const bool titled = r.kind == Kind::Camera || r.kind == Kind::Events || r.kind == Kind::Letterbox
+                         || r.kind == Kind::Shake || r.kind == Kind::Fade;
+        std::string label = titled ? r.label
+                          : r.kind == Kind::Nest ? std::string("Nested: ") + (r.label.empty() ? "(unnamed)" : r.label)
                           : std::string(KindName(r.kind)) + ": " + (r.label.empty() ? "(no object)" : r.label);
         if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap, ImVec2(kLeftW - 70.0f, kRowH - 2.0f))) {
             s.rowKind = r.kind; s.rowTrack = r.track; s.sel = Sel{};
@@ -622,6 +810,10 @@ void DrawTracks(EditorState& ed, const std::vector<Row>& rows) {
         if (ImGui::MenuItem("Audio (object)")) AddTrack(ed, Kind::Audio, false);
         if (ImGui::MenuItem("Events")) AddTrack(ed, Kind::Events, false);
         if (ImGui::MenuItem("Subtitles")) AddTrack(ed, Kind::Events, true);
+        if (!s.seq.letterbox.on && ImGui::MenuItem("Letterbox bars")) AddTrack(ed, Kind::Letterbox, false);
+        if (!s.seq.shake.on && ImGui::MenuItem("Camera shake")) AddTrack(ed, Kind::Shake, false);
+        if (!s.seq.fade.on && ImGui::MenuItem("Screen fade")) AddTrack(ed, Kind::Fade, false);
+        if (ImGui::MenuItem("Nested sequence")) AddTrack(ed, Kind::Nest, false);
         ImGui::EndPopup();
     }
 }
@@ -633,7 +825,7 @@ void DrawGrid(EditorState& ed, const std::vector<Row>& rows) {
     const ImVec2 o = ImGui::GetCursorScreenPos();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float W = std::max(120.0f, avail.x), H = std::max(kRulerH + kRowH, avail.y);
-    const float dur = s.seq.Duration();
+    const float dur = Dur(s);
     if (s.view.len <= 0.0f) AnimTimeViewFit(s.view, std::max(dur, 8.0f));
     auto tToX = [&](float t) { return o.x + kPad + ((t - s.view.start) / s.view.len) * (W - kPad * 2.0f); };
     auto xToT = [&](float x) { return s.view.start + (x - o.x - kPad) / (W - kPad * 2.0f) * s.view.len; };
@@ -734,6 +926,48 @@ void DrawGrid(EditorState& ed, const std::vector<Row>& rows) {
                                         : e.kind == K::Subtitle ? "\"" + e.text + "\"" : e.kind == K::TimeScale ? "time x" + std::to_string(e.value).substr(0, 4)
                                         : e.kind == K::WaitForInput ? "wait for input" : "end";
                 diamond(e.time, j + 1 < evs.size() ? evs[j + 1].time : 0.0f, label, s.sel.kind == Kind::Events && s.sel.track == r.track && s.sel.index == (int)j, {Kind::Events, r.track, (int)j, e.time});
+            }
+        } else if (r.kind == Kind::Letterbox) {
+            const auto& keys = s.seq.letterbox.keys;
+            for (std::size_t j = 0; j < keys.size(); ++j) {
+                char lb[32]; std::snprintf(lb, sizeof(lb), "%.0f%%", keys[j].value * 100.0f);
+                diamond(keys[j].time, j + 1 < keys.size() ? keys[j + 1].time : 0.0f, lb,
+                        s.sel.kind == Kind::Letterbox && std::fabs(s.sel.time - keys[j].time) < 1e-3f, {Kind::Letterbox, 0, -1, keys[j].time});
+            }
+        } else if (r.kind == Kind::Shake) {
+            std::vector<float> times;
+            auto addT = [&](float t) { for (float x : times) if (std::fabs(x - t) <= 1e-3f) return; times.push_back(t); };
+            for (const auto& k : s.seq.shake.strength) addT(k.time);
+            for (const auto& k : s.seq.shake.frequency) addT(k.time);
+            std::sort(times.begin(), times.end());
+            for (float t : times) {
+                float st = 0.0f; Sequence::FloatAt(s.seq.shake.strength, t, st);
+                char lb[32]; std::snprintf(lb, sizeof(lb), "%.0f%%", st * 100.0f);
+                diamond(t, 0.0f, lb, s.sel.kind == Kind::Shake && std::fabs(s.sel.time - t) < 1e-3f, {Kind::Shake, 0, -1, t});
+            }
+        } else if (r.kind == Kind::Fade) {
+            const auto& keys = s.seq.fade.keys;
+            for (std::size_t j = 0; j < keys.size(); ++j) {
+                char lb[32]; std::snprintf(lb, sizeof(lb), "%.0f%%", keys[j].color.a * 100.0f);
+                diamond(keys[j].time, j + 1 < keys.size() ? keys[j + 1].time : 0.0f, lb,
+                        s.sel.kind == Kind::Fade && std::fabs(s.sel.time - keys[j].time) < 1e-3f, {Kind::Fade, 0, -1, keys[j].time});
+            }
+        } else if (r.kind == Kind::Nest) {
+            const auto& cues = s.seq.nests[(std::size_t)r.track].cues;
+            for (std::size_t j = 0; j < cues.size(); ++j) {
+                const SeqNestCue& c = cues[j];
+                const Sequence* child = s.lib.Find(c.path);
+                const float dur = child ? std::max(0.25f, child->Duration(&s.lib) - c.offset) : 1.0f;
+                const float x0 = tToX(c.time), x1 = std::max(tToX(c.time + dur), x0 + 8.0f);
+                const bool selected = s.sel.kind == Kind::Nest && s.sel.track == r.track && s.sel.index == (int)j;
+                const bool over = hovered && mouse.x >= x0 && mouse.x <= x1 && mouse.y >= y && mouse.y <= y + kRowH;
+                if (over) hot = {Kind::Nest, r.track, (int)j, c.time};
+                dl->AddRectFilled(ImVec2(x0, y + 3.0f), ImVec2(x1, y + kRowH - 3.0f), (col & 0x00FFFFFF) | ((over || selected ? 180u : 120u) << 24), 3.0f);
+                if (selected) dl->AddRect(ImVec2(x0, y + 3.0f), ImVec2(x1, y + kRowH - 3.0f), IM_COL32(255, 255, 255, 230), 3.0f, 0, 1.5f);
+                const std::string name = c.path.empty() ? "choose a sequence" : std::filesystem::path(c.path).stem().string();
+                dl->PushClipRect(ImVec2(x0, y), ImVec2(x1, y + kRowH), true);
+                dl->AddText(ImVec2(x0 + 5.0f, cy - ImGui::GetTextLineHeight() * 0.5f), IM_COL32(255, 255, 255, 230), name.c_str());
+                dl->PopClipRect();
             }
         }
     }
@@ -961,6 +1195,109 @@ void EventInspector(EditorState& ed, State& s) {
     if (ImGui::Button("Delete event")) DeleteSel(s);
 }
 
+void LetterboxInspector(State& s) {
+    ImGui::TextColored(AccentCol(1.0f), "Letterbox bars");
+    Help("Black bars across the top and bottom of the picture, like a film. They are drawn on top of the scene, so they show on every renderer.");
+    TimeField(s);
+    auto& keys = s.seq.letterbox.keys;
+    const int i = Sequence::FloatKeyAt(keys, s.sel.time);
+    if (i < 0) { Help("This moment has no bar key. Use + on the track to add one."); return; }
+    float pct = keys[(std::size_t)i].value * 100.0f;
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::DragFloat("Bar height##lb", &pct, 0.15f, 0.0f, 45.0f, "%.1f %% of the screen")) {
+        if (!s.dragPushed) { BeginEdit(); s.dragPushed = true; }
+        keys[(std::size_t)i].value = pct / 100.0f;
+        Touch();
+    }
+    if (ImGui::IsItemDeactivated()) s.dragPushed = false;
+    Help("How tall each bar is. 0 is no bar. About 12% is a wide film frame.");
+    EaseCombo("Curve##lb", keys[(std::size_t)i].ease);
+    Help("How the bars grow or shrink from this key to the next one.");
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    ColorField("Bar colour##lb", s.seq.letterbox.color, true);
+    Help("The colour of both bars. Leave it black for a normal film look.");
+    if (ImGui::Button("Delete key##lb")) DeleteSel(s);
+}
+
+void ShakeInspector(State& s) {
+    ImGui::TextColored(AccentCol(1.0f), "Camera shake");
+    Help("The picture jitters. The same moment always shakes the same way, so scrubbing matches playback. Players who turned on Reduce motion feel no shake.");
+    TimeField(s);
+    auto channel = [&](const char* id, const char* label, std::vector<SeqFloatKey>& keys, float speed, float lo, float hi, const char* fmt, float fresh, const char* help) {
+        ImGui::PushID(id);
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        int i = Sequence::FloatKeyAt(keys, s.sel.time);
+        bool keyed = i >= 0;
+        if (ImGui::Checkbox(label, &keyed)) {
+            BeginEdit();
+            if (keyed) {
+                float v = fresh;
+                Sequence::FloatAt(keys, s.sel.time, v);
+                i = Sequence::SetFloatKey(keys, s.sel.time, v);
+                if (i >= 0) keys[(std::size_t)i].ease = Ease::SineInOut;
+            } else if (i >= 0) keys.erase(keys.begin() + i);
+            Touch();
+            i = Sequence::FloatKeyAt(keys, s.sel.time);
+        }
+        Help(help);
+        if (i >= 0) {
+            ImGui::SetNextItemWidth(160.0f);
+            Drag("Value##sh", keys[(std::size_t)i].value, speed, lo, hi, fmt);
+            EaseCombo("Curve##sh", keys[(std::size_t)i].ease);
+            Help("How this value moves from this key to the next one.");
+        }
+        ImGui::PopID();
+    };
+    channel("str", "Shake strength", s.seq.shake.strength, 0.01f, 0.0f, 1.0f, "%.2f", 0.6f,
+            "How hard the camera shakes here. 0 is still. 1 is the camera's full shake distance.");
+    channel("hz", "Shakes per second", s.seq.shake.frequency, 0.1f, 0.0f, 40.0f, "%.1f", 14.0f,
+            "How fast it jitters. About 14 is a rumble. Leave this unkeyed to use 18.");
+    if (ImGui::Button("Delete key##sh")) DeleteSel(s);
+}
+
+void FadeInspector(State& s) {
+    ImGui::TextColored(AccentCol(1.0f), "Screen fade");
+    Help("A colour laid over the whole picture. It is drawn on top of the scene, so it shows on every renderer. The event track's fade to black still works on its own.");
+    TimeField(s);
+    auto& keys = s.seq.fade.keys;
+    const int i = Sequence::ColorKeyAt(keys, s.sel.time);
+    if (i < 0) { Help("This moment has no fade key. Use + on the track to add one."); return; }
+    ColorField("Colour and opacity##fd", keys[(std::size_t)i].color, true);
+    Help("The colour, and how solid it is. 0 opacity is clear. 1 hides the scene.");
+    EaseCombo("Curve##fd", keys[(std::size_t)i].ease);
+    Help("How the colour and the opacity move from this key to the next one.");
+    if (ImGui::Button("Delete key##fd")) DeleteSel(s);
+}
+
+void NestInspector(EditorState& ed, State& s) {
+    SeqNestCue& c = s.seq.nests[(std::size_t)s.sel.track].cues[(std::size_t)s.sel.index];
+    ImGui::TextColored(AccentCol(1.0f), "Nested sequence");
+    Help("Plays another sequence from this moment. Its camera, object moves, bars, shake, fade, sounds and events play too. A sequence cannot play itself.");
+    TimeField(s);
+    TextField("Sequence file##nest", c.path, "glance.okayseq");
+    ImGui::SameLine();
+    if (ImGui::Button("Browse##nest")) {
+        const std::string dir = ed.projectDir().empty() ? std::string() : ed.projectDir() + "/";
+        EditorState* edp = &ed;
+        const std::size_t trk = (std::size_t)s.sel.track, idx = (std::size_t)s.sel.index;
+        okay::filedialog::OpenOne("Choose a sequence", dir, okay::filedialog::Filters("OkaySpace sequence", {"*.okayseq"}), [edp, trk, idx](const std::string& p) {
+            State& st = S();
+            if (trk >= st.seq.nests.size() || idx >= st.seq.nests[trk].cues.size()) return;
+            BeginEdit();
+            st.seq.nests[trk].cues[idx].path = ProjectRelative(*edp, p);
+            Touch();
+        });
+    }
+    Help("The .okayseq file to play. A name in the same folder as this sequence is enough.");
+    Drag("Start this far in##nest", c.offset, 0.01f, 0.0f, 3600.0f, "%.2f s");
+    Help("Skip this many seconds of the other sequence. 0 starts it at the beginning.");
+    if (const Sequence* child = s.lib.Find(c.path))
+        ImGui::TextDisabled("That sequence is %.2f seconds.", child->Duration(&s.lib));
+    else if (!c.path.empty())
+        Help("That file is not loaded yet. Save this sequence next to it, or type a path the project can find.");
+    if (ImGui::Button("Delete##nest")) DeleteSel(s);
+}
+
 void DrawInspector(EditorState& ed, const std::vector<Row>& rows) {
     State& s = S();
     (void)rows;
@@ -971,6 +1308,10 @@ void DrawInspector(EditorState& ed, const std::vector<Row>& rows) {
         case Kind::Animation: AnimCueInspector(s); return;
         case Kind::Audio:     AudioCueInspector(ed, s); return;
         case Kind::Events:    EventInspector(ed, s); return;
+        case Kind::Letterbox: LetterboxInspector(s); return;
+        case Kind::Shake:     ShakeInspector(s); return;
+        case Kind::Fade:      FadeInspector(s); return;
+        case Kind::Nest:      NestInspector(ed, s); return;
         default: break;
         }
     }
@@ -991,6 +1332,16 @@ void DrawInspector(EditorState& ed, const std::vector<Row>& rows) {
             ImGui::TextDisabled("Named events, fades, subtitles,\nwaits and the end.");
         } else if (s.rowKind == Kind::Camera) {
             ImGui::TextDisabled("Shots drive the scene's main camera;\nit comes back when the sequence ends.");
+        } else if (s.rowKind == Kind::Letterbox) {
+            Help("Bars across the top and bottom. Add a key, then set how tall the bars are and the curve into the next key.");
+            ColorField("Bar colour##lbtrack", s.seq.letterbox.color, true);
+        } else if (s.rowKind == Kind::Shake) {
+            Help("Keys of how hard the camera shakes, and how many shakes per second. Add a key with +.");
+        } else if (s.rowKind == Kind::Fade) {
+            Help("Keys of a colour laid over the whole screen, with an opacity. Add a key with +.");
+        } else if (s.rowKind == Kind::Nest && s.rowTrack >= 0 && s.rowTrack < (int)s.seq.nests.size()) {
+            TextField("Name##nesttr", s.seq.nests[(std::size_t)s.rowTrack].name);
+            Help("Plays other sequences. Add a cue with +, then choose the file.");
         }
         ImGui::Separator();
     }
@@ -1003,7 +1354,7 @@ void DrawInspector(EditorState& ed, const std::vector<Row>& rows) {
         Drag("Loop end##seq", s.seq.loopEnd, 0.05f, 0.0f, 3600.0f, "%.2f s (0 = length)");
     }
     ImGui::Spacing();
-    ImGui::TextDisabled("Duration %.2f s", s.seq.Duration());
+    ImGui::TextDisabled("Duration %.2f s", Dur(s));
     if (!s.path.empty()) { ImGui::TextDisabled("%s", ProjectRelative(ed, s.path).c_str()); }
 }
 
@@ -1052,20 +1403,20 @@ void DrawToolbar(EditorState& ed) {
     else if (tr == 1) { float best = 0.0f; for (float k : times) if (k < s.t - 1e-3f) best = k; s.t = best; s.playing = false; }
     else if (tr == 2) s.playing = !s.playing;
     else if (tr == 3) { for (float k : times) if (k > s.t + 1e-3f) { s.t = k; break; } s.playing = false; }
-    else if (tr == 4) { s.t = s.seq.Duration(); s.playing = false; }
+    else if (tr == 4) { s.t = Dur(s); s.playing = false; }
     ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
     if (AnimGlyphButton("##tlloop", 13, "Loop between the markers on the ruler", s.seq.loop)) { BeginEdit(); s.seq.loop = !s.seq.loop; Touch(); }
     ImGui::SameLine();
     if (AnimGlyphButton("##tlkey", 6, "Key the tracked objects as they stand, at the playhead (K)", false)) KeyNow(ed);
     ImGui::SameLine();
-    if (AnimGlyphButton("##tlfit", 15, "Fit the whole sequence", false)) AnimTimeViewFit(s.view, std::max(s.seq.Duration(), 2.0f));
+    if (AnimGlyphButton("##tlfit", 15, "Fit the whole sequence", false)) AnimTimeViewFit(s.view, std::max(Dur(s), 2.0f));
     ImGui::EndDisabled();
     ImGui::SameLine(0, sty.ItemSpacing.x * 2.0f);
     ImGui::SetNextItemWidth(90.0f);
     float t = s.t;
     if (ImGui::DragFloat("##tltime", &t, 0.01f, 0.0f, 3600.0f, "%.2f s")) { s.t = Snapped(t); s.playing = false; }
     ImGui::SameLine();
-    ImGui::TextDisabled("/ %.2f s", s.seq.Duration());
+    ImGui::TextDisabled("/ %.2f s", Dur(s));
     ImGui::SameLine(0, sty.ItemSpacing.x * 2.0f);
     ImGui::Checkbox("Snap", &s.snap);
     ImGui::SameLine();
@@ -1115,13 +1466,27 @@ void DrawTimeline(EditorState& ed) {
     State& s = S();
     g_focused = false;
     if (!g_showTimeline) { if (s.binding.Bound()) ReleasePreview(); s.overlayValid = false; return; }
+    ImGuiWindowFlags tlFlags = 0;
     if (std::getenv("OKAY_UI_TIMELINE")) {
-        ImGui::SetNextWindowPos(ImVec2(170, 430), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(1260, 410), ImGuiCond_Always);
+        // A floating window, not a hidden dock tab. "result" leaves the Game
+        // view clear above it (the bars and the fade). Otherwise the tracks fill
+        // the window.
+        tlFlags |= ImGuiWindowFlags_NoDocking;
+        ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
+        const char* lay = std::getenv("OKAY_UI_TIMELINE_LAYOUT");
+        if (lay && std::strcmp(lay, "result") == 0) {
+            ImGui::SetNextWindowPos(ImVec2(8, 700), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(1264, 240), ImGuiCond_Always);
+        } else {
+            ImGui::SetNextWindowPos(ImVec2(16, 36), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(1248, 748), ImGuiCond_Always);
+        }
     } else {
         ImGui::SetNextWindowSize(ImVec2(1100, 420), ImGuiCond_FirstUseEver);
     }
-    if (!ImGui::Begin("Timeline", &g_showTimeline)) { ImGui::End(); if (s.binding.Bound()) ReleasePreview(); return; }
+    if (!ImGui::Begin("Timeline", &g_showTimeline, tlFlags)) { ImGui::End(); if (s.binding.Bound()) ReleasePreview(); return; }
+    if (const char* lay = std::getenv("OKAY_UI_TIMELINE_LAYOUT"); lay && std::strcmp(lay, "result") == 0)
+        ImGui::SetWindowFocus("Game");   // the picture, with the bars and the fade, stays the tab in front
     g_focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     // Edit-mode playback; in Play the game's player drives the readout.
@@ -1130,7 +1495,7 @@ void DrawTimeline(EditorState& ed) {
         if (SequencePlayer* sp = SequencePlayer::Playing(ed.scene())) s.t = sp->Time();
     } else if (s.playing) {
         s.t += ImGui::GetIO().DeltaTime;
-        const float end = s.seq.loop ? s.seq.LoopEndTime() : s.seq.Duration();
+        const float end = s.seq.loop ? s.seq.LoopEndTime() : Dur(s);
         if (s.t >= end) {
             if (s.seq.loop && end > s.seq.loopStart) s.t = s.seq.loopStart + std::fmod(s.t - end, end - s.seq.loopStart);
             else { s.t = end; s.playing = false; }
@@ -1158,7 +1523,7 @@ void DrawTimeline(EditorState& ed) {
     if (g_focused && !ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false) && !ed.isPlaying()) s.playing = !s.playing;
         if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) { s.t = 0.0f; s.playing = false; }
-        if (ImGui::IsKeyPressed(ImGuiKey_End, false)) { s.t = s.seq.Duration(); s.playing = false; }
+        if (ImGui::IsKeyPressed(ImGuiKey_End, false)) { s.t = Dur(s); s.playing = false; }
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) DeleteSel(s);
         if (ImGui::IsKeyPressed(ImGuiKey_K, false) && !ed.isPlaying()) KeyNow(ed);
     }

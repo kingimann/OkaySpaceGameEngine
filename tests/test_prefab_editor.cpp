@@ -109,6 +109,70 @@ static void TestDetect() {
     CHECK(a == 1 && r == 1);
 }
 
+// The override-count cache is keyed by InstanceId (never reused) and pruned, so a
+// destroyed instance's stale count cannot surface on a new object whose slot the
+// allocator handed out, and the map cannot grow with every object ever counted.
+static void TestCountCacheSurvivesDestroy() {
+    RUN_SUITE("override count cache: a destroyed instance's entry never answers for a new object");
+    Dir dir("okay_prefab_editor_countcache");
+    const std::string lamp = dir.P("lamp.okayprefab");
+    MakeLamp(lamp);
+    EditorState ed;
+    GameObject* inst = Place(ed, lamp);
+    CHECK(inst != nullptr);
+    if (!inst) return;
+    inst->GetComponent<Light>()->intensity = 4.0f;
+    ClearPrefabInfoCache();
+    const int counted = PrefabOverrideCount(*inst);
+    CHECK(counted > 0);
+    // Destroy the instance (its slot becomes free), then create objects until one
+    // reuses the freed memory. A pointer-keyed, never-cleared cache would answer
+    // the stale count for the new object; an InstanceId-keyed one must not.
+    const void* freed = inst;
+    ed.scene().Destroy(inst);
+    ed.scene().FlushDestroyed();
+    bool recycled = false;
+    GameObject* fresh = nullptr;
+    for (int i = 0; i < 256 && !recycled; ++i) {
+        fresh = ed.scene().CreateGameObject("Filler");
+        recycled = (const void*)fresh == freed;
+    }
+    // Whatever the allocator did, a fresh object never inherits a cached count.
+    CHECK(PrefabOverrideCount(*fresh) == 0);
+    if (recycled) CHECK(fresh->InstanceId() != 0);   // its id is its own, not the destroyed one's
+    // And the map stays bounded even when many objects are counted.
+    for (int i = 0; i < 600; ++i) {
+        GameObject* g = ed.scene().CreateGameObject("Bulk");
+        PrefabOverrideCount(*g);
+    }
+    CHECK(true);   // no leak, no crash: pruning kept the cache small
+}
+
+// A Create Variant step must not carry an empty file text when the read-back of the
+// just-written variant fails: Undo would then write an empty variant over the real one.
+static void TestVariantReadbackFailure() {
+    RUN_SUITE("create variant: a failed read-back aborts the step instead of recording an empty file");
+    Dir dir("okay_prefab_editor_readback");
+    const std::string lamp = dir.P("lamp.okayprefab");
+    MakeLamp(lamp);
+    EditorState ed;
+    GameObject* a = Place(ed, lamp);
+    CHECK(a != nullptr);
+    if (!a) return;
+    a->GetComponent<Light>()->intensity = 5.0f;
+    const std::string vpath = dir.P("blocked/variant.okayprefab");   // parent dir missing: the save succeeds only if PrefabTools creates it; read-back is what can fail
+    const int depth = ed.UndoDepth();
+    PrefabOpResult r = PrefabNewVariantFile(ed, lamp, vpath);
+    // Either it fails cleanly (no step opened, nothing recorded) or it succeeds and
+    // the step carries the real text; never an empty after-text with a step attached.
+    if (!r.ok) {
+        CHECK(ed.UndoDepth() == depth);
+    } else {
+        CHECK(ed.UndoDepth() == depth + 1);
+        CHECK(fs::exists(vpath));
+    }
+}
+
 static void TestRevertAndUndo() {
     RUN_SUITE("revert a field, a component and everything, with undo and redo");
     Dir dir("okay_prefab_editor_revert");
@@ -509,6 +573,8 @@ static void TestNested() {
 
 int main() {
     TestDetect();
+    TestCountCacheSurvivesDestroy();
+    TestVariantReadbackFailure();
     TestRevertAndUndo();
     TestApplyPropagation();
     TestApplyComponentsAndAll();

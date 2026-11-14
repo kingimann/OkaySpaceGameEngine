@@ -223,7 +223,8 @@ What's supported:
 - **`Vector3.Angle(a, b)`** (`vec_angle`) — angle in degrees between two vectors;
   `Vector2.Lerp` / `Vector3.LerpUnclamped` map onto `vec_lerp`; and
   `Input.GetButton/GetButtonDown/GetButtonUp` are accepted (same as the key
-  checks).
+  checks). Touch gestures are `gesture("tap")`, `gesture("swipe up")`,
+  `pinch_scale()`, `twist_degrees()` and `is_touch_screen()` (see `docs/input.md`).
 - **Generic calls** `GetComponent<Rigidbody2D>()` (truthy if present) and
   `AddComponent<Rigidbody2D>()` (adds SpriteRenderer / Rigidbody2D / TextRenderer
   / BoxCollider2D at runtime).
@@ -480,6 +481,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `raycast_all3(ox,oy,oz, dx,dy,dz[, dist])` / `raycast_all(ox,oy,dx,dy[, dist])` | every object the ray passes through, nearest first (a list of names; `ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3(o.., d.., r[, dist])` / `box_cast3(c.., half.., d..[, dist])` / `capsule_cast3(a.., b.., r, d..[, dist])` | thick casts: the first thing the shape touches (details via `ray3_*`) |
+| `box_cast(cx, cy, hx, hy, dx, dy[, dist [, layers [, ignore_triggers [, angle]]]])` / `capsule_cast(ax, ay, bx, by, r, dx, dy[, dist])` | flat casts: the first thing a box or capsule touches (details via `ray_*`; angle is degrees) |
+| `overlap_box(cx, cy, hx, hy)` / `overlap_capsule(ax, ay, bx, by, r)` | names of the objects inside a flat box or capsule |
 | `overlap_sphere3(c.., r)` / `overlap_box3(c.., half..)` / `overlap_capsule3(a.., b.., r)` | names of the objects inside a shape |
 | `layer_mask("Default", "Enemy", 3)` | a layers value for the queries |
 | `overlap(x, y)` | true if a collider contains the point |
@@ -491,6 +494,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `velocity_x()` / `velocity_y()` | read this object's Rigidbody2D velocity |
 | `set_velocity(x, y)` / `set_vx(x)` / `set_vy(y)` | set its velocity (jump, dash, top-down move) |
 | `add_force(x, y)` / `add_impulse(x, y)` | apply a continuous force / instant momentum |
+| `add_explosion_force(cx, cy, force, radius[, up])` | shove this 2D body away from a point; the push fades to nothing at `radius` |
 | `set_image(path)` | set this object's UIImage texture (swap icons/states) |
 | `set_interactable(bool)` | enable/disable this object's UIButton (grey out menu entries) |
 | `set_progress(v)` | set this object's UIProgressBar fill (0..1) |

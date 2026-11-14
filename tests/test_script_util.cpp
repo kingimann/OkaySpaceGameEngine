@@ -63,5 +63,49 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("n").AsFloat(), 3.0f, 0.001f);
     }
 
+    // --- repeat / pad_left / pad_right: hostile counts are capped, not a hang or OOM (#719) ---
+    {
+        const char* src = R"SCRIPT(
+            var big = repeat("x", 999999999);        // hangs / ~1GB before the cap
+            var neg = repeat("x", -5);               // nothing
+            var nan = repeat("x", 0.0 / 0.0);        // NaN count: nothing
+            var p1 = pad_left("7", 999999999, "0");  // ~1GB before the cap
+            var p2 = pad_right("7", 999999999);
+            var ok = repeat("ab", 3);
+            var pl = pad_left("7", 3, "0");
+            var pr = pad_right("7", 3);
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK(vm->GetGlobal("big").AsString().size() <= (1u << 20));   // capped, truncated
+        CHECK(vm->GetGlobal("neg").AsString().empty());
+        CHECK(vm->GetGlobal("nan").AsString().empty());
+        CHECK(vm->GetGlobal("p1").AsString().size() <= (1u << 20));
+        CHECK(vm->GetGlobal("p2").AsString().size() <= (1u << 20));
+        CHECK(vm->GetGlobal("ok").AsString() == "ababab");
+        CHECK(vm->GetGlobal("pl").AsString() == "007");
+        CHECK(vm->GetGlobal("pr").AsString() == "7  ");
+    }
+
+    // --- format(): a huge index must be an empty field, not a thrown out_of_range (#719) ---
+    {
+        const char* src = R"SCRIPT(
+            var a = format("hp={0} of {1}", 7, 9);
+            var b = format("{99999999999999}!", 1);   // std::stoi threw here
+            var c = format("{2147483648} / {1}", 1, 2);
+            var d = format("hp={} of {}", 7, 9);
+            var e = format("x={5}", 1);               // valid index, out of range
+        )SCRIPT";
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load(src, &err));
+        CHECK(vm->GetGlobal("a").AsString() == "hp=7 of 9");
+        CHECK(vm->GetGlobal("b").AsString() == "!");
+        CHECK(vm->GetGlobal("c").AsString() == " / 2");
+        CHECK(vm->GetGlobal("d").AsString() == "hp=7 of 9");
+        CHECK(vm->GetGlobal("e").AsString() == "x=");
+    }
+
     TEST_MAIN_RESULT();
 }

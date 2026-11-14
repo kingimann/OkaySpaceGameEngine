@@ -4,10 +4,19 @@
 #include "test_framework.hpp"
 #include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
+#include "ActionExport.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/ActionList.hpp"
+#include "okay/Core/Time.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Core/Prefs.hpp"
+#include "okay/Core/Random.hpp"
 #include <Okay.hpp>
 #include <climits>
 #include <set>
 #include <cmath>
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -529,6 +538,432 @@ int main() {
         g.linkExec(start, 0, add); g.linkData(add, 0, get, 0); g.linkData(add, 1, mk, 0);
         CHECK(RunVar(g.toText(), "pts").s == "[(1, 0, 0), (0, 2, 0), (0, 0, 0)]");
         for (const auto& i : vs::ValidateGraphText(g.toText())) CHECK(i.severity != 0);   // no errors
+    }
+
+    // export_wait_delay_matches_runtime: Wait and Delay export as after(seconds, "fn").
+    // The variable after the node stays unset until the delay has passed, in the
+    // exported script and in the graph. A comment (the old export) would set it in Start.
+    {
+        for (const char* kind : {"Wait", "Delay"}) {
+            VsEditGraph g;
+            const int start = g.add("OnStart", 0, 0);
+            const int early = g.add("SetVar", 0, 0);
+            const int pause = g.add(kind, 0, 0);
+            const int hit = g.add("SetVar", 0, 0);
+            const int oneA = g.add("Const", 0, 0);
+            const int oneB = g.add("Const", 0, 0);
+            g.find(early)->arg = "early";
+            g.find(hit)->arg = "hit";
+            g.find(pause)->arg = "0.5";
+            g.find(oneA)->arg = "1";
+            g.find(oneB)->arg = "1";
+            g.linkExec(start, 0, early);
+            g.linkExec(early, 0, pause);
+            g.linkExec(pause, 0, hit);
+            g.linkData(early, 0, oneA, 0);
+            g.linkData(hit, 0, oneB, 0);
+
+            const std::string code = CompileToOkayScript(g);
+            const auto afterAt = code.find("after(0.5,");
+            const auto earlyAt = code.find("early = 1");
+            const auto hitAt = code.find("hit = 1");
+            CHECK(afterAt != std::string::npos);
+            CHECK(code.find("// Wait") == std::string::npos);
+            CHECK(code.find("// Delay") == std::string::npos);
+            CHECK(code.find("NOT TRANSLATED") == std::string::npos);
+            CHECK(earlyAt != std::string::npos && hitAt != std::string::npos && afterAt != std::string::npos);
+            CHECK(earlyAt < afterAt && afterAt < hitAt);
+
+            std::string err;
+            Scene graphScene(std::string("graph-") + kind);
+            auto* vs = graphScene.CreateGameObject("G")->AddComponent<VisualScriptComponent>();
+            CHECK(vs->LoadFromText(g.toText(), &err));
+            if (!err.empty()) std::printf("  graph %s: %s\n", kind, err.c_str());
+
+            Scene scriptScene(std::string("script-") + kind);
+            auto* sc = scriptScene.CreateGameObject("S")->AddComponent<ScriptComponent>("okayscript");
+            const bool loaded = sc->LoadSource(code, &err);
+            if (!loaded) std::printf("  export %s failed: %s\n%s\n", kind, err.c_str(), code.c_str());
+            CHECK(loaded);
+            if (!loaded || !sc->VM()) continue;
+
+            graphScene.Start();
+            scriptScene.Start();
+            auto gEarly = [&] { return vs->GetVariable("early").AsFloat(); };
+            auto gHit = [&] { return vs->GetVariable("hit").AsFloat(); };
+            auto sEarly = [&] { return sc->VM()->GetGlobal("early").AsFloat(); };
+            auto sHit = [&] { return sc->VM()->GetGlobal("hit").AsFloat(); };
+            auto dump = [&](const char* when) {
+                std::printf("  %s %s graph early=%.3f hit=%.3f script early=%.3f hit=%.3f\n%s\n",
+                            kind, when, gEarly(), gHit(), sEarly(), sHit(), code.c_str());
+            };
+            if (std::fabs(gEarly() - 1.f) > 0.001f || std::fabs(sEarly() - 1.f) > 0.001f ||
+                std::fabs(gHit()) > 0.001f || std::fabs(sHit()) > 0.001f) dump("at start");
+            CHECK_NEAR(gEarly(), 1.0f, 0.001f);
+            CHECK_NEAR(sEarly(), 1.0f, 0.001f);
+            CHECK_NEAR(gHit(), 0.0f, 0.001f);
+            CHECK_NEAR(sHit(), 0.0f, 0.001f);   // a comment export would have set hit already
+
+            graphScene.Update(0.2f);
+            scriptScene.Update(0.2f);
+            if (std::fabs(gHit()) > 0.001f || std::fabs(sHit()) > 0.001f) dump("at 0.2s");
+            CHECK_NEAR(gHit(), 0.0f, 0.001f);
+            CHECK_NEAR(sHit(), 0.0f, 0.001f);
+
+            graphScene.Update(0.4f);
+            scriptScene.Update(0.4f);
+            if (std::fabs(gHit() - 1.f) > 0.001f || std::fabs(sHit() - 1.f) > 0.001f) dump("at 0.6s");
+            CHECK_NEAR(gHit(), 1.0f, 0.001f);
+            CHECK_NEAR(sHit(), 1.0f, 0.001f);
+        }
+    }
+
+    // export_timer_matches_runtime: Timer passes at most once per interval and keeps
+    // the leftover, including the four-interval clamp. Zero and negative pass every time.
+    {
+        auto run = [](const char* seconds, const std::vector<float>& dts) {
+            VsEditGraph g;
+            const int upd = g.add("OnUpdate", 0, 0);
+            const int timer = g.add("Timer", 0, 0);
+            const int add = g.add("AddVar", 0, 0);
+            const int one = g.add("Const", 0, 0);
+            g.find(timer)->arg = seconds;
+            g.find(add)->arg = "pulses";
+            g.find(one)->arg = "1";
+            g.linkExec(upd, 0, timer);
+            g.linkExec(timer, 0, add);
+            g.linkData(add, 0, one, 0);
+
+            std::vector<okay::vs::VsIssue> blocked;
+            const std::string code = CompileToOkayScript(g, &blocked);
+            CHECK(blocked.empty());
+            CHECK(code.find("unsupported node") == std::string::npos);
+            CHECK(code.find("// Every") == std::string::npos);
+            const bool gated = std::strtod(seconds, nullptr) > 0.0;
+            if (gated) {
+                CHECK(code.find("_vs_timer_") != std::string::npos);
+                CHECK(code.find("Time.deltaTime") != std::string::npos);
+                CHECK(code.find("* 4") != std::string::npos);
+            } else {
+                CHECK(code.find("if (_vs_timer_") == std::string::npos);
+            }
+
+            std::string err;
+            Scene graphScene("timer-graph");
+            auto* vs = graphScene.CreateGameObject("G")->AddComponent<VisualScriptComponent>();
+            CHECK(vs->LoadFromText(g.toText(), &err));
+            Scene scriptScene("timer-script");
+            auto* sc = scriptScene.CreateGameObject("S")->AddComponent<ScriptComponent>("okayscript");
+            const bool loaded = sc->LoadSource(code, &err);
+            if (!loaded) std::printf("  timer %s failed: %s\n%s\n", seconds, err.c_str(), code.c_str());
+            CHECK(loaded);
+            graphScene.Start();
+            scriptScene.Start();
+            auto gp = [&] { return vs->GetVariable("pulses").AsFloat(); };
+            auto sp = [&] { return sc->VM() ? sc->VM()->GetGlobal("pulses").AsFloat() : -1.f; };
+            CHECK_NEAR(gp(), 0.f, 0.001f);
+            CHECK_NEAR(sp(), 0.f, 0.001f);
+            for (float dt : dts) {
+                graphScene.Update(dt);
+                scriptScene.Update(dt);
+                if (std::fabs(gp() - sp()) > 0.001f)
+                    std::printf("  timer %s after %.3f: graph %.3f script %.3f\n%s\n", seconds, dt, gp(), sp(), code.c_str());
+                CHECK_NEAR(gp(), sp(), 0.001f);
+            }
+            return std::make_pair(gp(), sp());
+        };
+        {
+            auto end = run("0.5", {0.2f, 0.2f});
+            CHECK_NEAR(end.first, 0.f, 0.001f);   // 0.4s accumulated, still short of 0.5
+            end = run("0.5", {0.2f, 0.2f, 0.2f});
+            CHECK_NEAR(end.first, 1.f, 0.001f);   // 0.6s fires once, leftover 0.1
+            end = run("0.5", {0.2f, 0.2f, 0.2f, 0.4f});
+            CHECK_NEAR(end.first, 2.f, 0.001f);   // leftover 0.1 + 0.4 fires again
+        }
+        {
+            auto end = run("0.5", {10.f});
+            CHECK_NEAR(end.first, 1.f, 0.001f);   // one pass, leftover clamped to 2s
+            end = run("0.5", {10.f, 0.1f});
+            CHECK_NEAR(end.first, 2.f, 0.001f);   // 2 + 0.1 fires again
+        }
+        CHECK_NEAR(run("0", {0.2f, 0.2f, 0.2f}).first, 3.f, 0.001f);
+        CHECK_NEAR(run("-2", {0.2f, 0.2f}).first, 2.f, 0.001f);
+        CHECK_NEAR(run("nan", {0.2f}).first, 1.f, 0.001f);
+    }
+
+    // A node with no script fails the export by name. It is not left as a comment.
+    {
+        VsEditGraph g;
+        const int start = g.add("OnStart", 0, 0);
+        const int bad = g.add("NoSuchExport", 0, 0);
+        const int set = g.add("SetVar", 0, 0);
+        g.find(set)->arg = "hit";
+        g.linkExec(start, 0, bad);
+        g.linkExec(bad, 0, set);
+        std::vector<okay::vs::VsIssue> blocked;
+        const std::string code = CompileToOkayScript(g, &blocked);
+        CHECK(code.find("unsupported node") == std::string::npos);
+        CHECK(blocked.size() == 1);
+        CHECK(blocked[0].node == bad);
+        CHECK(blocked[0].severity == 0);
+        CHECK(blocked[0].message.find("NoSuchExport") != std::string::npos);
+        CHECK(blocked[0].message.find("#" + std::to_string(bad)) != std::string::npos);
+    }
+
+    // export_actions_matches_runtime: every Actions step is in the exported script and
+    // the script's list does the same thing as the Actions component for the same inputs.
+    {
+        auto ops = [] {
+            std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/main.cpp");
+            std::string line;
+            bool on = false;
+            std::vector<std::string> out;
+            while (std::getline(in, line)) {
+                if (line.find("kInstrOps[]") != std::string::npos) { on = true; continue; }
+                if (!on) continue;
+                if (line.find("};") != std::string::npos) break;
+                if (line.find("{\"") == std::string::npos) continue;
+                const auto a = line.find('"'), b = line.find('"', a + 1);
+                if (a != std::string::npos && b != std::string::npos) out.push_back(line.substr(a + 1, b - a - 1));
+            }
+            return out;
+        }();
+        CHECK(ops.size() > 200);
+
+        auto argsFor = [](const std::string& op) {
+            if (op == "load_scene" || op == "save_prefs" || op == "game_save" || op == "game_load" ||
+                op == "game_continue" || op == "game_autosave" || op == "game_delete_slot")
+                return std::vector<std::string>{"../outside"};
+            if (op == "load_scene_index") return std::vector<std::string>{"99999"};
+            if (op == "net_host" || op == "net_join" || op == "net_host_relay" || op == "net_join_relay")
+                return std::vector<std::string>{"127.0.0.1", "1", "code"};
+            if (op == "playfab_login" || op == "playfab_name" || op == "playfab_set_stat" ||
+                op == "playfab_leaderboard" || op == "playfab_set_data" || op == "playfab_get_data")
+                return std::vector<std::string>{};   // no title: the call fails before any network request
+            return std::vector<std::string>{"a", "1", "2", "3", "4", "5"};
+        };
+        auto near = [](float a, float b) {
+            if (a != a && b != b) return true;
+            const float d = std::fabs(a - b);
+            return d <= 0.002f || d <= 0.002f * std::max(std::fabs(a), std::fabs(b));
+        };
+        struct World {
+            bool alive = false, active = false, pending = false, paused = false, quit = false;
+            std::string name, tag;
+            float px = 0, py = 0, pz = 0, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0, scale = 1;
+            int objects = 0;
+            std::map<std::string, float> vars, prefs;
+            std::map<std::string, std::string> strs;
+            std::map<std::string, std::vector<float>> arrays;
+            std::map<std::string, std::map<std::string, float>> maps;
+        };
+        auto reset = [] {
+            ActionList::ResetVars();
+            Prefs::Clear();
+            Time::SetTimeScale(1.f);
+            Game::SetPaused(false);
+            if (Game::QuitRequested()) Game::CancelQuit();
+        };
+        auto snap = [&](Scene& sc, GameObject* go) {
+            ActionList::UseScene(&sc);
+            World w;
+            w.objects = (int)sc.Objects().size();
+            w.scale = Time::BaseTimeScale();
+            w.paused = Game::Paused();
+            w.quit = Game::QuitRequested();
+            w.alive = go && !go->IsDestroyed();
+            if (w.alive && go->transform) {
+                w.active = go->active;
+                w.name = go->name;
+                w.tag = go->tag;
+                w.pending = sc.IsDestroyPending(go);
+                const Vec3 p = go->transform->localPosition, s = go->transform->localScale, e = go->transform->localRotation.ToEuler();
+                w.px = p.x; w.py = p.y; w.pz = p.z; w.sx = s.x; w.sy = s.y; w.sz = s.z; w.rx = e.x; w.ry = e.y; w.rz = e.z;
+            }
+            for (const auto& kv : ActionList::Vars()) w.vars.emplace(kv.first, kv.second);
+            for (const auto& kv : ActionList::StrVars()) w.strs.emplace(kv.first, kv.second);
+            for (const auto& kv : ActionList::Arrays()) w.arrays.emplace(kv.first, kv.second);
+            for (const auto& kv : ActionList::Maps()) {
+                std::map<std::string, float> inner;
+                for (const auto& e : kv.second) inner.emplace(e.first, e.second);
+                w.maps.emplace(kv.first, std::move(inner));
+            }
+            for (const char* k : {"a", "b", "1", "hit", "early", "n", "x", "score"})
+                if (Prefs::Has(k)) w.prefs.emplace(k, Prefs::GetFloat(k, 0.f));
+            return w;
+        };
+        auto same = [&](const World& a, const World& b, const char* op) {
+            auto bad = [&](const std::string& what) {
+                std::printf("  actions %s: %s\n", op, what.c_str());
+                return false;
+            };
+            if (a.alive != b.alive || a.active != b.active || a.pending != b.pending || a.objects != b.objects) return bad("object");
+            if (a.name != b.name || a.tag != b.tag) return bad("name");
+            if (!near(a.px, b.px) || !near(a.py, b.py) || !near(a.pz, b.pz)) return bad("position");
+            if (!near(a.sx, b.sx) || !near(a.sy, b.sy) || !near(a.sz, b.sz)) return bad("scale");
+            if (!near(a.rx, b.rx) || !near(a.ry, b.ry) || !near(a.rz, b.rz)) return bad("rotation");
+            if (!near(a.scale, b.scale) || a.paused != b.paused || a.quit != b.quit) return bad("time");
+            if (a.vars.size() != b.vars.size() || a.strs.size() != b.strs.size() || a.prefs.size() != b.prefs.size() ||
+                a.arrays.size() != b.arrays.size() || a.maps.size() != b.maps.size()) return bad("count");
+            for (const auto& kv : a.vars) {
+                auto it = b.vars.find(kv.first);
+                if (it == b.vars.end() || !near(kv.second, it->second)) return bad("var " + kv.first);
+            }
+            for (const auto& kv : a.strs) {
+                auto it = b.strs.find(kv.first);
+                if (it == b.strs.end() || kv.second != it->second) return bad("text " + kv.first);
+            }
+            for (const auto& kv : a.prefs) {
+                auto it = b.prefs.find(kv.first);
+                if (it == b.prefs.end() || !near(kv.second, it->second)) return bad("pref " + kv.first);
+            }
+            for (const auto& kv : a.arrays) {
+                auto it = b.arrays.find(kv.first);
+                if (it == b.arrays.end() || kv.second.size() != it->second.size()) return bad("array " + kv.first);
+                for (std::size_t i = 0; i < kv.second.size(); ++i)
+                    if (!near(kv.second[i], it->second[i])) return bad("array " + kv.first);
+            }
+            for (const auto& kv : a.maps) {
+                auto it = b.maps.find(kv.first);
+                if (it == b.maps.end() || kv.second.size() != it->second.size()) return bad("map " + kv.first);
+                for (const auto& e : kv.second) {
+                    auto jt = it->second.find(e.first);
+                    if (jt == it->second.end() || !near(e.second, jt->second)) return bad("map " + kv.first);
+                }
+            }
+            return true;
+        };
+        auto pump = [](Scene& sc, int n, float dt) {
+            for (int i = 0; i < n; ++i) { Time::Step(dt); sc.Update(dt); }
+        };
+        auto findG = [](Scene& sc) -> GameObject* {
+            for (const auto& up : sc.Objects()) if (up && up->name == "G" && !up->IsDestroyed()) return up.get();
+            return nullptr;
+        };
+        auto runList = [&](const ActionList& src, int updates, float dt) {
+            const std::string code = okay::editor::ActionListToCode(src);
+            reset();
+            Scene actions("actions");
+            GameObject* ago = actions.CreateGameObject("G");
+            ActionList* al = ago->AddComponent<ActionList>();
+            al->FromText(src.ToText());
+            actions.Start();
+            Random::Shared().Seed(42);
+            pump(actions, updates, dt);
+            World aw = snap(actions, findG(actions));
+
+            reset();
+            Scene scripts("scripts");
+            GameObject* sgo = scripts.CreateGameObject("G");
+            auto* sc = sgo->AddComponent<ScriptComponent>("okayscript");
+            std::string err;
+            const bool loaded = sc->LoadSource(code, &err);
+            if (!loaded) std::printf("  actions export failed: %s\n%s\n", err.c_str(), code.c_str());
+            CHECK(loaded);
+            scripts.Start();
+            Random::Shared().Seed(42);
+            pump(scripts, updates, dt);
+            World sw = snap(scripts, findG(scripts));
+            reset();
+            return std::make_pair(aw, sw);
+        };
+
+        for (const std::string& op : ops) {
+            ActionList src;
+            src.trigger = ActionList::Trigger::OnStart;
+            src.instructions.push_back({op, argsFor(op)});
+            const std::string code = okay::editor::ActionListToCode(src);
+            CHECK(code.find("// TODO") == std::string::npos);
+            CHECK(code.find("actions_load(") != std::string::npos);
+            const auto at = code.find(op);
+            CHECK(at != std::string::npos);
+            if (at != std::string::npos) {
+                const bool left = at == 0 || (code[at - 1] != '_' && !std::isalnum(static_cast<unsigned char>(code[at - 1])));
+                const auto end = at + op.size();
+                const bool right = end >= code.size() || (code[end] != '_' && !std::isalnum(static_cast<unsigned char>(code[end])));
+                CHECK(left && right);
+            }
+            auto both = runList(src, 4, 0.2f);
+            CHECK(same(both.first, both.second, op.c_str()));
+        }
+
+        // Wait holds the following step. The list runs on the first Update, then the
+        // wait counts on the updates after that.
+        {
+            ActionList src;
+            src.trigger = ActionList::Trigger::OnStart;
+            src.instructions.push_back({"set_var", {"early", "1"}});
+            src.instructions.push_back({"wait", {"0.5"}});
+            src.instructions.push_back({"set_var", {"hit", "1"}});
+            const std::string code = okay::editor::ActionListToCode(src);
+            CHECK(code.find("wait") != std::string::npos);
+            CHECK(code.find("// TODO") == std::string::npos);
+            reset();
+            Scene actions("wait-a");
+            auto* al = actions.CreateGameObject("G")->AddComponent<ActionList>();
+            al->FromText(src.ToText());
+            Scene scripts("wait-s");
+            auto* sc = scripts.CreateGameObject("G")->AddComponent<ScriptComponent>("okayscript");
+            std::string err;
+            CHECK(sc->LoadSource(code, &err));
+            actions.Start();
+            scripts.Start();
+            auto val = [&](Scene& scn, const char* name) {
+                ActionList::UseScene(&scn);
+                return ActionList::GetVar(name);
+            };
+            CHECK_NEAR(val(actions, "hit"), 0.f, 0.001f);
+            CHECK_NEAR(val(scripts, "hit"), 0.f, 0.001f);
+            Time::Step(0.2f); actions.Update(0.2f); Time::Step(0.2f); scripts.Update(0.2f);
+            CHECK_NEAR(val(actions, "early"), 1.f, 0.001f);
+            CHECK_NEAR(val(scripts, "early"), 1.f, 0.001f);
+            CHECK_NEAR(val(actions, "hit"), 0.f, 0.001f);
+            CHECK_NEAR(val(scripts, "hit"), 0.f, 0.001f);
+            for (int i = 0; i < 2; ++i) { Time::Step(0.2f); actions.Update(0.2f); Time::Step(0.2f); scripts.Update(0.2f); }
+            CHECK_NEAR(val(actions, "hit"), 0.f, 0.001f);   // 0.1s of the wait is still left
+            CHECK_NEAR(val(scripts, "hit"), 0.f, 0.001f);
+            Time::Step(0.2f); actions.Update(0.2f); Time::Step(0.2f); scripts.Update(0.2f);
+            CHECK_NEAR(val(actions, "hit"), 1.f, 0.001f);
+            CHECK_NEAR(val(scripts, "hit"), 1.f, 0.001f);
+            reset();
+        }
+        // If, else, and repeat run the same steps on both sides.
+        {
+            ActionList yes;
+            yes.instructions = {{"set_var", {"x", "1"}}, {"if", {"x", "gt", "0"}}, {"set_var", {"hit", "1"}},
+                                {"else", {}}, {"set_var", {"hit", "2"}}, {"end_if", {}}};
+            auto both = runList(yes, 1, 0.2f);
+            CHECK(same(both.first, both.second, "if"));
+            CHECK(both.first.vars.count("hit") && near(both.first.vars.at("hit"), 1.f));
+            ActionList no = yes;
+            no.instructions[0].args = {"x", "0"};
+            both = runList(no, 1, 0.2f);
+            CHECK(same(both.first, both.second, "else"));
+            CHECK(both.first.vars.count("hit") && near(both.first.vars.at("hit"), 2.f));
+            ActionList loop;
+            loop.instructions = {{"set_var", {"n", "0"}}, {"repeat", {"3"}}, {"add_var", {"n", "1"}}, {"end_repeat", {}}};
+            both = runList(loop, 1, 0.2f);
+            CHECK(same(both.first, both.second, "repeat"));
+            CHECK(both.first.vars.count("n") && near(both.first.vars.at("n"), 3.f));
+        }
+        // Every trigger emits a real load, not a TODO comment.
+        {
+            using T = ActionList::Trigger;
+            const T triggers[] = {T::OnStart, T::OnUpdate, T::OnKey, T::OnCollision, T::OnClick, T::OnKeyUp, T::OnMessage,
+                                  T::OnTriggerEnter, T::OnTriggerExit, T::OnMouseEnter, T::OnMouseExit, T::OnMouseDown,
+                                  T::OnMouseUp, T::OnMouseOver, T::OnCollisionExit, T::OnCollisionStay, T::OnInterval,
+                                  T::OnLateUpdate, T::OnTriggerStay};
+            for (T t : triggers) {
+                ActionList src;
+                src.trigger = t;
+                src.triggerKey = (t == T::OnInterval) ? "0.5" : (t == T::OnMessage) ? "Hit" : "e";
+                src.instructions.push_back({"set_var", {"hit", "1"}});
+                const std::string code = okay::editor::ActionListToCode(src);
+                CHECK(code.find("// TODO") == std::string::npos);
+                CHECK(code.find("actions_load(") != std::string::npos);
+                CHECK(code.find("set_var") != std::string::npos);
+            }
+        }
     }
 
     Log::sink = sink;

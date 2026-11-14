@@ -407,7 +407,14 @@ void RegisterAudioSource() {
      .AddBool("spatial", &AudioSource::spatial)
      .AddFloat("minDistance", &AudioSource::minDistance).Range(0, kBig, 0.5)
      .AddFloat("maxDistance", &AudioSource::maxDistance).Range(0, kBig, 0.5)
-     .AddEnum("rolloff", &AudioSource::rolloff, {"Linear", "Inverse", "Logarithmic"});
+     .AddEnum("rolloff", &AudioSource::rolloff, {"Linear", "Inverse", "Logarithmic"})
+     .AddBool("doppler", &AudioSource::doppler).Tooltip("Raise the pitch when this sound or the listener is moving closer, and lower it when moving apart")
+     .AddFloat("dopplerScale", &AudioSource::dopplerScale).Range(0, 5, 0.05).Tooltip("1 matches real speed. 0 is no shift. Higher exaggerates it")
+     .AddBool("occlude", &AudioSource::occlude).Tooltip("A wall between this and the listener makes the sound quieter and muffled")
+     .AddFloat("occlusionVolume", &AudioSource::occlusionVolume).Range(0, 1, 0.01).Tooltip("How loud it stays when a wall is in the way. 1 is no quieter")
+     .AddFloat("occlusionLowPass", &AudioSource::occlusionLowPass).Range(10, AudioSource::kLowPassOff, 10).Tooltip("How muffled it is behind a wall, in Hz. Lower is duller")
+     .AddBool("distanceLowPass", &AudioSource::distanceLowPass).Tooltip("Far sounds get muffled. Off keeps the tone the same at every distance")
+     .AddFloat("distanceLowPassHz", &AudioSource::distanceLowPassHz).Range(10, AudioSource::kLowPassOff, 10).Tooltip("Cutoff at the far edge, in Hz. The muffling follows a curve that stays bright up close");
     b.Commit();
 }
 

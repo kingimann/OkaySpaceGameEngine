@@ -158,5 +158,60 @@ int main() {
         for (Component* c : snap) CHECK(c && c->gameObject == g);
     }
 
+    // #735: an OnEnable that removes or destroys its own component must not leave
+    // StartComponent calling Start() (and m_started = true) on freed memory.
+    RUN_SUITE("OnEnable that removes itself does not use-after-free");
+    {
+        struct SelfRemover : public Behaviour {
+            int start = 0;                  // kept in sync for the sibling case only; read r->start only while r is alive
+            GameObject* victim = nullptr;   // the object this component sits on
+            int* startCount = nullptr;      // external counter: valid even after this component frees itself
+            void OnEnable() override {
+                // Remove a sibling component, then this component itself, then the whole object:
+                // each path must leave the pending Start skipped, not running on freed memory.
+                // Each branch returns at once: after RemoveComponent(this) the object is freed
+                // and even reading `mode` would be a use-after-free in the test itself.
+                if (mode == 1) { victim->RemoveComponent(victim->GetComponent<Probe>()); return; }
+                if (mode == 2) { victim->RemoveComponent(this); return; }
+                if (mode == 3) { victim->scene()->DestroyImmediate(victim); return; }
+            }
+            void Start() override { ++start; if (startCount) ++*startCount; }
+            int mode = 0;
+        };
+        for (int mode = 1; mode <= 3; ++mode) {
+            Scene s("SelfRemove");
+            GameObject* g = s.CreateGameObject("G");
+            g->AddComponent<Probe>();
+            int selfStarts = 0;
+            SelfRemover* r = g->AddComponent<SelfRemover>();
+            r->victim = g;
+            r->mode = mode;
+            r->startCount = &selfStarts;
+            s.Start();                       // Awake + Start batch: OnEnable removes/destroys mid-batch
+            s.Update(0.016f);                // the next frame's Update walk must also survive
+            if (mode == 1) {                  // OnEnable removed the sibling, not this component
+               
+                CHECK(selfStarts == 1);       // a sibling's removal does not stop this component's own Start
+            } else {                          // removed or destroyed itself: Start must never run
+                CHECK(selfStarts == 0);
+                CHECK(g->IsDestroyed() == (mode == 3));
+            }
+        }
+        // DestroyImmediate from inside the start batch defers to its end (the scene is
+        // walking), so assert what is stable: the destroyer itself never starts.
+        {
+            Scene s("Survivor");
+            GameObject* g = s.CreateGameObject("G");
+            g->AddComponent<Probe>();
+            int selfStarts = 0;
+            SelfRemover* r = g->AddComponent<SelfRemover>();
+            r->victim = g;
+            r->mode = 3;
+            r->startCount = &selfStarts;
+            s.Start();
+            CHECK(selfStarts == 0);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

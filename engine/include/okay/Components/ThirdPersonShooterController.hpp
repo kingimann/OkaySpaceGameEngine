@@ -16,6 +16,7 @@
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/AimAssist.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -141,6 +142,7 @@ public:
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
         m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
+        ApplyStickLook(uiBlocked, dt);
 
         // Look already applied. The orbit is LateUpdate. Move or jump stands up.
         if (HumanoidActions::IsSitting(gameObject)) {
@@ -151,8 +153,13 @@ public:
             return;
         }
 
-        // ---- Aim blend (right mouse) ----
-        m_aiming = !uiBlocked && Input::GetMouseButton(aimButton);
+        // ---- Aim blend (right mouse, or a toggled aim when the player asked for it) ----
+        {
+            bool aimHeld = !uiBlocked && Input::GetMouseButton(aimButton);
+            if (Accessibility::ToggleFor("Aim")) aimHeld = m_aimLatch.Update(aimHeld, true);
+            else m_aimLatch.Reset();
+            m_aiming = aimHeld;
+        }
         float aimT = 1.0f - std::exp(-aimSpeed * dt);
         m_aim += ((m_aiming ? 1.0f : 0.0f) - m_aim) * aimT;
 
@@ -177,7 +184,10 @@ public:
         if (!uiBlocked) stanceControl.ReadKeys();
         stanceControl.Step(gameObject, dt);
         const bool standing = stanceControl.Stance() == 0;
-        bool running = standing && sprintKey && Input::GetKey(sprintKey) && moving && !m_aiming;
+        bool sprintHeld = sprintKey && Input::GetKey(sprintKey);
+        if (Accessibility::ToggleFor("Sprint")) sprintHeld = m_sprintLatch.Update(sprintHeld, true);
+        else m_sprintLatch.Reset();
+        bool running = standing && sprintHeld && moving && !m_aiming;
         float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * (m_aiming ? 0.6f : 1.0f) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -358,6 +368,28 @@ private:
     int m_mouseSpace = 0;
     bool m_haveMouse = false;
     bool m_aiming = false;
+    HoldToggle m_aimLatch;
+    HoldToggle m_sprintLatch;
+
+    void ApplyStickLook(bool uiBlocked, float dt) {
+        if (uiBlocked || dt <= 0.0f) return;
+        const Vec2 stick = Input::GamepadRightAxis();
+        if (std::fabs(stick.x) + std::fabs(stick.y) <= kStickLookDeadzone) return;
+        float dYaw = 0.0f, dPitch = 0.0f;
+        StickLookDelta(stick.x, stick.y, dt, false, invertY, dYaw, dPitch);
+        const float strength = Accessibility::AimAssistStrength();
+        std::vector<LookAim> targets;
+        if (strength > 0.0f && transform) {
+            Vec3 eye = transform->Position() + Vec3{0.0f, cameraHeight, 0.0f};
+            Scene* sc = gameObject ? gameObject->scene() : nullptr;
+            if (sc && sc->mainCamera && sc->mainCamera->transform) eye = sc->mainCamera->transform->Position();
+            GatherAimTargets(sc, gameObject, eye, false, targets);
+        }
+        const StickAim aimed = ApplyStickAim(yaw, pitch, dYaw, dPitch, strength, dt,
+                                             targets.empty() ? nullptr : targets.data(), (int)targets.size());
+        yaw = aimed.yaw;
+        pitch = Mathf::Clamp(aimed.pitch, minPitch, maxPitch);
+    }
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
     FollowPivot m_pivot;            // the smoothed point the camera orbits
     SpringArm m_arm;                // camera collision

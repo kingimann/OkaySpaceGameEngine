@@ -4,6 +4,7 @@
 // a ground drag makes) is okay::VolumeGeometry, so what is drawn here is exactly the region the game tests.
 #include "VolumeTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
+#include "okay/Audio/SpatialFx.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/Volume.hpp"
@@ -42,6 +43,11 @@ Vec3  s_dragNow{0, 0, 0};
 int   s_handleAxis = -1, s_handleSign = 0;   // the face handle being dragged
 
 constexpr int kLogicBit = 5;
+constexpr int kReverbBit = 6;
+
+unsigned KindBit(Volume::Kind k) {
+    return k == Volume::Kind::Reverb ? (1u << kReverbBit) : (1u << (int)k);
+}
 
 struct View {
     Mat4 vp;
@@ -100,7 +106,7 @@ void CollectRegions(Scene& scene, std::vector<Region>& out) {
             Region r;
             r.g = v->Geometry(); r.go = go; r.color = Volume::KindColor(v->kind);
             r.label = std::string(Volume::KindName(v->kind)) + ": " + go->name;
-            r.bit = 1u << (int)v->kind;
+            r.bit = KindBit(v->kind);
             r.size = &v->size; r.offset = &v->offset;
             out.push_back(r);
         }
@@ -397,8 +403,9 @@ void DrawVolumeInspector(EditorState& ed, GameObject* go, Component* comp, Compo
         ImGui::TextColored(ImVec4(kc.r, kc.g, kc.b, 1.0f), "%s", Volume::KindHint(k));
         auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
         int kind = (int)c->kind;
-        const char* kinds[] = {"Checkpoint", "Kill", "Force", "Atmosphere", "Ambience"};
-        if (ImGui::Combo("Kind", &kind, kinds, IM_ARRAYSIZE(kinds))) {
+        const char* kinds[Volume::kKindCount];
+        for (int i = 0; i < Volume::kKindCount; ++i) kinds[i] = Volume::KindName((Volume::Kind)i);
+        if (ImGui::Combo("Kind", &kind, kinds, Volume::kKindCount)) {
             ed.PushUndo();
             c->kind = (Volume::Kind)kind;
             if (c->kind == Volume::Kind::Ambience && !go->GetComponent<AudioSource>()) { go->AddComponent<AudioSource>()->loop = true; }
@@ -473,6 +480,20 @@ void DrawVolumeInspector(EditorState& ed, GameObject* go, Component* comp, Compo
                 }
                 break;
             }
+            case Volume::Kind::Reverb: {
+                int preset = c->reverbPreset;
+                if (preset < 0 || preset >= (int)ReverbPreset::Count) preset = 0;
+                const char* presets[(int)ReverbPreset::Count];
+                for (int i = 0; i < (int)ReverbPreset::Count; ++i) presets[i] = ReverbPresetName((ReverbPreset)i);
+                if (ImGui::Combo("Echo", &preset, presets, (int)ReverbPreset::Count)) { c->reverbPreset = preset; ed.dirty = true; }
+                tip("Room is small and short. Hall is large. Cave rings for a long time. Outdoor is a little air and almost dry.");
+                if (ImGui::SliderFloat("Strength", &c->reverbAmount, 0.0f, 1.0f)) ed.dirty = true;
+                tip("How much echo is added to 3D sounds while the listener is in this volume. 0 leaves them dry.");
+                if (ImGui::SliderFloat("Edge blend", &c->blend, 0.0f, 1.0f)) ed.dirty = true;
+                tip("How far in from the edge the echo takes to reach full strength. 0 is full right at the edge.");
+                ImGui::TextDisabled("3D sounds pick this up from the listener. Music and other 2D sounds stay dry.");
+                break;
+            }
         }
         if (ed.isPlaying()) {
             if (k == Volume::Kind::Ambience) {
@@ -480,7 +501,8 @@ void DrawVolumeInspector(EditorState& ed, GameObject* go, Component* comp, Compo
                 ImGui::TextDisabled("Play: camera weight %.2f   sound %s, level %.2f", c->ViewerWeight(),
                                     src && src->IsPlaying() ? "playing" : "stopped", src ? src->FadeLevel() : 0.0f);
             }
-            else if (k == Volume::Kind::Atmosphere) ImGui::TextDisabled("Play: camera weight %.2f", c->ViewerWeight());
+            else if (k == Volume::Kind::Atmosphere || k == Volume::Kind::Reverb)
+                ImGui::TextDisabled("Play: listener weight %.2f", c->ViewerWeight());
             else ImGui::TextDisabled("Play: %d inside", c->Occupants());
         }
         if (ImGui::SmallButton("Remove##vol")) toRemove = c;
@@ -536,12 +558,13 @@ void DrawVolumeOverlayMenu(std::function<void()> onChange) {
     if (ImGui::MenuItem("Labels", nullptr, &g_showVolumeLabels) && onChange) onChange();
     ImGui::Separator();
     for (int k = 0; k < Volume::kKindCount; ++k) {
-        bool on = (g_volumeKinds & (1u << k)) != 0;
+        const unsigned bit = KindBit((Volume::Kind)k);
+        bool on = (g_volumeKinds & bit) != 0;
         const Color c = Volume::KindColor((Volume::Kind)k);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(c.r, c.g, c.b, 1.0f));
         const bool hit = ImGui::MenuItem(Volume::KindName((Volume::Kind)k), nullptr, &on);
         ImGui::PopStyleColor();
-        if (hit) { g_volumeKinds = on ? (g_volumeKinds | (1u << k)) : (g_volumeKinds & ~(1u << k)); if (onChange) onChange(); }
+        if (hit) { g_volumeKinds = on ? (g_volumeKinds | bit) : (g_volumeKinds & ~bit); if (onChange) onChange(); }
     }
     bool logic = (g_volumeKinds & (1u << kLogicBit)) != 0;
     if (ImGui::MenuItem("Logic zones (plates, trigger zones)", nullptr, &logic)) {
@@ -557,7 +580,8 @@ void VolumeAddComponentItems(EditorState& ed, GameObject* go, const std::functio
     if (!go) return;
     static const char* labels[Volume::kKindCount] = {
         "Volume: Checkpoint (respawn point)", "Volume: Kill (respawn / destroy)", "Volume: Force (wind, updraft, current)",
-        "Volume: Atmosphere (fog + vignette zone)", "Volume: Ambience (sound zone)"};
+        "Volume: Atmosphere (fog + vignette zone)", "Volume: Ambience (sound zone)", "Volume: Reverb (room echo)"};
+    static_assert(sizeof(labels) / sizeof(labels[0]) == (std::size_t)Volume::kKindCount, "one Add Component row per volume kind");
     for (int k = 0; k < Volume::kKindCount; ++k)
         if (item(true, labels[k])) {
             ed.PushUndo();

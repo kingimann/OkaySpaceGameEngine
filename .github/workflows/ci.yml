@@ -15,13 +15,13 @@ jobs:
   build-and-test:
     name: Build & test (Ubuntu)
     runs-on: ubuntu-latest
-    # The compiler cache turns the three builds below (tests, player, editor all compile
-    # the same engine) into one cold compile; a warm run only recompiles what changed.
+    # The compiler cache makes a warm run recompile only what changed. The player and
+    # editor builds are their own jobs below so they run in parallel with this one.
+    timeout-minutes: 90
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative
-      # and tests that find files next to their source (test_project_state) fail. All three builds use the same
-      # source tree, so their cache keys already match without it.
+      # and tests that find files next to their source (test_project_state) fail.
       CCACHE_COMPRESS: "1"
       CCACHE_MAXSIZE: 2G
     steps:
@@ -51,7 +51,35 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-      # Also compile the standalone player (engine + SDL2, no ImGui) so player
+  # The player and editor builds used to run after the tests in the one job above,
+  # which added their build times together (about 75 minutes). They are separate
+  # jobs now, so the three builds run side by side and a run takes as long as the
+  # slowest one. Each keeps its own compiler cache.
+  player:
+    name: Build player runtime (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-player-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-player-
+
+      # Compile the standalone player (engine + SDL2, no ImGui) so player
       # regressions are caught — the default build leaves it off.
       - name: Build player runtime
         run: |
@@ -60,6 +88,37 @@ jobs:
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-player -j
+
+      - name: Upload player runtime
+        uses: actions/upload-artifact@v6
+        with:
+          name: ubuntu-ci-player
+          path: build-player/bin/okay-player
+          retention-days: 1
+
+  editor:
+    name: Build & self-test editor (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-editor-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-editor-
 
       # Build the editor (Dear ImGui + SDL2) and run its headless self-test so
       # editor regressions are caught. --selftest returns before any SDL/display
@@ -73,18 +132,45 @@ jobs:
           cmake --build build-editor -j
           ./build-editor/bin/OkayEngine --selftest
 
-      # Export a small game with the editor's real Build and run it headless: its
-      # visual scripts must print exactly tests/export/expected.txt. The Windows
-      # jobs below run the same check on Windows.
+      - name: Upload editor
+        uses: actions/upload-artifact@v6
+        with:
+          name: ubuntu-ci-editor
+          path: build-editor/bin/OkayEngine
+          retention-days: 1
+
+  # Export a small game with the editor's real Build and run it headless: its
+  # visual scripts must print exactly tests/export/expected.txt. The Windows
+  # jobs below run the same check on Windows. Runs once the player and editor
+  # builds above have finished.
+  export-check:
+    name: Export a game and check its visual scripts (Ubuntu)
+    needs: [player, editor]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: ubuntu-ci-player
+          path: bin
+      - uses: actions/download-artifact@v6
+        with:
+          name: ubuntu-ci-editor
+          path: bin
+
       - name: Export a game and check its visual scripts
         run: |
-          cp build-player/bin/okay-player build-editor/bin/
-          tests/export/verify.sh build-editor/bin/OkayEngine
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y libsdl2-dev
+          chmod +x bin/okay-player bin/OkayEngine
+          tests/export/verify.sh bin/OkayEngine
 
       # The build pipeline's output layout: <Name>.exe + <Name>_Data/, only the assets the scene uses,
       # StreamingAssets, build.json; an old flat build still runs; compact, zip and dry-run output.
       - name: Check the build output layout
-        run: tests/export/verify_layout.sh build-editor/bin/OkayEngine
+        run: tests/export/verify_layout.sh bin/OkayEngine
 
   # Build the scripting, visual-scripting and robustness tests with
   # AddressSanitizer and UndefinedBehaviorSanitizer and run them: any memory
@@ -423,3 +509,130 @@ jobs:
         with:
           name: okayspace-webgl
           path: build-web/web/
+
+  # ---- Anti-cheat and updater checks that the jobs above can't run -----------------------------
+  # Three jobs of their own, none of them a required check, each under 15 minutes.
+
+  # The SQL tests (anticheat, reports, blocks, chat receipts, member moderation) need a Postgres.
+  # The test scripts skip themselves (exit 77) without OKAY_SQL_TEST_PGHOST, so no other job ran
+  # them and the row-level-security rules were never checked in CI. Here a throwaway Postgres
+  # service container is the target; each script makes and drops its own database and loads
+  # docs/sql/*.sql into it twice (the files must be idempotent). A skip is a failure here.
+  sql-tests:
+    name: SQL row-level-security tests (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OKAY_SQL_TEST_PGHOST: localhost
+      OKAY_SQL_TEST_PGPORT: "5432"
+      OKAY_SQL_TEST_PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install the Postgres client
+        run: |
+          command -v psql >/dev/null || { bash scripts/ci-apt-mirror.sh; sudo apt-get update && sudo apt-get install -y postgresql-client; }
+          psql --version
+
+      - name: Run the SQL tests
+        run: |
+          failed=""
+          for t in tests/scripts/test_*_sql.sh; do
+            echo "== $t"
+            bash "$t"; code=$?
+            if [ "$code" -ne 0 ]; then echo "$t exited $code (a skip, 77, counts as a failure here)"; failed="$failed $t"; fi
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+  # The ticket service's signing code (supabase/functions/session-ticket/ticket.ts) against Web Crypto's Ed25519 on
+  # a current Node, the signed-update tool (scripts/sign_index.py) with its guards, and the reference account server's
+  # limits. They were run by hand before.
+  ticket-and-script-tests:
+    name: Ticket function, update signing and account server tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Ticket function self-test (Node)
+        working-directory: supabase/functions/session-ticket
+        run: |
+          node --version
+          node --experimental-strip-types ticket_test.ts
+
+      - name: Update signing tool and the publish script's guards
+        run: bash tests/scripts/test_sign_index.sh
+
+      - name: Publish script checks
+        run: bash tests/scripts/test_publish_supabase_checks.sh
+
+      - name: Reference account server limits
+        run: python3 -I tests/scripts/test_account_server.py
+
+  # The anti-cheat tests that only do their real work with libsodium. The main Ubuntu job installs
+  # no libsodium-dev, so a test that says "built without libsodium" there only runs its refusal
+  # branch and never signs, seals or verifies anything (docs/feature_map/39). This job installs it,
+  # checks that the configure step really enabled it, builds only those tests and fails if any of
+  # them still prints that branch. The launcher-side ticket flow runs here end to end against a local
+  # fake ticket service (curl is on the runner).
+  anticheat-crypto:
+    name: Anti-cheat tests with libsodium (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 1G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache libsodium-dev pkg-config curl
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-anticheat-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-anticheat-
+            ccache-ubuntu-ci-
+
+      - name: Configure (libsodium must be on)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \
+            -DOKAY_BUILD_OKAYUI_TESTS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache | tee configure.log
+          grep -q "packet encryption ENABLED (libsodium)" configure.log || { echo "::error::libsodium was not enabled: the crypto tests would not run"; exit 1; }
+
+      - name: Build the tests
+        run: |
+          TESTS=$(grep -ohE 'add_executable\((test_(net_anticheat[a-z0-9_]*|anticheat_[a-z_]+|ticket_client|update_signature|account|self_update|launcher_versions))' tests/CMakeLists.txt | cut -c16- | sort -u | tr '\n' ' ')
+          echo "$TESTS"
+          cmake --build build -j 4 --target $TESTS
+
+      - name: Test
+        run: |
+          ctest --test-dir build -R 'anticheat|ticket_client|update_signature|^account$|self_update|launcher_versions' --output-on-failure -V 2>&1 | tee ctest.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -E "built without libsodium|only the refusal is checked|part B is skipped" ctest.log; then
+            echo "::error::a crypto test took its no-libsodium branch"; exit 1
+          fi

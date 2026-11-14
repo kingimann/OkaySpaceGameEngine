@@ -571,7 +571,10 @@ private:
     /// OnMouseEnter/Exit/Over/Down/Up/Click messages, tracking state across frames.
     void DispatchPointer();
     void DispatchActivation();   // OnEnable / OnDisable for components switched on/off
-    void StartComponent(Component* c);   // OnEnable (if owed), then Start
+    /// OnEnable (if owed), then Start. True when the component survived (an OnEnable
+    /// that removed or destroyed it makes the rest of its start-up unsafe: the caller
+    /// must not touch it again).
+    bool StartComponent(Component* c);
     void TickDelayedDestroys(float deltaTime);
     void StepAsyncLoads();
     void DestroyLoadedObjects(const std::vector<std::uint64_t>& ids);

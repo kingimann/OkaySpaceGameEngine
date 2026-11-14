@@ -110,6 +110,7 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     std::string low = name ? name : "";
     for (char& c : low) c = (char)std::tolower((unsigned char)c);
     auto has = [&](const char* t) { return VsTokenIs(low, t); };
+    if (has("clipboard")) return VsAt("Text");   // get_clipboard_text, set_clipboard_text
     if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
         return VsAt("Debug");
     if (low.rfind("game_", 0) == 0 && (has("save") || has("load") || has("slot") || has("continue") || has("autosave")))
@@ -119,10 +120,11 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");
     if (has("ui") || has("button") || has("slider") || has("toast") || has("tooltip") || has("font"))
         return VsAt("UI");
-    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input"))
+    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input") ||
+        has("gesture") || has("swipe") || has("pinch") || has("twist") || has("touch"))
         return VsAt("Input");
-    if (has("raycast") || has("overlap") || has("rigid") || has("force") || has("impulse") ||
-        has("velocity") || has("physics") || has("gravity"))
+    if (has("raycast") || has("overlap") || has("cast") || has("explosion") || has("rigid") ||
+        has("force") || has("impulse") || has("velocity") || has("physics") || has("gravity"))
         return VsAt("Physics");
     if (has("net") || has("steam") || has("rpc") || has("lobby")) return VsAt("Online");
     if (has("wait") || has("delay") || has("timescale") || has("pause") || has("timer") || has("cooldown"))
@@ -173,6 +175,10 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
         return VsAt("Events");
     if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
         return VsAt("Input", "Controls");
+    if (VsIs(type, "OnTap") || VsIs(type, "OnDoubleTap") || VsIs(type, "OnLongPress") ||
+        VsIs(type, "OnSwipe") || VsIs(type, "OnPinch") || VsIs(type, "OnRotate") ||
+        VsIs(type, "GestureSwipeDirection") || VsIs(type, "GesturePinchScale") || VsIs(type, "GestureTwist"))
+        return VsAt("Input");
     if (VsIs(type, "GetMoveAxis")) return VsAt("Input", "Axes");
     if (VsIs(type, "ScoreAdd") || VsIs(type, "ScoreSet") || VsIs(type, "ScoreGet")) return VsAt("Variables");
     if (VsIs(type, "CheckpointSave") || VsIs(type, "CheckpointLoad")) return VsAt("Variables", "Saved");
@@ -320,8 +326,12 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsPre(type, "Axis")) return VsAt("Input", "Axes");
     // Physics
     if (VsIs(type, "ContactPoint") || VsIs(type, "ContactNormal") || VsIs(type, "ImpactSpeed")) return VsAt("Physics", "Collisions");
-    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D")) return VsAt("Physics", "Queries");
-    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity")) return VsAt("Physics");
+    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D") ||
+        VsIs(type, "BoxCast2D") || VsIs(type, "CapsuleCast2D"))
+        return VsAt("Physics", "Queries");
+    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity") ||
+        VsIs(type, "AddExplosionForce"))
+        return VsAt("Physics");
     // Animation
     if (VsPre(type, "Ik")) return VsAt("Animation", "IK");
     if (VsIs(type, "Die") || VsIs(type, "Revive") || VsIs(type, "Dive") || VsIs(type, "Sit") || VsIs(type, "StandUp") ||

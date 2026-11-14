@@ -350,6 +350,47 @@ void ScrollTests() {
     CHECK(scrolled() > 0);
 }
 
+// Regression for #723: PushID past the 32-deep ID stack must not corrupt the
+// seed the matching PopID restores. Previously the seed was mutated even when
+// the push was skipped, so later widgets in the same frame hashed their ids
+// from a shifted seed and duplicated another widget's id.
+void IdStackDepthTests() {
+    Rig r;
+    int clicks = 0;
+    // 30 nested pushes fill the stack to 30 (the seed stack holds 32); the
+    // two buttons in the middle sit at depth 31 and 32, the 32nd push is skipped.
+    r.body = [&] {
+        for (int i = 0; i < 30; ++i) UI::PushID(i);
+        UI::Button("deep1");
+        UI::Button("deep2");
+        for (int i = 0; i < 30; ++i) UI::PopID();
+        UI::Button("shallow");
+        if (UI::Button("click")) ++clicks;
+    };
+    r.Frames(2);
+    UI::Rect deep, deep2, shallow, click;
+    r.body = [&] {
+        for (int i = 0; i < 30; ++i) UI::PushID(i);
+        UI::Button("deep1"); deep = UI::GetItemRect();
+        UI::Button("deep2"); deep2 = UI::GetItemRect();
+        for (int i = 0; i < 30; ++i) UI::PopID();
+        UI::Button("shallow"); shallow = UI::GetItemRect();
+        if (UI::Button("click")) ++clicks; click = UI::GetItemRect();
+    };
+    r.Frames(2);
+    // All four laid out without crashing and at distinct positions: ids stayed
+    // distinct despite the skipped push (the old code shifted the seed for the
+    // shallow widgets after the overflow, colliding ids into each other).
+    CHECK(deep.w > 0 && deep2.w > 0 && shallow.w > 0 && click.w > 0);
+    CHECK(deep2.y > deep.y || (deep2.y == deep.y && deep2.x != deep.x));
+    CHECK(shallow.y > deep2.y);
+    r.ClickC(click);
+    CHECK(clicks == 1);                                   // still clickable after the overflow frame
+    // And after the overflow frame the stack is balanced again: one more frame works.
+    r.Frames(1);
+    CHECK(clicks == 1);
+}
+
 void LayoutTests() {
     Rig r; UI::Rect a, b, c, d, e;
     r.body = [&] {
@@ -575,6 +616,7 @@ int main() {
     TreeAndSelectableTests();
     ScrollTests();
     LayoutTests();
+    IdStackDepthTests();
     WindowTests();
     ResizeTests();
     MiscTests();

@@ -217,6 +217,41 @@ void NetworkManager::InitServerState() {
         recent.push_back(r);
         if (m_cheatHandler) m_cheatHandler(r);
     };
+    anticheat.rttOf = [this](std::uint32_t peer) {
+        for (const auto& [ep, c] : m_clients) if (c.id == peer) return c.rtt;
+        return -1.0f;
+    };
+    // The detection engine's view of the world (static solids and the ground), from the scene's physics.
+    anticheat.detector.hooks.groundAt = [this](const Vec3& pos, float& groundY) {
+        Scene* sc = GetScene();
+        if (!sc) return false;
+        const Vec3 from(pos.x, pos.y + 0.5f, pos.z);
+        for (const auto& h : sc->physics3D().RaycastAll(*sc, from, Vec3(0, -1, 0), 2000.0f, nullptr, Physics3D::kAllLayers, false)) {
+            if (!h.gameObject || h.gameObject->GetComponent<NetworkSync>()) continue;   // players and their objects are not the ground
+            groundY = h.point.y;
+            return true;
+        }
+        return false;
+    };
+    anticheat.detector.hooks.staticBlocked = [this](const Vec3& a, const Vec3& b) {
+        Scene* sc = GetScene();
+        if (!sc) return false;
+        const float len = (b - a).Magnitude();
+        if (len < 1e-4f) return false;
+        // Both ways: a ray that starts inside a solid doesn't see the face it leaves through, so the step that
+        // comes out of a wall is found by the ray from the far end.
+        auto solidBetween = [&](const Vec3& from, const Vec3& to) {
+            const Vec3 dir = (to - from) * (1.0f / len);
+            for (const auto& h : sc->physics3D().RaycastAll(*sc, from, dir, len, nullptr, Physics3D::kAllLayers, false)) {
+                if (!h.gameObject || h.distance < 0.01f || h.distance > len - 0.01f) continue;
+                if (h.gameObject->GetComponent<NetworkSync>()) continue;   // players and their objects are not walls
+                if (const auto* rb = h.gameObject->GetComponent<Rigidbody3D>(); rb && rb->bodyType != Rigidbody3D::BodyType::Static) continue;
+                return true;
+            }
+            return false;
+        };
+        return solidBetween(a, b) || solidBetween(b, a);
+    };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
 }
 
@@ -245,7 +280,23 @@ void NetworkManager::UseNextSessionKeys() {
     m_nextSecure = net::SecureChannel{};                   // used once: the next session makes new ones
 }
 
+namespace {
+    NetworkManager::JoinGate g_joinGate;
+    std::string g_joinRefusal;
+}
+void NetworkManager::SetJoinGate(JoinGate gate) { g_joinGate = std::move(gate); g_joinRefusal.clear(); }
+std::string NetworkManager::LastJoinRefusal() { return g_joinRefusal; }
+
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
+    g_joinRefusal.clear();
+    if (g_joinGate) {
+        std::string why;
+        if (!g_joinGate(*this, host, port, false, std::string(), why)) {
+            g_joinRefusal = why.empty() ? std::string("join refused") : why;
+            OKAY_WARN("net: not joining ", host, ":", port, ": ", g_joinRefusal);
+            return false;
+        }
+    }
     Stop();
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
@@ -273,6 +324,17 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
 
 bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t relayPort,
                                 const std::string& code, bool asHost) {
+    if (!asHost) {
+        g_joinRefusal.clear();
+        if (g_joinGate) {
+            std::string why;
+            if (!g_joinGate(*this, relayHost, relayPort, true, code, why)) {
+                g_joinRefusal = why.empty() ? std::string("join refused") : why;
+                OKAY_WARN("net: not joining through the relay: ", g_joinRefusal);
+                return false;
+            }
+        }
+    }
     Stop();
     if (asHost && !EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
@@ -1756,13 +1818,41 @@ void NetworkManager::ClaimHit(const std::string& targetNetId, const std::string&
     SendReliable("__hit", targetNetId + "|" + weapon + buf);
 }
 
+// What the detection engine learns from a hit claim: its outcome and the
+// numbers the server's own checks measured.
+void NetworkManager::FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why) {
+    if (!anticheat.DetectOn()) return;
+    ShotEvent e;
+    e.t = anticheat.Clock();
+    e.weapon = claim.weapon;
+    e.hit = hit;
+    e.damage = claim.damage;
+    e.distance = m_hitDist;
+    e.offRay = m_hitOff; e.allowedOffRay = m_hitAllowed;
+    e.blockedByWall = why == "through a wall";
+    e.badOrigin = why.rfind("shot from where", 0) == 0;
+    e.outOfRange = why == "out of range";
+    if (!hit && why.rfind("missed", 0) != 0) { e.offRay = 0.0f; e.allowedOffRay = 0.0f; }   // only a miss is about where the target was
+    e.detail = why;
+    anticheat.detector.OnShot(shooter, e);
+}
+
 // "<targetNetId>|<weapon>|<clientTick>|ox oy oz|dx dy dz" from client `c`. The
 // server believes its own view: where it last saw the shooter, where the
 // target is, what's in between.
 void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     const std::uint32_t shooter = c.id;
+    HitClaim fed;   // what the detection engine is told (set once the claim is parsed)
+    fed.shooter = shooter;
+    m_hitDist = m_hitOff = m_hitAllowed = 0.0f;
     auto refuse = [&](const std::string& why) {
         ++m_hitsRefused;
+        if (anticheat.DetectOn()) {
+            if (why.rfind("malformed", 0) == 0) anticheat.detector.OnMalformed(shooter, why, anticheat.Clock());
+            else if (why == "through a wall" || why.rfind("missed", 0) == 0 || why.rfind("shot from where", 0) == 0 ||
+                     why == "out of range" || why.rfind("fire rate", 0) == 0)
+                FeedShot(shooter, fed, false, why);
+        }
         anticheat.Report(shooter, CheatKind::HitRejected, why);
         AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
     };
@@ -1792,6 +1882,7 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); viewTick = std::isfinite(viewTick) ? std::max(0.0, viewTick) : -1.0; }
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
+    fed = claim;
     const AntiCheatSettings& s = anticheat.settings;
     if (s.enabled) {
         // Only a weapon the game knows (a Net Validator for "hit/<weapon>", or
@@ -1865,6 +1956,12 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     if (!why.empty()) { refuse(why); return; }
     // The game's own rules (Validate Hit / on_validate_hit / NetworkManager::ValidateHit).
     if (anticheat.validateHit && !anticheat.validateHit(claim)) { refuse("refused by the game: " + claim.weapon); return; }
+    if (anticheat.DetectOn()) {
+        fed = claim;
+        FeedShot(shooter, claim, true, std::string());
+        if (anticheat.detector.KickRequested(shooter)) { AntiCheatAfterRefusal(shooter); return; }   // (c may be gone)
+        if (anticheat.detector.ShadowRestricted(shooter)) { ++m_hitsRefused; return; }              // no damage, and no sign of it
+    }
     ApplyHit(claim);
 }
 
@@ -1877,6 +1974,9 @@ std::string NetworkManager::CheckHitView(const HitClaim& claim, std::uint32_t sh
     const Vec3 tp = targetT->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
     const Vec3 to = tp - claim.origin;
     const float along = Vec3::Dot(to, claim.direction);
+    m_hitDist = std::max(0.0f, along);
+    m_hitOff = (to - claim.direction * along).Magnitude();
+    m_hitAllowed = s.hitTolerance + (s.maxSyncSpeed > 0.0f ? s.maxSyncSpeed : 8.0f) * slack;
     if (along < 0.0f) return "target behind the shot";
     if (s.maxHitRange > 0.0f && along > s.maxHitRange) return "out of range";
     // Off the ray by no more than the tolerance plus how far the target can
@@ -1950,6 +2050,7 @@ void NetworkManager::NoteRespawn(GameObject* go) {
     if (owner != 0)
         for (auto& [ep, c] : m_clients)
             if (c.id == owner) c.teleportUntil = m_serverTime + 1.0f;
+    if (owner != 0 && anticheat.DetectOn()) anticheat.detector.NoteRespawn(owner, anticheat.Clock());   // grace: its next positions and shots
     char buf[160];
     std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
     SendReliable("__respawn", std::string(buf) + id);
@@ -2165,6 +2266,7 @@ void NetworkManager::ServerTeleport(std::uint32_t id, const Vec3& pos) {
         if (c.id != id) continue;
         c.state.x = pos.x; c.state.y = pos.y; c.state.z = pos.z;
         c.hasState = true; c.stateAge = 0.0f;
+        if (anticheat.DetectOn()) anticheat.detector.NoteTeleport(id, anticheat.Clock());
         net::Packet cp(Correct); cp.Write(pos.x); cp.Write(pos.y); cp.Write(pos.z);
         SendDatagram(c.endpoint, cp.Data(), cp.Size());
         ApplyPeer(c.state);
@@ -2377,10 +2479,16 @@ float NetworkManager::KickBanLeft(const std::string& ident) const {
 
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
-    if (limit > 0 && anticheat.Violations(peer) >= limit) {
+    const bool detectKick = anticheat.DetectOn() && anticheat.detector.KickRequested(peer);
+    if ((limit > 0 && anticheat.Violations(peer) >= limit) || detectKick) {
         if (m_acKickHandler) {
             AntiCheatKick k;
             k.peer = peer;
+            if (anticheat.DetectOn()) {
+                k.risk = anticheat.detector.Risk(peer);
+                k.banRequested = anticheat.detector.BanRequested(peer);
+                k.evidence = anticheat.detector.Bundle(peer, BundleOptions{}).ToJson(12 * 1024);
+            }
             for (auto& [ep, c] : m_clients) if (c.id == peer) { k.name = c.name; k.userId = c.userId; }
             if (auto r = m_recentCheats.find(peer); r != m_recentCheats.end()) k.recent = r->second;
             m_acKickHandler(k);
@@ -2766,7 +2874,16 @@ void NetworkManager::ServerTick(float dt) {
         const bool sealed = len >= 1 && data[0] == kEncEnvelope;
         if (sealed) {
             net::SecureChannel* s = SessionFor(from);
-            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;  // can't open (or a replay) -> drop
+            const std::uint64_t replaysBefore = s ? s->Replays() : 0;
+            if (!s || !s->Open(data + 1, len - 1, decrypted)) {   // can't open (or a replay) -> drop
+                if (s && anticheat.DetectOn()) {
+                    if (auto cl = m_clients.find(from); cl != m_clients.end()) {   // evidence, from a joined peer's address
+                        if (s->Replays() > replaysBefore) anticheat.detector.OnReplay(cl->second.id, anticheat.Clock());
+                        else anticheat.detector.OnMalformed(cl->second.id, "packet would not open", anticheat.Clock());
+                    }
+                }
+                continue;
+            }
             data = decrypted.data(); len = decrypted.size();
         }
         net::Packet p(data, len);
@@ -3117,6 +3234,14 @@ void NetworkManager::ServerTick(float dt) {
                     }
                     continue;
                 }
+                // A counter the rules name (detect.economy): the detector checks the claimed value against what the server expects.
+                if (anticheat.DetectOn() && anticheat.detector.settings.FindEconomy(key)) {
+                    char* end = nullptr;
+                    const float v = std::strtof(value.c_str(), &end);
+                    if (end && end != value.c_str() && *end == '\0') anticheat.detector.OnClaimedValue(cl->second.id, key, v, anticheat.Clock());
+                    else anticheat.detector.OnMalformed(cl->second.id, "economy value unreadable", anticheat.Clock());
+                    if (anticheat.detector.KickRequested(cl->second.id)) { AntiCheatAfterRefusal(cl->second.id); continue; }
+                }
             }
             if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
             net::NoteObject(key, key.size() + value.size(), true);
@@ -3189,6 +3314,12 @@ void NetworkManager::ServerTick(float dt) {
                 // Commands for ticks too far ahead of or behind the server's are refused.
                 if (std::fabs((double)tick - (double)m_netTick) > rate) { ++m_inputsDropped; continue; }
                 in.Clamp();
+                if (anticheat.DetectOn()) {   // what the player asked for: ghost movement, aim snaps, jump spam
+                    const double now = anticheat.Clock();
+                    anticheat.detector.OnInput(c.id, in.move.x, in.move.y, now);
+                    anticheat.detector.OnAim(c.id, in.yaw, in.pitch, now);
+                    if (in.Pressed(PlayerInput::Jump)) anticheat.detector.OnJump(c.id, now);
+                }
                 c.inputs[seq] = {tick, in};
             }
             // Past the budget, drop the newest input, not the oldest unapplied one
@@ -3296,7 +3427,12 @@ void NetworkManager::ServerTick(float dt) {
                     continue;
                 }
                 c.lastSeen = 0.0f;
-                if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
+                if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) {   // garbage
+                    if (anticheat.DetectOn()) anticheat.detector.OnMalformed(c.id, "state: not finite", anticheat.Clock());
+                    continue;
+                }
+                if (anticheat.DetectOn() && m_serverTime >= c.teleportUntil)
+                    anticheat.detector.OnMove(c.id, "@avatar", Vec3(s.x, s.y, s.z), anticheat.Clock());
                 if (maxMoveSpeed > 0.0f && c.hasState && m_serverTime >= c.teleportUntil) {   // too fast? keep the last good spot
                     const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
                     // At most a quarter second of travel, however long it was quiet:
@@ -3305,6 +3441,7 @@ void NetworkManager::ServerTick(float dt) {
                     const float allowed = maxMoveSpeed * std::min(std::max(c.stateAge, m_snapshotInterval), 0.25f) * 1.25f + 0.25f;
                     if (dx * dx + dy * dy + dz * dz > allowed * allowed) {
                         ++c.violations;
+                        if (anticheat.DetectOn()) anticheat.detector.OnCorrection(c.id, anticheat.Clock());
                         net::Packet cp(Correct); cp.Write(c.state.x); cp.Write(c.state.y); cp.Write(c.state.z);
                         SendDatagram(c.endpoint, cp.Data(), cp.Size());
                         if (kickAfterViolations > 0 && c.violations >= kickAfterViolations)

@@ -87,6 +87,10 @@ public:
     /// The definition with this id, or null.
     const ItemDefinition* Find(const std::string& id) const;
     ItemDefinition* FindMutable(const std::string& id);
+    /// A real definition (not a loose stand-in made for a name nobody defined).
+    bool IsDefined(const std::string& id) const;
+    /// Plain-English problems: two items sharing an id, or ids that match once case is ignored.
+    std::vector<std::string> Issues() const;
     /// The id an item string means: an id as-is, else a legacy name or display name of
     /// a definition, else (registering a loose definition) the string itself. Surrounding
     /// whitespace is ignored, and so is case when that picks exactly one definition.

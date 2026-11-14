@@ -6,6 +6,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/ModelData.hpp"
+#include "okay/Render/FbxReader.hpp"
+#include "okay/Render/Gltf.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ModelAnimator.hpp"
@@ -14,7 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <clocale>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -169,6 +173,85 @@ int main() {
         CHECK(ok.parts[0].mesh.normals.size() == ok.parts[0].mesh.vertices.size());
     }
 
+    // Issue #752. Two ASCII files that declare `element vertex` twice. The first
+    // block carries nx/ny/nz and the second does not, so the second block's
+    // vertices used to come back with the first block's normals (the reported
+    // value was (0,1,0)). The second file gives the blocks different property
+    // subsets, which used to concatenate normals and UVs that no longer lined up
+    // with positions. Both are a parse error, and a single block of the same
+    // data still keeps the authored normal (not the face normal) and its UVs.
+    {
+        auto rejected = [](const std::string& ply) {
+            ImportedModel m; std::string e;
+            CHECK(!ReadPlyBuffer(ply, m, &e));
+            CHECK(e.find("more than one vertex element") != std::string::npos);
+            CHECK(m.parts.empty());
+        };
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 0 1\n0 0 1 0 0 1\n3 0 1 2\n");
+        rejected(
+            "ply\nformat ascii 1.0\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\n"
+            "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0 0 0\n0 0 1 1 1\n3 0 1 2\n");
+        const std::string single =
+            "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            "property float nx\nproperty float ny\nproperty float nz\nproperty float s\nproperty float t\n"
+            "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+            "0 0 0 0 1 0 0 0\n1 0 0 0 1 0 1 0\n0 1 0 0 1 0 0 1\n3 0 1 2\n";
+        ImportedModel one; std::string e;
+        CHECK(ReadPlyBuffer(single, one, &e));
+        if (!one.parts.empty()) {
+            const Mesh& me = one.parts[0].mesh;
+            CHECK(me.vertices.size() == 3 && me.normals.size() == 3 && me.uvs.size() == 3);
+            for (const Vec3& n : me.normals) { CHECK_NEAR(n.x, 0.0, 1e-6); CHECK_NEAR(n.y, 1.0, 1e-6); CHECK_NEAR(n.z, 0.0, 1e-6); }
+            CHECK_NEAR(me.uvs[0].y, 1.0, 1e-6);
+            CHECK_NEAR(me.uvs[2].x, 0.0, 1e-6); CHECK_NEAR(me.uvs[2].y, 0.0, 1e-6);
+        }
+        // The same bytes through ImportModelScene (the path the report exercised).
+        SetImportBackend(".ply", ImportBackend::Own);
+        Spit("mr_dup_vertex.ply",
+             "ply\nformat ascii 1.0\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "property float nx\nproperty float ny\nproperty float nz\n"
+             "element vertex 2\nproperty float x\nproperty float y\nproperty float z\n"
+             "element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+             "0 0 0 0 1 0\n1 0 0 0 1 0\n0 1 0\n0 0 1\n3 0 1 2\n");
+        Scene dup; dup.physicsEnabled = false;
+        bool dok = true; GameObject* dr = ImportModelScene(dup, "mr_dup_vertex.ply", &dok);
+        CHECK(!dok && dr == nullptr);
+        int meshes = 0; for (const auto& go : dup.Objects()) if (go->GetComponent<MeshRenderer>()) ++meshes;
+        CHECK(meshes == 0);
+        // Assimp loads this file. The seam must still refuse it, including when
+        // Assimp is the backend the default choice would have used.
+        SetImportBackend(".ply", ImportBackend::Default);
+        Scene dupAssimp; dupAssimp.physicsEnabled = false;
+        bool aok = true; GameObject* ar = ImportModelScene(dupAssimp, "mr_dup_vertex.ply", &aok);
+        CHECK(!aok && ar == nullptr);
+        ImportedModel via; std::string ae;
+        CHECK(!ImportModelData("mr_dup_vertex.ply", via, ImportBackend::Assimp, false, &ae));
+        CHECK(ae.find("more than one vertex element") != std::string::npos);
+        CHECK(via.parts.empty());
+        std::remove("mr_dup_vertex.ply");
+        SetImportBackend(".ply", ImportBackend::Default);
+    }
+
     // ---------------- OBJ + MTL ----------------
     ImportedModel obj;
     {
@@ -191,6 +274,23 @@ int main() {
         CHECK(blue.texture == kDir + "blue.png");               // "-s 1 1 1" option skipped
         CHECK(blue.normalMap == kDir + "blue_n.png");           // "-bm 1.0" option skipped
         CHECK(blue.specularMap == kDir + "spec.png");
+        // #753: a texture that climbs out of the model's directory (or is absolute) must not be
+        // kept: an untrusted model must not point the engine at any file on the machine. In-tree
+        // ".."s still resolve. Scratch files in the current directory (the build dir), like above.
+        {
+            Spit("mr_trav.obj", "mtllib mr_trav.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl climb\nf 1 2 3\n");
+            Spit("mr_trav.mtl", "newmtl climb\nmap_Kd ../../../../../../etc/passwd\n");
+            ImportedModel t1;
+            CHECK(ReadObjFile("mr_trav.obj", t1, &err));
+            CHECK(t1.materials.size() == 1 && t1.materials[0].texture.empty());   // dropped, not stored
+            Spit("mr_inside.obj", "mtllib mr_inside.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl ok\nf 1 2 3\n");
+            Spit("mr_inside.mtl", "newmtl ok\nmap_Kd ./sub/../mr_inside.png\n");
+            ImportedModel t2;
+            CHECK(ReadObjFile("mr_inside.obj", t2, &err));
+            CHECK(t2.materials.size() == 1 && t2.materials[0].texture == "mr_inside.png");   // in-tree ".." still resolves
+            std::remove("mr_trav.obj"); std::remove("mr_trav.mtl");
+            std::remove("mr_inside.obj"); std::remove("mr_inside.mtl");
+        }
         // Same triangles as the engine's long-standing Mesh::LoadOBJ (one merged mesh).
         bool lok = false; Mesh legacy = Mesh::LoadOBJ(kDir + "cube.obj", &lok);
         CHECK(lok);
@@ -210,8 +310,8 @@ int main() {
 
     // ---------------- The seam: backend switch ----------------
     {
-        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && !HasOwnReader(".3ds"));
-        CHECK(!SetImportBackend(".3ds", ImportBackend::Own));
+        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && !HasOwnReader(".blend"));
+        CHECK(!SetImportBackend(".blend", ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
         CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
         if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);
@@ -266,6 +366,176 @@ int main() {
         bool bok = false; Mesh big = ImportModel("mr_big.stl", &bok);
         CHECK(bok); Vec3 blo, bhi; big.Bounds(blo, bhi); CHECK(bhi.x - blo.x < 20.0f);
         std::remove("mr_big.stl");
+    }
+
+    // ---------------- Found by the real-file corpus (docs/model_corpus.md) ----------------
+    {
+        // An L-shaped (concave) hexagon in the XY plane, area 3, wound counter-clockwise: a fan from the first corner covers
+        // the notch (area 3.5 or more) or flips triangles; ear clipping gives area 3 with every triangle facing +Z.
+        const char* lx[6] = {"0 0 0", "2 0 0", "2 1 0", "1 1 0", "1 2 0", "0 2 0"};
+        auto planarArea = [](const Mesh& me, bool& allUp) {
+            double a = 0; allUp = true;
+            for (std::size_t i = 0; i + 2 < me.triangles.size(); i += 3) {
+                const Vec3& p0 = me.vertices[(std::size_t)me.triangles[i]]; const Vec3& p1 = me.vertices[(std::size_t)me.triangles[i + 1]]; const Vec3& p2 = me.vertices[(std::size_t)me.triangles[i + 2]];
+                const double z = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+                if (z <= 0) allUp = false;
+                a += 0.5 * z;
+            }
+            return a;
+        };
+        std::string obj; for (const char* v : lx) obj += std::string("v ") + v + "\n"; obj += "f 1 2 3 4 5 6\n";
+        ImportedModel om; std::string err; bool up = false;
+        CHECK(ReadObjBuffer(obj, "", om, &err) && om.parts.size() == 1);
+        if (!om.parts.empty()) { CHECK(om.parts[0].mesh.TriangleCount() == 4); CHECK_NEAR(planarArea(om.parts[0].mesh, up), 3.0, 1e-5); CHECK(up); }
+        // a convex quad is still fanned from its first corner (same triangles as before)
+        ImportedModel qm; CHECK(ReadObjBuffer("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n", "", qm, &err));
+        if (!qm.parts.empty()) CHECK(qm.parts[0].mesh.triangles == (std::vector<int>{0, 1, 2, 0, 2, 3}));
+        std::string ply = "ply\nformat ascii 1.0\nCreated by an exporter that writes free text here\nelement vertex 6\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n";
+        for (const char* v : lx) ply += std::string(v) + "\n";
+        ply += "6 0 1 2 3 4 5\n";
+        ImportedModel pm2;
+        CHECK(ReadPlyBuffer(ply, pm2, &err));   // the free-text header line is ignored (it used to fail the whole file)
+        if (!pm2.parts.empty()) { CHECK(pm2.parts[0].mesh.TriangleCount() == 4); CHECK_NEAR(planarArea(pm2.parts[0].mesh, up), 3.0, 1e-5); CHECK(up); }
+
+        // glTF primitive modes and bad indices: positions 0..4 on a line of unit steps in X with Y alternating, indices u16
+        auto b64 = [](const std::string& in) {
+            static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string o; std::size_t i = 0;
+            for (; i + 2 < in.size(); i += 3) { unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8) | (unsigned char)in[i + 2]; o += t[v >> 18]; o += t[(v >> 12) & 63]; o += t[(v >> 6) & 63]; o += t[v & 63]; }
+            if (i + 1 == in.size()) { unsigned v = (unsigned char)in[i] << 16; o += t[v >> 18]; o += t[(v >> 12) & 63]; o += "=="; }
+            else if (i + 2 == in.size()) { unsigned v = ((unsigned char)in[i] << 16) | ((unsigned char)in[i + 1] << 8); o += t[v >> 18]; o += t[(v >> 12) & 63]; o += t[(v >> 6) & 63]; o += '='; }
+            return o;
+        };
+        auto gltfJson = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, const char* extra) {
+            std::string buf;
+            for (int i = 0; i < nPos; ++i) { float f[3] = {(float)i, (i & 1) ? 1.0f : 0.0f, 0.0f}; buf.append((const char*)f, 12); }
+            const std::size_t posBytes = buf.size();
+            for (std::uint16_t v : idx) buf.append((const char*)&v, 2);
+            while (buf.size() % 4) buf.push_back('\0');
+            return "{\"asset\":{\"version\":\"2.0\"}," + std::string(extra) + "\"buffers\":[{\"byteLength\":" + std::to_string(buf.size()) + ",\"uri\":\"data:application/octet-stream;base64," + b64(buf) + "\"}],"
+                "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":" + std::to_string(posBytes) + "},{\"buffer\":0,\"byteOffset\":" + std::to_string(posBytes) + ",\"byteLength\":" + std::to_string(idx.size() * 2) + "}],"
+                "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":" + std::to_string(nPos) + ",\"type\":\"VEC3\"},{\"bufferView\":1,\"componentType\":5123,\"count\":" + std::to_string(idx.size()) + ",\"type\":\"SCALAR\"}],"
+                "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}," + (useIdx ? "\"indices\":1," : "") + "\"mode\":" + std::to_string(mode) + "}]}],\"nodes\":[{\"mesh\":0}],\"scenes\":[{\"nodes\":[0]}]}";
+        };
+        auto gltfTris = [&](int mode, const std::vector<std::uint16_t>& idx, bool useIdx, int nPos, int* trisOut) {
+            Spit("mr_mode.gltf", gltfJson(mode, idx, useIdx, nPos, ""));
+            bool ok = false; Mesh m = LoadGLTF("mr_mode.gltf", &ok);
+            std::remove("mr_mode.gltf");
+            *trisOut = m.TriangleCount();
+            return ok;
+        };
+        auto sceneOk = [&](const std::string& json) {
+            Spit("mr_scene.gltf", json);
+            Scene sc; sc.physicsEnabled = false; bool ok = true;
+            GameObject* r = ImportModelScene(sc, "mr_scene.gltf", &ok);
+            std::remove("mr_scene.gltf");
+            return ok && r != nullptr;
+        };
+        int n = -1;
+        CHECK(gltfTris(4, {0, 1, 2, 3, 4}, true, 5, &n) && n == 1);                 // TRIANGLES: the two trailing indices make no triangle
+        CHECK(gltfTris(5, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_STRIP: 5 indices, 3 triangles
+        CHECK(gltfTris(6, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_FAN
+        CHECK(gltfTris(5, {}, false, 5, &n) && n == 3);                             // strip without indices
+        CHECK(!gltfTris(1, {0, 1, 2, 3}, true, 5, &n) || n == 0);                   // LINES: no surface, nothing drawn
+        CHECK(!gltfTris(0, {}, false, 5, &n) || n == 0);                            // POINTS
+        CHECK(gltfTris(4, {0, 1, 2, 0, 1, 9}, true, 5, &n) && n == 1);              // one triangle with an index past the vertices is dropped, the other stays
+        CHECK(gltfTris(5, {0, 1, 1, 2, 3}, true, 5, &n) && n == 1);                 // strip: the two triangles with a repeated index are dropped, (1,2,3) stays
+        // a file whose meshes cannot be read fails the import; it does not give an empty model
+        CHECK(sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "")));
+        { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); j.replace(j.find("\"2.0\""), 5, "\"1.0\""); CHECK(!sceneOk(j)); }   // glTF 1.0: refused with a message, not read as garbage
+        CHECK(!sceneOk(gltfJson(1, {0, 1, 2}, true, 3, "")));                                         // lines only
+        CHECK(!sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],")));   // compressed geometry we cannot decode
+        { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); const std::size_t u = j.find("data:application/octet-stream;base64,"); j.replace(u, j.find('"', u) - u, "nothere.bin"); CHECK(!sceneOk(j)); }   // missing .bin
+        // random modes, index lists (some past the vertices) and vertex counts: never a triangle that reads outside the mesh
+        unsigned seed = 12345u;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+        for (int it = 0; it < 300; ++it) {
+            const int nPos = 1 + (int)(rnd() % 7), nIdx = (int)(rnd() % 12), mode = (int)(rnd() % 9) - 1;
+            std::vector<std::uint16_t> ix; for (int i = 0; i < nIdx; ++i) ix.push_back((std::uint16_t)(rnd() % (unsigned)(nPos + 3)));
+            const bool useIdx = (rnd() & 1) != 0 && !ix.empty();
+            int tris = -1; const bool ok = gltfTris(mode, ix, useIdx || ix.empty() ? useIdx : false, nPos, &tris);
+            CHECK(!ok || (tris >= 0 && tris <= std::max(nPos, nIdx)));
+        }
+    }
+
+    // ---------------- Non-ASCII directory and file names (paths are UTF-8 strings) ----------------
+    {
+        // On Windows a narrow fopen() / ifstream path goes through the ANSI code page, so a folder such as "Müller" or a
+        // Japanese file name failed to open. Copy the fixtures under such names and read each format by path.
+        namespace fsx = std::filesystem;
+        const std::string uni = "okay_m\xC3\xBCller_\xE6\x97\xA5\xE6\x9C\xAC";   // "okay_müller_日本"
+        std::error_code ec;
+        const fsx::path dir = fsx::temp_directory_path(ec) / fsx::u8path(uni);
+        fsx::remove_all(dir, ec); fsx::create_directories(dir, ec);
+        const std::string d8 = dir.u8string() + "/";
+        struct F { const char* src; const char* dst; };
+        const F files[] = {{"cube.obj", "w\xC3\xBCrfel.obj"}, {"cube.mtl", "cube.mtl"}, {"cube_ascii.stl", "\xE7\xAB\x8B\xE6\x96\xB9.stl"}, {"cube_ascii.ply", "cube.ply"}, {"cube_le.ply", "cube_le.ply"},
+                           {"walk.bvh", "walk.bvh"}, {"zup_cm.dae", "z\xC3\xBCp.dae"}, {"cube.3ds", "cube.3ds"}};
+        for (const F& f : files) { std::ofstream o(fsx::u8path(d8 + f.dst), std::ios::binary); const std::string b = Slurp(kDir + f.src); o.write(b.data(), (std::streamsize)b.size()); }
+        { std::ofstream o(fsx::u8path(d8 + "rig.fbx"), std::ios::binary); const std::string b = Slurp(std::string(OKAY_SOURCE_DIR) + "/tests/assets/fbx/cube_zup_cm_bin.fbx"); o.write(b.data(), (std::streamsize)b.size()); }
+        SetImportBackend(".dae", ImportBackend::Own); SetImportBackend(".bvh", ImportBackend::Own); SetImportBackend(".3ds", ImportBackend::Own);
+        for (const F& f : files) {
+            const std::string name = f.dst;
+            if (name.size() < 4 || name.substr(name.size() - 4) == ".mtl") continue;
+            ImportedModel m; std::string e;
+            const bool ok = ImportModelData(d8 + name, m, ImportBackend::Own, false, &e);
+            if (!ok) std::printf("  %s: %s\n", name.c_str(), e.c_str());
+            CHECK(ok);
+        }
+        if (fsx::exists(fsx::u8path(d8 + "cube.mtl"), ec)) { ImportedModel m; std::string e; CHECK(ReadObjFile(d8 + "w\xC3\xBCrfel.obj", m, &e) && !m.materials.empty()); }   // the .mtl beside it is found too
+        fbx::Scene fs_; std::string fe;
+        CHECK(fbx::LoadFile(d8 + "rig.fbx", fs_, &fe));
+        { bool ok = false; Mesh mm = ImportModel(d8 + "rig.fbx", &ok); CHECK(ok && !mm.vertices.empty()); }
+        fsx::remove_all(dir, ec);
+    }
+
+    // ---------------- Locale: a decimal comma must not change what a file reads as ----------------
+    {
+        // setlocale(LC_NUMERIC) in a German / French locale makes strtod stop at the '.' of "1.5". The readers use their own
+        // point-safe parse, so every file reads the same. Needs such a locale on the machine (LOCPATH on Linux, or Windows'
+        // own names); otherwise this part says so and passes.
+        auto fingerprint = [](const ImportedModel& m) {
+            std::string f; char b[96];
+            for (const ImportedNode& n : m.nodes) { std::snprintf(b, sizeof b, "n %.6g %.6g %.6g|%.6g %.6g %.6g %.6g|%.6g;", n.position.x, n.position.y, n.position.z, n.rotation.x, n.rotation.y, n.rotation.z, n.rotation.w, n.scale.x); f += b; }
+            for (const ImportedPart& p : m.parts) { for (const Vec3& v : p.mesh.vertices) { std::snprintf(b, sizeof b, "v %.6g %.6g %.6g;", v.x, v.y, v.z); f += b; } for (const Vec3& v : p.mesh.normals) { std::snprintf(b, sizeof b, "w %.5g %.5g %.5g;", v.x, v.y, v.z); f += b; } }
+            for (const ImportedMaterial& mt : m.materials) { std::snprintf(b, sizeof b, "m %.6g %.6g %.6g %.6g;", mt.diffuse.r, mt.diffuse.g, mt.diffuse.b, mt.shininess); f += b; }
+            for (const ImportedClip& c : m.clips) for (const ImportedChannel& ch : c.channels) { for (const auto& k : ch.position) { std::snprintf(b, sizeof b, "p %.6g %.6g;", k.time, k.value.x); f += b; } for (const auto& k : ch.rotation) { std::snprintf(b, sizeof b, "r %.6g %.6g;", k.time, k.value.w); f += b; } }
+            return f;
+        };
+        struct Case { const char* file; const char* ext; };
+        const Case cases[] = {{"cube.obj", ".obj"}, {"cube_ascii.stl", ".stl"}, {"cube_ascii.ply", ".ply"}, {"walk.bvh", ".bvh"}, {"zup_cm.dae", ".dae"}, {"two_materials.dae", ".dae"}};
+        std::string ref[6]; bool refOk[6];
+        SetImportBackend(".dae", ImportBackend::Own); SetImportBackend(".bvh", ImportBackend::Own);
+        for (int i = 0; i < 6; ++i) { ImportedModel m; std::string e; refOk[i] = ImportModelData(kDir + cases[i].file, m, ImportBackend::Own, false, &e); ref[i] = fingerprint(m); CHECK(refOk[i]); }
+        const std::string fbxPath = std::string(OKAY_SOURCE_DIR) + "/tests/assets/fbx/rig_ascii.fbx";
+        fbx::Scene fRef; std::string fe; CHECK(fbx::LoadFile(fbxPath, fRef, &fe));
+        const std::string savedLocale = std::setlocale(LC_NUMERIC, nullptr) ? std::setlocale(LC_NUMERIC, nullptr) : "C";
+        const char* names[] = {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR", "German_Germany.1252", "German_Germany", "German", "French_France.1252"};
+        std::string commaLocale;
+        for (const char* n : names) if (std::setlocale(LC_NUMERIC, n) && std::localeconv()->decimal_point[0] == ',') { commaLocale = n; std::printf("  locale '%s' (decimal point '%s')\n", n, std::localeconv()->decimal_point); break; }
+        std::setlocale(LC_NUMERIC, savedLocale.c_str());
+        if (commaLocale.empty()) std::printf("  no decimal-comma locale on this machine: locale check skipped\n");
+        else {
+            for (int i = 0; i < 6; ++i) {
+                ImportedModel m; std::string e;
+                std::setlocale(LC_NUMERIC, commaLocale.c_str());   // read under the comma locale, print (fingerprint) under the saved one
+                const bool ok = ImportModelData(kDir + cases[i].file, m, ImportBackend::Own, false, &e);
+                std::setlocale(LC_NUMERIC, savedLocale.c_str());
+                CHECK(ok == refOk[i]);
+                if (!(fingerprint(m) == ref[i])) std::printf("  %s reads differently under a decimal-comma locale\n", cases[i].file);
+                CHECK(fingerprint(m) == ref[i]);
+            }
+            std::setlocale(LC_NUMERIC, commaLocale.c_str());
+            fbx::Scene fLoc; CHECK(fbx::LoadFile(fbxPath, fLoc, &fe));
+            CHECK(fLoc.nodes.size() == fRef.nodes.size());
+            for (std::size_t i = 0; i < std::min(fLoc.nodes.size(), fRef.nodes.size()); ++i) for (int k = 0; k < 3; ++k) CHECK_NEAR(fLoc.nodes[i].translation[k], fRef.nodes[i].translation[k], 1e-9);
+            CHECK(fLoc.clips.size() == fRef.clips.size());
+            // text with a '.' next to the end of a number: "1.5" and "1.5e1" read as 1.5 and 15
+            ImportedModel q; std::string e;
+            CHECK(ReadObjBuffer("v 1.5 2.5e1 -3.25\nv 0 0 0\nv 1 0 0\nf 1 2 3\n", "", q, &e) && !q.parts.empty());
+            if (!q.parts.empty() && q.parts[0].mesh.vertices.size() >= 1) { CHECK_NEAR(q.parts[0].mesh.vertices[0].x, 1.5, 1e-6); CHECK_NEAR(q.parts[0].mesh.vertices[0].y, 25.0, 1e-5); CHECK_NEAR(q.parts[0].mesh.vertices[0].z, -3.25, 1e-6); }
+        }
+        std::setlocale(LC_NUMERIC, savedLocale.c_str());
     }
 
     // ---------------- Same files through both backends (needs Assimp) ----------------

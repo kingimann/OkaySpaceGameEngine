@@ -308,7 +308,7 @@ Scan ScanKindFor(const std::string& ext) {
     if (ext == "okaymat") return Scan::Material;
     static const std::set<std::string> text = {"okayanim", "okayclips", "okaydialogue", "okayquests", "okaybt", "okayseq", "okaysequence",
                                                "okayitems", "okayweapon", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
-                                               "json", "okayloc"};
+                                               "json", "okayloc", "okayac"};   // okayac: anti-cheat rules (their "spawn <prefab>" lines name files)
     return text.count(ext) ? Scan::Text : Scan::None;
 }
 } // namespace

@@ -5,8 +5,10 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Get started
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
+- [provenance_audit.md](provenance_audit.md): audit of code that may have been copied or ported from other projects (rule 19a), with findings, limits and owner questions.
 - [own_code_roadmap.md](own_code_roadmap.md): the plan to replace and remove every third-party library, with the criteria each must meet.
 - [crypto_review_package.md](crypto_review_package.md): what an outside security reviewer needs to review our own crypto.
+- [crypto_review_request.md](crypto_review_request.md): the request to send a reviewer, what we ask and give, how to pick one, and the owner's checklist.
 - [UNFINISHED.md](UNFINISHED.md): what is not finished yet, hidden or limited today, and the to-do list.
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
@@ -85,6 +87,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [own_x3d_reader.md](own_x3d_reader.md): our own X3D reader.
 - [own_amf_reader.md](own_amf_reader.md): our own AMF reader.
 - [own_3mf_reader.md](own_3mf_reader.md): our own 3MF reader (it also describes the XML and zip readers that AMF and X3D share).
+- [own_md2_reader.md](own_md2_reader.md), [own_md3_reader.md](own_md3_reader.md), [own_irrmesh_reader.md](own_irrmesh_reader.md), [own_b3d_reader.md](own_b3d_reader.md), [own_x_reader.md](own_x_reader.md): our own MD2, MD3, Irrlicht mesh, B3D and DirectX `.x` readers (batch C).
+- [own_readers_remaining.md](own_readers_remaining.md): every model format Assimp reads that we have no own reader for yet: what it is, how hard, whether real files exist, and the order to write them in.
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.
 - [terrain_water.md](terrain_water.md): terrain and water.
@@ -110,6 +114,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [photon.md](photon.md): the opt-in Photon Realtime transport.
 - [net_providers.md](net_providers.md): the Photon, PlayFab and Custom provider stubs are C++ extension points only.
 - [accounts.md](accounts.md): player accounts.
+- [anticheat_quickstart.md](anticheat_quickstart.md): add anti-cheat to your game in 5 minutes (presets, checklist), and what it does not do.
 - [anticheat.md](anticheat.md): anti-cheat.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 - [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.

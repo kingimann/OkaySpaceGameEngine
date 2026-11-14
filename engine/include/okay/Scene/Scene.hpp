@@ -474,6 +474,7 @@ public:
             int   tonemap = TonemapACES;                             // curve for the linear pipeline
             bool  bloom = false;
             float bloomThreshold = 1.0f, bloomIntensity = 0.6f, bloomRadius = 1.0f;
+            float bloomSoftness = 0.0f;                              // 0 = hard threshold (today), 1 = widest soft knee (PostQualityMath.hpp)
             bool  grading = false;
             float temperature = 0.0f, tint = 0.0f;                  // -1..1 white balance
             float saturation = 1.0f, contrast = 1.0f;
@@ -482,6 +483,7 @@ public:
             bool  fxaa = false;
             bool  ssao = false;
             float ssaoRadius = 0.5f, ssaoIntensity = 0.8f;
+            float ssaoPower = 1.0f;                                  // 1 = today; above 1 darker creases and crisper, below 1 wider and lighter
             bool  dof = false;
             float dofFocus = 10.0f, dofRange = 8.0f;
         };

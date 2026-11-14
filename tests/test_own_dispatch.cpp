@@ -1,11 +1,12 @@
 // The import seam routes every own-reader format to ITS reader. All own backends are switched ON at run time
 // (SetImportBackend), then one tiny fixture of each opt-in slot kind (.dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d
-// .ase .3mf .amf .x3d .dxf .lwo .blend) goes through ImportModelData. A model is accepted only if it says backend "own"
+// .ase .3mf .amf .x3d .dxf .lwo .blend .md2 .md3 .irrmesh .b3d .x) goes through ImportModelData. A model is accepted only if it says backend "own"
 // and has geometry (or clips for the animation-only files). For the batch B formats and Blender the result must also equal
 // what the format's own Read*File gives directly, so a wrong arm in the dispatch chain (a format absorbed by the last arm)
 // fails here. Fixtures: tests/data/models, or built in memory.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
+#include "batchc_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
@@ -71,6 +72,11 @@ int main() {
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch";
     fs::create_directories(dir);
     WriteFile(dir / "t.lwo", Lwo());
+    WriteFile(dir / "t.md2", fx::BuildMd2());
+    WriteFile(dir / "t.md3", fx::BuildMd3());
+    WriteFile(dir / "t.irrmesh", fx::BuildIrrMesh());
+    WriteFile(dir / "t.b3d", fx::BuildB3d());
+    WriteFile(dir / "t.x", fx::BuildXText());
     WriteFile(dir / "t.3mf", ThreeMf());
     WriteFile(dir / "t.amf", kAmf);
     WriteFile(dir / "t.x3d", kX3d);
@@ -83,6 +89,7 @@ int main() {
         {kDir + "arm.smd", true}, {kDir + "skel.md5mesh", true}, {kDir + "skel.md5anim", false}, {kDir + "rig.ms3d", true},
         {kDir + "scene.ase", true}, {(dir / "t.3mf").string(), true}, {(dir / "t.amf").string(), true}, {(dir / "t.x3d").string(), true},
         {(dir / "t.dxf").string(), true}, {(dir / "t.lwo").string(), true}, {kDir + "blend_attr_41.blend", true},
+        {(dir / "t.md2").string(), true}, {(dir / "t.md3").string(), true}, {(dir / "t.irrmesh").string(), true}, {(dir / "t.b3d").string(), true}, {(dir / "t.x").string(), true},
     };
     for (const Case& c : cases) {
         ImportedModel m; std::string err;
@@ -119,6 +126,21 @@ int main() {
         ImportedModel a, b; std::string err;
         CHECK(ImportModelData((dir / "t.dxf").string(), a, ImportBackend::Own, false, &err) && ReadDxfFile((dir / "t.dxf").string(), b, &err, false));
         CHECK(Verts(a) == Verts(b) && Tris(a) >= 1);
+    }
+    // batch C (slots 17 to 21): each must equal what its own Read*File gives (the dispatch test of these five in more depth is test_own_dispatch_c.cpp)
+    struct DirectC { const char* file; bool (*read)(const std::string&, ImportedModel&, std::string*); std::size_t tris; };
+    const DirectC directC[] = {
+        {"t.md2", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadMd2File(p, m, e); }, 2},
+        {"t.md3", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadMd3File(p, m, e); }, 1},
+        {"t.irrmesh", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadIrrMeshFile(p, m, e); }, 4},
+        {"t.b3d", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadB3dFile(p, m, e); }, 1},
+        {"t.x", [](const std::string& p, ImportedModel& m, std::string* e) { return ReadXFile(p, m, e); }, 3},
+    };
+    for (const DirectC& d : directC) {
+        ImportedModel a, b; std::string err;
+        const std::string path = (dir / d.file).string();
+        CHECK(ImportModelData(path, a, ImportBackend::Own, false, &err) && d.read(path, b, &err));
+        CHECK(Verts(a) == Verts(b) && Tris(a) == d.tris && Tris(b) == d.tris && a.nodes.size() == b.nodes.size() && a.clips.size() == b.clips.size());
     }
     {
         ImportedModel a, b; std::string err;

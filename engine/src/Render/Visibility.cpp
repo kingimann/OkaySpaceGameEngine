@@ -312,9 +312,20 @@ const Frame& Build(const Scene& scene, const Mat4& vp, const Vec3& eye, int view
         st.frame.items.push_back(it);
     }
     // Transparents after opaques so a blended surface is not covered by a later solid.
-    std::stable_partition(st.frame.items.begin(), st.frame.items.end(), [](const Item& it) {
+    auto firstBlend = std::stable_partition(st.frame.items.begin(), st.frame.items.end(), [](const Item& it) {
         return it.mr && it.mr->color.a >= 0.999f;
     });
+    // ...and the blended ones far to near: blending is order dependent, so a nearer glass
+    // pane drawn first would be painted over by the farther one behind it.
+    {
+        auto distSq = [&](const Item& it) {
+            const Vec3 p = it.go && it.go->transform ? it.go->transform->Position() : eye;
+            const Vec3 d = p - eye;
+            return d.x * d.x + d.y * d.y + d.z * d.z;
+        };
+        std::stable_sort(firstBlend, st.frame.items.end(),
+                         [&](const Item& a, const Item& b) { return distSq(a) > distSq(b); });
+    }
     st.frame.ready = true;
     LastCullCounters().drawn = (int)st.frame.items.size();
     LastCullCounters().culled = st.frame.frustumCulled;

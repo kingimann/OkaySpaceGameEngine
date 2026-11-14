@@ -2376,6 +2376,10 @@ add_executable(test_visibility_lod test_visibility_lod.cpp)
 target_link_libraries(test_visibility_lod PRIVATE okay::engine)
 add_test(NAME visibility_lod COMMAND test_visibility_lod)
 
+add_executable(test_render_bugfix test_render_bugfix.cpp)
+target_link_libraries(test_render_bugfix PRIVATE okay::engine)
+add_test(NAME render_bugfix COMMAND test_render_bugfix)
+
 add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
 target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)
 add_test(NAME gltf_pbr_maps COMMAND test_gltf_pbr_maps)

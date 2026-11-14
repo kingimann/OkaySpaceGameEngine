@@ -195,3 +195,9 @@ gltf	models/glTF2/wrongTypes/badNumber.gltf	ok	area=6.0000	meshes=1	tris=12	bone
 gltf	models/glTF2/wrongTypes/badObject.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badString.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badUint.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
+# off: own OFF reader on the OFF files of the same corpus (readers batch A); FAIL rows are files the reader refuses, Cube and Wuson also read by Assimp
+off	models/OFF/Cube.off	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=1	uv=0	nrm=1
+off	models/OFF/Wuson.off	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=3205	tex=0	nodes=1	uv=0	nrm=1
+off	models/OFF/invalid.off	FAIL	OFF: face 1 has fewer indices than its corner count
+off	models/invalid/OutOfMemory.off	FAIL	OFF: bad vertex or face count
+off	models/invalid/empty.off	FAIL	OFF: empty file

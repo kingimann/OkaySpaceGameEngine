@@ -26,7 +26,7 @@ Big-endian IFF chunks, every read bounds-checked; a chunk longer than the file i
   - **Planar:** U and V are where a point sits across the box along those two axes. A flat box gives 0.
   - **Cylindrical:** U is the angle round the main axis seen from the box centre, as a fraction of a turn; V is the position along the axis.
   - **Spherical:** U is the same angle; V is the latitude from -90 degrees (0) to +90 degrees (1). A point on the axis (a pole) gets the turn's starting value.
-  - **Wrap amounts.** `WRPW` scales U of cylindrical and spherical maps; `WRPH` scales V of spherical maps.
+  - **Wrap amounts.** `WRPW` scales U of cylindrical and spherical maps; `WRPH` scales V of cylindrical and spherical maps (kept as the old reader did; the LightWave spec only names spherical, so this is a deliberate match, not a rule).
   - **Where the turn starts** and which way it runs are set per axis (`TurnRuleFor`), fitted to the old output so textures stay where they were.
   - **The seam (new).** A triangle crosses the seam only when the gap between its U values that runs through the seam is not the largest. Then the corners on one side of the largest gap move onto the seam (the low ones up to the wrap amount, or the high ones down to 0, whichever moves less). Big triangles that do not cross, such as pole fans, are left alone.
   - **Measured against the old reader** on the corpus: planar files identical. On each cylindrical or spherical file every position keeps a UV it had before, and 2 to 8 seam positions get a different set of UVs.

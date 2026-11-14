@@ -71,7 +71,7 @@ struct Layer {
 // main axis X, Y or Z: one UV per triangle corner (`ci` holds each corner's position index), stored as (u, 1 - v) like
 // every other UV this reader makes.
 //
-// Our own code, written from the geometry of the three projections (rule 19a). The projection is placed on the
+// Reimplemented (rule 19a): the three projections are standard maths, but the turn start and pole rules were fitted to the old output, not derived from geometry alone (see docs/provenance_audit.md). The projection is placed on the
 // surface's own bounding box, which is how this reader has always placed it (the map's own TMAP centre, size and
 // rotation are not read yet; see docs/own_lwo_reader.md):
 //   - each main axis A has a fixed pair of other axes (P, Q): X -> (Z, Y), Y -> (X, Z), Z -> (X, Y);
@@ -186,7 +186,7 @@ void ProjectUvs(const std::vector<Vec3>& pos, const std::vector<std::uint32_t>& 
                 v[k] = box.Across(Coord(p, ax.q), ax.q);
             } else if (sf.proj == 1) {
                 u[k] = TurnFraction(p, box, ax) * wrapW;
-                v[k] = box.Across(Coord(p, ax.a), ax.a);
+                v[k] = box.Across(Coord(p, ax.a), ax.a) * wrapH;
             } else {
                 u[k] = TurnFraction(p, box, ax) * wrapW;
                 v[k] = LatitudeFraction(p, box, ax) * wrapH;

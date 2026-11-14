@@ -91,7 +91,6 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | ~~UI frames have no rotation or scale~~ Resolved: a UI Frame has Rotation (degrees clockwise around its pivot) and Scale (width and height; 1, 1 is unchanged). Children inherit both, hit tests follow the turned and scaled shape, and scenes saved before this load with no turn and a scale of 1. | `Components/UIFrame.hpp`, `UI/UIFrameTransform.cpp` | Done | Medium | Medium |
-| Missing widgets: search bar, date and time picker, file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | `engine/include/okay/Components/UI*.hpp` file list has none of these | App-style UI must be assembled by hand | Medium | Large |
 | ~~UI controller focus visuals not wired to accessibility~~ Resolved: the focused widget draws one ring. The colour, thickness, padding and optional pulse come from the UI theme. High-visibility focus and a thickness scale are on the Settings screen. The ring shows for keyboard, gamepad and script focus and hides on a mouse click. The focused widget scrolls into view. `ui_set_focus` and `UIButton.Focus` set it. | `UI/UIFocus`, `UI/UIRenderer`, `Components/UITheme`, `Components/UINavigation`, `Components/SettingsScreen` | Done. The navigation keys are still fixed, and `NavigateUI` still does not use `FocusGraph` links. | Medium | Medium |
 | UI scripting needs the OkayUI bridge; without it `ui_*` calls draw nothing | `Scripting/ScriptUI` has only the OkayUI implementation in `shared/` (feature map 13.x) | A build without OkayUI silently ignores UI script calls | Low | Medium |
 | Steeply tilted world-space UI draws as axis-aligned rectangles | `docs/ui_world_space.md` | In-world screens at an angle look wrong | Low | Medium |
@@ -157,7 +156,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 7. Medium: 57. Low: 29. Total rows: 94.
+High: 7. Medium: 56. Low: 29. Total rows: 93.
 
 ## Top 15 to tackle first
 

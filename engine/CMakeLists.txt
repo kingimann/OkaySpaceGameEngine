@@ -215,6 +215,7 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp

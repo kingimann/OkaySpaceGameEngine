@@ -144,6 +144,7 @@ Nothing user-visible, nothing default.
 | Safety-net tests for lightmap bake, touch scroll, item tooltips, loading layout, death lock and gamepad feed; pause menu pushes an input context | John | `john/untested-features-tests` |
 | Audio import settings apply on load; FLAC decoding | John | `john/audio-import-flac` (#786) |
 | 2D grid path costs, smoothing and moving obstacles | John | `john/pathfinding2d-weights` |
+| In-game UI widgets: search bar, date and time picker, sandboxed file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | John | `john/ui-widgets-more` |
 
 ## Free (unclaimed, safe small tasks)
 

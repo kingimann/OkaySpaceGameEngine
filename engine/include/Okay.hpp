@@ -194,6 +194,7 @@
 #include "okay/UI/UILayoutUpdate.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UITextBind.hpp"

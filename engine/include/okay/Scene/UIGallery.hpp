@@ -205,8 +205,13 @@ inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
 /// `portrait` lays the three cards out one under the other in a scroll view, on a 440 x 960 canvas, for phones.
 inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset::ModernFlat, bool portrait = false) {
     GameObject* canvas = EnsureCanvas(scene);
-    if (portrait)
+    if (portrait) {
         if (auto* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {440.0f, 960.0f};
+    } else if (auto* cv = canvas->GetComponent<Canvas>()) {
+        // A fourth card sits to the right of the original three.
+        if (cv->referenceResolution.x < 1700.0f) cv->referenceResolution.x = 1720.0f;
+        if (cv->referenceResolution.y < 760.0f) cv->referenceResolution.y = 760.0f;
+    }
     GameObject* root = Group(scene, canvas, "UI Gallery");
     // Page background: kept as-is by the theme (the name starts with Swatch).
     Panel(scene, root, "SwatchBackdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
@@ -261,7 +266,7 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
         GameObject* sv = Child(scene, content, "SwatchScroll");
         auto* sc = sv->AddComponent<UIScrollView>();
         sc->anchor = UIAnchor::TopLeft; sc->position = {0, 124}; sc->size = {440, 780};
-        sc->background = Color(0, 0, 0, 0); sc->autoContent = true; sc->contentHeight = 3 * 640.0f + 8.0f;
+        sc->background = Color(0, 0, 0, 0); sc->autoContent = true; sc->contentHeight = 4 * 640.0f + 280.0f;
         cardParent = sv;
     }
     auto cardAt = [&](int i) { return portrait ? Vec2{24.0f, 8.0f + 640.0f * i} : Vec2{32.0f + 416.0f * i, 86.0f}; };
@@ -440,6 +445,64 @@ inline GameObject* BuildGallery(Scene& scene, int preset = (int)UITheme::Preset:
             auto* ub = b->GetComponent<UIButton>();
             ub->clickTarget = "Numbers"; ub->clickFunction = fn[i]; ub->clickArg = amt[i];
         }
+    }
+    // ---- App widgets: search, date, files, accordion, crumbs, pages, skeleton, sheet ----
+    GameObject* c4 = gx::Card(scene, cardParent, "App", "App widgets", cardAt(3), {392, 900});
+    gx::Label(scene, c4, "SearchLabel", "Search", {20, 40}, 200);
+    {
+        GameObject* g = Child(scene, c4, "Search");
+        auto* w = g->AddComponent<UISearchBar>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 62}; w->size = {352, 148};
+        w->itemsText = "Apple\nApricot\nBanana\nCherry"; w->query = "ap";
+    }
+    gx::Label(scene, c4, "DateLabel", "Date and time", {20, 220}, 240);
+    {
+        GameObject* g = Child(scene, c4, "When");
+        auto* w = g->AddComponent<UIDateTimePicker>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 242}; w->size = {352, 64};
+        w->year = 2026; w->month = 11; w->day = 13; w->hour = 15; w->minute = 30;
+    }
+    gx::Label(scene, c4, "FilesLabel", "Files", {20, 316}, 200);
+    {
+        GameObject* g = Child(scene, c4, "Files");
+        auto* w = g->AddComponent<UIFilePicker>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 338}; w->size = {352, 96};
+    }
+    gx::Label(scene, c4, "AccLabel", "Accordion", {20, 444}, 200);
+    {
+        GameObject* g = Child(scene, c4, "Sections");
+        auto* w = g->AddComponent<UIAccordion>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 466}; w->size = {352, 120};
+        w->sectionsText = "General | Sound and picture\nAdvanced | Extra options";
+        w->openText = "1,0";
+    }
+    gx::Label(scene, c4, "CrumbLabel", "Breadcrumbs", {20, 596}, 200);
+    {
+        GameObject* g = Child(scene, c4, "Crumbs");
+        auto* w = g->AddComponent<UIBreadcrumbs>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 618}; w->size = {352, 36};
+        w->pathText = "Home/Library/Books"; w->value = 2;
+    }
+    gx::Label(scene, c4, "PageLabel", "Pages", {20, 662}, 200);
+    {
+        GameObject* g = Child(scene, c4, "Pages");
+        auto* w = g->AddComponent<UIPagination>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 684}; w->size = {352, 36};
+        w->page = 2; w->pageCount = 8;
+    }
+    gx::Label(scene, c4, "SkelLabel", "Loading", {20, 730}, 120);
+    {
+        GameObject* g = Child(scene, c4, "Loading");
+        auto* w = g->AddComponent<UISkeleton>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 752}; w->size = {160, 72};
+        w->loading = true; w->lines = 3;
+    }
+    {
+        GameObject* g = Child(scene, c4, "Sheet");
+        auto* w = g->AddComponent<UIBottomSheet>();
+        w->anchor = UIAnchor::TopLeft; w->position = {190, 752}; w->size = {182, 72};
+        w->open = true; w->progress = 1.0f; w->duration = 0.0f; w->dim = false;
+        w->closeOnBackdrop = false; w->title = "Filters";
     }
     ApplyThemePreset(scene, preset);
     return root;

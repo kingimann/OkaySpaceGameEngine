@@ -77,6 +77,20 @@ legacy fixed-function entry points. The probable result on a Mac is "no GPU rend
 renderer takes over. That is slow but correct. Supporting the GPU path means either a core-profile port of `GLRenderer` (shaders
 and no fixed-function calls; OpenGL is deprecated on macOS and frozen at 4.1), or a Metal renderer. I did not guess at either.
 
+## What the first macOS CI run showed
+
+The first run (Apple clang from Xcode 26.6, arm64, Homebrew SDL2 and libsodium) got through configure and most of the compile. All
+files that failed, in both parts, came from two causes:
+
+| Failure | Cause | Fix |
+|---|---|---|
+| `shared/AppRestart.hpp:694: error: expected unqualified-id` (launcher, editor, `test_self_update`, `test_app_restart`) | Apple's `<signal.h>` defines `sigfillset` as a macro, so `::sigfillset(&set)` does not parse | call `sigfillset(&set)` unqualified |
+| `ld: library 'sodium' not found` (okay-player, relay, most tests) | pkg-config gave `-lsodium` without `-L/opt/homebrew/lib`, and Apple's linker does not search Homebrew | `target_link_directories(okay_engine PUBLIC ${SODIUM_LIBRARY_DIRS})` |
+
+Nothing else failed to compile in that run: the other nine "fixed by reading" changes below compiled on Apple clang and libc++.
+Whether the tests then pass on macOS is not yet known: the run that has both fixes was still queued when this was written, so
+the "builds in CI" and test cells in the matrix above stay "attempted" until it is green.
+
 ## What this change fixed by reading (all unverified until the macOS job has run)
 
 | File | Problem | Fix |

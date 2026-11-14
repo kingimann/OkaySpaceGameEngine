@@ -1,5 +1,35 @@
 OkaySpace Game Engine — Changelog
 
+v2.870.0
+  Multiplayer and anti-cheat
+  - The relay program now refuses old game versions that do not send the
+    safety cookie. This stops fake packets from filling the relay. A server
+    owner can allow old games again with --legacy-hello=on.
+  - Anti-cheat: a kick report can carry the evidence behind it. The launcher
+    admin pages show linked accounts and evidence, and the editor has a
+    Detection engine section with a master switch and an observe mode.
+
+  Inventory
+  - Fixed a bug where inventory slots grew wrongly when sent over the
+    network. The weight limit is now enforced. Bags and chests scale with the
+    screen and scroll with the mouse wheel when they are tall.
+  - The top-down fire button no longer shoots through an open bag or menu.
+    Lean keys step aside when a chest or bag wants the same key.
+
+  Scripting
+  - Visual script: new List Append, List Slice, List Pop, Map Get Or and Map
+    Merge nodes. Typed scripts can pass arguments to events.
+
+  Importing models
+  - A texture path in a model's material file that points to an absolute
+    location is now ignored, so a downloaded model cannot point the engine at
+    files elsewhere on the computer.
+
+  Behind the scenes
+  - Fixed the Windows build on the newest build tools, and fixed four tests
+    that failed on the build servers. The web build is faster and times out
+    instead of hanging.
+
 v2.869.0
   Anti-cheat
   - A server-side detection engine can watch for speed hacks, flying,

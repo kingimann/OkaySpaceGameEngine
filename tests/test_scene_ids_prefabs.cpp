@@ -359,11 +359,66 @@ static void TestPrefabOverrides() {
     fs::remove_all(dir);
 }
 
+
+// Objects added under a plain-file instance survive a re-apply (they used to be dropped), with their
+// names and ids exact; the prefab's own edits still arrive; and a prefab file written by hand with no
+// guids (an old file) still loads unchanged.
+static void TestReapplyKeepsAdded() {
+    RUN_SUITE("prefab re-apply keeps added objects");
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "okay_prefab_added_test";
+    fs::create_directories(dir);
+    const std::string path = (dir / "gun.okayprefab").string();
+
+    Scene src("src");
+    GameObject* root = src.CreateGameObject("Gun");
+    root->AddComponent<SpriteRenderer>()->glyph = 'g';
+    GameObject* barrel = src.CreateGameObject("Barrel");
+    barrel->transform->SetParent(root->transform, false);
+    CHECK(SceneSerializer::SaveObjectToFile(*root, path));
+
+    Scene live("live");
+    GameObject* inst = SceneSerializer::InstantiateFromFile(live, path);
+    CHECK(inst != nullptr);
+    if (!inst) { fs::remove_all(dir); return; }
+    GameObject* scope = live.CreateGameObject("Scope");
+    scope->transform->SetParent(inst->transform, false);
+    scope->tag = "added";
+    GameObject* lens = live.CreateGameObject("Lens");
+    lens->transform->SetParent(scope->transform, false);
+    const std::string gScope = scope->Guid(), gLens = lens->Guid(), gRoot = inst->Guid();
+
+    root->tag = "edited-in-prefab";
+    CHECK(SceneSerializer::SaveObjectToFile(*root, path));
+    std::string err;
+    GameObject* fresh = SceneSerializer::ReapplyPrefab(live, *inst, &err);
+    CHECK(fresh != nullptr);
+    live.FlushDestroyed();
+    if (fresh) {
+        CHECK(fresh->tag == "edited-in-prefab");
+        CHECK(fresh->Guid() == gRoot);
+        GameObject* ns = live.FindByGuid(gScope);
+        GameObject* nl = live.FindByGuid(gLens);
+        CHECK(ns && ns->name == "Scope" && ns->tag == "added");
+        CHECK(nl && nl->name == "Lens" && nl->transform->Parent() == (ns ? ns->transform : nullptr));
+        CHECK(ns && ns->transform->Parent() == fresh->transform);
+        CHECK(ChildNames(fresh) == (std::vector<std::string>{"Barrel", "Scope"}));
+    }
+
+    const std::string oldPath = (dir / "old.okayprefab").string();
+    { std::ofstream f(oldPath); f << "okayscene 3\ngameobject 0 \"Old\"\n  transform 0 0 0 0 0 0 1 1 1 1\n  parent -1\nend\ngameobject 1 \"Kid\"\n  transform 1 0 0 0 0 0 1 1 1 1\n  parent 0\nend\n"; }
+    Scene o("o");
+    GameObject* oi = SceneSerializer::InstantiateFromFile(o, oldPath);
+    CHECK(oi && oi->name == "Old" && ChildNames(oi) == (std::vector<std::string>{"Kid"}));
+    fs::remove_all(dir);
+}
+
 int main() {
     TestGuids();
     TestOrderAndFlags();
     TestDuplicateComponents();
     TestRegistry();
     TestPrefabOverrides();
+    TestReapplyKeepsAdded();
     TEST_MAIN_RESULT();
 }

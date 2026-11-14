@@ -44,8 +44,8 @@ such files to `PrefabTools` themselves; plain prefab files work as described on 
 - The unit of an override is a whole record, not one number inside it: overriding a
   sprite's colour keeps the instance's whole `sprite` record, size and glyph included.
 - A component or child the instance lost is not tracked; reapplying brings it back.
-- Objects added under an instance that are not in the prefab are not carried over by
-  `ReapplyPrefab`.
+- Objects added under an instance that are not in the prefab are kept by `ReapplyPrefab` (it now
+  goes through `PrefabTools::Reapply` for every file kind), with their names and ids.
 - An override naming an object the prefab no longer has is dropped, with a warning.
 - The editor shows overrides per property and applies or reverts them through `PrefabTools`
   (see "In the editor" in [prefab_system.md](prefab_system.md)). "Open" on an instance enters prefab mode

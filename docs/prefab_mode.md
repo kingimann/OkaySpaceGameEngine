@@ -6,6 +6,23 @@ in is put aside and comes back exactly as you left it. It is built on the prefab
 `ValidateAsset`) and on the editor's undo stack ([editor_undo.md](editor_undo.md)); it adds no second prefab
 format and no second save path.
 
+## Status and plan
+
+What exists (all merged, ImGui-free logic in `EditorState`): opening a prefab file or an instance into
+its own level (the scene is put aside whole), edit, Save to the prefab asset, Revert from the file,
+nesting, unsaved tracking per level, external-change guard, and on Back every instance rebuilt with
+`PrefabTools::Reapply`. Test `prefab_mode` drives it without a window.
+
+What was open and is now done engine-side: `SceneSerializer::ReapplyPrefab` dropped the objects added
+under a plain-file instance, so a prefab-mode Save followed by a rebuild lost them. It now uses
+`PrefabTools::Reapply`, which keeps them with names and ids (test `scene_ids_prefabs`, suite
+"prefab re-apply keeps added objects", which also loads an old guid-less prefab unchanged).
+
+What is not done: no separate engine-level "edit session" class was added. The session is
+`EditorState` (editor/, no ImGui), so a second one in the engine would be a copy. The panel,
+breadcrumb bar and dialogs in `editor/main.cpp` are GUI and have not been run here. Per-field override
+units still fall back to whole records for record kinds `Diff` does not know.
+
 ## Using it
 
 Open a prefab in any of three ways:

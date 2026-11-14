@@ -265,9 +265,9 @@ has (warnings, the file still loads). Messages name the file and the object, for
 - Instance and object tracking is by position and name; a prefab that reorders or renames
   many objects at once can pair the wrong ones. Run the validator and re-capture after big
   prefab edits.
-- `PrefabTools::Reapply` (used for nested and variant files) keeps the objects added under
-  the instance and brings back lost ones; the wave 1 `ReapplyPrefab` path, which plain files
-  still take, drops added objects (see prefabs.md). Revert and apply keep both added and lost
+- `PrefabTools::Reapply` keeps the objects added under the instance and brings back lost ones.
+  `SceneSerializer::ReapplyPrefab` now sends every file kind (plain, nested, variant) to it, so a
+  plain prefab no longer drops added objects. Revert and apply keep both added and lost
   objects as they are.
 
 ## In the editor

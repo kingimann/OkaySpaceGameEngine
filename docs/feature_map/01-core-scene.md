@@ -154,7 +154,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Docs:** `docs/prefabs.md`, `docs/prefab_system.md`, `docs/prefab_mode.md`, `docs/making_a_game.md`
 - **Tests:** `instantiate`, `templates`, `scene_cameras`, `scene_defaults`, `prefab_nested`, `prefab_variants`, `prefab_apply_revert`, `prefab_editor`, `prefab_mode`
 - **Status:** Partial - prefab files, override data, nested prefabs and variants work as library code and the editor shows and edits them (1.6.10; tests `prefab_editor`); prefab mode edits a prefab on its own and saves it to every instance (1.6.11; test `prefab_mode`)
-- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; objects added under an instance are not carried over by `ReapplyPrefab`
+- **Open:** the old override unit is a whole record, `PrefabTools::Diff` goes per field but falls back to whole records for unknown ones; prefab mode's GUI (bar, dialogs in editor/main.cpp) is compiled but not run in a window. Objects added under an instance are now kept by `ReapplyPrefab` (test `scene_ids_prefabs`)
 - **Related:** 1.5, 12.7, 15.2, 21
 - **Words:** prefab, okayprefab, instantiate, override, template, starter, platformer template, player template, UI template, Slate, EnsureSceneCamera, nested prefab, prefab variant, PrefabTools, unpack, apply to prefab, revert override
 - **Seen as:** prefab changes don't apply to instances; a template scene has no camera or starts dark; an instance lost its colour change after re-apply

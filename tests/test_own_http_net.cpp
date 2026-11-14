@@ -839,6 +839,356 @@ static void TestNoVerifyBypass(const std::string& srcDir) {
     }
 }
 
+
+// ---- keep-alive, HEAD, conditional requests, cookies, hostile servers and proxies (loopback) -------------------
+// A server that answers several requests per connection. handler(connNo, nth request on this connection, head, body, fd)
+// sends the reply itself and returns false to close the connection afterwards.
+struct KaServer {
+    int fd = -1, port = 0;
+    std::atomic<bool> stop{false};
+    std::atomic<int> connections{0}, requests{0};
+    std::thread acceptor;
+    std::mutex mu;
+    std::vector<std::thread> workers;
+    std::vector<std::string> heads;
+    std::function<bool(int, int, const std::string&, const std::string&, int)> handler;
+    void Start() {
+        fd = Listen(port);
+        acceptor = std::thread([this] {
+            while (!stop) {
+                pollfd p{fd, POLLIN, 0};
+                if (::poll(&p, 1, 50) <= 0) continue;
+                int c = ::accept(fd, nullptr, nullptr);
+                if (c < 0) continue;
+                const int no = ++connections;
+                std::lock_guard<std::mutex> lk(mu);
+                workers.emplace_back([this, c, no] { Serve(c, no); ::close(c); });
+            }
+        });
+    }
+    void Serve(int c, int no) {
+        std::string in; char b[4096];
+        for (int nth = 0; !stop; ++nth) {
+            while (in.find("\r\n\r\n") == std::string::npos) {
+                pollfd p{c, POLLIN, 0};
+                if (::poll(&p, 1, 100) <= 0) { if (stop) return; continue; }
+                ssize_t n = ::recv(c, b, sizeof b, 0); if (n <= 0) return; in.append(b, size_t(n));
+            }
+            size_t he = in.find("\r\n\r\n");
+            std::string head = in.substr(0, he + 4); in.erase(0, he + 4);
+            size_t cl = 0, pos = head.find("Content-Length: ");
+            if (pos != std::string::npos) cl = size_t(std::atoll(head.c_str() + pos + 16));
+            while (in.size() < cl) {
+                pollfd p{c, POLLIN, 0};
+                if (::poll(&p, 1, 100) <= 0) { if (stop) return; continue; }
+                ssize_t n = ::recv(c, b, sizeof b, 0); if (n <= 0) return; in.append(b, size_t(n));
+            }
+            std::string body = in.substr(0, cl); in.erase(0, cl);
+            { std::lock_guard<std::mutex> lk(mu); heads.push_back(head); }
+            ++requests;
+            if (!handler(no, nth, head, body, c)) return;
+        }
+    }
+    std::string Head(size_t i) { std::lock_guard<std::mutex> lk(mu); return i < heads.size() ? heads[i] : std::string(); }
+    void Stop() {
+        if (fd < 0) return;
+        stop = true;
+        if (acceptor.joinable()) acceptor.join();
+        for (auto& w : workers) if (w.joinable()) w.join();
+        workers.clear(); ::close(fd); fd = -1;
+    }
+    ~KaServer() { Stop(); }
+};
+static std::string KaOk(const std::string& body, const std::string& extra = "") {
+    return "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + extra + "\r\n" + body;
+}
+
+static void TestKeepAliveNet() {
+    NetOptions o = Opts(); o.keepAlive = true;
+    detail::DropIdleConnections();
+    {   // sequential requests share one TCP connection
+        KaServer s; s.handler = [](int, int, const std::string& h, const std::string&, int c) { SendAll(c, KaOk("r:" + PathOf(h))); return true; };
+        s.Start();
+        const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+        for (int i = 0; i < 5; ++i) {
+            FetchResult r = Perform("GET", base + "/p" + std::to_string(i), {}, "", o);
+            CHECK(r.ok && r.response.body == "r:/p" + std::to_string(i) && r.reusedConnections == (i ? 1 : 0));
+        }
+        CHECK(s.connections == 1 && s.requests == 5 && detail::IdleCount() == 1);
+        CHECK(s.Head(1).find("Connection: close") == std::string::npos);
+        // another port is another connection; keepAlive off never reuses and says close
+        KaServer t; t.handler = s.handler; t.Start();
+        FetchResult r = Perform("GET", "http://127.0.0.1:" + std::to_string(t.port) + "/x", {}, "", o);
+        CHECK(r.ok && t.connections == 1 && s.connections == 1);
+        NetOptions off = Opts();
+        r = Perform("GET", base + "/off", {}, "", off);
+        CHECK(r.ok && s.connections == 2 && s.Head(5).find("Connection: close") != std::string::npos);
+        detail::DropIdleConnections();
+        t.Stop(); s.Stop();
+    }
+    {   // the server closes the idle connection: it is noticed (or the retry covers it); the call works either way
+        KaServer s; s.handler = [](int, int, const std::string&, const std::string&, int c) { SendAll(c, KaOk("ok")); return false; };
+        s.Start();
+        const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+        FetchResult a = Perform("GET", base + "/a", {}, "", o);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));   // let the FIN arrive
+        FetchResult b = Perform("GET", base + "/b", {}, "", o);
+        CHECK(a.ok && b.ok && b.response.body == "ok" && s.connections == 2 && b.reusedConnections == 0);
+        detail::DropIdleConnections(); s.Stop();
+    }
+    {   // the close races our request: the server swallows the second request on a connection and hangs up. GET is retried once.
+        KaServer s;
+        s.handler = [](int, int nth, const std::string&, const std::string&, int c) { if (nth == 1) return false; SendAll(c, KaOk("ok")); return true; };
+        s.Start();
+        const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+        FetchResult a = Perform("GET", base + "/a", {}, "", o);
+        FetchResult b = Perform("GET", base + "/b", {}, "", o);
+        CHECK(a.ok && b.ok && b.response.body == "ok" && b.staleRetries == 1 && s.connections == 2);
+        // POST does not ride on a kept connection at all, so it is sent once and never replayed
+        FetchResult p = Perform("POST", base + "/post", {}, "data", o);
+        CHECK(p.ok && p.reusedConnections == 0 && s.connections == 3);
+        detail::DropIdleConnections(); s.Stop();
+    }
+    {   // a POST that hits a server which hangs up is an error after ONE attempt
+        KaServer s; s.handler = [](int, int, const std::string&, const std::string&, int) { return false; };
+        s.Start();
+        FetchResult p = Perform("POST", "http://127.0.0.1:" + std::to_string(s.port) + "/post", {}, "data", o);
+        CHECK(!p.ok && s.requests == 1 && s.connections == 1);
+        s.Stop();
+    }
+    {   // a new deadline per call: the first call's 300 ms total is long over when the second call uses the idle connection
+        KaServer s; s.handler = [](int, int, const std::string&, const std::string&, int c) { SendAll(c, KaOk("ok")); return true; };
+        s.Start();
+        const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+        NetOptions q = o; q.totalMs = 300;
+        FetchResult a = Perform("GET", base + "/a", {}, "", q);
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        FetchResult b = Perform("GET", base + "/b", {}, "", o);
+        CHECK(a.ok && b.ok && b.reusedConnections == 1 && s.connections == 1);
+        detail::DropIdleConnections(); s.Stop();
+    }
+    {   // cancel and silence limits apply on a reused connection too
+        KaServer s;
+        s.handler = [&](int, int nth, const std::string&, const std::string&, int c) {
+            if (nth == 0) { SendAll(c, KaOk("ok")); return true; }
+            while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20));   // never answers
+            return false;
+        };
+        s.Start();
+        const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+        Perform("GET", base + "/a", {}, "", o);
+        NetOptions q = o; std::atomic<int> polls{0}; q.cancel = [&] { return ++polls > 4; };
+        auto t0 = std::chrono::steady_clock::now();
+        FetchResult b = Perform("GET", base + "/b", {}, "", q);
+        CHECK_ERR(b, Err::Aborted);
+        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 5.0);
+        detail::DropIdleConnections();
+        Perform("GET", base + "/a2", {}, "", o);   // new connection (the aborted one was dropped)
+        NetOptions w = o; w.ioMs = 400;
+        t0 = std::chrono::steady_clock::now();
+        FetchResult c2 = Perform("GET", base + "/b2", {}, "", w);
+        CHECK_ERR(c2, Err::Timeout);
+        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 5.0);
+        detail::DropIdleConnections(); s.Stop();
+    }
+    {   // idle connections belong to the thread; when it ends they are closed (the server sees the end of the connection)
+        KaServer s; std::atomic<int> ended{0};
+        s.handler = [&](int, int, const std::string&, const std::string&, int c) {
+            SendAll(c, KaOk("ok"));
+            for (int i = 0; i < 100 && !s.stop; ++i) { pollfd p{c, POLLIN, 0}; if (::poll(&p, 1, 50) > 0) { char b[8]; if (::recv(c, b, sizeof b, 0) <= 0) { ++ended; return false; } } }
+            return false;
+        };
+        s.Start();
+        std::thread([&] { NetOptions q = Opts(); q.keepAlive = true; Perform("GET", "http://127.0.0.1:" + std::to_string(s.port) + "/a", {}, "", q); }).join();
+        for (int i = 0; i < 40 && ended == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(ended == 1);
+        s.Stop();
+    }
+    {   // the pool holds at most 8 idle connections
+        std::vector<std::unique_ptr<KaServer>> servers;
+        for (int i = 0; i < 10; ++i) {
+            servers.push_back(std::make_unique<KaServer>());
+            servers.back()->handler = [](int, int, const std::string&, const std::string&, int c) { SendAll(c, KaOk("ok")); return true; };
+            servers.back()->Start();
+            FetchResult r = Perform("GET", "http://127.0.0.1:" + std::to_string(servers.back()->port) + "/", {}, "", o);
+            CHECK(r.ok);
+        }
+        CHECK(detail::IdleCount() == detail::kMaxIdleConnections);
+        detail::DropIdleConnections();
+        CHECK(detail::IdleCount() == 0);
+        for (auto& sv : servers) sv->Stop();
+    }
+}
+
+static void TestHeadConditionalCookies() {
+    KaServer s;
+    s.handler = [&](int, int, const std::string& h, const std::string&, int c) {
+        const std::string path = PathOf(h);
+        const bool head = h.rfind("HEAD ", 0) == 0;
+        if (path == "/res") {
+            if (h.find("If-None-Match: \"v7\"") != std::string::npos) { SendAll(c, "HTTP/1.1 304 Not Modified\r\nETag: \"v7\"\r\nLast-Modified: Wed, 01 Jan 2025 00:00:00 GMT\r\n\r\n"); return true; }
+            if (h.find("If-Modified-Since: Wed, 01 Jan 2025 00:00:00 GMT") != std::string::npos) { SendAll(c, "HTTP/1.1 304 Not Modified\r\n\r\n"); return true; }
+            SendAll(c, "HTTP/1.1 200 OK\r\nETag: \"v7\"\r\nLast-Modified: Wed, 01 Jan 2025 00:00:00 GMT\r\nContent-Length: 11\r\n\r\n" + std::string(head ? "" : "fresh bytes"));
+        } else if (path == "/head-gz") SendAll(c, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 999\r\n\r\n");
+        else if (path == "/set") SendAll(c, "HTTP/1.1 302 Found\r\nSet-Cookie: sid=abc; Path=/\r\nSet-Cookie: gone=1; Max-Age=0\r\nLocation: /need\r\nContent-Length: 0\r\n\r\n");
+        else if (path == "/need") { const size_t p = h.find("Cookie: "); SendAll(c, KaOk(p == std::string::npos ? "none" : h.substr(p + 8, h.find("\r\n", p) - p - 8))); }
+        else SendAll(c, KaOk("?"));
+        return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL"); ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy");
+    // HEAD: the length comes from the headers, no body is read, and a following GET on the same connection is not confused
+    okay::http::RequestOptions ro;
+    okay::http::ExResult r = okay::http::RequestEx("HEAD", base + "/res", {}, "", "", "", ro);
+    CHECK(r.reached && r.status == 200 && r.body.empty() && r.totalSize == 11 && r.etag == "\"v7\"" && r.lastModified == "Wed, 01 Jan 2025 00:00:00 GMT");
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", "", ro);
+    CHECK(r.reached && r.status == 200 && r.body == "fresh bytes" && s.connections == 1 && r.reusedConnections == 1);
+    // HEAD with an output file never creates or truncates it
+    char tmpl[] = "/tmp/okay_cond_XXXXXX"; int tfd = ::mkstemp(tmpl); ::close(tfd);
+    WriteFile(tmpl, "keep me");
+    r = okay::http::RequestEx("HEAD", base + "/res", {}, "", "", tmpl, ro);
+    CHECK(r.reached && r.status == 200);
+    { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "keep me"); }
+    // a HEAD answer that claims gzip and a length is still just headers
+    r = okay::http::RequestEx("HEAD", base + "/head-gz", {}, "", "", "", ro);
+    CHECK(r.reached && r.status == 200 && r.body.empty());
+    // conditional: ETag and date validators produce 304, the file is left alone, and the validators come back
+    okay::http::RequestOptions c1; c1.ifNoneMatch = "\"v7\"";
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", tmpl, c1);
+    CHECK(r.reached && r.status == 304 && r.notModified && r.body.empty() && r.etag == "\"v7\"");
+    okay::http::RequestOptions c2; c2.ifModifiedSince = "Wed, 01 Jan 2025 00:00:00 GMT";
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", tmpl, c2);
+    CHECK(r.reached && r.status == 304 && r.notModified);
+    { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "keep me"); }
+    okay::http::RequestOptions c3 = c1; c3.fileOnSuccessOnly = false;   // even when error bodies are wanted, a 304 never truncates
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", tmpl, c3);
+    CHECK(r.reached && r.notModified);
+    { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "keep me"); }
+    // a stale validator gets the full answer and the file is replaced
+    okay::http::RequestOptions c4; c4.ifNoneMatch = "\"old\"";
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", tmpl, c4);
+    CHECK(r.reached && r.status == 200 && !r.notModified);
+    { std::ifstream f(tmpl, std::ios::binary); std::string d((std::istreambuf_iterator<char>(f)), {}); CHECK(d == "fresh bytes"); }
+    // a validator with a line break is refused before any traffic
+    okay::http::RequestOptions bad; bad.ifNoneMatch = "x\r\nX-Evil: 1";
+    size_t before = size_t(s.requests.load());
+    r = okay::http::RequestEx("GET", base + "/res", {}, "", "", "", bad);
+    CHECK(!r.reached && size_t(s.requests.load()) == before);
+    // cookies: off by default, on with the option; the deleted one is not sent; the jar content is reported
+    r = okay::http::RequestEx("GET", base + "/set", {}, "", "", "", ro);
+    CHECK(r.reached && r.body == "none" && r.cookies.empty());
+    okay::http::RequestOptions ck; ck.cookies = true;
+    r = okay::http::RequestEx("GET", base + "/set", {}, "", "", "", ck);
+    CHECK(r.reached && r.body == "sid=abc" && r.cookies.size() == 1 && r.cookies[0] == "sid=abc");
+    // cookies do not leak into the next call
+    r = okay::http::RequestEx("GET", base + "/need", {}, "", "", "", ck);
+    CHECK(r.reached && r.body == "none");
+    detail::DropIdleConnections();
+    ::unlink(tmpl); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    s.Stop();
+}
+
+static void TestHostileNet() {
+    NetOptions o = Opts(); o.keepAlive = true;
+    detail::DropIdleConnections();
+    KaServer s;
+    s.handler = [&](int, int, const std::string& h, const std::string&, int c) {
+        const std::string path = PathOf(h);
+        if (path == "/ok") { SendAll(c, KaOk("ok")); return true; }
+        if (path == "/short") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort"); return false; }          // wrong (too large) length, then close
+        if (path == "/long") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdefghij"); return true; }        // body longer than stated
+        if (path == "/trunc-chunk") { SendAll(c, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nabc"); return false; }
+        if (path == "/glued") { SendAll(c, KaOk("one") + KaOk("TWO")); return true; }                                          // pipelined leftover
+        if (path == "/loop") { SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n"); return true; }
+        if (path == "/pingpong-a") { SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /pingpong-b\r\nContent-Length: 0\r\n\r\n"); return true; }
+        if (path == "/pingpong-b") { SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /pingpong-a\r\nContent-Length: 0\r\n\r\n"); return true; }
+        if (path == "/dribble") {   // a head that never ends
+            std::string head = "HTTP/1.1 200 OK\r\nX-Pad: ";
+            for (char ch : head) { SendAll(c, std::string(1, ch)); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+            for (int i = 0; i < 100 && !s.stop; ++i) { SendAll(c, "a"); std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
+            return false;
+        }
+        if (path == "/silent") { while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); return false; }
+        if (path == "/cl-conflict") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nabc"); return false; }
+        SendAll(c, KaOk("?")); return true;
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    FetchResult r = Perform("GET", base + "/short", {}, "", o);
+    CHECK(!r.ok && detail::IdleCount() == 0);                                      // truncated: error, nothing pooled
+    r = Perform("GET", base + "/trunc-chunk", {}, "", o);
+    CHECK(!r.ok && detail::IdleCount() == 0);
+    r = Perform("GET", base + "/cl-conflict", {}, "", o);
+    CHECK_ERR(r, Err::BadResponse);
+    r = Perform("GET", base + "/long", {}, "", o);                                 // longer than stated: the extra bytes poison the connection
+    CHECK(r.ok && r.response.body == "abc");
+    r = Perform("GET", base + "/ok", {}, "", o);
+    CHECK(r.ok && r.response.body == "ok" && r.reusedConnections == 0);            // so the next call used a clean new connection
+    r = Perform("GET", base + "/glued", {}, "", o);
+    CHECK(r.ok && r.response.body == "one");
+    r = Perform("GET", base + "/ok", {}, "", o);
+    CHECK(r.ok && r.response.body == "ok" && r.reusedConnections == 0);            // never read "TWO" as an answer
+    NetOptions lim = o; lim.limits.maxRedirects = 4;
+    r = Perform("GET", base + "/loop", {}, "", lim);
+    CHECK_ERR(r, Err::TooManyRedirects);
+    r = Perform("GET", base + "/pingpong-a", {}, "", lim);
+    CHECK_ERR(r, Err::TooManyRedirects);
+    {   NetOptions w = o; w.totalMs = 800;                                            // a slow head hits the total time
+        auto t0 = std::chrono::steady_clock::now();
+        r = Perform("GET", base + "/dribble", {}, "", w);
+        CHECK(!r.ok && (r.err == Err::Timeout || r.err == Err::TooLarge));
+        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 5.0); }
+    {   NetOptions w = o; w.ioMs = 300;
+        r = Perform("GET", base + "/silent", {}, "", w);
+        CHECK_ERR(r, Err::Timeout); }
+    detail::DropIdleConnections();
+    s.Stop();
+}
+
+// A proxy that misbehaves in a chosen way, for the CONNECT path (https needs libssl to get that far; skipped otherwise).
+static void TestProxyHostile() {
+    std::string why; NetOptions probe = Opts();
+    if (!TlsAvailable(probe, why)) { ++g_skips; std::printf("SKIP proxy CONNECT cases: %s\n", why.c_str()); return; }
+    std::atomic<int> mode{0};
+    Server px;
+    px.handler = [&](int c, const std::string&, const std::string&) {
+        switch (mode.load()) {
+        case 0: SendAll(c, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=x\r\nContent-Length: 0\r\n\r\n"); break;
+        case 1: SendAll(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n"); break;
+        case 2: break;                                                             // hangs up without an answer
+        case 3: SendAll(c, "garbage that is not http\r\n\r\n"); break;
+        case 4: SendAll(c, "HTTP/1.1 200 Connection established\r\n\r\nHELLO-BEFORE-TLS"); break;   // data ahead of the handshake
+        case 5: SendAll(c, "HTTP/1.1 301 Moved\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n"); break;   // a redirect is not a tunnel
+        case 6: SendAll(c, "HTTP/1.1 200 Connection established\r\n\r\n"); for (int i = 0; i < 100 && !px.stop; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(20)); break;   // tunnel that never speaks TLS
+        }
+    };
+    px.Start();
+    const std::string purl = "http://127.0.0.1:" + std::to_string(px.port);
+    auto envWith = [&](std::map<std::string, std::string> m) {
+        return EnvFn([m](const char* n) -> const char* { auto it = m.find(n); return it == m.end() ? nullptr : it->second.c_str(); });
+    };
+    NetOptions o = Opts(); o.keepAlive = true;
+    o.env = envWith({{"HTTPS_PROXY", purl}});
+    const std::string target = "https://example.invalid/x";
+    const int want[] = {407, 502};
+    for (int m = 0; m < 2; ++m) {
+        mode = m;
+        FetchResult r = Perform("GET", target, {}, "", o);
+        CHECK_ERR(r, Err::Proxy);
+        CHECK(r.message.find(std::to_string(want[m])) != std::string::npos);
+    }
+    for (int m = 2; m <= 5; ++m) {
+        mode = m;
+        FetchResult r = Perform("GET", target, {}, "", o);
+        CHECK_ERR(r, Err::Proxy);
+    }
+    mode = 4; { FetchResult r = Perform("GET", target, {}, "", o); CHECK(r.message.find("before the TLS handshake") != std::string::npos); }
+    mode = 6; { NetOptions w = o; w.ioMs = 400; w.totalMs = 3000; FetchResult r = Perform("GET", target, {}, "", w); CHECK(!r.ok && (r.err == Err::Timeout || r.err == Err::Tls)); }
+    CHECK(detail::IdleCount() == 0);   // nothing from a refused tunnel was kept
+    px.Stop();
+}
+
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);   // the transports must not depend on this, but test servers write to closed sockets
     std::string script = argc > 1 ? argv[1] : "tests/scripts/gen_http_test_certs.sh";
@@ -847,6 +1197,10 @@ int main(int argc, char** argv) {
     TestHostile();
     TestNativeHttp();
     TestDownloadFeatures();
+    TestKeepAliveNet();
+    TestHeadConditionalCookies();
+    TestHostileNet();
+    TestProxyHostile();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

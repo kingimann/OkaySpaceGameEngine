@@ -14,8 +14,11 @@
 // Deliberately strict: bare LF or CR in a head, obsolete line folding, duplicate
 // or conflicting Content-Length, Content-Length together with Transfer-Encoding,
 // unknown transfer or content encodings, CR/LF/NUL in anything we send, and an
-// https -> http redirect are all refused. We always send `Connection: close` and
-// `Accept-Encoding: identity`, so there is no keep-alive and no gzip.
+// https -> http redirect are all refused. We send `Accept-Encoding: identity` (gzip only when asked) and
+// `Connection: close`, unless the caller asks for keep-alive (FetchRequest::keepAlive): then a finished
+// connection with clear framing can be handed to the Connector and used again by the next request to the same
+// host (idempotent methods only, one safe retry on a connection that went stale). Cookies are off unless the caller
+// passes a CookieJar (a per-call jar: no disk, no shared state).
 // ---------------------------------------------------------------------------
 #include <algorithm>
 #include <chrono>
@@ -65,6 +68,11 @@ struct Stream {
     virtual long Read(void* buf, size_t n, Err& e) = 0;
     /// Writes all `n` bytes or fails (sets `e`).
     virtual bool Write(const void* buf, size_t n, Err& e) = 0;
+    /// Keep-alive support: called when an idle connection is taken from the pool again (new deadline, silence limit and
+    /// cancel check for the new request) and when it is put back (cancel = nullptr). Default: nothing to do.
+    virtual void Rebind(Clock::time_point /*deadline*/, int /*ioMs*/, const std::function<bool()>* /*cancel*/) {}
+    /// Keep-alive support: false when the peer has closed the connection or sent bytes nobody asked for.
+    virtual bool StillUsable() { return true; }
 };
 
 struct Limits {
@@ -271,7 +279,7 @@ inline bool ParseHeaderLine(const std::string& line, Header& h) {
 
 inline bool BuildRequest(const std::string& method, const Url& u, const std::vector<Header>& headers,
                          const std::string& body, bool absoluteForm, std::string& out,
-                         Err& e, std::string* msg = nullptr, bool acceptGzip = false) {
+                         Err& e, std::string* msg = nullptr, bool acceptGzip = false, bool keepAlive = false) {
     using detail::Set;
     if (!detail::IsToken(method) || method.size() > 16) return Set(e, msg, Err::BadHeader, "bad method");
     if (u.host.empty() || u.target.empty() || u.target[0] != '/') return Set(e, msg, Err::BadUrl, "bad url");
@@ -288,7 +296,8 @@ inline bool BuildRequest(const std::string& method, const Url& u, const std::vec
     if (absoluteForm) r += u.scheme + "://" + u.HostPort();
     r += u.target + " HTTP/1.1\r\nHost: " + u.HostPort() + "\r\n";
     if (!haveUa) r += "User-Agent: OkaySpace/1.0\r\n";
-    r += acceptGzip ? "Accept-Encoding: gzip, deflate\r\nConnection: close\r\n" : "Accept-Encoding: identity\r\nConnection: close\r\n";
+    r += acceptGzip ? "Accept-Encoding: gzip, deflate\r\n" : "Accept-Encoding: identity\r\n";
+    if (!keepAlive) r += "Connection: close\r\n";
     for (const Header& h : headers) r += h.name + ": " + h.value + "\r\n";
     if (!body.empty() || method == "POST" || method == "PUT" || method == "PATCH")
         r += "Content-Length: " + std::to_string(body.size()) + "\r\n";
@@ -410,6 +419,8 @@ inline bool DetermineFraming(const Response& r, const std::string& method, const
                              Framing& f, uint64_t& len, Err& e, std::string* m = nullptr) {
     using detail::Set;
     len = 0;
+    // No body follows a HEAD answer, 204 or 304: what its headers say about encodings and lengths does not matter.
+    if (method == "HEAD" || r.status == 204 || r.status == 304) { f = Framing::None; e = Err::None; return true; }
     if (const std::string* ce = r.Get("content-encoding"))
         if (!detail::IEq(detail::Trim(*ce), "identity") && ContentCoding(r, lim) == 0) return Set(e, m, Err::Unsupported, "content encoding not supported");
     std::string te; bool haveTe = false, haveCl = false; std::string clVal;
@@ -421,7 +432,6 @@ inline bool DetermineFraming(const Response& r, const std::string& method, const
             haveCl = true; clVal = v;
         }
     }
-    if (method == "HEAD" || r.status == 204 || r.status == 304) { f = Framing::None; e = Err::None; return true; }
     if (haveTe) {
         if (haveCl) return Set(e, m, Err::BadResponse, "Content-Length with Transfer-Encoding");
         if (!detail::IEq(detail::Trim(te), "chunked")) return Set(e, m, Err::Unsupported, "transfer encoding not supported");
@@ -529,6 +539,112 @@ inline bool ReadBody(Reader& rd, const Response& head, const std::string& method
 }
 
 // ----------------------------------------------------------------------------
+// Cookies (opt-in, per call)
+// ----------------------------------------------------------------------------
+/// A small cookie jar for ONE request and its redirects (or for a few calls a caller chooses to chain). Off unless the
+/// caller hands one to FetchRequest::jar. Deliberately simple and strict, not RFC 6265 complete:
+///  - host-only: a cookie goes back only to the exact host that set it (a Domain attribute is accepted only when it
+///    names that same host; anything else drops the cookie);
+///  - Path default and matching as in the RFC; Secure is sent only over https, and a Secure cookie from plain http is dropped;
+///  - Max-Age is honoured (zero or negative deletes); Expires is ignored (the cookie lasts as long as the jar);
+///  - at most 64 cookies, 4096 bytes each, a Cookie header of at most 8000 bytes; names must be tokens and values clean.
+/// Not thread safe: one jar belongs to one call at a time.
+class CookieJar {
+public:
+    struct Cookie { std::string name, value, host, path; bool secure = false; bool hasExpiry = false; Clock::time_point expires; };
+    static constexpr size_t kMaxCookies = 64, kMaxCookieBytes = 4096, kMaxHeaderBytes = 8000;
+
+    /// Store one Set-Cookie value that came from `from`. False when the cookie was refused (nothing stored).
+    bool Store(const Url& from, const std::string& setCookie) {
+        if (setCookie.size() > kMaxCookieBytes || !detail::CleanValue(setCookie)) return false;
+        size_t semi = setCookie.find(';');
+        const std::string pair = detail::Trim(setCookie.substr(0, semi));
+        size_t eq = pair.find('=');
+        if (eq == std::string::npos) return false;
+        Cookie c;
+        c.name = detail::Trim(pair.substr(0, eq)); c.value = detail::Trim(pair.substr(eq + 1));
+        if (!detail::IsToken(c.name)) return false;
+        if (c.value.size() >= 2 && c.value.front() == '"' && c.value.back() == '"') { /* quoted value is kept as sent */ }
+        c.host = from.host;
+        std::string path;
+        bool deleteIt = false;
+        size_t i = semi;
+        while (i != std::string::npos && i < setCookie.size()) {
+            size_t j = setCookie.find(';', i + 1);
+            std::string attr = detail::Trim(setCookie.substr(i + 1, (j == std::string::npos ? setCookie.size() : j) - i - 1));
+            i = j;
+            size_t e2 = attr.find('=');
+            const std::string an = detail::Lower(detail::Trim(attr.substr(0, e2)));
+            const std::string av = e2 == std::string::npos ? std::string() : detail::Trim(attr.substr(e2 + 1));
+            if (an == "domain") {
+                std::string d = detail::Lower(av);
+                if (!d.empty() && d[0] == '.') d.erase(0, 1);
+                if (d != from.host) return false;   // host-only jar: a wider domain is refused
+            } else if (an == "path") {
+                if (!av.empty() && av[0] == '/') path = av;
+            } else if (an == "secure") {
+                c.secure = true;
+            } else if (an == "max-age") {
+                bool neg = !av.empty() && av[0] == '-';
+                size_t k = neg ? 1 : 0; long long v = 0; bool digits = k < av.size() && av.size() - k < 10;
+                for (; k < av.size(); ++k) { if (av[k] < '0' || av[k] > '9') { digits = false; break; } v = v * 10 + (av[k] - '0'); }
+                if (!digits) continue;   // an unreadable Max-Age is ignored
+                if (neg || v == 0) deleteIt = true;
+                else { c.hasExpiry = true; c.expires = Clock::now() + std::chrono::seconds(v); }
+            }
+        }
+        if (c.secure && !from.Https()) return false;
+        if (path.empty()) {   // default path: the request path up to (not including) its last '/'
+            std::string rp = from.target.substr(0, from.target.find('?'));
+            size_t ls = rp.rfind('/');
+            path = (ls == std::string::npos || ls == 0) ? "/" : rp.substr(0, ls);
+        }
+        c.path = path;
+        for (size_t k = 0; k < items_.size(); ++k) {
+            if (items_[k].name == c.name && items_[k].host == c.host && items_[k].path == c.path) {
+                if (deleteIt) items_.erase(items_.begin() + long(k));
+                else items_[k] = c;
+                return true;
+            }
+        }
+        if (deleteIt) return true;
+        if (items_.size() >= kMaxCookies) return false;
+        items_.push_back(c);
+        return true;
+    }
+
+    /// The value for a Cookie header for a request to `u` ("a=1; b=2"), empty when none match.
+    std::string HeaderFor(const Url& u) const {
+        const std::string rp = u.target.substr(0, u.target.find('?'));
+        std::vector<const Cookie*> hit;
+        const Clock::time_point now = Clock::now();
+        for (const Cookie& c : items_) {
+            if (c.host != u.host) continue;
+            if (c.secure && !u.Https()) continue;
+            if (c.hasExpiry && c.expires <= now) continue;
+            const bool pathOk = rp == c.path ||
+                (rp.compare(0, c.path.size(), c.path) == 0 && (c.path.back() == '/' || rp[c.path.size()] == '/'));
+            if (!pathOk) continue;
+            hit.push_back(&c);
+        }
+        std::stable_sort(hit.begin(), hit.end(), [](const Cookie* a, const Cookie* b) { return a->path.size() > b->path.size(); });
+        std::string out;
+        for (const Cookie* c : hit) {
+            std::string one = c->name + "=" + c->value;
+            if (out.size() + one.size() + 2 > kMaxHeaderBytes) break;
+            if (!out.empty()) out += "; ";
+            out += one;
+        }
+        return out;
+    }
+    size_t Size() const { return items_.size(); }
+    void Clear() { items_.clear(); }
+    const std::vector<Cookie>& Items() const { return items_; }
+private:
+    std::vector<Cookie> items_;
+};
+
+// ----------------------------------------------------------------------------
 // Fetch with redirects
 // ----------------------------------------------------------------------------
 struct Connector {
@@ -537,6 +653,10 @@ struct Connector {
     virtual std::unique_ptr<Stream> Open(const Url& u, Clock::time_point deadline, Err& e, std::string& msg) = 0;
     /// True when `u` is plain http reached through a proxy (request line uses the absolute form).
     virtual bool AbsoluteForm(const Url&) { return false; }
+    /// Keep-alive: an idle connection that can serve `u` again, rebound to `deadline`, or null. Default: no pool.
+    virtual std::unique_ptr<Stream> TakeIdle(const Url&, Clock::time_point /*deadline*/) { return nullptr; }
+    /// Keep-alive: a connection whose last response was read completely and cleanly; keep it for the next request or close it.
+    virtual void GiveIdle(const Url&, std::unique_ptr<Stream>) {}
 };
 
 struct FetchRequest {
@@ -545,6 +665,11 @@ struct FetchRequest {
     std::vector<std::string> headerLines;   ///< "Name: value"
     std::string body;
     bool acceptGzip = false;                ///< ask for gzip/deflate and decode it (Limits::allowGzip is set for the call)
+    /// Do not send `Connection: close`; offer finished connections to the Connector and reuse its idle ones. Only
+    /// idempotent methods (GET, HEAD, OPTIONS, PUT, DELETE) ever ride on a reused connection, and a reused connection
+    /// that turns out to be stale (closed before one byte of the answer) is replaced once by a fresh one.
+    bool keepAlive = false;
+    std::shared_ptr<CookieJar> jar;         ///< null = cookies off (the default)
 };
 
 struct FetchHooks {
@@ -567,6 +692,8 @@ struct FetchResult {
     bool        partial = false;        ///< the server answered a Range request with 206 (the body starts at rangeStart)
     uint64_t    rangeStart = 0;
     uint64_t    rangeTotal = 0;         ///< complete size from Content-Range, 0 when unknown ("*")
+    int         reusedConnections = 0;  ///< requests of this call (hops) that rode on a kept-alive connection
+    int         staleRetries = 0;       ///< reused connections found dead and replaced by a fresh one
 };
 
 /// "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
@@ -612,6 +739,20 @@ inline bool SensitiveHeader(const std::string& name) {
     return false;
 }
 
+/// True when the connection that carried `head` (its body already read) can serve another request: HTTP/1.1, no
+/// `Connection: close`, a body with a clear end (length, chunked or none: not "until close"), and no stray bytes behind it.
+inline bool ConnectionReusable(const Response& head, const std::string& method, const Limits& lim, const Reader& rd) {
+    if (head.minor != 1 || rd.Avail() != 0 || rd.eof) return false;
+    for (const Header& h : head.headers) {
+        if (!detail::IEq(h.name, "connection")) continue;
+        std::string v = detail::Lower(h.value);
+        if (v.find("close") != std::string::npos) return false;
+    }
+    Framing f; uint64_t len = 0; Err e = Err::None;
+    if (!DetermineFraming(head, method, lim, f, len, e)) return false;
+    return f != Framing::UntilClose;
+}
+
 inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits& lim,
                          int totalMs, const FetchHooks& hooks = FetchHooks()) {
     FetchResult res;
@@ -630,14 +771,47 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
     for (int hop = 0;; ++hop) {
         if (Clock::now() >= deadline) return bad(Err::Timeout, "total time limit reached");
         Err e = Err::None; std::string msg;
-        std::unique_ptr<Stream> st = conn.Open(url, deadline, e, msg);
-        if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
+        std::vector<Header> sendHeaders = headers;
+        if (req.jar) {   // cookies for this hop (the jar only holds what a response to this call set)
+            const std::string ck = req.jar->HeaderFor(url);
+            if (!ck.empty()) {
+                bool merged = false;
+                for (Header& h : sendHeaders) if (detail::IEq(h.name, "cookie")) { h.value += "; " + ck; merged = true; break; }
+                if (!merged) sendHeaders.push_back(Header{"Cookie", ck});
+            }
+        }
         std::string wire;
-        if (!BuildRequest(method, url, headers, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip)) return bad(e, msg);
-        if (!st->Write(wire.data(), wire.size(), e)) return bad(e == Err::None ? Err::Io : e, "write failed");
-        Reader rd(*st);
+        if (!BuildRequest(method, url, sendHeaders, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip, req.keepAlive)) return bad(e, msg);
+        const bool idempotent = method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "PUT" || method == "DELETE";
+        std::unique_ptr<Stream> st;
+        std::unique_ptr<Reader> rdp;
         Response head;
-        if (!ReadHead(rd, lim, head, e, &msg)) return bad(e, msg);
+        bool usedIdle = false;
+        for (int attempt = 0;; ++attempt) {
+            usedIdle = false;
+            if (attempt == 0 && req.keepAlive && idempotent) { st = conn.TakeIdle(url, deadline); usedIdle = st != nullptr; }
+            if (!st) {
+                st = conn.Open(url, deadline, e, msg);
+                if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
+            }
+            bool stale = false;
+            if (!st->Write(wire.data(), wire.size(), e)) {
+                if (usedIdle && (e == Err::Io || e == Err::None)) stale = true;
+                else return bad(e == Err::None ? Err::Io : e, "write failed");
+            } else {
+                rdp = std::make_unique<Reader>(*st);
+                if (!ReadHead(*rdp, lim, head, e, &msg)) {
+                    // Closed or reset before the first byte of the answer on a connection we had kept: it went stale.
+                    if (usedIdle && rdp->buf.empty() && (e == Err::BadResponse || e == Err::Io)) stale = true;
+                    else return bad(e, msg);
+                }
+            }
+            if (!stale) break;
+            rdp.reset(); st.reset(); ++res.staleRetries;   // the next attempt opens a fresh connection
+        }
+        if (usedIdle) ++res.reusedConnections;
+        Reader& rd = *rdp;
+        if (req.jar) for (const Header& h : head.headers) if (detail::IEq(h.name, "set-cookie")) req.jar->Store(url, h.value);
         const std::string* loc = head.Get("location");
         const int s = head.status;
         const bool redirect = (s == 301 || s == 302 || s == 303 || s == 307 || s == 308) && loc;
@@ -649,7 +823,9 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             // The redirect's own body is not wanted; a broken one does not matter.
             Limits small = lim; small.maxBodyBytes = std::min<uint64_t>(lim.maxBodyBytes, 1 << 20);
             uint64_t tot = 0; Err e2 = Err::None;
-            ReadBody(rd, head, method, small, DataFn(), tot, e2, nullptr);
+            const bool bodyRead = ReadBody(rd, head, method, small, DataFn(), tot, e2, nullptr);
+            if (bodyRead && req.keepAlive && ConnectionReusable(head, method, small, rd)) conn.GiveIdle(url, std::move(st));
+            else st.reset();
             if (!(url.SameOrigin(next))) {
                 std::vector<Header> keep;
                 for (const Header& h : headers) if (!SensitiveHeader(h.name)) keep.push_back(h);
@@ -706,6 +882,7 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         }
         if (!ReadBody(rd, head, method, bodyLim, sink, total, e, &msg)) return bad(e, msg);
         head.bodyBytes = total;
+        if (req.keepAlive && ConnectionReusable(head, method, bodyLim, rd)) conn.GiveIdle(url, std::move(st));
         res.ok = true; res.err = Err::None;
         res.response = std::move(head);
         res.finalUrl = url;

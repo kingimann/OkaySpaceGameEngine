@@ -886,6 +886,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
+#include "ReleaseAssets.hpp"   // which release files belong to which platform (Windows: the .exe names, unchanged)
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
@@ -2110,7 +2111,7 @@ std::string InstallUpdate(const std::string& latest, const std::string& ref = "m
     // download or a mismatch all stop here with the reason, and the running program is untouched.
     {
         std::string reason;
-        if (!FetchVerified(latest, "OkayEngine.exe", self, reason)) {
+        if (!FetchVerified(latest, okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Editor), self, reason)) {
             okay::restart::AppendLog(self.parent_path() / "okay_update.log", "editor update refused: " + reason);
             return "Update to v" + latest + " was not installed. " + reason;
         }
@@ -3876,7 +3877,7 @@ std::string EnsurePlayer(std::string* note) {
     fs::path dest = self.parent_path() / kPlayerExe;
     if (note) *note = "Fetching the player runtime (checked against the published checksum)...";
     std::string reason;
-    if (!updater::FetchVerified(OKAY_ENGINE_VERSION, "OkaySpacePlayer.exe", dest, reason)) {
+    if (!updater::FetchVerified(OKAY_ENGINE_VERSION, okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Player), dest, reason)) {
         if (note) *note = "Couldn't get the player runtime: " + reason;
         return {};
     }

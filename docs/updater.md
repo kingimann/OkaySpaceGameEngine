@@ -44,7 +44,7 @@ servers and to the name on disk; the Versions page (`launcher/VersionsManager.cp
 | Linux | `OkaySpace-linux-x64` | `OkayEngine-linux-x64` | `OkaySpacePlayer-linux-x64` | `OkaySpace`, `Tools/OkayEngine`, `Tools/OkaySpacePlayer` |
 | macOS | none | none | none | refuses: "There is no macOS build of OkaySpace to update to yet" |
 
-The rules above apply unchanged to the Linux files: a file with no checksum in `versions.json` is refused. Two additions, both only off
+The editor's own update and its player download (`editor/main.cpp`, `FetchVerified`) use the same names. The rules above apply unchanged to the Linux files: a file with no checksum in `versions.json` is refused. Two additions, both only off
 Windows: a release whose entry lists none of this platform's files is refused up front with "v<ver> has no Linux build ... a Linux build may
 be published a little later, so try again" (`PlatformBuildProblem`), before anything is downloaded, rather than a per-file "not listed"; a
 release that lists some but not all of them is refused file by file as before. On Windows `PlatformBuildProblem` is always empty, so

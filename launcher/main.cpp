@@ -1113,7 +1113,7 @@ int RunUpdateCheck(void*) {
         if (selfExe.empty()) {
             UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
             ok = false;
-        } else if (StageFile(launcherIdx, base + launcherIdx, selfExe, true, checkFor(launcherIdx))) {
+        } else if (StageFile(launcherIdx, base + launcherIdx, selfExe, true, checkFor(launcherIdx.c_str()))) {
             items.push_back({launcherIdx, selfExe, true});
         } else ok = false;
     }

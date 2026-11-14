@@ -242,6 +242,101 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
+  # Our own crypto (okay::crypto, docs/crypto.md), as three small parallel jobs. Nothing here is in the
+  # required-checks list and none of them touches the jobs above.
+  # (a) The engine built with OKAY_OWN_CRYPTO=ON (network encryption through okay::crypto, no libsodium): the
+  # crypto and net-crypto tests, and the anti-cheat integrity test in its own-crypto modes.
+  own-crypto:
+    name: Own crypto (OKAY_OWN_CRYPTO=ON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 1G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-own-crypto-${{ github.sha }}
+          restore-keys: ccache-own-crypto-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-own -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_CRYPTO=ON -DOKAY_USE_SODIUM=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DOKAY_BUILD_TESTS=ON \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF
+
+      - name: Build
+        run: |
+          cmake --build build-own -j 3 --target test_crypto test_crypto_field test_crypto_fe16 fuzz_crypto_smoke \
+            fuzz_net_crypto_smoke test_net_crypto test_anticheat_integrity test_anticheat_integrity_ownlib \
+            test_anticheat_integrity_portable
+
+      - name: Test
+        run: ctest --test-dir build-own --output-on-failure -R '^(crypto|crypto_field|crypto_fe16|crypto_fuzz_smoke|net_crypto|anticheat_integrity|anticheat_integrity_ownlib|anticheat_integrity_portable)$'
+
+  # (b) The primitives and the code that parses attacker bytes around them, under ASan + UBSan: the known-answer
+  # tests, then the built-in mutating fuzz drivers (no libFuzzer) for a bounded number of iterations. The library
+  # sources are compiled with the sanitizers too.
+  crypto-sanitizers:
+    name: Own crypto (ASan + UBSan, fuzz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+
+      - name: Make ASan's address layout reliable
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-crypto-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
+            -DOKAY_SANITIZE=address,undefined -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF \
+            -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+
+      - name: Build
+        run: cmake --build build-crypto-asan -j 3 --target test_crypto test_crypto_field test_crypto_fe16 fuzz_net_crypto_smoke
+
+      - name: Known-answer tests
+        run: ctest --test-dir build-crypto-asan --output-on-failure -R '^(crypto|crypto_field|crypto_fe16)$'
+
+      - name: Built-in fuzz drivers (200000 iterations, a tenth for the key-exchange one)
+        run: bash scripts/crypto_fuzz_sanitized.sh 200000 1 g++
+
+  # (c) Constant-time audit with valgrind (docs/crypto_review_package.md section 4): GCC -O2 and Clang -O2,
+  # both field implementations. The full compiler and optimisation matrix is the same script without the filters.
+  crypto-ct:
+    name: Own crypto (constant-time, valgrind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y g++ clang valgrind
+
+      - name: Constant-time audit (GCC -O2, Clang -O2)
+        run: CT_COMPILERS="g++ clang++" CT_OPTS="-O2" bash scripts/crypto_ct_matrix.sh
+
   # The model readers with Assimp compiled in (OKAY_USE_ASSIMP=ON), which no other job
   # builds: ModelImportAssimp.cpp is compiled and the reader tests that compare the
   # built-in readers with Assimp's run. Only the model test targets are built. Assimp's

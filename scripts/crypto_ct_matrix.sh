@@ -5,6 +5,7 @@
 # when valgrind reports a branch or address that depends on a secret, or when a positive control
 # (deliberately leaky code) is NOT reported.
 # Usage: scripts/crypto_ct_matrix.sh [extra compiler flags, e.g. -march=native]
+# Optional filters (default: everything): CT_COMPILERS="g++ clang++" CT_OPTS="-O0 -O1 -O2 -O3 -Os -Ofast".
 # Needs valgrind and its headers (apt: valgrind). Linux only.
 set -u
 cd "$(dirname "$0")/.."
@@ -13,9 +14,9 @@ out=$(mktemp -d)
 srcs=""
 for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519; do srcs="$srcs engine/src/Crypto/$f.cpp"; done
 bad=0
-for cxx in g++ clang++; do
+for cxx in ${CT_COMPILERS:-g++ clang++}; do
   command -v "$cxx" >/dev/null || continue
-  for opt in -O0 -O1 -O2 -O3 -Os -Ofast; do
+  for opt in ${CT_OPTS:--O0 -O1 -O2 -O3 -Os -Ofast}; do
     for fe in "" "-DOKAY_CRYPTO_FE16"; do
       if ! "$cxx" -std=c++17 -g $opt $fe "$@" -DOKAY_CRYPTO_CTGRIND -Iengine/include \
             tests/crypto_ct_valgrind.cpp $srcs -o "$out/t" 2>"$out/err"; then

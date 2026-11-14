@@ -16,6 +16,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | What | State | What is missing |
 |---|---|---|
+| Own crypto in CI (`own-crypto`, `crypto-sanitizers`, `crypto-ct` jobs) | Running, NOT required, own crypto NOT READY (`OKAY_OWN_CRYPTO` off by default) | Outside review of `okay::crypto` (owner rule 18); the jobs stay non-required until then. Checklist for deleting third-party code: `docs/third_party_removal_checklist.md`. Which model formats are dropped when Assimp goes: `docs/release_note_dropped_model_formats.md` (draft; owner decides the release numbers) |
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |
 | OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |

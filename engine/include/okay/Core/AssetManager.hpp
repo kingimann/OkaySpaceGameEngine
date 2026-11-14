@@ -166,6 +166,17 @@ public:
     void SetReloadCallback(std::function<void(const std::string& key, const std::string& typeName)> cb);
 
     // --- Housekeeping -------------------------------------------------------------
+    /// Put an asset the caller already decoded into the cache under `path` (a Ready entry, no loader run). If a
+    /// live entry for that file already exists, it wins and its handle comes back instead: compare `Get()` with
+    /// `data.get()` to see which. Empty handle when `data` is null.
+    template <class T>
+    AssetHandle<T> Adopt(const std::string& path, std::shared_ptr<T> data) {
+        return AssetHandle<T>(AdoptEntry(std::type_index(typeid(T)), path, std::shared_ptr<void>(std::move(data))));
+    }
+    /// Forget the cache slot of one file, so the next Get() decodes it again. Handles that already exist keep
+    /// their (old) asset alive and valid. For a caller that knows the file changed and wants a fresh copy.
+    template <class T>
+    void Evict(const std::string& path) { EvictEntry(std::type_index(typeid(T)), path); }
     /// Drops cache slots whose assets are gone (happens lazily anyway).
     void Purge();
     AssetReport Report() const;
@@ -191,6 +202,8 @@ private:
     EntryPtr AcquireAsync(std::type_index t, const std::string& path,
                           std::function<void(const EntryPtr&, const std::string&)> cb);
     EntryPtr FindEntry(std::type_index t, const std::string& path);
+    void EvictEntry(std::type_index t, const std::string& path);
+    EntryPtr AdoptEntry(std::type_index t, const std::string& path, std::shared_ptr<void> data);
     void StartWorkerLocked();
     void FinishFailedLocked(const EntryPtr& e);
     void WorkerMain();

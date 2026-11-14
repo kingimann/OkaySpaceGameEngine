@@ -523,12 +523,37 @@ bool Browser::DoScan() {
 
 bool Browser::Sync() { return DoScan(); }
 
+void Browser::EnableWatcher(bool on) {
+    m_watchWanted = on;
+    if (!on) { m_watcher.reset(); m_watchRoot.clear(); }
+}
+
+const char* Browser::WatcherName() const { return m_watcher ? m_watcher->Name() : "polling"; }
+
 bool Browser::Poll(std::uint64_t nowMs) {
     if (!m_indexed || nowMs < m_nextPoll) return false;
     std::error_code ec;
     if (!fs::is_directory(P(m_root), ec)) { m_nextPoll = nowMs + 2000; return false; }
+    bool watching = false;
+    if (m_watchWanted) {
+        if (!m_watcher || m_watchRoot != m_root) {          // first use, or another project was opened
+            m_watcher = okay::MakeFileWatcher(m_root);
+            m_watchRoot = m_root;
+            m_nextSafetyScan = nowMs + 30000;
+        }
+        watching = m_watcher->Active();
+        if (watching) {
+            const okay::WatchState st = m_watcher->Take();
+            if (st == okay::WatchState::Quiet && nowMs < m_nextSafetyScan) {
+                m_nextPoll = nowMs + 200;                    // nothing happened: no scan, check again very soon
+                return false;
+            }
+            m_nextSafetyScan = nowMs + 30000;
+        }
+    }
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }
-    m_nextPoll = nowMs + std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs));
+    // Polling waits 2 s and 30 scan-lengths; a watcher already said when to look, so it only spaces scans a little.
+    m_nextPoll = nowMs + (watching ? 200 : std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs)));
     return m_scanChanged;
 }
 

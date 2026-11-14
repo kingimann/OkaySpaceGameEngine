@@ -152,7 +152,7 @@ Queries:
 | | `wrap` | `wrap` | `repeat`, `clamp`, `mirror` (`repeat`) |
 | | `maxSize` | `maxSize` | 0 (no limit) or 32..16384 (2048) |
 | | `mipmaps` | `mipmaps` | 1 / 0 (1) |
-| | `compress` | `compress` | 1 / 0 (0), asks the renderer for a compressed format |
+| | `compress` | `compress` | 1 / 0 (0), the software renderer shows a block-compressed look; GPU renderers ignore it |
 | model | `scale` | `scale` | 0.0001..10000 (1) |
 | | `normals` | `normals` | `import`, `calculate`, `flat` (`import`) |
 | | `importAnimations` | `importAnimations` | 1 / 0 (1) |
@@ -169,6 +169,17 @@ build does not know are kept (`ImportSettings::extra`) so a round trip loses not
 (`linear`, `filter nearest|linear`, `maxsize`, `mips`) and audio v1 (`stream`, `mono`, `quality` in percent) become
 the current keys. `Scan` rewrites such a meta in the current layout (`ScanOptions::upgradeMetas`, on by default;
 off leaves old metas byte for byte as they are and migrates in memory only). Migration raises no reimport signal.
+
+### File watcher
+
+`Core/FileWatcher.hpp` is a small interface on plain operating-system calls: `CreateNativeFileWatcher()` (Linux
+inotify, Windows `ReadDirectoryChangesW`, none elsewhere), `CreatePollingFileWatcher()` and
+`MakeFileWatcher(root, &why)` (native if it starts, otherwise polling). `Take()` never blocks and answers `Changed`,
+`Quiet` or, for the polling fallback, `Unknown` ("scan on your own timer"). New folders are watched as they appear
+(also when moved in); a lost event queue counts as a change. The Project panel's `Browser::EnableWatcher(true)` uses
+it: `Poll` then reads the watcher every 200 ms and scans only on `Changed`, plus a safety rescan every 30 seconds;
+without a native watcher it polls as before. It is off by default and nothing in the editor turns it on yet. Tested
+on Linux (`file_watcher`, `project_panel`); the Windows code was only compiled with MinGW (`-fsyntax-only`), never run.
 
 ### Reimport signal
 
@@ -239,8 +250,7 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 
 ## Not covered
 
-- No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet. There is no file
-  watcher: a consumer calls `Scan` again (the panel does so every two seconds or more; an unchanged 5,000-asset project takes about 45 ms in a Release build and 135 ms in a Debug build).
+- No UI here. The editor's Project panel is the one consumer (see `project_panel.md`); the build/export code does not call this yet. A consumer calls `Scan` again when something may have changed: the panel does so every two seconds or more (an unchanged 5,000-asset project takes about 45 ms in a Release build and 135 ms in a Debug build), or, with the opt-in watcher below, when the operating system says a file changed.
 - References are found by text scanning, not by loading. A path built at runtime, or stored in a binary file, is not
   seen; a name that happens to end in a known extension inside a quoted string can be taken for a path.
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
@@ -248,8 +258,22 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
   `maxSize`, `filter`, `wrap` and `mipmaps` (software and OpenGL renderers; the Direct3D renderers do not read them, so the editor hides those three controls until they do), and a model's `scale` (the editor),
   `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). Audio `loadMode` and `forceMono` are read
   when the file is loaded (`ReadAudioImportOptions`). `quality` is kept so older files round-trip and is not applied,
-  because audio is not re-encoded. `srgb` and `compress` are still stored and unread.
+  because audio is not re-encoded. Texture `compress` is read too (`ApplyTextureImportSettings`): the picture the
+  software renderer uses shows what a block-compressed texture looks like (`Graphics/TextureCompress.hpp`, our own
+  4x4 block codec; memory use is unchanged and the GPU renderers do not ask for a compressed format). `srgb` is read
+  into `TextureSampling` but no renderer applies it: linear-light mips or sRGB texture formats would change how a
+  texture with the default settings looks, and `import_settings_real` pins that a settings file holding the defaults
+  renders exactly like no settings file (so this needs the owner's decision, or a GPU).
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
+  Not started because it is not safe to do in one step, and it blocks on: (1) the player and the runtime have no
+  asset database (it lives in the editor's Project panel) and a build ships no `.okaymeta`, so a `guid:` reference
+  could not be resolved in a built game; (2) scene path fields are plain quoted strings written and read one by one
+  by many component writers and loaders in `SceneSerializer.cpp` (10,000 lines), with no single "asset
+  reference" type to hook; (3) an asset has a `.okaymeta` only after it is given a tag or settings, so references
+  to the rest would not be stable; (4) a scene that stores GUIDs cannot be read by older builds, so it needs a
+  format version, an off-by-default save option and a reader that keeps old files loading unchanged (reading is
+  the easy half: an old file has no `guid:` text). Suggested order: a runtime resolver (build writes a GUID to
+  path table next to the scene), read-only support in the loaders, then the save option.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 
-Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`); the Project panel's use of it is in `tests/test_project_panel_db.cpp` (`project_panel_db`).
+Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`); `tests/test_file_watcher.cpp` (`file_watcher`); `tests/test_texture_import_apply.cpp` (`texture_import_apply`); the Project panel's use of it is in `tests/test_project_panel_db.cpp` (`project_panel_db`).

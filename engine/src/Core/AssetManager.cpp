@@ -339,6 +339,31 @@ AssetManager::EntryPtr AssetManager::FindEntry(std::type_index t, const std::str
     return nullptr;
 }
 
+AssetManager::EntryPtr AssetManager::AdoptEntry(std::type_index t, const std::string& path, std::shared_ptr<void> data) {
+    if (!data) return nullptr;
+    const std::string key = Normalize(path), open = Normalize(path, false);
+    std::int64_t stamp = 0, size = -1;
+    StatFile(open, stamp, size);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    auto& slot = m_cache[Key(t, key)];
+    EntryPtr e = slot.lock();
+    if (e && e->state.load() != S(State::Failed)) return e->state.load() == S(State::Ready) ? e : nullptr;   // a live entry wins
+    e = std::make_shared<Entry>(t, key, open);
+    e->data = std::move(data);
+    auto li = m_loaders.find(t);
+    e->bytes = li != m_loaders.end() ? li->second.size(e->data.get()) : 0;
+    e->stamp = stamp;
+    e->fileSize = size;
+    e->state.store(S(State::Ready), std::memory_order_release);
+    slot = e;
+    return e;
+}
+
+void AssetManager::EvictEntry(std::type_index t, const std::string& path) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_cache.erase(Key(t, Normalize(path)));
+}
+
 // --- Pump ----------------------------------------------------------------------------
 
 int AssetManager::Pump() {

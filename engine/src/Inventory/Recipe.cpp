@@ -1,3 +1,4 @@
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/ItemPickup.hpp"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
 
 namespace okay {
@@ -113,22 +115,48 @@ bool RecipeBook::Load(const std::string& path, std::string* err) {
 }
 
 namespace {
-std::map<std::string, RecipeBook>& BookCache() {
-    static std::map<std::string, RecipeBook> cache;
-    return cache;
+// One cache: a file that loads is an asset-manager entry (AssetManager::Instance(), type RecipeBook); this keeps a
+// handle to it for the life of the process (as the old cache did), keyed by the path as the caller wrote it.
+// A file that cannot be loaded is remembered here as an empty one until Forget (the manager never caches a failure).
+struct RecipeBookSlots {
+    std::map<std::string, AssetHandle<RecipeBook>> pinned;
+    std::map<std::string, RecipeBook> failed;
+};
+RecipeBookSlots& Slots() {
+    static RecipeBookSlots s;
+    return s;
+}
+AssetManager& Manager() {
+    static std::once_flag once;
+    AssetManager& m = AssetManager::Instance();
+    std::call_once(once, [&m] {
+        m.RegisterLoader<RecipeBook>("RecipeBook", [](const std::string& path, std::string& error) -> std::shared_ptr<RecipeBook> {
+            auto t = std::make_shared<RecipeBook>();
+            return t->Load(path, &error) ? t : nullptr;
+        });
+    });
+    return m;
 }
 }
 
 const RecipeBook& RecipeBook::Cached(const std::string& path) {
-    auto& cache = BookCache();
-    auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
-    RecipeBook& b = cache[path];
-    b.Load(path);
-    return b;
+    auto& slots = Slots();
+    auto it = slots.pinned.find(path);
+    if (it != slots.pinned.end()) return *it->second.Get();
+    auto bad = slots.failed.find(path);
+    if (bad != slots.failed.end()) return bad->second;
+    AssetHandle<RecipeBook> h = Manager().Get<RecipeBook>(path);
+    if (!h) return slots.failed[path];
+    slots.pinned[path] = h;
+    return *h;
 }
 
-void RecipeBook::Forget(const std::string& path) { BookCache().erase(path); }
+void RecipeBook::Forget(const std::string& path) {
+    auto& slots = Slots();
+    slots.pinned.erase(path);
+    slots.failed.erase(path);
+    Manager().Evict<RecipeBook>(path);   // a copy someone else still holds stays valid; the next Cached() reads the file again
+}
 
 std::vector<std::string> RecipeBook::Issues(const ItemDatabase& items) const {
     std::vector<std::string> out;

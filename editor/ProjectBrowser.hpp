@@ -13,6 +13,7 @@
 // It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/project_panel.md.
 // Failure injection: SetFailureHook makes any file step fail, so tests can check nothing is lost.
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/FileWatcher.hpp"
 #include "okay/Core/ThumbnailCache.hpp"
 
 #include <cstdint>
@@ -144,6 +145,14 @@ public:
     /// nothing until the first Sync (the first scan can take a while on a big project and runs only when an
     /// operation or the info pane needs the database). Returns true when the scan found changes.
     bool Poll(std::uint64_t nowMs);
+    /// Let the operating system say when something changed (inotify on Linux, ReadDirectoryChangesW on Windows; see
+    /// okay/Core/FileWatcher.hpp) instead of scanning every 2 seconds or more. With it on, Poll checks the watcher
+    /// (a quick, non-blocking read) and scans only when it reported a change, plus a safety rescan every 30 seconds in
+    /// case an event was missed. Where no native watcher can start (no support, too many folders) Poll behaves as
+    /// before. Off by default, and nothing in the editor turns it on yet. Takes effect on the next Poll.
+    void EnableWatcher(bool on);
+    /// "inotify", "ReadDirectoryChangesW" or "polling" (also when the watcher is off).
+    const char* WatcherName() const;
     bool Indexed() const { return m_indexed; }
     /// How many assets use this one (0 when none), straight from the database's graph. Cheap: no scan.
     int UsersOf(const std::string& path);
@@ -281,6 +290,10 @@ private:
     okay::AssetDatabase m_db;
     bool m_indexed = false;
     std::uint64_t m_nextPoll = 0;
+    bool m_watchWanted = false;
+    std::unique_ptr<okay::FileWatcher> m_watcher;
+    std::string m_watchRoot;                 // the folder the watcher was started on
+    std::uint64_t m_nextSafetyScan = 0;
     std::uint64_t m_revision = 0;
     std::uint64_t m_problemRev = ~0ull; int m_problemCount = 0;
     struct FolderStat { int files = 0; std::vector<std::string> kids; };

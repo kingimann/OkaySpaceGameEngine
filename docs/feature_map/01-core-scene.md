@@ -253,13 +253,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.11.4 Async loading - `Core/AssetManager` - `LoadAsync` on one worker thread, callbacks from `Pump()` on the main thread, `Progress()`, duplicate requests share one decode
   - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size in `Pump()` and re-decodes in place so handles stay valid
   - 1.11.6 Report - `Core/AssetManager` - `Report()` lists every cached asset with type, bytes, refcount and reload count
-- **Code:** `Core/AssetManager`
-- **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`
+  - 1.11.7 One cache for the simple loaders - `Core/DataAsset`, `Audio/AudioDecode`, `Inventory/LootTable`, `Inventory/Recipe` - `DataAsset::Cached/Reload/Invalidate`, `AudioClip::LoadCached`, `LootTable::Cached/Forget` and `RecipeBook::Cached/Forget` keep their behaviour but their assets are manager entries; new `AssetManager::Evict<T>` and `Adopt<T>`
+- **Code:** `Core/AssetManager`, `Core/DataAsset`, `Audio/AudioDecode`, `Inventory/LootTable`, `Inventory/Recipe`
+- **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`, `AssetManager::Evict`, `AssetManager::Adopt`
 - **Editor:** none yet (the editor's "Asset Manager" panel is the marketplace download tool, 17.6)
 - **Docs:** `docs/asset_manager.md`
-- **Tests:** `assetmanager`
-- **Status:** Partial - merged in #568 and tested, but no engine loader, editor or player path calls it (docs and grep agree); GPU textures are not tracked
-- **Open:** move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an asset browser window on top (area 20)
+- **Tests:** `assetmanager`, `asset_cache_unify`
+- **Status:** Partial - the manager (#568) is tested, and `DataAsset::Cached`, `AudioClip::LoadCached`, `LootTable::Cached` and `RecipeBook::Cached` now keep their assets in it (one cache; `asset_cache_unify` was run against the old code first, 35 checks, then the new, plus the existing tests for those loaders); the renderers' loads, `WeaponBook::Cached` and the painter's textures do not use it; GPU textures are not tracked
+- **Open:** move the rest (`WeaponBook::Cached`, the software renderer's `GetCachedTexture`/`GetCachedMips`, the painter's UI textures); track GPU resources; an asset browser window on top (area 20)
 - **Related:** 1.12, 20, 2.9, 7.2
 - **Words:** AssetManager, asset handle, AssetHandle, hot reload, async load, resource cache, reference count, Pump
 - **Seen as:** the same texture loaded twice; an edited file does not show until restart; a hitch when a big file loads
@@ -274,13 +275,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
   - 1.12.5 Search and paging - `Core/AssetDatabaseSearch` - filter, sort and page query with per-type counts
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
-- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
+  - 1.12.7 File watcher - `Core/FileWatcher` - `CreateNativeFileWatcher` (Linux inotify, Windows `ReadDirectoryChangesW`), `CreatePollingFileWatcher`, `MakeFileWatcher`; `Take()` gives Changed, Quiet or Unknown; `Browser::EnableWatcher(true)` makes the Project panel scan only on a change (plus a 30 s safety rescan), off by default
+  - 1.12.8 Texture compress setting - `Graphics/TextureCompress`, `Core/ImportSidecar` - `compress` in a texture's meta makes the loaded picture show a software 4x4 block-compressed look (`CompressRoundTrip`); `srgb` is read into `TextureSampling` but not applied by any renderer
+- **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`, `Core/FileWatcher`, `Graphics/TextureCompress`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
 - **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
-- **Tests:** `asset_database`, `project_panel`, `project_panel_db`
-- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
-- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
+- **Tests:** `asset_database`, `project_panel`, `project_panel_db`, `file_watcher`, `texture_import_apply`
+- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; the audio settings and texture `compress` are read by importers (`compress` only as a software look); `srgb` is read but no renderer applies it; a file watcher exists and is tested on Linux (Windows code compiled with MinGW only, never run) but the editor does not turn it on; scenes still store paths, the build/export code does not call it
+- **Open:** `srgb` in a renderer (needs the owner's decision: it changes the default look, see `docs/asset_database.md`) and `compress` on the GPU; GUID references inside scene files (written down in `docs/asset_database.md` what blocks it; the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; the editor does not call `Browser::EnableWatcher(true)` yet; an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
 - **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count

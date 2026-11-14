@@ -7,9 +7,14 @@
 //   * model `scale`: multiplies the size of a model added to a scene from the editor.
 //   * model `normals` / `smoothingAngle` / `importAnimations`: applied when a model is brought into a scene
 //     (see ModelImport.cpp, which reads them through ReadModelImportOptions below).
-// compress and sRGB are stored but no importer reads them, and the editor does not offer them.
+// texture `compress` is read too (the editor does not offer it yet): the loaded picture shows what a block-compressed
+// texture looks like (software codec, Graphics/TextureCompress.hpp; the GPU renderers do not ask for a compressed
+// format). `srgb` is read into TextureSampling but no renderer applies it: doing so (linear-light mips, sRGB texture
+// formats) would change how a texture with the default settings looks, and a test pins that a settings file holding
+// the defaults renders exactly like no settings file.
 // Audio `loadMode` and `forceMono` are read by the audio loader (quality is kept for old files and not applied).
 #include "okay/Graphics/Image.hpp"
+#include "okay/Graphics/TextureCompress.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -63,6 +68,9 @@ struct TextureSampling {
     int  filter = Trilinear;
     int  wrap = Repeat;
     bool mipmaps = true;
+    bool srgb = true;        ///< the picture is colour (gamma) data; false for linear data such as normal maps
+    bool srgbSet = false;    ///< the sidecar says so
+    bool compress = false;   ///< show the picture as a block-compressed texture
 };
 
 inline TextureSampling TextureImportSampling(const std::string& imagePath) {
@@ -81,6 +89,14 @@ inline TextureSampling TextureImportSampling(const std::string& imagePath) {
     if (m.empty()) m = ReadImportSetting(imagePath, "texture", "mips");
     m = low(m);
     if (m == "0" || m == "false" || m == "off") t.mipmaps = false;
+    const std::string sr = low(ReadImportSetting(imagePath, "texture", "srgb"));
+    if (!sr.empty()) { t.srgbSet = true; t.srgb = !(sr == "0" || sr == "false" || sr == "off"); }
+    else {
+        const std::string lin = low(ReadImportSetting(imagePath, "texture", "linear"));   // the earliest layout
+        if (!lin.empty()) { t.srgbSet = true; t.srgb = (lin == "0" || lin == "false" || lin == "off"); }
+    }
+    const std::string cp = low(ReadImportSetting(imagePath, "texture", "compress"));
+    t.compress = cp == "1" || cp == "true" || cp == "on";
     return t;
 }
 
@@ -139,6 +155,9 @@ inline void ApplyTextureImportSettings(const std::string& imagePath, Image& img)
     if (!img.Valid()) return;
     const int ms = TextureImportMaxSize(imagePath);
     if (ms > 0 && (img.Width() > ms || img.Height() > ms)) img = BoxDownscale(img, ms);
+    if (!imagePath.empty() && imagePath[0] != '@' && imagePath.rfind("proc:", 0) != 0 &&
+        TextureImportSampling(imagePath).compress)
+        CompressRoundTrip(img);
 }
 
 } // namespace okay

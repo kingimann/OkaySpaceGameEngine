@@ -8,6 +8,7 @@
 #include "../editor/ProjectBrowser.hpp"
 
 #include <chrono>
+#include <thread>
 #include <fstream>
 #include <map>
 #include <set>
@@ -437,6 +438,32 @@ int main() {
         fs::rename(fs::u8path(p.td.at("Art/other.png")), fs::u8path(p.td.at("Art/moved.png")));
         fs::rename(fs::u8path(p.td.at("Art/other.png.okaymeta")), fs::u8path(p.td.at("Art/moved.png.okaymeta")));
         CHECK(b.Poll(t + 4000000) && b.Db().PathToGuid("Art/moved.png") == g);
+    }
+
+    RUN_SUITE("the operating system watcher replaces the 2 second polling (opt in)");
+    {
+        Proj p;
+        Browser b(p.td.assets());
+        CHECK(std::string(b.WatcherName()) == "polling");                          // off by default
+        CHECK(b.UsersOf(p.tex) == 3 && b.Indexed());
+        b.EnableWatcher(true);
+        std::uint64_t t = 20000000;
+        CHECK(!b.Poll(t));                                                         // starts the watcher; nothing changed
+        if (std::string(b.WatcherName()) == "polling") {
+            std::printf("no native file watcher here: the watcher suite only checked the fallback name\n");
+        } else {
+            CHECK(!b.Poll(t + 500));                                               // quiet: no scan, nothing reported
+            WriteFile(p.td.at("Scenes/watched.okayscene"), "scene \"W\"\ngameobject \"X\"\n  sprite texture \"" + p.tex + "\"\n");
+            bool saw = false;
+            for (int i = 0; i < 200 && !saw; ++i) {                                // the event arrives within a few ms
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                saw = b.Poll(t + 1000 + static_cast<std::uint64_t>(i) * 1000);     // far less than the 2 s polling wait
+            }
+            CHECK(saw && b.UsersOf(p.tex) == 4);
+            CHECK(!b.Poll(t + 400000));                                            // quiet again
+            b.EnableWatcher(false);
+            CHECK(std::string(b.WatcherName()) == "polling");
+        }
     }
 
     RUN_SUITE("no meta files unless an asset needs one");

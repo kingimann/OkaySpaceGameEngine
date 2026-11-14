@@ -1,4 +1,5 @@
 #include "okay/Core/DataAsset.hpp"
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Core/SaveData.hpp"
 #include <fstream>
 #include <sstream>
@@ -12,7 +13,16 @@
 namespace okay {
 namespace {
 std::string g_baseDir;
-std::unordered_map<std::string, DataAsset> g_cache;
+// One cache: a file that exists is an asset-manager entry (AssetManager::Instance(), type DataAsset); this
+// map holds a handle to it for the life of the process (the old cache never freed an asset), keyed by the
+// path as the caller wrote it. Each path starts with one DataAsset object (`scratch`): it is what a caller
+// gets, empty, while the file cannot be read (a place for scripts to Set() into, as before; the manager never
+// caches a failed load), and when the file can be read that same object is filled and handed to the manager.
+struct Slot {
+    AssetHandle<DataAsset> handle;
+    std::shared_ptr<DataAsset> scratch = std::make_shared<DataAsset>();
+};
+std::unordered_map<std::string, Slot> g_cache;
 
 std::string Trim(const std::string& s) {
     std::size_t a = s.find_first_not_of(" \t\r\n");
@@ -136,10 +146,29 @@ void DataAsset::SetBaseDir(const std::string& dir) { g_baseDir = dir; }
 const std::string& DataAsset::BaseDir() { return g_baseDir; }
 
 DataAsset& DataAsset::Cached(const std::string& path) {
-    DataAsset& a = g_cache[path];
-    // An entry whose file wasn't there is only a place for scripts to Set() into: while
-    // it is still untouched, every call tries the file again, so creating it later works.
-    if (!a.m_loaded && a.m_fields.empty() && a.Load(path)) a.m_loaded = true;
+    Slot& slot = g_cache[path];
+    if (DataAsset* held = slot.handle.Get()) {
+        // Emptied by Invalidate (and not Set into since): read the file again, in place.
+        if (!held->m_loaded && held->m_fields.empty() && held->Load(path)) held->m_loaded = true;
+        return *held;
+    }
+    // An entry whose file wasn't there is only a place for scripts to Set() into: while it is still
+    // untouched, every call tries the file again, so creating it later works. The object that was
+    // handed out earlier is the one that fills, and then becomes the manager's entry for the file.
+    DataAsset& a = *slot.scratch;
+    if (a.m_fields.empty()) {
+        AssetHandle<DataAsset> existing = AssetManager::Instance().Find<DataAsset>(path);
+        if (existing) {
+            slot.handle = existing;          // someone already loaded this file through the manager
+            return *existing;
+        }
+        if (a.Load(path)) {
+            a.m_loaded = true;
+            AssetHandle<DataAsset> h = AssetManager::Instance().Adopt<DataAsset>(path, slot.scratch);
+            if (h) slot.handle = h;
+            return h ? *h : a;
+        }
+    }
     return a;
 }
 
@@ -147,20 +176,36 @@ bool DataAsset::Reload(const std::string& path) {
     DataAsset a;
     if (!a.Load(path)) return false;     // keep what was cached
     a.m_loaded = true;
-    g_cache[path] = std::move(a);        // assigned in place: earlier references stay valid
+    Slot& slot = g_cache[path];
+    if (DataAsset* held = slot.handle.Get()) {
+        *held = std::move(a);            // assigned in place: earlier references stay valid
+        return true;
+    }
+    *slot.scratch = std::move(a);        // in place, so a reference to an empty asset fills
+    AssetHandle<DataAsset> h = AssetManager::Instance().Adopt<DataAsset>(path, slot.scratch);
+    if (h) {
+        if (h.Get() != slot.scratch.get()) *h = *slot.scratch;   // the manager already had a copy: update it too
+        slot.handle = h;
+    }
     return true;
 }
 
 // Emptied in place rather than erased: a DataAsset& the caller still holds (a script's cached lookup, a
 // panel) must not dangle. An emptied, unloaded entry is read from disk again by the next Cached().
+// The manager's entry is the same object, so another holder of a handle to it sees the emptied asset too.
 void DataAsset::Invalidate(const std::string& path) {
     auto it = g_cache.find(path);
     if (it == g_cache.end()) return;
-    it->second.m_fields.clear();
-    it->second.m_loaded = false;
+    DataAsset* a = it->second.handle ? it->second.handle.Get() : it->second.scratch.get();
+    a->m_fields.clear();
+    a->m_loaded = false;
 }
 void DataAsset::InvalidateAll() {
-    for (auto& kv : g_cache) { kv.second.m_fields.clear(); kv.second.m_loaded = false; }
+    for (auto& kv : g_cache) {
+        DataAsset* a = kv.second.handle ? kv.second.handle.Get() : kv.second.scratch.get();
+        a->m_fields.clear();
+        a->m_loaded = false;
+    }
 }
 
 } // namespace okay

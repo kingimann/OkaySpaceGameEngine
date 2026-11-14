@@ -7,6 +7,7 @@
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Audio/VorbisDecoder.hpp"
+#include "okay/Core/AssetManager.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/Log.hpp"
 #include "AudioInternal.hpp"
@@ -124,27 +125,70 @@ bool AudioClip::IsAudioFile(const std::string& path) {
     return ext == "wav" || ext == "ogg" || ext == "mp3" || ext == "flac";
 }
 
+namespace {
+
+// LoadCached's shared clips live in the asset manager (AssetManager::Instance()), one entry per file AND
+// variant. The variant (sample rate, forced mono) is a suffix of the key, "<path>\n:rate=44100,mono", which the
+// loader below splits off again. Such a key is not a file name, so hot reload skips these entries (they are
+// pinned for the life of the process, as the old cache kept them).
+struct SharedClip {
+    std::shared_ptr<const AudioClip> clip;
+};
+
+AssetManager& SharedClipManager() {
+    static std::once_flag once;
+    AssetManager& m = AssetManager::Instance();
+    std::call_once(once, [&m] {
+        m.RegisterLoader<SharedClip>(
+            "AudioClip (shared)",
+            [](const std::string& key, std::string& error) -> std::shared_ptr<SharedClip> {
+                const std::size_t cut = key.rfind("\n:");
+                if (cut == std::string::npos) { error = "bad audio cache key"; return nullptr; }
+                const std::string path = key.substr(0, cut);
+                const std::string vary = key.substr(cut + 2);
+                const bool mono = vary.find(",mono") != std::string::npos;
+                const int rate = std::atoi(vary.c_str() + 5);   // after "rate="
+                AudioClip c;
+                std::string loadErr;
+                if (!c.Load(path, &loadErr, mono)) {
+                    Log::Warning("[asset] cannot load audio '", path, "': ", loadErr);
+                    error = loadErr;
+                    return nullptr;
+                }
+                auto out = std::make_shared<SharedClip>();
+                out->clip = std::make_shared<const AudioClip>(rate > 0 && c.sampleRate != rate ? c.Resampled(rate) : std::move(c));
+                return out;
+            },
+            [](const SharedClip& c) { return c.clip ? c.clip->samples.size() * sizeof(float) : std::size_t(0); });
+    });
+    return m;
+}
+
+std::mutex g_clipMu;
+std::map<std::string, AssetHandle<SharedClip>>& ClipPins() {
+    static std::map<std::string, AssetHandle<SharedClip>> pins;
+    return pins;
+}
+
+} // namespace
+
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
-    static std::mutex mu;
-    static std::map<std::pair<std::string, int>, std::shared_ptr<const AudioClip>> cache;
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
-    const auto key = std::make_pair(path + (mono ? "\n:mono" : ""), rate);
+    const std::string key = path + "\n:rate=" + std::to_string(rate > 0 ? rate : 0) + (mono ? ",mono" : "");
     {
-        std::lock_guard<std::mutex> lock(mu);
-        auto it = cache.find(key);
-        if (it != cache.end()) return it->second;
+        std::lock_guard<std::mutex> lock(g_clipMu);
+        auto it = ClipPins().find(key);
+        if (it != ClipPins().end()) return it->second->clip;
     }
-    AudioClip c;
     std::string loadErr;
-    if (!c.Load(path, &loadErr, mono)) {
-        Log::Warning("[asset] cannot load audio '", path, "': ", loadErr);
+    AssetHandle<SharedClip> h = SharedClipManager().Get<SharedClip>(key, &loadErr);
+    if (!h) {
         if (error) *error = loadErr;
         return nullptr;
     }
-    auto shared = std::make_shared<const AudioClip>(rate > 0 && c.sampleRate != rate ? c.Resampled(rate) : std::move(c));
-    std::lock_guard<std::mutex> lock(mu);
-    cache[key] = shared;
-    return shared;
+    std::lock_guard<std::mutex> lock(g_clipMu);
+    ClipPins()[key] = h;
+    return h->clip;
 }
 
 // ---------------------------------------------------------------------------

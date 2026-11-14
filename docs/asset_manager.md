@@ -42,6 +42,28 @@ and Material by calling their existing load functions (`Image::Load`, `AudioClip
 
 Failed loads are never cached: the next `Get` tries the file again.
 
+`Evict<T>(path)` forgets one cache slot, so the next `Get` decodes the file again (handles that already exist keep
+the old asset alive and valid). `Adopt<T>(path, shared_ptr<T>)` puts an asset the caller decoded itself into the
+cache as a ready entry; if a live entry for that file already exists, that one wins and its handle is returned.
+
+## The old caches now live here
+There is one cache for these loaders; each keeps its call signature and behaviour:
+
+| Entry point | Manager type | What stays the same |
+|---|---|---|
+| `DataAsset::Cached`, `Reload`, `Invalidate`, `InvalidateAll` | `DataAsset` | One object per path, kept for the life of the process; edits with `Set` stay; `Reload` and `Invalidate` change the object in place so a held reference stays valid; a missing file gives an empty asset to `Set` into that fills in place when the file appears (that object is then adopted into the manager) |
+| `AudioClip::LoadCached(path, rate, error, downmix)` | an internal `SharedClip` type; the key is `<path>\n:rate=N[,mono]` | The same `shared_ptr` for the same file, rate and mono; a rate is its own entry; failures are not cached |
+| `LootTable::Cached` / `Forget` | `LootTable` | Loaded once per path; a file that fails to load is remembered as an empty table until `Forget`; `Forget` now also evicts the manager slot |
+| `RecipeBook::Cached` / `Forget` | `RecipeBook` | Same as the loot table |
+
+Each of these keeps a handle to its assets for the life of the process (as the old caches never freed an asset), so
+the weak manager cache does not free them. Differences you can see: two spellings of one file (`a/./b.png` and
+`b.png`) now share one entry, the usage `Report()` lists these assets, and a manager user who calls `Get<DataAsset>`
+sees the same object `DataAsset::Cached` returns (an `Invalidate` empties it for them too). The audio entries have no
+file name of their own in the key, so hot reload skips them. Tests: `asset_cache_unify` (written first and run
+against the old code, 35 checks, then against the new), plus `core_data`, `dataasset`, `audio_formats`,
+`audio_stereo`, `durable_saves`, `item_loot_recipes`.
+
 ## Async loading
 `LoadAsync` queues a decode on one background thread and returns a handle that is
 `Loading()`. Callbacks always run from `Pump()` on the main thread, with no manager lock
@@ -65,4 +87,7 @@ All manager methods are safe to call from any thread; `Pump()` is meant for one
 
 ## Not covered
 GPU textures and other renderer resources are not tracked here; only CPU-side assets.
-`DataAsset::Cached` is unchanged: it already retries files that failed to open.
+Not moved: `WeaponBook::Cached` (its `Load` fills its own cache as a side effect), the software renderer's texture
+caches (`GetCachedTexture`, `GetCachedMips`: pointers into one map, `@name` and `proc:` pictures, the mip chains),
+the painter's UI textures and the renderers' GPU uploads. A DataAsset reference taken for a missing file does not
+fill if someone else loaded that file through the manager first (the two objects stay separate).

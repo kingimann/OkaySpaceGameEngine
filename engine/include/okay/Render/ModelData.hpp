@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -160,6 +160,12 @@ bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err
 /// clipped). Smooth normals are generated when the file has none. Colors, `4OFF` and `nOFF` are not read (reported in
 /// `out.notes`, or an error for the last two). Units, axes and texture coordinates are kept as written.
 bool ReadOffBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
+/// skinned part per material (up to four bone weights per vertex, vertices welded, v flipped), the bind pose from the
+/// first frame and, when the file has several frames, one clip ("animation", 30 frames per second assumed). Euler
+/// angles follow Valve's convention. Vertex animation (flex) sections are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes the material names, which are the texture files).
+bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -168,12 +174,13 @@ bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* e
 bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 

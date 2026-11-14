@@ -23,6 +23,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
 | OFF | 5 | `models/OFF` (3) and `models/invalid` (2): a cube, a 3,205-vertex figure, an invalid one, an empty file, one that claims 353 billion vertices (readers batch A) |
+| SMD | 4 | `models/SMD` (3: a one-triangle file, a 3,732-triangle figure with one bone, a 896-triangle prop) and `models/invalid` (1 empty file) |
 
 ## Running it
 
@@ -132,6 +133,8 @@ What this run is not: wine is not Windows (its C runtime and file layer are its 
 Same corpus, same Assimp v5.4.3 sources, rebuilt with the OFF, SMD, MD5, MS3D, ASE importers (and the 3DS one, which Assimp's ASE code needs: without it ASE compiles to nothing and every `.ase` fails with "no suitable reader"). The Assimp side was printed by the scratch tool described above (triangles, area, bounding box, clip length; `aiProcess_Triangulate` only); the own side by `test_model_corpus --list <reader> <dir>`. The rows are in the manifest (`off`, `smd`, `md5`, `md5anim`, `ms3d`, `ase`).
 
 **OFF** (`docs/own_off_reader.md`): `Cube.off` and `Wuson.off` read by both with equal triangle count (12, 3,732), area (6.0000, 9.0258) and bounding box. `invalid.off` (declares 4 faces, holds fewer): Assimp reads it as 2 triangles of zero area, ours refuses it, naming the face. `OutOfMemory.off` (claims 353,535,235,358 vertices): Assimp tried to allocate it and was killed by the kernel's out-of-memory handler during this run; ours refuses it before allocating. `empty.off`: both refuse.
+
+**SMD** (`docs/own_smd_reader.md`): all three files read by both. Triangle counts (1, 896, 3,732) and surface areas (0.5000, 1202.6489 against our 1202.6491, 9.0258) agree. The bounding boxes agree once Assimp's still-Z-up result is turned the way our root node turns it ((x, y, z) to (x, z, -y)). Assimp's vertex counts are unwelded (11,196 on Wuson against our 2,117). All three carry only a bind pose (no animation frames, no rotated bones with weights to speak of), so the Euler order and the animation path are checked on synthetic fixtures only. The winding of the real files agrees with their vertex normals (3,730 of 3,732 triangles on Wuson), so it is kept as written.
 
 ## What this does not show
 

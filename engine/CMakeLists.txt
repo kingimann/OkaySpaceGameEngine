@@ -234,6 +234,7 @@ add_library(okay_engine
     src/Render/Max3dsReader.cpp
     src/Render/BvhReader.cpp
     src/Render/OffReader.cpp
+    src/Render/SmdReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -520,6 +521,11 @@ endif()
 if(OKAY_OWN_OFF)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
     message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
+endif()
+# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_SMD)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

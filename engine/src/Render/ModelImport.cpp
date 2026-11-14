@@ -89,7 +89,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -401,6 +401,12 @@ constexpr bool kOwnOffDefault = true;
 constexpr bool kOwnOffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_SMD_DEFAULT
+constexpr bool kOwnSmdDefault = true;
+#else
+constexpr bool kOwnSmdDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -409,6 +415,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_3DS",     "3DS",     kOwn3dsDefault},       // 4
     {"OKAY_OWN_BVH",     "BVH",     kOwnBvhDefault},       // 5
     {"OKAY_OWN_OFF",     "OFF",     kOwnOffDefault},       // 6
+    {"OKAY_OWN_SMD",     "SMD",     kOwnSmdDefault},       // 7
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -422,6 +429,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".3ds") return 4;
     if (e == ".bvh") return 5;
     if (e == ".off") return 6;
+    if (e == ".smd") return 7;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -538,7 +546,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
                   : s == 5 ? ReadBvhFile(path, out, &e1)
-                  : ReadOffFile(path, out, &e1);
+                  : s == 6 ? ReadOffFile(path, out, &e1)
+                  : ReadSmdFile(path, out, &e1);
         if (good && flatten && s >= 6) FlattenImportedModel(out);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);

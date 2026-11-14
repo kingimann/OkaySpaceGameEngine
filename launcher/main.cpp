@@ -16582,6 +16582,21 @@ static bool OfficialFetchFile(const std::string& url, const fs::path& out, long 
     std::error_code ec;
     fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in, retries like curl --retry 2); anything unclear falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2;
+        sp.onBytes = [&](uint64_t n) { OffLocked([&] { g_off.bytesNow = before + (long long)n; }); };
+        sp.cancelled = [] { return OfficialCancelled(); };
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(url, out.string(), sp);
+        if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(out, ec); return false; }
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) {   // a clear refusal: what curl -f reports; the launcher's Download() gets its turn, as after a curl failure
+            if (!Download(url, out.string())) { fs::remove(out, ec); return false; }
+            return fs::exists(out, ec);
+        }
+    }
+#endif
     int code = -1;
     Proc p = SpawnHidden("curl -L -s -f --retry 2 -A \"OkaySpace-Launcher\" -o \"" + out.string() + "\" \"" + url + "\"");
     if (p.valid()) {

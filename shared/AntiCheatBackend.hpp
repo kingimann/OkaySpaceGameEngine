@@ -114,8 +114,18 @@ inline std::string InList(const std::vector<std::string>& ids) {
 
 namespace detail {
 inline bool Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
-                   const std::string& details, const std::string& hwHash, Request& out, std::string* err);
+                   const std::string& details, const std::string& hwHash, Request& out, std::string* err,
+                   const std::string& evidence = std::string());
 } // namespace detail
+
+// The largest evidence bundle a report carries (ac_reports_evidence_check: 16 KiB).
+constexpr std::size_t kMaxEvidenceBytes = 16 * 1024;
+// True when `json` can ride in a report's evidence column: a JSON object within the cap.
+inline bool ValidEvidence(const std::string& json) {
+    if (json.empty() || json.size() > kMaxEvidenceBytes) return false;
+    og::json::Value v;
+    return og::json::Reader(json).Parse(v) && v.kind == og::json::Value::Object;
+}
 
 // ---- Player calls --------------------------------------------------------------
 // Report another player. The server fills in the reporter (auth.uid()) and the status.
@@ -125,13 +135,18 @@ inline bool FileReport(const std::string& reportedUid, const std::string& game, 
 }
 // A game server's anti-cheat kick of a player (kind 'server_kick'): only an
 // account in ac_report_servers may file it.
+// `evidence` (optional) is the detection engine's bundle (EvidenceBundle::ToJson): attached to the
+// report row for admins when it is a JSON object within kMaxEvidenceBytes, left out when it is not
+// (the report is still filed). Only a report server's insert keeps it (the guard trigger).
 inline bool FileServerKick(const std::string& reportedUid, const std::string& game, const std::string& reason,
-                           const std::string& details, Request& out, std::string* err = nullptr) {
-    return detail::Report("server_kick", reportedUid, game, reason, details, std::string(), out, err);
+                           const std::string& details, Request& out, std::string* err = nullptr,
+                           const std::string& evidence = std::string()) {
+    return detail::Report("server_kick", reportedUid, game, reason, details, std::string(), out, err, evidence);
 }
 
 inline bool detail::Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
-                           const std::string& details, const std::string& hwHash, Request& out, std::string* err) {
+                           const std::string& details, const std::string& hwHash, Request& out, std::string* err,
+                           const std::string& evidence) {
     const std::string why = Text(reason, 500);
     if (!IsUuid(reportedUid)) return detail::Fail(err, "Pick the player to report.");
     if (why.empty()) return detail::Fail(err, "Say what happened.");
@@ -142,7 +157,8 @@ inline bool detail::Report(const char* kind, const std::string& reportedUid, con
     out.header = "Prefer: return=minimal";
     out.body = "{\"reported\":" + JStr(reportedUid) + ",\"kind\":\"" + kind + "\",\"game\":" + JStrOrNull(Text(game, 120)) +
                ",\"reason\":" + JStr(why) + ",\"details\":" + JStrOrNull(Text(details, 4000, true)) +
-               ",\"hw_hash\":" + JStrOrNull(hwHash) + "}";
+               ",\"hw_hash\":" + JStrOrNull(hwHash) +
+               (ValidEvidence(evidence) ? ",\"evidence\":" + evidence : std::string()) + "}";
     return true;
 }
 

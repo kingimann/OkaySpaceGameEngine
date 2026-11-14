@@ -1,0 +1,2646 @@
+
+
+===== FILE: engine/include/okay/Crypto/Crypto.hpp =====
+
+#pragma once
+// okay::crypto - the engine's OWN implementations of the crypto primitives the
+// network layer uses (stage 1 of docs/own_code_roadmap.md).
+//
+//   *** UNREVIEWED. NOT THE DEFAULT. ***
+//   This code was written from the RFCs by the engine team and has NOT been
+//   reviewed by an outside cryptographer. It is built side by side with
+//   libsodium and is only used when the build is configured with
+//   -DOKAY_OWN_CRYPTO=ON. It must NOT become the default, and libsodium must
+//   NOT be removed, before an outside expert has reviewed it.
+//
+// What is here (and only what the engine actually uses, plus its building blocks):
+//   ChaCha20, HChaCha20, Poly1305            RFC 8439, draft-irtf-cfrg-xchacha
+//   ChaCha20-Poly1305 AEAD (IETF)            RFC 8439
+//   XChaCha20-Poly1305 AEAD (IETF)           draft-irtf-cfrg-xchacha (what SecureChannel seals with)
+//   BLAKE2b                                  RFC 7693
+//   SHA-256, SHA-512                         FIPS 180-4
+//   X25519                                   RFC 7748
+//   Ed25519 (pure, detached)                 RFC 8032
+//   Kx session keys (X25519 + BLAKE2b-512)   same construction as libsodium's crypto_kx
+//   RandomBytes (the OS CSPRNG), MemZero, ConstantTimeEqual
+//
+// Constant time by construction: no secret-dependent branches or table indexes;
+// the field arithmetic uses fixed loops and masks, the X25519 and Ed25519 scalar
+// multiplications are fixed-length ladders with masked selects. (This is what the
+// code aims for; nobody has audited the generated machine code.)
+//
+// No <mutex>/<thread> here (MinGW rule). Functions never throw.
+#include <cstddef>
+#include <cstdint>
+
+namespace okay::crypto {
+
+// ---- sizes ------------------------------------------------------------------
+constexpr std::size_t kChaChaKeyBytes = 32;
+constexpr std::size_t kChaChaNonceBytes = 12;       // IETF ChaCha20 / ChaCha20-Poly1305
+constexpr std::size_t kXChaChaNonceBytes = 24;      // XChaCha20-Poly1305
+constexpr std::size_t kPoly1305KeyBytes = 32;
+constexpr std::size_t kPoly1305TagBytes = 16;
+constexpr std::size_t kAeadTagBytes = 16;
+constexpr std::size_t kBlake2bMaxBytes = 64;
+constexpr std::size_t kBlake2bMaxKeyBytes = 64;
+constexpr std::size_t kSha256Bytes = 32;
+constexpr std::size_t kSha512Bytes = 64;
+constexpr std::size_t kX25519Bytes = 32;
+constexpr std::size_t kKxPublicKeyBytes = 32;
+constexpr std::size_t kKxSecretKeyBytes = 32;
+constexpr std::size_t kKxSessionKeyBytes = 32;
+constexpr std::size_t kEd25519PublicKeyBytes = 32;
+constexpr std::size_t kEd25519SeedBytes = 32;
+constexpr std::size_t kEd25519SecretKeyBytes = 64;  // seed || public key (libsodium's layout)
+constexpr std::size_t kEd25519SignatureBytes = 64;
+
+// ---- utilities ----------------------------------------------------------------
+/// Fill `out` from the operating system's CSPRNG (getrandom / getentropy / BCryptGenRandom).
+/// No custom generator. If the OS cannot supply bytes this aborts: continuing with
+/// predictable "random" bytes would be worse than stopping.
+void RandomBytes(void* out, std::size_t n);
+
+/// Zero `p` in a way the optimiser may not remove.
+void MemZero(void* p, std::size_t n);
+
+/// True when the n bytes are equal. Time depends on n only, not on where they differ.
+bool ConstantTimeEqual(const void* a, const void* b, std::size_t n);
+
+// ---- ChaCha20 / Poly1305 (RFC 8439) -------------------------------------------
+/// out = in XOR keystream (in-place allowed). 32-bit block counter, 96-bit nonce. Returns false, writing nothing, when the
+/// message needs more blocks than the counter has left (a wrap would reuse keystream); true otherwise.
+bool ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                 const std::uint8_t key[32], const std::uint8_t nonce[12], std::uint32_t counter);
+/// HChaCha20 (the XChaCha20 subkey step): 32-byte key, 16-byte input -> 32-byte subkey.
+void HChaCha20(std::uint8_t out[32], const std::uint8_t key[32], const std::uint8_t in[16]);
+
+class Poly1305 {
+public:
+    explicit Poly1305(const std::uint8_t key[32]);
+    ~Poly1305();
+    void Update(const std::uint8_t* m, std::size_t n);
+    void Final(std::uint8_t tag[16]);   // wipes the state
+private:
+    std::uint32_t m_r[5], m_h[5], m_pad[4];
+    std::uint8_t m_buf[16];
+    std::size_t m_fill;
+    void Blocks(const std::uint8_t* m, std::size_t n, std::uint32_t hibit);
+};
+void Poly1305Mac(std::uint8_t tag[16], const std::uint8_t* m, std::size_t n, const std::uint8_t key[32]);
+
+// ---- AEAD ---------------------------------------------------------------------
+// Seal writes n + 16 bytes to `out` (ciphertext then tag); `out` may equal `in`.
+// Open takes n + 16 bytes (`cn` includes the tag), returns false and zeroes `out`
+// (cn - 16 bytes) when the tag does not verify. `aad` may be null when aadLen is 0.
+void ChaCha20Poly1305Seal(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                          const std::uint8_t* aad, std::size_t aadLen,
+                          const std::uint8_t nonce[12], const std::uint8_t key[32]);
+bool ChaCha20Poly1305Open(std::uint8_t* out, const std::uint8_t* in, std::size_t cn,
+                          const std::uint8_t* aad, std::size_t aadLen,
+                          const std::uint8_t nonce[12], const std::uint8_t key[32]);
+void XChaCha20Poly1305Seal(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                           const std::uint8_t* aad, std::size_t aadLen,
+                           const std::uint8_t nonce[24], const std::uint8_t key[32]);
+bool XChaCha20Poly1305Open(std::uint8_t* out, const std::uint8_t* in, std::size_t cn,
+                           const std::uint8_t* aad, std::size_t aadLen,
+                           const std::uint8_t nonce[24], const std::uint8_t key[32]);
+
+// ---- hashes -------------------------------------------------------------------
+/// BLAKE2b (RFC 7693), sequential mode, 1..64-byte output, optional key (0..64 bytes).
+class Blake2b {
+public:
+    explicit Blake2b(std::size_t outLen = 64, const std::uint8_t* key = nullptr, std::size_t keyLen = 0);
+    ~Blake2b();
+    void Update(const std::uint8_t* m, std::size_t n);
+    void Final(std::uint8_t* out);      // writes outLen bytes; wipes the state
+private:
+    std::uint64_t m_h[8], m_t[2];
+    std::uint8_t m_buf[128];
+    std::size_t m_fill, m_outLen;
+    void Compress(bool last);
+};
+void Blake2bHash(std::uint8_t* out, std::size_t outLen, const std::uint8_t* m, std::size_t n,
+                 const std::uint8_t* key = nullptr, std::size_t keyLen = 0);
+
+class Sha256 {
+public:
+    Sha256();
+    void Update(const std::uint8_t* m, std::size_t n);
+    void Final(std::uint8_t out[32]);
+private:
+    std::uint32_t m_h[8];
+    std::uint64_t m_len;
+    std::uint8_t m_buf[64];
+    std::size_t m_fill;
+    void Block(const std::uint8_t* p);
+};
+void Sha256Hash(std::uint8_t out[32], const std::uint8_t* m, std::size_t n);
+
+class Sha512 {
+public:
+    Sha512();
+    void Update(const std::uint8_t* m, std::size_t n);
+    void Final(std::uint8_t out[64]);
+private:
+    std::uint64_t m_h[8];
+    std::uint64_t m_len;
+    std::uint8_t m_buf[128];
+    std::size_t m_fill;
+    void Block(const std::uint8_t* p);
+};
+void Sha512Hash(std::uint8_t out[64], const std::uint8_t* m, std::size_t n);
+
+// ---- X25519 (RFC 7748) --------------------------------------------------------
+/// out = X25519(scalar, point). Returns false when the result is all zero (a
+/// small-order peer point), as libsodium's crypto_scalarmult does; `out` is still written.
+bool X25519(std::uint8_t out[32], const std::uint8_t scalar[32], const std::uint8_t point[32]);
+/// out = X25519(scalar, 9) (the public key for a secret scalar).
+void X25519Base(std::uint8_t out[32], const std::uint8_t scalar[32]);
+
+// ---- Kx session keys ------------------------------------------------------------
+// Same construction as libsodium's crypto_kx: q = X25519(my_sk, their_pk), then
+// BLAKE2b-512(q || client_pk || server_pk) is split into rx || tx (client) or
+// tx || rx (server). Returns false (keys zeroed) when q is all zero.
+void KxKeypair(std::uint8_t pk[32], std::uint8_t sk[32]);
+bool KxClientSessionKeys(std::uint8_t rx[32], std::uint8_t tx[32], const std::uint8_t clientPk[32],
+                         const std::uint8_t clientSk[32], const std::uint8_t serverPk[32]);
+bool KxServerSessionKeys(std::uint8_t rx[32], std::uint8_t tx[32], const std::uint8_t serverPk[32],
+                         const std::uint8_t serverSk[32], const std::uint8_t clientPk[32]);
+
+// ---- Ed25519 (RFC 8032, pure, detached signatures) -------------------------------
+void Ed25519SeedKeypair(std::uint8_t pk[32], std::uint8_t sk[64], const std::uint8_t seed[32]);
+void Ed25519Keypair(std::uint8_t pk[32], std::uint8_t sk[64]);   // random seed
+void Ed25519PublicFromSeed(std::uint8_t pk[32], const std::uint8_t seed[32]);
+/// Signs with the first 32 bytes of `sk` (the seed); the public key is recomputed, so a
+/// secret key whose second half was tampered with can't leak the scalar.
+void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
+/// Same signature as Ed25519Sign, but uses the public key stored in sk[32..64] as is instead of recomputing it from the seed
+/// (what libsodium always does): about twice as fast. ONLY for a sk made by Ed25519SeedKeypair/Ed25519Keypair: if the tail
+/// of sk is not the seed's public key, two signatures of the same message under different tails reveal the secret scalar.
+/// Ed25519Sign has no such precondition and is the default.
+void Ed25519SignTrustedPk(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
+/// Strict, like libsodium: S must be < L, R and the public key must not be small-order,
+/// and the public key must be a canonical encoding of a curve point.
+bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]);
+/// True for a public key no signature should ever be accepted under: a non-canonical encoding (y >= p) or a
+/// point of small order (including the identity, which "verifies" R = identity, S = 0 for any message).
+/// Exactly the key checks Ed25519Verify makes first; used to vet key lists before trusting them.
+/// A 32-byte string that is not a curve point at all is NOT reported (it fails to verify anything anyway).
+bool Ed25519IsWeakKey(const std::uint8_t pk[32]);
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Util.cpp =====
+
+// okay::crypto utilities: MemZero and ConstantTimeEqual. UNREVIEWED (see Crypto.hpp).
+#include <okay/Crypto/Crypto.hpp>
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto {
+
+void MemZero(void* p, std::size_t n) {
+    volatile std::uint8_t* v = static_cast<volatile std::uint8_t*>(p);
+    for (std::size_t i = 0; i < n; ++i) v[i] = 0;
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__("" : : "r"(p) : "memory");   // the compiler may not assume the stores are dead
+#endif
+}
+
+bool ConstantTimeEqual(const void* a, const void* b, std::size_t n) {
+    const std::uint8_t* x = static_cast<const std::uint8_t*>(a);
+    const std::uint8_t* y = static_cast<const std::uint8_t*>(b);
+    std::uint32_t d = 0;
+    for (std::size_t i = 0; i < n; ++i) d |= static_cast<std::uint32_t>(x[i] ^ y[i]);
+    // d == 0 -> 1, otherwise 0, without a branch on d.
+    const bool equal = ((d - 1u) >> 31) == 1u;
+    OKAY_CT_PUBLIC(equal);   // by design: whether a tag/signature matched is public
+    return equal;
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/CtAnnotate.hpp =====
+
+#pragma once
+// Constant-time audit hook, internal to okay::crypto. UNREVIEWED (see Crypto.hpp).
+//
+// tests/crypto_ct_valgrind.cpp runs the primitives under valgrind with every secret marked as
+// "undefined memory"; valgrind then reports any branch or memory address that depends on it.
+// A few values are SUPPOSED to become public: the accept/reject result of a tag comparison, and
+// whether an X25519 result is all zero (a small-order peer point). OKAY_CT_PUBLIC(x) marks exactly
+// those, so the audit can tell "intended" from "leak". In a normal build it expands to nothing and
+// costs nothing; it is only active when the library is compiled with OKAY_CRYPTO_CTGRIND.
+#ifdef OKAY_CRYPTO_CTGRIND
+#include <valgrind/memcheck.h>
+#define OKAY_CT_PUBLIC(x) VALGRIND_MAKE_MEM_DEFINED(&(x), sizeof(x))
+#else
+#define OKAY_CT_PUBLIC(x) ((void)0)
+#endif
+
+// ---- value barrier ------------------------------------------------------------------------------
+// A compiler is allowed to turn `(a & mask) | (b & ~mask)` into a branch on `mask` when it can prove or
+// guess something about it, and clang does (found by the valgrind audit, tests/crypto_ct_valgrind.cpp:
+// ToBytes in the 16-bit field and the Barrett correction step in Scalar25519.hpp became `test; js` at -O2/-O3).
+// Passing a mask through an empty inline-asm statement makes it opaque, so the select stays arithmetic.
+// This is a mitigation that the audit checks per compiler and optimisation level, not a guarantee.
+#include <cstdint>
+namespace okay::crypto::ct {
+template <class T> inline T Barrier(T x) {
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__("" : "+r"(x));
+#else
+    volatile T v = x;   // MSVC and others: a volatile round trip is the portable way to hide the value
+    x = v;
+#endif
+    return x;
+}
+} // namespace okay::crypto::ct
+
+
+===== FILE: engine/src/Crypto/Sha256.cpp =====
+
+// SHA-256 (FIPS 180-4). UNREVIEWED (see Crypto.hpp). Used for session-ticket key
+// bindings. The round constants are the first 32 bits of the fractional parts of the
+// cube roots of the first 64 primes (the initial hash, of the square roots of the first 8).
+#include <okay/Crypto/Crypto.hpp>
+
+namespace okay::crypto {
+namespace {
+
+constexpr std::uint32_t kK[64] = {
+    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
+    0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
+    0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
+    0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+    0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u};
+constexpr std::uint32_t kIv[8] = {
+    0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au, 0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
+
+inline std::uint32_t Rotr(std::uint32_t x, int c) { return (x >> c) | (x << (32 - c)); }
+
+} // namespace
+
+Sha256::Sha256() : m_len(0), m_fill(0) {
+    for (int i = 0; i < 8; ++i) m_h[i] = kIv[i];
+    for (int i = 0; i < 64; ++i) m_buf[i] = 0;
+}
+
+void Sha256::Block(const std::uint8_t* p) {
+    std::uint32_t w[64];
+    for (int i = 0; i < 16; ++i)
+        w[i] = static_cast<std::uint32_t>(p[4 * i]) << 24 | static_cast<std::uint32_t>(p[4 * i + 1]) << 16 |
+               static_cast<std::uint32_t>(p[4 * i + 2]) << 8 | static_cast<std::uint32_t>(p[4 * i + 3]);
+    for (int i = 16; i < 64; ++i) {
+        const std::uint32_t s0 = Rotr(w[i - 15], 7) ^ Rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        const std::uint32_t s1 = Rotr(w[i - 2], 17) ^ Rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    std::uint32_t a = m_h[0], b = m_h[1], c = m_h[2], d = m_h[3], e = m_h[4], f = m_h[5], g = m_h[6], h = m_h[7];
+    for (int i = 0; i < 64; ++i) {
+        const std::uint32_t S1 = Rotr(e, 6) ^ Rotr(e, 11) ^ Rotr(e, 25);
+        const std::uint32_t ch = (e & f) ^ (~e & g);
+        const std::uint32_t t1 = h + S1 + ch + kK[i] + w[i];
+        const std::uint32_t S0 = Rotr(a, 2) ^ Rotr(a, 13) ^ Rotr(a, 22);
+        const std::uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        const std::uint32_t t2 = S0 + maj;
+        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    m_h[0] += a; m_h[1] += b; m_h[2] += c; m_h[3] += d; m_h[4] += e; m_h[5] += f; m_h[6] += g; m_h[7] += h;
+}
+
+void Sha256::Update(const std::uint8_t* m, std::size_t n) {
+    m_len += n;
+    while (n > 0) {
+        std::size_t take = 64 - m_fill;
+        if (take > n) take = n;
+        for (std::size_t i = 0; i < take; ++i) m_buf[m_fill + i] = m[i];
+        m_fill += take; m += take; n -= take;
+        if (m_fill == 64) { Block(m_buf); m_fill = 0; }
+    }
+}
+
+void Sha256::Final(std::uint8_t out[32]) {
+    const std::uint64_t bits = m_len * 8;
+    const std::uint8_t one = 0x80, zero = 0;
+    Update(&one, 1);
+    while (m_fill != 56) Update(&zero, 1);
+    std::uint8_t lenBytes[8];
+    for (int i = 0; i < 8; ++i) lenBytes[i] = static_cast<std::uint8_t>(bits >> (56 - 8 * i));
+    Update(lenBytes, 8);
+    for (int i = 0; i < 8; ++i) {
+        out[4 * i] = static_cast<std::uint8_t>(m_h[i] >> 24); out[4 * i + 1] = static_cast<std::uint8_t>(m_h[i] >> 16);
+        out[4 * i + 2] = static_cast<std::uint8_t>(m_h[i] >> 8); out[4 * i + 3] = static_cast<std::uint8_t>(m_h[i]);
+    }
+    MemZero(m_h, sizeof m_h); MemZero(m_buf, sizeof m_buf);
+}
+
+void Sha256Hash(std::uint8_t out[32], const std::uint8_t* m, std::size_t n) {
+    Sha256 s;
+    if (n) s.Update(m, n);
+    s.Final(out);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Sha512.cpp =====
+
+// SHA-512 (FIPS 180-4). UNREVIEWED (see Crypto.hpp). Ed25519 hashes with it. The round
+// constants are the first 64 bits of the fractional parts of the cube roots of the first
+// 80 primes (the initial hash, of the square roots of the first 8).
+#include <okay/Crypto/Crypto.hpp>
+
+namespace okay::crypto {
+namespace {
+
+constexpr std::uint64_t kK[80] = {
+    0x428a2f98d728ae22ull, 0x7137449123ef65cdull, 0xb5c0fbcfec4d3b2full, 0xe9b5dba58189dbbcull,
+    0x3956c25bf348b538ull, 0x59f111f1b605d019ull, 0x923f82a4af194f9bull, 0xab1c5ed5da6d8118ull,
+    0xd807aa98a3030242ull, 0x12835b0145706fbeull, 0x243185be4ee4b28cull, 0x550c7dc3d5ffb4e2ull,
+    0x72be5d74f27b896full, 0x80deb1fe3b1696b1ull, 0x9bdc06a725c71235ull, 0xc19bf174cf692694ull,
+    0xe49b69c19ef14ad2ull, 0xefbe4786384f25e3ull, 0x0fc19dc68b8cd5b5ull, 0x240ca1cc77ac9c65ull,
+    0x2de92c6f592b0275ull, 0x4a7484aa6ea6e483ull, 0x5cb0a9dcbd41fbd4ull, 0x76f988da831153b5ull,
+    0x983e5152ee66dfabull, 0xa831c66d2db43210ull, 0xb00327c898fb213full, 0xbf597fc7beef0ee4ull,
+    0xc6e00bf33da88fc2ull, 0xd5a79147930aa725ull, 0x06ca6351e003826full, 0x142929670a0e6e70ull,
+    0x27b70a8546d22ffcull, 0x2e1b21385c26c926ull, 0x4d2c6dfc5ac42aedull, 0x53380d139d95b3dfull,
+    0x650a73548baf63deull, 0x766a0abb3c77b2a8ull, 0x81c2c92e47edaee6ull, 0x92722c851482353bull,
+    0xa2bfe8a14cf10364ull, 0xa81a664bbc423001ull, 0xc24b8b70d0f89791ull, 0xc76c51a30654be30ull,
+    0xd192e819d6ef5218ull, 0xd69906245565a910ull, 0xf40e35855771202aull, 0x106aa07032bbd1b8ull,
+    0x19a4c116b8d2d0c8ull, 0x1e376c085141ab53ull, 0x2748774cdf8eeb99ull, 0x34b0bcb5e19b48a8ull,
+    0x391c0cb3c5c95a63ull, 0x4ed8aa4ae3418acbull, 0x5b9cca4f7763e373ull, 0x682e6ff3d6b2b8a3ull,
+    0x748f82ee5defb2fcull, 0x78a5636f43172f60ull, 0x84c87814a1f0ab72ull, 0x8cc702081a6439ecull,
+    0x90befffa23631e28ull, 0xa4506cebde82bde9ull, 0xbef9a3f7b2c67915ull, 0xc67178f2e372532bull,
+    0xca273eceea26619cull, 0xd186b8c721c0c207ull, 0xeada7dd6cde0eb1eull, 0xf57d4f7fee6ed178ull,
+    0x06f067aa72176fbaull, 0x0a637dc5a2c898a6ull, 0x113f9804bef90daeull, 0x1b710b35131c471bull,
+    0x28db77f523047d84ull, 0x32caab7b40c72493ull, 0x3c9ebe0a15c9bebcull, 0x431d67c49c100d4cull,
+    0x4cc5d4becb3e42b6ull, 0x597f299cfc657e2aull, 0x5fcb6fab3ad6faecull, 0x6c44198c4a475817ull};
+constexpr std::uint64_t kIv[8] = {
+    0x6a09e667f3bcc908ull, 0xbb67ae8584caa73bull, 0x3c6ef372fe94f82bull, 0xa54ff53a5f1d36f1ull,
+    0x510e527fade682d1ull, 0x9b05688c2b3e6c1full, 0x1f83d9abfb41bd6bull, 0x5be0cd19137e2179ull};
+
+inline std::uint64_t Rotr(std::uint64_t x, int c) { return (x >> c) | (x << (64 - c)); }
+
+} // namespace
+
+Sha512::Sha512() : m_len(0), m_fill(0) {
+    for (int i = 0; i < 8; ++i) m_h[i] = kIv[i];
+    for (int i = 0; i < 128; ++i) m_buf[i] = 0;
+}
+
+void Sha512::Block(const std::uint8_t* p) {
+    std::uint64_t w[80];
+    for (int i = 0; i < 16; ++i) {
+        std::uint64_t v = 0;
+        for (int j = 0; j < 8; ++j) v = (v << 8) | p[8 * i + j];
+        w[i] = v;
+    }
+    for (int i = 16; i < 80; ++i) {
+        const std::uint64_t s0 = Rotr(w[i - 15], 1) ^ Rotr(w[i - 15], 8) ^ (w[i - 15] >> 7);
+        const std::uint64_t s1 = Rotr(w[i - 2], 19) ^ Rotr(w[i - 2], 61) ^ (w[i - 2] >> 6);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    std::uint64_t a = m_h[0], b = m_h[1], c = m_h[2], d = m_h[3], e = m_h[4], f = m_h[5], g = m_h[6], h = m_h[7];
+    for (int i = 0; i < 80; ++i) {
+        const std::uint64_t S1 = Rotr(e, 14) ^ Rotr(e, 18) ^ Rotr(e, 41);
+        const std::uint64_t ch = (e & f) ^ (~e & g);
+        const std::uint64_t t1 = h + S1 + ch + kK[i] + w[i];
+        const std::uint64_t S0 = Rotr(a, 28) ^ Rotr(a, 34) ^ Rotr(a, 39);
+        const std::uint64_t maj = (a & b) ^ (a & c) ^ (b & c);
+        const std::uint64_t t2 = S0 + maj;
+        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    m_h[0] += a; m_h[1] += b; m_h[2] += c; m_h[3] += d; m_h[4] += e; m_h[5] += f; m_h[6] += g; m_h[7] += h;
+    MemZero(w, sizeof w);
+}
+
+void Sha512::Update(const std::uint8_t* m, std::size_t n) {
+    m_len += n;
+    while (n > 0) {
+        std::size_t take = 128 - m_fill;
+        if (take > n) take = n;
+        for (std::size_t i = 0; i < take; ++i) m_buf[m_fill + i] = m[i];
+        m_fill += take; m += take; n -= take;
+        if (m_fill == 128) { Block(m_buf); m_fill = 0; }
+    }
+}
+
+void Sha512::Final(std::uint8_t out[64]) {
+    const std::uint64_t bits = m_len * 8;    // (messages under 2^61 bytes; the upper 64 length bits are 0)
+    const std::uint8_t one = 0x80, zero = 0;
+    Update(&one, 1);
+    while (m_fill != 112) Update(&zero, 1);
+    std::uint8_t lenBytes[16] = {0};
+    for (int i = 0; i < 8; ++i) lenBytes[8 + i] = static_cast<std::uint8_t>(bits >> (56 - 8 * i));
+    Update(lenBytes, 16);
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j) out[8 * i + j] = static_cast<std::uint8_t>(m_h[i] >> (56 - 8 * j));
+    MemZero(m_h, sizeof m_h); MemZero(m_buf, sizeof m_buf);
+}
+
+void Sha512Hash(std::uint8_t out[64], const std::uint8_t* m, std::size_t n) {
+    Sha512 s;
+    if (n) s.Update(m, n);
+    s.Final(out);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Blake2b.cpp =====
+
+// BLAKE2b (RFC 7693), sequential mode. UNREVIEWED (see Crypto.hpp).
+// The data-dependent work is adds, xors and rotates; the message schedule indexes
+// with the public round constants only.
+#include <okay/Crypto/Crypto.hpp>
+
+namespace okay::crypto {
+namespace {
+
+constexpr std::uint64_t kIv[8] = {
+    0x6a09e667f3bcc908ull, 0xbb67ae8584caa73bull, 0x3c6ef372fe94f82bull, 0xa54ff53a5f1d36f1ull,
+    0x510e527fade682d1ull, 0x9b05688c2b3e6c1full, 0x1f83d9abfb41bd6bull, 0x5be0cd19137e2179ull};
+
+constexpr std::uint8_t kSigma[12][16] = {
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
+    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
+    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
+    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
+    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
+    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
+    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
+    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3}};
+
+inline std::uint64_t Rotr(std::uint64_t x, int c) { return (x >> c) | (x << (64 - c)); }
+inline std::uint64_t Load64(const std::uint8_t* p) {
+    std::uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+inline void G(std::uint64_t v[16], int a, int b, int c, int d, std::uint64_t x, std::uint64_t y) {
+    v[a] = v[a] + v[b] + x; v[d] = Rotr(v[d] ^ v[a], 32);
+    v[c] = v[c] + v[d];     v[b] = Rotr(v[b] ^ v[c], 24);
+    v[a] = v[a] + v[b] + y; v[d] = Rotr(v[d] ^ v[a], 16);
+    v[c] = v[c] + v[d];     v[b] = Rotr(v[b] ^ v[c], 63);
+}
+
+} // namespace
+
+Blake2b::Blake2b(std::size_t outLen, const std::uint8_t* key, std::size_t keyLen) : m_fill(0), m_outLen(outLen) {
+    if (m_outLen < 1) m_outLen = 1;
+    if (m_outLen > 64) m_outLen = 64;
+    if (keyLen > 64) keyLen = 64;
+    for (int i = 0; i < 8; ++i) m_h[i] = kIv[i];
+    m_h[0] ^= 0x01010000ull ^ (static_cast<std::uint64_t>(keyLen) << 8) ^ static_cast<std::uint64_t>(m_outLen);
+    m_t[0] = m_t[1] = 0;
+    for (int i = 0; i < 128; ++i) m_buf[i] = 0;
+    if (keyLen > 0) {                                    // the key is the first block, zero padded
+        for (std::size_t i = 0; i < keyLen; ++i) m_buf[i] = key[i];
+        m_fill = 128;
+    }
+}
+
+Blake2b::~Blake2b() {
+    MemZero(m_h, sizeof m_h); MemZero(m_buf, sizeof m_buf);
+}
+
+void Blake2b::Compress(bool last) {
+    std::uint64_t m[16], v[16];
+    for (int i = 0; i < 16; ++i) m[i] = Load64(m_buf + 8 * i);
+    for (int i = 0; i < 8; ++i) { v[i] = m_h[i]; v[i + 8] = kIv[i]; }
+    v[12] ^= m_t[0];
+    v[13] ^= m_t[1];
+    if (last) v[14] = ~v[14];
+    for (int r = 0; r < 12; ++r) {
+        const std::uint8_t* s = kSigma[r];
+        G(v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
+        G(v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
+        G(v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
+        G(v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
+        G(v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
+        G(v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
+        G(v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
+        G(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
+    }
+    for (int i = 0; i < 8; ++i) m_h[i] ^= v[i] ^ v[i + 8];
+    MemZero(m, sizeof m); MemZero(v, sizeof v);
+}
+
+void Blake2b::Update(const std::uint8_t* in, std::size_t n) {
+    // The last block is only compressed in Final, so a full buffer waits for more input.
+    while (n > 0) {
+        if (m_fill == 128) {
+            m_t[0] += 128; if (m_t[0] < 128) ++m_t[1];
+            Compress(false);
+            m_fill = 0;
+        }
+        std::size_t take = 128 - m_fill;
+        if (take > n) take = n;
+        for (std::size_t i = 0; i < take; ++i) m_buf[m_fill + i] = in[i];
+        m_fill += take; in += take; n -= take;
+    }
+}
+
+void Blake2b::Final(std::uint8_t* out) {
+    m_t[0] += m_fill; if (m_t[0] < m_fill) ++m_t[1];
+    for (std::size_t i = m_fill; i < 128; ++i) m_buf[i] = 0;
+    Compress(true);
+    for (std::size_t i = 0; i < m_outLen; ++i) out[i] = static_cast<std::uint8_t>(m_h[i / 8] >> (8 * (i % 8)));
+    MemZero(m_h, sizeof m_h); MemZero(m_buf, sizeof m_buf);
+    m_fill = 0;
+}
+
+void Blake2bHash(std::uint8_t* out, std::size_t outLen, const std::uint8_t* m, std::size_t n,
+                 const std::uint8_t* key, std::size_t keyLen) {
+    Blake2b b(outLen, key, keyLen);
+    if (n) b.Update(m, n);
+    b.Final(out);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/ChaCha20.cpp =====
+
+// ChaCha20 (RFC 8439 section 2.3/2.4) and HChaCha20 (draft-irtf-cfrg-xchacha).
+// UNREVIEWED (see Crypto.hpp). Only adds, xors and rotates on state words: no
+// secret-dependent branches or memory indexes.
+#include <okay/Crypto/Crypto.hpp>
+
+namespace okay::crypto {
+namespace {
+
+inline std::uint32_t Rotl(std::uint32_t x, int c) { return (x << c) | (x >> (32 - c)); }
+inline std::uint32_t Load32(const std::uint8_t* p) {
+    return static_cast<std::uint32_t>(p[0]) | static_cast<std::uint32_t>(p[1]) << 8 |
+           static_cast<std::uint32_t>(p[2]) << 16 | static_cast<std::uint32_t>(p[3]) << 24;
+}
+inline void Store32(std::uint8_t* p, std::uint32_t v) {
+    p[0] = static_cast<std::uint8_t>(v); p[1] = static_cast<std::uint8_t>(v >> 8);
+    p[2] = static_cast<std::uint8_t>(v >> 16); p[3] = static_cast<std::uint8_t>(v >> 24);
+}
+
+inline void QuarterRound(std::uint32_t& a, std::uint32_t& b, std::uint32_t& c, std::uint32_t& d) {
+    a += b; d ^= a; d = Rotl(d, 16);
+    c += d; b ^= c; b = Rotl(b, 12);
+    a += b; d ^= a; d = Rotl(d, 8);
+    c += d; b ^= c; b = Rotl(b, 7);
+}
+
+// Twenty rounds (ten column + diagonal double rounds) over the 16-word state.
+void Rounds(std::uint32_t x[16]) {
+    for (int i = 0; i < 10; ++i) {
+        QuarterRound(x[0], x[4], x[8], x[12]);
+        QuarterRound(x[1], x[5], x[9], x[13]);
+        QuarterRound(x[2], x[6], x[10], x[14]);
+        QuarterRound(x[3], x[7], x[11], x[15]);
+        QuarterRound(x[0], x[5], x[10], x[15]);
+        QuarterRound(x[1], x[6], x[11], x[12]);
+        QuarterRound(x[2], x[7], x[8], x[13]);
+        QuarterRound(x[3], x[4], x[9], x[14]);
+    }
+}
+
+constexpr std::uint32_t kSigma[4] = {0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u};   // "expand 32-byte k"
+
+} // namespace
+
+bool ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                 const std::uint8_t key[32], const std::uint8_t nonce[12], std::uint32_t counter) {
+    // RFC 8439 has a 32-bit block counter. Wrapping it would reuse keystream (found by the Wycheproof/sodium_compat counter
+    // vectors), so a request that needs more blocks than are left refuses and touches nothing.
+    // blocks needed = ceil(n / 64) must be <= 2^32 - counter (compared in 64 bits; also safe for 32-bit size_t).
+    const std::uint64_t blocks = (static_cast<std::uint64_t>(n) >> 6) + ((n & 63) ? 1u : 0u);
+    if (blocks > (std::uint64_t(1) << 32) - counter) return false;
+    std::uint32_t st[16];
+    for (int i = 0; i < 4; ++i) st[i] = kSigma[i];
+    for (int i = 0; i < 8; ++i) st[4 + i] = Load32(key + 4 * i);
+    st[12] = counter;
+    for (int i = 0; i < 3; ++i) st[13 + i] = Load32(nonce + 4 * i);
+
+    while (n > 0) {
+        std::uint32_t x[16];
+        for (int i = 0; i < 16; ++i) x[i] = st[i];
+        Rounds(x);
+        std::uint8_t block[64];
+        for (int i = 0; i < 16; ++i) Store32(block + 4 * i, x[i] + st[i]);
+        const std::size_t take = n < 64 ? n : 64;
+        for (std::size_t i = 0; i < take; ++i) out[i] = static_cast<std::uint8_t>(in[i] ^ block[i]);
+        out += take; in += take; n -= take;
+        st[12] += 1;   // cannot wrap into reuse: refused above (the last block's increment may wrap, and is never used)
+        MemZero(block, sizeof block);
+        MemZero(x, sizeof x);
+    }
+    MemZero(st, sizeof st);
+    return true;
+}
+
+void HChaCha20(std::uint8_t out[32], const std::uint8_t key[32], const std::uint8_t in[16]) {
+    std::uint32_t x[16];
+    for (int i = 0; i < 4; ++i) x[i] = kSigma[i];
+    for (int i = 0; i < 8; ++i) x[4 + i] = Load32(key + 4 * i);
+    for (int i = 0; i < 4; ++i) x[12 + i] = Load32(in + 4 * i);
+    Rounds(x);
+    // No final addition; the output is words 0..3 and 12..15.
+    for (int i = 0; i < 4; ++i) Store32(out + 4 * i, x[i]);
+    for (int i = 0; i < 4; ++i) Store32(out + 16 + 4 * i, x[12 + i]);
+    MemZero(x, sizeof x);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Poly1305.cpp =====
+
+// Poly1305 (RFC 8439 section 2.5). UNREVIEWED (see Crypto.hpp).
+// Arithmetic mod 2^130 - 5 on five 26-bit limbs; every product fits in 64 bits.
+// Only adds, multiplies, shifts and masks: no secret-dependent branches or indexes.
+#include <okay/Crypto/Crypto.hpp>
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto {
+namespace {
+
+constexpr std::uint32_t kMask26 = 0x3ffffffu;
+
+inline std::uint32_t Load32(const std::uint8_t* p) {
+    return static_cast<std::uint32_t>(p[0]) | static_cast<std::uint32_t>(p[1]) << 8 |
+           static_cast<std::uint32_t>(p[2]) << 16 | static_cast<std::uint32_t>(p[3]) << 24;
+}
+inline void Store32(std::uint8_t* p, std::uint32_t v) {
+    p[0] = static_cast<std::uint8_t>(v); p[1] = static_cast<std::uint8_t>(v >> 8);
+    p[2] = static_cast<std::uint8_t>(v >> 16); p[3] = static_cast<std::uint8_t>(v >> 24);
+}
+
+// Split 16 little-endian bytes into five 26-bit limbs (limb 4 holds bits 104..127).
+inline void Split(std::uint32_t l[5], const std::uint8_t* p) {
+    l[0] = Load32(p) & kMask26;
+    l[1] = (Load32(p + 3) >> 2) & kMask26;
+    l[2] = (Load32(p + 6) >> 4) & kMask26;
+    l[3] = (Load32(p + 9) >> 6) & kMask26;
+    l[4] = Load32(p + 12) >> 8;
+}
+
+} // namespace
+
+Poly1305::Poly1305(const std::uint8_t key[32]) : m_fill(0) {
+    std::uint8_t r[16];
+    for (int i = 0; i < 16; ++i) r[i] = key[i];
+    // Clamp r (RFC 8439 section 2.5).
+    r[3] &= 15; r[7] &= 15; r[11] &= 15; r[15] &= 15;
+    r[4] &= 252; r[8] &= 252; r[12] &= 252;
+    Split(m_r, r);
+    for (int i = 0; i < 5; ++i) m_h[i] = 0;
+    for (int i = 0; i < 4; ++i) m_pad[i] = Load32(key + 16 + 4 * i);
+    for (int i = 0; i < 16; ++i) m_buf[i] = 0;
+    MemZero(r, sizeof r);
+}
+
+Poly1305::~Poly1305() {
+    MemZero(m_r, sizeof m_r); MemZero(m_h, sizeof m_h); MemZero(m_pad, sizeof m_pad); MemZero(m_buf, sizeof m_buf);
+}
+
+// Process whole 16-byte blocks; `hibit` is the 2^128 bit (1<<24 in limb 4) for full blocks.
+void Poly1305::Blocks(const std::uint8_t* m, std::size_t n, std::uint32_t hibit) {
+    const std::uint64_t r0 = m_r[0], r1 = m_r[1], r2 = m_r[2], r3 = m_r[3], r4 = m_r[4];
+    const std::uint64_t s1 = r1 * 5, s2 = r2 * 5, s3 = r3 * 5, s4 = r4 * 5;
+    std::uint64_t h0 = m_h[0], h1 = m_h[1], h2 = m_h[2], h3 = m_h[3], h4 = m_h[4];
+    while (n >= 16) {
+        std::uint32_t t[5];
+        Split(t, m);
+        h0 += t[0]; h1 += t[1]; h2 += t[2]; h3 += t[3]; h4 += t[4] + hibit;
+
+        std::uint64_t d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
+        std::uint64_t d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
+        std::uint64_t d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
+        std::uint64_t d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
+        std::uint64_t d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+
+        std::uint64_t c = d0 >> 26; h0 = d0 & kMask26; d1 += c;
+        c = d1 >> 26; h1 = d1 & kMask26; d2 += c;
+        c = d2 >> 26; h2 = d2 & kMask26; d3 += c;
+        c = d3 >> 26; h3 = d3 & kMask26; d4 += c;
+        c = d4 >> 26; h4 = d4 & kMask26; h0 += c * 5;
+        c = h0 >> 26; h0 &= kMask26; h1 += c;
+        m += 16; n -= 16;
+    }
+    m_h[0] = static_cast<std::uint32_t>(h0); m_h[1] = static_cast<std::uint32_t>(h1);
+    m_h[2] = static_cast<std::uint32_t>(h2); m_h[3] = static_cast<std::uint32_t>(h3);
+    m_h[4] = static_cast<std::uint32_t>(h4);
+}
+
+void Poly1305::Update(const std::uint8_t* m, std::size_t n) {
+    if (m_fill > 0) {
+        while (n > 0 && m_fill < 16) { m_buf[m_fill++] = *m++; --n; }
+        if (m_fill < 16) return;
+        Blocks(m_buf, 16, 1u << 24);
+        m_fill = 0;
+    }
+    const std::size_t whole = n & ~static_cast<std::size_t>(15);
+    if (whole) { Blocks(m, whole, 1u << 24); m += whole; n -= whole; }
+    while (n > 0) { m_buf[m_fill++] = *m++; --n; }
+}
+
+void Poly1305::Final(std::uint8_t tag[16]) {
+    if (m_fill > 0) {
+        m_buf[m_fill] = 1;                               // the padding bit sits inside the block,
+        for (std::size_t i = m_fill + 1; i < 16; ++i) m_buf[i] = 0;
+        Blocks(m_buf, 16, 0);                            // so no 2^128 bit for the short block
+        m_fill = 0;
+    }
+    std::uint32_t h0 = m_h[0], h1 = m_h[1], h2 = m_h[2], h3 = m_h[3], h4 = m_h[4];
+    // Fully carry.
+    std::uint32_t c = h1 >> 26; h1 &= kMask26; h2 += c;
+    c = h2 >> 26; h2 &= kMask26; h3 += c;
+    c = h3 >> 26; h3 &= kMask26; h4 += c;
+    c = h4 >> 26; h4 &= kMask26; h0 += c * 5;
+    c = h0 >> 26; h0 &= kMask26; h1 += c;
+    c = h1 >> 26; h1 &= kMask26; h2 += c;
+    c = h2 >> 26; h2 &= kMask26; h3 += c;
+    c = h3 >> 26; h3 &= kMask26; h4 += c;
+    c = h4 >> 26; h4 &= kMask26; h0 += c * 5;
+    c = h0 >> 26; h0 &= kMask26; h1 += c;
+    // g = h + 5 - 2^130; keep g if h >= 2^130 - 5 (g did not go negative), else h.
+    std::uint32_t g0 = h0 + 5; c = g0 >> 26; g0 &= kMask26;
+    std::uint32_t g1 = h1 + c; c = g1 >> 26; g1 &= kMask26;
+    std::uint32_t g2 = h2 + c; c = g2 >> 26; g2 &= kMask26;
+    std::uint32_t g3 = h3 + c; c = g3 >> 26; g3 &= kMask26;
+    std::uint32_t g4 = h4 + c - (1u << 26);
+    const std::uint32_t keepG = ct::Barrier((g4 >> 31) - 1u);         // all ones when g4 did not borrow
+    h0 = (h0 & ~keepG) | (g0 & keepG);
+    h1 = (h1 & ~keepG) | (g1 & keepG);
+    h2 = (h2 & ~keepG) | (g2 & keepG);
+    h3 = (h3 & ~keepG) | (g3 & keepG);
+    h4 = (h4 & ~keepG) | (g4 & keepG);
+    // h mod 2^128, as four 32-bit words, plus the pad, mod 2^128.
+    const std::uint32_t w0 = h0 | (h1 << 26);
+    const std::uint32_t w1 = (h1 >> 6) | (h2 << 20);
+    const std::uint32_t w2 = (h2 >> 12) | (h3 << 14);
+    const std::uint32_t w3 = (h3 >> 18) | (h4 << 8);
+    std::uint64_t f = static_cast<std::uint64_t>(w0) + m_pad[0];
+    Store32(tag, static_cast<std::uint32_t>(f));
+    f = static_cast<std::uint64_t>(w1) + m_pad[1] + (f >> 32);
+    Store32(tag + 4, static_cast<std::uint32_t>(f));
+    f = static_cast<std::uint64_t>(w2) + m_pad[2] + (f >> 32);
+    Store32(tag + 8, static_cast<std::uint32_t>(f));
+    f = static_cast<std::uint64_t>(w3) + m_pad[3] + (f >> 32);
+    Store32(tag + 12, static_cast<std::uint32_t>(f));
+    MemZero(m_r, sizeof m_r); MemZero(m_h, sizeof m_h); MemZero(m_pad, sizeof m_pad); MemZero(m_buf, sizeof m_buf);
+}
+
+void Poly1305Mac(std::uint8_t tag[16], const std::uint8_t* m, std::size_t n, const std::uint8_t key[32]) {
+    Poly1305 p(key);
+    p.Update(m, n);
+    p.Final(tag);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Aead.cpp =====
+
+// ChaCha20-Poly1305 (RFC 8439 section 2.8) and XChaCha20-Poly1305
+// (draft-irtf-cfrg-xchacha, the "IETF" construction: HChaCha20 subkey, then the
+// RFC 8439 AEAD with nonce 0000 || last 8 nonce bytes). UNREVIEWED (see Crypto.hpp).
+#include <okay/Crypto/Crypto.hpp>
+
+#include <cstdlib>
+
+namespace okay::crypto {
+namespace {
+
+inline void Store64(std::uint8_t* p, std::uint64_t v) {
+    for (int i = 0; i < 8; ++i) p[i] = static_cast<std::uint8_t>(v >> (8 * i));
+}
+
+void PadTo16(Poly1305& p, std::size_t n) {
+    static const std::uint8_t zeros[16] = {0};
+    if (n % 16) p.Update(zeros, 16 - n % 16);
+}
+
+// tag = Poly1305(otk, aad || pad || ct || pad || le64(aadLen) || le64(ctLen)),
+// otk = first 32 bytes of the ChaCha20 block at counter 0.
+void ComputeTag(std::uint8_t tag[16], const std::uint8_t* aad, std::size_t aadLen,
+                const std::uint8_t* ct, std::size_t n, const std::uint8_t nonce[12], const std::uint8_t key[32]) {
+    std::uint8_t otk[64] = {0};
+    ChaCha20Xor(otk, otk, 64, key, nonce, 0);
+    Poly1305 p(otk);
+    MemZero(otk, sizeof otk);
+    if (aadLen) p.Update(aad, aadLen);
+    PadTo16(p, aadLen);
+    if (n) p.Update(ct, n);
+    PadTo16(p, n);
+    std::uint8_t lens[16];
+    Store64(lens, static_cast<std::uint64_t>(aadLen));
+    Store64(lens + 8, static_cast<std::uint64_t>(n));
+    p.Update(lens, 16);
+    p.Final(tag);
+}
+
+} // namespace
+
+void ChaCha20Poly1305Seal(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                          const std::uint8_t* aad, std::size_t aadLen,
+                          const std::uint8_t nonce[12], const std::uint8_t key[32]) {
+    // A message of more than (2^32 - 1) * 64 bytes (about 256 GiB) would wrap the block counter: that is a caller bug, and
+    // like libsodium we stop instead of reusing keystream (Seal cannot report an error). Not reachable on 32-bit size_t.
+    if (n && !ChaCha20Xor(out, in, n, key, nonce, 1)) std::abort();
+    ComputeTag(out + n, aad, aadLen, out, n, nonce, key);
+}
+
+bool ChaCha20Poly1305Open(std::uint8_t* out, const std::uint8_t* in, std::size_t cn,
+                          const std::uint8_t* aad, std::size_t aadLen,
+                          const std::uint8_t nonce[12], const std::uint8_t key[32]) {
+    if (cn < kAeadTagBytes) return false;
+    const std::size_t n = cn - kAeadTagBytes;
+    std::uint8_t tag[16];
+    ComputeTag(tag, aad, aadLen, in, n, nonce, key);     // over the ciphertext, before any decryption
+    const bool ok = ConstantTimeEqual(tag, in + n, 16);
+    if (!ok) {
+        if (n) MemZero(out, n);                          // never hand back plaintext for a bad tag
+        return false;
+    }
+    if (n && !ChaCha20Xor(out, in, n, key, nonce, 1)) { MemZero(out, n); return false; }   // counter exhausted
+    return true;
+}
+
+void XChaCha20Poly1305Seal(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+                           const std::uint8_t* aad, std::size_t aadLen,
+                           const std::uint8_t nonce[24], const std::uint8_t key[32]) {
+    std::uint8_t sub[32], n12[12] = {0, 0, 0, 0};
+    HChaCha20(sub, key, nonce);
+    for (int i = 0; i < 8; ++i) n12[4 + i] = nonce[16 + i];
+    ChaCha20Poly1305Seal(out, in, n, aad, aadLen, n12, sub);
+    MemZero(sub, sizeof sub);
+}
+
+bool XChaCha20Poly1305Open(std::uint8_t* out, const std::uint8_t* in, std::size_t cn,
+                           const std::uint8_t* aad, std::size_t aadLen,
+                           const std::uint8_t nonce[24], const std::uint8_t key[32]) {
+    std::uint8_t sub[32], n12[12] = {0, 0, 0, 0};
+    HChaCha20(sub, key, nonce);
+    for (int i = 0; i < 8; ++i) n12[4 + i] = nonce[16 + i];
+    const bool ok = ChaCha20Poly1305Open(out, in, cn, aad, aadLen, n12, sub);
+    MemZero(sub, sizeof sub);
+    return ok;
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Fe25519.hpp =====
+
+#pragma once
+// Arithmetic in GF(2^255 - 19), internal to okay::crypto (X25519 and Ed25519). UNREVIEWED.
+// Two interchangeable implementations with the same interface, chosen at compile time:
+//   fe64 (Fe25519_64.hpp): five 51-bit limbs and a 128-bit product. Needs __int128 (GCC/Clang, 64-bit).
+//   fe16 (Fe25519_16.hpp): sixteen 16-bit limbs in int64_t. Portable (MSVC, WebAssembly, 32-bit).
+// Define OKAY_CRYPTO_FE16 to force the portable one (tests/test_crypto_field.cpp compiles both
+// regardless and checks them against each other).
+#include "Fe25519_16.hpp"
+#if defined(__SIZEOF_INT128__) && !defined(OKAY_CRYPTO_FE16)
+#include "Fe25519_64.hpp"
+namespace okay::crypto { namespace fe = fe64; }
+#else
+namespace okay::crypto { namespace fe = fe16; }
+#endif
+
+
+===== FILE: engine/src/Crypto/Fe25519_64.hpp =====
+
+#pragma once
+// Field arithmetic in GF(2^255 - 19) with five 51-bit limbs in uint64_t and a 128-bit
+// product (radix 2^51). Used when the compiler has __int128 (GCC and Clang on 64-bit
+// targets); Fe25519.hpp falls back to the 16-limb Fe25519_16.hpp otherwise. Same interface
+// as that file. UNREVIEWED (see ../../include/okay/Crypto/Crypto.hpp).
+//
+// Representation: value = v[0] + v[1] 2^51 + ... + v[4] 2^204, limbs unsigned. 2^255 = 19.
+// Limb bounds (the invariants every function relies on):
+//   * Mul, Square, MulSmall take limbs below 2^54 and return limbs <= 2^51 + 2^13.
+//   * Add does not reduce: the sum of two reduced elements has limbs < 2^52 + 2^14.
+//   * Sub computes a + 4p - b limb by limb (so no limb goes negative while b's limbs are below
+//     2^53 - 76), then does one weak carry; it returns limbs <= 2^51 + 2^13 again.
+//   So Add of up to four reduced elements may feed Mul, and anything may feed Sub's `a`; the
+//   second operand of Sub must be a Mul/Square/Sub output or a sum of at most two of them.
+// Everything is fixed-length arithmetic and masks: no branch or table index depends on a value.
+#include <cstdint>
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto::fe64 {
+
+__extension__ typedef unsigned __int128 U128;   // (__extension__: quiet under -Wpedantic)
+typedef std::uint64_t U64;
+
+constexpr U64 kMask51 = (static_cast<U64>(1) << 51) - 1;
+
+struct Fe { U64 v[5]; };
+
+inline void Zero(Fe& r) { for (int i = 0; i < 5; ++i) r.v[i] = 0; }
+inline void One(Fe& r) { Zero(r); r.v[0] = 1; }
+inline void Copy(Fe& r, const Fe& a) { for (int i = 0; i < 5; ++i) r.v[i] = a.v[i]; }
+// r = x for a small public constant (x < 2^31).
+inline void SetSmall(Fe& r, std::uint32_t x) { Zero(r); r.v[0] = x; }
+
+inline void Add(Fe& r, const Fe& a, const Fe& b) { for (int i = 0; i < 5; ++i) r.v[i] = a.v[i] + b.v[i]; }
+
+// One weak carry pass: limbs to 51 bits, the overflow of limb 4 folded back times 19.
+inline void Carry(Fe& r) {
+    U64 c = r.v[0] >> 51; r.v[0] &= kMask51; r.v[1] += c;
+    c = r.v[1] >> 51; r.v[1] &= kMask51; r.v[2] += c;
+    c = r.v[2] >> 51; r.v[2] &= kMask51; r.v[3] += c;
+    c = r.v[3] >> 51; r.v[3] &= kMask51; r.v[4] += c;
+    c = r.v[4] >> 51; r.v[4] &= kMask51; r.v[0] += 19 * c;
+}
+
+inline void Sub(Fe& r, const Fe& a, const Fe& b) {
+    // 4p = (2^53 - 76, 2^53 - 4, 2^53 - 4, 2^53 - 4, 2^53 - 4) limb-wise.
+    r.v[0] = a.v[0] + 0x1fffffffffffb4ull - b.v[0];
+    for (int i = 1; i < 5; ++i) r.v[i] = a.v[i] + 0x1ffffffffffffcull - b.v[i];
+    Carry(r);
+}
+inline void Neg(Fe& r, const Fe& a) { Fe z; Zero(z); Sub(r, z, a); }
+
+namespace detail {
+// Carry the five 128-bit column sums down to limbs (each column below 2^115).
+inline void Finish(Fe& r, U128 t0, U128 t1, U128 t2, U128 t3, U128 t4) {
+    U64 c = static_cast<U64>(t0 >> 51); const U64 r0 = static_cast<U64>(t0) & kMask51;
+    t1 += c; c = static_cast<U64>(t1 >> 51); const U64 r1 = static_cast<U64>(t1) & kMask51;
+    t2 += c; c = static_cast<U64>(t2 >> 51); const U64 r2 = static_cast<U64>(t2) & kMask51;
+    t3 += c; c = static_cast<U64>(t3 >> 51); const U64 r3 = static_cast<U64>(t3) & kMask51;
+    t4 += c; c = static_cast<U64>(t4 >> 51); const U64 r4 = static_cast<U64>(t4) & kMask51;
+    U64 s0 = r0 + c * 19;                              // c < 2^60 for inputs below 2^54, so 19c < 2^64
+    c = s0 >> 51; s0 &= kMask51;
+    r.v[0] = s0; r.v[1] = r1 + c; r.v[2] = r2; r.v[3] = r3; r.v[4] = r4;
+}
+} // namespace detail
+
+inline void Mul(Fe& r, const Fe& a, const Fe& b) {
+    const U64 a0 = a.v[0], a1 = a.v[1], a2 = a.v[2], a3 = a.v[3], a4 = a.v[4];
+    const U64 b0 = b.v[0], b1 = b.v[1], b2 = b.v[2], b3 = b.v[3], b4 = b.v[4];
+    const U64 b1_19 = 19 * b1, b2_19 = 19 * b2, b3_19 = 19 * b3, b4_19 = 19 * b4;
+    const U128 t0 = static_cast<U128>(a0) * b0 + static_cast<U128>(a4) * b1_19 + static_cast<U128>(a3) * b2_19 +
+                    static_cast<U128>(a2) * b3_19 + static_cast<U128>(a1) * b4_19;
+    const U128 t1 = static_cast<U128>(a1) * b0 + static_cast<U128>(a0) * b1 + static_cast<U128>(a4) * b2_19 +
+                    static_cast<U128>(a3) * b3_19 + static_cast<U128>(a2) * b4_19;
+    const U128 t2 = static_cast<U128>(a2) * b0 + static_cast<U128>(a1) * b1 + static_cast<U128>(a0) * b2 +
+                    static_cast<U128>(a4) * b3_19 + static_cast<U128>(a3) * b4_19;
+    const U128 t3 = static_cast<U128>(a3) * b0 + static_cast<U128>(a2) * b1 + static_cast<U128>(a1) * b2 +
+                    static_cast<U128>(a0) * b3 + static_cast<U128>(a4) * b4_19;
+    const U128 t4 = static_cast<U128>(a4) * b0 + static_cast<U128>(a3) * b1 + static_cast<U128>(a2) * b2 +
+                    static_cast<U128>(a1) * b3 + static_cast<U128>(a0) * b4;
+    detail::Finish(r, t0, t1, t2, t3, t4);
+}
+
+inline void Square(Fe& r, const Fe& a) {
+    const U64 a0 = a.v[0], a1 = a.v[1], a2 = a.v[2], a3 = a.v[3], a4 = a.v[4];
+    const U64 d0 = 2 * a0, d1 = 2 * a1, d2 = 2 * a2, d3 = 2 * a3;
+    const U64 a3_19 = 19 * a3, a4_19 = 19 * a4;
+    const U128 t0 = static_cast<U128>(a0) * a0 + static_cast<U128>(d1) * a4_19 + static_cast<U128>(d2) * a3_19;
+    const U128 t1 = static_cast<U128>(d0) * a1 + static_cast<U128>(d2) * a4_19 + static_cast<U128>(a3) * a3_19;
+    const U128 t2 = static_cast<U128>(d0) * a2 + static_cast<U128>(a1) * a1 + static_cast<U128>(d3) * a4_19;
+    const U128 t3 = static_cast<U128>(d0) * a3 + static_cast<U128>(d1) * a2 + static_cast<U128>(a4) * a4_19;
+    const U128 t4 = static_cast<U128>(d0) * a4 + static_cast<U128>(d1) * a3 + static_cast<U128>(a2) * a2;
+    detail::Finish(r, t0, t1, t2, t3, t4);
+}
+
+// r = a * c for a small public constant c < 2^17.
+inline void MulSmall(Fe& r, const Fe& a, std::uint32_t c) {
+    detail::Finish(r, static_cast<U128>(a.v[0]) * c, static_cast<U128>(a.v[1]) * c, static_cast<U128>(a.v[2]) * c,
+                   static_cast<U128>(a.v[3]) * c, static_cast<U128>(a.v[4]) * c);
+}
+
+// Fully reduce: the unique representative in [0, p), little-endian bytes.
+inline void ToBytes(std::uint8_t out[32], const Fe& a) {
+    Fe t;
+    Copy(t, a);
+    Carry(t); Carry(t);                                // now every limb is below 2^51 (value < 2^255)
+    // q = 1 exactly when t >= p, i.e. when t + 19 carries out of bit 255.
+    U64 q = (t.v[0] + 19) >> 51;
+    q = (t.v[1] + q) >> 51;
+    q = (t.v[2] + q) >> 51;
+    q = (t.v[3] + q) >> 51;
+    q = (t.v[4] + q) >> 51;
+    t.v[0] += 19 * q;                                  // t + 19q, then drop bit 255: t - p when q = 1
+    U64 c = t.v[0] >> 51; t.v[0] &= kMask51; t.v[1] += c;
+    c = t.v[1] >> 51; t.v[1] &= kMask51; t.v[2] += c;
+    c = t.v[2] >> 51; t.v[2] &= kMask51; t.v[3] += c;
+    c = t.v[3] >> 51; t.v[3] &= kMask51; t.v[4] += c;
+    t.v[4] &= kMask51;
+    const U64 w0 = t.v[0] | (t.v[1] << 51);
+    const U64 w1 = (t.v[1] >> 13) | (t.v[2] << 38);
+    const U64 w2 = (t.v[2] >> 26) | (t.v[3] << 25);
+    const U64 w3 = (t.v[3] >> 39) | (t.v[4] << 12);
+    const U64 w[4] = {w0, w1, w2, w3};
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 8; ++j) out[8 * i + j] = static_cast<std::uint8_t>(w[i] >> (8 * j));
+}
+
+// Load 32 little-endian bytes; bit 255 is ignored (every caller masks it anyway, as the specs say).
+inline void FromBytes(Fe& r, const std::uint8_t in[32]) {
+    U64 w[4];
+    for (int i = 0; i < 4; ++i) {
+        w[i] = 0;
+        for (int j = 7; j >= 0; --j) w[i] = (w[i] << 8) | in[8 * i + j];
+    }
+    r.v[0] = w[0] & kMask51;
+    r.v[1] = ((w[0] >> 51) | (w[1] << 13)) & kMask51;
+    r.v[2] = ((w[1] >> 38) | (w[2] << 26)) & kMask51;
+    r.v[3] = ((w[2] >> 25) | (w[3] << 39)) & kMask51;
+    r.v[4] = (w[3] >> 12) & kMask51;
+}
+
+// bit must be 0 or 1: swaps a and b when it is 1, in constant time.
+inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
+    const U64 mask = ct::Barrier(0 - static_cast<U64>(bit));
+    for (int i = 0; i < 5; ++i) {
+        const U64 t = mask & (a.v[i] ^ b.v[i]);
+        a.v[i] ^= t; b.v[i] ^= t;
+    }
+}
+// r = bit ? b : a
+inline void Select(Fe& r, const Fe& a, const Fe& b, std::int64_t bit) {
+    const U64 mask = ct::Barrier(0 - static_cast<U64>(bit));
+    for (int i = 0; i < 5; ++i) r.v[i] = a.v[i] ^ (mask & (a.v[i] ^ b.v[i]));
+}
+
+inline bool IsZero(const Fe& a) {
+    std::uint8_t b[32];
+    ToBytes(b, a);
+    std::uint32_t acc = 0;
+    for (int i = 0; i < 32; ++i) acc |= b[i];
+    return acc == 0;
+}
+inline bool Equal(const Fe& a, const Fe& b) { Fe d; Sub(d, a, b); return IsZero(d); }
+inline int IsNegative(const Fe& a) { std::uint8_t b[32]; ToBytes(b, a); return b[0] & 1; }
+
+// r = a^e for a PUBLIC exponent (32 little-endian bytes): the loop and the
+// multiply pattern depend only on e, never on a. (Reference for the chains; used for sqrt(-1).)
+inline void PowPublic(Fe& r, const Fe& a, const std::uint8_t e[32]) {
+    Fe acc;
+    One(acc);
+    for (int bit = 255; bit >= 0; --bit) {
+        Square(acc, acc);
+        if ((e[bit >> 3] >> (bit & 7)) & 1) Mul(acc, acc, a);
+    }
+    Copy(r, acc);
+}
+
+#include "Fe25519Chain.inc"
+
+// sqrt(-1) = 2^((p-1)/4) = 2^(2^253 - 5)
+inline const Fe& SqrtMinusOne() {
+    static const Fe k = [] {
+        std::uint8_t e[32];
+        for (int i = 0; i < 32; ++i) e[i] = 0xff;
+        e[0] = 0xfb; e[31] = 0x1f;
+        Fe two; SetSmall(two, 2);
+        Fe r; PowPublic(r, two, e);
+        return r;
+    }();
+    return k;
+}
+
+} // namespace okay::crypto::fe64
+
+
+===== FILE: engine/src/Crypto/Fe25519_16.hpp =====
+
+#pragma once
+// Portable field arithmetic in GF(2^255 - 19): sixteen 16-bit limbs in int64_t, no __int128.
+// This is the fallback Fe25519.hpp selects when the compiler has no 128-bit integer (MSVC,
+// WebAssembly, 32-bit targets) or when OKAY_CRYPTO_FE16 is defined; the 51-bit version is
+// Fe25519_64.hpp. Both have the same interface and are compiled side by side in
+// tests/test_crypto_field.cpp, which checks them against each other. UNREVIEWED (see Crypto.hpp).
+//
+// An element is sixteen signed 64-bit limbs holding 16 bits each (value =
+// sum v[i] * 2^(16 i)); 2^256 = 38 (mod p) is how the top folds back. Everything
+// is fixed-length loops and masks: no branch or table index depends on a value.
+// Limbs may be "loose" (a few bits over 16, or negative) between operations; Mul
+// and Square take inputs up to about 2^20 in magnitude and return limbs that are
+// 16 bits to within a small excess; Freeze gives the canonical form.
+#include <cstdint>
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto::fe16 {
+
+struct Fe { std::int64_t v[16]; };
+
+inline void Zero(Fe& r) { for (int i = 0; i < 16; ++i) r.v[i] = 0; }
+inline void One(Fe& r) { Zero(r); r.v[0] = 1; }
+inline void Copy(Fe& r, const Fe& a) { for (int i = 0; i < 16; ++i) r.v[i] = a.v[i]; }
+// r = x for a small public constant (x < 2^31).
+inline void SetSmall(Fe& r, std::uint32_t x) { Zero(r); r.v[0] = x & 0xffff; r.v[1] = x >> 16; }
+
+inline void Add(Fe& r, const Fe& a, const Fe& b) { for (int i = 0; i < 16; ++i) r.v[i] = a.v[i] + b.v[i]; }
+inline void Sub(Fe& r, const Fe& a, const Fe& b) { for (int i = 0; i < 16; ++i) r.v[i] = a.v[i] - b.v[i]; }
+
+// One carry pass: limbs to [0, 2^16), the overflow of limb 15 folded back times 38.
+inline void Carry(Fe& r) {
+    for (int i = 0; i < 15; ++i) {
+        const std::int64_t c = r.v[i] >> 16;          // arithmetic shift: floor division
+        r.v[i + 1] += c;
+        r.v[i] -= c * 65536;
+    }
+    const std::int64_t c = r.v[15] >> 16;
+    r.v[15] -= c * 65536;
+    r.v[0] += 38 * c;
+}
+
+inline void Mul(Fe& r, const Fe& a, const Fe& b) {
+    std::int64_t t[31];
+    for (int i = 0; i < 31; ++i) t[i] = 0;
+    for (int i = 0; i < 16; ++i)
+        for (int j = 0; j < 16; ++j) t[i + j] += a.v[i] * b.v[j];
+    for (int i = 0; i < 15; ++i) t[i] += 38 * t[i + 16];
+    Fe o;
+    for (int i = 0; i < 16; ++i) o.v[i] = t[i];
+    Carry(o);
+    Carry(o);
+    Copy(r, o);
+}
+inline void Square(Fe& r, const Fe& a) { Mul(r, a, a); }
+// r = a * c for a small public constant c < 2^16.
+inline void MulSmall(Fe& r, const Fe& a, std::uint32_t c) { Fe k; SetSmall(k, c); Mul(r, a, k); }
+inline void Neg(Fe& r, const Fe& a) { Fe z; Zero(z); Sub(r, z, a); }
+
+// Fully reduce: the unique representative in [0, p), little-endian bytes.
+inline void ToBytes(std::uint8_t out[32], const Fe& a) {
+    Fe t;
+    Copy(t, a);
+    Carry(t); Carry(t); Carry(t);
+    // Fold bit 255 (2^255 = 19) until the value is below 2^255.
+    for (int k = 0; k < 3; ++k) {
+        const std::int64_t c = t.v[15] >> 15;
+        t.v[15] -= c * 32768;
+        t.v[0] += 19 * c;
+        for (int i = 0; i < 15; ++i) {
+            const std::int64_t d = t.v[i] >> 16;
+            t.v[i + 1] += d;
+            t.v[i] -= d * 65536;
+        }
+    }
+    // Now 0 <= t < 2^255 with 16-bit limbs. Subtract p once if t >= p.
+    std::int64_t u[16];
+    std::int64_t borrow = 0;
+    for (int i = 0; i < 16; ++i) {
+        const std::int64_t pi = (i == 0) ? 0xffed : (i == 15 ? 0x7fff : 0xffff);
+        const std::int64_t d = t.v[i] - pi - borrow;
+        borrow = (d >> 63) & 1;
+        u[i] = d + borrow * 65536;
+    }
+    const std::int64_t keepT = ct::Barrier(-borrow);  // all ones when the subtraction borrowed (t < p)
+    for (int i = 0; i < 16; ++i) t.v[i] = (t.v[i] & keepT) | (u[i] & ~keepT);
+    for (int i = 0; i < 16; ++i) {
+        out[2 * i] = static_cast<std::uint8_t>(t.v[i] & 0xff);
+        out[2 * i + 1] = static_cast<std::uint8_t>((t.v[i] >> 8) & 0xff);
+    }
+}
+
+// Load 32 little-endian bytes (all 256 bits; callers mask bit 255 where the spec says to).
+inline void FromBytes(Fe& r, const std::uint8_t in[32]) {
+    for (int i = 0; i < 16; ++i)
+        r.v[i] = static_cast<std::int64_t>(in[2 * i]) | static_cast<std::int64_t>(in[2 * i + 1]) << 8;
+}
+
+// bit must be 0 or 1: swaps a and b when it is 1, in constant time.
+inline void CSwap(Fe& a, Fe& b, std::int64_t bit) {
+    const std::int64_t mask = ct::Barrier(-bit);
+    for (int i = 0; i < 16; ++i) {
+        const std::int64_t t = mask & (a.v[i] ^ b.v[i]);
+        a.v[i] ^= t; b.v[i] ^= t;
+    }
+}
+// r = bit ? b : a
+inline void Select(Fe& r, const Fe& a, const Fe& b, std::int64_t bit) {
+    const std::int64_t mask = ct::Barrier(-bit);
+    for (int i = 0; i < 16; ++i) r.v[i] = a.v[i] ^ (mask & (a.v[i] ^ b.v[i]));
+}
+
+inline bool IsZero(const Fe& a) {
+    std::uint8_t b[32];
+    ToBytes(b, a);
+    std::uint32_t acc = 0;
+    for (int i = 0; i < 32; ++i) acc |= b[i];
+    return acc == 0;
+}
+inline bool Equal(const Fe& a, const Fe& b) { Fe d; Sub(d, a, b); return IsZero(d); }
+inline int IsNegative(const Fe& a) { std::uint8_t b[32]; ToBytes(b, a); return b[0] & 1; }
+
+// r = a^e for a PUBLIC exponent (32 little-endian bytes): the loop and the
+// multiply pattern depend only on e, never on a.
+inline void PowPublic(Fe& r, const Fe& a, const std::uint8_t e[32]) {
+    Fe acc;
+    One(acc);
+    for (int bit = 255; bit >= 0; --bit) {
+        Square(acc, acc);
+        if ((e[bit >> 3] >> (bit & 7)) & 1) Mul(acc, acc, a);
+    }
+    Copy(r, acc);
+}
+
+#include "Fe25519Chain.inc"
+
+// sqrt(-1) = 2^((p-1)/4) = 2^(2^253 - 5)
+inline const Fe& SqrtMinusOne() {
+    static const Fe k = [] {
+        std::uint8_t e[32];
+        for (int i = 0; i < 32; ++i) e[i] = 0xff;
+        e[0] = 0xfb; e[31] = 0x1f;
+        Fe two; SetSmall(two, 2);
+        Fe r; PowPublic(r, two, e);
+        return r;
+    }();
+    return k;
+}
+
+} // namespace okay::crypto::fe16
+
+
+===== FILE: engine/src/Crypto/Fe25519Chain.inc =====
+
+// Textual include, inside a namespace that already has Fe, Mul and Square (Fe25519_16.hpp and
+// Fe25519_64.hpp): the two fixed addition chains for inversion and for the square-root exponent.
+// The exponents are public constants, so nothing here depends on a secret value. Every step is
+// a Square or a Mul; the chains are the standard ones for 2^255 - 19 and are checked against the
+// bit-by-bit PowPublic in tests/test_crypto_field.cpp.
+
+// r = a^(2^n) (n >= 1)
+inline void SquareN(Fe& r, const Fe& a, int n) {
+    Square(r, a);
+    for (int i = 1; i < n; ++i) Square(r, r);
+}
+
+// a^(p-2) = a^(2^255 - 21): the inverse (0 maps to 0).
+inline void Invert(Fe& r, const Fe& z) {
+    Fe t0, t1, t2, t3;
+    Square(t0, z);          // z^2
+    SquareN(t1, t0, 2);     // z^8
+    Mul(t1, z, t1);         // z^9
+    Mul(t0, t0, t1);        // z^11
+    Square(t2, t0);         // z^22
+    Mul(t1, t1, t2);        // z^(2^5 - 1)
+    SquareN(t2, t1, 5);
+    Mul(t1, t2, t1);        // 2^10 - 1
+    SquareN(t2, t1, 10);
+    Mul(t2, t2, t1);        // 2^20 - 1
+    SquareN(t3, t2, 20);
+    Mul(t2, t3, t2);        // 2^40 - 1
+    SquareN(t2, t2, 10);
+    Mul(t1, t2, t1);        // 2^50 - 1
+    SquareN(t2, t1, 50);
+    Mul(t2, t2, t1);        // 2^100 - 1
+    SquareN(t3, t2, 100);
+    Mul(t2, t3, t2);        // 2^200 - 1
+    SquareN(t2, t2, 50);
+    Mul(t1, t2, t1);        // 2^250 - 1
+    SquareN(t1, t1, 5);     // 2^255 - 32
+    Mul(r, t1, t0);         // 2^255 - 21
+}
+
+// a^((p-5)/8) = a^(2^252 - 3), for square roots.
+inline void Pow22523(Fe& r, const Fe& z) {
+    Fe t0, t1, t2;
+    Square(t0, z);          // z^2
+    SquareN(t1, t0, 2);     // z^8
+    Mul(t1, z, t1);         // z^9
+    Mul(t0, t0, t1);        // z^11
+    Square(t0, t0);         // z^22
+    Mul(t0, t1, t0);        // 2^5 - 1
+    SquareN(t1, t0, 5);
+    Mul(t0, t1, t0);        // 2^10 - 1
+    SquareN(t1, t0, 10);
+    Mul(t1, t1, t0);        // 2^20 - 1
+    SquareN(t2, t1, 20);
+    Mul(t1, t2, t1);        // 2^40 - 1
+    SquareN(t1, t1, 10);
+    Mul(t0, t1, t0);        // 2^50 - 1
+    SquareN(t1, t0, 50);
+    Mul(t1, t1, t0);        // 2^100 - 1
+    SquareN(t2, t1, 100);
+    Mul(t1, t2, t1);        // 2^200 - 1
+    SquareN(t1, t1, 50);
+    Mul(t0, t1, t0);        // 2^250 - 1
+    SquareN(t0, t0, 2);     // 2^252 - 4
+    Mul(r, t0, z);          // 2^252 - 3
+}
+
+
+===== FILE: engine/src/Crypto/Scalar25519.hpp =====
+
+#pragma once
+// Scalars modulo the Ed25519 group order L = 2^252 + 27742317777372353535851937790883648493,
+// internal to okay::crypto. UNREVIEWED (see ../../include/okay/Crypto/Crypto.hpp).
+//
+// Barrett reduction on 32-bit limbs with 64-bit intermediate products (no __int128, so it is the same
+// code on every compiler). Only fixed-length loops and masks: the work done does not depend on the
+// value, so it is safe on secret inputs (the signing nonce, the secret scalar). With
+// mu = floor(2^512 / L), q = floor(x mu / 2^512) is floor(x / L) or one less for every x < 2^512, so
+// x - q L is in [0, 2L) and two conditional subtractions finish it (the second is belt and braces).
+// tests/test_crypto_field.cpp checks it against a bit-by-bit reference, at the edges and on random input.
+#include <cstddef>
+#include <cstdint>
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto::sc {
+
+namespace detail {
+constexpr std::uint32_t kL[9] = {0x5cf5d3edu, 0x5812631au, 0xa2f79cd6u, 0x14def9deu, 0u, 0u, 0u, 0x10000000u, 0u};
+constexpr std::uint32_t kMu[9] = {0x0a2c131bu, 0xed9ce5a3u, 0x086329a7u, 0x2106215du, 0xffffffebu,
+                                  0xffffffffu, 0xffffffffu, 0xffffffffu, 0x0000000fu};
+
+// out[0..na+nb) = a * b (schoolbook; out must not alias a or b).
+inline void MulLimbs(std::uint32_t* out, const std::uint32_t* a, int na, const std::uint32_t* b, int nb) {
+    for (int i = 0; i < na + nb; ++i) out[i] = 0;
+    for (int i = 0; i < na; ++i) {
+        std::uint64_t carry = 0;
+        for (int j = 0; j < nb; ++j) {
+            const std::uint64_t t = static_cast<std::uint64_t>(a[i]) * b[j] + out[i + j] + carry;   // <= 2^64 - 1
+            out[i + j] = static_cast<std::uint32_t>(t);
+            carry = t >> 32;
+        }
+        out[i + nb] = static_cast<std::uint32_t>(carry);
+    }
+}
+
+// r (9 limbs) -= L when r >= L, in constant time.
+inline void CondSubL(std::uint32_t r[9]) {
+    std::uint32_t d[9];
+    std::uint64_t borrow = 0;
+    for (int i = 0; i < 9; ++i) {
+        const std::uint64_t t = static_cast<std::uint64_t>(r[i]) - kL[i] - borrow;
+        d[i] = static_cast<std::uint32_t>(t);
+        borrow = (t >> 32) & 1;
+    }
+    const std::uint32_t keepR = ct::Barrier(0u - static_cast<std::uint32_t>(borrow));   // all ones when r < L
+    for (int i = 0; i < 9; ++i) r[i] = (r[i] & keepR) | (d[i] & ~keepR);
+}
+
+// x = 16 little-endian 32-bit limbs (< 2^512) -> 32 bytes of x mod L.
+inline void Barrett(std::uint8_t out[32], const std::uint32_t x[16]) {
+    std::uint32_t q1[25], ql[17], r[9];
+    MulLimbs(q1, x, 16, kMu, 9);
+    MulLimbs(ql, q1 + 16, 9, kL, 8);                  // q (9 limbs) * L (8 limbs), only the low 9 limbs matter
+    std::uint64_t borrow = 0;
+    for (int i = 0; i < 9; ++i) {
+        const std::uint64_t t = static_cast<std::uint64_t>(x[i]) - ql[i] - borrow;
+        r[i] = static_cast<std::uint32_t>(t);
+        borrow = (t >> 32) & 1;
+    }
+    CondSubL(r);
+    CondSubL(r);
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 4; ++j) out[4 * i + j] = static_cast<std::uint8_t>(r[i] >> (8 * j));
+    for (int i = 0; i < 25; ++i) q1[i] = 0;
+    for (int i = 0; i < 17; ++i) ql[i] = 0;
+    for (int i = 0; i < 9; ++i) r[i] = 0;
+}
+
+inline void LoadLimbs(std::uint32_t* out, const std::uint8_t* in, int nbytes) {
+    for (int i = 0; i < nbytes / 4; ++i)
+        out[i] = static_cast<std::uint32_t>(in[4 * i]) | static_cast<std::uint32_t>(in[4 * i + 1]) << 8 |
+                 static_cast<std::uint32_t>(in[4 * i + 2]) << 16 | static_cast<std::uint32_t>(in[4 * i + 3]) << 24;
+}
+} // namespace detail
+
+// out = (the 64-byte little-endian integer in) mod L
+inline void Reduce64(std::uint8_t out[32], const std::uint8_t in[64]) {
+    std::uint32_t x[16];
+    detail::LoadLimbs(x, in, 64);
+    detail::Barrett(out, x);
+    for (int i = 0; i < 16; ++i) x[i] = 0;
+}
+
+// out = (a * b + c) mod L for 32-byte little-endian a, b, c with a * b + c < 2^512
+// (true when a < 2^256 and b < 2^255, or both below 2^255.5 or so: callers pass a < L, b < 2^255).
+inline void MulAdd(std::uint8_t out[32], const std::uint8_t a[32], const std::uint8_t b[32], const std::uint8_t c[32]) {
+    std::uint32_t la[8], lb[8], lc[8], x[16];
+    detail::LoadLimbs(la, a, 32); detail::LoadLimbs(lb, b, 32); detail::LoadLimbs(lc, c, 32);
+    detail::MulLimbs(x, la, 8, lb, 8);
+    std::uint64_t carry = 0;
+    for (int i = 0; i < 16; ++i) {
+        const std::uint64_t t = static_cast<std::uint64_t>(x[i]) + (i < 8 ? lc[i] : 0u) + carry;
+        x[i] = static_cast<std::uint32_t>(t);
+        carry = t >> 32;
+    }
+    detail::Barrett(out, x);
+    for (int i = 0; i < 8; ++i) { la[i] = lb[i] = lc[i] = 0; }
+    for (int i = 0; i < 16; ++i) x[i] = 0;
+}
+
+// Public data: is the 32-byte little-endian s below L?
+inline bool IsCanonical(const std::uint8_t s[32]) {
+    std::uint32_t l[8];
+    detail::LoadLimbs(l, s, 32);
+    std::uint64_t borrow = 0;
+    for (int i = 0; i < 8; ++i) {
+        const std::uint64_t t = static_cast<std::uint64_t>(l[i]) - detail::kL[i] - borrow;
+        borrow = (t >> 32) & 1;
+    }
+    return borrow == 1;
+}
+
+} // namespace okay::crypto::sc
+
+
+===== FILE: engine/src/Crypto/X25519.cpp =====
+
+// X25519 (RFC 7748 section 5) and the Kx session-key derivation built on it.
+// UNREVIEWED (see Crypto.hpp). A fixed 255-step Montgomery ladder: the secret
+// scalar only ever drives masked conditional swaps.
+#include <okay/Crypto/Crypto.hpp>
+#include "Fe25519.hpp"
+#include "CtAnnotate.hpp"
+
+namespace okay::crypto {
+
+bool X25519(std::uint8_t out[32], const std::uint8_t scalar[32], const std::uint8_t point[32]) {
+    using namespace fe;
+    std::uint8_t k[32];
+    for (int i = 0; i < 32; ++i) k[i] = scalar[i];
+    k[0] &= 248; k[31] &= 127; k[31] |= 64;           // decodeScalar25519
+
+    std::uint8_t up[32];
+    for (int i = 0; i < 32; ++i) up[i] = point[i];
+    up[31] &= 127;                                    // decodeUCoordinate: mask the top bit
+    Fe x1, x2, z2, x3, z3;
+    FromBytes(x1, up);
+    One(x2); Zero(z2); Copy(x3, x1); One(z3);
+
+    std::int64_t swap = 0;
+    for (int t = 254; t >= 0; --t) {
+        const std::int64_t kt = (k[t >> 3] >> (t & 7)) & 1;
+        swap ^= kt;
+        CSwap(x2, x3, swap);
+        CSwap(z2, z3, swap);
+        swap = kt;
+
+        Fe A, AA, B, BB, E, C, D, DA, CB, T;
+        Add(A, x2, z2);  Square(AA, A);
+        Sub(B, x2, z2);  Square(BB, B);
+        Sub(E, AA, BB);
+        Add(C, x3, z3);
+        Sub(D, x3, z3);
+        Mul(DA, D, A);
+        Mul(CB, C, B);
+        Add(T, DA, CB);  Square(x3, T);
+        Sub(T, DA, CB);  Square(T, T);  Mul(z3, x1, T);
+        Mul(x2, AA, BB);
+        MulSmall(T, E, 121665);  Add(T, AA, T);  Mul(z2, E, T);
+    }
+    CSwap(x2, x3, swap);
+    CSwap(z2, z3, swap);
+
+    Fe zi, r;
+    Invert(zi, z2);
+    Mul(r, x2, zi);
+    ToBytes(out, r);
+    MemZero(k, sizeof k);
+    MemZero(&x1, sizeof x1); MemZero(&x2, sizeof x2); MemZero(&z2, sizeof z2);
+    MemZero(&x3, sizeof x3); MemZero(&z3, sizeof z3);
+    std::uint32_t acc = 0;
+    for (int i = 0; i < 32; ++i) acc |= out[i];
+    const bool nonZero = acc != 0;
+    OKAY_CT_PUBLIC(nonZero);   // by design: an all-zero result (small-order peer point) is reported, as libsodium does
+    return nonZero;
+}
+
+void X25519Base(std::uint8_t out[32], const std::uint8_t scalar[32]) {
+    std::uint8_t nine[32] = {9};
+    X25519(out, scalar, nine);
+}
+
+void KxKeypair(std::uint8_t pk[32], std::uint8_t sk[32]) {
+    RandomBytes(sk, 32);
+    X25519Base(pk, sk);
+}
+
+namespace {
+// BLAKE2b-512(q || client_pk || server_pk) -> first half, second half.
+bool KxDerive(std::uint8_t h[64], const std::uint8_t mySk[32], const std::uint8_t theirPk[32],
+              const std::uint8_t clientPk[32], const std::uint8_t serverPk[32]) {
+    std::uint8_t q[32];
+    const bool ok = X25519(q, mySk, theirPk);
+    if (!ok) { MemZero(q, sizeof q); MemZero(h, 64); return false; }
+    Blake2b b(64);
+    b.Update(q, 32); b.Update(clientPk, 32); b.Update(serverPk, 32);
+    b.Final(h);
+    MemZero(q, sizeof q);
+    return true;
+}
+} // namespace
+
+bool KxClientSessionKeys(std::uint8_t rx[32], std::uint8_t tx[32], const std::uint8_t clientPk[32],
+                         const std::uint8_t clientSk[32], const std::uint8_t serverPk[32]) {
+    std::uint8_t h[64];
+    if (!KxDerive(h, clientSk, serverPk, clientPk, serverPk)) { MemZero(rx, 32); MemZero(tx, 32); return false; }
+    for (int i = 0; i < 32; ++i) { rx[i] = h[i]; tx[i] = h[32 + i]; }
+    MemZero(h, sizeof h);
+    return true;
+}
+
+bool KxServerSessionKeys(std::uint8_t rx[32], std::uint8_t tx[32], const std::uint8_t serverPk[32],
+                         const std::uint8_t serverSk[32], const std::uint8_t clientPk[32]) {
+    std::uint8_t h[64];
+    if (!KxDerive(h, serverSk, clientPk, clientPk, serverPk)) { MemZero(rx, 32); MemZero(tx, 32); return false; }
+    for (int i = 0; i < 32; ++i) { tx[i] = h[i]; rx[i] = h[32 + i]; }
+    MemZero(h, sizeof h);
+    return true;
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Ed25519.cpp =====
+
+// Ed25519 (RFC 8032 section 5.1), pure, detached signatures. UNREVIEWED (see Crypto.hpp).
+//
+// Curve arithmetic is on the twisted Edwards curve -x^2 + y^2 = 1 + d x^2 y^2 in extended
+// coordinates (X:Y:Z:T). The addition formula is the unified one that is complete for this curve,
+// so no input is special; doubling has its own cheaper formula.
+//
+// Secret scalars (signing, public key from a seed) only ever go through BaseMult: the scalar is
+// recoded into 64 signed 4-bit digits and, for each digit, ALL eight entries of that window's
+// precomputed table are read and combined with masks (a constant-time lookup), so neither the
+// memory addresses nor the operations depend on the scalar. The table holds j * 16^(2i) * B
+// (j = 1..8, i = 0..31) in affine "cached" form; it is derived from the curve constants on first
+// use (thread-safe function-local static), nothing is pasted in.
+// Verification works on public data only (signature, message, public key), so it is VARIABLE TIME on purpose:
+// one interleaved double-scalar multiplication [S]B + [h](-A) (Straus/Shamir) over width-5 and width-7 non-adjacent
+// forms, with a precomputed table of odd multiples of the base point (derived on first use, like the signing table),
+// shared doublings, doublings that skip the T coordinate when no addition follows, and the small-order checks done by
+// comparing encodings against the seven-entry blocklist instead of decoding the points a second time.
+// d, sqrt(-1) and the base point are derived from their definitions on first use.
+#include <okay/Crypto/Crypto.hpp>
+#include "Fe25519.hpp"
+#include "Scalar25519.hpp"
+
+namespace okay::crypto {
+namespace {
+
+using fe::Fe;
+
+struct Point { Fe X, Y, Z, T; };
+// A point with Z = 1 in the form the mixed addition wants: y + x, y - x, 2 d x y.
+struct Cached { Fe yplusx, yminusx, t2d; };
+
+struct Consts {
+    Fe d, d2;
+    Point base;
+    Cached table[32][8];                              // table[i][j] = (j + 1) * 16^(2 i) * B
+    Cached baseOdd[32];                               // baseOdd[i] = (2 i + 1) * B, for the width-7 form (verification only)
+};
+
+// A cached point that keeps Z (projective), for tables built from a variable point: no inversion to build.
+struct CachedP { Fe yplusx, yminusx, z2, t2d; };
+
+void SetIdentity(Point& p) { fe::Zero(p.X); fe::One(p.Y); fe::One(p.Z); fe::Zero(p.T); }
+
+// Decode per RFC 8032 section 5.1.3. Does NOT insist on a canonical y (callers do);
+// fails when there is no x, or x is 0 with the sign bit set. Public data only.
+bool Decode(Point& p, const Fe& d, const std::uint8_t in[32]) {
+    using namespace fe;
+    std::uint8_t yb[32];
+    for (int i = 0; i < 32; ++i) yb[i] = in[i];
+    const int sign = yb[31] >> 7;
+    yb[31] &= 127;
+    Fe y, one, u, v, v3, v7, x, t, chk, negU;
+    FromBytes(y, yb);
+    One(one);
+    Square(u, y);                    // y^2
+    Mul(v, d, u);
+    Add(v, v, one);                  // d y^2 + 1
+    Sub(u, u, one);                  // y^2 - 1
+    Square(v3, v); Mul(v3, v3, v);   // v^3
+    Square(v7, v3); Mul(v7, v7, v);  // v^7
+    Mul(t, u, v7);
+    Pow22523(t, t);                  // (u v^7)^((p-5)/8)
+    Mul(t, t, v3);
+    Mul(x, t, u);                    // candidate x = u v^3 (u v^7)^((p-5)/8)
+    Square(chk, x); Mul(chk, chk, v);   // v x^2
+    Neg(negU, u);
+    if (Equal(chk, u)) {
+        // x is right
+    } else if (Equal(chk, negU)) {
+        Mul(x, x, SqrtMinusOne());
+    } else {
+        return false;
+    }
+    if (IsZero(x) && sign) return false;
+    if (IsNegative(x) != sign) Neg(x, x);
+    Copy(p.X, x); Copy(p.Y, y); One(p.Z); Mul(p.T, x, y);
+    return true;
+}
+
+void EncodeWithInverse(std::uint8_t out[32], const Point& p, const Fe& zi) {
+    using namespace fe;
+    Fe x, y;
+    Mul(x, p.X, zi);
+    Mul(y, p.Y, zi);
+    ToBytes(out, y);
+    out[31] = static_cast<std::uint8_t>(out[31] | (IsNegative(x) << 7));
+}
+
+void Encode(std::uint8_t out[32], const Point& p) {
+    fe::Fe zi;
+    fe::Invert(zi, p.Z);
+    EncodeWithInverse(out, p, zi);
+}
+
+// Encode two points with ONE inversion (Montgomery's trick: 1/(Z1 Z2), then Z2 and Z1 multiply it into 1/Z1 and 1/Z2).
+void Encode2(std::uint8_t out1[32], const Point& p1, std::uint8_t out2[32], const Point& p2) {
+    using namespace fe;
+    Fe zz, inv, zi1, zi2;
+    Mul(zz, p1.Z, p2.Z);
+    Invert(inv, zz);
+    Mul(zi1, inv, p2.Z);
+    Mul(zi2, inv, p1.Z);
+    EncodeWithInverse(out1, p1, zi1);
+    EncodeWithInverse(out2, p2, zi2);
+}
+
+// Unified addition (add-2008-hwcd-3 with a = -1).
+void PointAdd(Point& r, const Point& p, const Point& q, const Fe& d2) {
+    using namespace fe;
+    Fe a, b, c, d, e, f, g, h, t1, t2;
+    Sub(t1, p.Y, p.X); Sub(t2, q.Y, q.X); Mul(a, t1, t2);
+    Add(t1, p.Y, p.X); Add(t2, q.Y, q.X); Mul(b, t1, t2);
+    Mul(c, p.T, q.T); Mul(c, c, d2);
+    Mul(d, p.Z, q.Z); Add(d, d, d);
+    Sub(e, b, a); Sub(f, d, c); Add(g, d, c); Add(h, b, a);
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+// Doubling (dbl-2008-hwcd with a = -1): 4 multiplications and 4 squarings.
+void PointDouble(Point& r, const Point& p) {
+    using namespace fe;
+    Fe a, b, c, e, f, g, h, t;
+    Square(a, p.X); Square(b, p.Y); Square(c, p.Z); Add(c, c, c);
+    Add(t, p.X, p.Y); Square(t, t);
+    Sub(e, t, a); Sub(e, e, b);                       // E = (X+Y)^2 - A - B
+    Sub(g, b, a);                                     // G = D + B with D = -A
+    Sub(f, g, c);                                     // F = G - C
+    Add(t, a, b); Neg(h, t);                          // H = D - B = -(A + B)
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+// Doubling that leaves r.T unset when the caller will double again (or finish) instead of adding: 3 multiplications and
+// 4 squarings. Verification only (a following addition needs T: pass needT).
+void PointDoubleMaybeT(Point& r, const Point& p, bool needT) {
+    using namespace fe;
+    Fe a, b, c, e, f, g, h, t;
+    Square(a, p.X); Square(b, p.Y); Square(c, p.Z); Add(c, c, c);
+    Add(t, p.X, p.Y); Square(t, t);
+    Sub(e, t, a); Sub(e, e, b);
+    Sub(g, b, a);
+    Sub(f, g, c);
+    Add(t, a, b); Neg(h, t);
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.Z, f, g);
+    if (needT) Mul(r.T, e, h);
+}
+
+// r = p + q with q in cached affine form (7 multiplications).
+void AddCached(Point& r, const Point& p, const Cached& q) {
+    using namespace fe;
+    Fe a, b, c, d, e, f, g, h, t;
+    Sub(t, p.Y, p.X); Mul(a, t, q.yminusx);
+    Add(t, p.Y, p.X); Mul(b, t, q.yplusx);
+    Mul(c, p.T, q.t2d);
+    Add(d, p.Z, p.Z);
+    Sub(e, b, a); Sub(f, d, c); Add(g, d, c); Add(h, b, a);
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+void ToCached(Cached& c, const Point& p, const Fe& d2) {
+    using namespace fe;
+    Fe zi, x, y, xy;
+    Invert(zi, p.Z);
+    Mul(x, p.X, zi); Mul(y, p.Y, zi);
+    Add(c.yplusx, y, x);
+    Sub(c.yminusx, y, x);
+    Mul(xy, x, y); Mul(c.t2d, xy, d2);
+}
+
+// r = p - q (q cached affine): the negative of q swaps y+x and y-x and negates 2dxy, which swaps F and G.
+void SubCached(Point& r, const Point& p, const Cached& q) {
+    using namespace fe;
+    Fe a, b, c, d, e, f, g, h, t;
+    Sub(t, p.Y, p.X); Mul(a, t, q.yplusx);
+    Add(t, p.Y, p.X); Mul(b, t, q.yminusx);
+    Mul(c, p.T, q.t2d);
+    Add(d, p.Z, p.Z);
+    Sub(e, b, a); Add(f, d, c); Sub(g, d, c); Add(h, b, a);
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+void ToCachedP(CachedP& c, const Point& p, const Fe& d2) {
+    using namespace fe;
+    Add(c.yplusx, p.Y, p.X);
+    Sub(c.yminusx, p.Y, p.X);
+    Add(c.z2, p.Z, p.Z);
+    Mul(c.t2d, p.T, d2);
+}
+
+// r = p + q or p - q (negate) with q projective-cached (8 multiplications).
+void AddCachedP(Point& r, const Point& p, const CachedP& q, bool negate) {
+    using namespace fe;
+    Fe a, b, c, d, e, f, g, h, t;
+    Sub(t, p.Y, p.X); Mul(a, t, negate ? q.yplusx : q.yminusx);
+    Add(t, p.Y, p.X); Mul(b, t, negate ? q.yminusx : q.yplusx);
+    Mul(c, p.T, q.t2d);
+    Mul(d, p.Z, q.z2);
+    Sub(e, b, a); Add(h, b, a);
+    if (negate) { Add(f, d, c); Sub(g, d, c); } else { Sub(f, d, c); Add(g, d, c); }
+    Mul(r.X, e, f); Mul(r.Y, g, h); Mul(r.T, e, h); Mul(r.Z, f, g);
+}
+
+// ---- constant-time fixed-base multiplication ----------------------------------------------
+void CMoveCached(Cached& r, const Cached& a, std::int64_t bit) {   // r = bit ? a : r
+    fe::Select(r.yplusx, r.yplusx, a.yplusx, bit);
+    fe::Select(r.yminusx, r.yminusx, a.yminusx, bit);
+    fe::Select(r.t2d, r.t2d, a.t2d, bit);
+}
+
+// t = digit * 16^(2 pos) * B for a digit in -8..8, reading all eight table entries whatever the digit.
+void SelectBase(Cached& t, const Consts& k, int pos, std::int32_t digit) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(digit) >> 31;              // 1 when negative
+    const std::int32_t negMask = -static_cast<std::int32_t>(sign);
+    const std::uint32_t babs = static_cast<std::uint32_t>((digit ^ negMask) - negMask);
+    fe::One(t.yplusx); fe::One(t.yminusx); fe::Zero(t.t2d);   // digit 0: the identity
+    for (int j = 0; j < 8; ++j) {
+        const std::uint32_t x = babs ^ static_cast<std::uint32_t>(j + 1);
+        const std::int64_t eq = static_cast<std::int64_t>((x - 1u) >> 31);   // 1 when babs == j + 1, else 0
+        CMoveCached(t, k.table[pos][j], eq);
+    }
+    Cached n;                                          // the negative: swap y+x and y-x, negate 2dxy
+    fe::Copy(n.yplusx, t.yminusx); fe::Copy(n.yminusx, t.yplusx); fe::Neg(n.t2d, t.t2d);
+    CMoveCached(t, n, static_cast<std::int64_t>(sign));
+    MemZero(&n, sizeof n);
+}
+
+// r = a * B for a 32-byte little-endian scalar a < 2^255 (clamped scalars and reduced scalars both are).
+void BaseMult(Point& r, const std::uint8_t a[32], const Consts& k) {
+    std::int32_t e[64];
+    for (int i = 0; i < 32; ++i) { e[2 * i] = a[i] & 15; e[2 * i + 1] = (a[i] >> 4) & 15; }
+    std::int32_t carry = 0;                            // digits 0..15 -> -8..8 with a carry upwards
+    for (int i = 0; i < 63; ++i) {
+        e[i] += carry;
+        carry = (e[i] + 8) >> 4;
+        e[i] -= carry * 16;
+    }
+    e[63] += carry;                                    // a < 2^255, so e[63] <= 8
+    Point h;
+    Cached t;
+    SetIdentity(h);
+    for (int i = 1; i < 64; i += 2) { SelectBase(t, k, i / 2, e[i]); AddCached(h, h, t); }
+    for (int i = 0; i < 4; ++i) PointDouble(h, h);     // times 16
+    for (int i = 0; i < 64; i += 2) { SelectBase(t, k, i / 2, e[i]); AddCached(h, h, t); }
+    r = h;
+    MemZero(e, sizeof e); MemZero(&h, sizeof h); MemZero(&t, sizeof t);
+}
+
+// Non-adjacent form with window w (2..7): digits are zero or odd with |d| < 2^(w-1), no two nonzero digits closer than w
+// positions, sum d[i] 2^i = s. Variable time: PUBLIC scalars only. s < 2^255; the array is longer than 256 because the
+// last carry can land a few positions above the top bit.
+constexpr int kNafLen = 264;
+void Wnaf(std::int8_t naf[kNafLen], const std::uint8_t s[32], int w) {
+    std::uint64_t x[6] = {0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 32; ++i) x[i >> 3] |= static_cast<std::uint64_t>(s[i]) << (8 * (i & 7));
+    for (int i = 0; i < kNafLen; ++i) naf[i] = 0;
+    const std::uint64_t width = std::uint64_t(1) << w, mask = width - 1;
+    std::uint64_t carry = 0;
+    int pos = 0;
+    while (pos < kNafLen) {
+        const int idx = pos >> 6, bit = pos & 63;
+        const std::uint64_t buf = bit < 64 - w ? x[idx] >> bit : (x[idx] >> bit) | (x[idx + 1] << (64 - bit));
+        const std::uint64_t window = carry + (buf & mask);
+        if ((window & 1) == 0) { ++pos; continue; }
+        if (window < width / 2) { carry = 0; naf[pos] = static_cast<std::int8_t>(window); }
+        else { carry = 1; naf[pos] = static_cast<std::int8_t>(static_cast<std::int64_t>(window) - static_cast<std::int64_t>(width)); }
+        pos += w;
+    }
+}
+
+constexpr int kWnafA = 5;   // 8 odd multiples of the variable point
+constexpr int kWnafB = 7;   // 32 odd multiples of the base point
+
+// r = [sb] B + [sa] P: both scalars public and below 2^255. Straus/Shamir: one chain of doublings shared by both.
+void DoubleScalarMultPublic(Point& r, const std::uint8_t sb[32], const Point& P, const std::uint8_t sa[32], const Consts& k) {
+    std::int8_t nafA[kNafLen], nafB[kNafLen];
+    Wnaf(nafA, sa, kWnafA);
+    Wnaf(nafB, sb, kWnafB);
+    CachedP tabA[8];                                  // tabA[i] = (2 i + 1) P
+    {
+        Point twoP, acc = P;
+        PointDouble(twoP, P);
+        ToCachedP(tabA[0], acc, k.d2);
+        for (int i = 1; i < 8; ++i) { PointAdd(acc, acc, twoP, k.d2); ToCachedP(tabA[i], acc, k.d2); }
+    }
+    int top = kNafLen - 1;
+    while (top >= 0 && nafA[top] == 0 && nafB[top] == 0) --top;
+    Point acc;
+    SetIdentity(acc);
+    for (int i = top; i >= 0; --i) {
+        const bool add = nafA[i] != 0 || nafB[i] != 0;
+        if (i < top) PointDoubleMaybeT(acc, acc, add);
+        if (nafA[i] > 0) AddCachedP(acc, acc, tabA[nafA[i] >> 1], false);
+        else if (nafA[i] < 0) AddCachedP(acc, acc, tabA[(-nafA[i]) >> 1], true);
+        if (nafB[i] > 0) AddCached(acc, acc, k.baseOdd[nafB[i] >> 1]);
+        else if (nafB[i] < 0) SubCached(acc, acc, k.baseOdd[(-nafB[i]) >> 1]);
+    }
+    r = acc;
+}
+
+Consts MakeConsts() {
+    using namespace fe;
+    Consts c;
+    Fe n, den, inv;
+    SetSmall(n, 121665);
+    SetSmall(den, 121666);
+    Invert(inv, den);
+    Mul(c.d, n, inv);
+    Neg(c.d, c.d);                                    // d = -121665/121666
+    fe::Add(c.d2, c.d, c.d);
+    // Base point: y = 4/5, x even (RFC 8032 encodes it as 0x58 then 0x66 x31).
+    std::uint8_t enc[32];
+    for (int i = 0; i < 32; ++i) enc[i] = 0x66;
+    enc[0] = 0x58;
+    Decode(c.base, c.d, enc);
+    Point bi = c.base;                                // 16^(2 i) * B
+    for (int i = 0; i < 32; ++i) {
+        Point acc = bi;
+        for (int j = 0; j < 8; ++j) {
+            ToCached(c.table[i][j], acc, c.d2);
+            PointAdd(acc, acc, bi, c.d2);
+        }
+        for (int j = 0; j < 8; ++j) PointDouble(bi, bi);   // * 256
+    }
+    {
+        Point twoB, acc = c.base;
+        PointDouble(twoB, c.base);
+        for (int i = 0; i < 32; ++i) { ToCached(c.baseOdd[i], acc, c.d2); PointAdd(acc, acc, twoB, c.d2); }
+    }
+    return c;
+}
+
+const Consts& GetConsts() {
+    static const Consts k = MakeConsts();
+    return k;
+}
+
+bool YIsCanonical(const std::uint8_t enc[32]) {      // public data: y < p, ignoring the sign bit
+    if ((enc[31] & 0x7f) != 0x7f) return true;
+    for (int i = 30; i >= 1; --i) if (enc[i] != 0xff) return true;
+    return enc[0] < 0xed;
+}
+
+// A point of order 1, 2, 4 or 8 (including the identity), by its ENCODING with the sign bit ignored: the y coordinates of
+// those points are 0, 1, -1 and the two of order 8, and the encodings y = p and y = p + 1 (non-canonical forms of 0 and 1)
+// decode to small-order points too: seven values in all, libsodium's blocklist. Negating a point does not change its order,
+// so the sign bit is ignored; this also reports the two encodings RFC 8032 refuses to decode (x = 0 with the sign bit set:
+// 0100..80 and ecff..ff), as libsodium's blocklist does (and the TweetNaCl-derived port that used to be in shared/AntiCheatCrypto.hpp did).
+// (Earlier versions decoded the point and doubled it three times: same set, one square root more per call. The agreement is
+// tested against libsodium (and, before it was deleted, the TweetNaCl-derived port, which still decoded) on every structured encoding: tests/crypto_difftest.cpp.)
+bool HasSmallOrderEncoding(const std::uint8_t enc[32]) {
+    static const std::uint8_t kBlock[7][32] = {
+        {0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00},
+        {0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00},
+        {0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0,
+         0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x05},
+        {0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f,
+         0x2a, 0x20, 0x53, 0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0x7a},
+        {0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+        {0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+        {0xee, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f},
+    };
+    for (const auto& b : kBlock) {
+        bool eq = true;
+        for (int i = 0; i < 31; ++i) eq = eq && enc[i] == b[i];
+        if (eq && (enc[31] & 0x7f) == b[31]) return true;
+    }
+    return false;
+}
+
+void Clamp(std::uint8_t a[32]) { a[0] &= 248; a[31] &= 127; a[31] |= 64; }
+
+} // namespace
+
+void Ed25519PublicFromSeed(std::uint8_t pk[32], const std::uint8_t seed[32]) {
+    const Consts& k = GetConsts();
+    std::uint8_t h[64];
+    Sha512Hash(h, seed, 32);
+    Clamp(h);
+    Point A;
+    BaseMult(A, h, k);
+    Encode(pk, A);
+    MemZero(h, sizeof h); MemZero(&A, sizeof A);
+}
+
+void Ed25519SeedKeypair(std::uint8_t pk[32], std::uint8_t sk[64], const std::uint8_t seed[32]) {
+    std::uint8_t p[32];
+    Ed25519PublicFromSeed(p, seed);
+    for (int i = 0; i < 32; ++i) { sk[i] = seed[i]; sk[32 + i] = p[i]; pk[i] = p[i]; }
+}
+
+void Ed25519Keypair(std::uint8_t pk[32], std::uint8_t sk[64]) {
+    std::uint8_t seed[32];
+    RandomBytes(seed, 32);
+    Ed25519SeedKeypair(pk, sk, seed);
+    MemZero(seed, sizeof seed);
+}
+
+namespace {
+// The signing core. h = SHA-512(seed) clamped is the secret scalar a (first half) and the nonce prefix (second half).
+// pkOrNull: the public key to hash into k. When null it is derived from the seed (one more fixed-base multiplication).
+void SignCore(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t seed[32], const std::uint8_t* pkOrNull) {
+    const Consts& k = GetConsts();
+    std::uint8_t h[64], pk[32];
+    Sha512Hash(h, seed, 32);
+    Clamp(h);                                         // h[0..32] = secret scalar a, h[32..64] = prefix
+    std::uint8_t digest[64], r[32], kk[32];
+    {
+        Sha512 s;
+        s.Update(h + 32, 32);
+        if (n) s.Update(m, n);
+        s.Final(digest);
+        sc::Reduce64(r, digest);
+    }
+    Point R;
+    BaseMult(R, r, k);
+    if (pkOrNull) {
+        for (int i = 0; i < 32; ++i) pk[i] = pkOrNull[i];
+        Encode(sig, R);
+    } else {
+        Point A;
+        BaseMult(A, h, k);
+        Encode2(sig, R, pk, A);                       // both encodings share one inversion
+        MemZero(&A, sizeof A);
+    }
+    {
+        Sha512 s;
+        s.Update(sig, 32); s.Update(pk, 32);
+        if (n) s.Update(m, n);
+        s.Final(digest);
+        sc::Reduce64(kk, digest);
+    }
+    sc::MulAdd(sig + 32, kk, h, r);                   // S = k a + r (mod L)
+    MemZero(h, sizeof h); MemZero(digest, sizeof digest); MemZero(r, sizeof r); MemZero(&R, sizeof R);
+}
+} // namespace
+
+void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]) {
+    SignCore(sig, m, n, sk, nullptr);                 // derives the public key from the seed: the tail of sk is never trusted
+}
+
+void Ed25519SignTrustedPk(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]) {
+    SignCore(sig, m, n, sk, sk + 32);                 // libsodium's behaviour: sk = seed || public key, the tail is used as is
+}
+
+bool Ed25519IsWeakKey(const std::uint8_t pk[32]) {
+    return !YIsCanonical(pk) || HasSmallOrderEncoding(pk);
+}
+
+bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]) {
+    // Everything here is public data: variable time is fine (and intended).
+    const Consts& k = GetConsts();
+    if (!sc::IsCanonical(sig + 32)) return false;
+    if (HasSmallOrderEncoding(sig)) return false;
+    if (!YIsCanonical(pk) || HasSmallOrderEncoding(pk)) return false;
+    Point A;
+    if (!Decode(A, k.d, pk)) return false;
+    // -A
+    fe::Neg(A.X, A.X); fe::Neg(A.T, A.T);
+    std::uint8_t digest[64], h[32];
+    {
+        Sha512 s;
+        s.Update(sig, 32); s.Update(pk, 32);
+        if (n) s.Update(m, n);
+        s.Final(digest);
+        sc::Reduce64(h, digest);
+    }
+    Point sum;
+    DoubleScalarMultPublic(sum, sig + 32, A, h, k);   // [S] B + [h] (-A)
+    std::uint8_t enc[32];
+    Encode(enc, sum);
+    return ConstantTimeEqual(enc, sig, 32);
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: engine/src/Crypto/Random.cpp =====
+
+// okay::crypto::RandomBytes: the operating system's CSPRNG, nothing of our own.
+// UNREVIEWED (see Crypto.hpp).
+#include <okay/Crypto/Crypto.hpp>
+
+#include <cstdio>
+#include <cstdlib>
+
+#if defined(_WIN32)
+  #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+  #define NOMINMAX
+  #endif
+  #include <windows.h>
+  #include <bcrypt.h>
+#elif defined(__linux__)
+  #include <errno.h>
+  #include <sys/random.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__EMSCRIPTEN__)
+  #include <unistd.h>
+#else
+  #include <cstdio>
+#endif
+
+namespace okay::crypto {
+
+static void Die(const char* why) {
+    std::fprintf(stderr, "okay::crypto: no OS randomness (%s); aborting\n", why);
+    std::abort();
+}
+
+void RandomBytes(void* out, std::size_t n) {
+    std::uint8_t* p = static_cast<std::uint8_t*>(out);
+#if defined(_WIN32)
+    while (n > 0) {
+        const ULONG chunk = n > 0x40000000u ? 0x40000000u : static_cast<ULONG>(n);
+        if (BCryptGenRandom(nullptr, p, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) Die("BCryptGenRandom");
+        p += chunk; n -= chunk;
+    }
+#elif defined(__linux__)
+    while (n > 0) {
+        const ssize_t r = getrandom(p, n > 256 ? 256 : n, 0);
+        if (r < 0) { if (errno == EINTR) continue; Die("getrandom"); }
+        p += r; n -= static_cast<std::size_t>(r);
+    }
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__EMSCRIPTEN__)
+    while (n > 0) {
+        const std::size_t chunk = n > 256 ? 256 : n;      // getentropy's limit
+        if (getentropy(p, chunk) != 0) Die("getentropy");
+        p += chunk; n -= chunk;
+    }
+#else
+    std::FILE* f = std::fopen("/dev/urandom", "rb");
+    if (!f) Die("/dev/urandom");
+    if (std::fread(p, 1, n, f) != n) Die("/dev/urandom read");
+    std::fclose(f);
+#endif
+}
+
+} // namespace okay::crypto
+
+
+===== FILE: shared/AntiCheatCrypto.hpp =====
+
+#pragma once
+// Anti-cheat crypto: ed25519 signatures (and the SHA-512 they are built on) for the build's integrity manifest
+// (AntiCheatIntegrity.hpp), the signed versions.json (UpdateSignature.hpp) and the host identity (Net/NetworkManager).
+//
+// This header holds NO crypto code of its own any more. It is a thin wrapper:
+//   * with libsodium in the build (OKAY_HAVE_SODIUM, the engine's OKAY_USE_SODIUM option) Ed25519 goes to libsodium
+//     (the preferred path wherever it is built), unless -DOKAY_OWN_CRYPTO=ON asks for our own;
+//   * everywhere else (no libsodium, or OKAY_OWN_CRYPTO), and for SHA-512 always, it goes to okay::crypto
+//     (engine/include/okay/Crypto/Crypto.hpp, the static library okay_crypto), which is our own code written from RFC 8032
+//     and FIPS 180-4. okay::crypto has NOT had its outside review yet (CLAUDE.md rule 18, docs/crypto_review_package.md).
+// It used to hold a C++ port of public-domain TweetNaCl as the fallback; the owner approved replacing it. Before it was
+// deleted, tests/test_anticheat_golden.cpp recorded what it answered on a fixed set of inputs, and that recorded answer is
+// still checked on every build. The extra checks libsodium 1.0.18's crypto_sign_verify_detached makes (S < L, R not
+// small-order, public key canonical and not small-order) are made by okay::crypto's Ed25519Verify and Ed25519IsWeakKey, and
+// are pinned in tests/test_anticheat_integrity.cpp (the identity-key forgery). Not claimed to match libsodium on every
+// malformed input beyond those checks (crypto_difftest compares the two on millions of inputs).
+// Signing never needs randomness (ed25519 is deterministic), and no key is ever made here: the owner makes them
+// (docs/anticheat.md).
+//
+// Anything that includes this header and is not linked to the engine must link okay_crypto (target okay::crypto).
+//
+// SHA-256 for file hashes is the engine's (okayofficial::FileSha256), so the manifest and the official game's updater hash
+// files the same way.
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <initializer_list>
+#include <string>
+#include <utility>
+#include <vector>
+
+#ifdef OKAY_HAVE_SODIUM
+#include <sodium.h>
+#endif
+#include <okay/Crypto/Crypto.hpp>
+
+namespace okayac {
+
+// ---- Hex -------------------------------------------------------------------
+inline std::string ToHex(const std::uint8_t* d, std::size_t n) {
+    static const char* hx = "0123456789abcdef";
+    std::string o;
+    o.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) { o += hx[d[i] >> 4]; o += hx[d[i] & 15]; }
+    return o;
+}
+
+// Strict: an even count of hex digits, with surrounding whitespace (a key file's
+// trailing newline) ignored and none inside.
+inline bool FromHex(const std::string& s, std::vector<std::uint8_t>& out) {
+    const std::size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) { out.clear(); return false; }
+    const std::size_t b = s.find_last_not_of(" \t\r\n");
+    const std::string t = s.substr(a, b - a + 1);
+    if (t.size() % 2) return false;
+    auto nib = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::vector<std::uint8_t> v(t.size() / 2);
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const int h = nib(t[2 * i]), l = nib(t[2 * i + 1]);
+        if (h < 0 || l < 0) return false;
+        v[i] = (std::uint8_t)(h << 4 | l);
+    }
+    out = std::move(v);
+    return true;
+}
+
+// Zero key material (not optimised away).
+inline void Wipe(void* p, std::size_t n) {
+#ifdef OKAY_HAVE_SODIUM
+    sodium_memzero(p, n);
+#else
+    volatile std::uint8_t* v = static_cast<volatile std::uint8_t*>(p);
+    while (n--) *v++ = 0;
+#endif
+}
+
+// ---- SHA-512 (FIPS 180-4), from okay::crypto -----------------------------------
+namespace sha512 {
+using Digest = std::array<std::uint8_t, 64>;
+
+// One-shot over several pieces (ed25519 hashes R || A || M without copying M).
+inline Digest Hash(std::initializer_list<std::pair<const std::uint8_t*, std::size_t>> parts) {
+    okay::crypto::Sha512 h;
+    for (const auto& part : parts) if (part.second) h.Update(part.first, part.second);
+    Digest d{};
+    h.Final(d.data());
+    return d;
+}
+inline Digest Hash(const std::uint8_t* p, std::size_t n) { return Hash({{p, n}}); }
+} // namespace sha512
+
+// ---- ed25519 -----------------------------------------------------------------
+namespace ed25519 {
+using PublicKey = std::array<std::uint8_t, 32>;
+using Seed = std::array<std::uint8_t, 32>;        // the private key (RFC 8032's 32-byte secret)
+using Signature = std::array<std::uint8_t, 64>;
+
+// True when Ed25519 goes to libsodium (it is built in, initialised, and OKAY_OWN_CRYPTO did not ask for our own).
+#ifdef OKAY_HAVE_SODIUM
+inline bool SodiumReady() {
+    static const bool ok = sodium_init() >= 0;
+    return ok;
+}
+#endif
+inline bool UseSodium() {
+#if defined(OKAY_HAVE_SODIUM) && !defined(OKAY_OWN_CRYPTO)
+    return SodiumReady();
+#else
+    return false;
+#endif
+}
+
+// The backend every caller uses.
+inline const char* Backend() { return UseSodium() ? "libsodium" : "okay::crypto"; }
+
+// A public key no signature should be accepted for (non-canonical encoding or a small-order point): the identity key
+// "verifies" R = identity, S = 0 for any message. Verify refuses these too; the key-list parser uses this. The answer
+// always comes from okay::crypto (libsodium has no such call; its verify makes the same refusals).
+inline bool IsWeakKey(const PublicKey& pk) { return okay::crypto::Ed25519IsWeakKey(pk.data()); }
+
+inline PublicKey PublicKeyFromSeed(const Seed& seed) {
+    PublicKey pk{};
+#ifdef OKAY_HAVE_SODIUM
+    if (UseSodium()) {
+        unsigned char sk[crypto_sign_SECRETKEYBYTES];
+        crypto_sign_seed_keypair(pk.data(), sk, seed.data());
+        Wipe(sk, sizeof(sk));
+        return pk;
+    }
+#endif
+    okay::crypto::Ed25519PublicFromSeed(pk.data(), seed.data());
+    return pk;
+}
+
+inline Signature Sign(const std::uint8_t* m, std::size_t n, const Seed& seed) {
+    Signature sig{};
+#ifdef OKAY_HAVE_SODIUM
+    if (UseSodium()) {
+        PublicKey pk{};
+        unsigned char sk[crypto_sign_SECRETKEYBYTES];
+        crypto_sign_seed_keypair(pk.data(), sk, seed.data());
+        crypto_sign_detached(sig.data(), nullptr, m, (unsigned long long)n, sk);
+        Wipe(sk, sizeof(sk));
+        return sig;
+    }
+#endif
+    std::uint8_t pk[32], sk[64];
+    okay::crypto::Ed25519SeedKeypair(pk, sk, seed.data());
+    okay::crypto::Ed25519Sign(sig.data(), m, n, sk);
+    okay::crypto::MemZero(sk, sizeof(sk));
+    return sig;
+}
+
+inline bool Verify(const std::uint8_t* m, std::size_t n, const Signature& sig, const PublicKey& pk) {
+#ifdef OKAY_HAVE_SODIUM
+    if (UseSodium()) return crypto_sign_verify_detached(sig.data(), m, (unsigned long long)n, pk.data()) == 0;
+#endif
+    return okay::crypto::Ed25519Verify(sig.data(), m, n, pk.data());
+}
+
+inline Signature Sign(const std::string& m, const Seed& seed) {
+    return Sign(reinterpret_cast<const std::uint8_t*>(m.data()), m.size(), seed);
+}
+inline bool Verify(const std::string& m, const Signature& sig, const PublicKey& pk) {
+    return Verify(reinterpret_cast<const std::uint8_t*>(m.data()), m.size(), sig, pk);
+}
+} // namespace ed25519
+} // namespace okayac
+
+
+===== FILE: engine/include/okay/Net/NetCrypto.hpp =====
+
+#pragma once
+// The seam between the network layer and a crypto backend: the only place that
+// knows whether libsodium or okay::crypto (our own, UNREVIEWED code, see
+// okay/Crypto/Crypto.hpp) does the work. SecureChannel, SessionTicket and the relay
+// call okay::net::netcrypto and nothing else.
+//
+//   OKAY_OWN_CRYPTO  -> okay::crypto   (CMake -DOKAY_OWN_CRYPTO=ON; never the default)
+//   OKAY_HAVE_SODIUM -> libsodium      (the default when it is found)
+//   neither          -> no encryption  (OKAY_NET_CRYPTO undefined)
+#if defined(OKAY_OWN_CRYPTO) && !defined(OKAY_NET_CRYPTO)
+#define OKAY_NET_CRYPTO
+#endif
+#if defined(OKAY_HAVE_SODIUM) && !defined(OKAY_NET_CRYPTO)
+#define OKAY_NET_CRYPTO
+#endif
+
+#ifdef OKAY_NET_CRYPTO
+#include <cstddef>
+#include <cstdint>
+#ifdef OKAY_OWN_CRYPTO
+#include <okay/Crypto/Crypto.hpp>
+#else
+#include <sodium.h>
+#endif
+
+namespace okay::net::netcrypto {
+
+constexpr std::size_t kKxPublicBytes = 32, kKxSecretBytes = 32, kKxSessionBytes = 32;
+constexpr std::size_t kNonceBytes = 24, kTagBytes = 16;
+constexpr std::size_t kSignPublicBytes = 32, kSignSecretBytes = 64, kSignBytes = 64, kSha256Bytes = 32;
+
+inline const char* Name() {
+#ifdef OKAY_OWN_CRYPTO
+    return "okay::crypto (own, unreviewed)";
+#else
+    return "libsodium";
+#endif
+}
+
+/// One-time init (true when the backend is usable).
+inline bool Init() {
+#ifdef OKAY_OWN_CRYPTO
+    return true;
+#else
+    static const int s = sodium_init();   // 0 ok, 1 already initialised, -1 failed
+    return s >= 0;
+#endif
+}
+
+inline void Random(void* out, std::size_t n) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::RandomBytes(out, n);
+#else
+    randombytes_buf(out, n);
+#endif
+}
+
+inline void KxKeypair(std::uint8_t* pk, std::uint8_t* sk) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::KxKeypair(pk, sk);
+#else
+    crypto_kx_keypair(pk, sk);
+#endif
+}
+inline bool KxServer(std::uint8_t* rx, std::uint8_t* tx, const std::uint8_t* pk, const std::uint8_t* sk,
+                     const std::uint8_t* peerPk) {
+#ifdef OKAY_OWN_CRYPTO
+    return crypto::KxServerSessionKeys(rx, tx, pk, sk, peerPk);
+#else
+    return crypto_kx_server_session_keys(rx, tx, pk, sk, peerPk) == 0;
+#endif
+}
+inline bool KxClient(std::uint8_t* rx, std::uint8_t* tx, const std::uint8_t* pk, const std::uint8_t* sk,
+                     const std::uint8_t* peerPk) {
+#ifdef OKAY_OWN_CRYPTO
+    return crypto::KxClientSessionKeys(rx, tx, pk, sk, peerPk);
+#else
+    return crypto_kx_client_session_keys(rx, tx, pk, sk, peerPk) == 0;
+#endif
+}
+
+/// XChaCha20-Poly1305 (IETF). Seal writes n + 16 bytes to out; Open takes cn (with the tag)
+/// and writes cn - 16 bytes, returning false when authentication fails.
+inline void AeadSeal(std::uint8_t* out, const std::uint8_t* in, std::size_t n, const std::uint8_t* ad,
+                     std::size_t adLen, const std::uint8_t* nonce, const std::uint8_t* key) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::XChaCha20Poly1305Seal(out, in, n, ad, adLen, nonce, key);
+#else
+    unsigned long long clen = 0;
+    crypto_aead_xchacha20poly1305_ietf_encrypt(out, &clen, in, n, ad, adLen, nullptr, nonce, key);
+#endif
+}
+inline bool AeadOpen(std::uint8_t* out, const std::uint8_t* in, std::size_t cn, const std::uint8_t* ad,
+                     std::size_t adLen, const std::uint8_t* nonce, const std::uint8_t* key) {
+#ifdef OKAY_OWN_CRYPTO
+    return crypto::XChaCha20Poly1305Open(out, in, cn, ad, adLen, nonce, key);
+#else
+    unsigned long long mlen = 0;
+    return crypto_aead_xchacha20poly1305_ietf_decrypt(out, &mlen, nullptr, in, cn, ad, adLen, nonce, key) == 0;
+#endif
+}
+
+inline bool SignKeypair(std::uint8_t* pk, std::uint8_t* sk) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::Ed25519Keypair(pk, sk);
+    return true;
+#else
+    return crypto_sign_keypair(pk, sk) == 0;
+#endif
+}
+inline void Sign(std::uint8_t* sig, const std::uint8_t* m, std::size_t n, const std::uint8_t* sk) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::Ed25519Sign(sig, m, n, sk);
+#else
+    crypto_sign_detached(sig, nullptr, m, n, sk);
+#endif
+}
+inline bool Verify(const std::uint8_t* sig, const std::uint8_t* m, std::size_t n, const std::uint8_t* pk) {
+#ifdef OKAY_OWN_CRYPTO
+    return crypto::Ed25519Verify(sig, m, n, pk);
+#else
+    return crypto_sign_verify_detached(sig, m, n, pk) == 0;
+#endif
+}
+inline void Sha256(std::uint8_t* out, const std::uint8_t* m, std::size_t n) {
+#ifdef OKAY_OWN_CRYPTO
+    crypto::Sha256Hash(out, m, n);
+#else
+    crypto_hash_sha256(out, m, n);
+#endif
+}
+
+} // namespace okay::net::netcrypto
+#endif // OKAY_NET_CRYPTO
+
+
+===== FILE: engine/include/okay/Net/SecureChannel.hpp =====
+
+#pragma once
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <okay/Net/NetCrypto.hpp>   // OKAY_NET_CRYPTO: libsodium, or (opt-in) okay::crypto
+
+namespace okay::net {
+
+/// Authenticated encryption for the UDP transport, built on libsodium (default) or,
+/// when the engine is configured with OKAY_OWN_CRYPTO=ON, on our own UNREVIEWED
+/// okay::crypto (same wire format either way: a sealed message from one opens on the other).
+///
+/// Each peer generates an X25519 key pair (PublicKey()) and exchanges public keys
+/// during the join handshake. From the two public keys plus its own secret key,
+/// each side derives a pair of symmetric session keys (one for each direction) with
+/// crypto_kx — so traffic in each direction has its own key. Messages are then
+/// sealed with XChaCha20-Poly1305 (crypto_aead): a random 24-byte nonce is prepended
+/// to the ciphertext, and the Poly1305 tag authenticates it, so any tampering or
+/// forgery is detected and rejected on open.
+///
+/// Replay protection (opt-in, SetSequenced): each sealed message then carries an
+/// 8-byte sequence number inside the ciphertext, and Open refuses any number it
+/// has already accepted or that is more than 64 behind the newest — so a captured
+/// packet can't be played again. Both ends must turn it on (the anti-cheat
+/// server does, through its Welcome); off, the format is exactly as before.
+///
+/// Associated data (opt-in, SetAssociatedData): bytes both ends know and that
+/// travel outside the ciphertext (the envelope tag, the protocol version) are
+/// authenticated with every message, so a packet sealed under a different
+/// version or header doesn't open. Empty (the default) is the old format.
+///
+/// When the engine is built with no crypto backend (OKAY_NET_CRYPTO undefined), this
+/// compiles to a stub: Available() is false and the seal/open calls fail, so the
+/// transport simply runs unencrypted.
+class SecureChannel {
+public:
+    static constexpr std::size_t kPublicKeyBytes = 32;
+
+    /// True when the engine was built with libsodium, so encryption is possible.
+    static bool Available() {
+#ifdef OKAY_NET_CRYPTO
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    /// One-time libsodium init (safe to call repeatedly; returns false if unavailable).
+    static bool Init() {
+#ifdef OKAY_NET_CRYPTO
+        static const bool s = netcrypto::Init();
+        return s;
+#else
+        return false;
+#endif
+    }
+
+    /// Generate this peer's ephemeral key pair. Call once before the handshake.
+    void GenerateKeys() {
+#ifdef OKAY_NET_CRYPTO
+        Init();
+        netcrypto::KxKeypair(m_pk, m_sk);
+        m_haveKeys = true;
+#endif
+    }
+
+    bool HasKeys() const { return m_haveKeys; }
+
+    /// This peer's public key to send to the other side (kPublicKeyBytes bytes).
+    std::vector<std::uint8_t> PublicKey() const {
+#ifdef OKAY_NET_CRYPTO
+        return std::vector<std::uint8_t>(m_pk, m_pk + netcrypto::kKxPublicBytes);
+#else
+        return {};
+#endif
+    }
+
+    /// Derive the session keys from the peer's public key. `asServer` must differ on
+    /// the two ends (the listening peer is the server). Returns false on failure
+    /// (no libsodium, no local keys, or a malformed/short peer key).
+    bool Establish(const std::vector<std::uint8_t>& peerPublicKey, bool asServer) {
+#ifdef OKAY_NET_CRYPTO
+        if (!m_haveKeys || peerPublicKey.size() != netcrypto::kKxPublicBytes) return false;
+        m_ready = asServer
+            ? netcrypto::KxServer(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data())
+            : netcrypto::KxClient(m_rx, m_tx, m_pk, m_sk, peerPublicKey.data());
+        return m_ready;
+#else
+        (void)peerPublicKey; (void)asServer; return false;
+#endif
+    }
+
+    /// True once session keys are derived and seal/open will work.
+    bool Ready() const { return m_ready; }
+
+    /// Number messages and refuse replays (see the class comment).
+    void SetSequenced(bool on) { m_sequenced = on; }
+    bool Sequenced() const { return m_sequenced; }
+    /// Messages Open refused as replays / too old.
+    std::uint64_t Replays() const { return m_replays; }
+    /// Authenticate these bytes with every message (see the class comment).
+    void SetAssociatedData(std::vector<std::uint8_t> ad) { m_ad = std::move(ad); }
+    const std::vector<std::uint8_t>& AssociatedData() const { return m_ad; }
+
+    /// Encrypt+authenticate `plain` for the peer. Output is nonce || ciphertext.
+    /// Returns false (leaving `out` empty) if the channel isn't ready.
+    bool Seal(const std::uint8_t* plain, std::size_t len, std::vector<std::uint8_t>& out) const {
+#ifdef OKAY_NET_CRYPTO
+        if (!m_ready) return false;
+        const std::size_t N = netcrypto::kNonceBytes;
+        std::vector<std::uint8_t> numbered;
+        if (m_sequenced) {   // seq (little-endian u64) || plain, all inside the ciphertext
+            const std::uint64_t seq = ++m_txSeq;
+            numbered.resize(8 + len);
+            for (int i = 0; i < 8; ++i) numbered[i] = static_cast<std::uint8_t>(seq >> (8 * i));
+            if (len) std::memcpy(numbered.data() + 8, plain, len);
+            plain = numbered.data(); len = numbered.size();
+        }
+        out.resize(N + len + netcrypto::kTagBytes);
+        netcrypto::Random(out.data(), N);                // fresh random nonce up front
+        netcrypto::AeadSeal(out.data() + N, plain, len, m_ad.empty() ? nullptr : m_ad.data(),
+                            m_ad.size(), out.data(), m_tx);
+        return true;
+#else
+        (void)plain; (void)len; (void)out; return false;
+#endif
+    }
+
+    /// Verify+decrypt a nonce||ciphertext blob from the peer into `out`. Returns false
+    /// if the channel isn't ready, the blob is too short, or authentication fails
+    /// (tampered/forged) — in which case the data must be dropped.
+    bool Open(const std::uint8_t* data, std::size_t len, std::vector<std::uint8_t>& out) const {
+#ifdef OKAY_NET_CRYPTO
+        if (!m_ready) return false;
+        const std::size_t N = netcrypto::kNonceBytes;
+        const std::size_t A = netcrypto::kTagBytes;
+        if (len < N + A) return false;
+        out.resize(len - N - A);
+        if (!netcrypto::AeadOpen(out.data(), data + N, len - N, m_ad.empty() ? nullptr : m_ad.data(),
+                                 m_ad.size(), data, m_rx))
+            return false;                                // authentication failed -> reject
+        if (m_sequenced) {
+            if (out.size() < 8) return false;
+            std::uint64_t seq = 0;
+            for (int i = 0; i < 8; ++i) seq |= static_cast<std::uint64_t>(out[i]) << (8 * i);
+            if (!AcceptSeq(seq)) { ++m_replays; out.clear(); return false; }
+            out.erase(out.begin(), out.begin() + 8);
+        }
+        return true;
+#else
+        (void)data; (void)len; (void)out; return false;
+#endif
+    }
+
+private:
+    // Sliding window over the last 64 sequence numbers: bit i of m_window = we
+    // accepted (m_rxMax - i). Seq 0 is never sent.
+    bool AcceptSeq(std::uint64_t seq) const {
+        if (seq == 0) return false;
+        if (seq > m_rxMax) {
+            const std::uint64_t shift = seq - m_rxMax;
+            m_window = shift >= 64 ? 0 : (m_window << shift);
+            m_window |= 1;
+            m_rxMax = seq;
+            return true;
+        }
+        const std::uint64_t back = m_rxMax - seq;
+        if (back >= 64) return false;                    // too old to tell: refuse
+        const std::uint64_t bit = std::uint64_t(1) << back;
+        if (m_window & bit) return false;                // seen it: a replay
+        m_window |= bit;
+        return true;
+    }
+    bool m_sequenced = false;
+    std::vector<std::uint8_t> m_ad;
+    mutable std::uint64_t m_txSeq = 0;
+    mutable std::uint64_t m_rxMax = 0, m_window = 0, m_replays = 0;
+#ifdef OKAY_NET_CRYPTO
+    unsigned char m_pk[netcrypto::kKxPublicBytes];
+    unsigned char m_sk[netcrypto::kKxSecretBytes];
+    unsigned char m_rx[netcrypto::kKxSessionBytes];   // key for data we receive
+    unsigned char m_tx[netcrypto::kKxSessionBytes];   // key for data we send
+#endif
+    bool m_haveKeys = false;   // (never set without libsodium)
+    bool m_ready = false;
+};
+
+} // namespace okay::net
+
+
+===== FILE: shared/AntiCheatChecks.hpp (lines 170-195, HMAC-SHA256) =====
+
+    std::uint64_t clientMs = 0;
+    std::string tag;   // hex HMAC-SHA256
+};
+
+namespace detail {
+inline std::array<std::uint8_t, 32> HmacSha256(const std::string& key, const std::string& msg) {
+    using okay::account::detail::Sha256;
+    std::array<std::uint8_t, 64> k{};
+    if (key.size() > 64) {
+        Sha256 h; h.Update(key);
+        const auto d = h.Digest();
+        std::copy(d.begin(), d.end(), k.begin());
+    } else {
+        std::copy(key.begin(), key.end(), k.begin());
+    }
+    std::array<std::uint8_t, 64> ipad{}, opad{};
+    for (int i = 0; i < 64; ++i) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5c; }
+    Sha256 in; in.Update(ipad.data(), ipad.size()); in.Update(msg);
+    const auto inner = in.Digest();
+    Sha256 out; out.Update(opad.data(), opad.size()); out.Update(inner.data(), inner.size());
+    Wipe(k.data(), k.size());
+    return out.Digest();
+}
+inline std::string ClockTag(const std::string& key, std::uint64_t nonce, std::uint32_t seq, std::uint64_t clientMs) {
+    const auto d = HmacSha256(key, "okayac-clock|" + std::to_string(nonce) + "|" + std::to_string(seq) + "|" + std::to_string(clientMs));
+    return ToHex(d.data(), d.size());

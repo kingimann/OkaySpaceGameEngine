@@ -26,6 +26,10 @@ nothing is checked and nothing is sent differently from before.
 - **P2 (identity and transport):** clients must encrypt, every packet is
   numbered and replays are refused, and a joining player can be required to
   hold a **session ticket** signed by your ticket service.
+- **Detection engine (opt-in, server side):** behavioural detectors for movement,
+  combat, economy and the network feed a per-player risk score with graduated
+  responses and exportable evidence. See
+  [Detection engine](#detection-engine-opt-in-server-side) below.
 - **P3 (client integrity, opt-in):** a signed manifest of the shipped files,
   checked by the launcher and player before a game starts, plus Windows
   debugger / loaded-module / clock-drift checks. See
@@ -44,6 +48,7 @@ maxSyncSpeed 8                      # u/s; 0 = no check
 maxSyncVarsPerSecond 30             # 0 = unlimited
 kickAfterViolations 5               # refusals within a minute; 0 = never kick
 ownerOnlySyncVars true              # "<netId>.<name>" keys are the owner's
+detect.enabled true                 # the detection engine (see "Detection engine" below); off without it
 # P2
 requireEncryption true              # only encrypted clients; numbered packets
 ticketKey <base64url ed25519 public key>
@@ -393,6 +398,259 @@ check them.
     forge one.
   - In C++, `NetworkManager::SetAntiCheatKickHandler` gets every anti-cheat
     kick with the player's account and last refusals.
+
+## Detection engine (opt-in, server side)
+
+The checks above refuse a message that is **impossible** (not yours, not allowed, too fast). The detection engine
+is for the cheats that send **possible-looking** messages: a client that moves 30% faster than it should, never
+misses, fires a bit faster than the weapon, or claims a bit of currency it never earned. It watches what each
+player *claims* over time, compares it with what the server knows, and keeps a **risk score** per player. It is
+off unless `detect.enabled true`, and every game-specific detector (speed, flight, weapons, abilities, economy)
+stays off until you give it the number it needs.
+
+> **What it can and cannot do.** Anything running on the player's machine can be patched out, so none of this
+> trusts the client. Every detector uses only what the server saw, measured with the server's clock and the
+> server's own physics. That makes cheating *expensive and slow to hide*, not impossible: a cheat tuned to stay
+> inside the tolerances (see [Limits](#detection-limits)) is not caught. The engine also cannot see anything the
+> server never receives (a read-only wall-hack that only shows the player enemies is invisible to a server).
+
+### How it works
+
+1. **Detectors** turn what clients send into *evidence*: a record with the kind of cheat, the measured value, the
+   threshold it broke, the server tick, a short ring of the player's recent states (position, view, ping) and a
+   one-line explanation.
+2. Evidence adds to the player's **risk**: the kind's weight x how far past the threshold it was (capped at
+   `severityCap`). Risk **decays** with a half-life (`riskHalfLife`, 90 s), so one odd moment fades and steady
+   cheating adds up. One detector scores at most once per `evidenceInterval` (0.5 s), and the *soft* detectors
+   (the ones that can be tripped by a honest glitch: burst speed, through-wall shot, fire rate, no-clip, jump rate,
+   cooldown, message rate, ...) need `confirmations` hits (2) within `confirmWindow` (3 s) before they score.
+3. Risk crosses **rungs** of a response ladder. Each rung is announced once, in order (`onDetectResponse`):
+
+   | rung | default risk | what the server does |
+   |---|---|---|
+   | `log` | 10 | the evidence is kept and logged |
+   | `flag` | 25 | flagged for review (use `onDetectResponse` / the kick handler to file it) |
+   | `rate_limit` | 40 | the player's message budget is halved (`rateLimitFactor`); the excess is dropped |
+   | `shadow_restrict` | 60 | its hit claims do no damage and the player is not told |
+   | `kick` | 90 | kicked (`"anti-cheat"`), with the evidence bundle attached to the kick |
+   | `ban_request` | 140 | the kick handler gets `banRequested = true`; **nothing is banned automatically** |
+
+   Rungs below `kick` are released when risk falls below `releaseRatio` (0.6) of their threshold; `kick` and
+   `ban_request` are latched. A rung set to 0 is off. A player who leaves and rejoins as the same account keeps
+   its risk for five minutes (like violation counts).
+4. **Evidence export**: `detector.Bundle(peer, options, account, address)` builds an `EvidenceBundle`
+   ([below](#evidence-bundles)). The kick handler's `AntiCheatKick` already carries `risk`, `banRequested` and the
+   bundle as JSON in `evidence`.
+
+Everything takes the time as an argument (`double`, seconds), so the same input always gives the same result and
+tests run in fake time. In a running server the time is the anti-cheat's own clock (`anticheat.Clock()`).
+
+### What each detector checks
+
+| detector (`detect.weight.<name>`) | checks | needs |
+|---|---|---|
+| `speed_window` | horizontal path length over 0.5 s / 2 s / 6 s windows against `maxSpeed` x a tolerance that shrinks with the window (1.25 / 1.15 / 1.08), plus ping slack | `maxSpeed` (or `maxSyncSpeed`) |
+| `speed_burst` | a travel budget that refills at `maxSpeed x burstTolerance` and holds `burstBankSeconds` of travel, so packets bunched by a lag spike are paid for by the silence before them | `maxSpeed` |
+| `teleport` | a jump further than the budget plus `teleportDistance` | `maxSpeed` |
+| `fly` | higher above the ground than a jump (+ step height), rising longer than a jump lasts, or hovering past the apex without falling (gravity violation) | `gravity`, `maxJumpHeight`, a ground query for the hover / height tests |
+| `wall_climb` | the same height test with almost no sideways movement; without a ground query, a sustained climb steeper than `slopeLimit` | as `fly` |
+| `noclip` | the step between two samples crosses a static solid (a server linecast against colliders that are not dynamic bodies or networked objects) | scene colliders (wired automatically) |
+| `input_mismatch` | moving above `ghostSpeedFraction` x `maxSpeed` for `ghostWindow` seconds while the player's input has been idle (needs fresh input: `staleInputSeconds`) | input commands (authoritative movement) or `OnInput` |
+| `jump_rate` | more than `maxJumpsPerSecond` jump presses in a second | jump events |
+| `fire_rate` | a token bucket per weapon: refills at `shotsPerSecond x fireRateTolerance`, holds `fireBankSeconds` | `detect.weapon` |
+| `accuracy`, `headshot` | hit ratio over the last `accuracyWindow` shots (at least `accuracyMinShots`) above `maxAccuracy`; headshot ratio over the hits (at least `headshotMinHits`) above `maxHeadshotRatio` | shot events (headshot flag comes from game code) |
+| `aim_snap` | a view change of `aimSnapDegrees` at more than `aimSnapSpeed` deg/s in one sample, followed within `aimSnapShotWindow` by a hit, `aimSnapConfirm` times within `aimSnapWithin` s | aim samples (input commands or `OnAim`) |
+| `through_wall` | the server's own raycast found a solid between shooter and target | hit claims (automatic) |
+| `damage_exceeds` | damage above the weapon's `maxDamage` (x its head multiplier on a headshot) | `detect.weapon`, shot events |
+| `hit_out_of_reach` | the target was further off the shot's ray than lag compensation allows, shot origin not where the shooter is, or beyond the weapon's range | hit claims (automatic) |
+| `economy_delta` | a counter the client claims above what the server's grants explain (+ `economyTolerance`, + `maxGainPerSecond` x time if the key allows a rate) | `detect.economy`, `SetBalance` / `OnGrant` from game code; client SyncVar writes of those keys are checked automatically |
+| `duplicate_item` | one unique item id held twice (by two players, or twice by one), or the same item gained faster than `maxItemsPerSecond` | `OnItemAcquire` / `OnItemRelease` from game code |
+| `cooldown_bypass` | an ability used again before `cooldown x (1 - cooldownTolerance)` minus ping slack | `detect.ability`, `OnAbility` from game code |
+| `message_burst` | messages per second above `maxMessagesPerSecond` (with `messageBurstSeconds` of bank) | automatic |
+| `replay` | a sequence number seen before or older than `replayWindow`; the secure channel's replay refusals are fed in automatically | automatic (encrypted sessions) |
+| `malformed` | more than `maxMalformedPerMinute` unreadable messages, hit claims, positions or values | automatic |
+| `desync_force` | more than `maxCorrectionsPerMinute` position corrections for one player, or its tick going backwards | automatic (corrections) |
+| `time_manipulation` | its game clock off the server's by more than `clockDrift` for three `clockWindow`s in a row (ping jitter is allowed for) | `OnClock` (the existing `maxClockDrift` heartbeat still works as before) |
+| `violation` | every refusal the checks above make (forged transform / despawn / sync var / spawn id weigh double) | automatic |
+
+### False-positive protection
+
+- **Grace** for `graceTeleport` (1 s), `graceRespawn` (2 s, also clears the shot window and aim state), `graceMigration` (6 s, everyone) and `graceJoin` (3 s warm-up): positions are re-anchored and nothing is judged. Tell the engine from game code:
+  `NoteTeleport`, `NoteRespawn`, `NoteHostMigration`. The engine calls the first two itself for `ServerTeleport` and `NoteRespawn`.
+- **Lag spikes**: a silence longer than `lagSpikeGap` (0.35 s) followed by traffic grants `graceLag` (1 s) during which the speed windows, jump rate, fire rate, aim snaps, cooldowns and message rate are not judged, and the stale windows are cleared. The travel budget still applies (bunched packets are paid for by the silence). A player who needs more than `maxLagGracesPerMinute` (6) graces a minute stops getting them, so faking lag is not a free pass.
+- **High ping**: every window, bucket and clock check loosens by `pingTolerance` x the player's round trip (at most `maxToleratedRtt`, 0.4 s) plus 0.1 s. The anti-cheat feeds each peer's measured ping in.
+- **Stale input**: the ghost-movement check ignores input older than `staleInputSeconds`.
+- **Legitimate boosts**: `NoteSpeedBoost(peer, multiplier, until)`, `NoteExternalForce(peer, until)` (knockback, vehicles, moving platforms), `NoteFlightAllowed(peer, until)` (jetpack, glide, an admin's noclip).
+- **Confirmations**: soft detectors need several hits (above). A single flick shot, a single odd packet or one bumped wall does not score.
+- **Parameter-gated**: a detector whose threshold is 0 / unset does nothing, so a game never gets a check it did not configure.
+
+### Config keys
+
+All are `.okayac` lines starting `detect.` (and live in `AntiCheatSettings::detect`, so the Anti-Cheat Config
+component's inline rules and its `.okayac` file both carry them). Unknown keys and bad numbers fail the whole file
+(the server then refuses joins, as for every other bad key). Only values that differ from the default are written
+back by `ToText()`.
+
+```
+detect.enabled true                 # master switch; everything else is off without it
+# movement
+detect.maxSpeed 8                   # u/s; 0 = use maxSyncSpeed
+detect.speedTolerance 1.25          # also speedToleranceMid 1.15, speedToleranceLong 1.08
+detect.speedWindowShort 0.5         # also speedWindowMid 2, speedWindowLong 6 (seconds)
+detect.burstTolerance 1.5           # travel budget refill, x maxSpeed
+detect.burstBankSeconds 1.5         # how much lag-burst travel is allowed
+detect.teleportDistance 12
+detect.gravity 20                   # 0 = the vertical checks are off
+detect.maxJumpHeight 1.2            # 0 = the vertical checks are off
+detect.stepHeight 0.6               # also slopeLimit, groundEpsilon, hoverWindow
+detect.noclipMinStep 0.25           # also noclipMaxGap
+detect.ghostSpeedFraction 0.4       # also ghostWindow, staleInputSeconds
+detect.maxJumpsPerSecond 4
+# combat
+detect.weapon rifle 10 30 2 300     # name  shots/s  max damage  [head multiplier [max range]]
+detect.fireRateTolerance 1.2        # also fireBankSeconds
+detect.accuracyWindow 40            # also accuracyMinShots 30, maxAccuracy 0.95, headshotMinHits 20, maxHeadshotRatio 0.8
+detect.aimSnapDegrees 25            # also aimSnapSpeed, aimSnapShotWindow, aimSnapConfirm, aimSnapWithin
+# economy / state
+detect.economy coins 0              # counter key  [max gain per second]
+detect.ability dash 5               # name  cooldown seconds
+detect.cooldownTolerance 0.1        # also economyTolerance, maxItemsPerSecond
+# network
+detect.maxMessagesPerSecond 90      # also messageBurstSeconds, maxMalformedPerMinute, maxCorrectionsPerMinute, clockDrift, clockWindow, replayWindow
+# suspicion model
+detect.riskHalfLife 90              # also riskCap, evidenceInterval, severityCap, confirmations, confirmWindow
+detect.flagAt 25                    # also logAt, rateLimitAt, shadowAt, kickAt, banAt, releaseRatio, rateLimitFactor (0 = rung off)
+detect.weight.teleport 30           # risk per record, any detector name from the table
+detect.evidenceCap 48               # also snapshotSeconds, snapshotCap, evidenceSnapshots
+# false-positive protection
+detect.graceTeleport 1              # also graceRespawn, graceMigration, graceJoin, lagSpikeGap, graceLag, maxLagGracesPerMinute, pingTolerance, maxToleratedRtt
+```
+
+### Tuning
+
+- **Start in observe mode**: set `kickAt 0` and `banAt 0` (and `shadowAt 0`, `rateLimitAt 0`), run real matches, and read the evidence
+  (`onDetectResponse`, the kick handler, or `detector.Bundle`). Raise a threshold, or lower a weight, for any detector that scored an honest player.
+- **Set `maxSpeed` to your fastest legitimate speed** (sprint + slope + any permanent buff), not the walking speed. Use `NoteSpeedBoost` for
+  temporary ones. Too low gives false positives in every window; the tolerances are for network noise, not for game design.
+- **Weapons**: give each weapon its real `shots/s` (the fastest mode) and its `max damage`. An unlisted weapon is not rate- or damage-checked.
+- **Accuracy and headshot ratios are a statistic**: a skilled honest player reaches 75% and 35% in the simulation; the defaults (95% / 80%) leave
+  a wide margin. Lower them only for games with aim assist off and high skill ceilings, and never below what your best players do.
+- **Weights**: a rung's distance is `threshold / weight`. A weight of 30 (teleport, duplicate item) flags on the first record; a weight of 6
+  needs about four records. Impossible-by-construction facts (damage above the weapon max, a duplicated unique item, a clock at 1.5x) are heavy;
+  statistics (accuracy) are lighter and decay away.
+- **The older `maxSyncSpeed` check is stricter about lag than the engine**: it banks about half a second of travel per object. If your players see
+  one-second stalls, set `maxSyncSpeed 0` and give `detect.maxSpeed` instead (its budget holds `burstBankSeconds`, 1.5 s, and is paid for by
+  the silence before a burst). Hit-claim checks keep using 8 u/s as a target's top speed when `maxSyncSpeed` is 0.
+- **Server-authoritative movement** (`authoritativeMovement`): the server moves players itself, so the movement detectors have nothing to check; the
+  input commands still feed the input, aim and jump detectors, and the combat, economy and network detectors run as usual.
+- **Ground and static queries** are wired from the scene's Physics3D when the server starts. Games without 3D colliders can set
+  `anticheat.detector.hooks.groundAt` / `staticBlocked` themselves, or leave them empty (then only the steep-climb and speed checks run).
+- **Games that do not use +Y as up** or have no gravity (top-down): leave `gravity` / `maxJumpHeight` at 0 and the vertical checks stay off; the
+  speed checks use X and Z.
+
+### Evidence bundles
+
+`EvidenceBundle` (okay/Net/CheatDetect.hpp) is what a server attaches to a report. It is a single compact JSON object:
+
+```
+{"v":1,"peer":4,"risk":62.5,"action":"shadow_restrict","t":812.4,"trunc":false,"game":"demo","server":"arena-3",
+ "counts":{"speed_window":4,"teleport":1},"thr":{"maxSpeed":8,...},
+ "ev":[{"k":"teleport","t":801.2,"tick":2210,"val":91.4,"thr":24.5,"w":30,"d":"moved 91 units in 50 ms","s":[[t,x,y,z,yaw,pitch,rtt],...]}],
+ "snap":[[t,x,y,z,yaw,pitch,rtt],...]}
+```
+
+- **Size**: `ToJson(maxBytes)` drops snapshots first, then each record's snapshots, then the oldest records, until it fits, and sets `"trunc":true`.
+  The default for a kick is 12 KB.
+- **No secrets, no addresses**: the account id and network address are only copied when the game sets `includeAccount` / `includeAddress`
+  in `BundleOptions` (off by default; `AntiCheatKick.evidence` never has them, add them from the handler if your report policy allows).
+  Free text is ASCII-only, capped, and any run of 32+ token-like characters (a ticket, key, or id) is replaced by `[redacted]`.
+- **Parsing**: `EvidenceBundle::Parse` is built for hostile input: at most 256 KB, depth 8, 512 array items, 64 keys per object, strings of 512
+  characters, finite numbers only, a known version and known detector names; unknown keys are ignored and a failed parse leaves the output untouched.
+  It is fuzzed in `cheat_detect`.
+- The code that sends a report (backend, launcher) is separate; it only has to attach `bundle.ToJson(cap)`.
+
+### Simulation harness: what was measured
+
+**Part 1 - scripted players against the detection engine** (`anticheat_sim`; 20 Hz position samples over a modelled network of latency, jitter, loss and lag spikes, fake time, 40 seeded trials per profile; the numbers are produced by the test and are the same on every run). "Flagged" means risk reached the `flag` rung (25); "time" is seconds from the cheat starting to the flag, median and worst.
+
+| cheat | flagged | time to flag (median / worst) |
+|---|---|---|
+| speedhack 1.5x-3x | 40/40 | 3.88 s / 21.88 s |
+| speedhack: runs at 1.30x the top speed, all the time | 40/40 | 5.62 s / 6.33 s |
+| speedhack: runs at 1.15x the top speed, all the time | 40/40 | 6.98 s / 7.52 s |
+| teleport 40-250 units | 40/40 | 0.02 s / 0.03 s |
+| fly (climb + hover) | 40/40 | 1.08 s / 1.58 s |
+| fly (low hover, never falls) | 40/40 | 1.58 s / 1.63 s |
+| wall climb | 40/40 | 1.22 s / 1.63 s |
+| no-clip through walls | 40/40 | 4.92 s / 4.93 s |
+| ghost movement (no input) | 40/40 | 2.17 s / 2.23 s |
+| jump spam | 40/40 | 4.40 s / 4.57 s |
+| aimbot (100% hits, 95% headshots) | 40/40 | 13.50 s / 16.75 s |
+| aimbot snap-and-shoot | 40/40 | 6.13 s / 10.21 s |
+| rapid fire 15-40/s | 40/40 | 4.22 s / 6.11 s |
+| hits through walls | 40/40 | 1.37 s / 3.40 s |
+| damage hack (x6) | 40/40 | 0.19 s / 0.20 s |
+| packet replay | 40/40 | 2.59 s / 3.40 s |
+| forged ownership claims | 40/40 | 1.71 s / 2.09 s |
+| inventory duplication | 40/40 | 1.03 s / 1.03 s |
+| cooldown bypass | 40/40 | 9.09 s / 12.26 s |
+| message flood | 40/40 | 1.72 s / 1.73 s |
+| malformed packet fuzz | 40/40 | 4.77 s / 5.99 s |
+| time manipulation 1.3x-2x | 40/40 | 5.03 s / 7.53 s |
+
+| honest profile (150 s per run; the shooter 300 s, the last row 600 s over 10 runs) | wrongly flagged | scored anything | highest risk |
+|---|---|---|---|
+| typical mover | 0/40 | 0/40 | 0.0 |
+| 300 ms ping, 60 ms jitter | 0/40 | 0/40 | 0.0 |
+| 8% packet loss | 0/40 | 0/40 | 0.0 |
+| lag spikes 0.5-1.8 s | 0/40 | 0/40 | 0.0 |
+| respawns / teleports | 0/40 | 0/40 | 0.0 |
+| ramps, ledges, falls | 0/40 | 0/40 | 0.0 |
+| skilled shooter (75% acc, 35% head, flicks) | 0/40 | 1/40 | 16.5 |
+| trader (grants, items, cooldowns) | 0/40 | 0/40 | 0.0 |
+| chatty lobby (60 msg/s, bursts to 150/s) | 0/40 | 0/40 | 0.0 |
+| clock drift 3% + jitter | 0/40 | 0/40 | 0.0 |
+
+Overall in this run: 880/880 cheating runs flagged, 0/410 honest runs flagged. The one honest run that scored at all was a
+75%-accuracy shooter who landed 39 of 40 shots in one window (accuracy alone adds 14 risk and the flag rung is 25).
+
+**Part 2 - scripted clients against a real `NetworkManager` server** (in-process, loopback UDP; the server runs the real receive path, the
+physics queries use real colliders in its scene, and the clients are real `NetworkManager`s):
+
+| script | result |
+|---|---|
+| speed hack, 3x | detected: speed windows, burst budget, then kicked at risk 90; the kick carried a parseable evidence bundle |
+| teleport, +120 units four times | detected: teleport + speed evidence, flagged |
+| fly: climbs to 12 m and hovers | detected: fly / wall-climb evidence |
+| no-clip through a static collider (both faces) | detected: no-clip evidence from the server's linecast |
+| rapid fire, 50 claims/s against a 10/s rifle | detected: fire-rate evidence |
+| shots through a wall (server raycast) | detected: through-wall evidence, no damage applied |
+| forged transform / despawn of another player's object | detected: refused and scored (violations weigh double) |
+| ticket forgery (3 bad tokens) | refused at the join gate; the cheater never gets a peer |
+| inventory duplication: currency claimed from nowhere, one unique item held by two players | detected: economy and duplicate-item evidence |
+| malformed packet fuzz (400 random messages on 8 channels, plus bad hit claims) | the server survives, the honest client is untouched, the fuzzer is scored |
+| packet replay (sealed datagrams captured by a relay and re-sent) | detected: replay evidence from the secure channel's window |
+| honest: walks at 6 u/s, a half-second lag stall, a teleport | clean (no evidence, no violation) |
+| honest: 300 ms ping, 40 ms jitter, 4% loss, 1% duplicates (real-time network simulator) | clean |
+
+Not covered by Part 2 (engine-level only, Part 1): aim snaps, accuracy / headshot ratios, jump spam, ghost movement, cooldowns, message floods
+and time manipulation, because those need input commands, headshot flags or a game's own events that the in-process clients here do not produce.
+
+
+### Detection limits
+
+- A cheat that stays inside the tolerances is invisible: a 1.2x speed hack at `maxSpeed 8` walks at 9.6 u/s, which is inside the 6 s window's
+  tolerance plus slack. A perfect-looking triggerbot with human accuracy is not a number the server can separate from a good player.
+- Anything the server never receives cannot be seen: read-only wall-hacks, radar, ESP. A server that does not send hidden players (interest
+  culling, occlusion) is the only fix, and the engine's interest culling already does part of it.
+- The ground, no-clip and wall queries use the server's colliders. A level whose collision differs from what clients see gives false positives
+  and false negatives; test in your level.
+- Economy and cooldown checks only know what game code reports. If the server does not call `OnGrant` for a legitimate source, every gain from it
+  looks like duplication; if the rules do not name a counter, it is not watched.
+- Network-model limits: all the loss, jitter and spike numbers here are from a model and from loopback tests, not from real networks. Tune
+  with your players' real traffic (observe mode first).
+- A banned player can make a new account. Risk follows an account (or, for anonymous players, an address) for five minutes after it leaves; the
+  backend's ban list is what persists.
 
 ## P3: client integrity (opt-in)
 

@@ -144,6 +144,24 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Lean steps aside for a use or bag press (Q / E clash). ---
+    {
+        Scene s("Lean");
+        GameObject* player = s.CreateGameObject("Player");
+        player->tag = "Player";
+        player->AddComponent<Inventory>();
+        auto* ui = player->AddComponent<InventoryUI>();
+        ui->toggleKey = 'e';
+        Input::FeedKeys({});
+        CHECK(!LeanKeyTaken(&s, 'e'));             // not pressed: a held lean is fine
+        Input::FeedKeys({'e'});
+        CHECK(LeanKeyTaken(&s, 'e'));              // the press that opens the bag is not a lean
+        CHECK(!LeanKeyTaken(&s, 'q'));             // Q is nobody else's key
+        ui->toggleKey = 'b';
+        CHECK(!LeanKeyTaken(&s, 'e'));
+        Input::FeedKeys({});
+    }
+
     // --- A top-down player does not shoot through an open bag or a text field. ---
     {
         Scene s("TDFire");

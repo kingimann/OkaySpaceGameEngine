@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.868.0
+  Accounts and anti-cheat
+  - Joining a server that needs a session ticket now asks the account
+    service for one first. A banned answer is final and the game does not
+    join. Servers that do not need tickets are not affected.
+  - Account passwords stored on this computer use a much slower, safer hash.
+    Older accounts upgrade the next time you sign in.
+  - The update feed can be digitally signed. Until a signing key is set up
+    in a build, updates work exactly as before.
+  - Behind the scenes: ban and appeal records are kept in an audit log,
+    report and appeal spam is limited, and repeat evasion by device is
+    tracked on the server side.
+
+  Releases
+  - The key used to publish updates was replaced, so new versions are
+    published with their checksums again.
+
 v2.867.0
   Updates and releases
   - A new version is only offered to players after its files and checksums

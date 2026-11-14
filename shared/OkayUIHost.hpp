@@ -14,6 +14,7 @@
 // OkayUI draws on top of every ImGui window, so a hosted region must not be one that other ImGui windows or menus are
 // meant to cover (documented in docs/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
+#include "OkayUIIme.hpp"
 
 // SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
 // the apps run their own entry point, so keep that rename off wherever this header is the first to include SDL.
@@ -32,7 +33,11 @@ public:
     /// Feed every SDL event (the host may also pass it to ImGui; the collector never consumes events).
     void Feed(const SDL_Event& e) {
         switch (e.type) {
+        case SDL_TEXTEDITING:   // the input method's preedit: a state, empty when composing ends (the commit then arrives as SDL_TEXTINPUT)
+            m_ime.Preedit(e.edit.text, e.edit.start);
+            break;
         case SDL_TEXTINPUT: {
+            if (m_ime.Composing()) m_ime.Cancel();   // the committed text replaces the preedit
             const std::size_t have = std::strlen(m_text);
             const std::size_t add = std::strlen(e.text.text);
             if (have + add < sizeof(m_text)) std::memcpy(m_text + have, e.text.text, add + 1);   // a full buffer drops the rest
@@ -98,6 +103,7 @@ public:
         in.mouseX = mouseX; in.mouseY = mouseY;
         in.mouseDown = leftDown || m_leftTap; in.rightDown = rightDown || m_rightTap; in.middleDown = m_middleHeld || m_middleTap; in.blocked = blocked;
         in.wheel = m_wheel;
+        if (deliverKeys) m_ime.Apply(in);   // the preedit only reaches a text field that may have the keyboard
         if (deliverKeys) {
             std::memcpy(m_out, m_text, sizeof(m_out));
             in.text = m_out[0] ? m_out : nullptr;
@@ -115,6 +121,10 @@ public:
         m_back = m_del = m_left = m_right = m_home = m_end = m_enter = m_escape = m_selectAll = false;
         return in;
     }
+
+    /// The input method state (preedit, caret, candidate window): call m_ime.AfterFrame(sink) after the frame.
+    okayuihost::ImeState& Ime() { return m_ime; }
+    const okayuihost::ImeState& Ime() const { return m_ime; }
 
     /// The OkayUI key a SDL keycode stands for (KeyId_None for the keys OkayUI does not name).
     static int KeyIdOf(SDL_Keycode k) {
@@ -137,6 +147,7 @@ public:
     }
 
 private:
+    okayuihost::ImeState m_ime;
     bool  m_up = false, m_down = false, m_copy = false, m_cut = false, m_paste = false, m_ctrl = false;
     bool  m_keyHeld[OkayUI::KeyId_COUNT] = {}, m_keyTap[OkayUI::KeyId_COUNT] = {};
     char  m_text[64] = {0};
@@ -145,6 +156,17 @@ private:
     bool  m_leftTap = false, m_rightTap = false, m_middleTap = false, m_middleHeld = false;   // a button went down since the last frame (even if it is already up again); the middle one is also tracked while held
     bool  m_back = false, m_del = false, m_left = false, m_right = false, m_home = false, m_end = false;
     bool  m_enter = false, m_escape = false, m_selectAll = false, m_shift = false;
+};
+
+/// The real sink: SDL's text input calls (a window is needed for them to do anything; headless SDL accepts and ignores them).
+class SdlImeSink : public ImeSink {
+public:
+    void StartTextInput() override { SDL_StartTextInput(); }
+    void StopTextInput() override { SDL_StopTextInput(); }
+    void SetCandidateRect(float x, float y, float w, float h) override {
+        SDL_Rect r; r.x = (int)x; r.y = (int)y; r.w = (int)(w < 1.0f ? 1.0f : w); r.h = (int)(h < 1.0f ? 1.0f : h);
+        SDL_SetTextInputRect(&r);
+    }
 };
 
 /// The rectangle a hosted screen occupies inside an ImGui window, remembered from one frame to the next (the OkayUI frame

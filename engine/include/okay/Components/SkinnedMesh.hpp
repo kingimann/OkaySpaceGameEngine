@@ -254,11 +254,18 @@ public:
         Mat4 meshWorld = transform ? transform->LocalToWorldMatrix() : Mat4::Identity();
         Mat4 meshInv = meshWorld.Inverse();
         std::vector<Mat4>& sk = palette;
+        const std::size_t had = sk.size();
         sk.resize(joints.size());
         for (std::size_t j = 0; j < joints.size(); ++j) {
-            Mat4 jw = joints[j] ? joints[j]->LocalToWorldMatrix() : Mat4::Identity();
+            if (!joints[j]) {
+                // A bone that is missing or was deleted holds its last pose (or the bind
+                // pose if it never had one). Treating it as a bone at the world origin
+                // dragged every vertex it moves into bone space, far from the body.
+                if (j >= had) sk[j] = Mat4::Identity();
+                continue;
+            }
             Mat4 ib = j < inverseBind.size() ? inverseBind[j] : Mat4::Identity();
-            sk[j] = meshInv * jw * ib;
+            sk[j] = meshInv * joints[j]->LocalToWorldMatrix() * ib;
         }
         if (gpu) {
             // The vertex shader deforms; leave the bind pose in the renderer's mesh

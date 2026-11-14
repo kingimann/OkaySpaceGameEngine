@@ -58,5 +58,34 @@ int main() {
         CHECK(r > 40.0f);
     }
 
+    RUN_SUITE("a skin joint that is gone keeps its pose");
+    {
+        Scene s("skin");
+        GameObject* meshGo = s.CreateGameObject("Mesh");
+        auto* mr = meshGo->AddComponent<MeshRenderer>();
+        auto* sm = meshGo->AddComponent<SkinnedMesh>();
+        GameObject* joint = s.CreateGameObject("Joint");
+        joint->transform->localPosition = {3, 0, 0};
+        sm->bind.vertices = {Vec3{4, 0, 0}};
+        sm->bind.triangles = {0, 0, 0};
+        sm->joints = {joint->transform, nullptr};
+        sm->jointIdx = {{1, 0, 0, 0}};   // bound to the missing joint only
+        sm->jointWt = {{1, 0, 0, 0}};
+        sm->inverseBind = {Mat4::Translate({-3, 0, 0}), Mat4::Translate({-3, 0, 0})};
+        sm->Skin();
+        // A missing bone leaves the vertex in its bind pose (it used to be dragged into bone space).
+        CHECK_NEAR(mr->mesh.vertices[0].x, 4.0f, 1e-3f);
+        // A bone that vanishes after moving holds the last pose.
+        sm->jointIdx = {{0, 0, 0, 0}};
+        sm->joints = {joint->transform, nullptr};
+        joint->transform->localPosition = {3, 5, 0};
+        sm->Skin();
+        CHECK_NEAR(mr->mesh.vertices[0].y, 5.0f, 1e-3f);
+        sm->joints[0] = nullptr;
+        sm->Skin();
+        CHECK_NEAR(mr->mesh.vertices[0].x, 4.0f, 1e-3f);
+        CHECK_NEAR(mr->mesh.vertices[0].y, 5.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

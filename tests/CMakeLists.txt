@@ -3154,3 +3154,8 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Virtual geometry phase 1 (docs/foundations/virtual_geometry.md): AutoLod chain generator
+add_executable(test_auto_lod test_auto_lod.cpp)
+target_link_libraries(test_auto_lod PRIVATE okay::engine)
+add_test(NAME auto_lod COMMAND test_auto_lod)

@@ -263,6 +263,7 @@ add_library(okay_engine
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp
     src/Optimize/MeshSimplify.cpp
+    src/Optimize/AutoLod.cpp
     src/Optimize/LodGroup.cpp
     src/Optimize/OcclusionBuffer.cpp
     src/Optimize/PortalCells.cpp

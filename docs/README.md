@@ -6,6 +6,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 ## Get started
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
 - [own_code_roadmap.md](own_code_roadmap.md): the plan to replace and remove every third-party library, with the criteria each must meet.
+- [foundations/world_streaming.md](foundations/world_streaming.md): design of large-world streaming (cell grid, chunks, streaming sources, budgeted loading, saves, multiplayer), what is built and what is not.
 - [crypto_review_package.md](crypto_review_package.md): what an outside security reviewer needs to review our own crypto.
 - [crypto_review_request.md](crypto_review_request.md): the request to send a reviewer, what we ask and give, how to pick one, and the owner's checklist.
 - [UNFINISHED.md](UNFINISHED.md): what is not finished yet, hidden or limited today, and the to-do list.

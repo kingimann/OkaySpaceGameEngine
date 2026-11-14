@@ -2893,9 +2893,15 @@ add_test(NAME 3mf_reader COMMAND test_3mf_reader WORKING_DIRECTORY ${CMAKE_CURRE
 add_executable(test_amf_reader test_amf_reader.cpp)
 target_link_libraries(test_amf_reader PRIVATE okay::engine)
 add_test(NAME amf_reader COMMAND test_amf_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+foreach(_fmt x3d)
+    add_executable(test_${_fmt}_reader test_${_fmt}_reader.cpp)
+    target_link_libraries(test_${_fmt}_reader PRIVATE okay::engine)
+    add_test(NAME ${_fmt}_reader COMMAND test_${_fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
 add_executable(test_batchb_hostile test_batchb_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/ThreeMfReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/AmfReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/X3dReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_batchb_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

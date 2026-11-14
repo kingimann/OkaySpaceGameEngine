@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / 3MF / AMF readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / 3MF / AMF / X3D readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf 3mf amf; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf 3mf amf x3d; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -207,3 +207,7 @@ amf	models/AMF/test7.amf	ok	area=18.2197	meshes=3	tris=8	bones=0	skinned=0	clips
 amf	models/AMF/test8.amf	ok	area=36.4394	meshes=6	tris=16	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-5.500,-2.828,-2.828,6.000,2.828,2.828	verts=48	tex=0	nodes=3	uv=0	nrm=1
 amf	models/AMF/test9.amf	ok	area=109.3182	meshes=18	tris=48	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-5.500,-9.000,-5.500,6.000,9.000,5.500	verts=144	tex=0	nodes=7	uv=0	nrm=1
 amf	models/AMF/test_with_mat.amf	ok	area=4.6503	meshes=2	tris=8	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=0.000,-0.000,-1.000,1.000,1.000,0.000	verts=24	tex=0	nodes=2	uv=0	nrm=1
+x3d	models-nonbsd/X3D/Chevy/ChevyTahoe.x3d	ok	area=59.7134	meshes=20	tris=1298	bones=0	skinned=0	clips=0	dur=0.000	mat=17	bbox=-2.835,0.046,-1.187,2.629,2.264,1.210	verts=1748	tex=2	nodes=21	uv=1	nrm=1
+x3d	models/X3D/ComputerKeyboard.x3d	ok	area=2.0364	meshes=100	tris=2020	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=0.000,-0.000,0.000,0.450,0.105,0.980	verts=2029	tex=0	nodes=101	uv=0	nrm=1
+x3d	models/X3D/HelloX3dTrademark.x3d	ok	area=12.3877	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=323	tex=1	nodes=2	uv=1	nrm=1
+x3d	models/X3D/IndexedLineSet.x3d	FAIL	X3D: the file has no triangle geometry (it has only: IndexedLineSet NavigationInfo Viewpoint WorldInfo)

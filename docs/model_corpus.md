@@ -24,6 +24,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
 | 3MF | 1 | one box, a deflate-compressed package |
 | AMF | 11 | hand-made files: pyramids with materials, colours, volumes and constellations |
+| X3D | 4 | a keyboard (Extrusion), a sphere with text, a line set, a car model with 17 shapes |
 
 ## Running it
 
@@ -126,6 +127,10 @@ One real file (`models/3MF/box.3mf`, a 10 x 20 x 30 millimetre box in a deflate-
 #### AMF
 
 11 files, all read by ours and by Assimp. 5 agree on everything compared. 6 differ and each was checked in the file: two have a volume colour and one triangle with its own colour (ours one part and material per colour, Assimp one mesh and material), two have an object with two volumes (Assimp returns only the first volume's triangles, half the area), two have constellations (ours places each instance with its delta and rotation; Assimp's box is ten times wider, with the rotation value used as the offset). `docs/own_amf_reader.md`.
+
+#### X3D
+
+4 files. Ours reads 3; `IndexedLineSet.x3d` has only lines and fails with a message (Assimp returns a mesh with 0 triangles). On the 3 that read, Assimp's numbers differ from ours and each difference was checked against the file with an independent count: `ChevyTahoe.x3d` ours 1298 triangles (the file's index lists give 1298; Assimp drops one of the four `USE`d wheels, 1234), `ComputerKeyboard.x3d` ours 100 shapes and 2020 triangles (independent count: the same; Assimp returns 4 meshes and 100 triangles, the `USE`d keys are not instanced), `HelloX3dTrademark.x3d` a sphere tessellated 24 x 12 by ours (528 triangles) and finer by Assimp (1280). `docs/own_x3d_reader.md`.
 
 ### Sanitizers and valgrind (engine-linked tests)
 

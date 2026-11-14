@@ -2973,6 +2973,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own Linux backend (17.17.3)
 - Own STL and PLY readers, import seam (3.6.9)
 - Own Windows backend (17.17.4)
+- Own X3D reader (side by side, off by default) (3.6.23)
 - owner (1.2)
 - Ownership gating (16.2.7)
 - oxygen (11.4)

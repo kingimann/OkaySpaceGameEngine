@@ -9,6 +9,7 @@
 #include "model_fixture_util.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
 #include "okay/Render/AmfReader.hpp"
+#include "okay/Render/X3dReader.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -190,11 +191,73 @@ static void HostileAmf() {
 }
 
 
+// ======================= X3D =======================
+static bool ReadX3d(const std::string& b, ImportedModel& m, std::string& e) { return ReadX3dBuffer(b, "", m, &e); }
+static std::string X3dDoc(const std::string& scene) { return "<?xml version=\"1.0\"?><!DOCTYPE X3D PUBLIC \"-//Web3D//DTD X3D 3.3//EN\" \"x.dtd\"><X3D><Scene>" + scene + "</Scene></X3D>"; }
+static const char* kX3d =
+    "<Transform DEF=\"T\" translation=\"1 2 3\" rotation=\"0 1 0 0.5\" scale=\"1 2 1\" center=\"0 1 0\" scaleOrientation=\"1 0 0 0.3\"><Shape DEF=\"S\"><Appearance><Material diffuseColor=\"1 0.5 0\" transparency=\"0.1\"/><ImageTexture url='\"a.png\"'/></Appearance>"
+    "<IndexedFaceSet coordIndex=\"0 1 2 3 -1 0 3 4 -1\" normalIndex=\"0 0 0 0 -1 1 1 1 -1\" texCoordIndex=\"0 1 2 3 -1 0 3 2 -1\" creaseAngle=\"1\" ccw=\"true\"><Coordinate point=\"0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 1\"/>"
+    "<Normal vector=\"0 0 1 0 1 0\"/><TextureCoordinate point=\"0 0 1 0 1 1 0 1\"/></IndexedFaceSet></Shape></Transform>"
+    "<Group><Shape USE=\"S\"/><Switch whichChoice=\"0\"><Shape><Box size=\"1 2 3\"/></Shape></Switch><LOD><Shape><Sphere/></Shape><Shape><Cone/></Shape></LOD><Shape><Cylinder/></Shape></Group>";
+
+static void HostileX3d() {
+    RUN_SUITE("x3d hostile");
+    const std::string good = X3dDoc(kX3d);
+    { ImportedModel m; std::string e; CHECK(ReadX3d(good, m, e) && m.parts.size() == 5); }
+    for (std::size_t n = 0; n < good.size(); ++n) Try(ReadX3d, good.substr(0, n));
+    auto x3d = [&](const std::string& s) { ImportedModel m; std::string e; const bool ok = ReadX3d(X3dDoc(s), m, e); if (ok) { CHECK(fx::Sane(m)); } else { CHECK(!e.empty() && m.parts.empty()); } return ok; };
+    { std::string deep; for (int i = 0; i < 20000; ++i) deep += "<Group>"; CHECK(!x3d(deep)); }
+    { std::string deep; for (int i = 0; i < 200; ++i) deep += "<Group>"; deep += "<Shape><Box/></Shape>"; for (int i = 0; i < 200; ++i) deep += "</Group>"; CHECK(!x3d(deep)); }   // over the scene depth cap
+    { std::string lol = "<!DOCTYPE X3D [<!ENTITY lol \"lol\"><!ENTITY lol2 \"&lol;&lol;&lol;\">]><X3D><Scene>&lol2;</Scene></X3D>"; ImportedModel m; std::string e; CHECK(!ReadX3d(lol, m, e)); }
+    // an exponential DEF/USE expansion: each level uses the previous one twice (2^40 shapes if followed)
+    { std::string s = "<Group DEF=\"g0\"><Shape><Box/></Shape></Group>";
+      for (int i = 1; i <= 40; ++i) s += "<Group DEF=\"g" + std::to_string(i) + "\"><Group USE=\"g" + std::to_string(i - 1) + "\"/><Group USE=\"g" + std::to_string(i - 1) + "\"/></Group>";
+      const double t0 = Now(); CHECK(!x3d(s)); CHECK(Now() - t0 < 30.0); }
+    // a shape reused 3000 times
+    { std::string s = "<Shape DEF=\"s\"><Box/></Shape>"; for (int i = 0; i < 3000; ++i) s += "<Transform translation=\"" + std::to_string(i) + " 0 0\"><Shape USE=\"s\"/></Transform>"; CHECK(x3d(s)); }
+    CHECK(!x3d("<Group DEF=\"a\"><Group USE=\"a\"/></Group>"));
+    for (const char* bad : {"1e999", "inf", "nan", "0x10", "1..2", "--1", "1e16", "1 2", ""}) {
+        CHECK(!x3d(std::string("<Transform translation=\"") + bad + "\"><Shape><Box/></Shape></Transform><Group/>") || std::string(bad) == "");
+        std::string s = "<Shape><IndexedFaceSet coordIndex=\"0 1 2 -1\"><Coordinate point=\"0 0 0 1 0 0 0 " + std::string(bad) + " 0\"/></IndexedFaceSet></Shape>"; CHECK(!x3d(s) || std::string(bad) == "1 2" || std::string(bad) == "");
+    }
+    for (const char* bad : {"-5", "99999999999", "1.5", "a", "2147483648"}) {
+        CHECK(x3d(std::string("<Shape><IndexedFaceSet coordIndex=\"0 1 2 -1 0 1 2 -1\"><Coordinate point=\"0 0 0 1 0 0 0 1 0\"/></IndexedFaceSet></Shape>").replace(48, 0, "")) || true);
+        std::string s = "<Shape><IndexedFaceSet coordIndex=\"0 1 2 -1 " + std::string(bad) + " 1 2 -1\"><Coordinate point=\"0 0 0 1 0 0 0 1 0\"/></IndexedFaceSet></Shape>"; x3d(s);
+    }
+    // huge polygon: 100000 corners, convex fan; and a concave 250-corner star (ear clipping bound)
+    { std::string idx, pts; for (int i = 0; i < 100000; ++i) { idx += std::to_string(i) + " "; const double a = 6.283185307 * i / 100000; pts += std::to_string(std::cos(a)) + " " + std::to_string(std::sin(a)) + " 0 "; }
+      CHECK(x3d("<Shape><IndexedFaceSet coordIndex=\"" + idx + "-1\"><Coordinate point=\"" + pts + "\"/></IndexedFaceSet></Shape>")); }
+    { std::string idx, pts; for (int i = 0; i < 250; ++i) { idx += std::to_string(i) + " "; const double a = 6.283185307 * i / 250, r = i % 2 ? 0.4 : 1.0; pts += std::to_string(r * std::cos(a)) + " " + std::to_string(r * std::sin(a)) + " 0 "; }
+      const double t0 = Now(); CHECK(x3d("<Shape><IndexedFaceSet coordIndex=\"" + idx + "-1\"><Coordinate point=\"" + pts + "\"/></IndexedFaceSet></Shape>")); CHECK(Now() - t0 < 10.0); }
+    // 20000 faces on 3 points; a vertex with 5000 incident triangles at different angles (crease clustering)
+    { std::string idx; for (int i = 0; i < 20000; ++i) idx += "0 1 2 -1 "; CHECK(x3d("<Shape><IndexedFaceSet creaseAngle=\"3\" coordIndex=\"" + idx + "\"><Coordinate point=\"0 0 0 1 0 0 0 1 0\"/></IndexedFaceSet></Shape>")); }
+    { std::string idx, pts = "0 0 0 "; for (int i = 1; i <= 5000; ++i) { pts += std::to_string(std::cos(i * 0.7)) + " " + std::to_string(std::sin(i * 0.7)) + " " + std::to_string(std::sin(i * 1.3)) + " "; }
+      for (int i = 1; i < 5000; ++i) idx += "0 " + std::to_string(i) + " " + std::to_string(i + 1) + " -1 ";
+      const double t0 = Now(); CHECK(x3d("<Shape><IndexedFaceSet creaseAngle=\"0.5\" coordIndex=\"" + idx + "\"><Coordinate point=\"" + pts + "\"/></IndexedFaceSet></Shape>")); CHECK(Now() - t0 < 10.0); }
+    // numbers: scale zero / huge / negative zero; rotation axis zero; a singular transform still gives sane output or a clean failure
+    for (const char* tr : {"scale=\"0 0 0\"", "scale=\"1e15 1e15 1e15\"", "scale=\"-0 1 1\"", "rotation=\"0 0 0 1\"", "rotation=\"0 0 1 1e15\"", "scale=\"1e-300 1 1\"", "scale=\"1e15 1 1\" translation=\"1e15 1e15 1e15\""})
+        x3d(std::string("<Transform ") + tr + "><Shape><Box/></Shape><Shape><Sphere radius=\"1e15\"/></Shape><Shape><Cone bottomRadius=\"-1\" height=\"-2\"/></Shape></Transform>");
+    for (const char* prim : {"<Box size=\"0 0 0\"/>", "<Box size=\"-1 2 3\"/>", "<Sphere radius=\"0\"/>", "<Sphere radius=\"1e15\"/>", "<Cylinder radius=\"0\" height=\"0\"/>", "<Cone height=\"0\"/>", "<Cone bottomRadius=\"1e15\" height=\"1e-12\"/>"}) x3d(std::string("<Shape>") + prim + "</Shape>");
+    // Extrusion: absurd spines, scales, orientations, huge counts, collinear and self-overlapping spines
+    for (const char* e : {"<Extrusion spine=\"0 0 0 0 0 0 0 0 0\"/>", "<Extrusion spine=\"0 0 0 1e15 0 0\" scale=\"1e15 1e15\"/>", "<Extrusion scale=\"0 0\"/>", "<Extrusion orientation=\"0 0 0 1e15\"/>",
+                          "<Extrusion orientation=\"nan 0 0 1\"/>", "<Extrusion spine=\"0 0 0 0 1 0 0 0 0 0 1 0 0 0 0\"/>", "<Extrusion spine=\"0 0 0 0 1 0 0 2 0 0 1 0\"/>",
+                          "<Extrusion crossSection=\"0 0 0 0\"/>", "<Extrusion crossSection=\"1 1 1 1 1 1\" spine=\"0 0 0 1 1 1 2 0 2 3 1 3\"/>", "<Extrusion scale=\"1 1 2\"/>", "<Extrusion orientation=\"0 0 1\"/>"})
+        x3d(std::string("<Shape>") + e + "</Shape>");
+    { std::string sp, cs; for (int i = 0; i < 2000; ++i) sp += std::to_string(std::sin(i * 0.1)) + " " + std::to_string(i * 0.01) + " " + std::to_string(std::cos(i * 0.1)) + " ";
+      for (int i = 0; i < 1000; ++i) cs += std::to_string(std::cos(i * 0.00628)) + " " + std::to_string(std::sin(i * 0.00628)) + " ";
+      const double t0 = Now(); x3d("<Shape><Extrusion spine=\"" + sp + "\" crossSection=\"" + cs + "\" creaseAngle=\"1\"/></Shape>"); CHECK(Now() - t0 < 30.0); }
+    { std::string sp, cs; for (int i = 0; i < 3000; ++i) sp += "0 " + std::to_string(i) + " 0 "; for (int i = 0; i < 2000; ++i) cs += "1 " + std::to_string(i) + " "; x3d("<Shape><Extrusion spine=\"" + sp + "\" crossSection=\"" + cs + "\"/></Shape>"); }   // 6 million points: refused
+    RUN_SUITE("x3d fuzz");
+    const long n = Iters();
+    for (long i = 0; i < n; ++i) Try(ReadX3d, Mutate(good));
+}
+
 
 
 
 int main() {
     Hostile3mf();
     HostileAmf();
+    HostileX3d();
     TEST_MAIN_RESULT();
 }

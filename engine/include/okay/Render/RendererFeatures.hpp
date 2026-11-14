@@ -30,7 +30,7 @@
 //              Same mesh fog modes, filmic flag, sun cascades and localShadow
 //              tiles as OpenGL. Post chain draws exposure, the tonemap curve,
 //              bloom (post.bloom or BloomEnabled), grading, vignette smoothness
-//              and post.fxaa. No depth of field. BloomEnabled does
+//              post.fxaa and post.dof (DofMath.hpp, UNVERIFIED on a GPU). BloomEnabled does
 //              nothing unless the chain is already running (it does not start
 //              the chain). SSAO (post.ssao, or SSAOEnabled while the chain runs)
 //              is an extra pass inside the chain (SsaoMath.hpp). UNVERIFIED on a
@@ -123,7 +123,7 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
         {"Ambient occlusion in Post-processing", false,
          "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::No, S::No}},
+        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
         {"The procedural sun disc, halo, clouds and stars", true,
          "Direct3D 12 and the software renderer show the sun's colours as a plain gradient.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},

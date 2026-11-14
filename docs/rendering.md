@@ -32,7 +32,7 @@ What the scene's Post-processing section actually draws:
 | Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | no |
 | Vignette amount | yes | yes | yes | yes |
 | Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | no |
-| Depth of field | yes | no | no | no |
+| Depth of field | yes | yes (new, unrun on a GPU) | no | no |
 
 Fog is drawn on all four. The vignette amount is an overlay when the post chain
 itself does not run, so it still shows on Direct3D 12 and the software renderer.
@@ -64,7 +64,7 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 | **Vignette** | Darkens the edges and corners, with a **Smoothness** for how far in it reaches. 0 = off. The post chain draws it when it runs; otherwise it is an overlay that looks the same on every renderer. |
 | **Anti-aliasing (FXAA)** | A luma-driven edge filter on the finished frame. |
 | **Ambient Occlusion (SSAO)** | Darkens creases and contact points: **Radius** (world units) and **Intensity**. OpenGL, and Direct3D 11 (new, unrun on a GPU). |
-| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL only. |
+| **Depth of Field** | Blurs outside the **Focus Range** either side of the **Focus Distance**. OpenGL, and Direct3D 11 (new, unrun on a GPU). Off unless the switch is on. |
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a
 storm blinks even with every other effect off.

@@ -74,6 +74,10 @@ then this file gets updated. Keep this file short and true.
       `docs/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
       Never use an asset whose licence is unknown or that forbids our use, and never scrape or download assets without
       recording where they came from.
+    - **No third-party SDKs or libraries.** Do not add or link any (for example Steamworks, Photon, PlayFab or Supabase
+      client SDKs, analytics, crash-report or ad SDKs, middleware). Talk to outside services over their plain web APIs
+      with our own code. Optional hooks that only work when someone installs an SDK stay off by default and are not
+      extended.
     - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
 

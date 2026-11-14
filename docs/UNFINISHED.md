@@ -16,6 +16,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | What | State | What is missing |
 |---|---|---|
+| Own stack dogfood switch (`OKAY_OWN_STACK`) | Developer and CI only | Seen working on Linux only: the `own-stack` CI job has not been seen running on GitHub, nothing was run on real Windows, and the readers' automatic fallback to the old reader is not covered by its tests. Own crypto is only ever in test builds (`OKAY_OWN_STACK_CRYPTO_TEST`) and releases refuse it. Plan and gates: `docs/own_stack_rollout.md` |
 | Direct3D 11 depth of field, ambient occlusion, Bloom Softness and AO Power | Compile-checked only | Never run on a GPU or compiled by `D3DCompile`; the shared maths is CPU tested (`dof_math`, `ssao_math`, `post_quality_math`). The software renderer and Direct3D 12 ignore Bloom Softness and AO Power |
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |

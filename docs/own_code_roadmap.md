@@ -2,6 +2,8 @@
 
 **Goal: removal.** Every third-party library in the build is to be replaced by our own code and then deleted from the repository, slowly. Our own replacement is not a permanent second option: it is the future default, and the library is a temporary fallback that goes away. The only things we keep on purpose are services our users publish on and connect through: **Steamworks** and **Photon** (see the last section).
 
+The stages between "it exists" and "the library is deleted" (off, dogfood, opt-in, default on, removed), the gates for each, the proposed order and the `OKAY_OWN_STACK` dogfood switch are in `docs/own_stack_rollout.md`.
+
 Our replacements stay **off by default** until the owner declares them ready and bug free. "Ready" is the list of criteria below, all of which must hold; there is no partial credit and no date.
 
 ## How a library is removed

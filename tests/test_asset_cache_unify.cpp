@@ -11,6 +11,8 @@
 #include "okay/Inventory/Recipe.hpp"
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#include <thread>
 
 using namespace okay;
 namespace fs = std::filesystem;
@@ -130,6 +132,69 @@ int main() {
         CHECK(fresh && fresh.Get() != &a);
         CHECK(a.GetInt("v") == 1);
         CHECK(!AssetManager::Instance().Find<DataAsset>(dir.string() + "/never.okaydata"));
+    }
+
+    // --- The files are opened by the caller's own path string (only the cache key is normalized) ---
+    {
+        fs::create_directories(dir / "o" / "p"); fs::create_directories(dir / "o" / "q");   // q must exist: the OS resolves "q/.."
+        const std::string odd = dir.generic_string() + "//o/./q/../p//";   // a folder spelling with // ./ and ..
+        ItemDatabase::Get().Clear();
+        WriteText(dir / "o" / "p" / "t.okayloot", "okayloot 1\nrolls 1 1\nentry \"wood\" 1 1 1 1\n");
+        CHECK(LootTable::Cached(odd + "t.okayloot").entries.size() == 1);
+        WriteText(dir / "o" / "p" / "b.okayrecipes", "okayrecipes 1\nrecipe \"Plank\" 1\n  in \"wood\" 1\n  out \"plank\" 1\nend\n");
+        CHECK(RecipeBook::Cached(odd + "b.okayrecipes").recipes.size() == 1);
+        AudioClip tone = AudioClip::Const(0.25f, 1000, 22050);
+        CHECK(tone.SaveWAV((dir / "o" / "p" / "t.wav").string()));
+        CHECK(AudioClip::LoadCached(odd + "t.wav", 0) != nullptr);
+        WriteText(dir / "o" / "p" / "d.okaydata", "k = v\n");
+        CHECK(DataAsset::Cached(odd + "d.okaydata").GetString("k") == "v");
+    }
+
+    // --- Case: the key keeps case on Linux/macOS and folds it only on Windows ---
+    {
+        CHECK(AssetManager::Normalize("Data/X", false) != AssetManager::Normalize("data/x", false));
+        CHECK(AssetManager::Normalize("Data/X", true) == AssetManager::Normalize("data/x", true));
+#ifdef _WIN32
+        CHECK(AssetManager::Normalize("Data/X") == AssetManager::Normalize("data/x"));
+#else
+        CHECK(AssetManager::Normalize("Data/X") != AssetManager::Normalize("data/x"));
+        // Two files whose names differ only by case are two objects (skipped on a case-insensitive disk).
+        const std::string lo = (dir / "cs_x.okaydata").string(), up = (dir / "CS_X.okaydata").string();
+        WriteText(lo, "v = lower\n");
+        WriteText(up, "v = upper\n");
+        if (fs::exists(lo) && fs::exists(up) && fs::equivalent(lo, up) == false) {
+            DataAsset& a = DataAsset::Cached(lo);
+            DataAsset& b = DataAsset::Cached(up);
+            CHECK(&a != &b);
+            CHECK(a.GetString("v") == "lower" && b.GetString("v") == "upper");
+        } else {
+            std::printf("case-insensitive file system here: the Linux case check was skipped\n");
+        }
+#endif
+    }
+
+    // --- Hot reload leaves an asset alone that a script changed with Set() ---
+    {
+        AssetManager& m = AssetManager::Instance();
+        const std::string edited = (dir / "hot_edited.okaydata").string(), plain = (dir / "hot_plain.okaydata").string();
+        WriteText(edited, "hp = 1\n");
+        WriteText(plain, "hp = 1\n");
+        DataAsset& e = DataAsset::Cached(edited);
+        DataAsset& pl = DataAsset::Cached(plain);
+        e.Set("hp", "99");                                  // a script edit
+        CHECK(e.EditedByScript() && !pl.EditedByScript());
+        WriteText(edited, "hp = 2 and a longer text\n");   // both files change on disk
+        WriteText(plain, "hp = 2 and a longer text\n");
+        m.SetHotReload(true, 0.0);
+        for (int i = 0; i < 400 && pl.GetString("hp") == "1"; ++i) {
+            m.Pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        for (int i = 0; i < 20; ++i) m.Pump();
+        m.SetHotReload(false);
+        CHECK(pl.GetString("hp") == "2 and a longer text"); // an untouched asset is reloaded ...
+        CHECK(e.GetString("hp") == "99");                   // ... an edited one keeps the script's value
+        CHECK(e.Save(edited) && !e.EditedByScript());       // saved: it follows the file again
     }
 
     fs::remove_all(dir, ec);

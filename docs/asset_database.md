@@ -176,9 +176,12 @@ off leaves old metas byte for byte as they are and migrates in memory only). Mig
 inotify, Windows `ReadDirectoryChangesW`, none elsewhere), `CreatePollingFileWatcher()` and
 `MakeFileWatcher(root, &why)` (native if it starts, otherwise polling). `Take()` never blocks and answers `Changed`,
 `Quiet` or, for the polling fallback, `Unknown` ("scan on your own timer"). New folders are watched as they appear
-(also when moved in); a lost event queue counts as a change. The Project panel's `Browser::EnableWatcher(true)` uses
-it: `Poll` then reads the watcher every 200 ms and scans only on `Changed`, plus a safety rescan every 30 seconds;
-without a native watcher it polls as before. It is off by default and nothing in the editor turns it on yet. Tested
+(also when moved in); a lost event queue counts as a change. If the watched folder is deleted (Linux) or a re-arm
+fails (Windows `Take`/`Issue`), the watcher answers `Unknown` (not `Quiet`) until it can watch again, then says
+`Changed` once; the Linux case is tested with a removed temp folder. The Project panel's `Browser::EnableWatcher(true)`
+uses it: `Poll` then reads the watcher every 200 ms and scans only on `Changed` (at most one such scan per second:
+after a change a busy folder is held back and the last change still gets its trailing scan), plus a safety rescan
+every 30 seconds; on `Unknown`, or without a native watcher, it polls as before. It is off by default and nothing in the editor turns it on yet. Tested
 on Linux (`file_watcher`, `project_panel`); the Windows code was only compiled with MinGW (`-fsyntax-only`), never run.
 
 ### Reimport signal
@@ -276,4 +279,4 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
   path table next to the scene), read-only support in the loaders, then the save option.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 
-Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`); `tests/test_file_watcher.cpp` (`file_watcher`); `tests/test_texture_import_apply.cpp` (`texture_import_apply`); the Project panel's use of it is in `tests/test_project_panel_db.cpp` (`project_panel_db`).
+Tests: `tests/test_asset_database.cpp` (ctest name `asset_database`); `tests/test_file_watcher.cpp` (`file_watcher`); `tests/test_texture_import_apply.cpp` (`texture_import_apply`); the Project panel's use of the watcher (including the one-scan-per-second limit) is in `tests/test_project_panel.cpp` (`project_panel`), and its use of the database in `tests/test_project_panel_db.cpp` (`project_panel_db`). The Windows watcher code was not run on Windows.

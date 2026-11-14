@@ -148,7 +148,8 @@ public:
     /// Let the operating system say when something changed (inotify on Linux, ReadDirectoryChangesW on Windows; see
     /// okay/Core/FileWatcher.hpp) instead of scanning every 2 seconds or more. With it on, Poll checks the watcher
     /// (a quick, non-blocking read) and scans only when it reported a change, plus a safety rescan every 30 seconds in
-    /// case an event was missed. Where no native watcher can start (no support, too many folders) Poll behaves as
+    /// case an event was missed; after a change it scans at most once a second (the last change is still scanned, a moment
+    /// later). Where no native watcher can start (no support, too many folders) Poll behaves as
     /// before. Off by default, and nothing in the editor turns it on yet. Takes effect on the next Poll.
     void EnableWatcher(bool on);
     /// "inotify", "ReadDirectoryChangesW" or "polling" (also when the watcher is off).
@@ -294,6 +295,9 @@ private:
     std::unique_ptr<okay::FileWatcher> m_watcher;
     std::string m_watchRoot;                 // the folder the watcher was started on
     std::uint64_t m_nextSafetyScan = 0;
+    bool m_pendingChange = false;            // the watcher said Changed and the scan has not run yet (throttled)
+    std::uint64_t m_nextChangedScan = 0;     // earliest time for the next scan caused by a watcher change
+    static constexpr std::uint64_t kMinRescanMs = 1000;   // a busy folder is scanned at most once per second
     std::uint64_t m_revision = 0;
     std::uint64_t m_problemRev = ~0ull; int m_problemCount = 0;
     struct FolderStat { int files = 0; std::vector<std::string> kids; };

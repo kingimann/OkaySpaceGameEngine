@@ -133,6 +133,28 @@ int main() {
         CHECK(why.empty());
     }
 
+    // --- The watched folder is deleted: Unknown (scan on your own timer), and it recovers when the folder returns ---
+    {
+        const fs::path gone = fs::temp_directory_path() / "okay_file_watcher_gone";
+        fs::remove_all(gone, ec); fs::create_directories(gone / "sub");
+        auto w = CreateNativeFileWatcher();
+        if (w && w->Start(gone.string())) {
+            CHECK(StaysQuiet(*w));
+            fs::remove_all(gone, ec);
+            CHECK(WaitChanged(*w));                         // the deletion itself is a change
+            CHECK(w->Take() == WatchState::Unknown);        // not "Quiet" forever
+            CHECK(w->Take() == WatchState::Unknown);
+            fs::create_directories(gone / "sub");
+            CHECK(WaitChanged(*w));                         // it is back: watched again, one Changed
+            CHECK(StaysQuiet(*w));
+            WriteText(gone / "sub" / "n.txt", "x");
+            CHECK(WaitChanged(*w));                         // and events flow again, below the root too
+            fs::remove_all(gone, ec);
+        } else {
+            std::printf("no native watcher here: the deleted-folder check was skipped\n");
+        }
+    }
+
     fs::remove_all(dir, ec);
     TEST_MAIN_RESULT();
 }

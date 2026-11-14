@@ -50,6 +50,7 @@ public:
         m_fd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
         if (m_fd < 0) { if (error) *error = std::string("inotify_init1: ") + std::strerror(errno); return false; }
         if (!AddTree(r, error)) { Stop(); return false; }
+        m_rootWd = RootWatch();
         return true;
     }
 
@@ -59,6 +60,8 @@ public:
         m_dirs.clear();
         m_root.clear();
         m_overflow = false;
+        m_broken = false;
+        m_rootWd = -1;
     }
 
     bool Active() const override { return m_fd >= 0; }
@@ -66,6 +69,13 @@ public:
 
     WatchState Take(std::vector<std::string>* paths) override {
         if (m_fd < 0) return WatchState::Unknown;
+        if (m_broken) {
+            // The watched folder was deleted or moved away. We cannot tell what changes: answer Unknown (the
+            // caller scans on its own timer) until the folder is back, then watch it afresh and say Changed once.
+            std::error_code ec;
+            if (!fs::is_directory(fs::u8path(m_root), ec) || !Rearm()) return WatchState::Unknown;
+            return WatchState::Changed;
+        }
         bool changed = m_overflow;
         alignas(inotify_event) char buf[16384];
         for (;;) {
@@ -76,6 +86,11 @@ public:
                 p += sizeof(inotify_event) + ev->len;
                 if (ev->mask & IN_Q_OVERFLOW) { m_overflow = true; changed = true; continue; }
                 auto it = m_dirs.find(ev->wd);
+                if (ev->wd == m_rootWd && (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED))) {
+                    m_broken = true;   // the root itself is gone
+                    changed = true;
+                    continue;
+                }
                 if (ev->mask & IN_IGNORED) { if (it != m_dirs.end()) m_dirs.erase(it); changed = true; continue; }
                 if (it == m_dirs.end()) continue;
                 changed = true;
@@ -98,6 +113,25 @@ public:
     }
 
 private:
+    int RootWatch() const {
+        for (const auto& kv : m_dirs) if (kv.second == m_root) return kv.first;
+        return -1;
+    }
+
+    // Start over on the same root with a fresh descriptor (old watches die with the old one).
+    bool Rearm() {
+        const std::string root = m_root;
+        if (m_fd >= 0) ::close(m_fd);
+        m_dirs.clear();
+        m_overflow = false;
+        m_fd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        if (m_fd < 0) return false;
+        if (!AddTree(fs::u8path(root), nullptr)) return false;   // m_root stays set, so it is kept
+        m_rootWd = RootWatch();
+        m_broken = false;
+        return true;
+    }
+
     // Watch `dir` and every folder below it. A failure on the first folder is reported (no
     // room for watches: the caller falls back to polling); a failure deeper is skipped.
     bool AddTree(const fs::path& dir, std::string* error) {
@@ -133,6 +167,8 @@ private:
 
     int m_fd = -1;
     bool m_overflow = false;
+    bool m_broken = false;     // root deleted/moved: answer Unknown until it returns
+    int m_rootWd = -1;
     std::string m_root;
     std::map<int, std::string> m_dirs;   // watch descriptor -> folder
 };
@@ -159,6 +195,7 @@ public:
         if (!m_event) { Stop(); if (error) *error = "CreateEventW failed"; return false; }
         m_buf.assign(64 * 1024, 0);
         if (!Issue()) { Stop(); if (error) *error = "ReadDirectoryChangesW failed"; return false; }
+        m_broken = false;
         return true;
     }
 
@@ -171,13 +208,22 @@ public:
         m_dir = INVALID_HANDLE_VALUE;
         m_event = nullptr;
         m_pending = false;
+        m_broken = false;
     }
 
     bool Active() const override { return m_dir != INVALID_HANDLE_VALUE; }
     const char* Name() const override { return "ReadDirectoryChangesW"; }
 
     WatchState Take(std::vector<std::string>* paths) override {
-        if (m_dir == INVALID_HANDLE_VALUE) return WatchState::Unknown;
+        if (m_dir == INVALID_HANDLE_VALUE && !m_broken) return WatchState::Unknown;
+        if (m_broken) {
+            // A re-arm failed (folder deleted, share gone, ...): we cannot tell what changes, so answer Unknown
+            // (the caller scans on its own timer) and retry from scratch each time until it works again.
+            const std::string root = m_root;
+            std::string err;
+            if (!Start(root, &err)) { m_broken = true; return WatchState::Unknown; }   // Start() cleared m_broken
+            return WatchState::Changed;
+        }
         bool changed = false;
         while (m_pending) {
             DWORD n = 0;
@@ -185,13 +231,13 @@ public:
                 if (::GetLastError() == ERROR_IO_INCOMPLETE) break;   // nothing yet
                 m_pending = false;
                 changed = true;                                       // the call failed: rescan to be safe
-                Issue();
+                if (!Issue()) m_broken = true;
                 break;
             }
             m_pending = false;
             changed = true;
             if (n == 0) {   // buffer overflowed: events were lost, the caller rescans
-                Issue();
+                if (!Issue()) m_broken = true;
                 break;
             }
             const char* p = m_buf.data();
@@ -204,7 +250,7 @@ public:
                 if (!fi->NextEntryOffset) break;
                 p += fi->NextEntryOffset;
             }
-            Issue();
+            if (!Issue()) { m_broken = true; break; }
         }
         return changed ? WatchState::Changed : WatchState::Quiet;
     }
@@ -226,6 +272,7 @@ private:
     HANDLE m_event = nullptr;
     OVERLAPPED m_ov{};
     bool m_pending = false;
+    bool m_broken = false;     // re-arm failed: answer Unknown and retry
     std::string m_root;
     std::vector<char> m_buf;   // DWORD aligned: vector storage comes from operator new
 };

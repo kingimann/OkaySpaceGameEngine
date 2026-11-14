@@ -61,6 +61,56 @@ int main() {
     CHECK(AssetManager::Normalize("C:\\Dir\\File.PNG", false) == "C:/Dir/File.PNG");
     CHECK(AssetManager::Normalize("./", false) == ".");
     CHECK(AssetManager::Normalize("", false).empty());
+    // Windows shapes (these run on Linux too: the key function is lexical). UNC and \\?\ prefixes stay in the key.
+    CHECK(AssetManager::Normalize("\\\\server\\share\\x", false) == "//server/share/x");
+    CHECK(AssetManager::Normalize("//server/share/./y/../x", false) == "//server/share/x");
+    CHECK(AssetManager::Normalize("\\\\Server\\Share\\X", true) == "//server/share/x");
+    CHECK(AssetManager::Normalize("\\\\server\\share\\x", false) != AssetManager::Normalize("/server/share/x", false));
+    CHECK(AssetManager::Normalize("\\\\?\\C:\\Dir\\..\\f.png", false) == "//?/C:/f.png");
+    CHECK(AssetManager::Normalize("\\\\?\\C:\\Dir\\f.png", true) == "//?/c:/dir/f.png");
+    CHECK(AssetManager::Normalize("\\\\?\\UNC\\srv\\sh\\x", false) == "//?/UNC/srv/sh/x");
+    CHECK(AssetManager::Normalize("\\\\.\\C:\\x", false) == "//./C:/x");
+    CHECK(AssetManager::Normalize("///a//b", false) == "/a/b");             // three slashes are not a UNC prefix
+    CHECK(AssetManager::Normalize("a\\b/c\\\\d", false) == "a/b/c/d");        // mixed slashes
+    CHECK(AssetManager::Normalize("a/./b.png", false) == "a/b.png");         // the same file as a/b.png ...
+    CHECK(AssetManager::Normalize("a/./b.png", false) != AssetManager::Normalize("b.png", false));   // ... not as b.png
+
+    // --- The loader gets the caller's own path string; only the cache key is normalized
+    {
+        AssetManager m;
+        std::string seen;
+        std::atomic<int> n{0};
+        struct Probe { std::string text; };
+        m.RegisterLoader<Probe>("Probe", [&](const std::string& p, std::string& err) -> std::shared_ptr<Probe> {
+            seen = p; ++n;
+            std::ifstream f(p, std::ios::binary);
+            if (!f) { err = "cannot open " + p; return nullptr; }
+            auto b = std::make_shared<Probe>();
+            b->text.assign(std::istreambuf_iterator<char>(f), {});
+            return b;
+        });
+        WriteText(dir / "sub" / "orig.txt", "orig");
+        const std::string odd = d + "//sub/./../sub//orig.txt";       // ./ .. and // all in one path
+        auto h = m.Get<Probe>(odd);
+        CHECK(h.Ready() && h->text == "orig");
+        CHECK(seen == odd);                                           // not the normalized spelling
+        CHECK(h.Path() == AssetManager::Normalize(odd));              // the key is the normalized one
+        auto h2 = m.Get<Probe>(d + "/sub/orig.txt");                  // other spelling: same entry, no second load
+        CHECK(h2 == h && n == 1);
+        // Async and Adopt keep the original spelling too.
+        AssetManager m2;
+        std::string seen2;
+        m2.RegisterLoader<Probe>("Probe", [&](const std::string& p, std::string&) -> std::shared_ptr<Probe> {
+            seen2 = p; return std::make_shared<Probe>();
+        });
+        auto ha = m2.LoadAsync<Probe>(d + "/sub/./orig.txt");
+        CHECK(PumpUntil(m2, [&] { return ha.Ready(); }));
+        CHECK(seen2 == d + "/sub/./orig.txt");
+        // A Windows-style path with backslashes is handed through untouched (on Linux it is just a missing file).
+        std::string err;
+        auto hw = m.Get<Probe>("\\\\server\\share\\x.txt", &err);
+        CHECK(!hw.Ready() && seen == "\\\\server\\share\\x.txt");
+    }
 
     // --- Cache, refcount, release on last handle
     {

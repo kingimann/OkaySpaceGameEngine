@@ -110,7 +110,8 @@ public:
     template <class T>
     void RegisterLoader(std::string typeName,
                         std::function<std::shared_ptr<T>(const std::string& path, std::string& error)> load,
-                        std::function<std::size_t(const T&)> sizeOf = {}) {
+                        std::function<std::size_t(const T&)> sizeOf = {},
+                        std::function<bool(const T&)> canReload = {}) {
         LoaderRec r;
         r.name = std::move(typeName);
         r.load = [load](const std::string& p, std::string& e) -> std::shared_ptr<void> { return load(p, e); };
@@ -118,6 +119,7 @@ public:
         r.size = [sizeOf](const void* d) -> std::size_t {
             return sizeOf ? sizeOf(*static_cast<const T*>(d)) : sizeof(T);
         };
+        if (canReload) r.canReload = [canReload](const void* d) { return canReload(*static_cast<const T*>(d)); };
         AddLoader(std::type_index(typeid(T)), std::move(r));
     }
 
@@ -188,6 +190,7 @@ private:
         std::function<std::shared_ptr<void>(const std::string&, std::string&)> load;
         std::function<void(void*, void*)> assign;
         std::function<std::size_t(const void*)> size;
+        std::function<bool(const void*)> canReload;   // empty = always; false = hot reload leaves this asset alone
     };
     using EntryPtr = std::shared_ptr<assets_detail::Entry>;
     using Key = std::pair<std::type_index, std::string>;

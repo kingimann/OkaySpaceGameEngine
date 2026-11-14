@@ -455,11 +455,23 @@ int main() {
             CHECK(!b.Poll(t + 500));                                               // quiet: no scan, nothing reported
             WriteFile(p.td.at("Scenes/watched.okayscene"), "scene \"W\"\ngameobject \"X\"\n  sprite texture \"" + p.tex + "\"\n");
             bool saw = false;
-            for (int i = 0; i < 200 && !saw; ++i) {                                // the event arrives within a few ms
+            int sawAt = 0;
+            for (int i = 0; i < 200 && !saw; ++i) {
+                sawAt = i;                                // the event arrives within a few ms
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 saw = b.Poll(t + 1000 + static_cast<std::uint64_t>(i) * 1000);     // far less than the 2 s polling wait
             }
             CHECK(saw && b.UsersOf(p.tex) == 4);
+            // A busy folder: at most one scan per second after a change, and the last change is still scanned.
+            const std::uint64_t ts = t + 1000 + static_cast<std::uint64_t>(sawAt) * 1000;   // the time of that scan
+            WriteFile(p.td.at("Scenes/watched2.okayscene"), "scene \"W2\"\ngameobject \"X\"\n  sprite texture \"" + p.tex + "\"\n");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));                      // the event is queued now
+            CHECK(!b.Poll(ts + 300));                                                         // too soon after the last scan: held back
+            CHECK(b.UsersOf(p.tex) == 4);                                                     // not scanned yet
+            WriteFile(p.td.at("Scenes/watched3.okayscene"), "scene \"W3\"\ngameobject \"X\"\n  sprite texture \"" + p.tex + "\"\n");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            CHECK(!b.Poll(ts + 600) && b.UsersOf(p.tex) == 4);                                // still held back
+            CHECK(b.Poll(ts + 1000) && b.UsersOf(p.tex) == 6);                                // trailing scan: both changes seen
             CHECK(!b.Poll(t + 400000));                                            // quiet again
             b.EnableWatcher(false);
             CHECK(std::string(b.WatcherName()) == "polling");

@@ -28,8 +28,12 @@ held as two types.
 `AssetManager::Normalize` makes one key per file: `\` becomes `/`, repeated slashes
 collapse, `.` and `..` resolve lexically (leading `..` of a relative path is kept, `..`
 above the root of an absolute path is dropped), no trailing slash. Case is folded to lower
-case on Windows only (`Normalize(path, foldCase)` exposes the policy). The file is opened
-with the normalized path in its original case. Symlinks are not resolved, and relative
+case on Windows only (`#ifdef _WIN32`; `Normalize(path, foldCase)` exposes both policies, so `Data/x` and `data/x`
+are two files on Linux and macOS). Windows prefixes stay in the key: `\\server\share\x` becomes `//server/share/x`
+(not the same file as `/server/share/x`) and `\\?\C:\x` becomes `//?/C:/x`. **Only the cache key is normalized.**
+The loader is handed the caller's own path string, exactly as written (so a network share or a long-path
+`\\?\` path opens as it always did). Two spellings of a file share one entry, and the first caller's spelling is
+the one that is opened. Symlinks are not resolved, and relative
 paths are relative to the working directory (the key does not include it).
 
 ## Loaders
@@ -58,7 +62,7 @@ There is one cache for these loaders; each keeps its call signature and behaviou
 
 Each of these keeps a handle to its assets for the life of the process (as the old caches never freed an asset), so
 the weak manager cache does not free them. Differences you can see: two spellings of one file (`a/./b.png` and
-`b.png`) now share one entry, the usage `Report()` lists these assets, and a manager user who calls `Get<DataAsset>`
+`a/b.png`) now share one entry, the usage `Report()` lists these assets, and a manager user who calls `Get<DataAsset>`
 sees the same object `DataAsset::Cached` returns (an `Invalidate` empties it for them too). The audio entries have no
 file name of their own in the key, so hot reload skips them. Tests: `asset_cache_unify` (written first and run
 against the old code, 35 checks, then against the new), plus `core_data`, `dataasset`, `audio_formats`,
@@ -75,7 +79,10 @@ a sync `Get` of a file being decoded waits for that decode instead of repeating 
 `SetHotReload(true, intervalSeconds)` makes `Pump()` compare each loaded file's mtime and
 size. A change re-decodes on the worker, and `Pump()` moves the result into the existing
 object, so handles and pointers stay valid; `Version()` increments and the reload
-callback (`SetReloadCallback`) fires. A failed re-decode (file missing or half written)
+callback (`SetReloadCallback`) fires. A loader can be registered with a fourth argument, `canReload(const T&)`; hot
+reload skips an entry for which it returns false. `DataAsset` uses it: after a script's `Set()` or `Remove()` the asset
+is left alone (the edit is not thrown away when the file changes on disk) until it is saved or loaded again. Hot reload
+is off by default. A failed re-decode (file missing or half written)
 keeps the old data and retries on the next change. The in-place assignment happens
 inside `Pump()`, so code that reads an asset should run on that same thread.
 

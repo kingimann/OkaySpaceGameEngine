@@ -54,6 +54,15 @@ std::shared_ptr<void> RunLoader(const std::function<std::shared_ptr<void>(const 
 std::string AssetManager::Normalize(const std::string& path, bool foldCase) {
     std::string s = path;
     for (char& c : s) if (c == '\\') c = '/';
+    // Windows prefixes that are not plain folders: long-path / device ("\\?\", "\\.\") and UNC ("\\server\share").
+    // They stay in the key, so "\\server\share\x" and "/server/share/x" are different files.
+    std::string prefix;
+    if (s.size() >= 4 && s[0] == '/' && s[1] == '/' && (s[2] == '?' || s[2] == '.') && s[3] == '/') {
+        prefix = s.substr(0, 4);
+        s.erase(0, 4);
+    } else if (s.size() >= 3 && s[0] == '/' && s[1] == '/' && s[2] != '/') {
+        prefix = "/";           // together with the normal leading "/" this gives "//"
+    }
     std::vector<std::string> parts;
     std::string cur;
     for (std::size_t i = 0; i <= s.size(); ++i) {
@@ -84,6 +93,7 @@ std::string AssetManager::Normalize(const std::string& path, bool foldCase) {
     if (absolute) r += "/";
     for (std::size_t i = 0; i < out.size(); ++i) { if (i) r += "/"; r += out[i]; }
     if (r.empty() && !path.empty()) r = ".";
+    r = prefix + r;
     if (foldCase)
         for (char& c : r) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
     return r;
@@ -161,7 +171,8 @@ void AssetManager::RegisterDefaultLoaders() {
             std::size_t n = sizeof(DataAsset);
             for (const auto& f : a.Fields()) n += f.first.size() + f.second.size();
             return n;
-        });
+        },
+        [](const DataAsset& a) { return !a.EditedByScript(); });   // hot reload must not throw away a script's Set()
     RegisterLoader<Material>("Material",
         [](const std::string& p, std::string& e) -> std::shared_ptr<Material> {
             auto a = std::make_shared<Material>();
@@ -244,7 +255,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
         if (error) *error = "no loader registered for this asset type";
         return nullptr;
     }
-    const std::string key = Normalize(path), open = Normalize(path, false);
+    const std::string key = Normalize(path), open = path;   // key is normalized; the file is opened by the caller's own spelling
     EntryPtr e;
     std::unique_lock<std::mutex> lk(m_mutex);
     for (;;) {
@@ -293,7 +304,7 @@ AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::
     LoaderRec rec;
     if (!LoaderFor(t, rec)) {
         // Report through Pump like any other failure.
-        auto e = std::make_shared<Entry>(t, Normalize(path), Normalize(path, false));
+        auto e = std::make_shared<Entry>(t, Normalize(path), path);
         e->error = "no loader registered for this asset type";
         e->state = S(State::Failed);
         std::lock_guard<std::mutex> lk(m_mutex);
@@ -302,7 +313,7 @@ AssetManager::EntryPtr AssetManager::AcquireAsync(std::type_index t, const std::
         m_done.push_back(std::move(d));
         return e;
     }
-    const std::string key = Normalize(path), open = Normalize(path, false);
+    const std::string key = Normalize(path), open = path;   // key is normalized; the file is opened by the caller's own spelling
     std::lock_guard<std::mutex> lk(m_mutex);
     EntryPtr e;
     for (;;) {
@@ -341,7 +352,7 @@ AssetManager::EntryPtr AssetManager::FindEntry(std::type_index t, const std::str
 
 AssetManager::EntryPtr AssetManager::AdoptEntry(std::type_index t, const std::string& path, std::shared_ptr<void> data) {
     if (!data) return nullptr;
-    const std::string key = Normalize(path), open = Normalize(path, false);
+    const std::string key = Normalize(path), open = path;   // key is normalized; the file is opened by the caller's own spelling
     std::int64_t stamp = 0, size = -1;
     StatFile(open, stamp, size);
     std::lock_guard<std::mutex> lk(m_mutex);
@@ -385,6 +396,10 @@ int AssetManager::Pump() {
                     if (!e) { it = m_cache.erase(it); continue; }
                     ++it;
                     if (e->state.load() != S(State::Ready) || e->reloading) continue;
+                    {
+                        auto li = m_loaders.find(e->type);
+                        if (li != m_loaders.end() && li->second.canReload && !li->second.canReload(e->data.get())) continue;
+                    }
                     std::int64_t st = 0, sz = -1;
                     if (!StatFile(e->path, st, sz)) continue;
                     if (st == e->stamp && sz == e->fileSize) continue;
@@ -404,7 +419,8 @@ int AssetManager::Pump() {
                 e.reloading = false;
                 LoaderRec rec;
                 auto li = m_loaders.find(e.type);
-                if (d.data && li != m_loaders.end() && e.state.load() == S(State::Ready)) {
+                if (d.data && li != m_loaders.end() && e.state.load() == S(State::Ready) &&
+                    !(li->second.canReload && !li->second.canReload(e.data.get()))) {   // edited meanwhile: keep the edit
                     li->second.assign(e.data.get(), d.data.get());
                     e.bytes = li->second.size(e.data.get());
                     e.stamp = d.stamp;

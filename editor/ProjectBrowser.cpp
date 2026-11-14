@@ -544,13 +544,24 @@ bool Browser::Poll(std::uint64_t nowMs) {
         watching = m_watcher->Active();
         if (watching) {
             const okay::WatchState st = m_watcher->Take();
-            if (st == okay::WatchState::Quiet && nowMs < m_nextSafetyScan) {
-                m_nextPoll = nowMs + 200;                    // nothing happened: no scan, check again very soon
-                return false;
+            if (st == okay::WatchState::Unknown) {
+                watching = false;                            // it cannot tell now (folder gone, re-arm failed): scan on our own timer
+            } else {
+                if (st == okay::WatchState::Changed) m_pendingChange = true;
+                if (!m_pendingChange && nowMs < m_nextSafetyScan) {
+                    m_nextPoll = nowMs + 200;                // nothing happened: no scan, check again very soon
+                    return false;
+                }
+                if (m_pendingChange && nowMs < m_nextChangedScan) {
+                    m_nextPoll = m_nextChangedScan;          // a busy folder: at most one scan per kMinRescanMs, the last change still gets its scan
+                    return false;
+                }
+                m_nextSafetyScan = nowMs + 30000;
             }
-            m_nextSafetyScan = nowMs + 30000;
         }
     }
+    m_pendingChange = false;
+    if (watching) m_nextChangedScan = nowMs + kMinRescanMs;
     if (!DoScan()) { m_nextPoll = nowMs + 2000; return false; }
     // Polling waits 2 s and 30 scan-lengths; a watcher already said when to look, so it only spaces scans a little.
     m_nextPoll = nowMs + (watching ? 200 : std::max<std::uint64_t>(2000, static_cast<std::uint64_t>(30.0 * m_scanMs)));

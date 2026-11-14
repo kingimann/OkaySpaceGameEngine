@@ -39,6 +39,9 @@ public:
     bool        TryGetNumber(const std::string& key, double& out) const;
     void        Set(const std::string& key, const std::string& value);  // add or replace
     void        Remove(const std::string& key);
+    /// True after Set() or Remove() until the next Load() or Save(). Hot reload leaves such an asset alone, so a
+    /// script's edit is not thrown away when the file changes on disk.
+    bool        EditedByScript() const { return m_edited; }
 
     /// Written aside and swapped in, so a crash or full disk keeps the old file.
     bool Save(const std::string& path) const;
@@ -64,6 +67,7 @@ public:
 private:
     std::vector<Field> m_fields;
     bool m_loaded = false;      // set by the cache once a file was read into it
+    mutable bool m_edited = false;   // Set()/Remove() since the last Load()/Save()
 };
 
 } // namespace okay

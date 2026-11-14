@@ -83,11 +83,13 @@ bool DataAsset::TryGetNumber(const std::string& key, double& out) const {
 }
 
 void DataAsset::Set(const std::string& key, const std::string& value) {
+    m_edited = true;
     for (auto& f : m_fields) if (f.first == key) { f.second = value; return; }
     m_fields.emplace_back(key, value);
 }
 
 void DataAsset::Remove(const std::string& key) {
+    m_edited = true;
     for (std::size_t i = 0; i < m_fields.size(); ++i)
         if (m_fields[i].first == key) { m_fields.erase(m_fields.begin() + i); return; }
 }
@@ -108,7 +110,9 @@ std::string EncodeField(const std::string& v, bool key) {
 bool DataAsset::Save(const std::string& path) const {
     std::string out = std::string(kHeader) + "\n";
     for (const auto& f : m_fields) out += EncodeField(f.first, true) + " = " + EncodeField(f.second, false) + "\n";
-    return savefmt::AtomicWrite(path, out);
+    const bool ok = savefmt::AtomicWrite(path, out);
+    if (ok) m_edited = false;      // what the script set is now on disk
+    return ok;
 }
 
 bool DataAsset::Load(const std::string& path) {
@@ -139,6 +143,7 @@ bool DataAsset::Load(const std::string& path) {
     }
     if (in.bad()) return false;
     m_fields = std::move(fields);
+    m_edited = false;
     return true;
 }
 
@@ -199,12 +204,14 @@ void DataAsset::Invalidate(const std::string& path) {
     DataAsset* a = it->second.handle ? it->second.handle.Get() : it->second.scratch.get();
     a->m_fields.clear();
     a->m_loaded = false;
+    a->m_edited = false;
 }
 void DataAsset::InvalidateAll() {
     for (auto& kv : g_cache) {
         DataAsset* a = kv.second.handle ? kv.second.handle.Get() : kv.second.scratch.get();
         a->m_fields.clear();
         a->m_loaded = false;
+        a->m_edited = false;
     }
 }
 

@@ -54,7 +54,7 @@ dae	models/Collada/Cinema4D.dae	ok	area=465245.4191	meshes=3	tris=1296	bones=0	s
 dae	models/Collada/ConcavePolygon.dae	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64
 dae	models/Collada/anims_with_full_rotations_between_keys.DAE	ok	area=384.0000	meshes=64	tris=768	bones=0	skinned=0	clips=1	dur=11.967	mat=0	bbox=-0.316,-0.000,-119.685,0.686,1.000,0.500	verts=1536
 dae	models/Collada/box_nested_animation.dae	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=1	clips=1	dur=1.667	mat=1	bbox=0.000,-1.000,-0.000,2.000,1.000,2.000	verts=36
-dae	models/Collada/cameras.dae	FAIL	COLLADA: the scene has no mesh
+dae	models/Collada/cameras.dae	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 dae	models/Collada/cube_UTF16LE.dae	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/cube_UTF8BOM.dae	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/cube_emptyTags.dae	ok	area=60000.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-50.000,-50.000,-50.000,50.000,50.000,50.000	verts=24
@@ -67,7 +67,7 @@ dae	models/Collada/duck_triangulate.dae	ok	area=7.0235	meshes=1	tris=4212	bones=
 dae	models/Collada/earthCylindrical.DAE	ok	area=1.6503	meshes=2	tris=1920	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.423,-0.347,-0.357,0.332,0.347,0.496	verts=5760
 dae	models/Collada/kwxport_test_vcolors.dae	ok	area=6.0000	meshes=3	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/library_animation_clips.dae	ok	area=81.8617	meshes=1	tris=52	bones=5	skinned=1	clips=2	dur=0.833	mat=1	bbox=-1.000,-1.000,-2.929,1.000,7.000,1.000	verts=72
-dae	models/Collada/lights.dae	FAIL	COLLADA: the scene has no mesh
+dae	models/Collada/lights.dae	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 dae	models/Collada/regr01.dae	ok	area=0.0005	meshes=6	tris=172	bones=0	skinned=0	clips=0	dur=0.000	mat=6	bbox=-0.005,-0.000,-0.000,0.008,0.016,0.004	verts=516
 dae	models/Collada/sphere.dae	ok	area=0.0012	meshes=1	tris=760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.010,-0.010,-0.010,0.010,0.010,0.010	verts=401
 dae	models/Collada/sphere_triangulate.dae	ok	area=0.0012	meshes=1	tris=760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.010,-0.010,-0.010,0.010,0.010,0.010	verts=401
@@ -110,14 +110,14 @@ obj	models/OBJ/empty_mat.obj	ok	area=21.7672	meshes=1	tris=256	bones=0	skinned=0
 obj	models/OBJ/multiple_spaces.obj	ok	area=2.5981	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=1.000,1.000,1.000,3.000,3.000,3.000	verts=3	tex=0	nodes=0	uv=0	nrm=0
 obj	models/OBJ/number_formats.obj	ok	area=0.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-2.000,-3.000,1.000,2.000,3.000	verts=3	tex=0	nodes=0	uv=0	nrm=0
 obj	models/OBJ/only_a_part_of_vertexcolors.obj	ok	area=1.7071	meshes=1	tris=3	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=5	tex=0	nodes=0	uv=0	nrm=0
-obj	models/OBJ/point_cloud.obj	FAIL	no faces
+obj	models/OBJ/point_cloud.obj	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.276,-0.965,2.542,-0.208,-0.954,2.554	verts=3	tex=0	nodes=0	uv=0	nrm=1
 obj	models/OBJ/regr01.obj	ok	area=9677888.4513	meshes=12	tris=2710	bones=0	skinned=0	clips=0	dur=0.000	mat=12	bbox=-194.200,-204.512,0.000,1442.086,967.615,337.509	verts=2488	tex=0	nodes=0	uv=1	nrm=0
 obj	models/OBJ/regr_3429812.obj	ok	area=0.0000	meshes=1	tris=4	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=0.042,0.962,0.094,0.050,0.964,0.098	verts=4	tex=0	nodes=0	uv=0	nrm=0
 obj	models/OBJ/space_in_material_name.obj	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64	tex=0	nodes=0	uv=0	nrm=1
 obj	models/OBJ/spider.obj	ok	area=33275.8520	meshes=4	tris=1368	bones=0	skinned=0	clips=0	dur=0.000	mat=5	bbox=-92.655,-42.234,-106.691,57.936,37.504,86.691	verts=974	tex=5	nodes=0	uv=1	nrm=1
-obj	models/OBJ/testline.obj	FAIL	no faces
+obj	models/OBJ/testline.obj	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
 obj	models/OBJ/testmixed.obj	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
-obj	models/OBJ/testpoints.obj	FAIL	no faces
+obj	models/OBJ/testpoints.obj	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
 obj	models/invalid/empty.obj	FAIL	no faces
 obj	models/invalid/malformed.obj	FAIL	face index out of range
 obj	models/invalid/malformed2.obj	ok	area=5.0000	meshes=1	tris=10	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=0	uv=0	nrm=0
@@ -136,9 +136,9 @@ ply	models/PLY/cube_binary.ply	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0
 ply	models/PLY/cube_binary_header_with_RN_newline.ply	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,1.000,1.000,1.000	verts=8	tex=0	nodes=0	uv=0	nrm=1
 ply	models/PLY/cube_uv.ply	ok	area=24.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=24	tex=0	nodes=0	uv=1	nrm=1
 ply	models/PLY/float-color.ply	ok	area=10000.0000	meshes=1	tris=1	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,200.000,200.000,0.000	verts=3	tex=0	nodes=0	uv=0	nrm=1
-ply	models/PLY/issue623.ply	FAIL	PLY list too long
-ply	models/PLY/points.ply	FAIL	PLY has no faces
-ply	models/PLY/pond.0.ply	FAIL	PLY has no faces
+ply	models/PLY/issue623.ply	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=4.188,-2.321,-0.928,7.942,1.432,2.826	verts=24	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/points.ply	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,1.000,1.000	verts=4	tex=0	nodes=0	uv=0	nrm=1
+ply	models/PLY/pond.0.ply	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-1.502,0.571,-2.632,1.976,1.092,0.510	verts=70051	tex=0	nodes=0	uv=0	nrm=1
 ply	models/invalid/crash-30d6d0f7c529b3b66b4131700b7a4580cd7082df.ply	FAIL	unknown PLY property type
 ply	models/invalid/empty.ply	FAIL	not a PLY (missing 'ply' magic)
 gltf	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	FAIL	scene import failed
@@ -158,27 +158,27 @@ gltf	models/glTF2/BoxTextured-glTF-techniqueWebGL/BoxTextured.gltf	ok	area=6.000
 gltf	models/glTF2/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/BoxWithInfinites-glTF-Binary/BoxWithInfinites.glb	ok	area=-nan	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-inf,-nan,-nan,inf,-nan,-nan	verts=24	tex=0	nodes=3	uv=0	nrm=1
 gltf	models/glTF2/ClearCoat-glTF/ClearCoatTest.gltf	ok	area=261.0980	meshes=27	tris=37116	bones=0	skinned=0	clips=0	dur=0.000	mat=19	bbox=-7.358,-6.250,-0.060,3.100,6.855,1.050	verts=20106	tex=5	nodes=34	uv=1	nrm=1
-gltf	models/glTF2/IncorrectVertexArrays/Cube.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=9	uv=0	nrm=0
+gltf	models/glTF2/IncorrectVertexArrays/Cube.gltf	ok	area=92.0000	meshes=8	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-3.500,3.500,1.000,3.500	verts=284	tex=0	nodes=9	uv=0	nrm=0
 gltf	models/glTF2/IndexOutOfRange/AllIndicesOutOfRange.gltf	FAIL	scene import failed
 gltf	models/glTF2/IndexOutOfRange/IndexOutOfRange.gltf	ok	area=5.5000	meshes=1	tris=11	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=0	nrm=1
 gltf	models/glTF2/MissingBin/BoxTextured.gltf	FAIL	scene import failed
 gltf	models/glTF2/RecursiveNodes/RecursiveNodes.gltf	FAIL	scene import failed
 gltf	models/glTF2/SchemaFailures/sceneWrongType.gltf	FAIL	scene import failed
 gltf	models/glTF2/TestNoRootNode/NoScene.gltf	FAIL	scene import failed
-gltf	models/glTF2/TestNoRootNode/SceneWithoutNodes.gltf	FAIL	scene import failed
+gltf	models/glTF2/TestNoRootNode/SceneWithoutNodes.gltf	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=1	uv=0	nrm=0
 gltf	models/glTF2/cameras/Cameras.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,-0.708,1.000,0.707,0.000	verts=4	tex=0	nodes=4	uv=0	nrm=0
 gltf	models/glTF2/draco/2CylinderEngine.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_00.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_01.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_02.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_03.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_00.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=1024	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_01.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=8	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_02.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_03.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=5	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_04.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_05.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_06.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=6	tex=0	nodes=2	uv=0	nrm=0
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_07.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_08.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_09.gltf	FAIL	scene import failed
-gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_10.gltf	FAIL	scene import failed
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_07.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=1024	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_08.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_09.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
+gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_10.gltf	ok	area=0.0000	meshes=1	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_11.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_12.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
 gltf	models/glTF2/glTF-Asset-Generator/Mesh_PrimitiveMode/Mesh_PrimitiveMode_13.gltf	ok	area=1.0000	meshes=1	tris=2	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=4	tex=0	nodes=2	uv=0	nrm=0
@@ -298,25 +298,25 @@ lwo	models-nonbsd/LWO/LWO2/LWSReferences/QuickDraw--Standin-Driver.lwo	ok	area=2
 lwo	models-nonbsd/LWO/LWO2/LWSReferences/QuickDraw--Wheels-Back.lwo	ok	area=32.6825	meshes=3	tris=4348	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-2.358,-0.097,-3.647,2.358,2.077,-1.473	verts=2702	tex=0	nodes=2	uv=0	nrm=1
 lwo	models-nonbsd/LWO/LWO2/LWSReferences/QuickDraw--Wheels-Front.lwo	ok	area=15.9368	meshes=3	tris=4348	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-2.221,-0.078,1.794,2.221,1.439,3.312	verts=2702	tex=0	nodes=2	uv=0	nrm=1
 lwo	models-nonbsd/LWO/LWO2/rifle.lwo	ok	area=8673.7663	meshes=1	tris=572	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.523,-21.537,-44.979,3.523,20.233,71.303	verts=752	tex=1	nodes=2	uv=1	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_x_scale_222_wrap_21.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y_scale_111.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y_scale_111_wrap_21.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_planar_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_planar_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_planar_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_planar_z_scale_111.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_spherical_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_spherical_x_scale_222_wrap_22.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_spherical_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_spherical_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/MappingModes/earth_spherical_z_wrap_22.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=0	nodes=2	uv=0	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1330	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_x_scale_222_wrap_21.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1330	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y_scale_111.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_y_scale_111_wrap_21.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_cylindrical_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_planar_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_planar_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_planar_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_planar_z_scale_111.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_spherical_x.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1330	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_spherical_x_scale_222_wrap_22.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1330	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_spherical_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_spherical_z.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/MappingModes/earth_spherical_z_wrap_22.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWO2/MappingModes/earth_uv_cylindrical_y.lwo	ok	area=95.9384	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.400,-2.450,-2.850,2.300,2.850,2.850	verts=1328	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWO2/ModoExport_vertNormals.lwo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=266	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWO/LWO2/Subdivision.lwo	ok	area=17.9750	meshes=1	tris=48	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.950,0.000,-0.650,0.900,1.550,1.150	verts=54	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWO2/UglyVertexColors.lwo	ok	area=328.8292	meshes=3	tris=3180	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-4.700,-4.600,-2.493,12.450,4.600,2.555	verts=5369	tex=0	nodes=2	uv=1	nrm=1
+lwo	models/LWO/LWO2/UglyVertexColors.lwo	ok	area=328.8292	meshes=3	tris=3180	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-4.700,-4.600,-2.493,12.450,4.600,2.555	verts=5370	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWO2/box_2uv_1unused.lwo	ok	area=47.8750	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.950,0.000,-1.600,1.700,1.750,1.650	verts=24	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWO2/box_2vc_1unused.lwo	ok	area=47.8750	meshes=1	tris=419	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.950,0.000,-1.600,1.700,1.750,1.650	verts=284	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWO2/boxuv.lwo	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=2	uv=1	nrm=1
@@ -334,7 +334,7 @@ lwo	models/LWO/LWO2/sphere_with_mat_gloss_10pc.lwo	ok	area=63.5224	meshes=1	tris
 lwo	models/LWO/LWO2/transparency.lwo	ok	area=260.8988	meshes=1	tris=540	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-4.200,-4.650,-3.350,4.500,4.650,2.950	verts=290	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWO/LWO2/uvtest.lwo	ok	area=1.0000	meshes=16	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=16	bbox=-0.500,-0.500,0.000,0.500,0.500,0.000	verts=64	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWOB/ConcavePolygon.lwo	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64	tex=0	nodes=2	uv=0	nrm=1
-lwo	models/LWO/LWOB/MappingModes/bluewithcylindrictexz.lwo	ok	area=35.5050	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.200,0.000,-1.300,1.200,2.350,1.250	verts=24	tex=0	nodes=2	uv=0	nrm=1
+lwo	models/LWO/LWOB/MappingModes/bluewithcylindrictexz.lwo	ok	area=35.5050	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.200,0.000,-1.300,1.200,2.350,1.250	verts=24	tex=1	nodes=2	uv=1	nrm=1
 lwo	models/LWO/LWOB/sphere_with_mat_gloss_10pc.lwo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=266	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWO/LWOB/sphere_with_mat_gloss_50pc.lwo	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.150,-2.100,-2.500,2.150,2.100,2.600	verts=266	tex=0	nodes=2	uv=0	nrm=1
 lwo	models/LWS/simple_cube.lwo	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=2	uv=0	nrm=1

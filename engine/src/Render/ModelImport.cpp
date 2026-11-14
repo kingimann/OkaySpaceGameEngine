@@ -714,8 +714,9 @@ void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
 } // namespace
 
 GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
-    // A skeleton-only model (BVH motion capture) has nodes and clips but no mesh.
-    if (model.parts.empty() && (model.nodes.empty() || model.clips.empty())) return nullptr;
+    // A model with nodes but no mesh (a BVH skeleton, a COLLADA file of cameras and lights only) imports as its node
+    // hierarchy; a model with neither nodes nor parts is nothing to build.
+    if (model.parts.empty() && model.nodes.empty()) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
 
     if (model.nodes.empty()) {
@@ -1777,7 +1778,13 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
             if (!tex.empty()) mr->texture = tex;
         }
         AutoNormalizeImportScale(scene, root);
-        if (ok) *ok = okm;
+        // A file that names no mesh at all (no nodes, no meshes) is an empty scene, as Assimp reads it; one that names
+        // meshes none of which could be read is a failed import.
+        // (Assimp also wants a scene: a file with no "scenes" at all, or a glTF 1.0 file whose meshes are an object, fails.)
+        const JVal* ms = doc.root.Find("meshes");
+        const JVal* scs = doc.root.Find("scenes");
+        const bool namesNoMesh = !ms || (ms->type == JVal::Arr && ms->arr.empty());
+        if (ok) *ok = okm || (namesNoMesh && scs && scs->type == JVal::Arr && !scs->arr.empty());
         return root;
     }
 
@@ -2081,15 +2088,15 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
     {
         bool wantsMesh = false;
         for (int i = 0; i < nodeCount && !wantsMesh; ++i) wantsMesh = nodes->arr[i].Find("mesh") != nullptr;
-        bool anyTriangles = false;
+        bool anyTriangles = false;   // any geometry: a points / lines primitive keeps its vertices and has no triangles
         for (const auto& up : scene.Objects()) {
             GameObject* g = up.get();
             if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (mr->mesh.TriangleCount() > 0) { anyTriangles = true; break; } }
-            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (sm->bind.TriangleCount() > 0) { anyTriangles = true; break; } }
+            if (auto* mr = g->GetComponent<MeshRenderer>()) { if (!mr->mesh.vertices.empty()) { anyTriangles = true; break; } }
+            if (auto* sm = g->GetComponent<SkinnedMesh>()) { if (!sm->bind.vertices.empty()) { anyTriangles = true; break; } }
         }
         if (wantsMesh && !anyTriangles) {
-            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file, malformed accessors, or only points and lines)");
+            Log::Error("model import '", path, "': the glTF names meshes but none could be read (a missing .bin file or malformed accessors)");
             scene.Destroy(root);
             if (ok) *ok = false;
             return nullptr;

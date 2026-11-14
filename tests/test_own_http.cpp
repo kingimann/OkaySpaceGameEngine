@@ -370,7 +370,7 @@ static std::string GzipOf(const std::string& raw, const std::string& plain) {
     return g;
 }
 
-static void TestInflate() {
+static void TestInflate(int iters) {
     std::string out, why;
     const std::string plain = GzPlain();
     CHECK(InflateBody(kGz, true, 1 << 20, out, why) && out == plain);
@@ -411,7 +411,7 @@ static void TestInflate() {
         bits(1, 1); bits(1, 2); huff(0x30 + 'a', 8);
         huff(1, 7 /* length code 257 = 3 */); huff(1, 5); /* distance code 1 = distance 2 */
         huff(0, 7); if (n) raw.push_back(char(acc));
-        CHECK(!InflateBody(GzipOf(raw, "aaaa"), true, 1 << 20, out, why) && why.find("too far") != std::string::npos); }
+        CHECK(!InflateBody(GzipOf(raw, "aaaa"), true, 1 << 20, out, why) && why.find("before the output") != std::string::npos); }
     // zip bomb: ~1 MiB of output from a few KB, stops at the cap without allocating more than the cap
     {   std::string raw = BombRaw(4000);
         std::string plain2(1 + 4000 * 258, 'a');
@@ -421,15 +421,56 @@ static void TestInflate() {
     // an incomplete / over-subscribed dynamic table is refused: type 2 block with HLIT=0 HDIST=0 HCLEN=0 and zero code lengths
     {   std::string raw("\x05\x00\x00\x00\x00\x00\x00\x00", 8);
         CHECK(!InflateBody(GzipOf(raw, ""), true, 1000, out, why)); }
-    // mutation fuzz over random bytes: never crashes, output never passes the cap
+    // unmutated input IS accepted (so a decoder that refuses everything fails here), at every wrapper
+    CHECK(InflateBody(kGz, true, 1 << 20, out, why) && out == plain);
+    CHECK(InflateBody(kZlib, false, 1 << 20, out, why) && out == plain);
+    // every single-bit flip of every byte: count accepted and rejected; an accepted one must still give the same bytes
+    for (int wrap = 0; wrap < 2; ++wrap) {
+        const std::string& src = wrap ? kZlib : kGz;
+        size_t accepted = 0, rejected = 0;
+        for (size_t k = 0; k < src.size(); ++k)
+            for (int bit = 0; bit < 8; ++bit) {
+                std::string m = src; m[k] = char(m[k] ^ (1 << bit));
+                if (InflateBody(m, wrap == 0, 1 << 20, out, why)) { ++accepted; CHECK(out == plain); }
+                else { ++rejected; CHECK(!why.empty()); }
+            }
+        CHECK(accepted + rejected == src.size() * 8);
+        CHECK(rejected > accepted * 20);       // a checksummed stream refuses nearly every damaged copy
+        CHECK(rejected > 0);
+        std::printf("inflate bit flips (%s): %zu accepted, %zu rejected\n", wrap ? "zlib" : "gzip", accepted, rejected);
+    }
+    // every strict prefix of a valid stream is refused, never crashes (gzip, zlib, stored, and the raw fixed block)
+    {   const std::string gzStored = GzipOf(std::string("\x01\x05\x00\xfa\xff", 5) + "hello", "hello");
+        CHECK(InflateBody(gzStored, true, 100, out, why) && out == "hello");
+        size_t refused = 0;
+        for (const std::string* s : {&kGz, &gzStored})
+            for (size_t k = 0; k < s->size(); ++k) { CHECK(!InflateBody(s->substr(0, k), true, 1 << 20, out, why)); ++refused; }
+        for (size_t k = 0; k < kZlib.size(); ++k) { CHECK(!InflateBody(kZlib.substr(0, k), false, 1 << 20, out, why)); ++refused; }
+        for (size_t k = 0; k < kStoredZ.size(); ++k) { CHECK(!InflateBody(kStoredZ.substr(0, k), false, 1 << 20, out, why)); ++refused; }
+        CHECK(refused == kGz.size() + gzStored.size() + kZlib.size() + kStoredZ.size()); }
+    // mutation fuzz over random bytes: never crashes, output never passes the cap; valid headers followed by random
+    // bodies reach the dynamic-table code. Counts are printed so a decoder that refuses everything is visible.
     Rng rng{0x9e3779b97f4a7c15ull};
-    for (int i = 0; i < 3000; ++i) {
-        std::string m = (i & 1) ? kGz : kZlib;
-        for (int k = 0, c = 1 + int(rng.Below(6)); k < c; ++k) m[rng.Below(m.size())] = char(rng.Next());
-        if (rng.Below(4) == 0) m.resize(rng.Below(m.size() + 1));
-        InflateBody(m, (i & 1) != 0, 4096, out, why);
+    size_t fzAccepted = 0, fzRejected = 0;
+    const int rounds = std::max(3000, iters);
+    for (int i = 0; i < rounds; ++i) {
+        std::string m;
+        const bool gz = (i & 1) != 0;
+        if (i % 5 == 4) {                        // valid wrapper header, random deflate body
+            m = gz ? std::string("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03", 10) : std::string("\x78\x9c", 2);
+            for (size_t k = 0, c = 4 + rng.Below(60); k < c; ++k) m.push_back(char(rng.Next()));
+            if (m.size() > 3) m[gz ? 10 : 2] = char((rng.Next() & 0xf8) | 4 | (rng.Next() & 1));   // block kind 2 (dynamic) often
+        } else {
+            m = gz ? kGz : kZlib;
+            for (size_t k = 0, c = 1 + rng.Below(6); k < c; ++k) m[rng.Below(m.size())] = char(rng.Next());
+            if (rng.Below(4) == 0) m.resize(rng.Below(m.size() + 1));
+            if (rng.Below(8) == 0) m.insert(rng.Below(m.size() + 1), 1, char(rng.Next()));
+        }
+        if (InflateBody(m, gz, 4096, out, why)) ++fzAccepted; else ++fzRejected;
         CHECK(out.size() <= 4096);
     }
+    CHECK(fzRejected > 0);
+    std::printf("inflate fuzz: %d inputs, %zu accepted, %zu rejected\n", rounds, fzAccepted, fzRejected);
 }
 
 static void TestContentCoding() {
@@ -587,7 +628,7 @@ int main(int argc, char** argv) {
     int iters = 20000;
     if (const char* e = std::getenv("OKAY_FUZZ_ITERS")) iters = std::atoi(e);
     if (argc > 1) iters = std::atoi(argv[1]);
-    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); Fuzz(iters);
+    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(iters); TestContentCoding(); TestRange(); Fuzz(iters);
     std::printf("own_http: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -18,6 +18,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 |---|---|---|
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio import options (stream, mono, quality) are not read by the loader (clips keep their channels and long music is streamed per source instead) |
+| OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
 | Models already in a scene on import-settings Apply | Limited | Stored meshes are not re-imported; the setting applies the next time the model is added |
 | Ten visual-script nodes: `Fn.net_join_link`, `Fn.net_pin_host`, `Fn.pf_*` (delete, leaderboard_top, load, login, login_password, register, save, set_stat) | Hidden from the palette (`kHiddenUntilTested`) | No test covers them; they need a network or PlayFab service |
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |

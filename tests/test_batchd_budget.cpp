@@ -278,9 +278,58 @@ static void ScenePaths() {
     fs::remove_all(root, ec);
 }
 
+// Thousands of DISTINCT meshes. The case above names ONE mesh many times (built once, cached); this one names many different meshes,
+// each of which really is built. Every <MESH> is a convex fan of `corners` corners (corners-2 triangles, none degenerate) on its own
+// positions, so nothing is shared between meshes.
+static std::string XglDistinctMeshes(int meshes, int corners) {
+    std::string s; s.reserve((std::size_t)meshes * corners * 48);
+    s += "<WORLD>\n";
+    for (int m = 0; m < meshes; ++m) {
+        s += "<MESH ID=\"" + std::to_string(m) + "\">";
+        for (int i = 0; i < corners; ++i) {
+            const double a = 6.283185307179586 * i / corners;
+            s += "<P ID=\"" + std::to_string(i) + "\">" + std::to_string((int)(1000 * std::cos(a))) + "," + std::to_string((int)(1000 * std::sin(a))) + "," + std::to_string(m) + "</P>";
+        }
+        s += "<F>";
+        for (int i = 0; i < corners; ++i) s += "<FV1><PREF>" + std::to_string(i) + "</PREF></FV1>";
+        s += "</F></MESH>\n";
+    }
+    for (int m = 0; m < meshes; ++m) s += "<OBJECT><MESHREF>" + std::to_string(m) + "</MESHREF></OBJECT>";
+    s += "</WORLD>\n";
+    return s;
+}
+
+static void XglManyDistinctMeshes() {
+    // (a) A legal-size file of 700 distinct meshes (750,000 triangles, 1.5 million XML elements) reads in full: every mesh is built
+    //     once, all of them are counted by the built-triangle budget, and time and memory stay bounded.
+    {
+        const int kMeshes = 700, kCorners = 402;
+        const std::string s = XglDistinctMeshes(kMeshes, kCorners);
+        std::fprintf(stderr, "  xgl %d distinct meshes file: %zu bytes\n", kMeshes, s.size());
+        ImportedModel m; std::string err;
+        const Run r = Measure("xgl 700 distinct meshes", [&] { return ReadXglBuffer(s, "", m, &err); });
+        if (!r.ok) std::fprintf(stderr, "  err: %s\n", err.c_str());
+        CHECK(r.ok && (int)m.parts.size() == kMeshes && fx::TriCount(m) == (std::size_t)kMeshes * (kCorners - 2) && fx::Sane(m));
+    }
+    // (b) The same shape past the limits (4,400 distinct meshes, 4.4 million triangles, 200 MB of text) is refused,
+    //     in time, with bounded memory, and leaves nothing behind. NOTE: the XML node cap (2,000,000) refuses this file before the
+    //     4,000,000 built-triangle budget can be reached, because every corner of a fan costs about five XML nodes (text counts); that budget is therefore a
+    //     second line of defence that no file within the element cap can hit, and it is not tested by name here.
+    {
+        const int kMeshes = 4400, kCorners = 1002;
+        const std::string s = XglDistinctMeshes(kMeshes, kCorners);
+        std::fprintf(stderr, "  xgl %d distinct meshes file: %zu bytes\n", kMeshes, s.size());
+        ImportedModel m; std::string err;
+        const Run r = Measure("xgl 4400 distinct meshes", [&] { return ReadXglBuffer(s, "", m, &err); });
+        CHECK(!r.ok && !err.empty() && m.parts.empty() && m.nodes.empty());
+        CHECK(err.find("too many elements") != std::string::npos || err.find("budget") != std::string::npos);
+    }
+}
+
 int main() {
     RUN_SUITE("batchd_budget");
     XglHostile();
+    XglManyDistinctMeshes();
     IrrHostile();
     Ac3dHostile();
     OgreStripsAndFans();

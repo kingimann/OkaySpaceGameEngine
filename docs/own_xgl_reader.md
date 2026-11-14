@@ -14,7 +14,7 @@ XGL is a small XML scene format (written by 3D Studio exporters, Truespace and o
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 24 (extensions `.xgl`, `.zgl`) |
 | `tests/test_xgl_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`xgl_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
-| `tests/test_batchd_budget.cpp` | Budgets: a 0.45 MB file that names one 2,000-triangle mesh 6,000 times (`batchd_budget`) |
+| `tests/test_batchd_budget.cpp` | Budgets: a 0.45 MB file that names one 2,000-triangle mesh 6,000 times; 700 distinct meshes read in full (280,000 triangles, 15 MB, peak 195 MB under ASan); a 245 MB file of 4,400 distinct meshes is refused in under 10 s with a peak under 640 MB (`batchd_budget`). The 4,000,000 built-triangle budget itself cannot be reached by any file: the 2,000,000-node XML cap refuses first (each fan corner costs about five nodes), so it is defence in depth. Checked by lowering it for one run: the 700-mesh case then failed |
 
 ## What it reads
 

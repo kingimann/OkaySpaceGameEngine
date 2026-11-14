@@ -60,6 +60,16 @@ int main() {
         CHECK(!RunReaderGuarded([]() -> bool { throw std::runtime_error("boom"); }, e) && e.find("boom") != std::string::npos);
         e.clear();
         CHECK(!RunReaderGuarded([]() -> bool { throw 7; }, e) && e.find("unknown") != std::string::npos);
+        // a reader that threw after it had written part of its output: the guard only reports; the caller (ImportModelData) clears the model
+        ImportedModel half; e.clear();
+        CHECK(!RunReaderGuarded([&]() -> bool { half.parts.resize(3); throw std::bad_alloc(); }, e) && !e.empty() && half.parts.size() == 3);
+        // every exception kind ends in "refused" and a non-empty reason, and a thrown message that is a std::exception is passed on
+        for (int k = 0; k < 4; ++k) {
+            std::string r;
+            CHECK(!RunReaderGuarded([k]() -> bool { if (k == 0) throw std::bad_alloc(); if (k == 1) throw std::length_error("x"); if (k == 2) throw std::logic_error("reader-name-NFF"); throw 1.5; }, r)
+                  && r.find("refused") != std::string::npos);
+            if (k == 2) CHECK(r.find("reader-name-NFF") != std::string::npos);
+        }
     }
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch_d";
     fs::create_directories(dir);
@@ -181,6 +191,52 @@ int main() {
             CHECK(ImportModelData((dir / "inner" / "scene6.irr").string(), m6, ImportBackend::Own, false, &err) && fx::TriCount(m6) == 60);
             bool refused = false; for (const std::string& n : m6.notes) if (n.find("refused") != std::string::npos) refused = true;
             CHECK(refused);
+        }
+    }
+    // a refused file through the seam: the model is left EMPTY (even when the caller passed in a used one), the reason is not empty and
+    // names the format's reader, for garbage bytes and for an empty file, for each of the five batch-D formats
+    {
+        SetImportBackend("*", ImportBackend::Own);
+        const std::string junk("this is not a model\n\x01\x02\xff\xfe 1 2 3\n", 30);
+        struct Bad { const char* file; const char* reader; };
+        const Bad bad[] = {{"bad.ac", "AC3D"}, {"bad.mesh.xml", "OGRE"}, {"bad.xgl", "XGL"}, {"bad.irr", "IRR"}, {"bad.nff", "NFF"}};
+        for (const Bad& b : bad) {
+            for (const std::string& bytes : {junk, std::string()}) {
+                const std::string path = (dir / b.file).string();
+                WriteFile(path, bytes);
+                ImportedModel m; m.parts.resize(2); m.nodes.resize(2); m.notes.push_back("stale"); std::string err;
+                const bool ok = ImportModelData(path, m, ImportBackend::Own, false, &err);
+                if (ok) std::fprintf(stderr, "  %s: unexpectedly read\n", b.file);
+                CHECK(!ok && m.parts.empty() && m.nodes.empty() && m.materials.empty() && m.notes.empty() && m.clips.empty());
+                CHECK(!err.empty() && err.find(b.reader) != std::string::npos);
+            }
+        }
+        // a file that is not there is refused the same way (no throw out of the seam)
+        ImportedModel m; std::string err;
+        CHECK(!ImportModelData((dir / "missing.xgl").string(), m, ImportBackend::Own, false, &err) && m.parts.empty() && !err.empty());
+    }
+    // the NFF material table (mtable) may only name a file next to the model: refused for an absolute path and for "..", through the seam;
+    // the polygons still read (the Irrlicht scene case is checked above with scene6.irr)
+    {
+        SetImportBackend("*", ImportBackend::Own);
+        WriteFile(dir / "m.mat", fx::BuildNffMat());
+        fs::create_directories(dir / "nffsub");
+        auto withTable = [&](const std::string& table) {
+            std::string t = fx::BuildNffSense8();
+            t.replace(t.find("m.mat"), 5, table);
+            return t;
+        };
+        auto hasNote = [](const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; };
+        {   // next to the model: read, nothing refused
+            WriteFile(dir / "nffsub" / "m.mat", fx::BuildNffMat());
+            WriteFile(dir / "nffsub" / "ok.nff", withTable("m.mat"));
+            ImportedModel m; std::string err;
+            CHECK(ImportModelData((dir / "nffsub" / "ok.nff").string(), m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 3 && m.parts.size() == 2 && !hasNote(m, "refused"));
+        }
+        for (const std::string& ref : {(dir / "m.mat").string(), std::string("../m.mat"), std::string("..\\m.mat")}) {
+            WriteFile(dir / "nffsub" / "esc.nff", withTable(ref));
+            ImportedModel m; std::string err;
+            CHECK(ImportModelData((dir / "nffsub" / "esc.nff").string(), m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 3 && hasNote(m, "refused"));
         }
     }
     SetImportBackend("*", ImportBackend::Default);

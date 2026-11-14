@@ -626,6 +626,52 @@ static void TestAccountNoResend() {
     std::error_code ec; fs::remove_all(dir, ec);
 }
 
+// A server that takes the request and then stalls: ApiTimed with a short limit gives up in time, the server saw exactly ONE request, and
+// curl never ran (a stalled POST may already have been processed, so it must not be repeated). ApiAnon has no time argument (30 s default),
+// so the stall case goes through ApiTimed, which needs a saved session.
+static void TestAccountStall() {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("okay_stall_" + okay::account::detail::RandomHex(8));
+    fs::create_directories(dir / "bin"); fs::create_directories(dir / "cfg");
+    const std::string log = (dir / "curl.log").string();
+    WriteFile((dir / "bin" / "curl").string(), "#!/bin/sh\necho run >> '" + log + "'\nexit 7\n");
+    Sh("chmod +x '" + (dir / "bin" / "curl").string() + "'");
+    WriteFile((dir / "cfg" / "session.txt").string(), "tester\ntoken-abc\n\n");   // the saved session ApiTimed needs
+    const char* oldPath = std::getenv("PATH"); const std::string savedPath = oldPath ? oldPath : "";
+    ::setenv("PATH", (dir / "bin").string().c_str(), 1);
+    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
+
+    Server s;   // reads the whole request, then stalls (no answer, no close) until the test stops it
+    s.handler = [&s](int, const std::string&, const std::string&) {
+        for (int i = 0; i < 100 && !s.stop; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    };
+    s.Start();
+    okay::account::AccountService svc(dir / "cfg", "http://127.0.0.1:" + std::to_string(s.port));
+    CHECK(svc.IsLoggedIn());
+    for (const char* m : {"POST", "PUT", "PATCH", "DELETE"}) {
+        const size_t before = s.Count();
+        const auto t0 = std::chrono::steady_clock::now();
+        okay::account::ApiResponse r = svc.ApiTimed("/act", m, "{\"a\":1}", {}, 1);
+        const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(!r.reached);
+        CHECK(sec < 4.0);                          // gave up at about the 1 s limit, not the 30 s default
+        CHECK(s.Count() - before == 1);            // exactly one request reached the server
+        CHECK(!fs::exists(log));                   // curl never ran: no re-send
+    }
+    {   // GET may be repeated: the fake curl runs once
+        const size_t before = s.Count();
+        okay::account::ApiResponse r = svc.ApiTimed("/act", "GET", {}, {}, 1);
+        CHECK(!r.reached);
+        CHECK(s.Count() - before == 1);
+        CHECK(fs::exists(log) && CountLines(log) == 1);
+    }
+    s.Stop();
+    ::setenv("PATH", savedPath.c_str(), 1);
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    std::error_code ec; fs::remove_all(dir, ec);
+}
+
 static void TestNoProxyList() {
     CHECK(HostBypassesProxy("localhost", "localhost,127.0.0.1"));
     CHECK(HostBypassesProxy("127.0.0.1", "localhost,127.0.0.1"));
@@ -966,6 +1012,7 @@ int main(int argc, char** argv) {
     TestReviewFixes();
     TestNoResendDecision();
     TestAccountNoResend();
+    TestAccountStall();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

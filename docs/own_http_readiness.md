@@ -56,6 +56,7 @@ Status words: **Done** (code and a test that runs), **Partial** (works for the c
 ## 3. What changed for readiness: which PR added what
 
 - **PR #850 (merged; its title wrongly says "keep-alive, HEAD, conditional requests, cookies"; the title cannot be changed on the merged commit):** gzip and deflate (own inflate), Range and resume, progress, cancel, the name-lookup timeout, `RequestEx`, the per-call timeout on the own client, the launcher `DownloadFile` move, the `own-http` CI job. It does NOT contain keep-alive, HEAD requests as a feature, conditional requests or cookies.
+- **Test gaps left open on main (checked when closing the "not covered" list):** keep-alive over TLS is untested because main has no keep-alive (PR #852) and no TLS server of our own (only `openssl s_server`, which closes after each answer); the PlayFab POST on a reused connection has no test because `PlayFab.hpp` on main still calls the system `curl` only (no own-client path, no `test_playfab_own.cpp`). The `AccountService::ApiTimed` stall case is now covered (see `docs/own_http_client.md`).
 - **PR #852 (open, not merged):** keep-alive, HEAD, conditional requests, cookies and moving more call sites onto the client. Until it merges, every line on this page that says these are Missing is the state of main.
 - **Review fixes (this branch `claude/ownhttp-review-fixes`):** Windows timeouts back to what they were, no curl re-send of a POST that may have been sent, strict Range checks, loopback tests for the redirect cap, and the CI and memory notes.
 

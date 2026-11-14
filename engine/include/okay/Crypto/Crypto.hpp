@@ -64,8 +64,9 @@ void MemZero(void* p, std::size_t n);
 bool ConstantTimeEqual(const void* a, const void* b, std::size_t n);
 
 // ---- ChaCha20 / Poly1305 (RFC 8439) -------------------------------------------
-/// out = in XOR keystream (in-place allowed). 32-bit block counter, 96-bit nonce.
-void ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+/// out = in XOR keystream (in-place allowed). 32-bit block counter, 96-bit nonce. Returns false, writing nothing, when the
+/// message needs more blocks than the counter has left (a wrap would reuse keystream); true otherwise.
+bool ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
                  const std::uint8_t key[32], const std::uint8_t nonce[12], std::uint32_t counter);
 /// HChaCha20 (the XChaCha20 subkey step): 32-byte key, 16-byte input -> 32-byte subkey.
 void HChaCha20(std::uint8_t out[32], const std::uint8_t key[32], const std::uint8_t in[16]);
@@ -170,8 +171,18 @@ void Ed25519PublicFromSeed(std::uint8_t pk[32], const std::uint8_t seed[32]);
 /// Signs with the first 32 bytes of `sk` (the seed); the public key is recomputed, so a
 /// secret key whose second half was tampered with can't leak the scalar.
 void Ed25519Sign(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
+/// Same signature as Ed25519Sign, but uses the public key stored in sk[32..64] as is instead of recomputing it from the seed
+/// (what libsodium always does): about twice as fast. ONLY for a sk made by Ed25519SeedKeypair/Ed25519Keypair: if the tail
+/// of sk is not the seed's public key, two signatures of the same message under different tails reveal the secret scalar.
+/// Ed25519Sign has no such precondition and is the default.
+void Ed25519SignTrustedPk(std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t sk[64]);
 /// Strict, like libsodium: S must be < L, R and the public key must not be small-order,
 /// and the public key must be a canonical encoding of a curve point.
 bool Ed25519Verify(const std::uint8_t sig[64], const std::uint8_t* m, std::size_t n, const std::uint8_t pk[32]);
+/// True for a public key no signature should ever be accepted under: a non-canonical encoding (y >= p) or a
+/// point of small order (including the identity, which "verifies" R = identity, S = 0 for any message).
+/// Exactly the key checks Ed25519Verify makes first; used to vet key lists before trusting them.
+/// A 32-byte string that is not a curve point at all is NOT reported (it fails to verify anything anyway).
+bool Ed25519IsWeakKey(const std::uint8_t pk[32]);
 
 } // namespace okay::crypto

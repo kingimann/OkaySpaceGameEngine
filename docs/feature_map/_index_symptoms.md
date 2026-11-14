@@ -186,6 +186,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a piece will not place (red ghost) | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a platform cannot be jumped up through | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a player is kicked for "speed hack | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
+| a player kicked with a risk score and evidence in the kick report | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | a player moves faster than allowed | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
 | a player says "it crashed" and I have nothing | [48.1](43-proposals.md#481-crash-reports) Crash reports |
 | a plugin does not load or shows "(error) | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
@@ -281,7 +282,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
 | a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
-| a TODO comment appears in generated code | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
@@ -408,7 +408,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | cannot make a custom effect without editing engine code | [26.1](20-35-planned.md#261-visual-shader-graphs) Visual shader graphs |
 | cannot paint a path or sand patch | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
 | cannot paint tiles in the editor | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
-| cannot paste into a game text field | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | cannot play a pre-rendered cutscene or intro movie | [50.4](43-proposals.md#504-video-playback) Video playback |
 | cannot publish to the Play Store from the editor | [56.2](43-proposals.md#562-mobile-packaging) Mobile packaging |
 | cannot reach a button with the gamepad | [32.1](20-35-planned.md#321-controller-navigation) Controller navigation |
@@ -573,6 +572,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | hitch when walking into a new area | [27.4](20-35-planned.md#274-streaming) Streaming |
 | hits through walls | [11.7](11-gameplay-systems.md#117-combat-actions-melee-dodge-dive) Combat actions: melee, dodge, dive |
 | holding two keys drops one | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
+| honest players with bad ping flagged when the thresholds are too tight | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | HTML game opens in the browser | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | huge map uses too much memory | [27.4](20-35-planned.md#274-streaming) Streaming |
 | huge terrain is heavy | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
@@ -866,6 +866,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sound plays from the start every time it should resume | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | sound stops when the window loses focus | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | spawned bullets stutter (pooling) | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |
+| speed window", "teleport", "through wall" evidence in the log | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | sprite pivot is always the centre | [43.2](43-proposals.md#432-sprite-atlas-and-slicing) Sprite atlas and slicing |
 | sprites draw in the wrong order | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | squares instead of letters in a language | [31.2](20-35-planned.md#312-font-fallback) Font fallback |
@@ -1192,6 +1193,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
+| View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |

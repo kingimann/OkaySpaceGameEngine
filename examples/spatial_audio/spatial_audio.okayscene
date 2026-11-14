@@ -1,0 +1,112 @@
+okayscene 3
+name "Spatial audio"
+gravity 0 -9.81 0
+gravity3 0 -9.81 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 1.7 -6 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "Press Play. You start in the Room: the near speaker is bright, the far one is duller, the one behind the wall is quiet, and the flyby rises in pitch as it approaches. Move the Main Camera into Hall, Cave or Outdoor to hear those echoes. 2D sounds stay dry." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+end
+gameobject 2 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.1 40 0 0 0 1 30 0.2 140
+    mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Near Speaker"
+  active 1
+  parent -1
+  transform 2 1.2 -4 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.95 0.85 0.35 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.7 1 1 1 2 30 1 0 0 0 22000 0 0 1 0 0.25 800 0 2000
+end
+gameobject 4 "Far Speaker"
+  active 1
+  parent -1
+  transform 2 1.2 8 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.45 0.55 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.85 1 1 1 2 16 1 0 0 0 22000 0 0 1 0 0.25 800 1 350
+end
+gameobject 5 "Flyby"
+  active 1
+  parent -1
+  transform 14 1.7 -6 0 0 0 1 0.6 0.6 0.6
+    mesh "Cube" 0.95 0.55 0.2 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    mover -28 0 0 1
+    audio "tone.wav" 0.75 1 1 1 2 40 1 0 0 0 22000 0 1 1.5 0 0.25 800 0 2000
+end
+gameobject 6 "Wall"
+  active 1
+  parent -1
+  transform 0 1.5 2 0 0 0 1 8 3 0.4
+    mesh "Cube" 0.55 0.55 0.58 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 7 "Behind Wall"
+  active 1
+  parent -1
+  transform 0 1.7 6 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.35 0.75 0.45 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.8 1 1 1 2 40 1 0 0 0 22000 0 0 1 1 0.2 500 0 2000
+end
+gameobject 8 "Room"
+  active 1
+  parent -1
+  transform 0 2 -2 0 0 0 1 1 1 1
+    volume kind=5 shape=0 sx=24 sy=8 sz=18 blend=0.4 rpre=0 ramt=1
+end
+gameobject 9 "Hall"
+  active 1
+  parent -1
+  transform 0 3 32 0 0 0 1 1 1 1
+    volume kind=5 shape=0 sx=18 sy=8 sz=14 blend=0.35 rpre=1 ramt=1
+end
+gameobject 10 "Hall Speaker"
+  active 1
+  parent -1
+  transform 0 1.5 32 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.65 0.75 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.7 1 1 1 2 22 1 0 0 0 22000 0 0 1 0 0.25 800 0 2000
+end
+gameobject 11 "Cave"
+  active 1
+  parent -1
+  transform 0 3 56 0 0 0 1 1 1 1
+    volume kind=5 shape=0 sx=16 sy=8 sz=14 blend=0.3 rpre=2 ramt=1
+end
+gameobject 12 "Cave Speaker"
+  active 1
+  parent -1
+  transform 0 1.5 56 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.45 0.7 0.55 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.7 1 1 1 2 22 1 0 0 0 22000 0 0 1 0 0.25 800 0 2000
+end
+gameobject 13 "Outdoor"
+  active 1
+  parent -1
+  transform 0 4 82 0 0 0 1 1 1 1
+    volume kind=5 shape=0 sx=22 sy=10 sz=18 blend=0.5 rpre=3 ramt=1
+end
+gameobject 14 "Outdoor Speaker"
+  active 1
+  parent -1
+  transform 0 1.5 82 0 0 0 1 0.5 1 0.5
+    mesh "Cube" 0.75 0.85 0.45 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    audio "tone.wav" 0.7 1 1 1 2 22 1 0 0 0 22000 0 0 1 0 0.25 800 0 2000
+end

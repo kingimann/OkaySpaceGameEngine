@@ -1,0 +1,5 @@
+okaybt 1
+name Quick
+key shout string ""
+root 0
+node 0 SetBlackboard parent=-1 x=0 y=0 name=Quick key=shout value=hi

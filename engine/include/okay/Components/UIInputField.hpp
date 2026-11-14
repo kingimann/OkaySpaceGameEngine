@@ -8,6 +8,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Clipboard.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Utf8.hpp"
 #include <string>
@@ -18,6 +19,10 @@ namespace okay {
 /// type — characters come from the OS text-input event so uppercase, symbols
 /// and punctuation all work (Shift/Caps respected); Backspace deletes, Enter
 /// submits (calls the sibling ScriptComponent's on_submit()) and Esc cancels.
+/// Ctrl or Command with C copies the whole value, X cuts it, and V pastes.
+/// The field has no caret selection, so there is no select-all shortcut.
+/// A password field does not copy or cut. Pasted text is capped at maxLength
+/// and control characters are dropped (a newline stays only while multiline).
 /// Shows `placeholder` when empty, blinks a caret, and scrolls horizontally so
 /// the caret stays visible in long text. An optional numeric/password mode and
 /// a character whitelist constrain what can be entered.
@@ -103,6 +108,13 @@ public:
             const std::uint32_t cp = utf8::Next(p, end);
             if ((int)length >= maxLength) break;
             if (cp == utf8::kReplacement) continue;                       // a broken byte: skip it
+            if (cp == '\n') {                                             // a pasted line break, only in a multiline field
+                if (!multiline || (contentType != ContentType::Standard && contentType != ContentType::Password)) continue;
+                text.push_back('\n');
+                ++length;
+                changed = true;
+                continue;
+            }
             if (cp < 128 ? !Accepts((char)cp) : contentType != ContentType::Standard && contentType != ContentType::Password) continue;
             if (cp == 127) continue;
             text.append(start, (std::size_t)(p - start));
@@ -122,6 +134,21 @@ public:
         return true;
     }
 
+    /// Copy the whole value. A password field and a failed write leave the clipboard alone.
+    bool CopyToClipboard() const {
+        if (contentType == ContentType::Password) return false;
+        return SetClipboardText(text);
+    }
+    /// Copy the whole value, then clear the field. A password field, or an empty one, is left as it is.
+    bool CutToClipboard() {
+        if (contentType == ContentType::Password || text.empty()) return false;
+        if (!SetClipboardText(text)) return false;
+        text.clear();
+        return true;
+    }
+    /// Insert the clipboard at the end. Length, content type and control characters are applied by TypeText.
+    bool PasteFromClipboard() { return TypeText(GetClipboardText()); }
+
     void Submit() {
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
@@ -136,8 +163,18 @@ public:
         }
         if (!focused) return;
 
-        // Real typed characters (Shift/Caps/symbols handled by the OS).
-        bool changed = TypeText(Input::TypedText());
+        // Ctrl/Cmd+C, X and V. There is no selection, so copy and cut use the whole value.
+        bool changed = false;
+        bool shortcut = false;
+        const bool command = Input::GetKey(Input::KeyCtrl) || Input::GetKey(Input::KeyCmd);
+        if (command) {
+            if (Input::GetKeyDown('c')) { CopyToClipboard(); shortcut = true; }
+            else if (Input::GetKeyDown('x')) { if (CutToClipboard()) changed = true; shortcut = true; }
+            else if (Input::GetKeyDown('v')) { if (PasteFromClipboard()) changed = true; shortcut = true; }
+        }
+        // Real typed characters (Shift/Caps/symbols handled by the OS). A shortcut
+        // frame is not also typed, so Ctrl+V does not insert a "v".
+        if (!shortcut && TypeText(Input::TypedText())) changed = true;
         // Backspace / Delete.
         if (Input::GetKeyDown((char)8) || Input::GetKeyDown((char)127)) {
             if (Backspace()) changed = true;

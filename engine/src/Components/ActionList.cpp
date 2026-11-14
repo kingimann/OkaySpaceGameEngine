@@ -1,5 +1,6 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
+#include "okay/Core/DisplaySettings.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include <algorithm>
 #include <cctype>
@@ -1599,6 +1600,25 @@ void ActionList::Update(float dt) {
         else if (op == "game_can_continue") { Vars()[Str(it, 0).empty() ? "can_continue" : Str(it, 0)] = GameSaves::CanContinue() ? 1.0f : 0.0f; }
         else if (op == "game_slot_age")    { Vars()[Str(it, 1).empty() ? "slot_age" : Str(it, 1)] = (float)GameSaves::SecondsSinceSave(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
         else if (op == "game_slot_text")   { StrVars()[Str(it, 1).empty() ? "slot_text" : Str(it, 1)] = GameSaves::SavedText(Str(it, 0).empty() ? "slot_1" : Str(it, 0)); }
+        else if (op == "set_display_mode") {
+            WindowMode mode = WindowMode::Windowed;
+            if (DisplaySettings::ParseMode(Str(it, 0), mode)) DisplaySettings::SetMode(mode);
+        }
+        else if (op == "set_display_resolution") DisplaySettings::SetResolution((int)Num(it, 0), (int)Num(it, 1));
+        else if (op == "set_refresh_rate") DisplaySettings::SetRefreshHz((int)Num(it, 0));
+        else if (op == "set_monitor") {
+            const std::string name = Str(it, 0);
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) DisplaySettings::SetMonitorIndex(std::atoi(name.c_str()));
+            else DisplaySettings::SetMonitorName(name);
+        }
+        else if (op == "begin_display_confirm") DisplaySettings::BeginTrial(10.f);
+        else if (op == "keep_display_settings") DisplaySettings::KeepTrial();
+        else if (op == "revert_display_settings") DisplaySettings::RevertTrial();
+        else if (op == "get_display_mode") StrVars()[Str(it, 0).empty() ? "display_mode" : Str(it, 0)] = DisplaySettings::ModeName(DisplaySettings::Mode());
+        else if (op == "get_monitor") StrVars()[Str(it, 0).empty() ? "monitor" : Str(it, 0)] = DisplaySettings::MonitorName();
+        else if (op == "get_refresh_rate") Vars()[Str(it, 0).empty() ? "refresh_rate" : Str(it, 0)] = (float)DisplaySettings::RefreshHz();
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }

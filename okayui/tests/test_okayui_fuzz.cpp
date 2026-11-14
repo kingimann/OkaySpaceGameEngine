@@ -119,7 +119,7 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
         const std::string lbl = r.Label();
         if (r.Chance(10)) UI::SameLine(r.Chance(50) ? r.Nasty() : -1.0f);
         if (r.Chance(8)) UI::SetNextItemWidth(r.Nasty());
-        switch (r.Int(48)) {
+        switch (r.Int(70)) {
             case 0: UI::Button(lbl.c_str()); break;
             case 1: UI::SmallButton(lbl.c_str()); break;
             case 2: UI::Checkbox(lbl.c_str(), &bools[r.Int(4)]); break;
@@ -146,7 +146,54 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 23: UI::ProgressBar(r.Nasty(), r.Chance(50) ? lbl.c_str() : nullptr); break;
             case 24: { int t = r.Int(4); UI::TabBar(hdr, r.Int(5) - 1, &t); break; }
             case 25: UI::Tooltip(lbl.c_str()); break;
-            case 26: if (UI::BeginTable(lbl.c_str(), r.Int(20) - 2, r.Chance(50) ? hdr : nullptr)) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("c"); UI::TableNextColumn(); UI::Text("d"); UI::EndTable(); } break;
+            case 26: if (r.Chance(10)) {   // ImGui-style windows: random SetNext*, conditions, flags, nested Begin calls, queries
+                if (r.Chance(70)) UI::SetNextWindowPos(UI::Vec2{r.Nasty(), r.Nasty()}, (UI::Cond)r.Int(17));
+                if (r.Chance(70)) UI::SetNextWindowSize(UI::Vec2{r.Nasty(), r.Nasty()}, (UI::Cond)r.Int(17));
+                const bool wo = UI::Begin(r.Chance(10) ? nullptr : "fz win", r.Chance(30) ? &bools[1] : nullptr, r.Int(8));
+                UI::GetWindowPos(); UI::GetWindowSize(); UI::IsWindowHovered(); UI::IsWindowFocused(); UI::IsWindowAppearing();
+                if (wo) UI::Text("in");
+                UI::End();
+                if (r.Chance(10)) UI::SetWindowFocus("fz win");
+                break;
+            }
+            if (r.Chance(8)) {   // typed drag and drop: sources, targets, payloads of every size, odd types, calls out of order
+                if (UI::BeginDragDropSource(r.Int(4))) { unsigned char buf[300] = {0}; UI::SetDragDropPayload(r.Chance(10) ? nullptr : (r.Chance(10) ? "" : "FZ"), r.Chance(10) ? nullptr : buf, r.Int(300)); UI::SetDragDropPreview(r.Chance(20) ? nullptr : "fz"); UI::EndDragDropSource(); }
+                if (UI::BeginDragDropTarget()) { UI::AcceptDragDropPayload(r.Chance(30) ? nullptr : "FZ", r.Int(2)); UI::EndDragDropTarget(); }
+                UI::EndDragDropTarget(); UI::EndDragDropSource(); UI::AcceptDragDropPayload("FZ");
+                break;
+            }
+            if (r.Chance(8)) { UI::SetWindowFontScale(r.Nasty()); UI::SetMouseCursor((UI::MouseCursor)r.Int(14)); const UI::IO& io = UI::GetIO(); (void)io; UI::GetMouseCursor(); break; }
+            if (r.Chance(15)) { UI::PushStyleVar((UI::StyleVar)r.Int(UI::StyleVar_COUNT + 3), UI::Vec2{r.Nasty(), r.Nasty()}); if (r.Chance(60)) UI::PopStyleVar(r.Int(4)); break; }
+            if (r.Chance(25)) {   // tab bars: random items, close boxes, trailing buttons, nested bars, calls out of order
+                if (UI::BeginTabBar(r.Chance(10) ? nullptr : "tb")) {
+                    bool tmpOpen = r.Chance(70);
+                    const int nt = r.Int(8);
+                    for (int ti = 0; ti < nt; ++ti) {
+                        const char* tl = r.Chance(8) ? nullptr : (ti % 2 ? "t1" : "t2");
+                        if (UI::BeginTabItem(tl, r.Chance(30) ? &tmpOpen : nullptr, r.Int(8))) { UI::Text("body"); if (r.Chance(10)) UI::BeginTabBar("inner"); UI::EndTabItem(); }
+                        if (r.Chance(20)) UI::TabItemButton("+", r.Int(8));
+                    }
+                    UI::EndTabBar();
+                }
+                UI::EndTabItem(); UI::EndTabBar();
+                break;
+            }
+            if (r.Chance(50)) {   // the flag-style table: random flags, columns (including too many and too few), setup calls, jumps
+                const int cols = r.Int(20) - 2;
+                if (UI::BeginTable(lbl.c_str(), cols, (UI::TableFlags)r.Int(8))) {
+                    const int nsetup = r.Int(20);
+                    for (int s = 0; s < nsetup; ++s) UI::TableSetupColumn(r.Chance(10) ? nullptr : "col", r.Int(2), r.Chance(20) ? r.Nasty() : (float)r.Int(200));
+                    if (r.Chance(70)) UI::TableHeadersRow();
+                    for (int row = 0; row < 3; ++row) {
+                        UI::TableNextRow();
+                        for (int c = 0; c < 4; ++c) { if (UI::TableSetColumnIndex(r.Int(20) - 2)) UI::Text("c"); }
+                        UI::TableGetColumnIndex(); UI::TableGetRowIndex();
+                    }
+                    UI::EndTable();
+                }
+                break;
+            }
+            if (UI::BeginTable(lbl.c_str(), r.Int(20) - 2, r.Chance(50) ? hdr : nullptr)) { UI::TableNextRow(); UI::TableNextColumn(); UI::Text("c"); UI::TableNextColumn(); UI::Text("d"); UI::EndTable(); } break;
             case 27: UI::OpenPopup(lbl.c_str()); break;
             case 28: if (UI::BeginPopup(lbl.c_str())) { UI::Selectable("in popup", false); if (r.Chance(30)) UI::CloseCurrentPopup(); UI::EndPopup(); } break;
             case 29: if (UI::BeginPopupContextItem(lbl.c_str())) { UI::Text("ctx"); UI::EndPopup(); } break;
@@ -168,6 +215,28 @@ void RandomWidgets(Rng& r, int depth, char strs[3][64], bool* bools, float* floa
             case 44: UI::InvisibleButton(lbl.c_str(), r.Nasty(), r.Nasty()); UI::IsItemActive(); UI::IsItemActivated(); UI::IsItemDeactivated(); UI::IsItemClicked(r.Int(2)); break;
             case 45: UI::IsMouseDown(r.Int(3)); UI::IsMouseClicked(r.Int(3)); UI::IsMouseReleased(r.Int(3)); UI::GetMousePos(); UI::GetMouseDelta(); UI::IsMouseHoveringRect({r.Nasty(), r.Nasty()}, {r.Nasty(), r.Nasty()}); break;
             case 46: UI::EndDisabled(); UI::IsDisabled(); UI::GetColorU32((UI::Col)r.Int(UI::Col_COUNT), r.Nasty()); UI::ColorMulAlpha(r.Next(), r.Nasty()); break;
+            case 48: UI::DragFloat3(lbl.c_str(), &floats[r.Int(2)], r.Nasty(), r.Nasty(), r.Nasty()); break;   // 3 floats: index <= 1 stays in range
+            case 49: UI::DragFloat4(lbl.c_str(), floats, r.Nasty(), r.Nasty(), r.Nasty()); break;
+            case 50: UI::DragInt3(lbl.c_str(), &ints[r.Int(2)], r.Nasty(), r.NastyInt(1000), r.NastyInt(1000)); break;
+            case 51: UI::DragFloatRange2(lbl.c_str(), &floats[0], &floats[r.Int(4)], r.Nasty(), r.Nasty(), r.Nasty()); break;
+            case 52: UI::SliderFloat3(lbl.c_str(), &floats[r.Int(2)], r.Nasty(), r.Nasty()); break;
+            case 53: UI::SliderFloat4(lbl.c_str(), floats, r.Nasty(), r.Nasty()); break;
+            case 54: UI::InputFloat(lbl.c_str(), &floats[r.Int(4)], r.Nasty()); break;
+            case 55: UI::ArrowButton(lbl.c_str(), r.NastyInt(10) - 3); UI::NewLine(); break;
+            case 56: UI::ColorButton(lbl.c_str(), floats, r.Nasty()); break;
+            case 57: UI::ColorEdit4(lbl.c_str(), floats); break;
+            case 58: UI::InputTextWithHint(lbl.c_str(), r.Chance(20) ? nullptr : "hint", strs[r.Int(3)], r.Chance(10) ? r.Int(4) : 64, (unsigned)r.Int(8)); break;
+            case 59: UI::SetKeyboardFocusHere(); break;
+            case 60: UI::PushTextWrapPos(r.Nasty()); UI::Text(lbl.c_str()); UI::TextDisabled(lbl.c_str()); UI::PopTextWrapPos(); break;
+            case 61: UI::PushTextWrapPos(r.Nasty()); break;   // left open on purpose: BeginFrame resets it
+            case 62: if (depth < 3) { UI::BeginGroup(); RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); UI::EndGroup(); } break;
+            case 63: UI::EndGroup(); break;   // unmatched on purpose
+            case 64: if (depth < 3) { if (r.Chance(30)) UI::SetNextItemOpen(r.Chance(50)); if (UI::TreeNodeEx(lbl.c_str(), (unsigned)r.Int(8))) { RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); UI::TreePop(); } UI::IsItemToggledOpen(); } break;
+            case 65: UI::SetNextItemOpen(r.Chance(50)); break;
+            case 66: if (depth < 3 && UI::BeginCombo(lbl.c_str(), r.Chance(20) ? nullptr : "preview")) { RandomWidgets(r, depth + 1, strs, bools, floats, ints, combo); UI::EndCombo(); } break;
+            case 67: UI::BeginMenuBar(); if (UI::BeginMenu(lbl.c_str())) { UI::MenuItem(lbl.c_str(), r.Chance(30) ? nullptr : "Ctrl+X", r.Chance(50), r.Chance(50)); UI::MenuSeparator(); if (r.Chance(60) && UI::BeginMenu(r.Chance(10) ? nullptr : "sub")) { UI::MenuItem("in"); if (r.Chance(50) && UI::BeginMenu("deeper")) { UI::MenuItem("x"); if (r.Chance(30) && UI::BeginMenu("d3")) { if (r.Chance(30) && UI::BeginMenu("d4")) { if (UI::BeginMenu("d5")) UI::EndMenu(); UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenu(); } UI::EndMenuBar(); break;
+            case 68: if (r.Chance(30)) UI::OpenPopup("m"); if (UI::BeginPopupModal("m", r.Chance(50) ? &bools[0] : nullptr)) { UI::Text("modal"); UI::EndPopup(); } UI::IsPopupOpen("m"); break;
+            case 69: UI::OpenPopup(lbl.c_str()); break;
             default: UI::ColorEdit3(lbl.c_str(), &floats[r.Int(2)]); break;   // reads 3 floats: the array has 4 entries, index <= 1 stays in range
         }
         if (r.Chance(20)) { UI::IsItemHovered(); UI::GetItemRect(); UI::WantsTextInput(); }
@@ -200,7 +269,7 @@ int main() {
             const std::string typed = r.Chance(30) ? r.Junk(12) : "";
             in.text = r.Chance(80) ? typed.c_str() : nullptr;
             in.backspace = r.Chance(10); in.del = r.Chance(8); in.left = r.Chance(8); in.right = r.Chance(8);
-            in.home = r.Chance(4); in.end = r.Chance(4); in.enter = r.Chance(4); in.escape = r.Chance(3); in.selectAll = r.Chance(3); in.shift = r.Chance(20);
+            in.home = r.Chance(4); in.end = r.Chance(4); in.enter = r.Chance(4); in.escape = r.Chance(3); in.selectAll = r.Chance(3); in.shift = r.Chance(20); in.up = r.Chance(8); in.down = r.Chance(8); in.copy = r.Chance(5); in.cut = r.Chance(5); in.paste = r.Chance(5); for (int ki = 0; ki < UI::KeyId_COUNT; ++ki) in.keyDown[ki] = r.Chance(10);
             UI::BeginFrame(in);
             const int windows = 1 + r.Int(4);
             for (int w = 0; w < windows; ++w) {

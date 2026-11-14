@@ -78,6 +78,9 @@ then this file gets updated. Keep this file short and true.
       client SDKs, analytics, crash-report or ad SDKs, middleware). Talk to outside services over their plain web APIs
       with our own code. Optional hooks that only work when someone installs an SDK stay off by default and are not
       extended.
+    - Do not spend time on licence texts, notice files or licence audits for third-party libraries that we are replacing
+      (SDL2, Dear ImGui, Assimp, ufbx, libsodium, curl and similar). Spend that time on the replacement. Licence and
+      notice work is only for assets that stay (fonts, images and data).
     - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
 

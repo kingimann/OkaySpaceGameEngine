@@ -691,7 +691,7 @@ inline bool SpawnHelperProcess(const fs::path& self, const fs::path& reqPath, co
         if (g < 0) _exit(127);
         if (g > 0) _exit(0);
         sigset_t set;
-        ::sigfillset(&set);
+        sigfillset(&set);
         ::sigprocmask(SIG_UNBLOCK, &set, nullptr);
         for (int fd = 0; fd < 1024; ++fd) {
             const int fl = ::fcntl(fd, F_GETFD);

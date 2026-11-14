@@ -193,6 +193,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
+add_executable(test_inventory_moves test_inventory_moves.cpp)
+target_link_libraries(test_inventory_moves PRIVATE okay::engine)
+add_test(NAME inventory_moves COMMAND test_inventory_moves)
+
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)

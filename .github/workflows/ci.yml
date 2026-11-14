@@ -325,12 +325,12 @@ jobs:
           grep -q 'OKAY_OWN_HTTP=1' build-http/build.ninja
 
       - name: Build
-        run: cmake --build build-http -j2 --target test_own_http test_own_http_net test_launcher_download_own test_native_fetch
+        run: cmake --build build-http -j2 --target test_own_http test_own_http_net test_launcher_download_own test_native_fetch test_playfab_own
 
       - name: Test (a skipped TLS case fails)
         env:
           OKAY_REQUIRE_TLS_TESTS: "1"
-        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_net|launcher_download_own|native_fetch)$'
+        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_net|launcher_download_own|native_fetch|playfab_own)$'
 
       - name: Sanitizers (ASan + UBSan)
         env:

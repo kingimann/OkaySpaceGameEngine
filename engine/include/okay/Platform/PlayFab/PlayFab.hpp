@@ -32,6 +32,9 @@ public:
     const std::string& TitleId()   const { return titleId_; }
     const std::string& PlayFabId() const { return playFabId_; }
     const std::string& LastError() const { return lastError_; }
+#ifdef OKAY_PLAYFAB_TESTING
+    void SetBaseUrlForTests(const std::string& base) { testBase_ = base; }   // only compiled into tests (OKAY_PLAYFAB_TESTING)
+#endif
 
     /// Sign in (creating the account on first use) with any stable id you
     /// choose — a device id, a saved random id, or your own account name.
@@ -230,6 +233,25 @@ private:
         fs::path cfgF  = dir / ("okay_pf_" + id + ".cfg");
 
         std::string url = "https://" + titleId_ + ".playfabapi.com" + path;
+#ifdef OKAY_PLAYFAB_TESTING
+        if (!testBase_.empty()) url = testBase_ + path;   // tests only: a loopback server instead of the real API
+#endif
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+        // Our own HTTP client first (opt-in: -DOKAY_OWN_HTTP=ON and OKAY_OWN_HTTP=1; Windows keeps curl). Any status is an
+        // answer, as with the curl path below (no -f). Not reaching the server (libssl missing, certificate refused,
+        // proxy trouble) falls through to curl.
+        if (okay::http::NativeAvailable()) {
+            std::vector<std::string> hdrs = {"Content-Type: application/json"};
+            if (authed && !ticket_.empty()) hdrs.push_back("X-Authorization: " + ticket_);
+            okay::http::Result nr = okay::http::Request("POST", url, hdrs, jsonBody);
+            if (nr.reached) {
+                Resp own;
+                own.body = std::move(nr.body); own.status = nr.status;
+                own.ok = own.status >= 200 && own.status < 300;
+                return own;
+            }
+        }
+#endif
         std::string cmd = "curl -s -X POST -o \"" + resp.string() + "\" -w \"%{http_code}\"";
         std::string cfg = "header = \"Content-Type: application/json\"\n";
         if (authed && !ticket_.empty())
@@ -262,6 +284,9 @@ private:
     std::string playFabId_;
     std::string username_;    // the id/name used at login (shown in UIs)
     std::string lastError_;
+#ifdef OKAY_PLAYFAB_TESTING
+    std::string testBase_;
+#endif
 };
 
 } // namespace okay

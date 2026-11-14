@@ -102,4 +102,39 @@ inline std::string ToUtf16le(const std::string& s) {
     return o;
 }
 
+
+// ---- B3D ----
+// BB3D version 1: a texture "tex\\a.png"; one brush "mat" (colour 0.5 0.25 0.75, alpha 0.5, shininess 0.5, texture 0).
+// NODE "root" (position (1,2,3), identity rotation) holds a mesh of one triangle (0,0,0) (1,0,0) (0,1,0), normals (0,0,1),
+// uv (0,0) (1,0) (0,1), brush -1 in TRIS and 0 in MESH; NODE "bone1" (position (0,1,4), scale 2, rotation 90 degrees about Y,
+// file order w x y z = 0.7071 0 0.7071 0) with BONE weights vertex 0: 1.0, vertex 1: 0.5, vertex 2: 0.25 and KEYS (position
+// and rotation) at frames 0 and 30; NODE "bone2" with BONE vertex 1: 0.5; ANIM 30 frames at 30 per second.
+struct B3dOpts { bool unweighted = false; bool twoTop = false; bool noAnim = false; bool noBone = false; };
+inline std::string BuildB3d(const B3dOpts& o = {}) {
+    auto I = [](int v) { std::string s; P32(s, (std::uint32_t)v); return s; };
+    auto F = [](float v) { std::string s; PF(s, v); return s; };
+    auto C = [](const char* t, const std::string& b) { std::string s = t; P32(s, (std::uint32_t)b.size()); return s + b; };
+    auto Z = [](const std::string& n) { return n + std::string(1, '\0'); };
+    auto V3 = [&](float a, float b, float c) { return F(a) + F(b) + F(c); };
+    auto Q = [&](float w, float x, float y, float z) { return F(w) + F(x) + F(y) + F(z); };
+    auto Node = [&](const std::string& name, const std::string& pos, const std::string& scl, const std::string& rot, const std::string& kids) { return C("NODE", Z(name) + pos + scl + rot + kids); };
+    const float h = 0.70710678f;
+    const std::string texs = C("TEXS", Z("tex\\a.png") + I(1) + I(2) + F(0) + F(0) + F(1) + F(1) + F(0));
+    const std::string brus = C("BRUS", I(1) + Z("mat") + V3(0.5f, 0.25f, 0.75f) + F(0.5f) + F(0.5f) + I(1) + I(0) + I(0));
+    std::string vrts = I(1) + I(1) + I(2);   // flags: normals; one set of 2 texture coordinates
+    const float pos[3][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, uv[3][2] = {{0, 0}, {1, 0}, {0, 1}};
+    for (int i = 0; i < 3; ++i) vrts += V3(pos[i][0], pos[i][1], pos[i][2]) + V3(0, 0, 1) + F(uv[i][0]) + F(uv[i][1]);
+    const std::string mesh = C("MESH", I(0) + C("VRTS", vrts) + C("TRIS", I(-1) + I(0) + I(1) + I(2)));
+    std::string bone1;
+    if (!o.noBone) bone1 = C("BONE", I(0) + F(1.0f) + I(1) + F(0.5f) + (o.unweighted ? std::string() : I(2) + F(0.25f)));
+    bone1 += C("KEYS", I(1 | 4) + I(0) + V3(0, 1, 4) + Q(1, 0, 0, 0) + I(30) + V3(0, 2, 4) + Q(h, 0, h, 0));
+    const std::string b1 = Node("bone1", V3(0, 1, 4), V3(2, 2, 2), Q(h, 0, h, 0), bone1);
+    const std::string b2 = Node("bone2", V3(0, 0, 0), V3(1, 1, 1), Q(1, 0, 0, 0), o.noBone ? std::string() : C("BONE", I(1) + F(0.5f)));
+    std::string kids = mesh + b1 + b2;
+    if (!o.noAnim) kids += C("ANIM", I(0) + I(30) + F(30.0f));
+    std::string top = Node("root", V3(1, 2, 3), V3(1, 1, 1), Q(1, 0, 0, 0), kids);
+    if (o.twoTop) top += Node("second", V3(0, 0, 0), V3(1, 1, 1), Q(1, 0, 0, 0), "");
+    return C("BB3D", I(1) + texs + brus + top);
+}
+
 } // namespace fx

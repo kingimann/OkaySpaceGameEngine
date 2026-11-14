@@ -3053,10 +3053,12 @@ endfunction()
 okay_batchc_reader_test(md2 Md2Reader.cpp)
 okay_batchc_reader_test(md3 Md3Reader.cpp)
 okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
+okay_batchc_reader_test(b3d B3dReader.cpp)
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrMeshReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

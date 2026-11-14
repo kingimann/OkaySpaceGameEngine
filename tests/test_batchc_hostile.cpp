@@ -135,10 +135,65 @@ static void Irr() {
     }
 }
 
+// ======================= B3D =======================
+static bool ReadB3d(const std::string& b, ImportedModel& m, std::string& e) { return ReadB3dBuffer(b, "", m, &e); }
+// every offset of a fixture, four bytes set to each of the given extremes
+template <class F> static void EveryOffset(F&& read, const std::string& good, std::initializer_list<std::uint32_t> values, std::size_t step = 1) {
+    for (std::size_t o = 0; o + 4 <= good.size(); o += step)
+        for (std::uint32_t v : values) { std::string s = good; Put32(s, o, v); Try(read, s); }
+}
+static void B3d() {
+    const std::string good = fx::BuildB3d();
+    {   ImportedModel m; std::string e; CHECK(ReadB3d(good, m, e) && fx::Sane(m)); }
+    Sweep("b3d", ReadB3d, good, Iters());
+    // integers: sizes, counts, ids at the edges; floats: NaN, infinity, the largest float
+    EveryOffset(ReadB3d, good, {0u, 1u, 3u, 255u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu, 0xFFFFFFFEu});
+    EveryOffset(ReadB3d, good, {0x7FC00000u, 0x7F800000u, 0xFF800000u, 0x7F7FFFFFu, 0x5E000000u});
+    {   fx::B3dOpts o; o.twoTop = true; o.noAnim = true; Sweep("b3d (two roots, no anim)", ReadB3d, fx::BuildB3d(o), Iters() / 4); }
+    // deep nesting: 30,000 nodes inside nodes (the explicit stack and the depth cap, no recursion), a flat list of 150,000 nodes
+    {
+        std::string body;
+        auto node = [](const std::string& kids) { std::string n = std::string("n\0", 2); for (int i = 0; i < 10; ++i) fx::PF(n, i < 3 ? 0.0f : (i < 6 ? 1.0f : (i == 6 ? 1.0f : 0.0f))); n += kids; std::string c = "NODE"; fx::P32(c, (std::uint32_t)n.size()); return c + n; };
+        const int depth = 30000;   // each level is a 8 byte chunk header, a 2 byte name and 10 floats: 50 bytes
+        std::string inner;
+        for (int i = 0; i < depth; ++i) {
+            inner += "NODE"; fx::P32(inner, (std::uint32_t)(42 + (depth - 1 - i) * 50));
+            inner += std::string("n\0", 2); for (int k = 0; k < 10; ++k) fx::PF(inner, k < 6 ? (k < 3 ? 0.0f : 1.0f) : (k == 6 ? 1.0f : 0.0f));
+        }
+        std::string f = "BB3D"; fx::P32(f, (std::uint32_t)(4 + inner.size())); fx::P32(f, 1); f += inner;
+        Try(ReadB3d, f);
+        std::string flat;
+        for (int i = 0; i < 150000; ++i) flat += node("");
+        std::string g = "BB3D"; fx::P32(g, (std::uint32_t)(4 + flat.size())); fx::P32(g, 1); g += flat;
+        Try(ReadB3d, g);
+    }
+    // a big valid model: 50,000 vertices, 50,000 triangles, all weighted to 5 bones (the fifth is dropped)
+    {
+        auto I = [](int v) { std::string s; fx::P32(s, (std::uint32_t)v); return s; };
+        auto F = [](float v) { std::string s; fx::PF(s, v); return s; };
+        auto C = [](const char* t, const std::string& b) { std::string s = t; fx::P32(s, (std::uint32_t)b.size()); return s + b; };
+        const int nv = 50000;
+        std::string vr = I(0) + I(0) + I(0), tr = I(-1);
+        for (int i = 0; i < nv; ++i) vr += F((float)(i % 100)) + F((float)(i / 100)) + F((float)(i % 7));
+        for (int i = 0; i < nv; ++i) tr += I(i) + I((i + 1) % nv) + I((i * 31 + 5) % nv);
+        std::string bones;
+        auto qid = F(1) + F(0) + F(0) + F(0);
+        auto node = [&](const std::string& name, const std::string& kids) { return C("NODE", name + std::string(1, '\0') + F(0) + F(0) + F(0) + F(1) + F(1) + F(1) + qid + kids); };
+        std::string bs;
+        for (int b = 0; b < 5; ++b) { std::string w; for (int i = 0; i < nv; ++i) w += I(i) + F(0.2f); bs += node("b" + std::to_string(b), C("BONE", w)); }
+        const std::string root = node("root", C("MESH", I(-1) + C("VRTS", vr) + C("TRIS", tr)) + bs);
+        std::string f = C("BB3D", I(1) + root);
+        const double t0 = Now(); ImportedModel m; std::string e; const bool ok = ReadB3d(f, m, e);
+        CHECK(ok ? fx::Sane(m) : !e.empty());
+        std::fprintf(stderr, "  b3d: 50,000 vertices with 5 bones each read (ok=%d, notes=%zu) in %.2f s\n", (int)ok, m.notes.size(), Now() - t0);
+    }
+}
+
 int main() {
     RUN_SUITE("batchc_hostile");
     Md2();
     Md3();
     Irr();
+    B3d();
     TEST_MAIN_RESULT();
 }

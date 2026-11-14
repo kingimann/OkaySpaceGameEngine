@@ -207,6 +207,13 @@ bool ReadMd3Buffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths). The Irrlicht scene
 /// format (.irr) is not read.
 bool ReadIrrMeshBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// B3D (Blitz3D model, binary): the node tree (position, scale, rotation), one part per TRIS chunk (vertices welded per
+/// vertex number, normals, first texture coordinate set, the brush as material: diffuse colour and alpha, shininess,
+/// first texture), skin weights (the four strongest per vertex; every node with a BONE chunk is a joint) and one clip
+/// ("animation") from the KEYS chunks at the ANIM chunk's frame rate. Blitz3D is left-handed: Z is mirrored and the winding
+/// reversed. Vertex colours, further texture coordinate sets, texture and brush flags and effects are not read (reported in
+/// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadB3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -223,6 +230,7 @@ bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMd3File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrMeshFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadB3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

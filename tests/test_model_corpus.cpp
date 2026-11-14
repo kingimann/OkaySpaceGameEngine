@@ -9,7 +9,7 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, md2, md3, irrmesh
+// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, md2, md3, irrmesh, b3d
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -58,6 +58,7 @@ static const char* ExtOf(const std::string& reader) {
     if (reader == "md2") return ".md2";
     if (reader == "md3") return ".md3";
     if (reader == "irrmesh") return ".irrmesh";
+    if (reader == "b3d") return ".b3d";
     return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
            reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" :
            reader == "3mf" ? ".3mf" : reader == "amf" ? ".amf" : reader == "x3d" ? ".x3d" : reader == "dxf" ? ".dxf" : reader == "lwo" ? ".lwo" : ".fbx";
@@ -69,7 +70,7 @@ static bool ExtMatches(const std::string& reader, std::string ext) {
 // the readers added in batch B (3MF, AMF, X3D, DXF, LWO)
 static bool IsBatchBReader(const std::string& r) { return r == "3mf" || r == "amf" || r == "x3d" || r == "dxf" || r == "lwo"; }
 // the readers added in batch C (MD2, MD3, IRRMESH, B3D, DirectX .x)
-static bool IsBatchCReader(const std::string& r) { return r == "md2" || r == "md3" || r == "irrmesh"; }
+static bool IsBatchCReader(const std::string& r) { return r == "md2" || r == "md3" || r == "irrmesh" || r == "b3d"; }
 static bool IsRawReader(const std::string& r) { return IsBatchCReader(r) || r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r); }
 // readers added after the first corpus pass also record textures, nodes, UV and normal presence
 static bool IsMeasuredReader(const std::string& r) { return IsBatchCReader(r) || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r); }

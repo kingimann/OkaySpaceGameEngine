@@ -2708,6 +2708,11 @@ target_compile_definitions(test_embedded_font PRIVATE OKAY_SOURCE_DIR="${PROJECT
 add_test(NAME embedded_font COMMAND test_embedded_font)
 add_test(NAME embedded_font_generator COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen_embedded_fonts.py --check)
 
+# Third-party notices: THIRD_PARTY_NOTICES.txt is generated from scripts/third_party_notices_data.json and must not be
+# stale; the packaging check accepts a staged folder and a zip that carry the notices and rejects ones that do not.
+add_test(NAME third_party_notices COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen_third_party_notices.py --check)
+add_test(NAME dist_notices_check COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dist_notices.py --selftest)
+
 # The internal arithmetic: the 51-bit and the portable 16-bit field against each other, the Barrett scalar
 # reduction against a bit-by-bit reference (includes engine/src/Crypto headers; needs __int128).
 add_executable(test_crypto_field test_crypto_field.cpp)

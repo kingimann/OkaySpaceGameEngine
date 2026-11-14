@@ -88,6 +88,8 @@ cmake --build "$BUILD_DIR" -j "$JOBS"
 #   OkaySpace.exe        <- the launcher (start here)
 #   SDL2.dll             <- required next to OkaySpace.exe (load-time linked)
 #   README.txt
+#   THIRD_PARTY_NOTICES.txt   <- licences of the third-party code and assets we ship
+#   Licenses/                 <- the licence files themselves (also Assets/Fonts/ has the font ones)
 #   Tools/
 #     OkayEngine.exe         (the editor)
 #     OkaySpacePlayer.exe    (standalone game runtime)
@@ -134,6 +136,13 @@ if [ -d assets/fonts ]; then
     mkdir -p "$OUT_DIR/Assets/Fonts"
     cp assets/fonts/* "$OUT_DIR/Assets/Fonts/" 2>/dev/null || true
 fi
+
+# Third-party notices (licence obligation): THIRD_PARTY_NOTICES.txt at the top, and every licence file we hold under
+# Licenses/. Both come from scripts/third_party_notices_data.json. Then fail the build if they are not in the folder
+# (the zip and the NSIS installer are made from this folder, so they carry them too). See docs/packaging.md.
+python3 scripts/gen_third_party_notices.py --check
+python3 scripts/gen_third_party_notices.py --stage "$OUT_DIR"
+python3 scripts/check_dist_notices.py "$OUT_DIR"
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).

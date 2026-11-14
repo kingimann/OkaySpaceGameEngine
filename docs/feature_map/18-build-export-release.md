@@ -17,11 +17,12 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.1.4 NSIS installer - `scripts/okayspace-installer.nsi` - per-user (`$LOCALAPPDATA\OkaySpace`, no admin), finds a prior install (registry, Apps entry, the folder it runs from) and updates it in place, waits for running exes to close, makes Start Menu and desktop shortcuts, an uninstaller and an Apps & features entry; user data is never touched
   - 18.1.5 Quick sandbox exe - `scripts/build-windows-exe.sh` - an older helper that builds only the sandbox demo and copies it to `dist/OkaySpace.exe`
   - 18.1.6 Toolchain and exe metadata - `cmake/mingw-w64-x86_64.toolchain.cmake`, `cmake/OkayWinVersion.cmake` - see 41.2
+  - 18.1.7 Third-party notices in the package - `scripts/gen_third_party_notices.py`, `scripts/third_party_notices_data.json`, `scripts/check_dist_notices.py`, `THIRD_PARTY_NOTICES.txt` - the notices file is generated from a hand-written data file (licence text copied only from licence files in the repo); the dist script stages it at the top of the folder plus the licence files in `Licenses/`, and the check fails the build or the zip when they are missing; the uninstaller removes them. Five items still say "licence text missing: owner to supply" (`docs/asset_licences.md`)
 - **Code:** `scripts/build-windows-dist.sh`, `scripts/okayspace-installer.nsi`, `scripts/build-windows-exe.sh`, `cmake/mingw-w64-x86_64.toolchain.cmake`, `CMakeLists.txt`
 - **API:** `scripts/build-windows-dist.sh`, `makensis -DVERSION= -DDISTDIR= -DOUTFILE= scripts/okayspace-installer.nsi`, `OkaySpace-Setup.exe`
 - **Editor:** none (File > Build Settings builds a game, not the engine: 18.6)
-- **Docs:** `docs/packaging.md`
-- **Tests:** none as ctest; the `windows-cross` CI job builds it on every PR (18.3) and the release workflow builds the installer (18.4)
+- **Docs:** `docs/packaging.md`, `docs/asset_licences.md`
+- **Tests:** ctest `third_party_notices` (notices file not stale) and `dist_notices_check` (the package check accepts a good folder and zip, rejects bad ones); no archive is built in ctest; the `windows-cross` CI job builds it on every PR (18.3) and the release workflow builds the installer (18.4)
 - **Status:** Works - built by CI on every PR and by the release workflow on every release
 - **Open:** "Stop committing dist binaries" (old map): `dist/` still holds June 2026 exes and a `VERSION.txt` of 2.412.0; `build-windows-exe.sh` copies the sandbox demo as `dist/OkaySpace.exe`, which is not the launcher (possible stale script); the Windows build is never executed in CI beyond six test exes (18.3.4)
 - **Related:** 18.4, 18.5, 41.2, 41.3, 19.6

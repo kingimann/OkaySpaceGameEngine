@@ -35,6 +35,8 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
+| Licences screen | Not present | The editor's About box (`editor/main.cpp`, "About OkaySpace") shows only the version and SDL, Dear ImGui and Assimp versions; the launcher's Settings > About row has version, updates and links. Neither shows third-party licences. Proposal: a "Licences" button in both that opens `THIRD_PARTY_NOTICES.txt` from the install folder (or shows it in a scrolling text window). Not done: this task did not touch `editor/main.cpp` or `launcher/main.cpp` |
+| Third-party licence texts | 5 items missing | Roboto Medium, SDL2, Dear ImGui, Assimp and libsodium have no licence file in the repo, and the DejaVu file has no entry for its Arev glyphs; `THIRD_PARTY_NOTICES.txt` says "licence text missing: owner to supply". Owner questions in `docs/asset_licences.md` (also two UNKNOWN groups of audio files) |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 
 ## Own cryptography: waiting for an outside review

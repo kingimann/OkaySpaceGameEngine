@@ -4676,6 +4676,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Theme and Slate palette (40.2.1)
 - Themes and the launcher-matching UI kit (12.7)
 - third person (4.1)
+- Third-party notices in the package (18.1.7)
 - Third-person camera (4.6)
 - Third-person movement part (4.1.3)
 - third-person shooter (4.4, 4.4.1)

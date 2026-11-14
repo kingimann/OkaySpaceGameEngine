@@ -59,12 +59,16 @@ Fonts are assets, not code, and stay with their licences:
 | JetBrains Mono (Regular) | `shared/JetBrainsMonoFont.h` (Dear ImGui format, editor and launcher) and `shared/JetBrainsMonoFontOwn.h` (OKF1, engine side); embedded for the script editor | SIL Open Font License 1.1, "Copyright 2020 The JetBrains Mono Project Authors". The licence and copyright text is now in `assets/fonts/JetBrainsMono-OFL.txt`, copied unmodified from `https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.242/OFL.txt` (git blob 821a3dac22aff15a1f1c9689a1d79c45bb58ca39, fetched 2026-11-13). The embedded font file says "Version 2.211" in its own name table; I could not fetch a `v2.211` tag, and the licence text of the tags I could fetch (v2.242, v2.304, master) is the same apart from the URL line and whitespace. **Still to do:** check that the installer and release archives ship that file next to the font. |
 | Roboto Medium | `shared/RobotoFont.h` (Dear ImGui format, editor and launcher) and `shared/RobotoFontOwn.h` (OKF1, engine side), embedded for the launcher | **The repository still has no licence file for it, and nothing was added here.** What exists: the font file's own name table (decoded from the embedded data) says "Copyright 2011 Google Inc. All Rights Reserved", "Version 2.001152; 2014" and, in its licence fields (name ids 13 and 14), "Licensed under the Apache License, Version 2.0" with the URL `http://www.apache.org/licenses/LICENSE-2.0`; `editor/main.cpp` and `launcher/main.cpp` carry a comment calling it Apache 2.0; the first comment line of `shared/RobotoFont.h` says it was exported with Dear ImGui's tool from a `misc/fonts/Roboto-Medium.ttf`. Those are leads, not a verified grant: the owner must confirm the source and add the licence text. |
 
+The full inventory of every asset (fonts, images, sounds, models, test data), with status and the owner's open questions, is in [asset_licences.md](asset_licences.md). The notices that ship with releases are generated into `THIRD_PARTY_NOTICES.txt` (`scripts/gen_third_party_notices.py`).
+
+The DejaVu Sans row above needs one correction: the font's own name table says it also contains glyphs from the Arev fonts (Copyright 2006 Tavmjong Bah), and the licence file we hold (a Debian copyright file) has no entry for them; status NEEDS NOTICE (`asset_licences.md`).
+
 **To resolve (we do not guess a licence):** (1) the owner confirms where Roboto Medium was obtained and under which
 licence, then adds that licence text next to it (for example `assets/fonts/Roboto-LICENSE.txt`) and a header line in
 `shared/RobotoFont.h` and `shared/RobotoFontOwn.h` (the generator writes the latter; edit `scripts/gen_embedded_fonts.py`);
-(2) JetBrains Mono: the OFL text and copyright line are now in the repository (see the table); check that the Windows
-installer and the release archives carry that file, as the OFL requires the notice to travel with the font;
-(3) the same check for whatever licence file Roboto gets. Until (1) is done the licence status of Roboto is unconfirmed.
+(2) JetBrains Mono: the OFL text and copyright line are in the repository (see the table); the Windows zip and installer
+now carry that file (in `Assets/Fonts/` and `Licenses/`, checked by `scripts/check_dist_notices.py`; no archive has been built yet to confirm);
+(3) the same for whatever licence file Roboto gets, and for the SDL2, Dear ImGui, Assimp and libsodium texts that are also missing. Until (1) is done the licence status of Roboto is unconfirmed.
 
 ## Services we keep (optional integrations, not bundled)
 

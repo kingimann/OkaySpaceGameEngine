@@ -1,0 +1,126 @@
+{
+  "_comment": "Hand-written. One entry per third-party item that ships in a release (binary or file). 'licence_files' are repo paths whose text is copied verbatim into THIRD_PARTY_NOTICES.txt by scripts/gen_third_party_notices.py. Never write a licence text here: if the repo has no licence file, leave licence_files empty and the generator writes 'licence text missing: owner to supply'. 'copyright' is only what the repo itself states. Regenerate: python3 scripts/gen_third_party_notices.py ; check: --check.",
+  "items": [
+    {
+      "id": "dear-imgui",
+      "name": "Dear ImGui (docking branch)",
+      "kind": "library",
+      "version": "commit 036bf939b6f8d74ad76bcf926b757c56e68c54ff (OKAY_IMGUI_TAG in CMakeLists.txt)",
+      "copyright": "not stated in the repository (the library is downloaded at configure time, not vendored)",
+      "licence": "MIT",
+      "licence_files": [],
+      "status": "NEEDS NOTICE",
+      "ships_in": "OkaySpace.exe (launcher) and Tools/OkayEngine.exe (editor)",
+      "note": "Licence per docs/THIRD_PARTY.md. No licence file for it is in the repository."
+    },
+    {
+      "id": "imguicolortextedit",
+      "name": "ImGuiColorTextEdit",
+      "kind": "library",
+      "version": "vendored in editor/vendor/TextEditor.*",
+      "copyright": "Copyright (c) 2017 BalazsJako",
+      "licence": "MIT",
+      "licence_files": ["editor/vendor/TextEditor.LICENSE"],
+      "status": "PERMITTED",
+      "ships_in": "Tools/OkayEngine.exe (the script editor's code view)",
+      "note": ""
+    },
+    {
+      "id": "ufbx",
+      "name": "ufbx",
+      "kind": "library",
+      "version": "0.21.4 (UFBX_HEADER_VERSION in engine/third_party/ufbx/ufbx.h)",
+      "copyright": "Copyright (c) 2020 Samuli Raivio",
+      "licence": "MIT or public domain (the licence file offers both; the owner has not yet recorded which is chosen)",
+      "licence_files": ["engine/third_party/ufbx/LICENSE"],
+      "status": "PERMITTED",
+      "ships_in": "the engine inside OkaySpace.exe, Tools/OkayEngine.exe and Tools/OkaySpacePlayer.exe (FBX import)",
+      "note": ""
+    },
+    {
+      "id": "sdl2",
+      "name": "Simple DirectMedia Layer (SDL2)",
+      "kind": "library",
+      "version": "2.30.9 (SDL2_VERSION in .github/workflows/release.yml)",
+      "copyright": "not stated in the repository (SDL2.dll is a prebuilt binary taken from the SDL MinGW package)",
+      "licence": "zlib",
+      "licence_files": [],
+      "status": "NEEDS NOTICE",
+      "ships_in": "SDL2.dll at the top of the Windows distribution and in Tools/",
+      "note": "Licence per docs/THIRD_PARTY.md. No licence file for it is in the repository."
+    },
+    {
+      "id": "assimp",
+      "name": "Open Asset Import Library (Assimp)",
+      "kind": "library",
+      "version": "5.4.3",
+      "copyright": "not stated in the repository (downloaded at configure time, not vendored)",
+      "licence": "BSD 3-clause",
+      "licence_files": [],
+      "status": "NEEDS NOTICE",
+      "ships_in": "linked into the Windows distribution (build-windows-dist.sh passes -DOKAY_USE_ASSIMP=ON)",
+      "note": "Licence per docs/THIRD_PARTY.md. No licence file for it is in the repository."
+    },
+    {
+      "id": "libsodium",
+      "name": "libsodium",
+      "kind": "library",
+      "version": "1.0.20 (MinGW prebuilt used by release.yml, statically linked)",
+      "copyright": "not stated in the repository (prebuilt package, not vendored)",
+      "licence": "ISC",
+      "licence_files": [],
+      "status": "NEEDS NOTICE",
+      "ships_in": "statically linked into the Windows programs when the release workflow sets OKAY_SODIUM_MINGW_PREFIX",
+      "note": "Licence per docs/THIRD_PARTY.md. No licence file for it is in the repository."
+    },
+    {
+      "id": "tweetnacl",
+      "name": "TweetNaCl-derived code (C++ port of its ed25519 and SHA-512)",
+      "kind": "library",
+      "version": "port inside shared/AntiCheatCrypto.hpp",
+      "copyright": "Bernstein et al. (named in the header of shared/AntiCheatCrypto.hpp)",
+      "licence": "public domain (as the header of shared/AntiCheatCrypto.hpp states it)",
+      "licence_files": [],
+      "no_text_needed": "Public domain: the source states no licence text and none is required. Using it needs the owner's approval under CLAUDE.md rule 19a (see docs/provenance_audit.md, F2).",
+      "status": "PERMITTED",
+      "ships_in": "the launcher and any build without libsodium and without OKAY_OWN_CRYPTO",
+      "note": ""
+    },
+    {
+      "id": "dejavu-sans",
+      "name": "DejaVu Sans (assets/fonts/DejaVuSans.ttf)",
+      "kind": "font",
+      "version": "2.37 (the font's own name table)",
+      "copyright": "Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. DejaVu changes are in public domain. (The font's own name table also names glyphs from the Arev fonts, copyright 2006 Tavmjong Bah; that notice is NOT in the repository's licence file, see docs/asset_licences.md.)",
+      "licence": "Bitstream Vera licence (as copied in the Debian copyright file)",
+      "licence_files": ["assets/fonts/DejaVuSans-LICENSE.txt"],
+      "status": "NEEDS NOTICE",
+      "ships_in": "Assets/Fonts/ in the Windows distribution (starter font)",
+      "note": "The licence file is the Debian package's copyright file. It has no entry for the Arev glyphs the font says it contains."
+    },
+    {
+      "id": "jetbrains-mono",
+      "name": "JetBrains Mono Regular (embedded)",
+      "kind": "font",
+      "version": "2.211 (the embedded font's own name table)",
+      "copyright": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)",
+      "licence": "SIL Open Font License 1.1",
+      "licence_files": ["assets/fonts/JetBrainsMono-OFL.txt"],
+      "status": "PERMITTED",
+      "ships_in": "embedded in the editor and launcher (shared/JetBrainsMonoFont.h) and the engine (shared/JetBrainsMonoFontOwn.h)",
+      "note": ""
+    },
+    {
+      "id": "roboto-medium",
+      "name": "Roboto Medium (embedded)",
+      "kind": "font",
+      "version": "2.001152; 2014 (the embedded font's own name table)",
+      "copyright": "Copyright 2011 Google Inc. All Rights Reserved. (from the font's own name table)",
+      "licence": "Apache License 2.0 (stated by the font's own name table and by comments in editor/main.cpp; the source of the file is not confirmed)",
+      "licence_files": [],
+      "status": "NEEDS NOTICE",
+      "ships_in": "embedded in the editor and launcher (shared/RobotoFont.h) and the engine (shared/RobotoFontOwn.h)",
+      "note": "No licence file for it is in the repository."
+    }
+  ]
+}

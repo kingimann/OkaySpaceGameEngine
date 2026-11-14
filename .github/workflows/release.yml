@@ -169,6 +169,7 @@ jobs:
           mkdir -p "$NAME"
           cp -r build-win-dist/* "$NAME"/
           zip -r "${NAME}.zip" "$NAME"
+          python3 scripts/check_dist_notices.py "${NAME}.zip"
           echo "zip=${NAME}.zip" >> "$GITHUB_OUTPUT"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "ver=${VER}" >> "$GITHUB_OUTPUT"

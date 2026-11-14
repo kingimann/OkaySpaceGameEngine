@@ -75,6 +75,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
+| Licences | Asset licences and release notices (`docs/asset_licences.md`) | Inventory, generated `THIRD_PARTY_NOTICES.txt` and the packaging check are written on branch `claude/asset-licences-notices`; five licence texts and two audio-source questions wait on the owner |
 | QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
 | Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
 | Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |

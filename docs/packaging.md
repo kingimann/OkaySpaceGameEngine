@@ -8,6 +8,8 @@ and everything else is tucked away. This is the **canonical layout** — builds
 OkaySpace.exe        ← the launcher: start here (sign in, create/play games)
 SDL2.dll             ← required next to OkaySpace.exe
 README.txt           ← short "what do I run" note
+THIRD_PARTY_NOTICES.txt ← licences of the third-party code and assets we ship
+Licenses/            ← the licence files themselves
 Tools/
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   standalone runtime that plays an exported game
@@ -16,6 +18,14 @@ Tools/
   VERSION.txt
   accounts.md
 ```
+
+## Third-party notices
+
+Every package carries `THIRD_PARTY_NOTICES.txt` and the licence files in `Licenses/` (the font licence files are also in
+`Assets/Fonts/`). `scripts/build-windows-dist.sh` stages them with `scripts/gen_third_party_notices.py --stage` and
+checks them with `scripts/check_dist_notices.py <folder or zip>`; `release.yml` checks the finished zip. The NSIS
+installer packs the same folder. The list lives in `scripts/third_party_notices_data.json`; see
+[asset_licences.md](asset_licences.md) for what is still missing.
 
 ## Why SDL2.dll appears twice
 

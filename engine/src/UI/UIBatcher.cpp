@@ -236,6 +236,12 @@ void BatchPainter::FillRect(const Rect* r) {
     WhiteQuad((float)r->x, (float)r->y, (float)r->w, (float)r->h);
 }
 
+void BatchPainter::FillRectF(const FRect* r) {
+    if (!r || r->w <= 0.0f || r->h <= 0.0f) return;
+    if (m_passthrough || !EnsurePage(m_batchPage >= 0 ? m_batchPage : 0)) { m_b.FillRectF(r); return; }
+    WhiteQuad(r->x, r->y, r->w, r->h);
+}
+
 // SDL outlines the border pixels inside the rect, one pixel wide.
 void BatchPainter::DrawRect(const Rect* r) {
     if (!r || r->w <= 0 || r->h <= 0) return;

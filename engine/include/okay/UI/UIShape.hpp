@@ -52,17 +52,17 @@ inline bool UIShapeUsesRadius(UIShape s) {
 enum UICorner { UICornerTL = 1, UICornerTR = 2, UICornerBR = 4, UICornerBL = 8,
                 UICornerAll = 15 };
 
-/// For a widget occupying the box [0,w] x [0,h] (local pixels), compute the inside
-/// horizontal span [x0,x1) at integer row `row`. Returns false when the row is
-/// entirely outside the shape. `radius` is the corner radius for Rounded (pixels);
-/// it's ignored by the other shapes. `cornerMask` selects which corners a
-/// Rounded/Pill shape rounds (default all); an un-masked corner stays square. This
-/// is the single source of truth both the fill and the hit-test use, so the visible
-/// shape and the clickable area agree.
-inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int row,
-                           float& x0, float& x1, int cornerMask = UICornerAll) {
-    if (w <= 0.0f || h <= 0.0f || row < 0 || (float)row >= h) return false;
-    const float cy = (float)row + 0.5f;
+/// Horizontal span [x0,x1) at y = `cy` inside the box [0,w] x [0,h]. `cy` is a
+/// position (0 at the top edge, `h` at the bottom), not a pixel index. Returns
+/// false when that y is outside the shape. `radius` is the corner radius for
+/// Rounded (pixels); the other shapes ignore it except where the shape comment
+/// says they use it. `cornerMask` selects which corners a Rounded/Pill shape
+/// rounds (default all). The integer helper below samples pixel centres, and
+/// both the fill and the hit-test go through that, so the visible shape and the
+/// clickable area agree.
+inline bool UIShapeSpanAt(UIShape shape, float w, float h, float radius, float cy,
+                          float& x0, float& x1, int cornerMask = UICornerAll) {
+    if (w <= 0.0f || h <= 0.0f || !(cy >= 0.0f) || cy >= h) return false;
 
     if (shape == UIShape::Rectangle) { x0 = 0.0f; x1 = w; return true; }
 
@@ -199,6 +199,17 @@ inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int ro
     }
     x0 = leftInset; x1 = w - rightInset;
     return x1 > x0;
+}
+
+/// For a widget occupying the box [0,w] x [0,h] (local pixels), the inside
+/// horizontal span [x0,x1) at integer row `row` (sampled at the pixel centre).
+/// Returns false when the row is entirely outside the shape. This is the span
+/// both the fill and the hit-test use, so the visible shape and the clickable
+/// area agree.
+inline bool UIShapeRowSpan(UIShape shape, float w, float h, float radius, int row,
+                           float& x0, float& x1, int cornerMask = UICornerAll) {
+    if (row < 0 || (float)row >= h) return false;
+    return UIShapeSpanAt(shape, w, h, radius, (float)row + 0.5f, x0, x1, cornerMask);
 }
 
 /// Whether the local point (px,py) lies inside the shape — for click hit-testing

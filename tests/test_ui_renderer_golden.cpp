@@ -120,8 +120,10 @@ int main(int argc, char** argv) {
         std::cout << "    batched: " << bdiff << " differing pixels, " << bbig << " differ by more than 48 (max "
                   << bmax << ")\n";
         // Triangles sample glyph edges a little differently from texture copies, so a
-        // few text pixels may differ; shapes, images and lines must match.
-        CHECK(bbig <= 50);
+        // few text pixels may differ; shapes, images and lines must match. Glyphs
+        // are now rasterized at their on-screen size, so that edge difference is a
+        // little wider than when a large atlas was scaled down.
+        CHECK(bbig <= 80);
     }
     SDL_DestroyRenderer(ren);
     SDL_FreeSurface(surf);

@@ -16,14 +16,14 @@ below were made by counting those files by extension; where I could not check so
 |---|---|
 | Importers in Assimp v5.4.3's registry | **51** (glTF 1.0 and glTF 2.0 are two importers) |
 | Importers our Windows distribution switches on (`engine/CMakeLists.txt`) | **45** (not switched on: USD, M3D, Unreal, IFC, Assbin, and Cinema 4D, which needs the non-free Maxon SDK and is off in every build) |
-| Importers we covered **before** this batch (including Blender, which is in review on its own branch) | 19 |
+| Importers we covered **before** this batch (including Blender, merged as #829, off by default) | 19 |
 | Importers we cover **now** (this batch adds MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | **24** of the 45 switched on |
 | Switched on in our build and still **without an own reader** | **21** (the table below, first 21 rows, plus glTF 1.0) |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
 tree. **Nothing was flipped.** Which formats the 24 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
-COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender (in review), MD2, MD3, Irrlicht mesh, B3D, DirectX .x.
+COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x.
 
 ## What is left
 

@@ -127,8 +127,10 @@ inline void Block(std::uint64_t h[8], const std::uint8_t* p) {
 }
 } // namespace detail
 
-// One-shot over several pieces (ed25519 hashes R || A || M without copying M).
-inline Digest Hash(std::initializer_list<std::pair<const std::uint8_t*, std::size_t>> parts) {
+// One-shot over several pieces (ed25519 hashes R || A || M without copying M). This is the portable
+// (TweetNaCl-era) implementation; callers outside the portable Ed25519 below use Hash(), which goes to
+// okay::crypto::Sha512 in an OKAY_OWN_CRYPTO build.
+inline Digest HashPortable(std::initializer_list<std::pair<const std::uint8_t*, std::size_t>> parts) {
     std::uint64_t h[8] = {0x6a09e667f3bcc908ull, 0xbb67ae8584caa73bull, 0x3c6ef372fe94f82bull, 0xa54ff53a5f1d36f1ull,
                           0x510e527fade682d1ull, 0x9b05688c2b3e6c1full, 0x1f83d9abfb41bd6bull, 0x5be0cd19137e2179ull};
     std::uint8_t buf[128];
@@ -155,6 +157,21 @@ inline Digest Hash(std::initializer_list<std::pair<const std::uint8_t*, std::siz
     for (int i = 0; i < 8; ++i)
         for (int j = 0; j < 8; ++j) d[i * 8 + j] = (std::uint8_t)(h[i] >> (56 - 8 * j));
     return d;
+}
+inline Digest HashPortable(const std::uint8_t* p, std::size_t n) { return HashPortable({{p, n}}); }
+
+// The SHA-512 every caller uses: okay::crypto's in an OKAY_OWN_CRYPTO build (unreviewed, opt-in), otherwise
+// the portable code above.
+inline Digest Hash(std::initializer_list<std::pair<const std::uint8_t*, std::size_t>> parts) {
+#ifdef OKAY_OWN_CRYPTO
+    okay::crypto::Sha512 h;
+    for (const auto& part : parts) if (part.second) h.Update(part.first, part.second);
+    Digest d{};
+    h.Final(d.data());
+    return d;
+#else
+    return HashPortable(parts);
+#endif
 }
 inline Digest Hash(const std::uint8_t* p, std::size_t n) { return Hash({{p, n}}); }
 } // namespace sha512
@@ -356,7 +373,7 @@ inline bool CanonicalPoint(const std::uint8_t s[32]) {
     return !(c == 0 && s[0] >= 0xed);
 }
 inline void Expand(const Seed& seed, std::uint8_t d[64]) {
-    const sha512::Digest h = sha512::Hash(seed.data(), seed.size());
+    const sha512::Digest h = sha512::HashPortable(seed.data(), seed.size());
     std::memcpy(d, h.data(), 64);
     d[0] &= 248; d[31] &= 127; d[31] |= 64;
 }
@@ -377,13 +394,13 @@ inline Signature Sign(const std::uint8_t* m, std::size_t n, const Seed& seed) {
     std::uint8_t d[64];
     detail::Expand(seed, d);
     const PublicKey pk = PublicKeyFromSeed(seed);
-    sha512::Digest r = sha512::Hash({{d + 32, 32}, {m, n}});
+    sha512::Digest r = sha512::HashPortable({{d + 32, 32}, {m, n}});
     detail::Reduce(r.data());
     detail::gf p[4];
     Signature sig{};
     detail::ScalarBase(p, r.data());
     detail::PackPoint(sig.data(), p);
-    sha512::Digest h = sha512::Hash({{sig.data(), 32}, {pk.data(), 32}, {m, n}});
+    sha512::Digest h = sha512::HashPortable({{sig.data(), 32}, {pk.data(), 32}, {m, n}});
     detail::Reduce(h.data());
     std::int64_t x[64] = {0};
     for (int i = 0; i < 32; ++i) x[i] = (std::int64_t)r[i];
@@ -406,7 +423,7 @@ inline bool Verify(const std::uint8_t* m, std::size_t n, const Signature& sig, c
     if (detail::HasSmallOrder(sig.data()) || IsWeakKey(pk)) return false;
     detail::gf p[4], q[4];
     if (detail::UnpackNeg(q, pk.data())) return false;
-    sha512::Digest h = sha512::Hash({{sig.data(), 32}, {pk.data(), 32}, {m, n}});
+    sha512::Digest h = sha512::HashPortable({{sig.data(), 32}, {pk.data(), 32}, {m, n}});
     detail::Reduce(h.data());
     detail::ScalarMult(p, q, h.data());
     detail::ScalarBase(q, sig.data() + 32);
@@ -434,6 +451,16 @@ inline bool SodiumReady() {
     return ok;
 }
 #endif
+
+// A public key no signature should be accepted for (non-canonical encoding or a small-order point). The
+// key-list parser uses this; with OKAY_OWN_CRYPTO the answer comes from okay::crypto.
+inline bool IsWeakKey(const PublicKey& pk) {
+#ifdef OKAY_OWN_CRYPTO
+    return okay::crypto::Ed25519IsWeakKey(pk.data());
+#else
+    return portable::IsWeakKey(pk);
+#endif
+}
 
 inline PublicKey PublicKeyFromSeed(const Seed& seed) {
 #ifdef OKAY_OWN_CRYPTO

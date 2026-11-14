@@ -2,6 +2,7 @@
 // Arithmetic mod 2^130 - 5 on five 26-bit limbs; every product fits in 64 bits.
 // Only adds, multiplies, shifts and masks: no secret-dependent branches or indexes.
 #include <okay/Crypto/Crypto.hpp>
+#include "CtAnnotate.hpp"
 
 namespace okay::crypto {
 namespace {
@@ -111,7 +112,7 @@ void Poly1305::Final(std::uint8_t tag[16]) {
     std::uint32_t g2 = h2 + c; c = g2 >> 26; g2 &= kMask26;
     std::uint32_t g3 = h3 + c; c = g3 >> 26; g3 &= kMask26;
     std::uint32_t g4 = h4 + c - (1u << 26);
-    const std::uint32_t keepG = (g4 >> 31) - 1u;         // all ones when g4 did not borrow
+    const std::uint32_t keepG = ct::Barrier((g4 >> 31) - 1u);         // all ones when g4 did not borrow
     h0 = (h0 & ~keepG) | (g0 & keepG);
     h1 = (h1 & ~keepG) | (g1 & keepG);
     h2 = (h2 & ~keepG) | (g2 & keepG);

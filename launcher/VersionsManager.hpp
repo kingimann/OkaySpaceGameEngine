@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ProjectVersion.hpp"
+#include "UpdateSignature.hpp"
 
 namespace okayversions {
 namespace fs = std::filesystem;
@@ -70,6 +71,8 @@ struct Entry {
 struct Index {
     bool ok = false;                     ///< a usable list (schema known, versions read)
     bool fallback = false;               ///< built from VERSION.txt / LTS.txt: no checksums
+    bool signatureRefused = false;       ///< a trusted key is built in and versions.json is unsigned or wrongly signed (`error` says so)
+    bool signedByPublisher = false;      ///< versions.json verified against a trusted key (false when no key is built in)
     std::string error;                   ///< why `ok` is false (plain words)
     std::string note;                    ///< a plain sentence about how complete the list is ("" = nothing to say)
     int schema = 0;
@@ -101,6 +104,9 @@ struct Sources {
     std::string bucketBase;                       ///< "https://.../releases/" ("" = no releases bucket is configured)
     std::string archiveTemplate;                  ///< GitHub address pattern ("https://.../download/v{version}/{file}"), "" = none
     std::vector<std::string> versionTxtUrls;      ///< other places a VERSION.txt lives (GitHub); the bucket's own is added
+    /// ed25519 public keys (hex, comma-separated) that must have signed versions.json (shared/UpdateSignature.hpp). Defaults to the keys
+    /// built into this program (-DOKAY_UPDATE_TRUSTED_KEYS); "" = none, unsigned indexes are accepted (the transition).
+    std::string trustedKeys = okayupdate::BuiltInTrustedKeys();
 };
 /// Find out which versions exist: <bucket>/versions.json; its channel heads are then checked against <bucket>/VERSION.txt and
 /// LTS.txt (the index is written last and can lag: a newer head there is added, without checksums). When there is no usable

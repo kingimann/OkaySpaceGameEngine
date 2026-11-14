@@ -8,6 +8,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "BehaviorTreeWindow.hpp"
+#include "MainShared.hpp"               // g_paused: a breakpoint pauses Play
 #include "ConsolePanel.hpp"             // ConsoleLog
 #include "EditorWidgets.hpp"            // AccentCol
 #include "okay/AI/BehaviorTree.hpp"
@@ -159,6 +160,11 @@ std::string Summary(const BehaviorTree& t, const BtNode& n) {
         case BtNodeType::SendEvent: return s("event") + (n.Flag("broadcast") ? " (broadcast)" : s("target").empty() ? "" : " -> " + s("target"));
         case BtNodeType::RunScript:
         case BtNodeType::Custom: return s("function") + "()";
+        case BtNodeType::RunSubtree: {
+            std::string file = s("tree");
+            if (const auto slash = file.find_last_of("/\\"); slash != std::string::npos) file = file.substr(slash + 1);
+            return file.empty() ? std::string("(no tree)") : file;
+        }
         case BtNodeType::PlayAudio: return s("clip").empty() ? "the Audio Source" : s("clip");
         case BtNodeType::StartDialogue: return (s("graph").empty() ? std::string("the Dialogue Runner") : s("graph")) + (n.Flag("wait") ? ", wait" : "");
         case BtNodeType::Perception: return s("targetName") + Fmt("  %g m", n.Num("range"));
@@ -312,7 +318,7 @@ struct Ctx {
     bool playing = false;
     explicit Ctx(EditorState& e) : ed(e), t(D().tree) {}
     void Validate() {
-        issues = t.Validate(&ed.scene());
+        issues = t.Validate(&ed.scene(), D().path);
         severity.clear();
         for (const auto& is : issues) if (is.node >= 0) severity[is.node] = std::max(severity[is.node], is.severity);
     }
@@ -391,7 +397,7 @@ std::string CopySubtree(const BehaviorTree& t, int id) {
         if (!n) return;
         const int nid = sub.AddNode(n->type, toParent);
         BtNode* nn = sub.Find(nid);
-        nn->name = n->name; nn->params = n->params; nn->x = n->x; nn->y = n->y;
+        nn->name = n->name; nn->params = n->params; nn->x = n->x; nn->y = n->y; nn->breakpoint = n->breakpoint;
         for (int ch : n->children) copy(ch, nid);
     };
     copy(id, -1);
@@ -407,7 +413,7 @@ int PasteSubtree(Ctx& c, const std::string& text, int parent, ImVec2 at) {
         if (!n) return;
         const int nid = c.t.AddNode(n->type, toParent);
         BtNode* nn = c.t.Find(nid);
-        nn->name = n->name; nn->params = n->params;
+        nn->name = n->name; nn->params = n->params; nn->breakpoint = n->breakpoint;
         nn->x = n->x - sub.Find(sub.root)->x + at.x; nn->y = n->y - sub.Find(sub.root)->y + at.y;
         ids[from] = nid;
         for (int ch : n->children) paste(ch, nid);
@@ -505,7 +511,21 @@ void DrawCanvas(Ctx& c, Ui& u, ImVec2 size) {
     // ---- live state ----
     const BehaviorTreeRunner* live = c.live;
     const float now = live ? live->Clock() : 0.0f;
-    auto liveState = [&](int id) -> const BehaviorTreeRunner::NodeState* { return live ? live->State(id) : nullptr; };
+    auto sameTree = [](const std::string& a, const std::string& b) {
+        if (a.empty() || b.empty()) return false;
+        return BehaviorTree::ResolvePath(a) == BehaviorTree::ResolvePath(b);
+    };
+    auto liveState = [&](int id) -> const BehaviorTreeRunner::NodeState* {
+        if (!live) return nullptr;
+        const std::string open = D().path;
+        if (open.empty() || sameTree(open, live->RootTreePath()) || sameTree(open, live->treePath)) return live->State(id);
+        return live->StateFor(open, id);
+    };
+    auto pausedOn = [&](int id, const BtNode& n) {
+        if (!live || !live->IsBreakPaused()) return false;
+        if (!D().path.empty() && sameTree(D().path, live->BreakTreePath()) && live->BreakNode() == id) return true;
+        return n.type == BtNodeType::RunSubtree && sameTree(n.Str("tree"), live->BreakTreePath());
+    };
     auto statusCol = [&](BtStatus s, float a) {
         switch (s) {
             case BtStatus::Success: return OkCol(a);
@@ -621,6 +641,17 @@ void DrawCanvas(Ctx& c, Ui& u, ImVec2 size) {
         if (running) {
             const float pulse = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 5.0f);
             dl->AddRect(r.Min - ImVec2(3, 3), r.Max + ImVec2(3, 3), PlayCol(0.30f + 0.45f * pulse), 8.0f * Z, 0, 3.0f);
+        }
+        const bool atBreak = pausedOn(k.id, n);
+        if (atBreak) {
+            dl->AddRect(r.Min - ImVec2(6, 6), r.Max + ImVec2(6, 6), Col(1.0f, 0.62f, 0.12f, 1.0f), 10.0f * Z, 0, 3.5f);
+            const char* hold = "paused";
+            dl->AddText(font, fs * 0.78f, ImVec2(r.Min.x + 8 * Z, r.Max.y - fs * 0.9f), Col(0.45f, 0.22f, 0.02f, 1.0f), hold);
+        }
+        if (n.breakpoint) {
+            const ImVec2 dot(r.Min.x - 3.0f * Z, r.GetCenter().y);
+            dl->AddCircleFilled(dot, 5.5f * std::max(Z, 0.75f), Col(0.90f, 0.18f, 0.16f, 1.0f));
+            dl->AddCircle(dot, 5.5f * std::max(Z, 0.75f), Col(1.0f, 1.0f, 1.0f, 0.9f), 0, 1.4f);
         }
         const ImU32 txt = running ? Col(0.08f, 0.08f, 0.08f) : ImGui::GetColorU32(ImGuiCol_Text);
         const ImU32 sub = running ? Col(0.18f, 0.18f, 0.18f) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -751,6 +782,7 @@ void DrawCanvas(Ctx& c, Ui& u, ImVec2 size) {
                 if (ImGui::MenuItem("Set as root", nullptr, id == t.root, n->parent < 0)) { DocPush(); t.root = id; DocTouch(); Tidy(c); }
                 if (n->parent >= 0 && ImGui::MenuItem("Detach from parent")) { DocPush(); t.Reparent(id, -1); n = t.Find(id); n->y += 120.0f; DocTouch(); }
                 if (ImGui::MenuItem("Rename", "double-click")) { u.renaming = id; u.renameFocus = true; std::snprintf(u.renameBuf, sizeof(u.renameBuf), "%s", n->name.c_str()); }
+                if (ImGui::MenuItem("Breakpoint", "F9", n->breakpoint)) { DocPush(); n->breakpoint = !n->breakpoint; DocTouch(); }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Copy subtree", "Ctrl+C")) u.clipboard = CopySubtree(t, id);
                 if (ImGui::MenuItem("Duplicate subtree", "Ctrl+D")) { const std::string txt = CopySubtree(t, id); PasteSubtree(c, txt, n->parent, ImVec2(n->x + 40.0f, n->y + 40.0f)); }
@@ -888,6 +920,8 @@ void DrawCanvas(Ctx& c, Ui& u, ImVec2 size) {
         const bool ctrl = io.KeyCtrl;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { if (u.renaming >= 0) u.renaming = -1; else ClearSel(u); }
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) u.frameReq = true;
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F9, false) && u.primary >= 0)
+            if (BtNode* bp = t.Find(u.primary); bp && !BtIsService(bp->type)) { DocPush(); bp->breakpoint = !bp->breakpoint; DocTouch(); }
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_0, false)) { const ImVec2 g = toGraph(org + csz * 0.5f); u.zoom = 1.0f; centreOn(g); }
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false)) { ClearSel(u); for (const Card& k : cards) Select(u, k.id, 1); }
         if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (DocUndo()) ClampSel(u, t); }
@@ -931,6 +965,11 @@ void DrawCanvas(Ctx& c, Ui& u, ImVec2 size) {
                 }
             }
             if (c.live->Completions() > 0) s += std::string("  \xC2\xB7  last run ") + BtStatusName(c.live->LastResult());
+            if (c.live->IsBreakPaused()) {
+                s += "  \xC2\xB7  paused";
+                const std::vector<BehaviorTreeRunner::TraceStep> trace = c.live->ActiveTrace();
+                if (!trace.empty()) s += " on " + trace.back().title;
+            }
         } else if (u.sel.size() > 1) s = std::to_string(u.sel.size()) + " nodes selected  \xC2\xB7  drag to move, Delete, Ctrl+C / Ctrl+D";
         else s = "drag: move / reorder  \xC2\xB7  drop on a node: reparent  \xC2\xB7  drag empty: box select  \xC2\xB7  wheel: zoom  \xC2\xB7  middle / right drag: pan  \xC2\xB7  double-click: rename";
         const float ofs = ImGui::GetFontSize() * 0.92f;
@@ -1045,6 +1084,8 @@ bool ParamField(Ctx& c, BtNode& n, const BtParamDef& p) {
         case BtParamDef::Key:
             keyCombo(p.choices);
             break;
+        case BtParamDef::Tree:
+            break;   // the node inspector draws the tree dropdown itself
         case BtParamDef::Choice: {
             std::vector<std::string> opts;
             std::stringstream ss(p.choices ? p.choices : "");
@@ -1130,6 +1171,120 @@ bool BeginParamTable(const char* id) {
     return true;
 }
 
+// .okaybt files under the project, as the runner stores them (relative to the project).
+std::vector<std::string> ListTreeFiles(EditorState& ed) {
+    std::vector<std::string> out;
+    const std::string root = ProjectAssetsDir(ed);
+    if (root.empty()) return out;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (!it->is_regular_file(ec)) continue;
+        if (Lower(it->path().extension().string()) != ".okaybt") continue;
+        out.push_back(ProjectRelative(ed, it->path().string()));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void DrawTreeSlot(Ctx& c, BtNode& n) {
+    const std::string cur = n.Str("tree");
+    std::string shown = cur.empty() ? "None (Behavior Tree)" : cur;
+    if (const auto slash = shown.find_last_of("/\\"); slash != std::string::npos && !cur.empty()) shown = shown.substr(slash + 1);
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Tree");
+    Tip("The behavior tree this node runs. Pick one from the project, or drag a .okaybt from the Project panel.");
+    ImGui::TableNextColumn();
+    ImGui::SetNextItemWidth(-28.0f);
+    if (ImGui::BeginCombo("##bttree", shown.c_str())) {
+        if (ImGui::Selectable("None", cur.empty())) { EditPush(); n.params.erase("tree"); DocTouch(); }
+        for (const std::string& path : ListTreeFiles(c.ed)) {
+            const bool mine = !D().path.empty() && BehaviorTree::ResolvePath(path) == BehaviorTree::ResolvePath(D().path);
+            const std::string label = path + (mine ? "  (this tree)" : "");
+            if (ImGui::Selectable(label.c_str(), path == cur)) {
+                EditPush();
+                n.params["tree"] = path;
+                DocTouch();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            const std::string ap((const char*)p->Data);
+            const std::string al = Lower(ap);
+            if (al.size() >= 7 && al.compare(al.size() - 7, 7, ".okaybt") == 0) {
+                EditPush();
+                n.params["tree"] = ProjectRelative(c.ed, ap);
+                DocTouch();
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine(0, 4);
+    if (ImGui::SmallButton("x##bttreex") && !cur.empty()) { EditPush(); n.params.erase("tree"); DocTouch(); }
+    if (!cur.empty()) Tip(cur.c_str());
+}
+
+void DrawKeyMap(Ctx& c, BtNode& n) {
+    std::vector<BtKeyLink> links = BtParseKeyMap(n.Str("map"));
+    std::vector<std::string> childKeys;
+    if (const std::string path = n.Str("tree"); !path.empty())
+        if (const std::shared_ptr<const BehaviorTree> sub = BehaviorTree::Load(path))
+            for (const auto& k : sub->keys) childKeys.push_back(k.name);
+    auto write = [&]() {
+        EditPush();
+        const std::string text = BtFormatKeyMap(links);
+        if (text.empty()) n.params.erase("map"); else n.params["map"] = text;
+        DocTouch();
+    };
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Keys");
+    Tip("Copy keys into the sub-tree before each tick, and back out after. The sub-tree keeps every other key to itself.");
+    ImGui::TableNextColumn();
+    if (links.empty()) ImGui::TextDisabled("none");
+    for (std::size_t i = 0; i < links.size(); ++i) {
+        ImGui::PushID((int)i);
+        BtKeyLink& link = links[i];
+        ImGui::SetNextItemWidth(110);
+        if (ImGui::BeginCombo("##parent", link.parent.empty() ? "(key)" : link.parent.c_str())) {
+            for (const auto& k : c.t.keys)
+                if (ImGui::Selectable(k.name.c_str(), k.name == link.parent)) { link.parent = k.name; write(); }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine(0, 4);
+        int way = link.way == '>' ? 0 : link.way == '<' ? 1 : 2;
+        ImGui::SetNextItemWidth(118);
+        if (ImGui::Combo("##way", &way, "into sub-tree\0back here\0both ways\0")) {
+            link.way = way == 0 ? '>' : way == 1 ? '<' : '=';
+            write();
+        }
+        ImGui::SameLine(0, 4);
+        ImGui::SetNextItemWidth(110);
+        const char* childShown = link.child.empty() ? "(key)" : link.child.c_str();
+        if (!childKeys.empty()) {
+            if (ImGui::BeginCombo("##child", childShown)) {
+                for (const std::string& name : childKeys)
+                    if (ImGui::Selectable(name.c_str(), name == link.child)) { link.child = name; write(); }
+                ImGui::EndCombo();
+            }
+        } else {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%s", link.child.c_str());
+            if (ImGui::InputTextWithHint("##child", "sub-tree key", buf, sizeof(buf))) { link.child = buf; write(); }
+        }
+        ImGui::SameLine(0, 4);
+        if (ImGui::SmallButton("x")) { links.erase(links.begin() + (std::ptrdiff_t)i); write(); ImGui::PopID(); break; }
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("Add key##btmap")) { links.push_back({}); write(); }
+}
+
 void DrawNodeInspector(Ctx& c, Ui& u, int id) {
     BehaviorTree& t = c.t;
     BtNode* n = t.Find(id);
@@ -1154,6 +1309,11 @@ void DrawNodeInspector(Ctx& c, Ui& u, int id) {
         ImGui::PopStyleColor();
     }
     ImGui::Spacing();
+    if (!BtIsService(n->type)) {
+        bool bp = n->breakpoint;
+        if (ImGui::Checkbox("Breakpoint##btbp", &bp)) { EditPush(); n->breakpoint = bp; DocTouch(); }
+        Tip("Pause Play when this node is reached. The card stays lit until you resume. F9 toggles it.");
+    }
     if (!d.params.empty()) ImGui::SeparatorText("Parameters");
     if (!d.params.empty() && BeginParamTable("##btparams")) {
         const std::string kind = n->Str("kind");
@@ -1178,6 +1338,11 @@ void DrawNodeInspector(Ctx& c, Ui& u, int id) {
                 if (kind == "health" && (k == "key" || k == "value" || k == "op" || k == "target" || k == "distance")) continue;
             }
             if (n->type == BtNodeType::MoveTo && std::string(p.key) == "position" && !n->Str("target").empty()) continue;
+            if (n->type == BtNodeType::RunSubtree && (std::string(p.key) == "tree" || std::string(p.key) == "map")) {
+                if (std::string(p.key) == "tree") DrawTreeSlot(c, *n);
+                else DrawKeyMap(c, *n);
+                continue;
+            }
             ParamField(c, *n, p);
         }
         ImGui::EndTable();
@@ -1192,7 +1357,14 @@ void DrawNodeInspector(Ctx& c, Ui& u, int id) {
     }
     // Live state.
     if (c.live) {
-        if (const auto* st = c.live->State(id)) {
+        const BehaviorTreeRunner::NodeState* st = nullptr;
+        {
+            const std::string open = D().path;
+            const bool root = open.empty() || BehaviorTree::ResolvePath(open) == c.live->RootTreePath()
+                || BehaviorTree::ResolvePath(open) == BehaviorTree::ResolvePath(c.live->treePath);
+            st = root ? c.live->State(id) : c.live->StateFor(open, id);
+        }
+        if (st) {
             ImGui::SeparatorText("Live");
             ImGui::Text("%s%s", BtStatusName(st->status), st->running ? " (running)" : "");
             if (st->lastTick >= 0.0f) ImGui::TextDisabled("ticked %u times, last %.1f s ago", st->ticks, (double)(c.live->Clock() - st->lastTick));
@@ -1238,7 +1410,14 @@ void DrawBlackboardTab(Ctx& c, Ui& u) {
     BehaviorTree& t = c.t;
     ImGui::TextWrapped("Keys the tree reads and writes. Each NPC's runner starts from these defaults (its own overrides on top).");
     ImGui::Spacing();
-    const bool live = c.live != nullptr;
+    Blackboard* liveBoard = nullptr;
+    if (c.live && c.playing) {
+        const std::string open = D().path;
+        const bool root = open.empty() || BehaviorTree::ResolvePath(open) == c.live->RootTreePath()
+            || BehaviorTree::ResolvePath(open) == BehaviorTree::ResolvePath(c.live->treePath);
+        liveBoard = root ? &c.live->blackboard : c.live->BoardFor(open);
+    }
+    const bool live = liveBoard != nullptr;
     if (ImGui::BeginTable("##btkeys", live ? 5 : 4, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
         ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -1288,13 +1467,13 @@ void DrawBlackboardTab(Ctx& c, Ui& u) {
             }
             if (live) {
                 ImGui::TableNextColumn();
-                const BtValue* lv = c.live->blackboard.Find(k.name);
+                const BtValue* lv = liveBoard->Find(k.name);
                 if (lv) {
                     BtValue tmp = *lv;
                     ImGui::SetNextItemWidth(-1);
                     switch (lv->type) {
-                        case BtValue::Type::Number: if (ImGui::DragFloat("##lv", &tmp.number, 0.05f)) c.live->blackboard.Set(k.name, tmp); break;
-                        case BtValue::Type::Bool: if (ImGui::Checkbox("##lv", &tmp.boolean)) c.live->blackboard.Set(k.name, tmp); break;
+                        case BtValue::Type::Number: if (ImGui::DragFloat("##lv", &tmp.number, 0.05f)) liveBoard->Set(k.name, tmp); break;
+                        case BtValue::Type::Bool: if (ImGui::Checkbox("##lv", &tmp.boolean)) liveBoard->Set(k.name, tmp); break;
                         default: ImGui::TextUnformatted(lv->AsString().c_str()); break;
                     }
                 } else ImGui::TextDisabled("-");
@@ -1532,8 +1711,8 @@ void DrawBehaviorTreeWindow(EditorState& ed) {
     g_focused = false;
     if (!g_showBehaviorTree) return;
     if (std::getenv("OKAY_UI_BT")) {
-        ImGui::SetNextWindowPos(ImVec2(24, 48), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(1400, 800), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(16, 36), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1248, 740), ImGuiCond_Always);
     } else {
         ImGui::SetNextWindowSize(ImVec2(1180, 680), ImGuiCond_FirstUseEver);
     }
@@ -1751,7 +1930,68 @@ void BehaviorTreeAddComponentItems(EditorState& ed, GameObject* go, const std::f
 void BehaviorTreeDevHooks(EditorState& ed) {
     static int s_frame = 0;
     if (s_frame < 100000) ++s_frame;
+    static bool s_pauseHook = false;
+    if (!s_pauseHook) {
+        s_pauseHook = true;
+        BehaviorTreeRunner::SetPauseHook([](BehaviorTreeRunner&, int) { g_paused = true; });
+    }
     if (std::getenv("OKAY_UI_BT")) g_showBehaviorTree = true;
+    // OKAY_UI_BTSUB=1: a parent tree with a Run Sub-Tree node (asset dropdown, not a typed
+    // path) and a breakpoint, so a screenshot can show the slot and the paused card.
+    if (std::getenv("OKAY_UI_BTSUB") && s_frame == 34) {
+        const std::string dir = ProjectAssetsDir(ed);
+        namespace fs = std::filesystem;
+        const fs::path folder = dir.empty() ? fs::path("Assets") : fs::path(dir);
+        std::error_code ec;
+        fs::create_directories(folder, ec);
+        BehaviorTree greet;
+        greet.name = "Greet";
+        greet.DeclareKey("target", BtValue::Object("Player"));
+        const int look = greet.AddNode(BtNodeType::LookAt);
+        greet.Find(look)->Set("target", "target");
+        greet.Find(look)->name = "Face";
+        const std::string greetPath = (folder / "Greet.okaybt").string();
+        std::string err;
+        greet.SaveToFile(greetPath, &err);
+        BehaviorTree::Forget(greetPath);
+        BehaviorTree brain;
+        brain.name = "Guard brain";
+        brain.DeclareKey("target", BtValue::Object("Player"));
+        const int run = brain.AddNode(BtNodeType::RunSubtree);
+        BtNode* node = brain.Find(run);
+        node->name = "Greet";
+        node->Set("tree", ProjectRelative(ed, greetPath));
+        node->Set("map", "target>target");
+        node->breakpoint = true;
+        brain.Layout(kNodeW, kNodeH, 22.0f, 64.0f, kServiceRowH);
+        const std::string brainPath = (folder / "GuardBrain.okaybt").string();
+        brain.SaveToFile(brainPath, &err);
+        BehaviorTree::Forget(brainPath);
+        BehaviorTree::SetAssetBaseDir(ed.projectDir().empty() ? folder.string() : ed.projectDir());
+        GameObject* guard = ed.scene().Find("Guard");
+        if (!guard) {
+            guard = ed.scene().CreateGameObject("Guard");
+            guard->transform->localPosition = {0, 0.5f, 0};
+            auto* mr = guard->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Cube();
+            mr->color = Color::FromBytes(200, 70, 60);
+        }
+        GameObject* player = ed.scene().Find("Player");
+        if (!player) {
+            player = ed.scene().CreateGameObject("Player");
+            player->transform->localPosition = {0, 0.5f, 4};
+        }
+        auto* r = guard->GetComponent<BehaviorTreeRunner>();
+        if (!r) r = guard->AddComponent<BehaviorTreeRunner>();
+        r->treePath = ProjectRelative(ed, brainPath);
+        r->runOnStart = true;
+        ed.Select(guard);
+        OpenBehaviorTreeFile(ed, brainPath);
+        U().liveObj = "Guard";
+        U().sideW = 460.0f;
+        U().forceSideTab = 0;
+        ed.dirty = true;
+    }
     if (std::getenv("OKAY_UI_BTGUARD") && s_frame == 34) {
         Scene& s = ed.scene();
         // Waypoints around the ground, a guard crate with an agent and the runner.

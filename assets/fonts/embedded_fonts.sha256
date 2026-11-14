@@ -1,0 +1,5 @@
+# SHA-256 and size of each embedded font's decoded TrueType bytes (what rendering sees). Written by
+# scripts/gen_embedded_fonts.py --from-legacy from the original Dear ImGui arrays; checked by --check and by
+# tests/test_embedded_font.cpp. If a font is ever replaced on purpose, change this file in the same commit.
+8559132c89ad51d8a2ba5b171887a44a7ba93776e205f553573de228e64b45f8 162588 Roboto
+b6b1ff4ddefe36d7f2a6174e1d001cab374e594519ee9049af028d577b64c5f5 114904 JetBrainsMono

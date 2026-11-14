@@ -1,28 +1,29 @@
 # 7. Audio
 
-Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, a music player and saved volume settings. Code is
-`engine/include/okay/Audio/*` (6 headers), `engine/src/Audio/*` (about 1,800 lines) and two components; the host programs
+Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, doppler, occlusion and distance muffling, reverb zones, a music player and saved volume settings. Code is
+`engine/include/okay/Audio/*` (7 headers), `engine/src/Audio/*` and two components; the host programs
 (`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
 model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
 ## 7. Audio
 
 ### 7.1 Mixer and Audio Mixer
-- **What:** The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice and distance panning, and reports peak levels for the editor meters.
+- **What:** The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice, distance panning, and (when asked) doppler, occlusion, distance muffling and a reverb zone, and reports peak levels for the editor meters.
 - **Parts:**
   - 7.1.1 Mixer core - `Audio/AudioMixer` - `RenderStereo` and `Render`: voices, resampling to the device rate, stereo voices, pan gains (balance for stereo 2D, mono-then-pan for 3D), one-pole low-pass per channel, streaming voices, clamping
   - 7.1.2 Groups, master and mute - `Audio/AudioMixer` - SFX, Music, UI and Voice groups each with volume and mute under `masterVolume`; `focusMuted` for a background window
   - 7.1.3 Ducking - `Audio/AudioMixer` - Music dips while a Voice source plays (level, attack, release)
-  - 7.1.4 Spatial listener - `Audio/AudioMixer` - `SetListener` set from the main camera each audio refill; `Attenuation` and `PanGains`
+  - 7.1.4 Spatial listener - `Audio/AudioMixer` - `SetListener` set from the main camera each audio refill; `Attenuation` and `PanGains`; doppler from the listener and source motion between refills
+  - 7.1.7 Reverb bus - `Audio/SpatialFx` (`SchroederReverb`) - eight damped combs into four all-passes, fed by 3D sources while the listener is inside a Reverb volume; skipped entirely when dry so an old mix is unchanged
   - 7.1.5 Audio Mixer panel - `editor/main.cpp` - master and group sliders, mutes, output meters, ducking controls
   - 7.1.6 Device feed - `player/main.cpp`, `editor/main.cpp` - open the audio device through `okay::platform` (SDL2 by default, our own ALSA backend with `-DOKAY_PLATFORM_BACKEND=own`) and keep about 70 ms queued from `RenderStereo`
 - **Code:** `Audio/AudioMixer`, `editor/main.cpp` (Audio Mixer panel), `player/main.cpp` (audio device loop)
 - **API:** `AudioMixer::masterVolume`, `AudioMixer::groupVolume`, `AudioMixer::groupMuted`, `AudioMixer::duckMusicUnderVoice`, `AudioMixer::SetListener`, `AudioMixer::peak`, script `Audio.SetGroupVolume`, `set_group_volume`, `set_ducking`
 - **Editor:** View > Panels > Audio Mixer
 - **Docs:** `docs/audio.md`
-- **Tests:** `audio_mixer`, `master_volume`, `audio`
-- **Status:** Works - AudioMixer.hpp and the mixing code in AudioMixer.cpp read (ducking ramp, low-pass, spatial pan); player and editor feed it; covered by `audio_mixer` and `master_volume`
-- **Open:** only four fixed groups (no user-made buses, effect chain or snapshots); low-pass is the only effect; no reverb, occlusion or doppler anywhere in the code; levels set in the editor panel are for the editor session only (players save their own, 7.4)
+- **Tests:** `audio_mixer`, `master_volume`, `audio`, `spatial_audio`, `volumes`
+- **Status:** Works - AudioMixer.hpp and the mixing code in AudioMixer.cpp read (ducking ramp, low-pass, spatial pan, doppler, occlusion, distance low-pass, reverb send); player and editor feed it; covered by `audio_mixer`, `master_volume` and `spatial_audio`
+- **Open:** only four fixed groups (no user-made buses, effect chain or snapshots); levels set in the editor panel are for the editor session only (players save their own, 7.4); one reverb bus for the listener (not a send per source, and the tail is not added once the listener has left the zone)
 - **Related:** 7.3, 7.4, 4.7, 37.1
 - **Words:** mixer, Audio Mixer, master volume, group volume, ducking, bus, SFX, Music, UI, Voice, mute, meters, peak, AudioMixer
 - **Seen as:** no sound at all; music too loud under dialogue; everything the same volume; the sound pans the wrong way or stays in the centre; sound stops when the window loses focus
@@ -52,15 +53,15 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 ### 7.3 Audio sources and music player
 - **What:** The AudioSource component plays a clip or, with Stream, a file read as it plays, with volume, pitch, pan or balance, loop, seek, 3D falloff, low-pass, fades and overlapping one-shots; the Music Player plays a playlist (streamed by default) with crossfades.
 - **Parts:**
-  - 7.3.1 Audio source - `Components/AudioSource` - volume, pitch, pan (balance for stereo 2D clips), group, loop, play on awake, `stream` (Inspector checkbox), rolloff (linear, inverse, logarithmic), `lowPass`; C++ `Seek`, `Time`, `Duration`
+  - 7.3.1 Audio source - `Components/AudioSource` - volume, pitch, pan (balance for stereo 2D clips), group, loop, play on awake, `stream` (Inspector checkbox), rolloff (linear, inverse, logarithmic), `lowPass`; doppler, occlusion and distance low-pass (each off by default, 3D only); C++ `Seek`, `Time`, `Duration`
   - 7.3.2 Fades and one-shots - `Components/AudioSource` - `FadeIn`, `FadeOut`, `FadeTo`; `PlayOneShot` up to 16 voices per source
   - 7.3.3 Music player - `Components/MusicPlayer` - playlist, shuffle, loop playlist, `stream` (on by default), crossfade between two child sources on the Music group
 - **Code:** `Components/AudioSource`, `Components/MusicPlayer`, `editor/main.cpp` (AudioSource and Music Player inspectors)
 - **API:** `AudioSource`, `AudioGroup`, `AudioRolloff`, `PlayOneShot`, `FadeIn`, `FadeOut`, `MusicPlayer`, script `play_sound`, `music_play`, `music_next`, `music_stop`
 - **Editor:** Add Component > Audio > Audio Source and Music Player; Inspector with file picker
 - **Docs:** `docs/audio.md`
-- **Tests:** `audio`, `audio_music`, `audio_stereo`, `audio_stream`, `wav`, `vs_media`
-- **Status:** Works - AudioSource.hpp and MusicPlayer.hpp read (crossfade start and fades are in the headers); covered by `audio_music`, `audio`, `audio_stereo` (placement), `audio_stream` (the Stream option, Music Player streaming, save and load of the flag) and `vs_media` (visual-script music nodes)
+- **Tests:** `audio`, `audio_music`, `audio_stereo`, `audio_stream`, `wav`, `vs_media`, `spatial_audio`
+- **Status:** Works - AudioSource.hpp and MusicPlayer.hpp read (crossfade start and fades are in the headers); covered by `audio_music`, `audio`, `audio_stereo` (placement), `audio_stream` (the Stream option, Music Player streaming, save and load of the flag), `spatial_audio` (doppler ratio, occlusion, distance curve, stereo and stream still correct) and `vs_media` (visual-script music nodes)
 - **Open:** one listener (the main camera); Seek is C++ only (no script or visual-script call); the editor Add Component menu labels and script bindings for audio live in areas 15 and 13
 - **Related:** 7.1, 7.2, 10.1, 9.4
 - **Words:** AudioSource, MusicPlayer, music, playlist, crossfade, one-shot, footsteps, 3D sound, spatial, rolloff, min distance, max distance, fade in, fade out, pitch, pan
@@ -79,7 +80,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Docs:** `docs/audio.md`
 - **Tests:** `master_volume`, `audio_mixer`
 - **Status:** Works - LoadSettings and SaveSettings call sites and the focus-mute line in player/main.cpp read; the save and load round trip is exercised in `audio_mixer`
-- **Open:** the volume sliders belong to the pause and settings screens (area 12.8); no subtitle or caption link yet (`CaptionManager` from #574 has a "sound caption" call but no Audio Source option feeds it, 10.1, 32.2)
+- **Open:** the volume sliders belong to the pause and settings screens (area 12.8). An Audio Source `caption` is shown by the caption widget when sound captions are on (32.2)
 - **Related:** 12.8, 1.7, 32.2, 7.1
 - **Words:** volume slider, master volume, music volume, effects volume, mute, saved settings, prefs, audio.* keys, mute when unfocused, settings screen
 - **Seen as:** the volume the player chose is forgotten next launch; the volume slider changes nothing; the game is loud again after restart

@@ -8,7 +8,10 @@
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -123,6 +126,137 @@ struct Overlap3DNode : VsPhysicsNode {
         }
         if (pin == 0) return (float)objs.size();
         return Names(objs);
+    }
+};
+
+// Flat (side-view) casts. Pins are the same shape as the 3D casts, and Z is ignored.
+// Unwired, a cast starts at this object and points along its right (the side-view facing).
+struct VsPhysics2DNode : VsPhysicsNode {
+    using VsPhysicsNode::VsPhysicsNode;
+    static Vec2 Flat(const VsValue& v) { Vec3 p = v.AsVec3(); return {p.x, p.y}; }
+    static Vec2 SelfPos2(VsContext& ctx) {
+        Vec3 p = SelfPos(ctx); return {p.x, p.y};
+    }
+    static Vec2 SelfRight2(VsContext& ctx) {
+        if (!ctx.transform) return {1.0f, 0.0f};
+        Vec3 r = ctx.transform->Right();
+        Vec2 d{r.x, r.y};
+        return d.SqrMagnitude() > 1e-8f ? d : Vec2{1.0f, 0.0f};
+    }
+    static VsValue HitPin2(int pin, const RaycastHit2D& h) {
+        switch (pin) {
+            case 0:  return h.hit;
+            case 1:  return Vec3{h.point.x, h.point.y, 0.0f};
+            case 2:  return Vec3{h.normal.x, h.normal.y, 0.0f};
+            case 3:  return h.distance;
+            default: return VsValue::Object(h.gameObject ? h.gameObject->InstanceId() : 0);
+        }
+    }
+};
+
+// Box Cast: in0 Center, in1 Half Size, in2 Direction, in3 Angle (degrees), in4 Reach.
+// A flat box swept through the side view. Skips this object and skips triggers.
+struct BoxCast2DNode : VsPhysics2DNode {
+    using VsPhysics2DNode::VsPhysics2DNode;
+    std::uint64_t recordedFrame = ~0ull;
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        Scene* s = SceneOf(ctx);
+        if (!s) return HitPin2(pin, RaycastHit2D{});
+        Vec2 c = Flat(In(0, g, ctx, VsValue(SelfPos(ctx))));
+        Vec2 h = Flat(In(1, g, ctx, VsValue(Vec3{0.5f, 0.5f, 0.0f})));
+        Vec2 d = Flat(In(2, g, ctx, VsValue(Vec3{SelfRight2(ctx).x, SelfRight2(ctx).y, 0.0f})));
+        float angle = In(3, g, ctx, VsValue(0.0f)).AsFloat() * Mathf::Deg2Rad;
+        float dist = In(4, g, ctx, VsValue(100.0f)).AsFloat();
+        if (dist <= 0.0f) dist = 1e9f;
+        RaycastHit2D hit = s->physics().BoxCast(*s, c, h, d, angle, dist, ctx.gameObject, mask, false);
+        if (recordedFrame != Time::FrameCount()) {
+            recordedFrame = Time::FrameCount();
+            s->physics().RecordQueryRay(c, d, dist, hit, Mathf::Min(Mathf::Abs(h.x), Mathf::Abs(h.y)));
+        }
+        return HitPin2(pin, hit);
+    }
+};
+
+// Capsule Cast: in0 Segment Start, in1 Segment End, in2 Radius, in3 Direction, in4 Reach.
+struct CapsuleCast2DNode : VsPhysics2DNode {
+    using VsPhysics2DNode::VsPhysics2DNode;
+    std::uint64_t recordedFrame = ~0ull;
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        Scene* s = SceneOf(ctx);
+        if (!s) return HitPin2(pin, RaycastHit2D{});
+        Vec2 mid = SelfPos2(ctx);
+        Vec2 a = Flat(In(0, g, ctx, VsValue(Vec3{mid.x, mid.y - 0.5f, 0.0f})));
+        Vec2 b = Flat(In(1, g, ctx, VsValue(Vec3{mid.x, mid.y + 0.5f, 0.0f})));
+        float r = In(2, g, ctx, VsValue(0.5f)).AsFloat();
+        Vec2 d = Flat(In(3, g, ctx, VsValue(Vec3{SelfRight2(ctx).x, SelfRight2(ctx).y, 0.0f})));
+        float dist = In(4, g, ctx, VsValue(100.0f)).AsFloat();
+        if (dist <= 0.0f) dist = 1e9f;
+        RaycastHit2D hit = s->physics().CapsuleCast(*s, a, b, r, d, dist, ctx.gameObject, mask, false);
+        if (recordedFrame != Time::FrameCount()) {
+            recordedFrame = Time::FrameCount();
+            s->physics().RecordQueryRay((a + b) * 0.5f, d, dist, hit, r);
+        }
+        return HitPin2(pin, hit);
+    }
+};
+
+// Overlap Rectangle: in0 Center, in1 Half Size, in2 Angle (degrees) -> Count, Objects.
+struct OverlapBox2DNode : VsPhysics2DNode {
+    using VsPhysics2DNode::VsPhysics2DNode;
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        Scene* s = SceneOf(ctx);
+        std::vector<GameObject*> objs;
+        if (s) {
+            Vec2 c = Flat(In(0, g, ctx, VsValue(SelfPos(ctx))));
+            Vec2 h = Flat(In(1, g, ctx, VsValue(Vec3{0.5f, 0.5f, 0.0f})));
+            float angle = In(2, g, ctx, VsValue(0.0f)).AsFloat() * Mathf::Deg2Rad;
+            for (Collider2D* col : s->physics().OverlapBox(*s, c, h, mask, true, ctx.gameObject, angle)) {
+                bool dup = false;
+                for (GameObject* o : objs) if (o == col->gameObject) { dup = true; break; }
+                if (!dup) objs.push_back(col->gameObject);
+            }
+        }
+        if (pin == 0) return (float)objs.size();
+        return Names(objs);
+    }
+};
+
+// Overlap Capsule: in0 Segment Start, in1 Segment End, in2 Radius -> Count, Objects.
+struct OverlapCapsule2DNode : VsPhysics2DNode {
+    using VsPhysics2DNode::VsPhysics2DNode;
+    VsValue Eval(int pin, NodeGraph& g, VsContext& ctx) override {
+        Scene* s = SceneOf(ctx);
+        std::vector<GameObject*> objs;
+        if (s) {
+            Vec2 mid = SelfPos2(ctx);
+            Vec2 a = Flat(In(0, g, ctx, VsValue(Vec3{mid.x, mid.y - 0.5f, 0.0f})));
+            Vec2 b = Flat(In(1, g, ctx, VsValue(Vec3{mid.x, mid.y + 0.5f, 0.0f})));
+            float r = In(2, g, ctx, VsValue(0.5f)).AsFloat();
+            for (Collider2D* col : s->physics().OverlapCapsule(*s, a, b, r, mask, true, ctx.gameObject)) {
+                bool dup = false;
+                for (GameObject* o : objs) if (o == col->gameObject) { dup = true; break; }
+                if (!dup) objs.push_back(col->gameObject);
+            }
+        }
+        if (pin == 0) return (float)objs.size();
+        return Names(objs);
+    }
+};
+
+// Add Explosion Force: in0 Center, in1 Force, in2 Radius, in3 Upward Bias.
+// Shoves this object's Rigidbody2D away from Center. The push fades to nothing
+// at Radius. Upward Bias pops debris up as well as out.
+struct AddExplosionForceNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        Vec3 c = In(0, g, ctx, VsValue(Vec3::Zero)).AsVec3();
+        float force = In(1, g, ctx, VsValue(10.0f)).AsFloat();
+        float radius = In(2, g, ctx, VsValue(5.0f)).AsFloat();
+        float up = In(3, g, ctx, VsValue(0.0f)).AsFloat();
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>())
+            rb->AddExplosionForce(force, {c.x, c.y}, radius, up);
+        return 0;
     }
 };
 

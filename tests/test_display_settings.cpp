@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/DisplaySettings.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 #include "okay/Render/ShadowSetup.hpp"
 #include <algorithm>
 #include <filesystem>
@@ -282,6 +283,202 @@ int main() {
         // Clearing the size also clears it from the prefs.
         DisplaySettings::ClearResolution();
         CHECK(!Prefs::Has("video.width") && !Prefs::Has("video.height"));
+    }
+
+    // ---- Monitors, refresh, fallback, the confirm clock, and the saved text ----
+    {
+        DisplayMode dropped = NearestDisplayMode({{100, 100, 60}, {1920, 1080, 60}, {1920, 1080, 60}, {800, 600, -1}, {1280, 720, 144}, {99999, 99999, 60}}, 1900, 1000, 50);
+        const auto filtered = FilterDisplayModes({{100, 100, 60}, {1920, 1080, 60}, {1920, 1080, 60}, {800, 600, -1}, {1280, 720, 144}, {99999, 99999, 60}, {1280, 720, 60}});
+        CHECK(filtered.size() == 3);
+        CHECK(filtered[0] == DisplayMode({1280, 720, 60}) && filtered[1] == DisplayMode({1280, 720, 144}) && filtered[2] == DisplayMode({1920, 1080, 60}));
+        const auto sizes = ResolutionsFromModes(filtered);
+        CHECK(sizes.size() == 2 && sizes[0] == DisplayResolution({1280, 720}) && sizes[1] == DisplayResolution({1920, 1080}));
+        const auto rates = RefreshRatesFor(filtered, 1280, 720);
+        CHECK(rates.size() == 2 && rates[0] == 60 && rates[1] == 144);
+        CHECK(NearestRefresh(rates, 100) == 60);                 // 40 away from 60, 44 away from 144
+        CHECK(NearestRefresh(rates, 120) == 144);
+        CHECK(NearestRefresh(rates, 102) == 60);                 // a tie keeps the lower rate (42 either way: 60 and 144 are not tied here)
+        CHECK(NearestRefresh({}, 60) == 0);
+        CHECK(dropped == DisplayMode({1920, 1080, 60}));
+        CHECK(NearestDisplayMode(filtered, 1280, 720, 0).refreshHz == 0);   // no rate asked: leave it unset
+        CHECK(!NearestDisplayMode({}, 100, 100, 60).Valid());
+        CHECK(NearestDisplayMode({}, 1280, 720, 60) == DisplayMode({1280, 720, 60}));
+
+        DisplayMonitor office;
+        office.index = 0; office.name = "Office"; office.width = 1920; office.height = 1080;
+        office.modes = filtered;
+        DisplayMonitor room;
+        room.index = 1; room.name = "Living room"; room.x = 1920; room.width = 2560; room.height = 1440;
+        room.modes = {{1920, 1080, 60}, {2560, 1440, 60}, {2560, 1440, 120}};
+        const std::vector<DisplayMonitor> mons = {office, room};
+
+        bool replaced = true;
+        CHECK(ChooseMonitorIndex(mons, "living room", 0, replaced) == 1 && !replaced);
+        CHECK(ChooseMonitorIndex(mons, "Gone", 1, replaced) == 0 && replaced);
+        replaced = true;
+        CHECK(ChooseMonitorIndex(mons, "", 1, replaced) == 1 && !replaced);
+        CHECK(ChooseMonitorIndex(mons, "", 9, replaced) == 0 && replaced);
+        replaced = true;
+        CHECK(ChooseMonitorIndex(mons, "", -1, replaced) == -1 && !replaced);
+        CHECK(ChooseMonitorIndex({}, "Office", 0, replaced) == -1);
+
+        DisplaySaved saved;
+        saved.mode = "fullscreen"; saved.width = 2560; saved.height = 1440; saved.refreshHz = 120;
+        saved.monitorName = "Living room"; saved.monitorIndex = 1;
+        DisplayPick pick = ResolveDisplay(saved, mons);
+        CHECK(!pick.monitorReplaced && !pick.modeReplaced && pick.monitorName == "Living room");
+        CHECK(pick.mode == WindowMode::Fullscreen && pick.width == 2560 && pick.height == 1440 && pick.refreshHz == 120);
+        saved.monitorName = "Old TV"; saved.refreshHz = 90; saved.width = 2000; saved.height = 1000;
+        pick = ResolveDisplay(saved, mons);
+        CHECK(pick.monitorReplaced && pick.monitorIndex == 0 && pick.modeReplaced);
+        CHECK(pick.width == 1920 && pick.height == 1080 && pick.refreshHz == 60);
+        saved.mode = "windowed"; saved.width = 1300; saved.height = 700; saved.refreshHz = 60; saved.monitorName = "Office";
+        pick = ResolveDisplay(saved, mons);
+        CHECK(!pick.modeReplaced && pick.mode == WindowMode::Windowed && pick.width == 1300 && pick.height == 700);
+        saved = DisplaySaved{};
+        saved.pending = true; saved.hasPrevious = true;
+        saved.mode = "fullscreen"; saved.width = 2560; saved.height = 1440; saved.monitorName = "Living room";
+        saved.prevMode = "windowed"; saved.prevWidth = 1280; saved.prevHeight = 720; saved.prevRefresh = 144;
+        saved.prevMonitorName = "Office"; saved.prevMonitorIndex = 0;
+        const DisplaySaved kept = ConfirmedOrPrevious(saved);
+        CHECK(!kept.pending && kept.mode == "windowed" && kept.width == 1280 && kept.monitorName == "Office");
+        pick = ResolveDisplay(saved, mons);
+        CHECK(pick.mode == WindowMode::Windowed && pick.width == 1280 && pick.height == 720 && pick.refreshHz == 144);
+        CHECK(pick.monitorName == "Office" && !pick.monitorReplaced);
+
+        const std::string text = SerializeDisplay(saved);
+        DisplaySaved back;
+        CHECK(ParseDisplay(text, back));
+        CHECK(back.pending && back.hasPrevious && back.mode == "fullscreen" && back.prevMode == "windowed");
+        CHECK(back.width == 2560 && back.prevWidth == 1280 && back.prevRefresh == 144 && back.prevMonitorName == "Office");
+        CHECK(ParseDisplay("note without a key\nunknown=1\n", back) == false);
+        DisplayTrial trial;
+        CHECK(!trial.Tick(1.f));
+        trial.Start(10.f);
+        trial.Start(1.f);                                         // the deadline stays
+        CHECK(trial.active && trial.secondsLeft == 10.f);
+        CHECK(!trial.Tick(9.5f) && trial.secondsLeft > 0.4f && trial.secondsLeft < 0.6f);
+        CHECK(trial.Tick(1.f) && !trial.active);
+
+        // The stored settings use the same rules, and a crashed confirm comes back as the previous choice.
+        Prefs::Clear();
+        DisplaySettings::ResetToDefaults();
+        DisplaySettings::SetMonitors(mons);
+        CHECK(DisplaySettings::Monitors().size() == 2);
+        CHECK(DisplaySettings::Resolutions().size() == 2);        // Office, the first monitor, until one is chosen
+        DisplaySettings::SetMonitorName("living room");
+        CHECK(DisplaySettings::MonitorIndex() == 1 && DisplaySettings::MonitorName() == "Living room");
+        CHECK(!DisplaySettings::SetMonitorName("nowhere"));
+        CHECK(DisplaySettings::RefreshRatesForResolution(2560, 1440).size() == 2);
+        DisplaySettings::SetMode(WindowMode::Windowed);
+        DisplaySettings::SetResolution(1280, 720);
+        DisplaySettings::SetRefreshHz(60);
+        DisplaySettings::BeginTrial(10.f);
+        DisplaySettings::SetMode(WindowMode::Fullscreen);
+        DisplaySettings::SetResolution(1920, 1080);
+        DisplaySettings::SetRefreshHz(144);
+        CHECK(DisplaySettings::TrialActive() && Prefs::GetInt("video.pending", 0) == 1);
+        CHECK(Prefs::GetString("video.prev.windowmode") == "windowed" && Prefs::GetInt("video.prev.width") == 1280);
+        DisplaySettings::TickTrial(3.f);
+        CHECK(DisplaySettings::TrialSecondsLeft() > 6.f && DisplaySettings::TrialSecondsLeft() < 8.f);
+        DisplaySettings::KeepTrial();
+        CHECK(!DisplaySettings::TrialActive() && Prefs::GetInt("video.pending", 0) == 0);
+        CHECK(DisplaySettings::Mode() == WindowMode::Fullscreen && DisplaySettings::RefreshHz() == 144);
+
+        DisplaySettings::BeginTrial(10.f);
+        DisplaySettings::SetMode(WindowMode::Borderless);
+        CHECK(Prefs::GetInt("video.pending", 0) == 1);
+        DisplaySettings::ResetToDefaults();                       // memory only; the prefs still hold the unfinished confirm
+        DisplaySettings::Restore();
+        CHECK(DisplaySettings::Mode() == WindowMode::Fullscreen); // the accepted choice, not the unconfirmed borderless one
+        CHECK(Prefs::GetInt("video.pending", 0) == 0);
+        DisplaySettings::SetMonitors(mons);
+        DisplaySettings::ResolveSaved();
+        CHECK(DisplaySettings::MonitorName() == "Living room" || DisplaySettings::MonitorIndex() == 1);
+
+        // A saved monitor that is gone falls back to the first one, and a missing size to the nearest.
+        Prefs::Clear();
+        DisplaySettings::ResetToDefaults();
+        Prefs::SetString("video.windowmode", "fullscreen");
+        Prefs::SetString("video.monitor", "Unplugged");
+        Prefs::SetInt("video.monitorindex", 1);
+        Prefs::SetInt("video.width", 8000);
+        Prefs::SetInt("video.height", 1000);
+        Prefs::SetInt("video.refresh", 50);
+        DisplaySettings::Restore();
+        DisplaySettings::SetMonitors(mons);
+        DisplaySettings::ResolveSaved();
+        CHECK(DisplaySettings::MonitorIndex() == 0 && DisplaySettings::MonitorName() == "Office");
+        CHECK(DisplaySettings::Width() == 1920 && DisplaySettings::Height() == 1080);
+        CHECK(DisplaySettings::RefreshHz() == 60);
+        CHECK(DisplaySettings::Mode() == WindowMode::Fullscreen);
+        const DisplayApply apply = DisplaySettings::CurrentApply();
+        CHECK(apply.hasMonitor && apply.monitorIndex == 0 && apply.hasSize && apply.width == 1920 && apply.mode == WindowMode::Fullscreen);
+    }
+
+    // ---- Scripts, visual-script nodes and action-list steps read and set the same choice ----
+    {
+        Prefs::Clear();
+        DisplaySettings::ResetToDefaults();
+        DisplayMonitor office;
+        office.index = 0; office.name = "Office"; office.width = 1920; office.height = 1080;
+        office.modes = {{1280, 720, 60}, {1920, 1080, 60}, {1920, 1080, 144}};
+        DisplayMonitor room;
+        room.index = 1; room.name = "Living room"; room.width = 2560; room.height = 1440;
+        room.modes = {{2560, 1440, 60}, {2560, 1440, 120}};
+        DisplaySettings::SetMonitors({office, room});
+
+        Scene scene("Script");
+        scene.physicsEnabled = false;
+        GameObject* host = scene.CreateGameObject("Host");
+        std::string err;
+        CHECK(host->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+            "function start() {\n"
+            "  begin_display_confirm();\n"
+            "  set_display_mode(\"full screen\");\n"
+            "  set_monitor(\"living room\");\n"
+            "  set_display_resolution(2560, 1440);\n"
+            "  set_refresh_rate(120);\n"
+            "  mode = get_display_mode();\n"
+            "  mon = get_monitor();\n"
+            "  w = get_display_width();\n"
+            "  hz = get_refresh_rate();\n"
+            "  left = get_display_confirm_seconds();\n"
+            "}\n", &err));
+        scene.Start();
+        scene.Update(0.016f);
+        auto* vm = host->GetComponent<ScriptComponent>()->VM();
+        CHECK(vm && vm->GetGlobal("mode").AsString() == "fullscreen");
+        CHECK(vm->GetGlobal("mon").AsString() == "Living room");
+        CHECK(vm->GetGlobal("w").AsFloat() == 2560.f && vm->GetGlobal("hz").AsFloat() == 120.f);
+        CHECK(vm->GetGlobal("left").AsFloat() > 9.f);
+        CHECK(DisplaySettings::TrialActive());
+        DisplaySettings::TickTrial(10.f);
+        CHECK(!DisplaySettings::TrialActive() && DisplaySettings::Mode() == WindowMode::Windowed);
+
+        CHECK(vs::IsBuiltinNode("Fn.set_display_mode") && vs::IsBuiltinNode("Fn.get_monitor") &&
+              vs::IsBuiltinNode("Fn.set_display_resolution") && vs::IsBuiltinNode("Fn.keep_display_settings") &&
+              vs::IsBuiltinNode("Fn.revert_display_settings") && vs::IsBuiltinNode("Fn.begin_display_confirm") &&
+              vs::IsBuiltinNode("Fn.get_refresh_rate") && vs::IsBuiltinNode("Fn.get_display_confirm_seconds"));
+        Scene graph("Graph");
+        graph.physicsEnabled = false;
+        auto* vc = graph.CreateGameObject("Graph")->AddComponent<VisualScriptComponent>();
+        CHECK(vc->LoadFromText("node 1 OnStart\nentry OnStart 1\nnode 2 Fn.set_display_mode\n"
+                               "default 2 0 \"borderless\"\nexec 1 0 2\n", &err));
+        graph.Start();
+        graph.Update(0.016f);
+        CHECK(DisplaySettings::Mode() == WindowMode::Borderless);
+
+        Scene actions("Actions");
+        actions.physicsEnabled = false;
+        auto* al = actions.CreateGameObject("A")->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = {{"set_display_mode", {"fullscreen"}}, {"set_refresh_rate", {"60"}}, {"get_display_mode", {"shown"}}};
+        actions.Start();
+        actions.Update(0.016f);
+        ActionList::UseScene(&actions);
+        CHECK(DisplaySettings::Mode() == WindowMode::Fullscreen && DisplaySettings::RefreshHz() == 60);
+        CHECK(ActionList::StrVars()["shown"] == "fullscreen");
     }
 
     DisplaySettings::ResetToDefaults();

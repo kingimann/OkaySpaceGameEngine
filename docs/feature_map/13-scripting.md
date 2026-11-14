@@ -42,8 +42,8 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Editor:** the Script Editor runs this checker for scripts whose language is `okayscript-next` (inline errors and warnings with columns)
 - **Docs:** `docs/scripting.md` (partly describes both languages), `docs/engine_api.md`
 - **Tests:** `okayscript_next`, `okayscript_next_csharp`
-- **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas, events (`+=` and `-=` on functions, methods as functions), interfaces, inheritance, `is` / `as` and casts, try / catch / finally with throw and Exception; not on main: coroutines, GetComponent of a typed script
-- **Open:** in flight (branches, no PR, 2026-11-14, each cut from the one before): claude/csharp-coroutines, -getcomponent; claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
+- **Status:** Partial - on main: classes, enums, switch, arrays, foreach, statics, interpolation, `??` and `?.`, List and Dictionary, lambdas, events (`+=` and `-=` on functions, methods as functions), interfaces, inheritance, `is` / `as` and casts, try / catch / finally with throw and Exception, coroutines; not on main: GetComponent of a typed script
+- **Open:** in flight (branches, no PR, 2026-11-14, each cut from the one before): claude/csharp-getcomponent; claude/next-event-args; `AvailableScriptLanguages()` lacks `okayscript-next` so New Script cannot pick it (possible gap); replacing the old VM is not done
 - **Related:** 13.1, 13.6, 13.5, 14.7
 - **Words:** okayscript-next, typed OkayScript, new OkayScript, class Behaviour, checker, interpreter, C# parity, lambdas, LINQ, statics, NextScriptVM
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column

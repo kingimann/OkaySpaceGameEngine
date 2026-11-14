@@ -133,7 +133,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [13.2](feature_map/13-scripting.md#132-c-style-language-core) | C#-style language core | Partial | in flight (branches, no PR, 2026-11-14, stacked): claude/csharp-coroutines, -getcomponent... |
+| [13.2](feature_map/13-scripting.md#132-c-style-language-core) | C#-style language core | Partial | in flight (branches, no PR, 2026-11-14, stacked): claude/csharp-getcomponent... |
 
 ### 15. Editor
 

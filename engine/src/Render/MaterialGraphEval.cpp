@@ -11,12 +11,13 @@ inline float Mix(float a, float b, float t) { return a * (1.0f - t) + b * t; }
 inline float Sat(float x) { return std::min(std::max(x, 0.0f), 1.0f); }
 } // namespace
 
-// Same formula as okm_hash in the generated shader text (MaterialGraphCodegen.cpp).
+// Cell hash, written for this engine: a lattice index is folded into one number with two
+// irrational steps (the 2D additive-recurrence constants 1/phi2 and 1/phi2^2 from the
+// published R2 sequence), then scrambled with a quadratic and wrapped. Same formula as okm_hash
+// in the generated shader text (MaterialGraphCodegen.cpp).
 float Hash12(float x, float y) {
-    float a = Fract(x * 0.1031f), b = Fract(y * 0.1031f), c = Fract(x * 0.1031f);
-    float d = a * (b + 33.33f) + b * (c + 33.33f) + c * (a + 33.33f);
-    a += d; b += d; c += d;
-    return Fract((a + b) * c);
+    float a = Fract(x * 0.7548777f + y * 0.5698403f);
+    return Fract(a * (a * 97.0f + 31.0f));
 }
 
 float Noise2(float u, float v, float scale) {

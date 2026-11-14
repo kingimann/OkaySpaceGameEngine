@@ -84,9 +84,8 @@ const char* kMacrosHLSL =
 // Same formulas as Hash12 / Noise2 in MaterialGraphEval.cpp.
 const char* kHelpersGLSL =
     "float okm_hash(vec2 p) {\n"
-    "    vec3 p3 = fract(vec3(p.x, p.y, p.x) * 0.1031);\n"
-    "    p3 += dot(p3, vec3(p3.y, p3.z, p3.x) + 33.33);\n"
-    "    return fract((p3.x + p3.y) * p3.z);\n"
+    "    float a = fract(p.x * 0.7548777 + p.y * 0.5698403);\n"
+    "    return fract(a * (a * 97.0 + 31.0));\n"
     "}\n"
     "float okm_noise(vec2 p, float s) {\n"
     "    vec2 q = p * s;\n"
@@ -102,9 +101,8 @@ const char* kHelpersGLSL =
 
 const char* kHelpersHLSL =
     "float okm_hash(float2 p) {\n"
-    "    float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);\n"
-    "    p3 += dot(p3, float3(p3.y, p3.z, p3.x) + 33.33);\n"
-    "    return frac((p3.x + p3.y) * p3.z);\n"
+    "    float a = frac(p.x * 0.7548777 + p.y * 0.5698403);\n"
+    "    return frac(a * (a * 97.0 + 31.0));\n"
     "}\n"
     "float okm_noise(float2 p, float s) {\n"
     "    float2 q = p * s;\n"

@@ -16,6 +16,7 @@
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
+#include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence (Admin > Anti-cheat)
 #include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
 #include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
@@ -1774,7 +1775,6 @@ std::vector<SchedMsg>              g_scheduled;
 std::string                        g_myStatus;
 bool                               g_myStatusKnown = false;
 long                               g_statusUntil = 0;
-bool                               g_minimizeToTray = false;  // opt-in Steam-style tray (off by default: a normal minimize always restores from the taskbar)
 
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
@@ -4439,7 +4439,6 @@ void LoadPrefs() {
                 } catch (...) {}
             }
         }
-        else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
@@ -4562,7 +4561,6 @@ void SavePrefs() {
     for (const auto& kv : g_chatColor) if (kv.second > 0) f << "chatcolor=" << kv.first << "|" << kv.second << "\n";
     for (const auto& kv : g_starred)
         f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
-    f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
@@ -13201,12 +13199,19 @@ struct AcAdminData {
     std::vector<acb::Ban> bans;
     std::vector<acb::Appeal> appeals;
     std::map<std::string, std::string> names;   // uid -> username
+    std::string linkedFor;                      // the account "Linked accounts" was asked for ("" = none)
+    std::vector<acb::LinkedAccount> linked;
+    long evidenceFor = 0;                       // the report "Evidence" was asked for (0 = none)
+    std::string evidence;                       // its bundle JSON ("" = none attached)
     std::string loadError;                      // "" = loaded
 };
 struct AcAdminJob {
     bool hasAction = false;
     acb::Request action;
     std::string okMsg;
+    bool countBans = false;     // the action is ac_ban_with_devices: add "(N bans)" to the message
+    std::string linkedFor;      // fetch ac_linked_accounts for this account (kept across refreshes)
+    long evidenceFor = 0;       // fetch this report's evidence bundle
     std::string reportStatus;   // the Reports filter ("" = all)
     std::string banUser;        // "Ban a player": look this username up, then ban it with:
     std::string banReason; long banUntil = 0;
@@ -13235,6 +13240,24 @@ static int AcAdminWorker(void* p) {
             const auto r = acb::Send(a, j->action);
             msg = r.ok ? j->okMsg : acb::ErrorText(r.status, r.body);
             err = !r.ok;
+            int made = 0;
+            if (r.ok && j->countBans && acb::ParseBanCount(r.body, made)) msg += " (" + std::to_string(made) + (made == 1 ? " ban)" : " bans)");
+        }
+        if (!j->linkedFor.empty()) {
+            acb::Request q;
+            if (acb::LinkedAccounts(j->linkedFor, q)) {
+                const auto r = acb::Send(a, q);
+                if (r.ok && acb::ParseLinkedAccounts(r.body, d.linked)) d.linkedFor = j->linkedFor;
+                else { msg = acb::ErrorText(r.status, r.body); err = true; }
+            }
+        }
+        if (j->evidenceFor > 0) {
+            acb::Request q;
+            if (acb::ReportEvidence(j->evidenceFor, q)) {
+                const auto r = acb::Send(a, q);
+                if (r.ok) { d.evidence = acb::ParseReportEvidence(r.body); d.evidenceFor = j->evidenceFor; if (d.evidence.empty()) { msg = "No evidence bundle on that report"; } }
+                else { msg = acb::ErrorText(r.status, r.body); err = true; }
+            }
         }
         const long now = (long)std::time(nullptr);
         auto load = [&](const acb::Request& q, auto parse, auto& into) {
@@ -13248,6 +13271,7 @@ static int AcAdminWorker(void* p) {
         for (const auto& x : d.reports) { ids.push_back(x.reporter); ids.push_back(x.reported); }
         for (const auto& x : d.bans) ids.push_back(x.userId);
         for (const auto& x : d.appeals) ids.push_back(x.userId);
+        for (const auto& x : d.linked) ids.push_back(x.userId);
         std::sort(ids.begin(), ids.end());
         ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
         for (std::size_t i = 0; i < ids.size(); i += 80) {   // keep each URL short
@@ -13307,13 +13331,15 @@ static void DrawAntiCheatAdmin() {
     static bool loaded = false, firstFrame = true;
     static int repFilter = 0;          // Open, Reviewing, Actioned, Dismissed, All
     static long selReport = 0;
+    static std::string linkedUid;      // "Linked accounts" shows for this account (re-fetched with every refresh)
+    static long evidenceId = 0;        // "Evidence" shows for this report
     static bool activeOnly = true;
     static char note[300] = "";
     // The ban dialog.
     static bool banOpen = false;
     static std::string banUid, banHw, banWho; static long banReport = 0;
     static char banReason[300] = "", banName[64] = "";
-    static int banDur = 0; static bool banMachine = true;
+    static int banDur = 0; static bool banMachine = true, banDevices = false;
     // The unban / decide dialogs.
     static long unbanId = 0; static char unbanWhy[300] = "";
     static long decideId = 0; static bool decideAccept = true; static char decideNote[300] = "";
@@ -13326,6 +13352,8 @@ static void DrawAntiCheatAdmin() {
         if (kDemo) { delete j; Toast("Demo: nothing is sent", 0); return; }
         if (g_acAdBusy) { delete j; Toast("Still working on the last action\xE2\x80\xA6", 0); return; }
         j->reportStatus = kRepStatus[repFilter];
+        if (j->linkedFor.empty()) j->linkedFor = linkedUid;
+        if (!j->evidenceFor && evidenceId) j->evidenceFor = evidenceId;
         g_acAdBusy = true;
         if (SDL_Thread* t = SDL_CreateThread(AcAdminWorker, "okay-acadmin", j)) SDL_DetachThread(t);
         else { g_acAdBusy = false; delete j; }
@@ -13334,7 +13362,7 @@ static void DrawAntiCheatAdmin() {
     if (!kDemo) {
         if (firstFrame) { firstFrame = false; queue(new AcAdminJob); }
         SDL_LockMutex(g_acAdMutex);
-        if (g_acAdReady) { g_acAdReady = false; D = g_acAdNew; loaded = true; }
+        if (g_acAdReady) { g_acAdReady = false; D = g_acAdNew; loaded = true; }   // (linkedUid / evidenceId are re-fetched by the next job)
         if (!g_acAdMsg.empty()) { Toast(g_acAdMsg, g_acAdMsgErr ? 2 : 1); g_acAdMsg.clear(); }
         SDL_UnlockMutex(g_acAdMutex);
     }
@@ -13365,7 +13393,7 @@ static void DrawAntiCheatAdmin() {
     };
     auto openBan = [&](const std::string& uid, const std::string& hw, long report, const std::string& reason) {
         banOpen = true; banUid = uid; banHw = hw; banReport = report; banWho = uid.empty() ? std::string() : name(uid);
-        std::snprintf(banReason, sizeof(banReason), "%s", reason.c_str()); banName[0] = '\0'; banDur = 0; banMachine = !hw.empty();
+        std::snprintf(banReason, sizeof(banReason), "%s", reason.c_str()); banName[0] = '\0'; banDur = 0; banMachine = !hw.empty(); banDevices = false;
     };
 
     // ---- Views ----
@@ -13442,9 +13470,30 @@ static void DrawAntiCheatAdmin() {
                 ImGui::SameLine();
                 if (r.status != "dismissed" && ImGui::Button("Dismiss") && acb::SetReportStatus(r.id, "dismissed", note, q)) { act(q, "Report dismissed"); note[0] = '\0'; }
                 ImGui::SameLine();
+                const std::string subject = client ? r.reporter : r.reported;
+                if (ImGui::Button("Linked accounts") && acb::IsUuid(subject)) {
+                    linkedUid = subject;
+                    AcAdminJob* j = new AcAdminJob; j->linkedFor = subject; queue(j);
+                }
+                if (r.kind == "server_kick") {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Evidence")) { evidenceId = r.id; AcAdminJob* j = new AcAdminJob; j->evidenceFor = r.id; queue(j); }
+                }
+                ImGui::SameLine();
                 if (PrimaryButton("Ban\xE2\x80\xA6", ImVec2(80, 0)))
                     openBan(client ? r.reporter : r.reported, client ? r.hwHash : std::string(), r.id,
                             client ? r.reason + ": " + r.details : r.reason);
+                if (linkedUid == subject && D.linkedFor == subject) {
+                    ImGui::TextDisabled("Accounts that used a machine this account used (a lead, not proof: machines can be shared):");
+                    if (D.linked.empty()) ImGui::TextDisabled("None.");
+                    for (const auto& l : D.linked)
+                        ImGui::BulletText("%s  \xC2\xB7  %s  \xC2\xB7  last seen %s", name(l.userId).c_str(), acb::LinkedSummary(l).c_str(),
+                                          l.lastSeen ? RelTime(l.lastSeen).c_str() : "-");
+                }
+                if (evidenceId == r.id && D.evidenceFor == r.id && !D.evidence.empty()) {
+                    ImGui::TextDisabled("Detection evidence (no account or address unless the server opted in):");
+                    ImGui::TextWrapped("%s", D.evidence.c_str());
+                }
                 ImGui::Unindent(96);
                 ImGui::Dummy(ImVec2(0, 4));
             }
@@ -13530,6 +13579,7 @@ static void DrawAntiCheatAdmin() {
         ImGui::SetNextItemWidth(200);
         ImGui::Combo("Length", &banDur, "Permanent\0" "1 day\0" "7 days\0" "30 days\0" "1 year\0");
         if (acb::IsHwHash(banHw)) ImGui::Checkbox("Also ban this machine (salted hardware hash)", &banMachine);
+        if (!banUid.empty()) ImGui::Checkbox("Also ban every machine this account used (ac_ban_with_devices)", &banDevices);
         ImGui::Dummy(ImVec2(0, 4));
         acb::Request q; std::string err;
         const std::string hw = banMachine && acb::IsHwHash(banHw) ? banHw : std::string();
@@ -13543,6 +13593,12 @@ static void DrawAntiCheatAdmin() {
                 j->banUser = uname; j->banReason = banReason; j->banUntil = acb::ExpiryFor(banDur, now); j->okMsg = "Banned";
                 queue(j);
                 ImGui::CloseCurrentPopup();
+            } else if (banDevices) {   // the account and every machine it used, in one step
+                if (!acb::BanWithDevices(banUid, banReason, acb::ExpiryFor(banDur, now), banReport, now, q, &err)) Toast(err, 2);
+                else {
+                    AcAdminJob* j = new AcAdminJob; j->hasAction = true; j->action = q; j->okMsg = "Banned"; j->countBans = true;
+                    queue(j); ImGui::CloseCurrentPopup();
+                }
             } else if (!acb::BanPlayer(banUid, hw, banReason, acb::ExpiryFor(banDur, now), banReport, now, q, &err)) Toast(err, 2);
             else { act(q, "Banned"); ImGui::CloseCurrentPopup(); }
         }
@@ -20064,15 +20120,7 @@ int main(int argc, char** argv) {
                     }
                 }
             } else {
-                NewsRelease hl{"Highlights", {
-                    "Script Editor: errors and warnings as you type, examples in autocomplete",
-                    "Game view: preview phone and tablet screen sizes",
-                    "Build Settings: choose the scenes in your build",
-                    "Camera: zoom, shake, dutch angle and lens shift",
-                    "Updates download straight from the OkaySpace update server",
-                }};
-                releaseCard(hl, false);
-                ImGui::TextDisabled("Notes for each release show up here once the launcher has checked for updates.");
+                ImGui::TextWrapped("Release notes are not loaded yet. They appear here once the launcher has checked for updates (you may be offline).");
             }
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))

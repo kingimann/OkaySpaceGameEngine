@@ -2380,6 +2380,10 @@ add_executable(test_render_bugfix test_render_bugfix.cpp)
 target_link_libraries(test_render_bugfix PRIVATE okay::engine)
 add_test(NAME render_bugfix COMMAND test_render_bugfix)
 
+add_executable(test_render_bugfix2 test_render_bugfix2.cpp)
+target_link_libraries(test_render_bugfix2 PRIVATE okay::engine)
+add_test(NAME render_bugfix2 COMMAND test_render_bugfix2)
+
 add_executable(test_gltf_pbr_maps test_gltf_pbr_maps.cpp)
 target_link_libraries(test_gltf_pbr_maps PRIVATE okay::engine)
 add_test(NAME gltf_pbr_maps COMMAND test_gltf_pbr_maps)

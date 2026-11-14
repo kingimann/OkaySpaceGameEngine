@@ -47,6 +47,7 @@ struct ParticleGradient {
             if (st <= t && (lo < 0 || st > stops[lo].time)) lo = i;
             if (st >= t && (hi < 0 || st < stops[hi].time)) hi = i;
         }
+        if (lo < 0 && hi < 0) return stops[0].color;   // NaN time: no stop brackets it
         if (lo < 0) return stops[hi].color;   // before the first stop
         if (hi < 0) return stops[lo].color;   // after the last stop
         const float span = stops[hi].time - stops[lo].time;
@@ -89,6 +90,7 @@ struct ParticleCurve {
             if (kt <= t && (lo < 0 || kt > keys[lo].time)) lo = i;
             if (kt >= t && (hi < 0 || kt < keys[hi].time)) hi = i;
         }
+        if (lo < 0 && hi < 0) return keys[0].value;   // NaN time: no key brackets it
         if (lo < 0) return keys[hi].value;
         if (hi < 0) return keys[lo].value;
         const float span = keys[hi].time - keys[lo].time;

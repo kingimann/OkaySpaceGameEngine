@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -91,11 +92,14 @@ inline bool NativeAvailable() {
 /// One request. `headers` are full "Name: value" lines. The body is `body`, or
 /// the contents of `bodyFile` when set. With `outFile` the response streams to
 /// that file (downloads) instead of `Result::body`. Follows redirects.
+/// `timeoutMs` > 0 limits the whole call (the own client: connect, silence and total; WinHTTP: resolve, connect,
+/// send and receive each), so a stalled server cannot hang the caller; 0 keeps the defaults.
 inline Result Request(const std::string& method, const std::string& url,
                       const std::vector<std::string>& headers,
                       const std::string& body = std::string(),
                       const std::string& bodyFile = std::string(),
-                      const std::string& outFile = std::string()) {
+                      const std::string& outFile = std::string(),
+                      int timeoutMs = 0) {
     Result r;
 #if defined(_WIN32)
     HINTERNET ses = detail::Session();
@@ -118,6 +122,7 @@ inline Result Request(const std::string& method, const std::string& url,
     HINTERNET req = WinHttpOpenRequest(con, wmethod.c_str(), object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                        WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
     if (!req) { WinHttpCloseHandle(con); return r; }
+    if (timeoutMs > 0) WinHttpSetTimeouts(req, timeoutMs, timeoutMs < 5000 ? timeoutMs : 5000, timeoutMs, timeoutMs);
 
     std::wstring hdrs;
     for (const std::string& h : headers) { hdrs += detail::Widen(h); hdrs += L"\r\n"; }
@@ -163,6 +168,12 @@ inline Result Request(const std::string& method, const std::string& url,
     }
     okay::ownhttp::NetOptions opt;
     opt.limits.maxBodyBytes = outFile.empty() ? (64ull << 20) : (8ull << 30);   // memory vs. a download to disk
+    if (timeoutMs > 0) {
+        opt.totalMs = timeoutMs;
+        opt.ioMs = timeoutMs;
+        opt.connectMs = timeoutMs < 5000 ? timeoutMs : 5000;
+        opt.resolveMs = timeoutMs < 5000 ? timeoutMs : 5000;
+    }
     struct Out { std::ofstream f; bool open = false; };
     auto out = std::make_shared<Out>();
     okay::ownhttp::FetchHooks hooks;
@@ -184,7 +195,110 @@ inline Result Request(const std::string& method, const std::string& url,
         r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
     }
 #else
-    (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile;
+    (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)timeoutMs;
+#endif
+    return r;
+}
+
+/// Extra controls for downloads (own client only; on Windows and without OKAY_OWN_HTTP this returns reached=false
+/// with an error and callers use their existing path). All fields optional.
+struct RequestOptions {
+    /// Called as the body arrives: bytes so far (counting from the resume offset) and the complete size when
+    /// known (0 when not). Return false to cancel.
+    std::function<bool(uint64_t done, uint64_t total)> progress;
+    /// Polled about every 200 ms, also while waiting on a silent server. Return true to cancel.
+    std::function<bool()> cancel;
+    /// With outFile: continue a partial download. Sends Range: bytes=N-; a 206 is appended to the file, a 200
+    /// (the server ignored the range) starts the file again, a 416 leaves the file alone (status tells).
+    uint64_t resumeFrom = 0;
+    uint64_t maxBytes = 0;       ///< 0 = the default cap (64 MiB in memory, 8 GiB to a file)
+    int connectMs = 0, ioMs = 0, totalMs = 0;   ///< 0 = the defaults (8 s, 30 s, 15 min)
+    int maxRedirects = 0;        ///< 0 = the default (10)
+    bool acceptGzip = false;     ///< in-memory bodies only; ignored with outFile
+    /// With outFile: write the file only for a 200 or 206 answer (like curl -f); other statuses leave it alone.
+    bool fileOnSuccessOnly = true;
+};
+
+/// Result of RequestEx: Result plus what a resumable download needs.
+struct ExResult : Result {
+    bool     resumed = false;       ///< the server sent the part we asked for; the file was appended to
+    uint64_t totalSize = 0;         ///< complete size when the server said so (Content-Range or Content-Length)
+    bool     writeFailed = false;   ///< outFile could not be opened or written (disk full, no permission)
+};
+
+inline ExResult RequestEx(const std::string& method, const std::string& url,
+                          const std::vector<std::string>& headers, const std::string& body,
+                          const std::string& bodyFile, const std::string& outFile, const RequestOptions& ro) {
+    ExResult r;
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (!NativeAvailable()) return r;
+    std::string payload = body;
+    if (!bodyFile.empty()) {
+        std::ifstream f(bodyFile, std::ios::binary);
+        if (!f) { r.error = "cannot read the body file"; return r; }
+        std::stringstream ss; ss << f.rdbuf(); payload = ss.str();
+    }
+    okay::ownhttp::NetOptions opt;
+    opt.limits.maxBodyBytes = ro.maxBytes ? ro.maxBytes : (outFile.empty() ? (64ull << 20) : (8ull << 30));
+    if (ro.connectMs > 0) opt.connectMs = ro.connectMs;
+    if (ro.ioMs > 0) opt.ioMs = ro.ioMs;
+    if (ro.totalMs > 0) opt.totalMs = ro.totalMs;
+    opt.cancel = ro.cancel;
+    if (ro.maxRedirects > 0) opt.limits.maxRedirects = ro.maxRedirects;
+    opt.acceptGzip = ro.acceptGzip && outFile.empty();
+    std::vector<std::string> hdrs = headers;
+    if (ro.resumeFrom > 0 && !outFile.empty()) hdrs.push_back("Range: bytes=" + std::to_string(ro.resumeFrom) + "-");
+    struct Out { std::ofstream f; bool open = false; uint64_t base = 0; bool wfail = false; };
+    auto out = std::make_shared<Out>();
+    okay::ownhttp::FetchHooks hooks;
+    if (!outFile.empty()) {
+        const uint64_t resumeFrom = ro.resumeFrom;
+        const bool successOnly = ro.fileOnSuccessOnly;
+        hooks.onHead = [out, outFile, resumeFrom, successOnly](const okay::ownhttp::Response& h) {
+            const bool ok = h.status == 200 || h.status == 206;
+            if (!ok && successOnly) return true;   // the body (an error page) is read and dropped
+            const bool append = h.status == 206 && resumeFrom > 0;
+            out->f.open(outFile, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
+            out->open = out->f.is_open();
+            out->base = append ? resumeFrom : 0;
+            if (!out->open) out->wfail = true;
+            return out->open;
+        };
+        hooks.onData = [out](const char* p, size_t n) {
+            if (!out->open) return true;
+            out->f.write(p, std::streamsize(n));
+            if (!out->f) out->wfail = true;
+            return bool(out->f);
+        };
+    }
+    if (ro.progress) {
+        auto prog = ro.progress;
+        hooks.onProgress = [out, prog, resumeFrom = ro.resumeFrom](uint64_t done, uint64_t total) {
+            const uint64_t base = out->open ? out->base : 0;
+            (void)resumeFrom;
+            return prog(base + done, total ? base + total : 0);
+        };
+    }
+    okay::ownhttp::FetchResult fr = okay::ownhttp::Perform(method, url, hdrs, payload, opt, hooks);
+    if (out->open) { out->f.flush(); if (!out->f) out->wfail = true; out->f.close(); }
+    r.writeFailed = out->wfail;
+    if (fr.ok) {
+        r.reached = true;
+        r.status = fr.response.status;
+        r.body = std::move(fr.response.body);
+        r.resumed = fr.partial && out->open;
+        if (fr.partial) r.totalSize = fr.rangeTotal;
+        else if (const std::string* cl = fr.response.Get("content-length")) {
+            uint64_t n = 0; bool digits = !cl->empty() && cl->size() < 19;
+            for (unsigned char c : *cl) { if (c < '0' || c > '9') digits = false; else n = n * 10 + (c - '0'); }
+            if (digits) r.totalSize = n;
+        }
+    } else {
+        r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
+    }
+#else
+    (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)ro;
+    r.error = "RequestEx needs the own HTTP client (OKAY_OWN_HTTP)";
 #endif
     return r;
 }

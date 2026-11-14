@@ -650,12 +650,16 @@ static int RunSelfTest() {
     // The Lighting footer names one shared gap. These six switches are that gap
     // (ignored on Direct3D 12 and the software renderer, drawn on the other two).
     {
-        const char* shared = "not drawn on Direct3D 12 or the software renderer.";
         const RenderFeature group[] = {
             RenderFeature::FilmicLighting, RenderFeature::Exposure, RenderFeature::TonemapCurve,
             RenderFeature::SceneBloom, RenderFeature::ColourGrading, RenderFeature::SceneFxaa};
         for (RenderFeature f : group) {
             const char* note = FeatureGapNote(f);
+            // The software renderer now reads the scene's exposure, curve, bloom, grading and FXAA;
+            // only the linear-lighting roll-off is still ignored there. Direct3D 12 ignores them all.
+            const char* shared = RendererSupports(f, RenderBackend::Software) == FeatureSupport::No
+                                     ? "not drawn on Direct3D 12 or the software renderer."
+                                     : "not drawn on Direct3D 12.";
             check(note && std::strstr(note, shared) != nullptr, "post switches share the Direct3D 12 / software gap");
             check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
         }
@@ -11888,7 +11892,7 @@ static void DrawLookSections(EditorState& ed) {
         }
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Linear lighting, exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12 or the software renderer. The vignette amount is drawn on every renderer. The software renderer has its own switches under Rendering below; those are separate from this section.");
+        ImGui::TextDisabled("Linear lighting is not drawn on Direct3D 12 or the software renderer. Exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12. The vignette amount is drawn on every renderer. The software renderer also has its own switches under Rendering below; the scene settings here take effect there too.");
         ImGui::PopTextWrapPos();
     }
 

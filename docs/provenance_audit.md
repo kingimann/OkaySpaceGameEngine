@@ -7,7 +7,7 @@ The rule being checked is CLAUDE.md rule 19a: no copyrighted code, write everyth
 file formats are fine, code is not; public-domain code needs the owner's approval first.
 
 **Short answer.** One clear case of a port was found (the LWO projected-UV code, from Assimp, BSD-3). One close port of
-public-domain code was found that is already listed (the TweetNaCl port in `shared/AntiCheatCrypto.hpp`), and one
+public-domain code was found that was already listed (the TweetNaCl port in `shared/AntiCheatCrypto.hpp`; **closed since: deleted, see F2**), and one
 possible port of public-domain constants that is **not** listed (the reverb tuning numbers, which match Freeverb). Two
 notice problems exist (Roboto has no licence file, and nothing ships the notice files). Everything else the scan
 found is a standard table, standard test data, "behaves like Assimp" wording, or a false alarm. A text scan cannot prove
@@ -18,7 +18,7 @@ that nothing else was copied; see "Method and limits".
 | # | Severity | Where | Possible source and licence | Action |
 |---|---|---|---|---|
 | 1 | **Clear copy / close port** | `engine/src/Render/LwoReader.cpp` lines 70 to 134 (`ProjectUvs`) | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Rewrite from the idea (section F1) |
-| 2 | **Close port of public-domain code (listed)** | `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Needs the owner's approval (rule 19a); already planned for removal behind `okay::crypto` (F2) |
+| 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | **Probable copy of public-domain constants (not listed)** | `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Ask the owner, or pick our own delay lengths (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
 | 5 | Vendored third-party code (allowed, listed) | `editor/vendor/TextEditor.*`, `engine/third_party/ufbx/` | ImGuiColorTextEdit (MIT), ufbx (MIT or public domain) | Keep until replaced; ufbx public-domain option needs the owner's approval (F5) |
@@ -44,7 +44,7 @@ All of these are in `docs/THIRD_PARTY.md`. Notice files were checked by looking 
 | ufbx | `engine/third_party/ufbx/` | MIT or public domain, both offered | Yes: `engine/third_party/ufbx/LICENSE`. Which ufbx version this is was not checked |
 | Assimp 5.4.3 | downloaded at configure time (`engine/CMakeLists.txt`, optional) | BSD 3-clause | Not vendored. A binary that links it needs its notice (F6) |
 | libsodium | system package, optional | ISC | Not vendored |
-| TweetNaCl port | `shared/AntiCheatCrypto.hpp` | Public domain | Not needed legally; **needs the owner's approval under rule 19a** (F2) |
+| TweetNaCl port | was `shared/AntiCheatCrypto.hpp` | Public domain | Deleted (F2, closed) |
 | stb `stb_decompress` | removed from the engine; the old base85 arrays remain in `shared/RobotoFont.h` and `shared/JetBrainsMonoFont.h` | Public domain | n/a. The arrays are font data compressed with that format; the decoder is no longer used by the engine |
 | DejaVu Sans | `assets/fonts/DejaVuSans.ttf` | Free font licence | Yes: `assets/fonts/DejaVuSans-LICENSE.txt` (a Debian copyright file) |
 | JetBrains Mono | embedded in `shared/JetBrainsMonoFont.h`, `shared/JetBrainsMonoFontOwn.h` | SIL OFL 1.1 | Yes: `assets/fonts/JetBrainsMono-OFL.txt` |
@@ -66,7 +66,9 @@ tinyfiledialogs (#640), stb_decompress (engine side).
 - **Severity:** close port (verified by comparison, not just by the comment).
 - **Action:** rewrite from scratch, from the idea only (project the vertex onto the map's axis, compute an angle around the axis, handle the wrap at U = 0 and U = 1 in our own way, for example by deciding per triangle from the shortest way round the circle instead of threshold flags). Then re-run the LWO corpus comparison. Correct the header comment and `docs/own_lwo_reader.md`. Note that the old threshold behaviour may differ from the new in rare files; that is acceptable and should be recorded.
 
-### F2. TweetNaCl port in `shared/AntiCheatCrypto.hpp` (close port, public domain, listed)
+### F2. TweetNaCl port in `shared/AntiCheatCrypto.hpp` (close port, public domain, listed) - CLOSED
+
+- **Status (closed):** the owner told us to replace it and it is gone. The `gf[16]` field code, the TweetNaCl-named helpers and constants, the group-order array and the second SHA-512 are deleted from `shared/AntiCheatCrypto.hpp`, which is now a thin wrapper (libsodium for Ed25519 where built, otherwise `okay::crypto`; SHA-512 always `okay::crypto`). Before deleting it, a differential run (24,000 random comparisons) and a recorded transcript test (`tests/test_anticheat_golden.cpp`) showed `okay::crypto` answers byte for byte like the old port. Caveats that remain: `okay::crypto` is unreviewed (rule 18), and F4 (`Fe25519_16.hpp`, the portable 16-bit field inside `okay::crypto`) is still unverified. The text below is the original finding, kept as the record.
 
 - **Evidence:** the header comment (lines 6 to 8) says "a C++ port of TweetNaCl's public-domain ed25519 (Bernstein et al.)". The code uses TweetNaCl's field representation (`typedef std::int64_t gf[16]` at line 189), TweetNaCl's helper names (`Carry`, `Sel`, `Pack`, `Unpack`, `Inv`, `Pow2523`, `ScalarMult`, `ScalarBase`, `UnpackNeg`), its curve constants named `D`, `D2`, `X`, `Y`, `I` and its group-order array `l`. It also holds the SHA-512 round-constant table (`K[80]`), which is standard FIPS 180-4 data.
 - **Licence:** public domain. Rule 19a says public-domain code needs the owner's approval; `docs/THIRD_PARTY.md` lists it as allowed only until `okay::crypto` is reviewed. I did not find a recorded approval; I could not verify that one was given elsewhere.
@@ -157,7 +159,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 ## Questions for the owner
 
 1. **LWO UV projection (F1).** Approve a rewrite from scratch of `ProjectUvs` now? It is the only clear port found and the fix is small (about 70 lines plus doc wording).
-2. **TweetNaCl port (F2).** Do you approve keeping it, as public-domain code, until `okay::crypto` has passed the outside review? If not, what should the launcher use in the meantime?
+2. **TweetNaCl port (F2). Answered and done: the owner approved replacing it.** (Original question: do you approve keeping it, as public-domain code, until `okay::crypto` has passed the outside review? If not, what should the launcher use in the meantime?)
 3. **Freeverb numbers (F3).** Are public-domain reverb constants acceptable, or should the delay lengths and gains be re-chosen by us?
 4. **Behaviour matching with Assimp (F7).** Confirm that matching Assimp's output (by running it) is acceptable, and that reading Assimp's source to do so is not.
 5. **ufbx licence choice (F5).** Record that we take ufbx under the MIT option, not the public-domain option?
@@ -171,5 +173,5 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 1. `ProjectUvs` in `LwoReader.cpp` (F1): clear port, small, testable against the existing LWO corpus.
 2. The reverb constants in `SpatialFx.cpp` (F3), if the owner says not to keep them: a few numbers and a listening test.
 3. `Fe25519_16.hpp` (F4): only after the owner's answer and the reviewer's view.
-4. The TweetNaCl port (F2): removed by the existing crypto plan, after the outside review (rule 18), not before.
+4. The TweetNaCl port (F2): done (deleted on the owner's say-so, replaced by `okay::crypto`; the outside review of `okay::crypto` is still open).
 5. Packaging notices (F6): not a rewrite, but it is a licence obligation that exists today.

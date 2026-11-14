@@ -803,6 +803,11 @@ add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
+target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_play_start_bench PRIVATE okay::engine)
+add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)

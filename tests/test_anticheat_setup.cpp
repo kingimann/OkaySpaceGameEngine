@@ -134,6 +134,148 @@ void TestAddAntiCheat() {
     std::error_code ec; fs::remove_all(proj, ec);
 }
 
+const as::Item* Find(const std::vector<as::Item>& v, const std::string& id) {
+    for (const auto& i : v) if (id == i.id) return &i;
+    return nullptr;
+}
+as::Status StatusOf(const std::vector<as::Item>& v, const std::string& id) {
+    const as::Item* i = Find(v, id);
+    return i ? i->status : as::Status::Info;
+}
+// ---- (2) the checklist ------------------------------------------------------------------------------
+void TestChecklistFacts() {
+    RUN_SUITE("anti-cheat checklist (rules)");
+    // An empty scene: everything missing, nothing else is judged.
+    {
+        as::Facts f; f.libsodium = true;
+        auto v = as::Evaluate(f);
+        CHECK(StatusOf(v, "manager") == as::Status::Missing && Find(v, "manager")->fix == as::Fix::AddManager);
+        CHECK(StatusOf(v, "config") == as::Status::Missing && Find(v, "config")->fix == as::Fix::AddConfig);
+        CHECK(StatusOf(v, "manifest") == as::Status::Warn && Find(v, "manifest")->fix == as::Fix::ManifestReport);
+        CHECK(!Find(v, "encryption") && !Find(v, "authority") && !Find(v, "detect") && !Find(v, "unclaimed") && !Find(v, "tickets"));
+        for (const auto& i : v) CHECK(!i.title.empty() && !i.detail.empty());
+    }
+    // A disabled component.
+    {
+        as::Facts f; f.hasManager = true; f.hasConfig = true; f.rules.enabled = false;
+        CHECK(StatusOf(as::Evaluate(f), "config") == as::Status::Missing && Find(as::Evaluate(f), "config")->fix == as::Fix::EnableConfig);
+    }
+    // A fully set up game: every line is OK (tickets is optional info).
+    {
+        as::Facts f; f.hasManager = true; f.hasConfig = true; f.libsodium = true; f.manifestMode = 2;
+        as::ApplyPreset(f.rules, as::Preset::Competitive, {}, true);
+        auto v = as::Evaluate(f);
+        as::Summary s = as::Summarize(v);
+        CHECK(s.warn == 0 && s.missing == 0 && s.ok >= 6 && s.info == 1);
+        CHECK(StatusOf(v, "tickets") == as::Status::Info && Find(v, "tickets")->fix == as::Fix::None);
+        CHECK(StatusOf(v, "detect") == as::Status::Ok && Has(Find(v, "detect")->detail, "observe"));
+    }
+    // Individual lines.
+    {
+        as::Facts f; f.hasManager = true; f.hasConfig = true; f.libsodium = true;
+        f.rules = AntiCheatSettings{}; f.rules.enabled = true; f.rules.ownerOnlySyncVars = false; f.rules.maxSyncSpeed = 0.0f;
+        auto v = as::Evaluate(f);
+        CHECK(StatusOf(v, "authority") == as::Status::Warn && Find(v, "authority")->fix == as::Fix::ServerAuthority);
+        CHECK(StatusOf(v, "encryption") == as::Status::Warn && Find(v, "encryption")->fix == as::Fix::EnableEncryption);
+        CHECK(StatusOf(v, "detect") == as::Status::Warn && Find(v, "detect")->fix == as::Fix::DetectObserve);
+        f.authoritativeMovement = true; f.rules.ownerOnlySyncVars = true;   // the server moves players: that counts as a move check
+        CHECK(StatusOf(as::Evaluate(f), "authority") == as::Status::Ok);
+        f.libsodium = false;   // a build without encryption cannot offer the fix, and says why
+        auto nv = as::Evaluate(f);
+        CHECK(StatusOf(nv, "encryption") == as::Status::Warn && Find(nv, "encryption")->fix == as::Fix::None && Has(Find(nv, "encryption")->detail, "libsodium"));
+        // Detection on and NOT observing: OK, and it says it can kick.
+        f.rules.detect.enabled = true;
+        CHECK(StatusOf(as::Evaluate(f), "detect") == as::Status::Ok && Has(Find(as::Evaluate(f), "detect")->detail, "may kick"));
+        // Tickets: a key without an audience is a hard problem (the server refuses every join).
+        f.rules.ticketKey = "abc";
+        CHECK(StatusOf(as::Evaluate(f), "tickets") == as::Status::Missing);
+        f.rules.ticketAudience = "arena-1";
+        CHECK(StatusOf(as::Evaluate(f), "tickets") == as::Status::Ok && Has(Find(as::Evaluate(f), "tickets")->detail, "arena-1"));
+        // Manifest modes.
+        f.manifestMode = 1; CHECK(StatusOf(as::Evaluate(f), "manifest") == as::Status::Ok && Has(Find(as::Evaluate(f), "manifest")->title, "Report"));
+        f.manifestMode = 2; CHECK(Has(Find(as::Evaluate(f), "manifest")->title, "Enforce"));
+        f.manifestMode = 0; CHECK(Has(Find(as::Evaluate(f), "manifest")->title, "Off"));
+    }
+    // A rules file that does not load fails closed: Missing, and no button pretends to fix it.
+    {
+        as::Facts f; f.hasManager = true; f.hasConfig = true; f.rules.enabled = true; f.rulesFile = "rules/arena.okayac"; f.rulesFileError = "can't open rules/arena.okayac";
+        auto v = as::Evaluate(f);
+        CHECK(StatusOf(v, "file") == as::Status::Missing && Find(v, "file")->fix == as::Fix::None && Has(Find(v, "file")->detail, "refuses every join"));
+        // Rules that come from a file: no fix button changes the component, so none is offered.
+        f.rulesFileError.clear(); f.rulesFromFile = true; f.libsodium = true;
+        v = as::Evaluate(f);
+        CHECK(StatusOf(v, "file") == as::Status::Ok);
+        for (const auto& i : v) CHECK(i.fix != as::Fix::EnableEncryption && i.fix != as::Fix::ServerAuthority && i.fix != as::Fix::DetectObserve);
+        CHECK(Find(v, "encryption") && Has(Find(v, "encryption")->detail, "rules file"));
+    }
+}
+
+void TestChecklistScene() {
+    RUN_SUITE("anti-cheat checklist (scene + fixes)");
+    const fs::path proj = TempDir("check");
+    Scene scene("S");
+    GameObject* net = scene.CreateGameObject("Net");
+    net->AddComponent<NetworkManager>();
+    // A door the server drives, a ball nobody owns, a coin players may claim, a pawn a player drives, and a player template.
+    auto* door = scene.CreateGameObject("Door")->AddComponent<NetworkSync>(); door->authority = NetworkSync::Authority::Host; door->netId = "door";
+    auto* ball = scene.CreateGameObject("Ball")->AddComponent<NetworkSync>(); ball->authority = NetworkSync::Authority::Manual; ball->netId = "ball";
+    auto* coin = scene.CreateGameObject("Coin")->AddComponent<NetworkSync>(); coin->authority = NetworkSync::Authority::Manual; coin->clientClaimable = true;
+    auto* pawn = scene.CreateGameObject("Pawn")->AddComponent<NetworkSync>(); pawn->authority = NetworkSync::Authority::Mine;
+    GameObject* tmplGo = scene.CreateGameObject("PlayerTemplate");   // cloned per player at run time: each clone gets an owner
+    auto* tmpl = tmplGo->AddComponent<NetworkSync>(); tmpl->authority = NetworkSync::Authority::Mine; tmplGo->active = false;
+
+    int manifest = 0;
+    as::Facts f = as::GatherFacts(scene, manifest, proj.string());
+    CHECK(f.hasManager && !f.hasConfig && f.manifestMode == 0 && f.unclaimed.size() == 2 && f.unclaimed[0] == "Ball (ball)" && f.unclaimed[1] == "Pawn");   // not the door (server drives it), the claimable coin or the inactive template
+
+    // Fix 1: add anti-cheat. Everything that follows is judged.
+    CHECK(as::ApplyFix(scene, as::Fix::AddConfig, manifest, proj.string(), net));
+    CHECK(!as::ApplyFix(scene, as::Fix::AddConfig, manifest, proj.string(), net));   // nothing more to add
+    auto v = as::Evaluate(as::GatherFacts(scene, manifest, proj.string()));
+    CHECK(StatusOf(v, "config") == as::Status::Ok);
+    const as::Item* un = Find(v, "unclaimed");
+    CHECK(un && un->status == as::Status::Warn && un->objects.size() == 2 && un->fix == as::Fix::None);   // no safe automatic fix: the maker decides per object
+    // The preset already made the game safe except for what the build and the Build Settings say.
+    CHECK(StatusOf(v, "authority") == as::Status::Ok && StatusOf(v, "detect") == as::Status::Ok);
+
+    // Break things on purpose, then use each fix button.
+    AntiCheatConfig* ac = as::FindConfig(scene);
+    CHECK(ac != nullptr);
+    ac->settings.enabled = false;
+    CHECK(as::ApplyFix(scene, as::Fix::EnableConfig, manifest, proj.string()) && ac->settings.enabled);
+    ac->settings.ownerOnlySyncVars = false; ac->settings.maxSyncSpeed = 0.0f;
+    CHECK(as::ApplyFix(scene, as::Fix::ServerAuthority, manifest, proj.string()) && ac->settings.ownerOnlySyncVars && ac->settings.maxSyncSpeed == 20.0f);
+    CHECK(!as::ApplyFix(scene, as::Fix::ServerAuthority, manifest, proj.string()));
+    ac->settings.maxSyncSpeed = 7.0f; ac->settings.ownerOnlySyncVars = false;   // a maker's own number stays
+    CHECK(as::ApplyFix(scene, as::Fix::ServerAuthority, manifest, proj.string()) && ac->settings.maxSyncSpeed == 7.0f);
+    ac->settings.detect = DetectSettings{};
+    CHECK(as::ApplyFix(scene, as::Fix::DetectObserve, manifest, proj.string()));
+    CHECK(ac->settings.detect.enabled && detectui::IsObserveMode(ac->settings.detect));
+    CHECK(!as::ApplyFix(scene, as::Fix::DetectObserve, manifest, proj.string()));
+    ac->settings.requireEncryption = false;
+    const bool sodium = net::SecureChannel::Available();
+    CHECK(as::ApplyFix(scene, as::Fix::EnableEncryption, manifest, proj.string()) == sodium && ac->settings.requireEncryption == sodium);
+    CHECK(as::ApplyFix(scene, as::Fix::ManifestReport, manifest, proj.string()) && manifest == 1);
+    CHECK(!as::ApplyFix(scene, as::Fix::ManifestReport, manifest, proj.string()) && manifest == 1);
+    manifest = 2;
+    CHECK(!as::ApplyFix(scene, as::Fix::ManifestReport, manifest, proj.string()) && manifest == 2);   // never lowers Enforce
+
+    // A rules file is read from the project, and a missing one is reported.
+    ac->file = "rules/arena.okayac";
+    as::Facts bad = as::GatherFacts(scene, manifest, proj.string());
+    CHECK(!bad.rulesFileError.empty() && !bad.rulesFromFile);
+    Write(proj / "Assets/rules/arena.okayac", "enabled true\nmaxSyncSpeed 9\nrequireEncryption true\n");
+    as::Facts good = as::GatherFacts(scene, manifest, proj.string());
+    CHECK(good.rulesFileError.empty() && good.rulesFromFile && good.rules.maxSyncSpeed == 9.0f && good.rules.requireEncryption);
+
+    // The manager fix adds one only when the scene has none.
+    Scene bare("B");
+    int m2 = 0;
+    CHECK(as::ApplyFix(bare, as::Fix::AddManager, m2, "") && as::FindManager(bare) != nullptr);
+    CHECK(!as::ApplyFix(bare, as::Fix::AddManager, m2, ""));
+    std::error_code ec; fs::remove_all(proj, ec);
+}
+
 } // namespace
 
 int main() {
@@ -142,6 +284,8 @@ int main() {
     TestPresets();
     TestNetworkedPrefabs();
     TestAddAntiCheat();
+    TestChecklistFacts();
+    TestChecklistScene();
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

@@ -18113,6 +18113,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(160);
                 ImGui::Combo("Anti-cheat", &g_build.antiCheat, "Off\0Report\0Enforce\0");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okayac::kBuildSettingsTooltip);
+                oked::DrawAntiCheatChecklist(ed, g_build.antiCheat, "build");   // what is on and what is missing for this scene
                 ImGui::Spacing(); SectionHeader("After the build");
                 ImGui::Checkbox("Open the output folder", &g_build.openFolderAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
@@ -30840,6 +30841,7 @@ void DrawInspector(EditorState& ed) {
                                 "Refusals run On Cheat Detected in visual scripts.");
             ImGui::PopTextWrapPos();
             oked::DrawAntiCheatPresetPicker(ed, ac);
+            oked::DrawAntiCheatChecklist(ed, g_build.antiCheat, "insp");
             AntiCheatSettings& s = ac->settings;
             if (ImGui::Checkbox("Enabled##ac", &s.enabled)) ed.dirty = true;
             oked::FieldTip("Enabled##ac");

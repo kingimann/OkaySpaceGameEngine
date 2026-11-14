@@ -29,6 +29,23 @@ void Wrapped(const char* text, bool disabled) {
     if (disabled) ImGui::TextDisabled("%s", text); else ImGui::TextUnformatted(text);
     ImGui::PopTextWrapPos();
 }
+
+ImVec4 Colour(as::Status s) {
+    switch (s) {
+    case as::Status::Ok: return ImVec4(0.45f, 0.85f, 0.50f, 1);
+    case as::Status::Warn: return ImVec4(0.95f, 0.80f, 0.35f, 1);
+    case as::Status::Missing: return ImVec4(0.95f, 0.45f, 0.40f, 1);
+    default: return ImVec4(0.65f, 0.70f, 0.78f, 1);
+    }
+}
+const char* Mark(as::Status s) {
+    switch (s) {
+    case as::Status::Ok: return "[on]";
+    case as::Status::Warn: return "[check]";
+    case as::Status::Missing: return "[missing]";
+    default: return "[optional]";
+    }
+}
 } // namespace
 
 bool AddAntiCheatMenuItem(EditorState& ed, okay::GameObject* go) {
@@ -73,6 +90,54 @@ void DrawAntiCheatPresetPicker(EditorState& ed, okay::AntiCheatConfig* ac) {
                           "observe mode (it never kicks). Keeps your ticket key, weapons and client-writable variables. The Rules file field is left alone.");
     Wrapped(as::Info(g_preset).blurb, true);
     ImGui::Spacing();
+}
+
+void DrawAntiCheatChecklist(EditorState& ed, int& manifestMode, const char* idSuffix) {
+    okay::Scene& scene = ed.scene();
+    const std::vector<as::Item> items = as::Evaluate(as::GatherFacts(scene, manifestMode, ed.projectDir()));
+    const as::Summary sum = as::Summarize(items);
+    char head[96];
+    std::snprintf(head, sizeof(head), "Anti-cheat checklist: %d on, %d to check%s##accl%s", sum.ok, sum.warn + sum.missing,
+                  sum.missing ? " (something is missing)" : "", idSuffix);
+    if (!ImGui::CollapsingHeader(head, sum.missing || sum.warn ? ImGuiTreeNodeFlags_DefaultOpen : 0)) return;
+    ImGui::PushID(idSuffix);
+    Wrapped("What anti-cheat does in this scene and Build Settings. A fix button only makes things safer: none of them kicks or bans anyone.", true);
+    as::Fix doFix = as::Fix::None;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const as::Item& it = items[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::TextColored(Colour(it.status), "%s", Mark(it.status));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(it.title.c_str());
+        if (it.fix != as::Fix::None) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(it.fixLabel)) doFix = it.fix;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Safe automatic fix. You can undo it by changing the field back.");
+        }
+        ImGui::Indent();
+        Wrapped(it.detail.c_str(), true);
+        if (std::string(it.id) == "unclaimed") {   // one Select button per object, so the maker can look and decide
+            int shown = 0;
+            for (const auto& go : scene.Objects())
+                for (auto* ns : go->GetComponents<okay::NetworkSync>())
+                    if (as::IsUnclaimed(*go, *ns) && shown++ < 12) {
+                        ImGui::PushID(go.get());
+                        if (ImGui::SmallButton("Select")) ed.Select(go.get());
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(go->name.c_str());
+                        ImGui::PopID();
+                    }
+            if (shown > 12) ImGui::TextDisabled("and %d more", shown - 12);
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+    if (doFix != as::Fix::None) {
+        okay::GameObject* sel = ed.selected();
+        if (as::ApplyFix(scene, doFix, manifestMode, ed.projectDir(), doFix == as::Fix::AddManager ? nullptr : sel) && doFix != as::Fix::ManifestReport)
+            ed.dirty = true;   // (the Build Settings combo is not part of the scene)
+    }
 }
 
 } // namespace oked

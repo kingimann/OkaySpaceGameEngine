@@ -167,6 +167,7 @@ inline Result Request(const std::string& method, const std::string& url,
         std::stringstream ss; ss << f.rdbuf(); payload = ss.str();
     }
     okay::ownhttp::NetOptions opt;
+    opt.keepAlive = true;   // sequential calls to one host on one thread reuse the connection (safe retry if it went stale)
     opt.limits.maxBodyBytes = outFile.empty() ? (64ull << 20) : (8ull << 30);   // memory vs. a download to disk
     if (timeoutMs > 0) {
         opt.totalMs = timeoutMs;
@@ -177,7 +178,7 @@ inline Result Request(const std::string& method, const std::string& url,
     struct Out { std::ofstream f; bool open = false; };
     auto out = std::make_shared<Out>();
     okay::ownhttp::FetchHooks hooks;
-    if (!outFile.empty()) {
+    if (!outFile.empty() && method != "HEAD") {
         hooks.onHead = [out, outFile](const okay::ownhttp::Response&) {
             out->f.open(outFile, std::ios::binary | std::ios::trunc);
             out->open = out->f.is_open();
@@ -217,6 +218,14 @@ struct RequestOptions {
     bool acceptGzip = false;     ///< in-memory bodies only; ignored with outFile
     /// With outFile: write the file only for a 200 or 206 answer (like curl -f); other statuses leave it alone.
     bool fileOnSuccessOnly = true;
+    /// Conditional request: sends If-None-Match / If-Modified-Since. A 304 answer comes back as status 304,
+    /// `notModified` true, no body, and an outFile is left alone.
+    std::string ifNoneMatch, ifModifiedSince;
+    /// Remember Set-Cookie answers for the redirects of this call and send them back (host-only, simple; see CookieJar).
+    /// Off by default. The cookies that were set are returned in ExResult::cookies.
+    bool cookies = false;
+    /// Reuse a kept-alive connection to the same host and keep this one for the next call (own client, same thread).
+    bool keepAlive = true;
 };
 
 /// Result of RequestEx: Result plus what a resumable download needs.
@@ -224,6 +233,10 @@ struct ExResult : Result {
     bool     resumed = false;       ///< the server sent the part we asked for; the file was appended to
     uint64_t totalSize = 0;         ///< complete size when the server said so (Content-Range or Content-Length)
     bool     writeFailed = false;   ///< outFile could not be opened or written (disk full, no permission)
+    bool     notModified = false;   ///< the server answered 304 to a conditional request
+    std::string etag, lastModified; ///< validators of the final answer, for the next conditional request
+    std::vector<std::string> cookies;   ///< "name=value" the jar holds after the call (only with RequestOptions::cookies)
+    int      reusedConnections = 0; ///< requests of this call that used a kept-alive connection
 };
 
 inline ExResult RequestEx(const std::string& method, const std::string& url,
@@ -246,15 +259,21 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
     opt.cancel = ro.cancel;
     if (ro.maxRedirects > 0) opt.limits.maxRedirects = ro.maxRedirects;
     opt.acceptGzip = ro.acceptGzip && outFile.empty();
+    opt.keepAlive = ro.keepAlive;
+    std::shared_ptr<okay::ownhttp::CookieJar> jar;
+    if (ro.cookies) { jar = std::make_shared<okay::ownhttp::CookieJar>(); opt.cookieJar = jar; }
     std::vector<std::string> hdrs = headers;
     if (ro.resumeFrom > 0 && !outFile.empty()) hdrs.push_back("Range: bytes=" + std::to_string(ro.resumeFrom) + "-");
+    if (!ro.ifNoneMatch.empty()) hdrs.push_back("If-None-Match: " + ro.ifNoneMatch);
+    if (!ro.ifModifiedSince.empty()) hdrs.push_back("If-Modified-Since: " + ro.ifModifiedSince);
     struct Out { std::ofstream f; bool open = false; uint64_t base = 0; bool wfail = false; };
     auto out = std::make_shared<Out>();
     okay::ownhttp::FetchHooks hooks;
-    if (!outFile.empty()) {
+    if (!outFile.empty() && method != "HEAD") {
         const uint64_t resumeFrom = ro.resumeFrom;
         const bool successOnly = ro.fileOnSuccessOnly;
         hooks.onHead = [out, outFile, resumeFrom, successOnly](const okay::ownhttp::Response& h) {
+            if (h.status == 304) return true;   // not modified: never touch the file
             const bool ok = h.status == 200 || h.status == 206;
             if (!ok && successOnly) return true;   // the body (an error page) is read and dropped
             const bool append = h.status == 206 && resumeFrom > 0;
@@ -287,6 +306,11 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
         r.status = fr.response.status;
         r.body = std::move(fr.response.body);
         r.resumed = fr.partial && out->open;
+        r.notModified = fr.response.status == 304;
+        r.reusedConnections = fr.reusedConnections;
+        if (const std::string* v = fr.response.Get("etag")) r.etag = *v;
+        if (const std::string* v = fr.response.Get("last-modified")) r.lastModified = *v;
+        if (jar) for (const auto& c : jar->Items()) r.cookies.push_back(c.name + "=" + c.value);
         if (fr.partial) r.totalSize = fr.rangeTotal;
         else if (const std::string* cl = fr.response.Get("content-length")) {
             uint64_t n = 0; bool digits = !cl->empty() && cl->size() < 19;

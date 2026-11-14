@@ -583,11 +583,270 @@ static void Fuzz(int iters) {
     std::printf("fuzz: %d iterations, %zu parsed ok\n", iters, okCount);
 }
 
+
+// ---- keep-alive, conditional requests, cookies (in-memory) ------------------------------------------------------
+// A pool-aware connector: every stream has a number, `serve(conn, nth request on it, wire)` returns the response bytes;
+// "" = the peer closed the connection without answering, "\x01" = the write fails (reset).
+struct PoolConn : Connector {
+    std::function<std::string(int, int, const std::string&)> serve;
+    std::vector<std::string> wires;
+    std::vector<std::unique_ptr<Stream>> idle;
+    std::vector<std::string> idleHost;
+    int opened = 0, taken = 0, given = 0;
+    struct PS : Stream {
+        PoolConn* c; int no; int reqs = 0; std::string in; size_t pos = 0; bool dead = false;
+        long Read(void* b, size_t n, Err&) override {
+            if (pos >= in.size()) return 0;
+            size_t k = std::min(n, in.size() - pos); std::memcpy(b, in.data() + pos, k); pos += k; return long(k);
+        }
+        bool Write(const void* b, size_t n, Err& e) override {
+            std::string w((const char*)b, n);
+            c->wires.push_back(w);
+            std::string r = c->serve(no, reqs++, w);
+            if (r == "\x01") { e = Err::Io; dead = true; return false; }
+            in = r; pos = 0; if (r.empty()) dead = true;
+            return true;
+        }
+        bool StillUsable() override { return !dead; }
+    };
+    std::unique_ptr<Stream> Open(const Url& u, Clock::time_point, Err&, std::string&) override {
+        auto s = std::make_unique<PS>(); s->c = this; s->no = ++opened; (void)u; return s;
+    }
+    std::unique_ptr<Stream> TakeIdle(const Url& u, Clock::time_point) override {
+        for (size_t i = 0; i < idle.size(); ++i)
+            if (idleHost[i] == u.HostPort()) {
+                auto s = std::move(idle[i]); idle.erase(idle.begin() + long(i)); idleHost.erase(idleHost.begin() + long(i));
+                if (!s->StillUsable()) return nullptr;
+                ++taken; return s;
+            }
+        return nullptr;
+    }
+    void GiveIdle(const Url& u, std::unique_ptr<Stream> s) override { ++given; idle.push_back(std::move(s)); idleHost.push_back(u.HostPort()); }
+};
+static std::string OkBody(const std::string& b, const std::string& extra = "") {
+    return "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(b.size()) + "\r\n" + extra + "\r\n" + b;
+}
+static FetchRequest Rq(const std::string& url, const std::string& method = "GET", bool ka = true) {
+    FetchRequest r; r.method = method; r.url = url; r.keepAlive = ka; return r;
+}
+
+static void TestKeepAlive() {
+    Limits lim;
+    {   // two sequential GETs: one connection, no "Connection: close" sent, the second is counted as reused
+        PoolConn c; c.serve = [](int, int, const std::string&) { return OkBody("hello"); };
+        FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+        CHECK(a.ok && b.ok && b.response.body == "hello");
+        CHECK(c.opened == 1 && c.taken == 1 && a.reusedConnections == 0 && b.reusedConnections == 1);
+        CHECK(c.wires.size() == 2 && c.wires[0].find("Connection: close") == std::string::npos);
+    }
+    {   // without the flag: close is sent and nothing is kept
+        PoolConn c; c.serve = [](int, int, const std::string&) { return OkBody("x"); };
+        FetchResult a = Fetch(c, Rq("http://h.example/a", "GET", false), lim, 5000);
+        FetchResult b = Fetch(c, Rq("http://h.example/b", "GET", false), lim, 5000);
+        CHECK(a.ok && b.ok && c.opened == 2 && c.given == 0);
+        CHECK(c.wires[0].find("Connection: close\r\n") != std::string::npos);
+    }
+    {   // the server says close, speaks HTTP/1.0, or has no length: the connection is not kept
+        for (int variant = 0; variant < 4; ++variant) {
+            PoolConn c;
+            c.serve = [variant](int, int, const std::string&) -> std::string {
+                if (variant == 0) return OkBody("x", "Connection: close\r\n");
+                if (variant == 1) return "HTTP/1.0 200 OK\r\nContent-Length: 1\r\n\r\nx";
+                if (variant == 2) return "HTTP/1.1 200 OK\r\n\r\nuntil-close";
+                return "HTTP/1.1 200 OK\r\nConnection: keep-alive, Close\r\nContent-Length: 1\r\n\r\nx";
+            };
+            FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+            CHECK(a.ok && c.given == 0);
+            FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+            CHECK(b.ok && c.opened == 2);
+        }
+    }
+    {   // a stale connection (closed before one byte of the answer): one fresh connection, the call still works
+        PoolConn c;
+        c.serve = [](int conn, int nth, const std::string&) -> std::string { return (conn == 1 && nth == 1) ? std::string() : OkBody("ok"); };
+        FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        // the pooled stream reports itself usable until it is asked, as a real one can (the close arrives later)
+        FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+        CHECK(a.ok && b.ok && b.response.body == "ok" && c.opened == 2 && b.staleRetries == 1);
+    }
+    {   // the same, but the write itself fails (connection reset)
+        PoolConn c;
+        c.serve = [](int conn, int nth, const std::string&) -> std::string { return (conn == 1 && nth == 1) ? std::string("\x01") : OkBody("ok"); };
+        Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+        CHECK(b.ok && c.opened == 2 && b.staleRetries == 1);
+    }
+    {   // a FRESH connection that is closed without an answer is an error, never retried in a loop
+        PoolConn c; c.serve = [](int, int, const std::string&) { return std::string(); };
+        FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        CHECK(!a.ok && c.opened == 1 && a.staleRetries == 0);
+    }
+    {   // POST never rides on a kept connection (a replay could run twice), but it can be offered back afterwards
+        PoolConn c; c.serve = [](int, int, const std::string&) { return OkBody("ok"); };
+        Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        FetchRequest p = Rq("http://h.example/p", "POST"); p.body = "data";
+        FetchResult r = Fetch(c, p, lim, 5000);
+        CHECK(r.ok && c.opened == 2 && r.reusedConnections == 0 && c.taken == 0);
+        FetchResult g = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+        CHECK(g.ok && g.reusedConnections == 1);
+    }
+    {   // a POST on a fresh connection that dies is reported, not replayed
+        PoolConn c; int posts = 0;
+        c.serve = [&](int, int, const std::string& w) -> std::string { if (w.compare(0, 4, "POST") == 0) { ++posts; return std::string(); } return OkBody("ok"); };
+        Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        FetchRequest p = Rq("http://h.example/p", "POST"); p.body = "data";
+        FetchResult r = Fetch(c, p, lim, 5000);
+        CHECK(!r.ok && posts == 1);
+    }
+    {   // a same-origin redirect reuses the connection; another host does not
+        PoolConn c;
+        c.serve = [](int, int, const std::string& w) -> std::string {
+            if (w.compare(0, 11, "GET /start ") == 0) return "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n";
+            if (w.compare(0, 11, "GET /other ") == 0) return "HTTP/1.1 302 Found\r\nLocation: http://b.example/z\r\nContent-Length: 0\r\n\r\n";
+            return OkBody("end");
+        };
+        FetchResult r = Fetch(c, Rq("http://h.example/start"), lim, 5000);
+        CHECK(r.ok && r.redirects == 1 && c.opened == 1 && r.reusedConnections == 1);
+        FetchResult r2 = Fetch(c, Rq("http://h.example/other"), lim, 5000);
+        CHECK(r2.ok && c.opened == 2 && r2.reusedConnections == 1);   // h.example's idle connection serves /other, only b.example is new
+    }
+    {   // chunked, HEAD and 304 answers keep the connection, and the bytes after them are not mistaken for the next answer
+        PoolConn c;
+        c.serve = [](int, int, const std::string& w) -> std::string {
+            if (w.compare(0, 4, "HEAD") == 0) return "HTTP/1.1 200 OK\r\nContent-Length: 12345\r\nETag: \"v1\"\r\n\r\n";
+            if (w.find("If-None-Match: \"v1\"") != std::string::npos) return "HTTP/1.1 304 Not Modified\r\nETag: \"v1\"\r\n\r\n";
+            return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        };
+        FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        FetchResult h = Fetch(c, Rq("http://h.example/a", "HEAD"), lim, 5000);
+        FetchRequest cond = Rq("http://h.example/a"); cond.headerLines = {"If-None-Match: \"v1\""};
+        FetchResult n = Fetch(c, cond, lim, 5000);
+        FetchResult g = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        CHECK(a.ok && a.response.body == "hello");
+        CHECK(h.ok && h.response.body.empty() && h.response.Get("content-length") && *h.response.Get("content-length") == "12345");
+        CHECK(n.ok && n.response.status == 304 && n.response.body.empty());
+        CHECK(g.ok && g.response.body == "hello" && c.opened == 1);
+    }
+    {   // a server that sends more than the answer (a second response glued on, or a body longer than its length) is not reused
+        for (int variant = 0; variant < 2; ++variant) {
+            PoolConn c;
+            c.serve = [variant](int, int, const std::string&) -> std::string {
+                if (variant == 0) return OkBody("one") + OkBody("TWO");   // pipelined leftover
+                return "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdefgh";   // longer than the stated length
+            };
+            FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+            CHECK(a.ok && a.response.body.size() == 3 && c.given == 0);
+            FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+            CHECK(b.ok && b.response.body.size() == 3 && c.opened == 2);   // a clean new connection; "TWO" was never taken as an answer
+        }
+    }
+    {   // truncated bodies and a Content-Length longer than what arrives: errors, and nothing is kept
+        for (int variant = 0; variant < 3; ++variant) {
+            PoolConn c;
+            c.serve = [variant](int, int, const std::string&) -> std::string {
+                if (variant == 0) return "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort";
+                if (variant == 1) return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel";
+                return "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n";   // the head never ends
+            };
+            FetchResult a = Fetch(c, Rq("http://h.example/a"), lim, 5000);
+            CHECK(!a.ok && c.given == 0 && c.idle.empty());
+        }
+    }
+    {   // a redirect loop on one kept connection still ends at the cap
+        PoolConn c; c.serve = [](int, int, const std::string&) { return std::string("HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n"); };
+        Limits l2; l2.maxRedirects = 5;
+        FetchResult r = Fetch(c, Rq("http://h.example/loop"), l2, 5000);
+        CHECK(!r.ok && r.err == Err::TooManyRedirects && c.opened == 1);
+    }
+    {   // an idle connection that is no longer usable is skipped by the connector
+        PoolConn c; c.serve = [](int, int, const std::string&) { return OkBody("ok"); };
+        Fetch(c, Rq("http://h.example/a"), lim, 5000);
+        static_cast<PoolConn::PS*>(c.idle[0].get())->dead = true;
+        FetchResult b = Fetch(c, Rq("http://h.example/b"), lim, 5000);
+        CHECK(b.ok && c.opened == 2 && b.reusedConnections == 0);
+    }
+}
+
+static void TestCookies() {
+    Limits lim;
+    auto find = [](const std::string& wire, const char* name) { size_t p = wire.find(name); return p == std::string::npos ? std::string() : wire.substr(p, wire.find("\r\n", p) - p); };
+    {   // off by default: Set-Cookie is ignored and nothing is sent
+        PoolConn c;
+        c.serve = [](int, int, const std::string& w) -> std::string {
+            if (w.compare(0, 11, "GET /start ") == 0) return "HTTP/1.1 302 Found\r\nSet-Cookie: s=1\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n";
+            return OkBody("end");
+        };
+        FetchResult r = Fetch(c, Rq("http://h.example/start", "GET", false), lim, 5000);
+        CHECK(r.ok && c.wires[1].find("Cookie:") == std::string::npos);
+    }
+    {   // on: the cookie from the redirect is sent to the next hop (same host), a caller Cookie header is merged
+        PoolConn c;
+        c.serve = [](int, int, const std::string& w) -> std::string {
+            if (w.compare(0, 11, "GET /start ") == 0) return "HTTP/1.1 302 Found\r\nSet-Cookie: sid=abc; Path=/; HttpOnly\r\nSet-Cookie: t=2\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n";
+            return OkBody("end", "Set-Cookie: later=3\r\n");
+        };
+        FetchRequest q = Rq("http://h.example/start", "GET", false); q.jar = std::make_shared<CookieJar>();
+        q.headerLines = {"Cookie: mine=0"};
+        FetchResult r = Fetch(c, q, lim, 5000);
+        CHECK(r.ok && find(c.wires[0], "Cookie:") == "Cookie: mine=0");
+        const std::string ck = find(c.wires[1], "Cookie:");
+        CHECK(ck.find("mine=0") != std::string::npos && ck.find("sid=abc") != std::string::npos && ck.find("t=2") != std::string::npos);
+        CHECK(q.jar->Size() == 3);   // sid, t and the one from the final answer
+    }
+    {   // never sent to another host, nor (Secure) over http; a Secure cookie from http is refused outright
+        CookieJar j; Url a, b, hs;
+        ParseUrl("http://a.example/x/y", a); ParseUrl("http://b.example/x/y", b); ParseUrl("https://a.example/x/y", hs);
+        CHECK(j.Store(a, "k=v"));
+        CHECK(j.HeaderFor(a) == "k=v" && j.HeaderFor(b).empty());
+        CHECK(!j.Store(a, "sec=1; Secure"));
+        CHECK(j.Store(hs, "sec=1; Secure"));
+        CHECK(j.HeaderFor(hs).find("sec=1") != std::string::npos && j.HeaderFor(a).find("sec=1") == std::string::npos);
+    }
+    {   // Domain: only the same host is accepted; other domains drop the cookie. Path scoping and default path.
+        CookieJar j; Url a, p1, p2;
+        ParseUrl("http://www.a.example/dir/page", a);
+        CHECK(!j.Store(a, "d=1; Domain=a.example"));
+        CHECK(!j.Store(a, "d=1; Domain=evil.example"));
+        CHECK(j.Store(a, "d=1; Domain=.www.a.example"));
+        CHECK(j.Store(a, "p=1; Path=/dir/sub"));
+        ParseUrl("http://www.a.example/dir/other", p1); ParseUrl("http://www.a.example/dir/sub/x", p2);
+        CHECK(j.HeaderFor(p1) == "d=1");                    // default path /dir covers /dir/other, p's path /dir/sub does not
+        CHECK(j.HeaderFor(p2).find("p=1") != std::string::npos && j.HeaderFor(p2).find("d=1") != std::string::npos);
+        Url p3; ParseUrl("http://www.a.example/dirx/y", p3);
+        CHECK(j.HeaderFor(p3).empty());                      // "/dir" does not match "/dirx"
+    }
+    {   // Max-Age=0 and a negative one delete; same name+path replaces; junk is refused
+        CookieJar j; Url a; ParseUrl("http://a.example/", a);
+        CHECK(j.Store(a, "k=1")); CHECK(j.Store(a, "k=2")); CHECK(j.Size() == 1 && j.HeaderFor(a) == "k=2");
+        CHECK(j.Store(a, "k=x; Max-Age=0")); CHECK(j.Size() == 0);
+        CHECK(j.Store(a, "k=1")); CHECK(j.Store(a, "k=x; Max-Age=-5")); CHECK(j.Size() == 0);
+        CHECK(!j.Store(a, "no-equals")); CHECK(!j.Store(a, "bad name=1")); CHECK(!j.Store(a, "=v"));
+        CHECK(!j.Store(a, std::string("k=v\r\nSet-Cookie: x=y")));
+        CHECK(!j.Store(a, "k=" + std::string(5000, 'a')));
+        CHECK(j.Store(a, "e=1; Max-Age=3600") && j.HeaderFor(a) == "e=1");
+        for (int i = 0; i < 100; ++i) j.Store(a, "n" + std::to_string(i) + "=1");
+        CHECK(j.Size() <= CookieJar::kMaxCookies);
+        CHECK(j.HeaderFor(a).size() <= CookieJar::kMaxHeaderBytes);
+    }
+    {   // a cookie set on one origin is not carried across a cross-origin redirect to a host that did not set it,
+        // and the caller's own Cookie header is dropped there as before
+        PoolConn c;
+        c.serve = [](int, int, const std::string& w) -> std::string {
+            if (w.compare(0, 11, "GET /start ") == 0) return "HTTP/1.1 302 Found\r\nSet-Cookie: a=1\r\nLocation: http://other.example/\r\nContent-Length: 0\r\n\r\n";
+            return OkBody("end");
+        };
+        FetchRequest q = Rq("http://h.example/start", "GET", false); q.jar = std::make_shared<CookieJar>(); q.headerLines = {"Cookie: mine=0"};
+        FetchResult r = Fetch(c, q, lim, 5000);
+        CHECK(r.ok && c.wires[1].find("Cookie:") == std::string::npos);
+    }
+}
+
 int main(int argc, char** argv) {
     int iters = 20000;
     if (const char* e = std::getenv("OKAY_FUZZ_ITERS")) iters = std::atoi(e);
     if (argc > 1) iters = std::atoi(argv[1]);
-    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); Fuzz(iters);
+    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); TestKeepAlive(); TestCookies(); Fuzz(iters);
     std::printf("own_http: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

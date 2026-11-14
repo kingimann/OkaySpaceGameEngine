@@ -227,11 +227,34 @@ int main() {
         bool fin = true; float maxU = 0;
         for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) { if (!std::isfinite(t.x) || !std::isfinite(t.y)) fin = false; maxU = std::max(maxU, t.x); }
         CHECK(fin && maxU > 1.0f && maxU <= 2.0001f);
+        // the seam is mended: no triangle's U values spread over more than half the wrap, and none leaves 0 .. wrap
+        bool mended = true;
+        for (const ImportedPart& p : m.parts) {
+            if (p.mesh.uvs.empty()) continue;
+            for (std::size_t t = 0; t + 2 < p.mesh.triangles.size(); t += 3) {
+                float lo = 1e9f, hi = -1e9f;
+                for (int k = 0; k < 3; ++k) { const float u = p.mesh.uvs[(std::size_t)p.mesh.triangles[t + (std::size_t)k]].x; lo = std::min(lo, u); hi = std::max(hi, u); }
+                if (hi - lo > 1.0001f || lo < -1e-4f || hi > 2.0001f) mended = false;
+            }
+        }
+        CHECK(mended);
         // spherical: finite UVs, U in 0..1, V in 0..1
         CHECK(Read(Box2(true, 2, 1), m, err));
         bool in01 = true;
         for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) if (!(t.x >= -1e-4f && t.x <= 1.0001f && t.y >= -1e-4f && t.y <= 1.0001f)) in01 = false;
         CHECK(in01);
+        // spherical about Y: V (stored as 1 - v) follows the height: the highest vertex has the smallest stored V
+        {   const ImportedPart* tp = nullptr;
+            for (const ImportedPart& p : m.parts) if (!p.mesh.uvs.empty()) tp = &p;
+            CHECK(tp != nullptr);
+            if (tp) {
+                std::size_t top = 0, bottom = 0;
+                for (std::size_t i = 0; i < tp->mesh.vertices.size(); ++i) {
+                    if (tp->mesh.vertices[i].y > tp->mesh.vertices[top].y) top = i;
+                    if (tp->mesh.vertices[i].y < tp->mesh.vertices[bottom].y) bottom = i;
+                }
+                CHECK(tp->mesh.uvs[top].y < tp->mesh.uvs[bottom].y);
+            } }
         // cubic projection: the texture is kept, no UVs, a note
         CHECK(Read(Box2(true, 3), m, err) && HasNote(m, "cubic or front"));
         bool anyUv = false, tex = false;

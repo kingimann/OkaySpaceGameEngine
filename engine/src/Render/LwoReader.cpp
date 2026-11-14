@@ -67,71 +67,126 @@ struct Layer {
     std::map<std::string, std::map<std::uint64_t, Vec2>> vmad;   // key = point << 32 | polygon
 };
 
-// UVs for a surface whose image map is planar (0), cylindrical (1) or spherical (2) around axis X, Y or Z, one per triangle
-// corner (`ci` holds the position index of each corner, stored as (u, 1 - v)). This is Assimp's ComputeUVMappingProcess:
-// the box and centre are those of the surface's vertices, and U values near the seam are rounded to the side of the face.
+// Projected texture coordinates for a surface whose image map is planar (0), cylindrical (1) or spherical (2) about its
+// main axis X, Y or Z: one UV per triangle corner (`ci` holds each corner's position index), stored as (u, 1 - v) like
+// every other UV this reader makes.
+//
+// Our own code, written from the geometry of the three projections (rule 19a). The projection is placed on the
+// surface's own bounding box, which is how this reader has always placed it (the map's own TMAP centre, size and
+// rotation are not read yet; see docs/own_lwo_reader.md):
+//   - each main axis A has a fixed pair of other axes (P, Q): X -> (Z, Y), Y -> (X, Z), Z -> (X, Y);
+//   - planar: u and v are where the point sits across the box along P and along Q (0 at the low side, 1 at the high side);
+//   - cylindrical: u is the angle around A, seen from the box centre, as a fraction of a turn (where the turn starts is
+//     set per axis, see TurnRuleFor) and times the width wrap amount; v is the position along A across the box;
+//   - spherical: u is the same angle (times the width wrap amount); v is the latitude, from -90 degrees (0) to +90
+//     degrees (1), times the height wrap amount.
+// A triangle that straddles the seam where the angle jumps from a full turn back to 0 would smear the whole image across
+// itself; its corners that sit on the far side of the seam are moved onto the seam on the side most of the triangle is
+// on, so the values never leave 0 .. wrap.
+namespace proj {
+
+struct Axes { int a, p, q; };
+inline Axes AxesFor(int mainAxis) {
+    switch (mainAxis) {
+    case 0:  return {0, 2, 1};
+    case 1:  return {1, 0, 2};
+    default: return {2, 0, 1};
+    }
+}
+inline double Coord(const Vec3& v, int i) { return i == 0 ? v.x : i == 1 ? v.y : v.z; }
+
+struct Box {
+    double low[3] = {0, 0, 0}, high[3] = {0, 0, 0};
+    double Mid(int i) const { return 0.5 * (low[i] + high[i]); }
+    // Where `x` sits across the box along axis i, 0 .. 1; a flat box (no extent) puts everything in the middle.
+    double Across(double x, int i) const {
+        const double extent = high[i] - low[i];
+        return extent > 1e-20 ? (x - low[i]) / extent : 0.5;
+    }
+};
+
+inline Box BoxOf(const std::vector<Vec3>& pos) {
+    Box b;
+    if (pos.empty()) return b;
+    for (int i = 0; i < 3; ++i) b.low[i] = b.high[i] = Coord(pos[0], i);
+    for (const Vec3& v : pos)
+        for (int i = 0; i < 3; ++i) { const double c = Coord(v, i); if (c < b.low[i]) b.low[i] = c; if (c > b.high[i]) b.high[i] = c; }
+    return b;
+}
+
+constexpr double kTurn = 6.283185307179586476925;   // 2 pi
+
+// The angle around the main axis as a fraction of a turn, 0 .. 1 (a point on the axis itself gets 0). Where the turn
+// starts and which way it runs is fixed per axis so that images land where this reader has always put them (measured on
+// the real cylindrical and spherical files in docs/model_corpus.md, every corner the same):
+// (positions here are the engine's, the file's Z already mirrored):
+//   X: from +Y towards +Z, starting half a turn round;  Y: from -Z towards -X;  Z: from +X towards +Y, half a turn round.
+struct TurnRule { int across, up; double acrossSign, upSign, start; };   // angle = atan2(upSign * up, acrossSign * across) + start
+inline TurnRule TurnRuleFor(int mainAxis) {
+    switch (mainAxis) {
+    case 0:  return {1, 2, 1.0, 1.0, 0.5};
+    case 1:  return {2, 0, -1.0, -1.0, 0.0};
+    default: return {0, 1, 1.0, 1.0, 0.5};
+    }
+}
+inline double TurnFraction(const Vec3& v, const Box& b, const Axes& ax) {
+    const TurnRule rule = TurnRuleFor(ax.a);
+    const double across = Coord(v, rule.across) - b.Mid(rule.across), up = Coord(v, rule.up) - b.Mid(rule.up);
+    if (across == 0.0 && up == 0.0) return 0.0;
+    double f = std::atan2(rule.upSign * up, rule.acrossSign * across) / kTurn + rule.start;   // -0.5 .. 1.0
+    f -= std::floor(f);
+    return f >= 1.0 ? 0.0 : f;
+}
+
+// Latitude of the point seen from the box centre, -90 .. +90 degrees, as 0 .. 1 (the centre itself gets 0.5).
+inline double LatitudeFraction(const Vec3& v, const Box& b, const Axes& ax) {
+    const double da = Coord(v, ax.a) - b.Mid(ax.a), dp = Coord(v, ax.p) - b.Mid(ax.p), dq = Coord(v, ax.q) - b.Mid(ax.q);
+    const double r = std::sqrt(da * da + dp * dp + dq * dq);
+    if (!(r > 0.0)) return 0.5;
+    const double s = std::max(-1.0, std::min(1.0, da / r));
+    return 0.5 + std::asin(s) / (kTurn / 2.0);
+}
+
+// Keeps a seam-straddling triangle on one side of the seam (see above). `u` holds the triangle's three values, 0 .. wrap.
+inline void MendSeam(double u[3], double wrap) {
+    const double half = 0.5 * wrap;
+    const double lo = std::min(u[0], std::min(u[1], u[2])), hi = std::max(u[0], std::max(u[1], u[2]));
+    if (hi - lo <= half) return;   // no jump inside this triangle
+    int nearHigh = 0;
+    for (int k = 0; k < 3; ++k) if (u[k] > half) ++nearHigh;
+    for (int k = 0; k < 3; ++k) {
+        if (nearHigh >= 2 && u[k] <= half) u[k] = wrap;   // most of it is just below a full turn: pull the rest up to the seam
+        if (nearHigh < 2 && u[k] > half) u[k] = 0.0;      // most of it is just past 0: pull the rest down to the seam
+    }
+}
+
+} // namespace proj
+
 void ProjectUvs(const std::vector<Vec3>& pos, const std::vector<std::uint32_t>& ci, const Surf& sf, std::vector<Vec2>& cuv) {
-    const double kPi = 3.14159265358979323846;
-    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
-    for (const Vec3& v : pos) {
-        lo.x = std::min(lo.x, v.x); lo.y = std::min(lo.y, v.y); lo.z = std::min(lo.z, v.z);
-        hi.x = std::max(hi.x, v.x); hi.y = std::max(hi.y, v.y); hi.z = std::max(hi.z, v.z);
-    }
-    const double c[3] = {0.5 * ((double)lo.x + hi.x), 0.5 * ((double)lo.y + hi.y), 0.5 * ((double)lo.z + hi.z)};
-    const double mn[3] = {lo.x, lo.y, lo.z}, mx[3] = {hi.x, hi.y, hi.z};
-    auto frac = [&](double v, int a) { const double d = mx[a] - mn[a]; return d > 1e-20 ? (v - mn[a]) / d : 0.0; };
-    // the two axes after `ax` in Assimp's formulas: X -> (Z, Y), Y -> (X, Z), Z -> (X, Y); angle taken as atan2(second, first)
-    const int ax = sf.axis;
-    const int a1 = ax == 0 ? 2 : 0, a2 = ax == 0 ? 1 : (ax == 1 ? 2 : 1);   // planar: u from a1, v from a2
-    cuv.assign(ci.size(), Vec2{0, 0});
-    std::vector<Vec2> uv(ci.size());
-    for (std::size_t k = 0; k < ci.size(); ++k) {
-        const Vec3& p = pos[ci[k]];
-        const double q[3] = {p.x, p.y, p.z};
-        double u = 0, v = 0;
-        if (sf.proj == 0) { u = frac(q[a1], a1); v = frac(q[a2], a2); }
-        else if (sf.proj == 1) {
-            // angle from the two axes other than the main one: X -> atan2(z, y), Y -> atan2(x, z), Z -> atan2(y, x)
-            const int p1 = ax == 0 ? 2 : (ax == 1 ? 0 : 1), p2 = ax == 0 ? 1 : (ax == 1 ? 2 : 0);
-            u = (std::atan2(q[p1] - c[p1], q[p2] - c[p2]) + kPi) / (2 * kPi);
-            v = frac(q[ax], ax);
-        } else {
-            const int p1 = ax == 0 ? 2 : (ax == 1 ? 0 : 1), p2 = ax == 0 ? 1 : (ax == 1 ? 2 : 0);
-            double d[3] = {q[0] - c[0], q[1] - c[1], q[2] - c[2]};
-            const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            if (len > 1e-20) { d[0] /= len; d[1] /= len; d[2] /= len; }
-            u = (std::atan2(d[p1], d[p2]) + kPi) / (2 * kPi);
-            v = (std::asin(std::max(-1.0, std::min(1.0, d[ax]))) + 0.5 * kPi) / kPi;
-        }
-        uv[k] = Vec2{(float)u, (float)v};
-    }
-    if (sf.proj != 0) {   // seams: a triangle with a U under 0.1 and another over 0.9 has the odd ones rounded to the other side
-        for (std::size_t t = 0; t + 2 < uv.size(); t += 3) {
-            bool zero = false, one = false, roundToZero = false, small = false, large = false;
-            for (int n = 0; n < 3; ++n) {
-                const float x = uv[t + (std::size_t)n].x;
-                if (x < 0.1f) { small = true; if (x <= 0.01f) zero = true; else roundToZero = true; }
-                if (x > 0.9f) { large = true; if (x >= 0.99f) one = true; }
-            }
-            if (!small || !large) continue;
-            for (int n = 0; n < 3; ++n) {
-                float& x = uv[t + (std::size_t)n].x;
-                if (x > 0.9f && !zero) x = 0.0f;
-                else if (x < 0.1f && !one) x = 1.0f;
-                else if (one && zero) {
-                    if (roundToZero && x >= 0.99f) x = 0.0f;
-                    else if (!roundToZero && x <= 0.01f) x = 1.0f;
-                }
+    using namespace proj;
+    const Box box = BoxOf(pos);
+    const Axes ax = AxesFor(sf.axis);
+    const double wrapW = std::isfinite(sf.wrapW) && sf.wrapW > 0.0f ? (double)sf.wrapW : 1.0;
+    const double wrapH = std::isfinite(sf.wrapH) && sf.wrapH > 0.0f ? (double)sf.wrapH : 1.0;
+    cuv.assign(ci.size(), Vec2{0.0f, 0.0f});
+    for (std::size_t t = 0; t + 2 < ci.size(); t += 3) {
+        double u[3], v[3];
+        for (int k = 0; k < 3; ++k) {
+            const std::uint32_t idx = ci[t + (std::size_t)k];
+            const Vec3 p = idx < pos.size() ? pos[idx] : Vec3{0, 0, 0};
+            if (sf.proj == 0) {
+                u[k] = box.Across(Coord(p, ax.p), ax.p);
+                v[k] = box.Across(Coord(p, ax.q), ax.q);
+            } else if (sf.proj == 1) {
+                u[k] = TurnFraction(p, box, ax) * wrapW;
+                v[k] = box.Across(Coord(p, ax.a), ax.a);
+            } else {
+                u[k] = TurnFraction(p, box, ax) * wrapW;
+                v[k] = LatitudeFraction(p, box, ax) * wrapH;
             }
         }
-    }
-    const bool wrap = sf.proj != 0;   // wrap amounts scale a cylindrical or spherical map
-    for (std::size_t k = 0; k < ci.size(); ++k) {
-        float u = uv[k].x, v = uv[k].y;
-        if (wrap) { u *= sf.wrapW; v *= sf.wrapH; }
-        if (!std::isfinite(u)) u = 0;
-        if (!std::isfinite(v)) v = 0;
-        cuv[k] = Vec2{u, 1.0f - v};
+        if (sf.proj != 0) MendSeam(u, wrapW);
+        for (int k = 0; k < 3; ++k) cuv[t + (std::size_t)k] = Vec2{(float)u[k], (float)(1.0 - v[k])};
     }
 }
 
@@ -494,9 +549,8 @@ struct Reader {
                     }
                 }
             }
-            // Planar, cylindrical and spherical image maps: UVs from the positions of this surface's mesh, in the layer's space
-            // (the same mapping as Assimp's GenUVCoords step: from the mesh's bounding box, ignoring the map's own centre, size
-            // and rotation; a cylindrical or spherical map's wrap amounts scale U and V).
+            // Planar, cylindrical and spherical image maps: UVs from the positions of this surface's mesh, in the layer's space,
+            // placed on the mesh's own bounding box (ProjectUvs above; the map's TMAP centre, size and rotation are not read yet).
             for (auto& kv : soups) {
                 SurfSoup& ss = kv.second;
                 if (kv.first < 0 || ss.soup.ci.empty()) continue;
@@ -553,7 +607,7 @@ struct Reader {
         if (envelopes) note(std::to_string(envelopes) + " animated (envelope) surface value(s) not read; the base values are used");
         if (procBlocks) note(std::to_string(procBlocks) + " shader, procedural or gradient texture block(s) not read");
         if (otherTex) note(std::to_string(otherTex) + " texture block(s) for channels other than colour, or second colour maps, not read");
-        if (projApplied) note(std::to_string(projApplied) + " image map(s) with planar, cylindrical or spherical projection: UVs were generated from the mesh's bounding box (as Assimp does), the map's own centre, size and rotation are not applied");
+        if (projApplied) note(std::to_string(projApplied) + " image map(s) with planar, cylindrical or spherical projection: UVs were generated from the mesh's bounding box, the map's own centre, size and rotation are not applied");
         if (nonUvProj) note(std::to_string(nonUvProj) + " image map(s) with cubic or front projection: the texture is kept but no UVs are made");
         if (otherVmaps) note(std::to_string(otherVmaps) + " vertex map(s) that are not UV (weights, colours, morphs) not read");
         if (smgp) note(std::to_string(smgp) + " smoothing group tag block(s) not read; the surface smoothing angle is used");

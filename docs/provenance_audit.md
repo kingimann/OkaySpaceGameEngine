@@ -17,7 +17,7 @@ that nothing else was copied; see "Method and limits".
 
 | # | Severity | Where | Possible source and licence | Action |
 |---|---|---|---|---|
-| 1 | **Clear copy / close port** | `engine/src/Render/LwoReader.cpp` lines 70 to 134 (`ProjectUvs`) | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Rewrite from the idea (section F1) |
+| 1 | ~~Clear copy / close port~~ **CLOSED: rewritten** | was `engine/src/Render/LwoReader.cpp` lines 70 to 134 (`ProjectUvs`) | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Done: rewritten as our own code from the geometry (F1) |
 | 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | **Probable copy of public-domain constants (not listed)** | `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Ask the owner, or pick our own delay lengths (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
@@ -57,6 +57,12 @@ tinyfiledialogs (#640), stb_decompress (engine side).
 ## Findings in detail
 
 ### F1. LWO planar, cylindrical and spherical UV projection (clear copy / close port)
+
+**Closed (2026-11-14, branch `claude2/lwo-uv-rewrite`).** The owner said nothing may be copied. `ProjectUvs` was deleted and written again from the geometry of planar, cylindrical and spherical projection. Neither the old function nor Assimp's code was read for the rewrite: only the old function's first 14 lines were seen once by accident, and they show the bounding-box idea already described here.
+- **Same results.** Where the turn starts on each axis was set so that every vertex keeps the UV the old version gave it, measured on the real files.
+- **The seam.** It is handled by our own rule: a seam-straddling triangle's odd corner is moved onto the seam on the majority side. There are no thresholds or flags.
+- **Checks.** `lwo_reader` (66 checks; new ones for the seam and for latitude) and `batchb_hostile` (23,926 checks) pass. On the corpus, all 52 LWO files give the same meshes, triangles, materials, textures, nodes and UV/normal presence as before; only the 13 cylindrical and spherical files changed vertex count, from the new seam rule. What follows is the original finding.
+
 
 - **File and lines:** `engine/src/Render/LwoReader.cpp`, `ProjectUvs`, about lines 70 to 134; the call site near 495 to 505.
 - **Evidence from our own text:** line 71, "This is Assimp's ComputeUVMappingProcess"; line 83, "the two axes after `ax` in Assimp's formulas"; line 498, "the same mapping as Assimp's GenUVCoords step"; `docs/own_lwo_reader.md` line 23 says the same. The file's first lines say "no code from any other importer", which is therefore wrong for this function.

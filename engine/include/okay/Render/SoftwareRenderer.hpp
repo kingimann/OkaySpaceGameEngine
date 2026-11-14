@@ -917,6 +917,10 @@ inline bool& PerPixelLighting() { static bool v = false; return v; }  // default
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
 inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by default (modern look); opt-out
+/// When shadows are on and this frame has a shadow map, lit meshes that receive shadows take the per-pixel
+/// path even if PerPixelLighting() is off (shadows are only sampled there). Default on, so shadows show by
+/// default. Turn off to get the faster per-vertex path back (it draws no shadows).
+inline bool& ShadowsUsePerPixel() { static bool v = true; return v; }
 inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
@@ -1740,6 +1744,92 @@ inline void ApplyColorGrade(Raster& r) {
     });
 }
 
+// ---- The scene's Post-processing section, on the CPU -------------------------
+/// What the software renderer takes from Scene::RenderSettings (the part that is cheap on a CPU):
+/// exposure, the tonemap curve (None / ACES / Filmic, and the scene's Tonemap switch), white balance,
+/// saturation, contrast, lift / gamma / gain, the vignette (with its smoothness), bloom and FXAA.
+/// Same maths as the OpenGL "uber" pass (kUberFrag), but on 8-bit colour: the software renderer shades
+/// in display space and has no HDR buffer, so the curves act on 0..1 values (the process-wide switches
+/// behave exactly as before). NOT supported on the CPU: SSAO from the scene, depth of field (see
+/// docs/render_status.md).
+struct ScenePostPlan {
+    int   tonemap = 1;           // 0 none, 1 ACES, 2 Filmic
+    float exposure = 1.0f;
+    bool  grade = false;
+    float temperature = 0, tint = 0, saturation = 1, contrast = 1;
+    Vec3  lift{0, 0, 0}, gamma{0, 0, 0}, gain{0, 0, 0};
+    float vignette = 0, vignetteSmooth = 0.5f;
+    bool  any() const { return tonemap != 0 || exposure != 1.0f || grade || vignette > 0.0f; }
+};
+/// Fold the scene's settings and the process-wide switches into one plan. The process-wide tonemap /
+/// exposure switch still turns the curve off, as before; the scene can turn it off too.
+inline ScenePostPlan PlanScenePost(const Scene::RenderSettings& rs) {
+    ScenePostPlan p;
+    const auto& ps = rs.post;
+    p.tonemap = (ToneMapEnabled() && rs.tonemap) ? ps.tonemap : 0;
+    p.exposure = ExposureScale(rs) * (ToneMapEnabled() ? Exposure() : 1.0f);
+    p.grade = ps.grading;
+    p.temperature = ps.temperature; p.tint = ps.tint; p.saturation = ps.saturation; p.contrast = ps.contrast;
+    p.lift = ps.lift; p.gamma = ps.gamma; p.gain = ps.gain;
+    p.vignette = rs.vignette > 1.0f ? 1.0f : (rs.vignette > 0.0f ? rs.vignette : 0.0f);
+    p.vignetteSmooth = ps.vignetteSmooth;
+    return p;
+}
+/// Apply a plan to one 0..1 colour (exposure, curve, grade). Exposed so tests can check single values.
+inline Vec3 ScenePostColor(const ScenePostPlan& p, Vec3 c) {
+    c = c * p.exposure;
+    if (p.tonemap != 0) c = TonemapColor(c, p.tonemap);
+    else c = {Mathf::Clamp01(c.x), Mathf::Clamp01(c.y), Mathf::Clamp01(c.z)};
+    if (p.grade) {
+        c = {c.x * (1.0f + 0.25f * p.temperature), c.y * (1.0f + 0.2f * p.tint), c.z * (1.0f - 0.25f * p.temperature)};
+        const float l = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+        c = {l + (c.x - l) * p.saturation, l + (c.y - l) * p.saturation, l + (c.z - l) * p.saturation};
+        c = {(c.x - 0.5f) * p.contrast + 0.5f, (c.y - 0.5f) * p.contrast + 0.5f, (c.z - 0.5f) * p.contrast + 0.5f};
+        c = {c.x * (1.0f + p.gain.x) + p.lift.x * (1.0f - c.x),
+             c.y * (1.0f + p.gain.y) + p.lift.y * (1.0f - c.y),
+             c.z * (1.0f + p.gain.z) + p.lift.z * (1.0f - c.z)};
+        auto g = [](float v, float gm) { return std::pow(v < 0 ? 0.0f : v, 1.0f / std::fmax(1.0f + gm * 0.75f, 0.1f)); };
+        c = {g(c.x, p.gamma.x), g(c.y, p.gamma.y), g(c.z, p.gamma.z)};
+    }
+    return c;
+}
+/// The vignette darkening (0..0.8) at a pixel, the same formula as the GPU uber pass.
+inline float ScenePostVignette(const ScenePostPlan& p, float u, float v, float aspect) {
+    if (p.vignette <= 0.0f) return 0.0f;
+    const float dx = (u - 0.5f) * aspect * 2.0f, dy = (v - 0.5f) * 2.0f;
+    const float rr = std::sqrt(dx * dx + dy * dy) / std::sqrt(aspect * aspect + 1.0f);
+    const float e0 = std::fmax(1.0f - p.vignetteSmooth * 1.3f, 0.0f), e1 = 1.05f;
+    float t = (rr - e0) / (e1 - e0); t = t < 0 ? 0.0f : (t > 1 ? 1.0f : t);
+    return 0.8f * p.vignette * t * t * (3.0f - 2.0f * t);
+}
+inline void ApplyScenePost(Raster& r, const ScenePostPlan& p) {
+    if (!p.any()) return;
+    const int W = r.width, H = r.height;
+    if (W < 1 || H < 1) return;
+    const float aspect = (float)W / (float)H;
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
+        for (int x = 0; x < W; ++x) {
+            const std::size_t i = (std::size_t)y * W + x;
+            const std::uint32_t px = r.color[i];
+            Vec3 c = ScenePostColor(p, {(float)(px & 0xFF) / 255.0f, (float)((px >> 8) & 0xFF) / 255.0f,
+                                        (float)((px >> 16) & 0xFF) / 255.0f});
+            std::uint32_t a = px >> 24;
+            if (p.vignette > 0.0f) {
+                // Same coverage maths as the GPU pass: the frame's own alpha is its coverage, and the
+                // vignette adds black coverage on top, so an empty (sky) pixel still darkens at the edge.
+                const float v = ScenePostVignette(p, ((float)x + 0.5f) / W, ((float)y + 0.5f) / H, aspect);
+                const float cov = (float)a / 255.0f;
+                const float oa = 1.0f - (1.0f - v) * (1.0f - cov);
+                const float k = oa > 1e-4f ? cov * (1.0f - v) / oa : 0.0f;
+                c = c * k; a = (std::uint32_t)(oa * 255.0f + 0.5f);
+            }
+            auto cl = [](float f) { return (std::uint32_t)((f < 0 ? 0 : (f > 1 ? 1 : f)) * 255.0f + 0.5f); };
+            r.color[i] = (a << 24) | (cl(c.z) << 16) | (cl(c.y) << 8) | cl(c.x);
+        }
+    });
+}
+
 // ---- Anti-aliasing (FXAA-lite) ---------------------------------------------
 inline bool& FXAAEnabled() { static bool v = true; return v; }
 
@@ -2163,7 +2253,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                    || mr->shader == MeshRenderer::Shader::Hologram
                                    || mr->shader == MeshRenderer::Shader::Posterize
                                    || mr->shader == MeshRenderer::Shader::Velvet
-                                   || mr->rimStrength > 0.0f || mr->triplanar)
+                                   || mr->rimStrength > 0.0f || mr->triplanar
+                                   || (ShadowsUsePerPixel() && mr->receiveShadows
+                                       && (Shadows().enabled || LocalShadowsActive())))
                                   && !unlit && !useMatcap;
             const int  shaderMode = (int)mr->shader;
             const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
@@ -2218,10 +2310,20 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Split the frame into horizontal bands across hardware threads.
     ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); });
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
-    ApplyBloom(r);                                                   // bright-pass glow
-    ApplyToneMap(r);                                                 // filmic highlight rolloff
-    ApplyColorGrade(r);                                              // brightness/contrast/sat/vignette/gamma
-    ApplyFXAA(r);                                                    // edge anti-aliasing
+    if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
+        BloomEnabled() = true;
+        const float t0 = BloomThreshold(), i0 = BloomIntensity();
+        BloomThreshold() = std::fmin(rs.post.bloomThreshold, 0.95f);   // 8-bit frame: no values above 1
+        BloomIntensity() = rs.post.bloomIntensity;
+        ApplyBloom(r);
+        BloomEnabled() = false; BloomThreshold() = t0; BloomIntensity() = i0;
+    } else ApplyBloom(r);                                            // bright-pass glow
+    const ScenePostPlan postPlan = PlanScenePost(rs);
+    ApplyScenePost(r, postPlan);                                     // scene exposure, tonemap, grade, vignette
+    ApplyColorGrade(r);                                              // process-wide brightness/contrast/sat/vignette/gamma
+    if (rs.post.fxaa && !FXAAEnabled()) { FXAAEnabled() = true; ApplyFXAA(r); FXAAEnabled() = false; }
+    else ApplyFXAA(r);                                               // edge anti-aliasing
+    PostVignetteHandled() = postPlan.vignette > 0.0f;                // the host skips its own overlay
     LastCullCounters().drawn = swDrawn;
 }
 
@@ -2234,7 +2336,6 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
                                            int w, int h, int ss, const GameObject* ignore = nullptr) {
     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
     while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
-    PostVignetteHandled() = false;   // the host paints the vignette over a software frame
     const int iw = w * ss, ih = h * ss;
     work.Resize(iw, ih);
     work.Clear(0u);
@@ -2283,8 +2384,10 @@ inline void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
                                const Scene& scene, const Mat4& vp, const Vec3& eye,
                                int w, int h, const GameObject* ignore = nullptr) {
     const CullCounters saved = LastCullCounters();
+    const bool vigSaved = PostVignetteHandled();   // this pass is never shown: it must not change who paints the vignette
     RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
     LastCullCounters() = saved;
+    PostVignetteHandled() = vigSaved;
 }
 
 } // namespace okay

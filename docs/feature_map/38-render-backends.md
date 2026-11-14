@@ -91,23 +91,23 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 ### 38.5 Software rasterizer
 - **What:** The CPU renderer that runs everywhere and is the fallback and the test renderer: a z-buffered triangle rasterizer with lighting, shadows and its own post passes.
 - **Parts:**
-  - 38.5.1 Rasterizer - `Render/SoftwareRenderer` - `Raster`: W-buffer depth, perspective-correct textured triangles with mip maps, flat or per-pixel lighting
+  - 38.5.1 Rasterizer - `Render/SoftwareRenderer` - `Raster`: W-buffer depth, perspective-correct textured triangles with mip maps, flat or per-pixel lighting (per-pixel is chosen automatically while a shadow map exists, `ShadowsUsePerPixel`)
   - 38.5.2 Scene draw - `Render/SoftwareRenderer` - `RenderMeshes` and `RenderMeshesSS` (supersampled), frustum culling, camera culling mask, row-parallel passes (`ParallelRows`)
-  - 38.5.3 Shadows - `Render/SoftwareRenderer` - cascaded sun shadow maps with soft filtering (`ShadowMap`, `ShadowFactor`), plus spot, point and area light shadow maps (`RenderLocalShadowMaps`, `LocalShadowFactor`, `LocalShadowMath.hpp`); drawn on the per-pixel path only
-  - 38.5.4 Post passes - `Render/SoftwareRenderer` - SSAO, bloom, tonemap, colour grade, vignette, FXAA with process-wide switches (see 2.5.3)
+  - 38.5.3 Shadows - `Render/SoftwareRenderer` - cascaded sun shadow maps with soft filtering (`ShadowMap`, `ShadowFactor`), plus spot, point and area light shadow maps (`RenderLocalShadowMaps`, `LocalShadowFactor`, `LocalShadowMath.hpp`); drawn by default (the per-pixel path is used while a shadow map exists)
+  - 38.5.4 Post passes - `Render/SoftwareRenderer` - SSAO, bloom, tonemap, colour grade, vignette, FXAA; the process-wide switches (see 2.5.3) and, for everything but SSAO, the scene's Post-processing section (`PlanScenePost`, `ApplyScenePost`)
   - 38.5.5 Texture caches - `Render/SoftwareRenderer` - `RegisterTexture`, `GetCachedTexture`, mip chains; the GPU backends reuse this cache, including `proc:` textures
   - 38.5.6 Occlusion depth - `Render/SoftwareRenderer` - `SceneOcclusionDepth` lets particles and lines hide behind geometry
 - **Code:** `Render/SoftwareRenderer`
 - **API:** `Raster`, `RenderMeshes`, `RenderMeshesSS`, `Shadows()`, `ShadowsEnabled()`, `PerPixelLighting()`, `SceneOcclusionDepth`
 - **Editor:** the fallback for the Scene and Game views; Lighting panel > Rendering section switches
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
-- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
+- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
-- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting, SSAO and bloom are off by default; no procedural sky, clouds or DoF; shadows only on the per-pixel path
+- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky, clouds or DoF; the scene's SSAO switch is not read
 - **Related:** 38.1, 38.10, 2.3, 2.5, 2.8
 - **Words:** software renderer, Raster, RenderMeshes, RenderMeshesSS, CPU rasterizer, z-buffer, W-buffer, supersampling, fallback renderer, mip map
-- **Seen as:** 1 FPS with a large model; jagged edges; no shadows at all until Per-pixel lighting is on
-- **Ask me like:** "Why is the software renderer used when I have a GPU?"; "Turn per-pixel lighting on by default in the software path"
+- **Seen as:** 1 FPS with a large model; jagged edges; shadows missing after turning `ShadowsUsePerPixel` off
+- **Ask me like:** "Why is the software renderer used when I have a GPU?"; "Draw software shadows on the vertex path"
 
 ### 38.6 Console renderer
 - **What:** A dependency-free renderer that draws 2D quads as characters in the terminal, so the engine runs headless.

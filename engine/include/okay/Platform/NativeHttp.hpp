@@ -9,9 +9,19 @@
 //
 // Elsewhere (and if WinHTTP can't reach the server, e.g. an odd proxy setup)
 // Request returns reached=false and callers fall back to the curl path.
+//
+// Linux and other POSIX systems can OPT IN to our own HTTP/1.1 client
+// (OwnHttp.hpp / OwnHttpNet.hpp, docs/own_http_client.md): build with
+// -DOKAY_OWN_HTTP=ON and set the environment variable OKAY_OWN_HTTP=1. TLS then
+// comes from the system OpenSSL, loaded at run time. If libssl cannot be loaded,
+// the certificate does not verify, or anything else goes wrong before a response
+// arrives, reached stays false and the spawned curl path runs as before. It is off
+// by default; the curl path remains the default and the fallback.
 // ---------------------------------------------------------------------------
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,6 +29,9 @@
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <winhttp.h>
+#elif defined(OKAY_OWN_HTTP) && !defined(__APPLE__)
+#  include "okay/Platform/OwnHttpNet.hpp"
+#  define OKAY_OWN_HTTP_ACTIVE 1
 #endif
 
 namespace okay::http {
@@ -27,6 +40,7 @@ struct Result {
     bool        reached = false;   ///< got an HTTP response (any status)
     long        status = 0;
     std::string body;              ///< response body (empty when written to outFile)
+    std::string error;             ///< own client only: why no response was obtained (for logs)
 };
 
 #if defined(_WIN32)
@@ -61,10 +75,14 @@ inline HINTERNET Session() {
 } // namespace detail
 #endif
 
-/// True where the native client exists (Windows); the curl path is used elsewhere.
+/// True where the native client exists: Windows (WinHTTP), or POSIX built with
+/// OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1. The curl path is used otherwise.
 inline bool NativeAvailable() {
 #if defined(_WIN32)
     return detail::Session() != nullptr && !std::getenv("OKAY_HTTP_CURL");
+#elif defined(OKAY_OWN_HTTP_ACTIVE)
+    const char* on = std::getenv("OKAY_OWN_HTTP");
+    return on && on[0] == '1' && on[1] == '\0' && !std::getenv("OKAY_HTTP_CURL");
 #else
     return false;
 #endif
@@ -135,6 +153,36 @@ inline Result Request(const std::string& method, const std::string& url,
     }
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(con);
+#elif defined(OKAY_OWN_HTTP_ACTIVE)
+    if (!NativeAvailable()) return r;
+    std::string payload = body;
+    if (!bodyFile.empty()) {
+        std::ifstream f(bodyFile, std::ios::binary);
+        if (!f) { r.error = "cannot read the body file"; return r; }
+        std::stringstream ss; ss << f.rdbuf(); payload = ss.str();
+    }
+    okay::ownhttp::NetOptions opt;
+    opt.limits.maxBodyBytes = outFile.empty() ? (64ull << 20) : (8ull << 30);   // memory vs. a download to disk
+    struct Out { std::ofstream f; bool open = false; };
+    auto out = std::make_shared<Out>();
+    okay::ownhttp::FetchHooks hooks;
+    if (!outFile.empty()) {
+        hooks.onHead = [out, outFile](const okay::ownhttp::Response&) {
+            out->f.open(outFile, std::ios::binary | std::ios::trunc);
+            out->open = out->f.is_open();
+            return out->open;
+        };
+        hooks.onData = [out](const char* p, size_t n) { out->f.write(p, std::streamsize(n)); return bool(out->f); };
+    }
+    okay::ownhttp::FetchResult fr = okay::ownhttp::Perform(method, url, headers, payload, opt, hooks);
+    if (out->open) out->f.close();
+    if (fr.ok) {
+        r.reached = true;
+        r.status = fr.response.status;
+        r.body = std::move(fr.response.body);
+    } else {
+        r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
+    }
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile;
 #endif

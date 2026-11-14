@@ -54,18 +54,15 @@ page covers what an object round trip keeps.
   `loadingscreen ... "<subtitle>" "<logo>" <asyncLoad> <objectsPerFrame>` (a record without the two numbers loads with
   background loading off, so a scene saved before it keeps loading in one go).
 - **Duplicate components:** `AddComponent` twice is allowed at runtime and
-  `GetComponent` returns the first. Scripts, visual scripts, action lists, tweens, sync vars,
-  validators, state machines, every 2D and 3D collider (a compound collider is several shapes on one
-  object), audio sources, joints (`Joint2D`, `Joint3D`: one per neighbour), spawners, lights, particle systems
-  (each with its own `particlesfx` / `particleswind` lines, which belong to the `particles` line before them),
-  trigger zones, UI animations, sequence players and quest triggers are saved per instance, in order, with their
-  own values and their own `compoff` switch. Every other type (for example `SpriteRenderer`, `TextRenderer`,
-  `Camera`, `Mover`) saves only its first instance. A text with two records of one of those
-  other types loads both and adds a warning (`object N has two 'X' components; only the first is saved`).
-  The per-instance types are exactly those `AllowsMultiple` lists in `SceneSerializer.cpp`; to add one, make
-  its writer loop over `GetComponents<T>()` (the reader already adds one component per record) and add it
-  there. The trigger filter record (`trigfilter2d` / `trigfilter3d`) is still one per object and applies to
-  every collider on it.
+  `GetComponent` returns the first. Every component the file knows is saved per instance, in the
+  order it is stored, with its own values and its own `compoff` switch. A follow-up line
+  (`particlesfx`, `meshgeo`, `fpfeel`, `loc`, and the rest) belongs to the instance it was written
+  with: grouped under that instance, or marked with `i=<index>` when the line is a later sidecar
+  (`loc`, `uix`, `terrainlayers`). The first instance omits `i`, so a file with one of each type
+  is unchanged. An older file (one record, no index) loads as it always did. The trigger filter
+  (`trigfilter2d` / `trigfilter3d`) is still one line when every collider on the object shares it,
+  and that line still applies to all of them; when the filters differ, each collider gets its own
+  line with its index.
 - **Key bindings in one-token records:** the records `tdctrl`, `tdctrl2d`, `charctrl2d`, `ctmctrl` and `tpsctrl` name a key
   (sprint, run, dash, fire, camera turn) as one token. Older builds wrote the raw character, which broke the record for
   space, tab and Enter (the later fields shifted by one) and read `-` ("no key") back as no key. Now a printable character
@@ -124,8 +121,8 @@ unchanged.
   record is written for 119 of them and not for the writer's own.
 * `SceneText` (the tolerant parser, `Canonicalize`) now lists `comporder` among the records it knows (the fourth pass had left it out, so
   an object that wrote one was kept in file order instead of the writer's); prefab tools treat it as bookkeeping (see above).
-* Not changed: components that are not saved at all (a plain C++ `Behaviour` nobody registered) and the second instance of a
-  single-instance type are still dropped, so their place in the order cannot be saved either.
+* Not changed: components that are not saved at all (a plain C++ `Behaviour` nobody registered) are still dropped, so their
+  place in the order cannot be saved either. A second instance of a saved type is kept, in order.
 
 ## What changed: scene serializer, wave 7 (1.5)
 
@@ -148,5 +145,5 @@ below; not the validators at the end of the file.
 * Checked and fine: every finite float (denormals, `-0`, the largest and smallest) reads back bit for bit; names, tags and
   strings with quotes, backslashes, UTF-8, tabs and line breaks; merging a scene into itself keeps every id unique and each
   child under its own parent; two objects with one `guid` load with a warning and a new id for the second.
-* Not changed: a second `SpriteRenderer`, `TextRenderer` or `Camera` on one object still saves only the first; the scene text
-  is still parsed twice by a full load (a throwaway pass first, so a bad file leaves the scene alone).
+* Not changed: the scene text is still parsed twice by a full load (a throwaway pass first, so a bad file leaves the scene alone).
+  A second `SpriteRenderer`, `TextRenderer`, `Camera` or any other saved component is kept; see "Duplicate components".

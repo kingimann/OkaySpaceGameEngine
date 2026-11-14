@@ -160,7 +160,7 @@ public:
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
 
-    void Clear() { m_contacts.clear(); }
+    void Clear() { m_contacts.clear(); m_meshContacts.clear(); }
 
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
@@ -180,6 +180,7 @@ public:
 private:
     using Pair = std::pair<Collider3D*, Collider3D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
+    std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay3D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact3D> m_debugContacts;

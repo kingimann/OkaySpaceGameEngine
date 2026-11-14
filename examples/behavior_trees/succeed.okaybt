@@ -1,0 +1,8 @@
+okaybt 1
+name Succeed
+key done bool false
+key heard string ""
+root 0
+node 0 Sequence parent=-1 x=200 y=0 name=Succeed
+node 1 RunSubtree parent=0 x=40 y=120 name=Quick tree=quick.okaybt map=heard<shout
+node 2 SetBlackboard parent=0 x=360 y=120 key=done value=true

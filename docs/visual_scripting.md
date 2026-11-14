@@ -91,7 +91,10 @@ peers, at this object's position), `NetDespawn` (in0=sync id), `NetReady` (in0=b
 - `Repeat <n>` — run the downstream chain `n` times, then continue
 - `Once` — pass through only the first time it's reached (one-shot setup)
 - `Timer <seconds>` — pass through at most once every `seconds` (accumulates
-  `DeltaTime`); ideal for "every N seconds" pulses under `OnUpdate`
+  `DeltaTime`, keeps the leftover, and clamps that leftover to four intervals).
+  Zero, negative, and NaN pass every time. Ideal for "every N seconds" pulses
+  under `OnUpdate`. Generate script emits the same gate (`Time.deltaTime`, then
+  the following nodes inside the `if`)
 - `Wait <seconds>` — one-shot delay: blocks until `seconds` elapse, then passes
   through from then on (combine with `Once` for a single deferred action)
 - `FlipFlop` — alternate between exec out 0 and 1 on each execution
@@ -419,7 +422,11 @@ is built in the **Visual Script** graph.
 File format: `node <id> Action "<op> <args>"`, `node <id> Actions "<step> ; <step>"`,
 `node <id> Condition "<op> <args>"`, `node <id> Delay <seconds>`. Arguments are
 %-escaped (no spaces, quotes, `#` or `;` inside one), `%-` is an empty argument.
-OkayScript export: `run_action("...")` / `check_action("...")`.
+OkayScript export: an Action or Condition node is `run_action("...")` / `check_action("...")`.
+An Actions component exports as `actions_load("...")` with the list's own text, so every
+step and trigger runs on an Actions component (`editor/ActionExport.hpp`). A graph node
+that has no script fails the export: the Problems list and the node itself name it, and
+View as OkayScript does not offer a script that skips the node.
 
 Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
 left jumps to each chain; right- or middle-drag pans; F frames the selection.
@@ -1160,7 +1167,7 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **Branch** (`Branch`) — in Condition
 - **Sequence** (`Sequence`) — continues to First, then Second
 - **Run Once** (`Once`) — was Once
-- **Every Seconds** (`Timer`) — was Every (s); setting: seconds
+- **Every Seconds** (`Timer`) — was Every (s); setting: seconds. Passes at most once per interval and keeps the leftover. Generate script uses that same gate
 - **Wait Once** (`Wait`) — was Wait (s). Waits the first time, then stays open
 - **Wait Seconds** (`Delay`) — was Delay (s). Pauses, then continues, and waits again next time
 - **Cooldown** (`Cooldown`) — was Cooldown (s)

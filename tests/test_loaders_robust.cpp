@@ -91,7 +91,7 @@ int main() {
               "{\"bufferView\":1,\"componentType\":5121,\"count\":3,\"type\":\"SCALAR\"}],"
               "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}]"));
         bool ok = true; Mesh m = LoadGLTF("lr_idx.gltf", &ok);
-        CHECK(!ok);
+        CHECK(m.triangles.empty());   // the one triangle has an index past the vertices: dropped on its own (the rest of a primitive stays, see test_model_readers)
         for (int t : m.triangles) CHECK(t >= 0 && t < (int)m.vertices.size());
     }
 

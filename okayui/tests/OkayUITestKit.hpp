@@ -29,7 +29,7 @@ inline void Reset() {
     OkayUI::Style().caretBlink = false;
 }
 
-enum Key { Key_Backspace, Key_Delete, Key_Left, Key_Right, Key_Home, Key_End, Key_Enter, Key_Escape, Key_SelectAll, Key_COUNT };
+enum Key { Key_Backspace, Key_Delete, Key_Left, Key_Right, Key_Home, Key_End, Key_Enter, Key_Escape, Key_SelectAll, Key_Up, Key_Down, Key_Copy, Key_Cut, Key_Paste, Key_COUNT };
 
 inline float CenterX(const OkayUI::Rect& r) { return r.x + r.w * 0.5f; }
 inline float CenterY(const OkayUI::Rect& r) { return r.y + r.h * 0.5f; }
@@ -39,10 +39,19 @@ inline float CenterY(const OkayUI::Rect& r) { return r.y + r.h * 0.5f; }
 struct Sim {
     float W = 640, H = 480;
     float mx = 0, my = 0;
-    bool down = false, rdown = false, blocked = false, shift = false;
+    bool down = false, rdown = false, blocked = false, shift = false, ctrl = false;
     float wheel = 0;
     std::string text;
     bool edge[Key_COUNT] = {};
+    // IME: the preedit is a state (kept until EndCompose), a commit is one-shot
+    std::string composition, commitText;
+    bool composing = false;
+    int compCaret = -1;
+    void Compose(const std::string& s, int caret = -1) { composition = s; composing = true; compCaret = caret; }
+    void EndCompose() { composing = false; composition.clear(); compCaret = -1; }
+    void Commit(const std::string& s) { commitText = s; }
+    bool named[OkayUI::KeyId_COUNT] = {};   // named keys held (see OkayUI::KeyId)
+    void Hold(OkayUI::KeyId k, bool held) { named[k] = held; }
     Bitmap bmp;
     int frames = 0;
     Sim(float w = 640, float h = 480) : W(w), H(h) {}
@@ -53,11 +62,14 @@ struct Sim {
         in.wheel = wheel; in.text = text.empty() ? nullptr : text.c_str();
         in.backspace = edge[Key_Backspace]; in.del = edge[Key_Delete]; in.left = edge[Key_Left]; in.right = edge[Key_Right];
         in.home = edge[Key_Home]; in.end = edge[Key_End]; in.enter = edge[Key_Enter]; in.escape = edge[Key_Escape];
-        in.selectAll = edge[Key_SelectAll]; in.shift = shift;
+        in.selectAll = edge[Key_SelectAll]; in.up = edge[Key_Up]; in.down = edge[Key_Down]; in.copy = edge[Key_Copy]; in.cut = edge[Key_Cut]; in.paste = edge[Key_Paste]; in.shift = shift; in.ctrl = ctrl; in.displayW = W; in.displayH = H;
+        for (int i = 0; i < OkayUI::KeyId_COUNT; ++i) in.keyDown[i] = named[i];
+        in.composition = composing ? composition.c_str() : nullptr; in.compositionCaret = compCaret;
+        in.commit = commitText.empty() ? nullptr : commitText.c_str();
         OkayUI::BeginFrame(in);
         ui();
         OkayUI::EndFrameData();
-        text.clear(); wheel = 0;
+        text.clear(); commitText.clear(); wheel = 0;
         for (bool& e : edge) e = false;
         ++frames;
     }

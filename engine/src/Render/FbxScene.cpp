@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_map>
@@ -137,6 +138,9 @@ struct Conv {
 // ---------------------------------------------------------------------------
 typedef std::int64_t Id;
 
+// Numbers from a file are doubles; ids go through the saturating cast in okay/Core/SafeCast.hpp (as do the other integer fields).
+inline Id ToId(double v) { return (Id)SafeInt64(v); }
+
 struct Props {
     std::unordered_map<std::string, std::vector<double>> num;
     std::unordered_map<std::string, std::string> str;
@@ -173,6 +177,45 @@ std::string CleanName(const std::string& raw, const std::string& /*cls*/) {
     }
     return raw;
 }
+
+// PBR property sets of modelling tools, named as ufbx names them (ufbx.c: ufbxi_3ds_max_physical_material_pbr_mapping and
+// its siblings). The property name in the file is `prefix + name`. A set is recognised by the class id the tool writes into
+// the material (3dsMax|ClassIDa / 3dsMax|ClassIDb). Only what this engine can show is read: base colour, roughness,
+// metalness, emission colour and factor, normal map, ambient occlusion map. Each list ends with nullptr.
+struct PbrSet {
+    const char* id; std::uint32_t classA, classB; const char* prefix;
+    const char* const* baseColor; const char* const* roughness; const char* const* metalness;
+    const char* const* emitColor; const char* const* emitFactor; const char* const* normal; const char* const* ao;
+    const char* useGlossinessProp;   ///< property that says the roughness slot holds glossiness (about 1 = it does; nullptr = never)
+};
+const char* const kNone[] = {nullptr};
+const char* const kBase[] = {"base_color", "baseColor", "basecolor", nullptr};   // "basecolor" is what 3ds Max really writes for its PBR material
+const char* const kRough[] = {"roughness", "Roughness_Map", nullptr};
+const char* const kMetal[] = {"metalness", nullptr};
+const char* const kEmitC[] = {"emit_color", nullptr};
+const char* const kPhysEmitF[] = {"emission", nullptr};
+const char* const kBump[] = {"bump", "bump_map_amt", nullptr};
+const char* const kNorm[] = {"norm", nullptr};
+const char* const kAo[] = {"ao", nullptr};
+const char* const kGloss[] = {"glossiness", nullptr};
+const char* const kGltfBase[] = {"main|baseColor", nullptr};
+const char* const kGltfRough[] = {"main|roughness", nullptr};
+const char* const kGltfMetal[] = {"main|metalness", nullptr};
+const char* const kGltfEmit[] = {"main|emission", "main|emissionColor", nullptr};
+const char* const kGltfNormal[] = {"main|normal", nullptr};
+const char* const kGltfAo[] = {"main|ambientOcclusion", nullptr};
+const char* const kOpenRough[] = {"specular_roughness", nullptr};
+const char* const kOpenMetal[] = {"base_metalness", nullptr};
+const char* const kOpenBase[] = {"base_color", nullptr};
+const char* const kOpenEmitC[] = {"emission_color", nullptr};
+const char* const kOpenEmitF[] = {"emission_weight", nullptr};
+const PbrSet kPbrSets[] = {
+    {"3dsmax-physical",       0x3d6b1cecu, 0xdeadc001u, "3dsMax|Parameters|", kBase, kRough, kMetal, kEmitC, kPhysEmitF, kBump, kNone, nullptr},
+    {"openpbr",               0xf1551e33u, 0x37fb1337u, "3dsMax|Parameters|", kOpenBase, kOpenRough, kOpenMetal, kOpenEmitC, kOpenEmitF, kBump, kNone, nullptr},
+    {"gltf",                  0x38420192u, 0x45fe4e1bu, "3dsMax|",            kGltfBase, kGltfRough, kGltfMetal, kGltfEmit, kNone, kGltfNormal, kGltfAo, nullptr},
+    {"3dsmax-pbr-metal-rough", 0xd00f1e00u, 0xbe77e500u, "3dsMax|main|",      kBase, kRough, kMetal, kEmitC, kNone, kNorm, kAo, "useGlossiness"},
+    {"3dsmax-pbr-spec-gloss", 0xd00f1e00u, 0x01dbad33u, "3dsMax|main|",       kBase, kGloss, kNone, kEmitC, kNone, kNorm, kAo, "useGlossiness"},
+};
 
 struct Obj {
     const Elem* e = nullptr;
@@ -287,6 +330,8 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
             for (int j = 0; j < m && !inside; ++j) {
                 const int p = idx[(std::size_t)j];
                 if (p == a || p == b || p == c) continue;
+                auto same = [&](int o) { return std::fabs(X(p) - X(o)) < 1e-12 && std::fabs(Y(p) - Y(o)) < 1e-12; };
+                if (same(a) || same(b) || same(c)) continue;   // a bridge into a hole repeats corners at the same spot: not inside
                 if (cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0) inside = true;
             }
             if (!inside) ear = i;
@@ -310,6 +355,7 @@ struct Curve {
     std::vector<double> t, v;           // seconds, value
     std::vector<int> flags;             // per key
     std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file
+    bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
     double Eval(double time) const {
         const std::size_t n = t.size();
@@ -326,7 +372,7 @@ struct Curve {
         if (f & 0x4) return v[lo] + (v[hi] - v[lo]) * u;              // linear
         // cubic Hermite from the key tangents
         double m0 = sr[lo], m1 = sl[lo];
-        if (f & 0x300) {                                              // auto / TCB: derive from the neighbours
+        if ((f & 0x300) && !hasSlopes) {                              // auto / TCB without stored slopes: derive from the neighbours
             m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, flags[hi]);
         }
         const double u2 = u * u, u3 = u2 * u;
@@ -370,7 +416,7 @@ struct Builder {
         for (const Elem& e : o->children) {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;
-            const Id id = (Id)e.props[0].Num();
+            const Id id = ToId(e.props[0].Num());
             if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s, e.name);
             if (e.props.size() > 2 && e.props[2].type == 'S') ob.sub = e.props[2].s;
             LoadProps(e, ob.props);
@@ -383,7 +429,7 @@ struct Builder {
         if (c) for (const Elem& e : c->children) {
             if (e.name != "C" || e.props.size() < 3 || e.props[0].type != 'S') continue;
             if (!e.props[1].IsNumber() || !e.props[2].IsNumber()) continue;
-            Conn cn; cn.child = (Id)e.props[1].Num(); cn.parent = (Id)e.props[2].Num();
+            Conn cn; cn.child = ToId(e.props[1].Num()); cn.parent = ToId(e.props[2].Num());
             cn.propLink = e.props[0].s == "OP";
             if (e.props.size() > 3 && e.props[3].type == 'S') cn.prop = e.props[3].s;
             conns.push_back(std::move(cn));
@@ -421,7 +467,7 @@ struct Builder {
             Texture t; t.name = o.name;
             if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = f->props[0].s;
             if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = f->props[0].s;
-            const Id id = (Id)o.e->props[0].Num();
+            const Id id = ToId(o.e->props[0].Num());
             auto pit = parentsOf.find(id);   // Video -> Texture
             for (const Conn* c : childrenOf[id]) {   // children of the texture: Video
                 const Obj* v = Get(c->child);
@@ -435,6 +481,23 @@ struct Builder {
                 }
             }
             (void)pit;
+            // A Video that carries the picture while the one connected to the texture does not (some exporters write the pair
+            // apart): found by file name, as ufbx does. Only when the texture got no content from its own Video.
+            if (t.content.empty() && (!t.fileName.empty() || !t.relativeFileName.empty())) {
+                for (const Obj& vo : objs) {
+                    if (vo.cls != "Video") continue;
+                    const Elem* ct = vo.e->Find("Content");
+                    if (!ct || ct->props.empty() || ct->props[0].s.empty()) continue;
+                    const Elem* vf = vo.e->Find("FileName"); const Elem* vr = vo.e->Find("RelativeFilename");
+                    const bool same = (vf && !vf->props.empty() && !t.fileName.empty() && vf->props[0].s == t.fileName) ||
+                                      (vr && !vr->props.empty() && !t.relativeFileName.empty() && vr->props[0].s == t.relativeFileName);
+                    if (!same) continue;
+                    const Prop& p = ct->props[0];
+                    if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
+                    else if (p.type == 'S') { const std::string b = Base64Decode(p.s); t.content.assign(b.begin(), b.end()); }
+                    if (!t.content.empty()) break;
+                }
+            }
             texOfObj[id] = (int)sc.textures.size();
             sc.textures.push_back(std::move(t));
         }
@@ -454,12 +517,56 @@ struct Builder {
                 const double sh = std::max(0.0, p.Get(sn, 0.0));
                 m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, 1.0 - std::sqrt(sh) * 0.1));
             }
-            const Id id = (Id)o.e->props[0].Num();
+            std::string shadingModel;
+            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = sm->props[0].s;
+            for (char& ch : shadingModel) ch = (char)std::tolower((unsigned char)ch);
+            if (shadingModel == "lambert" || shadingModel == "phong") m.shaderSet = shadingModel;
+            // PBR property sets written by modelling tools (ufbx's "shader types"): found by the tool's class id, and
+            // only when the material does not say lambert / phong, the same rule ufbx uses.
+            const PbrSet* pbr = nullptr;
+            if (m.shaderSet.empty()) {
+                const std::uint32_t ca = (std::uint32_t)SafeInt64(p.Get("3dsMax|ClassIDa", 0)), cb = (std::uint32_t)SafeInt64(p.Get("3dsMax|ClassIDb", 0));
+                for (const PbrSet& s : kPbrSets) if (ca == s.classA && cb == s.classB) { pbr = &s; break; }
+            }
+            if (pbr) {
+                m.shaderSet = pbr->id;
+                const std::string pre = pbr->prefix;
+                auto find = [&](const char* const* names) -> const char* {   // first name the file has, as the full property name
+                    for (; *names; ++names) if (p.Has((pre + *names).c_str())) return *names;
+                    return nullptr;
+                };
+                double v3[3];
+                if (const char* n = find(pbr->baseColor)) { m.hasDiffuse = true; p.Vec3((pre + n).c_str(), v3, 1.0); for (int i = 0; i < 3; ++i) m.diffuse[i] = v3[i]; }
+                if (const char* n = find(pbr->emitColor)) { m.hasEmissive = true; p.Vec3((pre + n).c_str(), v3, 0.0); for (int i = 0; i < 3; ++i) m.emissive[i] = v3[i]; }
+                if (const char* n = find(pbr->emitFactor)) { m.hasEmissiveFactor = true; m.emissiveFactor = p.Get((pre + n).c_str(), 1.0); }
+                if (const char* n = find(pbr->metalness)) { m.hasMetalness = true; m.metalness = std::min(1.0, std::max(0.0, p.Get((pre + n).c_str(), 0.0))); }
+                if (const char* n = find(pbr->roughness)) {
+                    double r = p.Get((pre + n).c_str(), 0.5);
+                    const bool gloss = pbr->useGlossinessProp && std::fabs(p.Get((pre + pbr->useGlossinessProp).c_str(), 0.0) - 1.0) < 0.5;
+                    if (gloss) r = 1.0 - r;
+                    m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, r));
+                }
+            }
+            const Id id = ToId(o.e->props[0].Num());
+            auto squash = [](const std::string& x) { std::string o; for (char ch : x) if (ch != '_') o += (char)std::tolower((unsigned char)ch); return o; };
+            // the slot's own name, or "<name>_map" (what 3ds Max connects textures to: "base_color_map" for the value "basecolor")
+            auto isOneOf = [&](const std::string& prop, const char* const* names, const std::string& pre) {
+                if (!names) return false;
+                const std::string want = squash(prop);
+                for (; *names; ++names) { const std::string n = squash(pre + *names); if (want == n || want == n + "map") return true; }
+                return false;
+            };
             for (const Conn* c : childrenOf[id]) {   // textures plugged into this material
                 const Obj* t = Get(c->child);
                 if (!t || t->cls != "Texture" || !c->propLink) continue;
                 auto it = texOfObj.find(c->child);
                 if (it == texOfObj.end()) continue;
+                if (pbr) {
+                    const std::string pre = pbr->prefix;
+                    if (isOneOf(c->prop, pbr->baseColor, pre)) { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; continue; }
+                    if (isOneOf(c->prop, pbr->normal, pre)) { if (m.normalTexture < 0) m.normalTexture = it->second; continue; }
+                    if (isOneOf(c->prop, pbr->ao, pre)) { if (m.aoTexture < 0) m.aoTexture = it->second; continue; }
+                }
                 if (c->prop == "DiffuseColor" || c->prop == "Diffuse") { if (m.diffuseTexture < 0) m.diffuseTexture = it->second; }
                 else if (c->prop == "NormalMap") { if (m.normalTexture < 0) m.normalTexture = it->second; }
             }
@@ -492,7 +599,7 @@ struct Builder {
         // parent of each model (first Model parent wins; id 0 = scene root)
         std::unordered_map<Id, Id> parentOf;
         for (std::size_t mi : models) {
-            const Id id = (Id)objs[mi].e->props[0].Num();
+            const Id id = ToId(objs[mi].e->props[0].Num());
             Id par = 0;
             auto it = parentsOf.find(id);
             if (it != parentsOf.end()) for (const Conn* c : it->second) {
@@ -506,7 +613,7 @@ struct Builder {
         // children in file order; roots first, then anything caught in a parent cycle
         std::unordered_map<Id, std::vector<Id>> kids;
         std::vector<Id> rootIds, order;
-        for (std::size_t mi : models) { const Id id = (Id)objs[mi].e->props[0].Num(); if (parentOf[id] == 0) rootIds.push_back(id); else kids[parentOf[id]].push_back(id); }
+        for (std::size_t mi : models) { const Id id = ToId(objs[mi].e->props[0].Num()); if (parentOf[id] == 0) rootIds.push_back(id); else kids[parentOf[id]].push_back(id); }
         std::unordered_map<Id, int> depth; std::unordered_set<Id> seen;
         auto walk = [&](Id start) -> bool {
             std::vector<Id> stack{start}; depth[start] = 1;
@@ -522,7 +629,7 @@ struct Builder {
         };
         for (Id r : rootIds) if (!walk(r)) return Fail("node hierarchy too deep");
         for (std::size_t mi : models) {   // cycle members: promote to roots
-            const Id id = (Id)objs[mi].e->props[0].Num();
+            const Id id = ToId(objs[mi].e->props[0].Num());
             if (!seen.count(id)) { parentOf[id] = 0; rootIds.push_back(id); if (!walk(id)) return Fail("node hierarchy too deep"); }
         }
         // `order` is depth-first pre-order per root already, but a promoted cycle root may have been walked
@@ -657,7 +764,7 @@ struct Builder {
         }
 
         // skin + blend shapes
-        const Id gid = (Id)g.props[0].Num();
+        const Id gid = ToId(g.props[0].Num());
         bool haveSkin = false;
         for (const Conn* c : childrenOf[gid]) {
             const Obj* d = Get(c->child);
@@ -668,11 +775,11 @@ struct Builder {
                 const Mat g2n = Mul(Translate(xp[modelNode].gt[0], xp[modelNode].gt[1], xp[modelNode].gt[2]),
                                     Mul(Euler(xp[modelNode].gr, 0), ScaleM(xp[modelNode].gs[0], xp[modelNode].gs[1], xp[modelNode].gs[2])));
                 std::uint32_t ci = 0;
-                for (const Conn* cc : childrenOf[(Id)d->e->props[0].Num()]) {
+                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
                     const Obj* cl = Get(cc->child);
                     if (!cl || cl->cls != "Deformer" || cl->sub != "Cluster" || cc->propLink) continue;
                     Cluster cluster;
-                    for (const Conn* bc : childrenOf[(Id)cl->e->props[0].Num()]) {
+                    for (const Conn* bc : childrenOf[ToId(cl->e->props[0].Num())]) {
                         auto nm = nodeOfModel.find(bc->child);
                         if (nm != nodeOfModel.end() && !bc->propLink) { cluster.boneNode = nm->second; break; }
                     }
@@ -693,12 +800,12 @@ struct Builder {
                 for (auto& w : m.skinWeights) std::stable_sort(w.begin(), w.end(), [](const Influence& a, const Influence& b) { return a.weight > b.weight; });
                 if (m.clusters.empty()) m.skinWeights.clear();
             } else if (d->sub == "BlendShape") {
-                for (const Conn* cc : childrenOf[(Id)d->e->props[0].Num()]) {
+                for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
                     const Obj* ch = Get(cc->child);
                     if (!ch || ch->cls != "Deformer" || ch->sub != "BlendShapeChannel" || cc->propLink) continue;
                     BlendChannel bc; bc.name = ch->name; bc.weight = ch->props.Get("DeformPercent", 0.0) * 0.01;
                     const Obj* shape = nullptr;
-                    for (const Conn* sc2 : childrenOf[(Id)ch->e->props[0].Num()]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
+                    for (const Conn* sc2 : childrenOf[ToId(ch->e->props[0].Num())]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
                     if (shape) {
                         const std::vector<double>* ix = ArrayOf(*shape->e, "Indexes");
                         const std::vector<double>* dv = ArrayOf(*shape->e, "Vertices");
@@ -716,7 +823,7 @@ struct Builder {
                             }
                         }
                     }
-                    chanOfObj[(Id)ch->e->props[0].Num()] = {(int)sc.meshes.size(), (int)m.channels.size()};
+                    chanOfObj[ToId(ch->e->props[0].Num())] = {(int)sc.meshes.size(), (int)m.channels.size()};
                     m.channels.push_back(std::move(bc));
                 }
             }
@@ -735,7 +842,7 @@ struct Builder {
                 if (o && o->cls == "Geometry" && o->sub == "Mesh") { geo = o; break; }
             }
             if (!geo) continue;
-            const Id gid = (Id)geo->e->props[0].Num();
+            const Id gid = ToId(geo->e->props[0].Num());
             auto it = meshOfGeom.find(gid);
             if (it != meshOfGeom.end()) { sc.nodes[ni].mesh = it->second; continue; }
             Mesh m;
@@ -798,13 +905,13 @@ struct Builder {
                 prev = t;
                 c.t.push_back(t); c.v.push_back((*kv)[i]);
                 int flags = 0x8;
-                if (fl && !fl->empty()) flags = (int)(*fl)[std::min(seg[i], fl->size() - 1)];
+                if (fl && !fl->empty()) flags = SafeInt((*fl)[std::min(seg[i], fl->size() - 1)]);
                 c.flags.push_back(flags);
                 double r = 0, l = 0;
-                if (da && (seg[i] * 4 + 1) < da->size()) { r = (*da)[seg[i] * 4]; l = (*da)[seg[i] * 4 + 1]; }
+                if (da && (seg[i] * 4 + 1) < da->size()) { r = (*da)[seg[i] * 4]; l = (*da)[seg[i] * 4 + 1]; c.hasSlopes = true; }
                 c.sr.push_back(r); c.sl.push_back(l);
             }
-            curveOf[(Id)o.e->props[0].Num()] = (int)curveStore.size();
+            curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
             curveStore.push_back(std::move(c));
         }
         // curve nodes
@@ -812,7 +919,7 @@ struct Builder {
         for (const Obj& o : objs) {
             if (o.cls != "AnimationCurveNode") continue;
             CurveNode cn;
-            const Id id = (Id)o.e->props[0].Num();
+            const Id id = ToId(o.e->props[0].Num());
             o.props.Vec3("d|X", cn.def, 0);
             if (o.props.Has("d|DeformPercent")) cn.def[0] = o.props.Get("d|DeformPercent", 0);
             for (const Conn* c : childrenOf[id]) {   // curves feeding it
@@ -835,7 +942,7 @@ struct Builder {
         // stacks -> layers -> curve nodes
         for (const Obj& st : objs) {
             if (st.cls != "AnimationStack") continue;
-            const Id sid = (Id)st.e->props[0].Num();
+            const Id sid = ToId(st.e->props[0].Num());
             std::vector<Layr> layers;
             for (const Conn* c : childrenOf[sid]) {
                 const Obj* l = Get(c->child);
@@ -863,10 +970,16 @@ struct Builder {
                 }
             if (perNode.empty() && blendCns.empty()) continue;
             if (t1 < t0) continue;
+            // A take has its own time span (LocalStart / LocalStop): several takes can share one timeline
+            // and their curves, so the span, not the keys, says which part of the curves a take plays.
+            if (st.props.Has("LocalStop")) {
+                const double a = st.props.Get("LocalStart", 0.0) / kKTimePerSec, b = st.props.Get("LocalStop", 0.0) / kKTimePerSec;
+                if (std::isfinite(a) && std::isfinite(b) && b > a) { t0 = a; t1 = b; }
+            }
             Clip clip; clip.name = st.name;
             const double dur = t1 - t0;
-            std::size_t samples = (std::size_t)std::max(1.0, std::ceil(dur * opt.bakeRate));
-            if (samples + 1 > opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;
+            std::size_t samples = SafeSize(std::max(1.0, std::ceil(dur * opt.bakeRate)));   // a hostile LocalStop makes dur huge: saturate, then the limits below apply
+            if (samples >= opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;   // (not samples + 1 > max: that wraps for a saturated count)
             {   // whole-file budget: this clip costs (sample count) x (curve nodes it evaluates)
                 std::size_t entries = blendCns.size();
                 for (const auto& kv : perNode) entries += kv.second.size();
@@ -958,7 +1071,7 @@ bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::str
 }
 
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "cannot open " + path; return false; }
     std::vector<std::uint8_t> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return LoadMemory(buf.data(), buf.size(), out, err, opt);

@@ -537,9 +537,6 @@ void Scene::Update(float deltaTime) {
 namespace {
 
 // Render interpolation: a body is drawn between its last two physics poses.
-bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
-    return (t->Position() - p).SqrMagnitude() < 1e-10f && std::fabs(Quat::Dot(t->Rotation(), r)) > 1.0f - 1e-6f;
-}
 // Before stepping: put the body back at its real physics pose (it was drawn at an
 // in-between one). If game code moved it since, it was teleported: keep that.
 // A parent moving does not count: the local pose the solver wrote is still there,
@@ -553,16 +550,20 @@ bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
 void RestorePose(Transform* t, PoseHistory& h) {
     h.rotByGame = false;
     if (!h.valid) return;
-    if (h.shownLocalValid) {
-        const bool moved = (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f;
-        if (moved) { h.valid = false; h.shownLocalValid = false; return; }
-        h.rotByGame = std::fabs(Quat::Dot(t->localRotation, h.shownLocalRot)) < 1.0f - 1e-6f;
-        t->localPosition = h.physLocal;
-        if (!h.rotByGame) t->localRotation = h.physLocalRot;
-        return;
-    }
-    if (SamePose(t, h.shownPos, h.shownRot)) { t->SetPosition(h.curPos); t->SetRotation(h.curRot); }
-    else h.valid = false;
+    // (ShowPose always records the local pose it drew, so valid implies shownLocalValid.)
+    if (!h.shownLocalValid) { h.valid = false; return; }
+    const bool moved = (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f;
+    if (moved) { h.valid = false; h.shownLocalValid = false; return; }
+    // Any change at all counts, however small: a slow turn (a smoothed chase of a target
+    // moves a fraction of a degree per frame) must not be thrown away. Nothing but game
+    // code writes the rotation between ShowPose and here, so an untouched body compares
+    // equal. The squared quaternion difference of 0.001 degrees is about 1e-10, so 1e-14
+    // is far below any real turn and above float noise.
+    const Quat& q = t->localRotation; const Quat& r = h.shownLocalRot;
+    const float dx = q.x - r.x, dy = q.y - r.y, dz = q.z - r.z, dw = q.w - r.w;
+    h.rotByGame = dx * dx + dy * dy + dz * dz + dw * dw > 1e-14f;
+    t->localPosition = h.physLocal;
+    if (!h.rotByGame) t->localRotation = h.physLocalRot;
 }
 void BeginStep(Transform* t, PoseHistory& h) {
     h.prevPos = t->Position();

@@ -61,6 +61,14 @@ then this file gets updated. Keep this file short and true.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first.
 19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
 
+19a. **No copyrighted code. Write everything yourself.** Do not copy, port, translate or closely follow code, shader
+    text, data tables, comments or test files from any other project or source, open source or not (for example
+    Unreal, Godot, Assimp, meshoptimizer, SDL, Dear ImGui, stb). A licence that allows copying does not change this.
+    Public-domain code needs the owner's approval first. Write from specifications, file-format documents, papers and
+    general algorithms, in your own words and structure, and work out constants yourself and check them with tests.
+    Ideas, algorithms and file formats are not copyrighted; code is. Say in the report and the docs what each new file
+    was written from (its spec or paper). If code was copied or ported by mistake, rewrite it from scratch.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

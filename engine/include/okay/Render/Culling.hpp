@@ -71,7 +71,7 @@ struct Frustum {
 namespace cull_detail {
 struct LocalBounds {
     const void* data = nullptr; std::size_t count = 0;
-    Vec3 probe[3];                 // a few vertices: catches edits made in place
+    std::uint64_t hash = 0;        // of every vertex: catches edits made in place
     Vec3 center{0, 0, 0}; float radius = 0.0f;
 };
 inline std::unordered_map<const Mesh*, LocalBounds>& Cache() {
@@ -87,12 +87,21 @@ inline void MeshLocalSphere(const Mesh& mesh, Vec3& center, float& radius) {
     auto& e = cache[&mesh];
     const auto& V = mesh.vertices;
     const std::size_t n = V.size();
-    auto probeAt = [&](int k) -> const Vec3& { return V[k == 0 ? 0 : (k == 1 ? n / 2 : n - 1)]; };
-    bool same = e.data == (const void*)V.data() && e.count == n;
-    if (same && n)
-        for (int k = 0; k < 3 && same; ++k) same = std::memcmp(&e.probe[k], &probeAt(k), sizeof(Vec3)) == 0;
+    // Hash every vertex (a cheap pass, much less than rebuilding the bounds). Probing a few
+    // vertices missed an edit anywhere else in the mesh, so it was culled by its old bounds.
+    std::uint64_t h = 1469598103934665603ull;
+    if (n) {
+        const unsigned char* b = reinterpret_cast<const unsigned char*>(V.data());
+        const std::size_t words = n * sizeof(Vec3) / 8;
+        for (std::size_t i = 0; i < words; ++i) {
+            std::uint64_t w; std::memcpy(&w, b + i * 8, 8);
+            h = (h ^ w) * 1099511628211ull; h ^= h >> 29;
+        }
+        for (std::size_t i = words * 8; i < n * sizeof(Vec3); ++i) h = (h ^ b[i]) * 1099511628211ull;
+    }
+    const bool same = e.data == (const void*)V.data() && e.count == n && e.hash == h;
     if (!same) {
-        e.data = V.data(); e.count = n;
+        e.data = V.data(); e.count = n; e.hash = h;
         if (n) {
             Vec3 lo = V[0], hi = V[0];
             for (const Vec3& v : V) {
@@ -103,7 +112,6 @@ inline void MeshLocalSphere(const Mesh& mesh, Vec3& center, float& radius) {
             float r2 = 0.0f;
             for (const Vec3& v : V) { Vec3 d = v - e.center; float q = d.x * d.x + d.y * d.y + d.z * d.z; if (q > r2) r2 = q; }
             e.radius = std::sqrt(r2);
-            for (int k = 0; k < 3; ++k) e.probe[k] = probeAt(k);
         } else { e.center = {0, 0, 0}; e.radius = 0.0f; }
     }
     center = e.center; radius = e.radius;

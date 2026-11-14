@@ -46,5 +46,17 @@ int main() {
         CHECK_NEAR(a, 0.5f, 0.02f);       // linear in remaining life; it used to be 0.9*0.8*0.7*0.6*0.5
     }
 
+    RUN_SUITE("culling bounds follow an in-place vertex edit");
+    {
+        Mesh m;
+        m.vertices = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+        Vec3 c; float r = -1.0f;
+        MeshLocalSphere(m, c, r);
+        CHECK(r < 1e-3f);
+        m.vertices[1] = {100, 0, 0};      // not the first, middle or last vertex
+        MeshLocalSphere(m, c, r);
+        CHECK(r > 40.0f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -165,8 +165,29 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Docs:** `docs/own_ui_toolkit.md` (section 4.36), `docs/okayui_gap_report.md`, `docs/own_ui_code_editor.md`
 - **Tests:** `okayui_gaps`
 - **Status:** Partial - implemented and tested headless (pixels, behaviour, edit tracking, delays); never run in a real window; the remaining gaps are in the report
-- **Open:** `DockBuilder*` (21 uses), `FindWindowByName` and the ImGui internals, arbitrary fonts and icon fonts, `Shortcut` is simple (no chords of more than one key), logarithmic sliders, column reordering and hiding, folding and multiple cursors in `CodeEdit`, the host side of IME, middle button fed by the real host
+- **Open:** `Shortcut` is simple (no chords of more than one key), folding and multiple cursors in `CodeEdit`, middle button fed by the real host (the rest of the list is closed in 40.9)
 - **Related:** 40.1, 40.7
 - **Words:** gap report, ImGui port, password field, IsItemEdited, child flags, AutoResizeY, ListClipper, BeginTooltip, BeginPopupContextWindow, rounded corners, ImDrawFlags, overwrite mode
 - **Seen as:** a ported panel needs a call OkayUI does not have; a password shows as text; a tooltip with widgets in it does not draw; a long list is slow
 - **Ask me like:** "work on 40.8, what does the launcher still need"; "read docs/okayui_gap_report.md and close the top gap"
+
+### 40.9 Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries
+- **What:** the next batch from the gap report: a `DockBuilder` for building a dock layout in code (the shape of the editor's layout presets, also under the Dear ImGui names), arbitrary and icon fonts over our own TrueType rasteriser (add from memory or file, merge by code point range, any size, `PushFont`), logarithmic sliders and drags with printf-style formats, table column reordering and hiding with a header menu and saved state, the host side of input methods (preedit, commit, candidate window rectangle, an in-memory test backend, SDL wiring) and `WindowInfo` queries for what the editor read from Dear ImGui's window internals. Everything is off by default and not wired into the editor or launcher.
+- **Parts:**
+  - 40.9.1 DockBuilder - `okayui/src/OkayUIDockBuilder.cpp` - `DockBuilder` (AddNode, SplitNode, SetNodeSize, DockWindow, RemoveNode, Text, Finish) and the Dear ImGui names `DockBuilderSplitNode` ... `DockBuilderFinish`, `SetNextWindowDockID`, `IsWindowDocked`
+  - 40.9.2 Fonts - `okayui/src/OkayUIFonts.cpp` - `AddFontFromMemory`, `AddFontFromFile`, `AddFontBuiltin`, `FontConfig` (merge, ranges, offset, minimum advance), `PushFont`, `PopFont`, `CalcTextSize(font, ...)`, `DrawList::AddText(font, ...)`, `FontGlyph`; no hinting, kerning or complex scripts
+  - 40.9.3 Log sliders and drags - `okayui/src/OkayUI.cpp` - `SliderFlags`, restricted printf formats, `SliderRatioFromValue`, `FormatNumber`
+  - 40.9.4 Table columns - `okayui/src/OkayUI.cpp` - `Table_Reorderable`, `Table_Hideable`, `TableSetColumnEnabled`, `TableSetColumnDisplayIndex`, `TableSaveState`, `SaveTableStates`
+  - 40.9.5 IME host side - `shared/OkayUIIme.hpp`, `shared/OkayUIHost.hpp` - `ImeState`, `ImeSink`, `RecordingImeSink`, `SdlImeSink`, `SDL_TEXTEDITING` in `InputCollector`
+  - 40.9.6 Window queries - `okayui/src/OkayUI.cpp` - `WindowInfo`, `FindWindowByName`, `GetCurrentWindowInfo`, `GetFocusedWindowInfo`, `GetWindowInfos`, `GetWindowInnerRect`, `BringWindowToDisplayFront`, `SetItemWidthDefault`, `SetNextWindowCollapsed`, `###` ids
+- **Code:** `okayui/include/okay/UI/OkayUIDock.hpp`, `okayui/src/OkayUIDockBuilder.cpp`, `okayui/include/okay/UI/OkayUIFonts.hpp`, `okayui/src/OkayUIFonts.cpp`, `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/src/OkayUI.cpp`, `shared/OkayUIIme.hpp`, `shared/OkayUIHost.hpp`, `okayui/soft/OkayUI_Soft.cpp`, `okayui/tests/test_okayui_dockbuilder.cpp`, `okayui/tests/test_okayui_fonts.cpp`, `okayui/tests/test_okayui_logtables.cpp`, `okayui/tests/test_okayui_ime.cpp`, `okayui/tests/test_okayui_windows_api.cpp`
+- **API:** `OkayUI::DockBuilder`, `OkayUI::AddFontFromFile`, `OkayUI::PushFont`, `OkayUI::SliderFloat(label, v, min, max, format, flags)`, `OkayUI::TableSetColumnEnabled`, `okayuihost::ImeState`, `OkayUI::FindWindowByName`
+- **Editor:** none (library only; the editor and launcher still call Dear ImGui)
+- **Docs:** `docs/own_ui_toolkit.md` (section 4.37), `docs/okayui_gap_report.md`, `docs/imgui_port_report.md`
+- **Tests:** `okayui_dockbuilder`, `okayui_fonts`, `okayui_logtables`, `okayui_ime`, `okayui_windows_api`
+- **Status:** Partial - implemented and tested headless (exact pixels, goldens, behaviour, fuzz under ASan and UBSan); never run in a real window, with a real mouse, a real GPU or a real input method
+- **Open:** font hinting, kerning, GPOS/GSUB and complex scripts; `ImGuiDockNode` field uses and `GetCurrentContext` in the editor; IME against a real input method; the 2 to 4 cell slider and drag variants have no format or flags; table auto-fit and nested tables
+- **Related:** 40.7, 40.8
+- **Words:** DockBuilder, DockBuilderSplitNode, layout preset, font, icon font, merge fonts, PushFont, TrueType, logarithmic slider, SliderFlags, table column reorder, hide column, IME, candidate window, FindWindowByName, ImGuiWindow
+- **Seen as:** the editor layout code has no OkayUI shape; an icon font cannot be loaded; a log slider is linear; a table column cannot be moved or hidden; the candidate window of an input method is in the wrong place
+- **Ask me like:** "work on 40.9, what is left of fonts"; "read docs/okayui_gap_report.md and close the top gap"

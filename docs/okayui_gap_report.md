@@ -15,10 +15,10 @@ name a family relies on is declared and every proof file exists, and says "Missi
 | What | Value |
 |---|---:|
 | `ImGui::` call sites | 26740 (editor 20440, launcher 8548, shared 90) |
-| Call sites whose name has no OkayUI function | 134 (0.5%) |
+| Call sites whose name has no OkayUI function | 78 (0.3%) |
 | ImGui flag / type / enum uses | 11876 |
-| ... of which no OkayUI counterpart | 434 (3.7%) |
-| Families Done / Partial / Missing | 14 / 14 / 0 |
+| ... of which no OkayUI counterpart | 303 (2.6%) |
+| Families Done / Partial / Missing | 16 / 12 / 0 |
 | IME mentions in the scanned sources (`Ime*`, `WantTextInput`, `SetPlatformImeData`) | 41 |
 
 ## By family
@@ -26,28 +26,28 @@ name a family relies on is declared and every proof file exists, and says "Missi
 | Family | Call sites | Launcher | Names missing | Flags missing | Status | Proof (file) |
 |---|---:|---:|---:|---:|---|---|
 | Item and hover queries | 2144 | 241 | 5 | 0 | Done | `okayui/tests/test_okayui_drawlist.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
-| Layout and cursor | 5928 | 2444 | 0 | 0 | Partial | `okayui/tests/test_okayui_drawlist.cpp`, `okayui/tests/test_okayui_compat.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
+| Layout and cursor | 5928 | 2444 | 0 | 0 | Done | `okayui/tests/test_okayui_drawlist.cpp`, `okayui/tests/test_okayui_compat.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Text (display) | 2690 | 798 | 0 | 0 | Done | `okayui/tests/test_okayui_widgets.cpp`, `okayui/tests/test_okayui_values.cpp` |
 | Buttons, checkbox, radio, images | 2564 | 454 | 0 | 58 | Partial | `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_widgets.cpp` |
-| Value widgets (drag, slider, number) | 1704 | 6 | 0 | 9 | Partial | `okayui/tests/test_okayui_values.cpp` |
+| Value widgets (drag, slider, number) | 1704 | 6 | 0 | 0 | Partial | `okayui/tests/test_okayui_values.cpp`, `okayui/tests/test_okayui_logtables.cpp` |
 | Text input, single line | 537 | 107 | 0 | 0 | Done | `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Text input, multi-line | 28 | 17 | 0 | 0 | Partial | `okayui/src/OkayUIText.cpp`, `okayui/tests/test_okayui_widgets.cpp`, `okayui/tests/test_okayui_codeedit.cpp` |
 | Child windows | 428 | 203 | 0 | 0 | Done | `okayui/tests/test_okayui_gaps.cpp`, `okayui/tests/test_okayui_behaviour.cpp` |
-| Docking and viewports | 47 | 0 | 46 | 32 | Partial | `okayui/tests/test_okayui_dock.cpp`, `okayui/tests/test_okayui_dock_fuzz.cpp` |
-| Windows, scrolling, focus | 1215 | 550 | 23 | 39 | Partial | `okayui/tests/test_okayui_windows.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
+| Docking and viewports | 47 | 0 | 15 | 13 | Partial | `okayui/tests/test_okayui_dock.cpp`, `okayui/tests/test_okayui_dock_fuzz.cpp`, `okayui/tests/test_okayui_dockbuilder.cpp` |
+| Windows, scrolling, focus | 1215 | 550 | 0 | 0 | Partial | `okayui/tests/test_okayui_windows.cpp`, `okayui/tests/test_okayui_gaps.cpp`, `okayui/tests/test_okayui_windows_api.cpp` |
 | Popups | 1054 | 399 | 2 | 0 | Partial | `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Menus | 1034 | 146 | 0 | 0 | Done | `okayui/tests/test_okayui_values.cpp` |
 | Combo, selectable, list | 684 | 79 | 0 | 0 | Done | `okayui/tests/test_okayui_widgets.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Tree nodes | 172 | 4 | 0 | 0 | Done | `okayui/tests/test_okayui_widgets.cpp` |
-| Tables | 282 | 46 | 0 | 2 | Partial | `okayui/tests/test_okayui_tables.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
+| Tables | 282 | 46 | 0 | 1 | Partial | `okayui/tests/test_okayui_tables.cpp`, `okayui/tests/test_okayui_gaps.cpp`, `okayui/tests/test_okayui_logtables.cpp` |
 | Tabs | 76 | 8 | 1 | 2 | Partial | `okayui/tests/test_okayui_values.cpp` |
-| Drag and drop | 132 | 0 | 0 | 36 | Partial | `okayui/tests/test_okayui_values.cpp` |
+| Drag and drop | 132 | 0 | 0 | 0 | Done | `okayui/tests/test_okayui_values.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Colour editors and pickers | 203 | 17 | 0 | 0 | Done | `okayui/tests/test_okayui_color.cpp` |
 | Plots | 3 | 0 | 0 | 0 | Done | `okayui/tests/test_okayui_widgets.cpp` |
 | Tooltips | 1630 | 120 | 0 | 0 | Done | `okayui/tests/test_okayui_gaps.cpp`, `okayui/tests/test_okayui_values.cpp` |
 | Style and colours | 1831 | 994 | 8 | 22 | Partial | `okayui/tests/test_okayui_color.cpp`, `okayui/tests/test_okayui_values.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
 | Mouse, keys, IO | 928 | 180 | 4 | 46 | Partial | `okayui/tests/test_okayui_values.cpp`, `okayui/tests/test_okayui_gaps.cpp` |
-| Fonts and icons | 91 | 68 | 2 | 27 | Partial | `okayui/tests/test_okayui_windows.cpp` |
+| Fonts and icons | 91 | 68 | 0 | 0 | Partial | `okayui/tests/test_okayui_windows.cpp`, `okayui/tests/test_okayui_fonts.cpp` |
 | Clipboard | 52 | 24 | 0 | 0 | Done | `okayui/tests/test_okayui_behaviour.cpp`, `okayui/tests/test_okayui_codeedit.cpp` |
 | IDs | 827 | 259 | 0 | 56 | Done | `okayui/tests/test_okayui_compat.cpp` |
 | Disabled blocks | 398 | 173 | 0 | 0 | Done | `okayui/tests/test_okayui_drawlist.cpp` |
@@ -62,23 +62,21 @@ Ranked by call sites without an OkayUI function plus flag uses without a counter
 
 | # | Family | Uncovered | Launcher | What is missing |
 |---:|---|---:|---:|---|
-| 1 | Docking and viewports | 78 | 0 | OkayUI has its own dock system (dock space, splitters, tabs, layout save and load). Missing: every `DockBuilder*` call (21 uses, the editor's default layout), docking nodes as an API, multi-viewports (OS windows). |
-| 2 | Windows, scrolling, focus | 62 | 0 | `FindWindowByName`/`FindWindowByID`/`GetCurrentWindow` and `ImGuiWindow` internals (30 uses, editor layout code) are ImGui internals with no OkayUI shape. No horizontal scrolling. No `NoSavedSettings`, `NoNav` (accepted). |
-| 3 | Buttons, checkbox, radio, images | 58 | 24 | `ButtonFlags_MouseButtonLeft/Right` (12 uses on `InvisibleButton`) are not honoured: only the left button clicks. `ImTextureID` is an `SDL_Texture*` here (24 uses in the launcher). |
-| 4 | Context, frame and host | 56 | 21 | Not call-for-call: the host owns the frame (`OkayUIHost`: BeginFrame, EndFrame, draw data to a backend). Code that creates ImGui contexts (the launcher's second context for a popup, `VsGraphShot`) has to be reshaped, not ported. |
-| 5 | IDs | 56 | 0 | `ImGuiID` is `unsigned` here. |
-| 6 | Mouse, keys, IO | 50 | 4 | The middle button, drag deltas and key aliases are in. Missing: `Shortcut` and key chords (4 uses), key ownership (`SetKeyOwner`), `ImGuiKey` values beyond the 70 named `KeyId`s (the mouse wheel as a key, keypad keys). |
-| 7 | Drag and drop | 36 | 0 | Typed payloads, preview text and accept-before-delivery exist. Missing: `GetDragDropPayload` (4 uses: peek at the payload while dragging) and `BeginDragDropTargetCustom` (4, a target on a bare rectangle). |
-| 8 | Style and colours | 30 | 5 | `GetStyle()` returns a read-only copy of the numbers a port reads (spacing, padding, scrollbar size), not the whole `ImGuiStyle` (no `Colors[]`). `StyleColorsDark/Light/Classic` (6 uses) and `PushItemFlag` (2) are missing; several `StyleVar`s are accepted and ignored. |
-| 9 | Draw list (custom drawing) | 29 | 0 | Rounded corners by flag, polygons and textured quads are in. No anti-aliasing and no concave fill (`AddConcavePolyFilled`, not used). `ImRect` (29 uses) is an ImGui internal type. |
-| 10 | Fonts and icons | 29 | 10 | `SetFont` swaps between OkayUI's fonts (the 8x8 and the launcher's Roboto); an arbitrary font (a code font, an icon font merged into the text font) cannot be loaded or pushed. `ImFont*` has 22 uses, the icon font setup in `launcher/main.cpp` and `editor/main.cpp` has no OkayUI counterpart yet. |
-| 11 | Value widgets (drag, slider, number) | 9 | 0 | No printf format strings, no `SliderFlags_Logarithmic` (5 uses) or `AlwaysClamp` (3 uses), no `DragIntRange2`. |
-| 12 | Item and hover queries | 5 | 2 | Edit tracking, hover flags with delays and disabled items are in. `SetItemKeyOwner` (5 uses) has no meaning without ImGui's key ownership and stays a host call. |
-| 13 | Tabs | 3 | 0 | No closable or reorderable tabs; `TabBarFindTabByID` (an internal, 1 use) is missing. |
-| 14 | Popups | 2 | 0 | `GetMousePosOnOpeningCurrentPopup` (4 uses, the editor's node-graph menus) and `ClosePopupToLevel` (1, the file dialog) are missing; `BeginPopupEx` is an internal. |
-| 15 | Tables | 2 | 0 | Sorting, scrolling boxes, frozen rows and columns, row clipping, `NoResize` per column. Missing: column reordering and hiding, the header context menu, auto-fit by double click, nested tables, `TableGetHoveredColumn`. |
-| 16 | Layout and cursor | 0 | 0 | `PushMultiItemsWidths` (1 use, a three-cell row in the editor) is missing; `GetTreeNodeToLabelSpacing` (1) is missing. `AlignTextToFramePadding` does nothing (OkayUI rows are already centred). |
-| 17 | Text input, multi-line | 0 | 0 | Built on `CodeEdit` (selection, undo, clipboard, scrolling). No word wrap; `CtrlEnterForNewLine` (4 uses) is accepted and ignored. |
+| 1 | Buttons, checkbox, radio, images | 58 | 24 | `ButtonFlags_MouseButtonLeft/Right` (12 uses on `InvisibleButton`) are not honoured: only the left button clicks. `ImTextureID` is an `SDL_Texture*` here (24 uses in the launcher). |
+| 2 | Context, frame and host | 56 | 21 | Not call-for-call: the host owns the frame (`OkayUIHost`: BeginFrame, EndFrame, draw data to a backend). Code that creates ImGui contexts (the launcher's second context for a popup, `VsGraphShot`) has to be reshaped, not ported. |
+| 3 | IDs | 56 | 0 | `ImGuiID` is `unsigned` here. |
+| 4 | Mouse, keys, IO | 50 | 4 | The middle button, drag deltas, key aliases and `Shortcut` (one key plus modifiers) are in. Missing: key ownership (`SetKeyOwner`, `SetItemKeyOwner`), `SetNextFrameWantCaptureKeyboard`, `ImGuiKey` values beyond the 70 named `KeyId`s (the mouse wheel as a key, keypad keys, punctuation keys). |
+| 5 | Style and colours | 30 | 5 | `GetStyle()` returns a read-only copy of the numbers a port reads (spacing, padding, scrollbar size), not the whole `ImGuiStyle` (no `Colors[]`). `StyleColorsDark/Light/Classic` (6 uses) and `PushItemFlag` (2) are missing; several `StyleVar`s are accepted and ignored. |
+| 6 | Draw list (custom drawing) | 29 | 0 | Rounded corners by flag, polygons and textured quads are in. No anti-aliasing and no concave fill (`AddConcavePolyFilled`, not used). `ImRect` (29 uses) is an ImGui internal type. |
+| 7 | Docking and viewports | 28 | 0 | OkayUI has its own dock system (dock space, splitters, tabs, layout save and load) and `DockBuilder` (draft layout: split, size, dock a window, remove, text, `Finish`) with the Dear ImGui names `DockBuilderAddNode` to `DockBuilderFinish`, `SetNextWindowDockID` and `IsWindowDocked`. Not done: the fields of `ImGuiDockNode` the editor reads (`TabBar`, `HostWindow`, `Windows`: 16 uses, rewrite over `WindowInfo` and `DockBuilder::Node`), tab bar amending, `DockContextQueueUndockWindow`, multi-viewports (OS windows), the ini settings calls. |
+| 8 | Item and hover queries | 5 | 2 | Edit tracking, hover flags with delays and disabled items are in. `SetItemKeyOwner` (5 uses) has no meaning without ImGui's key ownership and stays a host call. |
+| 9 | Tabs | 3 | 0 | No closable or reorderable tabs; `TabBarFindTabByID` (an internal, 1 use) is missing. |
+| 10 | Popups | 2 | 0 | `ClosePopupToLevel` (1 use, the file dialog) and `BeginPopupEx` (an internal, 1) are missing; `GetMousePosOnOpeningCurrentPopup` exists. |
+| 11 | Tables | 1 | 0 | Sorting, scrolling boxes, frozen rows and columns, row clipping, `NoResize` per column, column reordering by header drag (`Table_Reorderable`, `Col_NoReorder`), hiding with the right-click header menu (`Table_Hideable`, `Col_NoHide`, `Col_DefaultHide`) and the table state saved as text (`TableSaveState`, `SaveTableStates`). Missing: auto-fit by double click, nested tables, `TableGetHoveredColumn`, a context menu on the cells. |
+| 12 | Fonts and icons | 0 | 0 | `AddFontFromMemory`, `AddFontFromFile`, `AddFontBuiltin` (TrueType and OpenType, our own rasteriser), merging by code point range (icon fonts, fallback), glyph offset and minimum advance, any pixel size, `PushFont` and `PopFont` for widgets and `DrawList::AddText(font, size, ...)`, measuring with wrapping. Not done: hinting, kerning and GPOS/GSUB (no ligatures), complex scripts (Arabic joining, Indic, right-to-left), variable, colour and bitmap fonts, `.ttc` faces beyond the first, Dear ImGui's compressed base85 blobs (decode first), `ImFont*` as a pointer (a `FontId` int here); nothing run in a real window. |
+| 13 | Text input, multi-line | 0 | 0 | Built on `CodeEdit` (selection, undo, clipboard, scrolling). No word wrap; `CtrlEnterForNewLine` (4 uses) is accepted and ignored. |
+| 14 | Value widgets (drag, slider, number) | 0 | 0 | `SliderFloat`, `SliderInt`, `DragFloat` and `DragInt` take a restricted printf format (one `f e g` or `d i u` conversion, no `%s`) and `SliderFlags` (`Logarithmic`, `AlwaysClamp` accepted, `NoRoundToFormat`, `NoInput`); a log drag moves by ratio. Not done: the 2 to 4 cell and vertical variants have no format or flags, no `DragIntRange2`, a log slider with a format that rounds to zero decimals near 0 has a coarse small end, never run with a real mouse. |
+| 15 | Windows, scrolling, focus | 0 | 0 | `WindowInfo` (`FindWindowByName`, `FindWindowByID`, `GetCurrentWindowInfo`, `GetFocusedWindowInfo`, `GetWindowInfos`: name, position, size, active, docked, tab visible) and `GetWindowID`, `GetWindowInnerRect`, `BringWindowToDisplayFront`, `SetItemWidthDefault` cover what the call sites read of `ImGuiWindow`; `###` ids follow Dear ImGui. Not done: reading `ImGuiWindow` fields by pointer (`RootWindow`, `ParentWindow`, `DC.*`, `NavWindow`: OkayUI has no child windows with entries), no horizontal scrolling, no `NoSavedSettings`, `NoNav` (accepted). |
 
 ## What the launcher still needs (launcher/ only)
 
@@ -96,12 +94,10 @@ Calls with no OkayUI function (22 call sites in 11 names):
 - `GetActiveID` x1 (Context, frame and host)
 - `DestroyContext` x1 (Context, frame and host)
 
-Flags and types with no OkayUI counterpart (44 uses in 8 names):
+Flags and types with no OkayUI counterpart (34 uses in 6 names):
 
 - `ImTextureID` x24
-- `ImFont` x7
 - `ImGuiContext` x4
-- `ImFontConfig` x3
 - `ImGuiStyleVar_WindowBorderSize` x2
 - `ImGuiKey_MouseWheelY` x2
 - `ImGuiStyleVar_ChildBorderSize` x1
@@ -118,29 +114,19 @@ popup and a screenshot path, and that code has to be reshaped when the launcher 
 **Buttons, checkbox, radio, images** (Partial)
 - flags and types: `ImTextureID` (58)
 
-**Value widgets (drag, slider, number)** (Partial)
-- flags and types: `ImGuiSliderFlags_Logarithmic` (5), `ImGuiSliderFlags_AlwaysClamp` (3), `ImGuiSliderFlags_None` (1)
-
 **Docking and viewports** (Partial)
-- calls: `SetNextWindowDockID` (8), `DockBuilderGetNode` (5), `DockBuilderDockWindow` (4), `DockBuilderSetNodeSize` (4), `IsWindowDocked` (3), `DockBuilderAddNode` (2), `DockBuilderFinish` (2), `DockBuilderRemoveNode` (2), `DockNodeGetRootNode` (2), `GetPlatformIO` (2), `SaveIniSettingsToMemory` (2), `SetNextWindowViewport` (2), `DockBuilderSplitNode` (1), `DockContextQueueUndockWindow` (1), `DockNodeBeginAmendTabBar` (1), `DockNodeEndAmendTabBar` (1), `GetWindowDockNode` (1), `LoadIniSettingsFromMemory` (1), `RenderPlatformWindowsDefault` (1), `UpdatePlatformWindows` (1)
-- flags and types: `ImGuiDockNode` (16), `ImGuiConfigFlags_ViewportsEnable` (6), `ImGuiConfigFlags_NavEnableKeyboard` (4), `ImGuiDockNodeFlags_DockSpace` (2), `ImGuiDockNodeFlags_NoTabBar` (2), `ImGuiConfigFlags_DockingEnable` (1), `ImGuiDockNodeFlags_None` (1)
-
-**Windows, scrolling, focus** (Partial)
-- calls: `FindWindowByName` (12), `GetCurrentWindow` (6), `BringWindowToDisplayFront` (3), `FindWindowByID` (1), `SetNextWindowCollapsed` (1)
-- flags and types: `ImGuiWindow` (39)
+- calls: `DockNodeGetRootNode` (2), `GetPlatformIO` (2), `SaveIniSettingsToMemory` (2), `SetNextWindowViewport` (2), `DockContextQueueUndockWindow` (1), `DockNodeBeginAmendTabBar` (1), `DockNodeEndAmendTabBar` (1), `GetWindowDockNode` (1), `LoadIniSettingsFromMemory` (1), `RenderPlatformWindowsDefault` (1), `UpdatePlatformWindows` (1)
+- flags and types: `ImGuiConfigFlags_ViewportsEnable` (6), `ImGuiConfigFlags_NavEnableKeyboard` (4), `ImGuiDockNodeFlags_NoTabBar` (2), `ImGuiConfigFlags_DockingEnable` (1)
 
 **Popups** (Partial)
 - calls: `BeginPopupEx` (1), `ClosePopupToLevel` (1)
 
 **Tables** (Partial)
-- flags and types: `ImGuiTableBgTarget_CellBg` (1), `ImGuiTableColumnFlags_NoHide` (1)
+- flags and types: `ImGuiTableBgTarget_CellBg` (1)
 
 **Tabs** (Partial)
 - calls: `TabBarFindTabByID` (1)
 - flags and types: `ImGuiTabBarFlags_IsFocused` (1), `ImGuiTabItemFlags_Button` (1)
-
-**Drag and drop** (Partial)
-- flags and types: `ImGuiPayload` (36)
 
 **Style and colours** (Partial)
 - calls: `StyleColorsDark` (3), `StyleColorsLight` (2), `PopItemFlag` (1), `PushItemFlag` (1), `StyleColorsClassic` (1)
@@ -149,10 +135,6 @@ popup and a screenshot path, and that code has to be reshaped when the launcher 
 **Mouse, keys, IO** (Partial)
 - calls: `SetKeyOwner` (2), `SetNextFrameWantCaptureKeyboard` (2)
 - flags and types: `ImGuiKey` (10), `ImGuiKey_MouseWheelY` (5), `ImGuiKey_Keypad0` (3), `ImGuiKey_KeypadSubtract` (3), `ImGuiKey_Minus` (3), `ImGuiKey_KeypadDecimal` (2), `ImGuiKey_LeftBracket` (2), `ImGuiKey_LeftShift` (2), `ImGuiKey_Period` (2), `ImGuiKey_RightBracket` (2), `ImGuiKey_RightShift` (2), `ImGuiKey_Slash` (2), ...
-
-**Fonts and icons** (Partial)
-- calls: `GetFontTexUvWhitePixel` (2)
-- flags and types: `ImFont` (19), `ImFontConfig` (7), `ImWchar` (1)
 
 **IDs** (Done)
 - flags and types: `ImGuiID` (56)
@@ -167,12 +149,15 @@ popup and a screenshot path, and that code has to be reshaped when the launcher 
 ## IME
 
 The scanned code mentions IME 41 times: `editor/main.cpp` (30), `launcher/main.cpp` (3), `editor/DialogueWindow.cpp` (2), `editor/AnimatorWindow.cpp` (1), `editor/BehaviorTreeWindow.cpp` (1). OkayUI has the API (`Input::composition`, `Input::commit`, `GetImeRect`, text fields and `CodeEdit` show the
-preedit and report the caret rectangle; `okayui/tests/test_okayui_compose.cpp`). What is missing is the host side: nothing forwards the operating system's composition
-events (SDL text editing events) into `Input`, and nothing places the system candidate window at `GetImeRect()`. Status: Partial, headless only.
+preedit and report the caret rectangle; `okayui/tests/test_okayui_compose.cpp`). The host side is now written: `shared/OkayUIIme.hpp` (`ImeState`: preedit, commit and cancel events,
+what to tell the system after a frame, `RecordingImeSink` as the in-memory test backend) and `shared/OkayUIHost.hpp` (`InputCollector` turns `SDL_TEXTEDITING` into the preedit, `SdlImeSink` calls
+`SDL_StartTextInput`, `SDL_StopTextInput` and `SDL_SetTextInputRect` with the caret or preedit rectangle), tested with synthetic events in `okayui/tests/test_okayui_ime.cpp`.
+Status: Partial. **Unverified:** nothing here ran against a real input method (Windows, macOS, X11 or Wayland) in a real window, and the editor and launcher do not use it yet.
 
 ## CodeEdit against ImGuiColorTextEdit
 
 See `docs/own_ui_code_editor.md` (HAVE and GAP table). New in this change: overwrite mode (Insert), Ctrl+Insert, Shift+Insert, Shift+Delete, Alt+Backspace and
-show-whitespace, tested in `okayui/tests/test_okayui_gaps.cpp`. Still missing: code folding, multiple cursors, word wrap (none of them in ImGuiColorTextEdit either), IME
-through a real window, a code font.
+show-whitespace, tested in `okayui/tests/test_okayui_gaps.cpp`. A code font is now possible (`AddFontFromFile` with a monospaced font, `PushFont`), but `CodeEdit` still measures
+with the active UI font: it was not re-tested with a pushed code font. Still missing: code folding, multiple cursors, word wrap (none of them in ImGuiColorTextEdit either), IME
+through a real window.
 

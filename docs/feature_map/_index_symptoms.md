@@ -138,6 +138,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
+| a log slider is linear | [40.9](40-okayui-library.md#409-gap-step-33-dock-layout-building-fonts-log-sliders-table-columns-ime-host-side-window-queries) Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries |
 | a long list is slow | [40.8](40-okayui-library.md#408-gap-step-32-calls-the-launcher-and-editor-use-that-okayui-lacked-and-the-gap-report) Gap step 32: calls the launcher and editor use that OkayUI lacked, and the gap report |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
@@ -272,6 +273,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a style looks different between renderers | [26.3](20-35-planned.md#263-custom-shaders) Custom shaders |
 | a subtitle never appears | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | a Supabase function isn't found | [41.6](41-build-tools-infra.md#416-supabase-functions-and-sql-schema) Supabase functions and SQL schema |
+| a table column cannot be moved or hidden | [40.9](40-okayui-library.md#409-gap-step-33-dock-layout-building-fonts-log-sliders-table-columns-ime-host-side-window-queries) Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries |
 | a table column is the wrong width | [40.1](40-okayui-library.md#401-core-widgets-and-auto-layout) Core widgets and auto-layout |
 | a tap does nothing on a phone | [8.4](08-input.md#84-cursor-and-touch) Cursor and touch |
 | a target silently missing (SDL2 not found warning) | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
@@ -349,6 +351,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
+| an icon font cannot be loaded | [40.9](40-okayui-library.md#409-gap-step-33-dock-layout-building-fonts-log-sliders-table-columns-ime-host-side-window-queries) Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries |
 | an image shows a red box or "can't load | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | an instance lost its colour change after re-apply | [1.6](01-core-scene.md#16-prefabs-and-templates) Prefabs and templates |
 | an intro animation snaps | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
@@ -943,6 +946,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the camera shakes forever | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | the camera sits inside the roof | [4.5](04-characters-cameras.md#45-vehicles) Vehicles |
 | the camera view is mirrored | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
+| the candidate window of an input method is in the wrong place | [40.9](40-okayui-library.md#409-gap-step-33-dock-layout-building-fonts-log-sliders-table-columns-ime-host-side-window-queries) Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries |
 | the canvas is slow with many nodes | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | the car skates sideways | [4.5](04-characters-cameras.md#45-vehicles) Vehicles |
 | the chair pose floats above the seat | [4.11](04-characters-cameras.md#411-seats-and-sitting) Seats and sitting |
@@ -979,6 +983,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the editor closed by itself | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the editor crashes or shows a black screen | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | the editor exe is huge | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| the editor layout code has no OkayUI shape | [40.9](40-okayui-library.md#409-gap-step-33-dock-layout-building-fonts-log-sliders-table-columns-ime-host-side-window-queries) Gap step 33: dock layout building, fonts, log sliders, table columns, IME host side, window queries |
 | the editor opens to an empty scene with no direction | [51.3](43-proposals.md#513-welcome-screen-and-tips) Welcome screen and tips |
 | the editor opens twice or the second launch does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the editor says "GPU renderer failing | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |

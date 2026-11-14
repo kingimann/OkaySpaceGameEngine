@@ -38,8 +38,8 @@ FAMILIES = [
          note="Edit tracking, hover flags with delays and disabled items are in. `SetItemKeyOwner` (5 uses) has no meaning without ImGui's key ownership and stays a host call."),
     dict(name="Layout and cursor", calls=r"SameLine|Dummy|Spacing|Separator|NewLine|Indent|Unindent|GetCursor\w+|SetCursor\w+|GetContentRegion\w+|GetWindowContentRegion\w+|BeginGroup|EndGroup|AlignTextToFramePadding|CalcTextSize|GetFrameHeight\w*|GetTextLineHeight\w*|SetNextItemWidth|PushItemWidth|PopItemWidth|CalcItemWidth|Columns|NextColumn|PushMultiItemsWidths|GetTreeNodeToLabelSpacing|GetFontSize",
          types=(), needs="SameLine Dummy GetCursorScreenPos GetContentRegionAvail CalcItemWidth GetCursorStartPos GetWindowContentRegionMin",
-         proof="okayui/tests/test_okayui_drawlist.cpp okayui/tests/test_okayui_compat.cpp okayui/tests/test_okayui_gaps.cpp", status="Partial",
-         note="`PushMultiItemsWidths` (1 use, a three-cell row in the editor) is missing; `GetTreeNodeToLabelSpacing` (1) is missing. `AlignTextToFramePadding` does nothing (OkayUI rows are already centred)."),
+         proof="okayui/tests/test_okayui_drawlist.cpp okayui/tests/test_okayui_compat.cpp okayui/tests/test_okayui_gaps.cpp", status="Done",
+         note="`AlignTextToFramePadding` does nothing (OkayUI rows are already centred); `SetItemWidthDefault` is the window-wide item width."),
     dict(name="Text (display)", calls=r"Text\w*|BulletText|Bullet|SeparatorText|LabelText|PushTextWrapPos|PopTextWrapPos",
          types=(), needs="Text TextColored TextDisabled TextWrapped TextUnformatted BulletText SeparatorText PushTextWrapPos",
          proof="okayui/tests/test_okayui_widgets.cpp okayui/tests/test_okayui_values.cpp", status="Done",
@@ -49,9 +49,9 @@ FAMILIES = [
          proof="okayui/tests/test_okayui_behaviour.cpp okayui/tests/test_okayui_widgets.cpp", status="Partial",
          note="`ButtonFlags_MouseButtonLeft/Right` (12 uses on `InvisibleButton`) are not honoured: only the left button clicks. `ImTextureID` is an `SDL_Texture*` here (24 uses in the launcher)."),
     dict(name="Value widgets (drag, slider, number)", calls=r"Drag\w+|Slider\w+|InputInt|InputFloat\w*|InputDouble",
-         types=("SliderFlags",), needs="DragFloat DragInt DragFloat2 DragFloat3 SliderFloat SliderInt InputInt InputFloat",
-         proof="okayui/tests/test_okayui_values.cpp", status="Partial",
-         note="No printf format strings, no `SliderFlags_Logarithmic` (5 uses) or `AlwaysClamp` (3 uses), no `DragIntRange2`."),
+         types=("SliderFlags",), needs="DragFloat DragInt DragFloat2 DragFloat3 SliderFloat SliderInt InputInt InputFloat Slider_Logarithmic Slider_AlwaysClamp FormatNumber SliderRatioFromValue",
+         proof="okayui/tests/test_okayui_values.cpp okayui/tests/test_okayui_logtables.cpp", status="Partial",
+         note="`SliderFloat`, `SliderInt`, `DragFloat` and `DragInt` take a restricted printf format (one `f e g` or `d i u` conversion, no `%s`) and `SliderFlags` (`Logarithmic`, `AlwaysClamp` accepted, `NoRoundToFormat`, `NoInput`); a log drag moves by ratio. Not done: the 2 to 4 cell and vertical variants have no format or flags, no `DragIntRange2`, a log slider with a format that rounds to zero decimals near 0 has a coarse small end, never run with a real mouse."),
     dict(name="Text input, single line", calls=r"InputText|InputTextWithHint|SetKeyboardFocusHere",
          types=("InputTextFlags",), needs="InputText InputTextWithHint InputText_Password InputText_CharsDecimal InputText_CharsNoBlank SetKeyboardFocusHere",
          proof="okayui/tests/test_okayui_behaviour.cpp okayui/tests/test_okayui_gaps.cpp", status="Done",
@@ -65,13 +65,13 @@ FAMILIES = [
          proof="okayui/tests/test_okayui_gaps.cpp okayui/tests/test_okayui_behaviour.cpp", status="Done",
          note="Borders, padding, auto height (one frame behind), negative sizes, no-scroll-bar. `AutoResizeX`, `ResizeX/Y` are accepted and ignored (2 uses)."),
     dict(name="Windows, scrolling, focus", calls=r"Begin|End|SetNextWindow\w*|GetWindow\w+|SetWindow\w+|IsWindow\w+|FindWindow\w+|BringWindow\w+|GetCurrentWindow|GetScroll\w+|SetScroll\w+|GetMainViewport",
-         types=("WindowFlags", "ImGuiWindow", "ImGuiViewport", "ImGuiCond"), needs="Begin End SetNextWindowPos SetNextWindowSize SetNextWindowFocus SetNextWindowBgAlpha SetWindowPos IsWindowFocused GetScrollY SetScrollHereY",
-         proof="okayui/tests/test_okayui_windows.cpp okayui/tests/test_okayui_gaps.cpp", status="Partial",
-         note="`FindWindowByName`/`FindWindowByID`/`GetCurrentWindow` and `ImGuiWindow` internals (30 uses, editor layout code) are ImGui internals with no OkayUI shape. No horizontal scrolling. No `NoSavedSettings`, `NoNav` (accepted)."),
+         types=("WindowFlags", "ImGuiWindow", "ImGuiViewport", "ImGuiCond"), needs="Begin End SetNextWindowPos SetNextWindowSize SetNextWindowFocus SetNextWindowBgAlpha SetWindowPos IsWindowFocused GetScrollY SetScrollHereY FindWindowByName FindWindowByID GetCurrentWindowInfo GetFocusedWindowInfo GetWindowInfos GetWindowInnerRect BringWindowToDisplayFront SetItemWidthDefault SetNextWindowCollapsed",
+         proof="okayui/tests/test_okayui_windows.cpp okayui/tests/test_okayui_gaps.cpp okayui/tests/test_okayui_windows_api.cpp", status="Partial",
+         note="`WindowInfo` (`FindWindowByName`, `FindWindowByID`, `GetCurrentWindowInfo`, `GetFocusedWindowInfo`, `GetWindowInfos`: name, position, size, active, docked, tab visible) and `GetWindowID`, `GetWindowInnerRect`, `BringWindowToDisplayFront`, `SetItemWidthDefault` cover what the call sites read of `ImGuiWindow`; `###` ids follow Dear ImGui. Not done: reading `ImGuiWindow` fields by pointer (`RootWindow`, `ParentWindow`, `DC.*`, `NavWindow`: OkayUI has no child windows with entries), no horizontal scrolling, no `NoSavedSettings`, `NoNav` (accepted)."),
     dict(name="Popups", calls=r"OpenPopup|BeginPopup\w*|EndPopup|CloseCurrentPopup|IsPopupOpen|ClosePopupToLevel|GetMousePosOnOpeningCurrentPopup",
          types=("PopupFlags",), needs="OpenPopup BeginPopup BeginPopupModal BeginPopupContextItem BeginPopupContextWindow IsPopupOpen",
          proof="okayui/tests/test_okayui_behaviour.cpp okayui/tests/test_okayui_gaps.cpp", status="Partial",
-         note="`GetMousePosOnOpeningCurrentPopup` (4 uses, the editor's node-graph menus) and `ClosePopupToLevel` (1, the file dialog) are missing; `BeginPopupEx` is an internal."),
+         note="`ClosePopupToLevel` (1 use, the file dialog) and `BeginPopupEx` (an internal, 1) are missing; `GetMousePosOnOpeningCurrentPopup` exists."),
     dict(name="Menus", calls=r"MenuItem|BeginMenu|EndMenu|BeginMenuBar|EndMenuBar",
          types=(), needs="MenuItem BeginMenu BeginMenuBar", proof="okayui/tests/test_okayui_values.cpp", status="Done", note="Nested menus, shortcuts text, checked and enabled state, keyboard navigation."),
     dict(name="Combo, selectable, list", calls=r"BeginCombo|EndCombo|Combo|Selectable|ListBox\w*",
@@ -81,19 +81,19 @@ FAMILIES = [
          types=("TreeNodeFlags",), needs="TreeNode TreeNodeEx CollapsingHeader SetNextItemOpen", proof="okayui/tests/test_okayui_widgets.cpp", status="Done", note=""),
     dict(name="Tables", calls=r"BeginTable|EndTable|Table\w+",
          types=("TableFlags", "TableColumnFlags", "TableSortSpecs", "SortDirection", "TableRowFlags", "TableBgTarget"), needs="BeginTable TableSetupColumn TableHeadersRow TableGetSortSpecs TableSetupScrollFreeze Col_WidthStretch Col_NoResize",
-         proof="okayui/tests/test_okayui_tables.cpp okayui/tests/test_okayui_gaps.cpp", status="Partial",
-         note="Sorting, scrolling boxes, frozen rows and columns, row clipping, `NoResize` per column. Missing: column reordering and hiding, the header context menu, auto-fit by double click, nested tables, `TableGetHoveredColumn`."),
+         proof="okayui/tests/test_okayui_tables.cpp okayui/tests/test_okayui_gaps.cpp okayui/tests/test_okayui_logtables.cpp", status="Partial",
+         note="Sorting, scrolling boxes, frozen rows and columns, row clipping, `NoResize` per column, column reordering by header drag (`Table_Reorderable`, `Col_NoReorder`), hiding with the right-click header menu (`Table_Hideable`, `Col_NoHide`, `Col_DefaultHide`) and the table state saved as text (`TableSaveState`, `SaveTableStates`). Missing: auto-fit by double click, nested tables, `TableGetHoveredColumn`, a context menu on the cells."),
     dict(name="Tabs", calls=r"BeginTabBar|EndTabBar|BeginTabItem|EndTabItem|TabItemButton|TabBarFindTabByID",
          types=("TabItemFlags", "TabBarFlags"), needs="BeginTabBar BeginTabItem EndTabItem TabItemButton",
          proof="okayui/tests/test_okayui_values.cpp", status="Partial", note="No closable or reorderable tabs; `TabBarFindTabByID` (an internal, 1 use) is missing."),
     dict(name="Drag and drop", calls=r"BeginDragDrop\w*|EndDragDrop\w*|AcceptDragDropPayload|SetDragDropPayload|GetDragDropPayload",
          types=("DragDropFlags", "ImGuiPayload"), needs="BeginDragDropSource BeginDragDropTarget AcceptDragDropPayload SetDragDropPayload",
-         proof="okayui/tests/test_okayui_values.cpp", status="Partial",
-         note="Typed payloads, preview text and accept-before-delivery exist. Missing: `GetDragDropPayload` (4 uses: peek at the payload while dragging) and `BeginDragDropTargetCustom` (4, a target on a bare rectangle)."),
+         proof="okayui/tests/test_okayui_values.cpp okayui/tests/test_okayui_gaps.cpp", status="Done",
+         note="Typed payloads, preview text, accept-before-delivery, `GetDragDropPayload` (peek while dragging) and `BeginDragDropTargetCustom` (a target on a bare rectangle, with `GetWindowInnerRect` and `GetWindowID`). `ImGuiPayload` is `DragPayload` here (`data`, `size`, `delivery`)."),
     dict(name="Docking and viewports", calls=r"Dock\w+|SetNextWindowDockID|IsWindowDocked|GetWindowDockNode|SetNextWindowViewport|UpdatePlatformWindows|RenderPlatformWindowsDefault|GetPlatformIO|SaveIniSettings\w*|LoadIniSettings\w*",
-         types=("DockNode", "ImGuiDockNodeFlags", "ConfigFlags", "ImGuiViewport"), needs="DockSpace DockBegin DockEnd",
-         proof="okayui/tests/test_okayui_dock.cpp okayui/tests/test_okayui_dock_fuzz.cpp", status="Partial",
-         note="OkayUI has its own dock system (dock space, splitters, tabs, layout save and load). Missing: every `DockBuilder*` call (21 uses, the editor's default layout), docking nodes as an API, multi-viewports (OS windows)."),
+         types=("DockNode", "ImGuiDockNodeFlags", "ConfigFlags", "ImGuiViewport"), needs="DockSpace DockBegin DockEnd DockBuilderSplitNode DockBuilderFinish SetNextWindowDockID IsWindowDocked",
+         proof="okayui/tests/test_okayui_dock.cpp okayui/tests/test_okayui_dock_fuzz.cpp okayui/tests/test_okayui_dockbuilder.cpp", status="Partial",
+         note="OkayUI has its own dock system (dock space, splitters, tabs, layout save and load) and `DockBuilder` (draft layout: split, size, dock a window, remove, text, `Finish`) with the Dear ImGui names `DockBuilderAddNode` to `DockBuilderFinish`, `SetNextWindowDockID` and `IsWindowDocked`. Not done: the fields of `ImGuiDockNode` the editor reads (`TabBar`, `HostWindow`, `Windows`: 16 uses, rewrite over `WindowInfo` and `DockBuilder::Node`), tab bar amending, `DockContextQueueUndockWindow`, multi-viewports (OS windows), the ini settings calls."),
     dict(name="Colour editors and pickers", calls=r"ColorEdit\w*|ColorPicker\w*|ColorConvert\w*",
          types=("ColorEditFlags",), needs="ColorEdit3 ColorEdit4 ColorPicker3 ColorPicker4 ColorConvertHSVtoRGB", proof="okayui/tests/test_okayui_color.cpp", status="Done",
          note="HSV input mode, float display mode and the wheel picker are not there (not used)."),
@@ -108,11 +108,11 @@ FAMILIES = [
     dict(name="Mouse, keys, IO", calls=r"GetIO|IsKey\w+|IsMouse\w+|GetMouse\w+|ResetMouseDragDelta|SetMouseCursor|Shortcut|SetKeyOwner|SetNextFrameWantCapture\w+|GetTime|GetFrameCount",
          types=("ImGuiKey", "ImGuiMouseButton", "ImGuiMouseCursor", "ImGuiIO", "ImGuiModFlags", "ImGuiKeyChord"), needs="GetIO IsKeyPressed IsMouseClicked GetMouseDragDelta MouseButton_Middle SetMouseCursor KeyId_UpArrow",
          proof="okayui/tests/test_okayui_values.cpp okayui/tests/test_okayui_gaps.cpp", status="Partial",
-         note="The middle button, drag deltas and key aliases are in. Missing: `Shortcut` and key chords (4 uses), key ownership (`SetKeyOwner`), `ImGuiKey` values beyond the 70 named `KeyId`s (the mouse wheel as a key, keypad keys)."),
+         note="The middle button, drag deltas, key aliases and `Shortcut` (one key plus modifiers) are in. Missing: key ownership (`SetKeyOwner`, `SetItemKeyOwner`), `SetNextFrameWantCaptureKeyboard`, `ImGuiKey` values beyond the 70 named `KeyId`s (the mouse wheel as a key, keypad keys, punctuation keys)."),
     dict(name="Fonts and icons", calls=r"PushFont|PopFont|GetFont|SetWindowFontScale|GetFontTexUvWhitePixel",
-         types=("ImFont", "ImFontConfig", "ImFontAtlas", "ImWchar"), needs="SetFont GetFont SetWindowFontScale",
-         proof="okayui/tests/test_okayui_windows.cpp", status="Partial",
-         note="`SetFont` swaps between OkayUI's fonts (the 8x8 and the launcher's Roboto); an arbitrary font (a code font, an icon font merged into the text font) cannot be loaded or pushed. `ImFont*` has 22 uses, the icon font setup in `launcher/main.cpp` and `editor/main.cpp` has no OkayUI counterpart yet."),
+         types=("ImFont", "ImFontConfig", "ImFontAtlas", "ImWchar"), needs="SetFont GetFont SetWindowFontScale AddFontFromMemory AddFontFromFile AddFontBuiltin PushFont PopFont CalcTextSize GetFontTexUvWhitePixel",
+         proof="okayui/tests/test_okayui_windows.cpp okayui/tests/test_okayui_fonts.cpp", status="Partial",
+         note="`AddFontFromMemory`, `AddFontFromFile`, `AddFontBuiltin` (TrueType and OpenType, our own rasteriser), merging by code point range (icon fonts, fallback), glyph offset and minimum advance, any pixel size, `PushFont` and `PopFont` for widgets and `DrawList::AddText(font, size, ...)`, measuring with wrapping. Not done: hinting, kerning and GPOS/GSUB (no ligatures), complex scripts (Arabic joining, Indic, right-to-left), variable, colour and bitmap fonts, `.ttc` faces beyond the first, Dear ImGui's compressed base85 blobs (decode first), `ImFont*` as a pointer (a `FontId` int here); nothing run in a real window."),
     dict(name="Clipboard", calls=r"SetClipboardText|GetClipboardText", types=(), needs="SetClipboardText GetClipboardText",
          proof="okayui/tests/test_okayui_behaviour.cpp okayui/tests/test_okayui_codeedit.cpp", status="Done", note="Limited to 4095 bytes."),
     dict(name="IDs", calls=r"PushID|PopID|GetID", types=("ImGuiID",), needs="PushID PopID GetID", proof="okayui/tests/test_okayui_compat.cpp", status="Done", note="`ImGuiID` is `unsigned` here."),
@@ -219,6 +219,8 @@ def main():
     ime_files = defaultdict(int)
     for path in base.source_files():
         t = base.strip_comments_and_strings(open(path, encoding="utf-8", errors="replace").read())
+        if os.path.relpath(path, ROOT).replace(os.sep, "/").startswith("shared/OkayUI"):
+            continue   # OkayUI's own host files are the replacement, not Dear ImGui usage
         k = len(re.findall(r"\b(?:Ime\w*|WantTextInput|SetPlatformImeData|InputQueueCharacters|ImGuiInputTextCallbackData)\b", t))
         if k:
             ime += k
@@ -342,14 +344,17 @@ def main():
     w("")
     w("The scanned code mentions IME %d times: %s. OkayUI has the API (`Input::composition`, `Input::commit`, `GetImeRect`, text fields and `CodeEdit` show the" % (
         ime, ", ".join("`%s` (%d)" % kv for kv in sorted(ime_files.items(), key=lambda kv: -kv[1])[:5]) or "none"))
-    w("preedit and report the caret rectangle; `okayui/tests/test_okayui_compose.cpp`). What is missing is the host side: nothing forwards the operating system's composition")
-    w("events (SDL text editing events) into `Input`, and nothing places the system candidate window at `GetImeRect()`. Status: Partial, headless only.")
+    w("preedit and report the caret rectangle; `okayui/tests/test_okayui_compose.cpp`). The host side is now written: `shared/OkayUIIme.hpp` (`ImeState`: preedit, commit and cancel events,")
+    w("what to tell the system after a frame, `RecordingImeSink` as the in-memory test backend) and `shared/OkayUIHost.hpp` (`InputCollector` turns `SDL_TEXTEDITING` into the preedit, `SdlImeSink` calls")
+    w("`SDL_StartTextInput`, `SDL_StopTextInput` and `SDL_SetTextInputRect` with the caret or preedit rectangle), tested with synthetic events in `okayui/tests/test_okayui_ime.cpp`.")
+    w("Status: Partial. **Unverified:** nothing here ran against a real input method (Windows, macOS, X11 or Wayland) in a real window, and the editor and launcher do not use it yet.")
     w("")
     w("## CodeEdit against ImGuiColorTextEdit")
     w("")
     w("See `docs/own_ui_code_editor.md` (HAVE and GAP table). New in this change: overwrite mode (Insert), Ctrl+Insert, Shift+Insert, Shift+Delete, Alt+Backspace and")
-    w("show-whitespace, tested in `okayui/tests/test_okayui_gaps.cpp`. Still missing: code folding, multiple cursors, word wrap (none of them in ImGuiColorTextEdit either), IME")
-    w("through a real window, a code font.")
+    w("show-whitespace, tested in `okayui/tests/test_okayui_gaps.cpp`. A code font is now possible (`AddFontFromFile` with a monospaced font, `PushFont`), but `CodeEdit` still measures")
+    w("with the active UI font: it was not re-tested with a pushed code font. Still missing: code folding, multiple cursors, word wrap (none of them in ImGuiColorTextEdit either), IME")
+    w("through a real window.")
     w("")
     if problems:
         w("## Problems the script found")

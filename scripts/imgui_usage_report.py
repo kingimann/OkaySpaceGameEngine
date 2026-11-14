@@ -39,7 +39,7 @@ ALIASES = {
     "GetWindowDrawList": "GetWindowDrawList", "GetForegroundDrawList": "GetForegroundDrawList",
     "TableSetupColumn": "TableSetupColumn", "IsKeyPressed": "IsKeyPressed",
     "BeginDragDropSource": "BeginDragDropSource", "InputTextMultiline": "InputText",
-    "SliderFloat": "SliderFloat", "PushFont": "SetFont", "PopFont": "SetFont",
+    "SliderFloat": "SliderFloat", "GetCurrentWindow": "GetCurrentWindowInfo",
     "TextWrapped": "TextWrapped", "SetItemTooltip": "SetTooltip", "BeginTooltip": "Tooltip",
 }
 
@@ -114,8 +114,14 @@ FUNC_START = re.compile(r"^(?:static\s+|inline\s+|constexpr\s+|template\s*<[^>]*
 KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "sizeof", "namespace"}
 
 
+# ImGui types whose job OkayUI's value types do (by shape, not by layout): ImFont* is a FontId, ImGuiWindow a WindowInfo, ImGuiDockNode a DockBuilder::Node, ImGuiPayload a DragPayload.
+TYPE_ALIASES = {"ImFont": "FontId", "ImFontConfig": "FontConfig", "ImWchar": "GlyphRange", "ImGuiWindow": "WindowInfo", "ImGuiDockNode": "DockBuilder", "ImGuiPayload": "DragPayload"}
+
+
 def type_covered(name, idents):
     """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
+    if name in TYPE_ALIASES:
+        return TYPE_ALIASES[name] in idents
     if name in ("ImVec2", "ImVec4"):
         return ("Vec2" if name == "ImVec2" else "Vec4") in idents
     if name.startswith("ImDrawFlags_"):

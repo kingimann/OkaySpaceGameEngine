@@ -497,6 +497,23 @@ int DlWorker(void* data) {
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in); anything unclear falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes;
+        sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
+        sp.cancelled = [&] { bool c; SDL_LockMutex(g_dlMutex); c = d->cancelReq; SDL_UnlockMutex(g_dlMutex); return c; };
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) {
+            if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(d->part, ec); set([&]{ d->status = 4; }); return 0; }
+            if (r.outcome == okay::http::OwnOutcome::Ok && r.bytes > 0) {
+                fs::remove(d->dest, ec); fs::rename(d->part, d->dest, ec);
+                set([&]{ d->received = (long long)r.bytes; if (d->total <= 0) d->total = (long long)r.bytes; d->status = ec ? 3 : 2; });
+            } else { fs::remove(d->part, ec); set([&]{ d->status = 3; }); }
+            return 0;
+        }
+    }
+#endif
     std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
                       " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);

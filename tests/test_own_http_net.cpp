@@ -642,6 +642,25 @@ static void TestTls(const std::string& scriptPath) {
         // credentials are never sent when verification fails: the TLS server can not have answered
         r = Perform("GET", s.Url("localhost", "ok.http"), {"Authorization: Bearer SECRET"}, "", o2);
         CHECK(!r.ok);
+        {   // keep-alive over TLS: sequential calls work whether or not the server (openssl s_server -HTTP) keeps the
+            // connection; a connection that was kept must pass the same checks again (nothing is trusted from before)
+            WriteFile(docs + "/ka.http", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+            NetOptions k = o; k.keepAlive = true; int reused = 0;
+            for (int i = 0; i < 4; ++i) {
+                r = Perform("GET", s.Url("localhost", "ka.http"), {}, "", k);
+                CHECK(r.ok && r.response.body == "hello");
+                reused += r.reusedConnections;
+            }
+            std::printf("  (TLS keep-alive: %d of 3 follow-up requests rode on a kept connection)\n", reused);
+            detail::DropIdleConnections();   // openssl s_server serves one connection at a time: do not leave one open and idle
+            // a pooled connection is never used for another host name or another CA setting
+            NetOptions k2 = k; k2.caFile = certs + "/ca2.pem";
+            r = Perform("GET", s.Url("localhost", "ka.http"), {}, "", k2);
+            CHECK_ERR(r, Err::Tls);
+            r = Perform("GET", "https://127.0.0.2:" + std::to_string(s.port) + "/ka.http", {}, "", k);
+            CHECK_ERR(r, Err::Tls);
+            detail::DropIdleConnections();
+        }
     }
     {   // wrong host name in the certificate
         SServer s; CHECK(s.Start(docs, certs + "/wronghost.crt", certs + "/wronghost.key"));

@@ -124,7 +124,9 @@ inline const VsSharedLevel kCollectionLevels[] = {
     {"ListInsert", VsLevel::Intermediate}, {"ListSet", VsLevel::Intermediate}, {"ListFind", VsLevel::Intermediate},
     {"ListRemoveItem", VsLevel::Intermediate}, {"ListSort", VsLevel::Intermediate}, {"ListReverse", VsLevel::Intermediate},
     {"ListClear", VsLevel::Intermediate}, {"ListCopy", VsLevel::Intermediate}, {"MapClear", VsLevel::Intermediate},
-    {"MapCount", VsLevel::Intermediate}, {"MapCopy", VsLevel::Intermediate}, {"StructNew", VsLevel::Advanced},
+    {"MapCount", VsLevel::Intermediate}, {"MapCopy", VsLevel::Intermediate},
+    {"ListAppend", VsLevel::Intermediate}, {"ListSlice", VsLevel::Intermediate}, {"ListPop", VsLevel::Intermediate},
+    {"MapGetOr", VsLevel::Intermediate}, {"MapMerge", VsLevel::Intermediate}, {"StructNew", VsLevel::Advanced},
     {"StructGet", VsLevel::Advanced}, {"StructSet", VsLevel::Advanced}, {"MakeColor", VsLevel::Intermediate},
     {"SplitColor", VsLevel::Intermediate},
 };

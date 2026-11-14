@@ -297,6 +297,23 @@ int main() {
         relay.Stop();
     }
 
+    // ---- Legacy (v1/v2) hellos: refused when off (the relay program's default), nothing registered (#733) ----
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        relay.SetLegacyHello(false);
+        Peer v1(relay.Port());
+        v1.Hello(RelayHost, "LEG");                       // a v1 hello: [tag][role][code], no cookie
+        Pump(relay);
+        CHECK(relay.PeerCount() == 0 && relay.SlotOf(v1.self) == 0);
+        CHECK(relay.LegacyHellos() >= 1);
+        relay.SetLegacyHello(true);                       // the explicit opt-in still works
+        v1.Hello(RelayHost, "LEG");
+        Pump(relay);
+        CHECK(relay.PeerCount() == 1);
+        relay.Stop();
+    }
+
     // ---- 10,000 random datagrams: no crash, still bounded, still works ----
     {
         RelayServer relay;

@@ -18,6 +18,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 |---|---|---|
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress, audio options | Removed from the UI | The renderers do no colour-space handling, no compressed GPU path exists, audio import options (stream, mono, quality) are not read by the loader (clips keep their channels and long music is streamed per source instead) |
+| OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
 | Models already in a scene on import-settings Apply | Limited | Stored meshes are not re-imported; the setting applies the next time the model is added |
 | Ten visual-script nodes: `Fn.net_join_link`, `Fn.net_pin_host`, `Fn.pf_*` (delete, leaderboard_top, load, login, login_password, register, save, set_stat) | Hidden from the palette (`kHiddenUntilTested`) | No test covers them; they need a network or PlayFab service |
 | 15 online nodes with only indirect coverage (net host/join/relay/queue/browser) | Visible | Never run as nodes in a test; the calls under them are covered by network suites |
@@ -28,7 +29,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
 | UI nameplate | Health bar bound | Name and level are plain text, not bound to data |
 | UI Dropdown | Scrolls with wheel and keys | No touch or drag scrolling |
-| Inventory screen | Shows the bag | Moving items between bags is still the Inventory component's job |
+| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
@@ -36,10 +37,10 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 ## Planned: visual-script core upgrade
 
-Not started. Today graphs can call functions, have variable scopes, and use Broadcast / On Event and the list builtins; these steps build on that. One at a time, each shipped only when finished, tested and usable in the editor:
+Steps 1 and 2 turned out to be mostly shipped already (see "Declared variables, lists, maps and structs" in `docs/visual_scripting.md`); the audit and the remaining gaps are below. Steps 3 to 5 are not started. One at a time, each shipped only when finished, tested and usable in the editor:
 
-1. A better variable system for all types: vectors, colors, structs, objects, arrays and maps, with local, graph, object and global scopes and defaults editable in the Inspector.
-2. A full set of array and map nodes: add, remove, insert, find, sort, for each, length, with typed element pins.
+1. DONE (earlier work, audited again here): a better variable system. Declared variables (`decl name Type scope default`) with Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>` and struct types; object, scene and global scopes with defaults editable in the Inspector; typed Set / Add Var; old `var` lines still load (`tests/data/vs_core_legacy.okayvs` is a graph in the old format, run by `vs_variables`). Not done: a declared "local" scope (function locals via Set Local stay untyped), and a separate "graph" scope distinct from "object" (today `object` is the graph's own variables); typed lists of structs.
+2. DONE for lists and maps: add, remove (by index and by value), insert, set, find, sort, reverse, clear, copy, for each, length, keys, values, count, plus List Append, List Slice, List Pop, Map Get Or and Map Merge (added now), with element types carried through the graph checker. Not done: lists and maps have no OkayScript export (Generate script lists them as not translated); no sort-by-key or sort-with-comparer; List Pop takes only the last item.
 3. Custom events with typed parameters, and delegates (bind, unbind, call).
 4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
 5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.
@@ -62,9 +63,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
-- Admin: create test servers without a game
+- Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
-- Improve inventory systems (survival-game style)
+- Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
 - Improve the blocky character's arms, especially in first person

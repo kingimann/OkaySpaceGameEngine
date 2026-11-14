@@ -29,8 +29,18 @@ float Cross(float ax, float az, float bx, float bz, float cx, float cz) {
 void NavCarveVolume::SetHull(const float* xs, const float* zs, int n) {
     count = 0;
     if (n <= 0) return;
-    std::vector<int> idx((std::size_t)n);
-    for (int i = 0; i < n; ++i) idx[(std::size_t)i] = i;
+    // Points that coincide up to rounding (a box's top and bottom corners after a turn about Y land a few
+    // ulps apart, and the ulps depend on the compiler and CPU) count as one, so the hull has exactly the
+    // corners the footprint has.
+    std::vector<int> idx;
+    idx.reserve((std::size_t)n);
+    for (int i = 0; i < n; ++i) {
+        bool dup = false;
+        for (int j : idx)
+            if (std::fabs(xs[i] - xs[j]) <= 1e-4f && std::fabs(zs[i] - zs[j]) <= 1e-4f) { dup = true; break; }
+        if (!dup) idx.push_back(i);
+    }
+    n = (int)idx.size();
     std::sort(idx.begin(), idx.end(), [&](int a, int b) { return xs[a] < xs[b] || (xs[a] == xs[b] && zs[a] < zs[b]); });
     std::vector<int> h((std::size_t)n * 2 + 2);
     int k = 0;

@@ -414,6 +414,32 @@ struct MapCopyNode : VsNode {   // in0 = map, in1 = deep? -> a new map
     }
 };
 
+// Map Get Or: the value under Key, or Default when the key isn't there (no Found pin to test).
+struct MapGetOrNode : VsNode {   // in0 = map, in1 = key, in2 = default
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        auto m = VsMapIn(this, In(0, g, ctx), g, ctx, HasInput(0));
+        if (m) {
+            auto it = m->find(In(1, g, ctx).AsString());
+            if (it != m->end()) return it->second;
+        }
+        return In(2, g, ctx);
+    }
+};
+
+// Map Merge: copy every entry of From into Into (a key in both takes From's value).
+struct MapMergeNode : VsNode {   // in0 = into, in1 = from
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto into = VsMapIn(this, In(0, g, ctx), g, ctx, true);
+        if (!into) return 0;
+        auto from = In(1, g, ctx).AsMap();
+        if (!from) { g.Error(this, ctx, "its From input isn't a map; nothing was merged"); return 0; }
+        if (from == into) return 0;
+        for (const auto& kv : *from) (*into)[kv.first] = kv.second;
+        return 0;
+    }
+};
+
 // ---- Structs: a map with declared, typed fields (`struct` line) ----------------
 struct StructNewNode : VsNode {   // text = struct name -> a new struct with every field at its default
     std::string name;

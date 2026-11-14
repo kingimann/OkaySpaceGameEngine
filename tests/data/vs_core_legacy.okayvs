@@ -1,0 +1,45 @@
+# A graph in the format before the visual-script core upgrade (old `var` lines, no `decl`, no `struct`,
+# only the list and map nodes that existed then). It must keep loading and running unchanged.
+var lives 3
+var title "Old graph"
+node 1 OnStart
+entry OnStart 1
+node 2 NewList
+node 3 SetVar bag
+data 3 0 2 0
+node 4 GetVar bag
+node 5 ListAdd
+data 5 0 4 0
+default 5 1 5
+node 6 ListAdd
+data 6 0 4 0
+default 6 1 7
+node 7 ForEach
+data 7 0 4 0
+node 8 AddVar sum
+data 8 0 7 0
+node 9 NewMap
+node 10 SetVar table
+data 10 0 9 0
+node 11 GetVar table
+node 12 MapSet
+data 12 0 11 0
+default 12 1 "gold"
+data 12 2 13 0
+node 13 GetVar sum
+node 14 MapGet
+data 14 0 11 0
+default 14 1 "gold"
+node 15 SetVar gold
+data 15 0 14 0
+node 16 AddVar lives
+default 16 0 -1
+exec 1 0 3
+exec 3 0 5
+exec 5 0 6
+exec 6 0 7
+exec 7 0 8
+exec 7 1 10
+exec 10 0 12
+exec 12 0 15
+exec 15 0 16

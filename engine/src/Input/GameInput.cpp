@@ -87,4 +87,15 @@ bool InteractClaimsKey(const Scene* scene, char key) {
     return false;
 }
 
+bool LeanKeyTaken(const Scene* scene, char key) {
+    if (!scene || !key) return false;
+    if (InteractClaimsKey(scene, key)) return true;
+    if (!Input::GetKeyDown(key)) return false;
+    for (const InventoryUI* ui : scene->FindObjectsOfType<InventoryUI>())
+        if (ui && ui->enabled && ui->toggleKey == key) return true;
+    for (const GridInventory* g : scene->FindObjectsOfType<GridInventory>())
+        if (g && g->enabled && g->toggleKey == key) return true;
+    return false;
+}
+
 } // namespace okay

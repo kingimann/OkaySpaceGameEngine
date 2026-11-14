@@ -959,11 +959,12 @@ private:
     void ApplyHit(HitClaim& claim);
     bool m_applyingHit = false;   // server: inside ApplyHit (its __dmg carries the death)
     int m_lateLifeSent = 0;
-    std::unique_ptr<net::BuildSync> m_buildSync;
-    std::unique_ptr<net::QuestSync> m_questSync;
     std::unordered_map<std::string, RequestHandler> m_requestHandlers;
     std::vector<std::pair<int, std::function<void(std::uint32_t)>>> m_joinHooks;
     int m_nextJoinHook = 1;
+    // After the tables they unregister from (destroyed first).
+    std::unique_ptr<net::BuildSync> m_buildSync;
+    std::unique_ptr<net::QuestSync> m_questSync;
     /// A client's message on a "__req/" channel: true if it was one (handled or dropped).
     bool HandleClientRequest(Client& from, const std::string& channel, const std::string& data);
     /// Server: object life events (death, respawn, health) go out on one ordered channel so a

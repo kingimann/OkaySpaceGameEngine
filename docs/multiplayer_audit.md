@@ -193,7 +193,7 @@ Ranked by player-visible impact. Each has a regression test in
     Limits per player and for the shared story, and a request rate. A client keeps a working local log until the
     server's first snapshot (a server that does not run this changes nothing). Test:
     `tests/test_net_quest_sync.cpp` (shared and per-player scope, late joiners, resume, client writes refused,
-    33 hostile request shapes, hostile server lines, caps, rate, forged `__qst`, session end).
+    about 30 hostile request shapes, hostile server lines, caps, rate, forged `__qst`, session end).
 20. **A late joiner saw a dead object alive.** Deaths, respawns and health went to the peers connected at the
     time. A joiner is now told who is dead (with where the blow came from, so it falls the same way) and who is
     hurt, including objects that destroy themselves on death (`m_dead`, kept until a respawn). While looking at
@@ -227,10 +227,16 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
    legacy peers and per-version counts); turning the default off is a rollout decision for
    when older games and launchers already out there have updated (`LegacyPeers()` zero),
    and needs a release note, not a silent change. `--legacy-hello=off` already refuses them.
-2. **Build-mode placements and quest state are not synced**
-   (`docs/unfinished_engine.md`, section 11 and neighbours). Players still diverge in games that
-   rely on these. A player who joins while an object is dead sees it alive until its next respawn
-   (`__death` and `__respawn` go to the peers connected at the time).
+2. **What round 4 left open in build mode, quests and late joins.** Build-mode and quest sync are done
+   (18, 19, 20); what they do not cover: the state of doors, movers and logic outputs is not replicated (each
+   peer runs its own logic from the replicated pieces and links), pieces a script makes or destroys are not
+   replicated, per-player quests advance only through `nm->Quests()` on the server (the stock kill, talk and
+   reach sources feed the server's own log), a networked game is not saved as one (the server's state is the
+   thing to save; the clients are copies), and a scene object a script destroys (not a Health Stat death) is
+   not removed on a late joiner. The request channels are reliable and ordered, so a request in flight when a
+   session drops is sent again after a resume and can run twice (a place twice, within the caps and the rate
+   limit); a build or quest request is not idempotent. Snapshots and requests are not room scoped (a dedicated
+   server that runs several rooms in one scene would share build and quest state between them).
 3. **Reconnect limits.** Messages in flight when the session dropped are re-sent after a resume
    (bounded, may arrive twice; see 14 above), not after a rejoin that is no resume. A rejoin that gets no resume (grace over, host restarted) is a
    new peer: objects made with `SpawnOwned` are not re-announced under the new id, the game

@@ -342,6 +342,40 @@ int main() {
         a.story->Set("local", vs::VsValue(3.0f));
         CHECK(a.story->Get("local").AsFloat() == 3.0f);
     }
+    {   // A server with no quest log or story sends nothing; one that gets them catches its clients up.
+        Scene ss("Plain"), cs("Client");
+        ss.physicsEnabled = false; cs.physicsEnabled = false;
+        auto* snm = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        auto* cnm = cs.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        snm->interpolationRate = cnm->interpolationRate = 0.0f;
+        QuestLog* clog = QuestLog::Get(&cs, true);
+        clog->showNotifications = false; clog->drawUI = false; clog->allowJournal = false;
+        clog->quests = {Quest("shared", 1, 1)};
+        CHECK(snm->StartServer(0));
+        ss.Start();
+        CHECK(cnm->StartClient("127.0.0.1", snm->ServerPort()));
+        cs.Start();
+        auto step = [&] { ss.Update(0.02f); cs.Update(0.02f); std::this_thread::sleep_for(std::chrono::milliseconds(3)); };
+        for (int i = 0; i < 400 && !cnm->Joined(); ++i) step();
+        CHECK(cnm->Joined());
+        for (int i = 0; i < 60; ++i) step();
+        CHECK(cnm->Quests().SnapshotsApplied() == 0 && !clog->remoteAuthority);
+        CHECK(clog->StartQuest("shared"));                    // local, as before
+        // The server's game makes a quest log and a story: the client is told, and its log becomes a copy.
+        QuestLog* slog = QuestLog::Get(&ss, true);
+        slog->showNotifications = false; slog->drawUI = false; slog->allowJournal = false;
+        slog->quests = {Quest("shared", 1, 1), Quest("late", 1, 1)};
+        StoryState* sst = StoryState::Get(&ss, true);
+        sst->Set("world", vs::VsValue(7.0f));
+        CHECK(slog->StartQuest("late"));
+        for (int i = 0; i < 300 && !(cnm->Quests().SnapshotsApplied() >= 1 && clog->remoteAuthority); ++i) step();
+        CHECK(clog->remoteAuthority);
+        for (int i = 0; i < 100 && clog->Status("late") != QuestStatus::Active; ++i) step();
+        CHECK(clog->Status("late") == QuestStatus::Active);
+        CHECK(clog->Status("shared") == QuestStatus::Inactive);   // the server's word replaced the local start
+        StoryState* cst = StoryState::Get(&cs, false);
+        CHECK(cst && cst->Get("world").AsFloat() == 7.0f);
+    }
     {   // A client that never gets a snapshot (the server does not run this) keeps a working log.
         Peer lone("Lone");
         Peer srv("NoSync");

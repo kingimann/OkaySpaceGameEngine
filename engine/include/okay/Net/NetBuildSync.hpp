@@ -102,6 +102,8 @@ private:
     std::uint64_t m_execId = 0;
     std::vector<std::uint64_t> m_hooked;      // BuildModes (by instance id) whose hooks are ours
     double m_time = 0.0, m_scan = 0.0, m_prune = 0.0;
+    float m_present = 0.0f;
+    bool m_hasBuild = false;
     bool m_handlersOn = false;
     int  m_joinHook = 0;
     int  m_accepted = 0, m_refused = 0, m_malformed = 0, m_snapshots = 0;

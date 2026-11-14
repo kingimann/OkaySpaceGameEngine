@@ -115,7 +115,8 @@ private:
     NetworkManager& m_nm;
     Scene* m_scene = nullptr;
     double m_time = 0.0;
-    float m_acc = 0.0f, m_scan = 0.0f;
+    float m_acc = 0.0f, m_scan = 0.0f, m_present = 0.0f;
+    bool m_have = false;
     bool m_handlersOn = false;
     int  m_joinHook = 0;
     int  m_applied = 0, m_refused = 0, m_malformed = 0, m_snapshots = 0;
@@ -140,7 +141,6 @@ private:
     void Refuse(const std::string& why) { ++m_refused; m_lastRefusal = why; }
     bool TakeToken(PeerState& ps);
     bool MayWriteShared(const std::string& name) const;
-    void Changed(std::uint32_t peer, const std::string& id, QuestStatus before, const std::vector<QuestRecord>& recs);
     bool RunQuestOp(std::uint32_t peer, const std::string& id, const std::function<bool(QuestLog&)>& op);
 
     // client

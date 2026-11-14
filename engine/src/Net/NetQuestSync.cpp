@@ -161,9 +161,20 @@ void QuestSync::Tick(Scene* scene, float dt) {
         if (m_handlersOn || m_hookedLog || m_hookedStory || !m_shared.empty()) Reset();
         return;
     }
-    if (m_scene != scene) { Reset(); m_scene = scene; }
+    if (m_scene != scene) { Reset(); m_scene = scene; m_present = 0.0f; m_have = false; }
     if (server) {
+        // A scene with no quest log and no story state has nothing to sync, and sends nothing.
+        if ((m_present -= dt) <= 0.0f) {
+            m_present = 0.25f;
+            m_have = QuestLog::Get(scene, false) || StoryState::Get(scene, false);
+        }
+        if (!m_have) { if (m_handlersOn) { ServerOff(); m_shared.clear(); } return; }
+        const bool wasOn = m_handlersOn;
         ServerOn();
+        if (!wasOn) {   // it started mid-session: the clients already here are told the state
+            m_shared = SharedNow();   // the snapshot below is the news; the next diff starts from it
+            for (const auto& p : m_nm.Peers()) SendSnapshot(p.id);
+        }
         for (const auto& p : m_nm.Peers()) if (auto it = m_peers.find(p.id); it != m_peers.end()) it->second.seen = m_time;
         if ((m_acc += dt) >= std::max(0.02f, syncInterval)) { m_acc = 0.0f; Flush(); }
         if ((m_scan -= dt) <= 0.0f) {   // a player that left and is not coming back
@@ -176,7 +187,7 @@ void QuestSync::Tick(Scene* scene, float dt) {
                 m_peers.erase(old);
             }
         }
-    } else if ((m_scan -= dt) <= 0.0f || (!m_hookedLog && !m_hookedStory)) {
+    } else if ((m_scan -= dt) <= 0.0f) {
         m_scan = 0.5f;
         HookClient(*scene);
     }

@@ -192,20 +192,28 @@ void BuildSync::Tick(Scene* scene, float dt) {
         if (!m_hooked.empty() || m_handlersOn || m_exec) Reset();
         return;
     }
-    if (m_scene != scene) { Reset(); m_scene = scene; }
-    // A server whose scene has no build mode has nothing to place with. A client always can show what
-    // the server built, even if its own player cannot build (the executor is made when it is told).
-    if (server && !m_exec && scene->FindObjectsOfType<BuildMode>().empty()) return;
+    if (m_scene != scene) { Reset(); m_scene = scene; m_present = 0.0f; m_hasBuild = false; }
+    // A server whose scene has no build mode has nothing to place with, and sends nothing. A client always
+    // can show what the server built, even if its own player cannot build (the executor is made when told).
+    if (server && !m_exec && (m_present -= dt) <= 0.0f) {
+        m_present = 0.25f;
+        m_hasBuild = !scene->FindObjectsOfType<BuildMode>().empty();
+    }
+    if (server && !m_exec && !m_hasBuild) return;
     if (server || m_exec) EnsureExecutor(*scene);
     if (server) {
+        const bool wasOn = m_handlersOn;
         ServerOn();
+        if (!wasOn) {   // it started mid-session: the clients already here are told what is built
+            for (const auto& p : m_nm.Peers()) SendSnapshot((std::int64_t)p.id);
+        }
         m_exec->maxObjects = maxObjects;
         if (!m_exec->onChanged) m_exec->onChanged = [this](const BuildMode::Op& op) { OnChange(op); };   // what it does for a request goes out
     } else if (m_exec) {
         m_exec->onChanged = nullptr;   // a client applies what the server sent; it echoes nothing
     }
-    if ((m_scan -= dt) <= 0.0f || m_hooked.empty()) {
-        m_scan = 0.5f;
+    if ((m_scan -= dt) <= 0.0f) {
+        m_scan = client ? 0.1f : 0.5f;   // a client's build mode must not run unhooked for long
         Rescan(*scene, server, client);
     }
     if (server && (m_prune -= dt) <= 0.0f) {

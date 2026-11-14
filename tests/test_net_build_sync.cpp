@@ -64,18 +64,18 @@ struct Peer {
     NetworkManager* nm = nullptr;
     BuildMode* bm = nullptr;
     GameObject* avatar = nullptr;
-    explicit Peer(const char* name) : scene(name) {
+    explicit Peer(const char* name, bool builder = true) : scene(name) {
         nm = scene.CreateGameObject("Net")->AddComponent<NetworkManager>();
         nm->interpolationRate = 0.0f;
-        bm = World(scene);
+        if (builder) bm = World(scene);
     }
 };
 
 struct Rig {
     std::unique_ptr<Peer> srv;
     std::vector<std::unique_ptr<Peer>> cli;
-    Rig() {
-        srv = std::make_unique<Peer>("Server");
+    explicit Rig(bool serverBuilder = true) {
+        srv = std::make_unique<Peer>("Server", serverBuilder);
         CHECK(srv->nm->StartServer(0));
         srv->scene.Start();
     }
@@ -515,6 +515,31 @@ int main() {
         // A piece a snapshot lists is created; one it leaves out is removed (reconcile).
         w.srv->nm->SendOrderedTo(id, "__bld", "B\nE\n");
         CHECK(w.Until([&] { return Count(a.scene) == 0; }));
+    }
+
+    // ---- A server with no build mode sends nothing; one that gets a build mode catches its clients up ----
+    {
+        Rig w(/*serverBuilder*/ false);
+        Peer& a = w.Add();
+        w.Pump(30);
+        CHECK(a.nm->Build().SnapshotsApplied() == 0);          // no snapshot, no extra traffic
+        CHECK(Count(a.scene) == 0);
+        a.bm->PlaceItem(0, {1, 0.5f, 1}, Quat::Identity);      // the server has nothing to place with: dropped
+        w.Pump(40);
+        CHECK(Count(a.scene) == 0 && Count(w.srv->scene) == 0);
+        // The server's game makes a build mode and places a piece: the client that is already here sees it.
+        w.srv->bm = World(w.srv->scene);
+        GameObject* mine = nullptr;
+        w.Pump(30);                                             // it notices within a quarter second
+        mine = w.srv->bm->PlaceItem(0, {2, 0.5f, 2}, Quat::Identity);
+        CHECK(mine != nullptr);
+        CHECK(w.Until([&] { return Count(a.scene) == 1; }));
+        // And the client's own requests work from then on.
+        a.bm->PlaceItem(0, {6, 0.5f, 6}, Quat::Identity);
+        CHECK(w.Until([&] { return Count(w.srv->scene) == 2 && Count(a.scene) == 2; }));
+        // A client with no build mode of its own still sees what is built.
+        Peer& v = w.Add();
+        CHECK(w.Until([&] { return Count(v.scene) == 2; }));
     }
 
     // ---- With the session over, build mode is local again ----

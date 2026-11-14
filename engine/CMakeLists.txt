@@ -601,6 +601,12 @@ target_sources(okay_engine PRIVATE
 # ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+# ---- World streaming foundation (docs/foundations/world_streaming.md): cell grid, chunks, sources ----
+target_sources(okay_engine PRIVATE
+    src/Scene/WorldGrid.cpp
+    src/Scene/WorldChunk.cpp
+    src/Scene/StreamingSource.cpp
+)
 # Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
 # ---- Property reflection (docs/properties.md) ----

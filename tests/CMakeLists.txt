@@ -2371,6 +2371,14 @@ add_executable(test_optimize_streaming test_optimize_streaming.cpp)
 target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
 add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
 
+# World streaming foundation (docs/foundations/world_streaming.md): cell grid, chunk format, splitter, sources
+add_executable(test_world_grid test_world_grid.cpp)
+target_link_libraries(test_world_grid PRIVATE okay::engine)
+add_test(NAME world_grid COMMAND test_world_grid)
+add_executable(test_world_chunk test_world_chunk.cpp)
+target_link_libraries(test_world_chunk PRIVATE okay::engine)
+add_test(NAME world_chunk COMMAND test_world_chunk)
+
 # Optimization tools (27): scene optimization report (JSON / text)
 add_executable(test_camera_stack test_camera_stack.cpp)
 target_link_libraries(test_camera_stack PRIVATE okay::engine)

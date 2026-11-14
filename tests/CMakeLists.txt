@@ -2907,6 +2907,18 @@ target_compile_definitions(test_smd_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_S
 add_test(NAME smd_hostile COMMAND test_smd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(smd_hostile PROPERTIES TIMEOUT 300)
 
+# Our own MD5 reader: fixtures from scripts/gen_md5_fixtures.py (md5mesh + md5anim pairs), values computed by hand, the
+# import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_md5_reader test_md5_reader.cpp)
+target_link_libraries(test_md5_reader PRIVATE okay::engine)
+target_compile_definitions(test_md5_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_reader COMMAND test_md5_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_md5_hostile test_md5_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Md5Reader.cpp)
+target_include_directories(test_md5_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_md5_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_hostile COMMAND test_md5_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(md5_hostile PROPERTIES TIMEOUT 300)
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

@@ -235,6 +235,7 @@ add_library(okay_engine
     src/Render/BvhReader.cpp
     src/Render/OffReader.cpp
     src/Render/SmdReader.cpp
+    src/Render/Md5Reader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -526,6 +527,11 @@ endif()
 if(OKAY_OWN_SMD)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
     message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
+endif()
+# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MD5)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

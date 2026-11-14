@@ -185,6 +185,7 @@ add_library(okay_engine
     src/Audio/AudioStream.cpp
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
+    src/Audio/FlacDecoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp

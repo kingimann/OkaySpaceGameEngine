@@ -72,12 +72,14 @@ struct AudioClip {
     /// to mono, and `downmix` forces mono). Returns false (leaving the clip
     /// empty) on failure.
     bool LoadWAV(const std::string& path, std::string* error = nullptr, bool downmix = false);
-    /// Load an OGG Vorbis or MP3 file the same way (the file's own rate).
+    /// Load an OGG Vorbis, MP3 or FLAC file the same way (the file's own rate).
     bool LoadOGG(const std::string& path, std::string* error = nullptr, bool downmix = false);
     bool LoadMP3(const std::string& path, std::string* error = nullptr, bool downmix = false);
-    /// Load a WAV, OGG or MP3 file, chosen by its extension.
+    bool LoadFLAC(const std::string& path, std::string* error = nullptr, bool downmix = false);
+    /// Load a WAV, OGG, MP3 or FLAC file, chosen by its extension. Also reads the
+    /// file's import sidecar: Mix down to one channel forces mono (same as `downmix`).
     bool Load(const std::string& path, std::string* error = nullptr, bool downmix = false);
-    /// True for the extensions Load understands (.wav, .ogg, .mp3).
+    /// True for the extensions Load understands (.wav, .ogg, .mp3, .flac).
     static bool IsAudioFile(const std::string& path);
     /// Load `path` once (resampled to `rate`, or kept as is when 0) and share the
     /// decoded clip: twenty sources on one file decode it once. Null on failure.

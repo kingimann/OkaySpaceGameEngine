@@ -104,7 +104,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   1. M - Inspector for the selected asset (texture, model, audio blocks) writing through `SetSettings`. Depends on: 20.1 package 2.
   2. M - Texture loader applies `maxSize`, `mipmaps`, `sRGB` from the meta when the image is loaded (`AssetManager` Image loader). Depends on: package 1.
   3. M - Model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations`. Depends on: package 1, 3.6.
-  4. S - Audio loader honours `loadMode`, `forceMono`, `quality`. Depends on: package 1, 7.2.
+  4. S - Audio loader honours `loadMode` and `forceMono` (done; `quality` is not applied because audio is not re-encoded). Depends on: package 1, 7.2.
   5. S - On `SettingsChanged` reload the asset in the open scene. Depends on: packages 2-4.
 - **Open:** no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
 - **Related:** 20.1, 3.6, 2.2, 7.2

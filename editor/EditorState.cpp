@@ -1123,7 +1123,7 @@ void EditorState::Play() {
     {
         std::vector<std::string> missing;
         LoadSceneAudio(m_scene, m_projectDir, AudioMixer::sampleRate, &missing);
-        for (const auto& p : missing) Log::Warning("Audio Source: can't read ", p, " (WAV, OGG or MP3)");
+        for (const auto& p : missing) Log::Warning("Audio Source: can't read ", p, " (WAV, OGG, MP3 or FLAC)");
     }
     // Check every visual script first and say what's wrong in the Console
     // (errors in red: that part won't work; warnings: probably not what you meant).

@@ -246,8 +246,9 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
 - Import settings are stored and signalled. These are read (through `okay/Core/ImportSidecar.hpp`): a texture's
   `maxSize`, `filter`, `wrap` and `mipmaps` (software and OpenGL renderers; the Direct3D renderers do not read them, so the editor hides those three controls until they do), and a model's `scale` (the editor),
-  `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). The other keys (`srgb`, `compress`, the
-  audio options) are stored but no importer reads them yet.
+  `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). Audio `loadMode` and `forceMono` are read
+  when the file is loaded (`ReadAudioImportOptions`). `quality` is kept so older files round-trip and is not applied,
+  because audio is not re-encoded. `srgb` and `compress` are still stored and unread.
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 

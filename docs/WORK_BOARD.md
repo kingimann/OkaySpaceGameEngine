@@ -142,6 +142,7 @@ Nothing user-visible, nothing default.
 | UI focus ring for keyboard and gamepad | John | `john/ui-focus-visuals` |
 | Item, loot-table and recipe editors | John | `john/item-loot-recipe-editors` |
 | Safety-net tests for lightmap bake, touch scroll, item tooltips, loading layout, death lock and gamepad feed; pause menu pushes an input context | John | `john/untested-features-tests` |
+| Audio import settings apply on load; FLAC decoding | John | `john/audio-import-flac` (#786) |
 
 ## Free (unclaimed, safe small tasks)
 

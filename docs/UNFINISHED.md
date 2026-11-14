@@ -45,12 +45,13 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | Step | State | Who |
 |---|---|---|
-| Decide whether to consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`, and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto` (not done: `AccountService.hpp` `Sha256` is under the PBKDF2 password hashing and uses a copy-state shortcut, `OfficialGame.hpp` `FileSha256` and `AntiCheatChecks.hpp` `HmacSha256` sit on it; moving them is not a small change and needs a new HMAC with RFC 4231 tests), and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
 | Choose a reviewer, a budget and a date; send the request and the bundle (nobody has been asked; cost and start date unknown) | Not started | Owner |
 | The outside review itself, its report and findings | Not started | Reviewer |
 | Fix every finding or record why it is acceptable, re-run the evidence, send the fixes back for a re-check | Waiting on the report | Team |
 | CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
-| The flip decision: make it the default for new builds, then delete libsodium and the TweetNaCl port one release later | Owner decision, only after a reviewer's yes | Owner |
+| The flip decision: make it the default for new builds, then delete libsodium one release later (the TweetNaCl port is already deleted) | Owner decision, only after a reviewer's yes | Owner |
 
 ## Planned: visual-script core upgrade
 

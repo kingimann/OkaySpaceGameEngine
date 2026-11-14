@@ -190,7 +190,7 @@ int main() {
         Bytes seed = RndBytes(32), m = RndBytes(40), pk(32), sk(64), sig(64);
         Ed25519SeedKeypair(pk.data(), sk.data(), seed.data());
         Ed25519Sign(sig.data(), m.data(), m.size(), sk.data());
-        const char* small[] = {
+        const char* smallOrderKeys[] = {
             "0100000000000000000000000000000000000000000000000000000000000000",   // identity
             "0100000000000000000000000000000000000000000000000000000000000080",   // identity, sign bit set
             "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",   // order 2 (y = -1)
@@ -205,7 +205,7 @@ int main() {
             "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
             "efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"};
         std::vector<Bytes> encs;
-        for (const char* h : small) encs.push_back(Hex(h));
+        for (const char* h : smallOrderKeys) encs.push_back(Hex(h));
         for (int y = 0; y < 60; ++y) { Bytes e(32, 0); e[0] = static_cast<std::uint8_t>(y); encs.push_back(e); e[31] = 0x80; encs.push_back(e); }
         for (const Bytes& e : encs) {
             for (int variant = 0; variant < 4; ++variant) {

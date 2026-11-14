@@ -33,7 +33,7 @@ two mask selects into branches, now guarded by a value barrier (`ct::Barrier`). 
 flags and CPU we ran, not a guarantee.
 
 `okay::crypto` is its own static library (`okay_crypto`, `okay::crypto` in CMake), so code that must not link the engine can use it:
-`shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting) goes to it under `-DOKAY_OWN_CRYPTO`, and the crypto tests, fuzz
+`shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz
 targets and benchmark link only it.
 
 ## Switching it on
@@ -53,7 +53,7 @@ format is identical, so a client built one way talks to a server built the other
 |---|---|
 | `crypto` | every published vector: RFC 8439 (A.1 to A.5 and 2.x), the XChaCha draft (HChaCha20 and the AEAD vector), RFC 7748 (5.2, 6.1, iterated 1 and 1000; 1,000,000 with `OKAY_CRYPTO_SLOW=1`), RFC 8032 section 7.1 (all five), RFC 7693 (`abc` and the appendix E self-test); streaming equals one-shot at every split; every bit of the tag and ciphertext, the AAD, the nonce and the key flipped must fail; Ed25519 malleability, small-order and non-canonical cases |
 | `crypto_wycheproof` | every vector (1,927) of the Project Wycheproof files for X25519, Ed25519, ChaCha20-Poly1305, XChaCha20-Poly1305, HMAC and HKDF (built on our SHA-2) and the ChaCha20 counter boundaries, copied unmodified into `tests/wycheproof/` (Apache-2.0); "acceptable" results are pinned and, with libsodium installed, compared with it vector by vector (no differences). Found one defect, fixed: `ChaCha20Xor` wrapped its 32-bit counter silently, it now refuses. The decisions where we are stricter or looser than a vector file are in `docs/crypto_review_package.md` section 3.1. `OKAY_WYCHEPROOF_DIR` selects another copy |
-| `crypto_difftest_smoke` | `tests/crypto_difftest.cpp`, the large differential test against libsodium and the TweetNaCl-derived port on random and structured edge-case inputs (values near p and L, small-order and non-canonical encodings, every bit flip, every AEAD truncation); the ctest is a 1,500-case smoke, `OKAY_DIFF_N=1000000` is the 33-million-comparison run quoted in the review package |
+| `crypto_difftest_smoke` | `tests/crypto_difftest.cpp`, the large differential test against libsodium on random and structured edge-case inputs (values near p and L, small-order and non-canonical encodings, every bit flip, every AEAD truncation); the ctest is a 1,500-case smoke, `OKAY_DIFF_N=1000000` is the 33-million-comparison run quoted in the review package |
 | `crypto_sodium_xcheck` | against the system libsodium, thousands of random cases per primitive, both directions (ours seals and theirs opens, theirs seals and ours opens), including accept/reject agreement on malformed Ed25519 inputs and small-order X25519 points. `OKAY_CRYPTO_XCHECK_N` sets the count |
 | `crypto_python_xcheck` | the same against Python `cryptography` (OpenSSL) and `hashlib`; skipped when that module is missing |
 | `net_crypto_own`, `net_crypto_sodium` | the existing `test_net_crypto.cpp` compiled once per backend in the same build |
@@ -62,7 +62,8 @@ format is identical, so a client built one way talks to a server built the other
 | `crypto_fe16` | `tests/test_crypto.cpp` again, compiled with the portable field forced on |
 | `crypto_ct_valgrind` | the constant-time audit, method 1: every secret marked undefined memory under valgrind, two deliberately leaky controls that must be reported (`scripts/crypto_ct_matrix.sh` runs it for every installed compiler, -O0 to -Ofast, both fields) |
 | `crypto_timing_smoke` | the constant-time audit, method 2 (`tests/crypto_timing.cpp`) is a statistical timing test that needs a quiet machine and millions of measurements; the ctest only checks that it runs |
-| `anticheat_integrity_ownlib`, `anticheat_integrity_portable` | `tests/test_anticheat_integrity.cpp` compiled without the engine: once against `okay::crypto` alone (`-DOKAY_OWN_CRYPTO`) and once with neither it nor libsodium (the TweetNaCl-derived port); the RFC 8032 vectors, S < L, small-order R and key, canonical key |
+| `anticheat_integrity_ownlib`, `anticheat_integrity_fallback` | `tests/test_anticheat_integrity.cpp` compiled without the engine: once against `okay::crypto` alone with `-DOKAY_OWN_CRYPTO`, once with neither the define nor libsodium (the no-libsodium fallback, also `okay::crypto`; the TweetNaCl-derived port that used to be tested here is deleted); the RFC 8032 vectors, S < L, small-order R and key, canonical key |
+| `anticheat_golden`, `anticheat_golden_engine` | `tests/test_anticheat_golden.cpp`: a transcript of Ed25519 (public keys, signatures, verdicts on valid and tampered inputs, weak keys, S >= L) and SHA-512 on about 8,000 deterministic checks; the hash of the whole transcript was recorded from the old TweetNaCl-derived port before it was deleted, so the replacement is pinned to the old answers. Built once against `okay::crypto` alone and once against the engine (libsodium when the build has it) |
 | `bench_crypto` (not a test) | microseconds per operation next to libsodium when it is installed |
 | the whole `net*` family, `anticheat*`, `dedicated_server` | run under whichever backend the build was configured with; `scripts/test_crypto_backends.sh` builds and runs them under both |
 

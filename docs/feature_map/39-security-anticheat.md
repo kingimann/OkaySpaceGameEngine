@@ -80,7 +80,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.4.1 Manifest writer - `shared/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`
   - 39.4.2 Verifier - `shared/AntiCheatIntegrity.hpp` - `VerifyInstall` fails on a missing or changed file, an unlisted program file (`.exe`, `.dll`, `.asi`, hidden ones too), a linked file or folder, a bad signature, or an untrusted signer
   - 39.4.3 Start decision - `shared/AntiCheatIntegrity.hpp` - `DecideStart` and `CheckLaunch`: Off, Report or Enforce from the build (`anticheat=` in `game.okayconfig`), `OKAY_ANTICHEAT` (stricter only) and trusted keys
-  - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise a portable TweetNaCl port with libsodium's extra checks (canonical S, no small-order R or key); tested against RFC 8032 vectors
+  - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise our own `okay::crypto` (the TweetNaCl-derived port is deleted) with libsodium's extra checks (canonical S, no small-order R or key); `okay::crypto` is not yet reviewed from outside; tested against RFC 8032 vectors and a recorded transcript of the old port's answers
   - 39.4.5 File hashing and safe paths - `shared/OfficialGame.hpp` - `okayofficial::Verify` (size plus SHA-256) and path checks shared with the official-game updater
   - 39.4.6 Launcher and player hooks - `launcher/main.cpp` (L1181), `player/main.cpp` (L1405) - launcher checks the official game and library games with a `game.okayconfig`; the player checks before anything loads; a player built with trusted keys needs a valid signed manifest and takes its mode from it
   - 39.4.7 Build Settings option - `editor/main.cpp` (Output > Anti-cheat) - Off, Report, Enforce; writes `anticheat=`
@@ -90,7 +90,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Docs:** `docs/anticheat.md` (P3: client integrity, The manifest, Keys, Crypto, Limits)
 - **Tests:** `anticheat_integrity`, `official_game`
 - **Status:** Partial - the code and its tests are complete; whether the released launcher trusts any key depends on the repository variable `OKAY_AC_TRUSTED_KEYS` (the release only warns when it is empty), so by default this is telemetry; client-side checks can always be patched out (docs "Limits")
-- **Open:** set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games; the launcher always uses the portable crypto (it doesn't link the engine)
+- **Open:** set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games; a build without libsodium uses `okay::crypto`, which has not had its outside review
 - **Related:** 17.13, 17.14, 18.6, 39.7
 - **Words:** integrity, manifest.json, signed manifest, ed25519, SHA-256, tampered build, launch check, Report, Enforce, trusted keys, game.okayconfig, anticheat=
 - **Seen as:** "The game refuses to start" after editing a file; a launcher warning in report mode; a proxy `version.dll` next to the exe is flagged

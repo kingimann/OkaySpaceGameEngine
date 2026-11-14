@@ -58,7 +58,9 @@ Image BoxDownscale(const Image& src, int maxSide) {
     return out;
 }
 
-bool WaveformThumbnailGenerator::Handles(const std::string& e) const { return e == "wav" || e == "ogg" || e == "mp3"; }
+bool WaveformThumbnailGenerator::Handles(const std::string& e) const {
+    return e == "wav" || e == "ogg" || e == "mp3" || e == "flac";
+}
 
 Image WaveformThumbnailGenerator::Render(const std::string& absolutePath, std::string* error) {
     std::error_code ec;

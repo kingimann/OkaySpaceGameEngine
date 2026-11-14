@@ -2,6 +2,7 @@
 
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/Perception.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/AnimControl.hpp"
@@ -22,7 +23,6 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Net/NetOwnership.hpp"
-#include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -528,26 +528,13 @@ void BehaviorTreeRunner::RunService(int idx, float elapsed) {
         bool noticed = false;
         if (tgt && tgt->transform && tgt != gameObject) {
             const Vec3 pos = Position(), tp = tgt->transform->Position();
-            const float d = Dist2D(pos, tp);
-            const float range = n.Num("range"), angle = n.Num("angle"), hearing = n.Num("hearing");
-            bool inCone = angle >= 359.0f;
-            if (!inCone) {
-                const Vec3 to = Dir2D(pos, tp);
-                if (to.x == 0.0f && to.z == 0.0f) inCone = true;
-                else {
-                    Vec3 fwd = Forward();
-                    const float fm = std::sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
-                    if (fm < 1e-5f) inCone = true;
-                    else {
-                        float dot = (to.x * fwd.x + to.z * fwd.z) / fm;
-                        dot = std::clamp(dot, -1.0f, 1.0f);
-                        inCone = std::acos(dot) * 57.29578f <= angle * 0.5f;
-                    }
-                }
-            }
-            const bool seen = d <= range && inCone && (!n.Flag("lineOfSight") || LineOfSight(pos, tgt, n.Num("eyeHeight")));
-            const bool heard = hearing > 0.0f && d <= hearing;
-            noticed = seen || heard;
+            SenseSettings sense;
+            sense.sightRange = n.Num("range");
+            sense.fieldOfView = n.Num("angle");
+            sense.lineOfSight = n.Flag("lineOfSight");
+            sense.eyeHeight = n.Num("eyeHeight");
+            sense.hearingRange = n.Num("hearing");
+            noticed = Sense(sc, pos, Forward(), tp, gameObject, tgt, sense).noticed;
             if (noticed) {
                 if (!tk.empty()) blackboard.Set(tk, BtValue::Object(tgt->name, tgt->InstanceId()));
                 if (!lk.empty()) blackboard.Set(lk, BtValue::Vector(tp));
@@ -751,22 +738,6 @@ bool BehaviorTreeRunner::ResolveTarget(const std::string& spec, Vec3& pos, GameO
     return true;
 }
 
-bool BehaviorTreeRunner::LineOfSight(const Vec3& from, GameObject* target, float eyeHeight) const {
-    Scene* sc = SceneOf();
-    if (!sc || !target || !target->transform) return false;
-    const Vec3 tp = target->transform->Position();
-    const Vec3 o{from.x, from.y + eyeHeight, from.z};
-    const Vec3 e{tp.x, tp.y + eyeHeight, tp.z};
-    Vec3 d = e - o;
-    const float m = d.Magnitude();
-    if (m < 1e-4f) return true;
-    d = d * (1.0f / m);
-    const RaycastHit3D hit = sc->physics3D().Raycast(*sc, o, d, m, gameObject, Physics3D::kAllLayers, false);
-    if (!hit) return true;
-    if (hit.gameObject && (hit.gameObject == target || hit.gameObject->IsSelfOrDescendantOf(target))) return true;
-    return hit.distance >= m - 0.3f;
-}
-
 float BehaviorTreeRunner::HealthFraction() const {
     if (m_npc) return m_npc->maxHealth > 0.0f ? m_npc->health / m_npc->maxHealth : 1.0f;
     if (auto* s = gameObject->GetComponent<SurvivalStats>()) return s->Fraction();
@@ -788,7 +759,8 @@ bool BehaviorTreeRunner::Test(const BtNode& n) const {
         if (!ResolveTarget(n.Str("target"), p, &g) || !g) return false;
         const float d = Dist2D(Position(), p), want = n.Num("distance");
         if (want > 0.0f && d > want) return false;
-        return LineOfSight(Position(), g, 1.2f);
+        if (!SceneOf()) return false;
+        return SightLineClear(SceneOf(), Position(), p, gameObject, g, 1.2f);
     }
     if (kind == "health") return HealthFraction() < n.Num("fraction");
     // blackboard

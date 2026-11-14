@@ -284,11 +284,59 @@ lookup grid behind the queries is at most 2048 cells a side, so a mesh far large
 gets bigger cells rather than a bigger grid. A mesh whose extent overflows a float loads but
 has no grid, and every query on it finds nothing.
 
+## 2D grid paths
+
+Tilemap games use a grid, not the baked mesh. Add **Grid Path Agent** to the
+walker and, on the tilemap, **Grid Movement Costs** when a road should be
+cheap or mud slow. A **Grid Obstacle** blocks the cells under it.
+
+Nothing is on until you ask. A new agent walks the way the old search did:
+four directions, only empty tiles (tile number 0) are open, every step costs
+the same, and the path is every cell. The Inspector spells the switches out:
+
+- **Allow diagonal steps.** A diagonal never squeezes between two walls.
+- **Smooth the path.** Straightens the route wherever the line of sight is
+  clear, so it is not a staircase of cells. It does not re-price the route:
+  it will not cross a wall, but it can cross a walkable expensive cell.
+- **Pay for mud and roads.** Uses the cost layer. Empty tiles cost 1. The
+  road tile and the mud tile are set on Grid Movement Costs (lower is
+  cheaper, 0 blocks that tile). Any other tile number stays a wall.
+
+A Grid Obstacle covers a rectangle of cells starting at its own cell. When
+those cells land on an agent's current path, that agent plans again at once.
+An agent on some other route keeps it.
+
+Scripts, on the object that has the component (`"Name"` first to pick another):
+
+```
+grid_move_to(4, 2)          # world point: the cell that contains it
+grid_move_cell(4, 2)        # that cell
+grid_stop()
+grid_arrived()              # 1 once the cell was reached
+grid_set_tile_cost(1, 0.5)  # tile 1 is a cheap road; 0 blocks it
+grid_set_cell_cost(3, 1, 8) # one cell is mud
+grid_block(3, 1)            # this object's Grid Obstacle blocks that cell
+grid_clear()
+```
+
+C#-style scripts: `GridPathAgent2D` (`SetDestination`, `SetCell`, `Stop`,
+`Arrived`), `GridCostLayer` (`SetTileCost`, `SetCellCost`) and
+`GridObstacle2D` (`Place`, `Clear`).
+
+Visual scripts: **Walk the Grid**, **Stop Grid Walk** and **Grid Arrived**
+under Scene / Navigation, plus the generated `GridPathAgent2D.*`,
+`GridCostLayer.*` and `GridObstacle2D.*` nodes.
+
 ## Limits
 
-- The older grid pathfinder (`Pathfinding::AStar`, `OnTilemap`) takes at most
+- The grid pathfinder (`Pathfinding::AStar`, `OnTilemap`) takes at most
   `Pathfinding::kMaxCells` cells (width times height, 4096 x 4096); a larger grid
-  returns no path.
+  returns no path. A start or goal on a blocked cell returns no path.
+- Costs, diagonal steps and smoothing apply only when the call or the Grid Path
+  Agent asks for them. The 3D agents do not use this grid; they use the mesh above.
+- Smoothing is line of sight. It shortens a staircase and will not cross a wall.
+  It does not know that mud is expensive, so leave **Smooth the path** off when
+  the cheap route must be followed cell for cell.
 - Polygons are axis-aligned rectangles at cell resolution: walls at an angle
   get a staircase edge one cell wide. Lower the cell size where it shows.
 - One agent radius per bake. A game with both rats and ogres bakes for the

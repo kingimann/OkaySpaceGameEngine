@@ -341,6 +341,9 @@ inline const std::vector<VsDef>& Registry() {
         {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
         {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"GridMoveTo",   "Walk the Grid",  CAT_ACTION, true, {""}, {"X","Y"}, {}, 0, nullptr},
+        {"GridStop",     "Stop Grid Walk", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"GridArrived",  "Grid Arrived",   CAT_DATA, false, {}, {}, {"Arrived"}, 0, nullptr},
         // --- Behavior trees (Behavior Tree Runner) ---
         {"BtSet",        "Set Blackboard", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "key"},
         {"BtGet",        "Get Blackboard", CAT_DATA, false, {}, {}, {"Value"}, 1, "key"},
@@ -691,6 +694,11 @@ inline const std::vector<VsDef>& Registry() {
         {"CraftItem",       "Craft",            CAT_ACTION, true, {""}, {"Times"}, {"Crafted"}, 1, "recipe output item"},
         {"LootRoll",        "Loot Roll",        CAT_ACTION, true, {""}, {}, {"Rolled"}, 1, "loot table"},
         {"SpawnPickup",     "Spawn Pickup",     CAT_ACTION, true, {""}, {"Count", "X", "Y", "Z"}, {"Name"}, 1, "item"},
+        {"SwingWeapon",     "Swing Weapon",     CAT_ACTION, true, {""}, {}, {"Swung"}, 0, nullptr},
+        {"FireWeapon",      "Fire Weapon",      CAT_ACTION, true, {""}, {}, {"Fired"}, 0, nullptr},
+        {"ReloadWeapon",    "Reload Weapon",    CAT_ACTION, true, {""}, {}, {"Started"}, 0, nullptr},
+        {"WeaponAmmo",      "Get Ammo",         CAT_DATA, false, {}, {}, {"Rounds"}, 0, nullptr},
+        {"SetWeapon",       "Set Weapon",       CAT_ACTION, true, {""}, {}, {"Set"}, 1, "weapon"},
         // Other objects' variables, save / load.
         {"SetObjectVar",    "Set Object Var",   CAT_VAR, true, {""}, {"Target", "Value"}, {}, 1, "variable"},
         {"GetObjectVar",    "Get Object Var",   CAT_VAR, false, {}, {"Target"}, {"Value"}, 1, "variable"},
@@ -1064,7 +1072,7 @@ public:
             {"Condition", "always"}, {"Actions", "log Hello"},
             {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
-            {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}};
+            {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}, {"SetWeapon", "sword"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -2015,6 +2023,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
     else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
+    else if (t=="GridMoveTo")  out += ind + "grid_move_to(" + in(0, "0") + ", " + in(1, "0") + ")\n";
+    else if (t=="GridStop")    out += ind + "grid_stop()\n";
     else if (t=="BtSet")       out += ind + "bt_set(" + q(arg("x")) + ", " + in(0) + ")\n";
     else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
     else if (t=="SetLinePoints") out += ind + "line_set_points(" + in(0, "[]") + ")\n";
@@ -2164,6 +2174,10 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="EquipItem")      out += ind + "equip(" + in(0, "\"\"") + ", " + q(arg("item")) + ")\n";
     else if (t=="CraftItem")      out += ind + "craft(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
     else if (t=="LootRoll")       out += ind + "loot_roll(" + q(arg("loot")) + ")\n";
+    else if (t=="SwingWeapon")    out += ind + "weapon_swing()\n";
+    else if (t=="FireWeapon")     out += ind + "weapon_fire()\n";
+    else if (t=="ReloadWeapon")   out += ind + "weapon_reload()\n";
+    else if (t=="SetWeapon")      out += ind + "weapon_set(" + q(arg("sword")) + ")\n";
     else if (t=="SpawnPickup")    out += ind + "spawn_pickup(" + q(arg("item")) + ", " + in(0, "1") + ", " + in(1, "0") + ", " + in(2, "0") + ", " + in(3, "0") + ")\n";
     else if (t=="SetBuildPalette") {   // "Name=prefab|icon, ..." -> one build_palette_add per item
         out += ind + "build_palette_clear()\n";

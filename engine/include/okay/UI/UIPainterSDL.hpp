@@ -75,6 +75,7 @@ public:
         SDL_SetRenderDrawColor(m_r, r, g, b, a);
     }
     void FillRect(const Rect* r) override { SDL_RenderFillRect(m_r, (const SDL_Rect*)r); }
+    void FillRectF(const FRect* r) override { SDL_RenderFillRectF(m_r, (const SDL_FRect*)r); }
     void DrawRect(const Rect* r) override { SDL_RenderDrawRect(m_r, (const SDL_Rect*)r); }
     void DrawLine(int x0, int y0, int x1, int y1) override { SDL_RenderDrawLine(m_r, x0, y0, x1, y1); }
     void DrawPoint(int x, int y) override { SDL_RenderDrawPoint(m_r, x, y); }

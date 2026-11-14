@@ -431,6 +431,7 @@ MyGame/
   items.okayitems           item definitions            strings.okayloc   the string table (Localization window)
   Assets/**/*.okayloot      loot tables                 Assets/**/*.okayrecipes   crafting recipes
                             (Window > Items, Loot & Recipes edits all three)
+  weapons.okayweapon        the weapon list             (View > Editors & Tools > Weapons)
 ```
 
 Each project has its own `project.okayproj` and its own build settings: opening another project loads that

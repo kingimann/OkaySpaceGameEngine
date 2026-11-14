@@ -112,6 +112,8 @@ function update(dt) {
 | `add_impulse(...)` / `add_impulse3(...)` | Instant velocity change |
 | `jump(v)` | Set upward velocity (2D or 3D body) |
 | `set_gravity(x, y)` / `set_gravity3(x, y, z)` | Change world gravity |
+| `physics_steps()` / `set_physics_steps(n)` | Read or set how many times a second physics runs |
+| `physics_smooth()` / `set_physics_smooth(on)` | Draw bodies between physics steps |
 
 ### Input
 | Function | Description |
@@ -171,6 +173,7 @@ function update(dt) {
 | `ui_set_progress("n", v)` | Set a progress bar's fill (0..1) |
 | `ui_get_rotation("n")` / `ui_set_rotation("n", degrees)` | Read or turn a UI frame, in degrees clockwise around its pivot. Children turn with it |
 | `ui_get_scale("n")` / `ui_set_scale("n", x, y)` | Read or set a UI frame's width and height scale. One number sets both. 1, 1 is unchanged. Children scale with it |
+| `ui_set_focus("n")` | Move keyboard and gamepad focus to that widget, draw the focus ring, and scroll it into view. A mouse click hides the ring until the next keyboard, gamepad or script focus |
 | `ui_set_fill("n", v)` | Set a filled UI Image's amount (cooldowns/health) |
 
 ### OkayUI (build a HUD from script — no Canvas objects)

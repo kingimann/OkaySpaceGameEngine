@@ -163,7 +163,7 @@ void AssetDatabase::RegisterDefaultExtractors() {
     RegisterExtractor("scene", {"okayscene", "okayprefab"}, wrap(&ExtractSceneRefs));
     RegisterExtractor("material", {"okaymat"}, wrap(&ExtractMaterialRefs));
     RegisterExtractor("text", {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayvs", "okayseq",
-                               "okayloot", "okayitems", "okayrecipes", "okaydata", "okaynav", "gltf"},
+                               "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"},
                       wrap(&ExtractTextRefs));
 }
 

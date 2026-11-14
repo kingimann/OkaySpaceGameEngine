@@ -9,6 +9,7 @@
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesInventory.hpp"
+#include "okay/VisualScript/NodesCombat.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/VisualScript/NodesStory.hpp"
@@ -342,6 +343,7 @@ int TargetPinFor(const std::string& type) {
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
+        {"GridMoveTo", 2}, {"GridStop", 0}, {"GridArrived", 0},
         {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
         {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
         {"ParticlePlay", 0}, {"ParticleStop", 0}, {"ParticleBurst", 1},
@@ -471,6 +473,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "CraftItem")      return std::make_unique<InvCraftNode>(a0("item"));
         if (type == "LootRoll")       return std::make_unique<InvLootRollNode>(a0("table"));
         if (type == "SpawnPickup")    return std::make_unique<InvSpawnPickupNode>(a0("item"));
+        if (type == "SwingWeapon")    return std::make_unique<SwingWeaponNode>();
+        if (type == "FireWeapon")     return std::make_unique<FireWeaponNode>();
+        if (type == "ReloadWeapon")   return std::make_unique<ReloadWeaponNode>();
+        if (type == "WeaponAmmo")     return std::make_unique<WeaponAmmoNode>();
+        if (type == "SetWeapon")      return std::make_unique<SetWeaponNode>(a0("sword"));
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);
@@ -828,6 +835,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
     if (type == "NavStop")         return std::make_unique<NavStopNode>();
     if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
+    if (type == "GridMoveTo")      return std::make_unique<GridMoveToNode>();
+    if (type == "GridStop")        return std::make_unique<GridStopNode>();
+    if (type == "GridArrived")     return std::make_unique<GridArrivedNode>();
     if (type == "BtSet")           return std::make_unique<BtSetNode>(argOr("x"));
     if (type == "BtGet")           return std::make_unique<BtGetNode>(argOr("x"));
     if (type == "BtRun")           return std::make_unique<BtRunNode>(argOr(""));

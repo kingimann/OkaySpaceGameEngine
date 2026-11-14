@@ -455,6 +455,12 @@ to *start Y / ignore / only*: **radius** (above 0 it's a sphere cast), **layers*
 (the same layer list) and **skip triggers**. Stored as the trailing tokens `r:`,
 `lm:` and `nt:1`. The Actions trigger list also has **On Trigger Stay**.
 
+**2D sweeps and blasts.** **Box Cast** and **Capsule Cast** sweep a flat shape and
+return the first hit the same way a raycast does. **Overlap Rectangle** and
+**Overlap Capsule** name what is already inside. **Add Explosion Force** shoves
+this object's 2D body away from a point; the push fades to nothing at the
+radius, and a kinematic or static body is left alone. See [physics](physics.md).
+
 **Physics debug view.** *View ▸ Scene Overlays ▸ Physics Debug* (or the **Physics**
 checkbox on the Game view toolbar) draws colliders (green solid, blue trigger,
 grey asleep), this frame's contact points with their normals (red) and, with

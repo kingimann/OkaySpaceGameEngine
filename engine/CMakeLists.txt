@@ -123,6 +123,9 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Combat/WeaponBook.cpp
+    src/Components/MeleeAttacker.cpp
+    src/Components/RangedWeapon.cpp
     src/Inventory/ItemDatabase.cpp
     src/Inventory/LootTable.cpp
     src/Inventory/InventoryPersistence.cpp
@@ -185,7 +188,9 @@ add_library(okay_engine
     src/Audio/AudioStream.cpp
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
+    src/Audio/FlacDecoder.cpp
     src/AI/Pathfinding.cpp
+    src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
     src/AI/NavMeshBake.cpp
     src/AI/NavMeshCarve.cpp
@@ -194,6 +199,7 @@ add_library(okay_engine
     src/AI/Navigation.cpp
     src/AI/BehaviorTree.cpp
     src/AI/BehaviorTreeRunner.cpp
+    src/AI/Perception.cpp
     src/Core/ImageWrite.cpp
     src/Core/BuildPipeline.cpp
     src/Core/ImageDecode.cpp
@@ -213,6 +219,7 @@ add_library(okay_engine
     src/Debug/ProjectDiagnostics.cpp
     src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
@@ -239,6 +246,11 @@ add_library(okay_engine
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/ThreeMfReader.cpp
+    src/Render/AmfReader.cpp
+    src/Render/X3dReader.cpp
+    src/Render/DxfReader.cpp
+    src/Render/LwoReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -564,6 +576,13 @@ if(OKAY_OWN_BLEND)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
+# Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
+foreach(_fmt 3MF AMF X3D DXF LWO)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
+    endif()
+endforeach()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

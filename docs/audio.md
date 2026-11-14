@@ -6,15 +6,35 @@ and its groups, music, the player's volume settings, and scripting.
 
 ## Clips
 
-An AudioSource plays a **WAV, OGG or MP3** file. Set its file in the Inspector
+An AudioSource plays a **WAV, OGG, MP3 or FLAC** file. Set its file in the Inspector
 (Browse or type a path relative to the project). Files are decoded once when Play
 starts, resampled to the output rate, and shared between every source that uses
-them. Files that can't be read are listed in the Console.
+them. Files that can't be read are listed in the Console. FLAC is lossless: the
+samples are the ones stored in the file. The decoder is our own, written from the
+public FLAC format description.
 
 Clips keep their **channels**: a mono file stays mono and a stereo file stays stereo
 (files with more than two channels are averaged to mono). Nothing is downmixed
 unless you ask: in code `AudioClip::Load(path, &error, true)` (or
-`AudioClip::Downmixed()`) gives the mono version.
+`AudioClip::Downmixed()`) gives the mono version. The import setting
+**Mix down to one channel** does the same thing for that file.
+
+### Import settings
+
+Select an audio file in the Project panel. Two settings are saved next to it
+and used the next time the file is loaded (Play, or Load on an Audio Source):
+
+| Setting | What it does |
+| --- | --- |
+| Loading | **Load the whole file**, or **Read it while it plays** (a small fixed amount of memory however long the file is). An Audio Source or Music Player whose own Stream box is ticked also reads while it plays, even when this says to load the whole file. |
+| Mix down to one channel | Left and right become a single channel. Off keeps a stereo file stereo. |
+
+A one-shot that needs the samples in memory still loads the whole file. It still
+mixes down to one channel when that setting is on.
+
+There is no quality setting. The file is not re-encoded, so a quality number
+would not change the sound. A number left in an older settings file is kept and
+ignored.
 
 ### Stereo placement
 
@@ -41,7 +61,8 @@ one-shot of the source's own clip (`PlayOneShot()`) needs the clip in memory.
 
 How it works, for the curious: each streaming source owns an `AudioStream`
 (WAV is read directly; MP3 goes through `Mp3Stream`, our own decoder one frame at a
-time; OGG through `VorbisStream`, our own Vorbis decoder reading Ogg pages on demand). Decoded audio waits in a
+time; OGG through `VorbisStream`, our own Vorbis decoder reading Ogg pages on demand;
+FLAC through `FlacStream`, our own decoder one frame at a time). Decoded audio waits in a
 ring of 32,768 frames. The mixer's buffer fill starts by topping the ring up (the
 decode step), so decoding always runs ahead of what is played and on the same
 thread that mixes, with no locks. If the file cannot be read fast enough the ring

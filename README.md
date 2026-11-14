@@ -50,11 +50,14 @@ Details: [docs/platform_layer.md](docs/platform_layer.md) and
   graph. [scripting](docs/scripting.md),
   [visual scripting](docs/visual_scripting.md)
 - **Gameplay:** navigation, behavior trees, dialogue and quests, cutscenes,
-  save games, inventory, crafting and build mode.
+  save games, inventory, crafting, build mode, hinge limits, and an editor for
+  items, loot and recipes.
   [all systems](docs/README.md#gameplay-systems)
-- **UI:** a canvas with the usual widgets, HTML/CSS-style documents, in-world UI
-  and localization. [game UI](docs/game_ui.md)
-- **Audio:** a mixer, WAV, OGG and MP3, and a music player.
+- **UI:** a canvas with the usual widgets, frames that turn and scale, a
+  keyboard and gamepad focus ring, on-screen touch controls, HTML/CSS-style
+  documents, in-world UI and localization. [game UI](docs/game_ui.md)
+- **Audio:** a mixer, WAV, OGG and MP3, a music player, and optional 3D echo,
+  pitch that follows speed, and muffling with walls and distance.
   [audio](docs/audio.md)
 - **Multiplayer:** host or join over UDP with optional encryption, a relay for
   players behind routers, dedicated servers, voice, accounts, cloud saves and

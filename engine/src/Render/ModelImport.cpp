@@ -591,7 +591,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 9 ? ReadMs3dFile(path, out, &e1)
                   : s == 10 ? ReadAseFile(path, out, &e1)
                   : ReadBlendFile(path, out, &e1, flatten);   // 16 (the Blender reader flattens by itself)
-        if (good && flatten && s >= 6 && s != 16) FlattenImportedModel(out);
+        if (good && flatten && s >= 6 && s <= 10) FlattenImportedModel(out);   // batch A (OFF..ASE) has no flatten switch of its own; later readers flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;

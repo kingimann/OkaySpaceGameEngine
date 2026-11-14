@@ -52,7 +52,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
-- **Open:** rich text tags (bold, italic, colour, size, icon) from the UI plan: none found in `TextRenderer`; no rating or progress "data source" beyond the Bar Bind (12.13)
+- **Open:** rich text exists (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`; see `docs/ui_runtime.md`) but works on screen-space text only: world (3D) text ignores the tags; no rating or progress "data source" beyond the Bar Bind (12.13)
 - **Related:** 12.3, 12.7, 12.11, 2.9, 1.8
 - **Words:** button, panel, label, text, TextRenderer, image, UIImage, raw image, nine-slice, 9-slice, progress bar, health bar, radial, cooldown, rating, stars, crosshair, reticle, shape, rounded corners, pill, shadow, gradient
 - **Seen as:** a button does nothing on click; text is blurry or too small; an image shows a red box or "can't load"; a bar does not fill; corners are square when they should be round; text does not update when the language changes
@@ -74,7 +74,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** from the component-library request, none found as components: radio group. Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
+- **Open:** radio buttons exist: `UIToggle` with Style = Radio and a group name (`radioGroup`; picking one clears the others in its group, see `docs/ui_runtime.md`). Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -147,16 +147,16 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.7.1 Slate palette and kit - `Scene/UITemplates` - Card, Heading, List Row, Badge, Avatar, Divider, button kinds, Switch, Spinner, Notification
   - 12.7.2 Prebuilt screens - `Scene/UITemplates` - Main Menu, Pause, Settings, Confirm Dialog, HUD, Health Bar, Dialog Box, Shop, Game Over, Lobby, Scoreboard, Leaderboard, Matchmaking, five loading screens; each lands on one shared Canvas
   - 12.7.3 Style presets and copy/paste style - `Scene/UIStyles` - per-component preset chips, Copy style / Paste style
-  - 12.7.4 UI Theme component - `Components/UITheme` - four built-in looks (Dark, Light, Sci-fi, Fantasy) plus custom palette baked onto child widgets on request
+  - 12.7.4 UI Theme component - `Components/UITheme` - twelve built-in looks (Dark, Light, Sci-fi, Fantasy, Modern Flat and seven more, see `docs/ui_runtime.md`) plus a custom palette, baked onto child widgets on request; looks can be saved as `.okaytheme` files in the project and loaded again; the companion `UIStyleVariant` component gives a widget one of seven roles (Default, Primary, Secondary, Danger, Ghost, Outline, Pill)
   - 12.7.5 UI font - `Components/TextRenderer`, `editor/main.cpp` (Lighting window, UI Font) - launcher Roboto by default, scene-chosen TTF/OTF, or classic pixel font
   - 12.7.6 UI Theme window - `editor/main.cpp` (~42418-42667) - reusable styles applied across widgets, "Apply to All UI"
 - **Code:** `Scene/UITemplates`, `Scene/UIStyles`, `Components/UITheme`, `editor/main.cpp` (`DrawUIThemer`, `DrawUIWidgetItems`)
 - **API:** `UITemplates::AddMainMenu/AddPauseMenu/AddSettings/AddHUD/AddShop...`, `UIStyles::ApplyButton/ApplyPanel...`, `UITheme::Apply`; script `apply_ui_theme`, `set_ui_theme`, `ui_style("classic")`
 - **Editor:** GameObject > Create > UI (Kit, Prebuilt Screens), View > Editors & Tools > UI Theme, "Look" chips at the top of each UI inspector, Save Selected as UI
 - **Docs:** `docs/game_ui.md` (Adding UI in the editor, Theming)
-- **Tests:** `ui_templates`, `ui_tabs`, `uicapture_look`
-- **Status:** Partial - kit, screens and presets are implemented and tested; UITheme has no test and is a one-shot skin, not the stylesheet system the UI plan describes
-- **Open:** "full component library" (see the missing list in 12.3 and 12.4); stylesheet assets with selectors, hover/pressed/focused/disabled states and transitions (UI plan P2); a real blur behind panels is not possible with the painter (per the `UITheme` header)
+- **Tests:** `ui_templates`, `ui_tabs`, `uicapture_look`, `runtime_ui` (UITheme looks, roles and saved `.okaytheme` files)
+- **Status:** Partial - kit, screens and presets are implemented and tested; UITheme (12 looks, roles, saved `.okaytheme` files) is tested in `test_runtime_ui` but is still a one-shot skin baked onto widgets, not the stylesheet system the UI plan describes
+- **Open:** "full component library" (see the missing list in 12.3 and 12.4); stylesheet assets with selectors, hover/pressed/focused/disabled states and transitions (UI plan P2; this part is still open); a real blur behind panels is not possible with the painter (per the `UITheme` header)
 - **Related:** 12.2, 12.8, 12.10, 40.2
 - **Words:** theme, skin, Slate, launcher look, UI kit, template, prebuilt screen, main menu, HUD, preset, style, copy style, Look chips, UITheme, UI font, dark mode
 - **Seen as:** a new widget does not match the launcher colours; a prebuilt screen overlaps another; "Apply to All UI" changes too much; the font looks pixelated or wrong; centred menus draw on top of each other

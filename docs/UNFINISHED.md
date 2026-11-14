@@ -177,9 +177,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (colour labels in `.okaylabels` vs tags in `.okaymeta`); no file watcher, outside changes show on the next poll (2 s or more); no automated UI test of the window... |
-| [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | possible bug: Build Game collects assets from the open scene only (extra scenes in the build list are copied but not scanned)... |
+| [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | Build Game and the database each have their own dependency walk (Build Game uses `Core/BuildPipeline`, not `BuildClosurePaths`); references are found by reading text, so a path built at run time is never seen... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
-| [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
+| [20.4](feature_map/20-35-planned.md#204-import-settings) | Import settings | Partial | no audio options in the UI, no sRGB or compress effect; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins... |
 | [20.5](feature_map/20-35-planned.md#205-thumbnails) | Thumbnails | Partial | pictures are made on the main thread inside a time budget, not on a worker thread; a scene thumbnail loads the whole scene; no thumbnail for fonts or data assets |
 
 ### 21. Prefab system (Critical)

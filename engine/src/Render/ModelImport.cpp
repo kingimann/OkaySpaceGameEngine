@@ -1,4 +1,8 @@
 #include <set>
+#include <exception>
+#include <functional>
+#include <new>
+#include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
@@ -94,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -490,6 +494,36 @@ constexpr bool kOwnXDefault = true;
 constexpr bool kOwnXDefault = false;
 #endif
 
+#ifdef OKAY_OWN_AC3D_DEFAULT
+constexpr bool kOwnAc3dDefault = true;
+#else
+constexpr bool kOwnAc3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_OGRE_DEFAULT
+constexpr bool kOwnOgreDefault = true;
+#else
+constexpr bool kOwnOgreDefault = false;
+#endif
+
+#ifdef OKAY_OWN_XGL_DEFAULT
+constexpr bool kOwnXglDefault = true;
+#else
+constexpr bool kOwnXglDefault = false;
+#endif
+
+#ifdef OKAY_OWN_IRR_DEFAULT
+constexpr bool kOwnIrrDefault = true;
+#else
+constexpr bool kOwnIrrDefault = false;
+#endif
+
+#ifdef OKAY_OWN_NFF_DEFAULT
+constexpr bool kOwnNffDefault = true;
+#else
+constexpr bool kOwnNffDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -519,8 +553,13 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_IRRMESH", "IRRMESH", kOwnIrrMeshDefault},   // 19
     {"OKAY_OWN_B3D",     "B3D",     kOwnB3dDefault},       // 20
     {"OKAY_OWN_X",       "X",       kOwnXDefault},         // 21
+    {"OKAY_OWN_AC3D",    "AC3D",    kOwnAc3dDefault},      // 22
+    {"OKAY_OWN_OGRE",    "OGRE",    kOwnOgreDefault},      // 23
+    {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
+    {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
+    {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
 };
-constexpr int kOwnSlots = 24;   // slots 22 and 23 are free; raise this (and add rows above) when a reader needs a slot beyond 23
+constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -547,6 +586,11 @@ int OwnSlot(const std::string& ext) {
     if (e == ".irrmesh") return 19;
     if (e == ".b3d") return 20;
     if (e == ".x") return 21;
+    if (e == ".ac" || e == ".acc" || e == ".ac3d") return 22;
+    if (e == ".mesh.xml") return 23;
+    if (e == ".xgl" || e == ".zgl") return 24;
+    if (e == ".irr") return 25;
+    if (e == ".nff" || e == ".enff") return 26;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -561,6 +605,10 @@ bool OwnOptedIn(int slot) {
 }
 
 std::string ExtensionOf(const std::string& path) {
+    {   // OGRE's XML meshes are ".mesh.xml": the extension is the last two parts, not the last one
+        const std::string l = Lower(path);
+        if (EndsWith(l, ".mesh.xml")) return ".mesh.xml";
+    }
     std::size_t sl = path.find_last_of("/\\"), dot = path.find_last_of('.');
     if (dot == std::string::npos || (sl != std::string::npos && dot < sl)) return std::string();
     return Lower(path.substr(dot));
@@ -635,6 +683,21 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     return ImportBackend::Assimp;
 }
 
+bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
+    try {
+        return read();
+    } catch (const std::bad_alloc&) {
+        err = "the file needs more memory than this machine can give (refused)";
+    } catch (const std::length_error&) {
+        err = "the file asks for a larger buffer than is allowed (refused)";
+    } catch (const std::exception& e) {
+        err = std::string("the reader failed with an error (refused): ") + e.what();
+    } catch (...) {
+        err = "the reader failed with an unknown error (refused)";
+    }
+    return false;
+}
+
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
@@ -660,7 +723,17 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const int s = OwnSlot(ext);
         if (s < 0) { if (err) *err = "no built-in reader for this format"; return false; }
         std::string e1;
-        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
+        // the mesh files an Irrlicht scene names are read through this same seam, with the default choice of backend (our own
+        // reader where it is switched on, else Assimp when the build has it); one level only, so a scene cannot name a scene
+        thread_local int loaderDepth = 0;
+        const IrrMeshLoader irrLoader = [&](const std::string& p, ImportedModel& m, std::string* e) {
+            if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr")) { if (e) *e = "a scene file may not load another scene"; return false; }
+            ++loaderDepth;
+            const bool r = ImportModelData(p, m, ImportBackend::Default, false, e);
+            --loaderDepth;
+            return r;
+        };
+        bool good = RunReaderGuarded([&]() -> bool { return s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
                   : s == 5 ? ReadBvhFile(path, out, &e1)
                   : s == 6 ? ReadOffFile(path, out, &e1)
@@ -678,7 +751,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 18 ? ReadMd3File(path, out, &e1)
                   : s == 19 ? ReadIrrMeshFile(path, out, &e1)
                   : s == 20 ? ReadB3dFile(path, out, &e1)
-                  : ReadXFile(path, out, &e1);   // 21
+                  : s == 21 ? ReadXFile(path, out, &e1)
+                  : s == 22 ? ReadAc3dFile(path, out, &e1)
+                  : s == 23 ? ReadOgreXmlFile(path, out, &e1)
+                  : s == 24 ? ReadXglFile(path, out, &e1)
+                  : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
+                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+        if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);

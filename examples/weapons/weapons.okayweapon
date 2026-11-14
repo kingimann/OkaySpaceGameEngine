@@ -1,0 +1,28 @@
+okayweapon 1
+weapon "sword"
+  name "Practice sword"
+  kind melee
+  item "sword"
+  damage 12
+  swing 0.8
+  range 3
+  arc 100
+  hit 0.25 0.45
+  knockback 4
+  combo 3 0.6 0.25
+  hitbox 0 1.2 1.6 1.4
+end
+weapon "pistol"
+  name "Practice pistol"
+  kind gun
+  item "pistol"
+  damage 9
+  fire 4
+  range 24
+  magazine 8
+  ammo 24
+  reload 1.1
+  knockback 3
+  spread 1
+  hitscan 1
+end

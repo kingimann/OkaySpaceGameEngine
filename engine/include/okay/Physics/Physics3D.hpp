@@ -59,7 +59,9 @@ struct RaycastHit3D {
 /// and overlaps include triggers by default; shape casts skip them, as they
 /// always did (casts are mostly used for movement).
 ///
-/// Assumes physics bodies are top-level (un-parented) Transforms.
+/// A body may sit under a parent. The step moves it in world space, so a moving or
+/// turning parent carries it and gravity stays world-down. Un-parenting keeps the
+/// speed that parent was giving it (see docs/physics.md).
 class Physics3D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;

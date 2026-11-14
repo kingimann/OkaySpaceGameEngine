@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -49,6 +50,8 @@ public:
     bool     sleeping   = false;
     /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
     PoseHistory poseHistory;
+    /// Runtime: the parent this body was carried by last step. Not authored.
+    ParentSample parentCarry;
     /// Force this body awake (call after teleporting or externally moving it).
     void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
 
@@ -105,6 +108,7 @@ public:
         m_forceAccum = Vec2::Zero; m_torqueAccum = 0.0f;
         WakeUp();
         poseHistory = PoseHistory{};
+        parentCarry = ParentSample{};
     }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).

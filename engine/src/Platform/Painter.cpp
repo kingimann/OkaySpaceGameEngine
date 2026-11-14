@@ -2,6 +2,7 @@
 #include "okay/Platform/Painter.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/UI/UIFontPolicy.hpp"
 
 namespace okay::platform {
 
@@ -41,7 +42,8 @@ ui2d::Tex Painter::FontAtlas(okay::TtfFont* f) {
     if (u.tex && (u.w != a.Width() || u.h != a.Height())) { DestroyTexture(u.tex); u.tex = nullptr; }
     if (!u.tex) {
         TextureDesc d;
-        d.width = a.Width(); d.height = a.Height(); d.scale = ScaleMode::Linear;
+        d.width = a.Width(); d.height = a.Height();
+        d.scale = UIGlyphAtlasLinearSampling() ? ScaleMode::Linear : ScaleMode::Nearest;
         u.tex = CreateTexture(d, nullptr);
         u.w = a.Width(); u.h = a.Height();
     }

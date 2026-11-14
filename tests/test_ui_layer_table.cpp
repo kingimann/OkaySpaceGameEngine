@@ -36,7 +36,9 @@ int main() {
                                 K_Radial, K_Minimap, K_Slider, K_Stepper, K_Rating, K_Toggle,
                                 K_Tabs, K_Button, K_Text, K_WorldUI, K_Dropdown, K_Input,
                                 K_Crosshair, K_FocusRing, K_Tooltip, K_Keybind, K_ModalDim, K_ContextMenu, K_Caption,
-                                K_TouchStick, K_TouchPad, K_TouchButton};
+                                K_TouchStick, K_TouchPad, K_TouchButton,
+                                K_Search, K_DateTime, K_FilePicker, K_Accordion, K_Breadcrumbs,
+                                K_Pagination, K_Skeleton, K_BottomSheet};
         CHECK((int)(sizeof(expected) / sizeof(expected[0])) == K_Count);
         for (int i = 0; i < K_Count; ++i) CHECK(expected[i] == i);   // contiguous, ascending
         CHECK(K_Minimap == 7);
@@ -78,6 +80,14 @@ int main() {
         { auto* g = mk("ch");  g->AddComponent<Crosshair>();        cases.push_back({g, K_Crosshair}); }
         { auto* g = mk("cap"); g->AddComponent<CaptionOverlay>();    cases.push_back({g, K_Caption}); }
         { auto* g = mk("tt");  g->AddComponent<UITooltip>();        cases.push_back({g, K_Tooltip}); }
+        { auto* g = mk("se");  g->AddComponent<UISearchBar>();      cases.push_back({g, K_Search}); }
+        { auto* g = mk("when"); g->AddComponent<UIDateTimePicker>(); cases.push_back({g, K_DateTime}); }
+        { auto* g = mk("fp");  g->AddComponent<UIFilePicker>();     cases.push_back({g, K_FilePicker}); }
+        { auto* g = mk("ac");  g->AddComponent<UIAccordion>();      cases.push_back({g, K_Accordion}); }
+        { auto* g = mk("bc");  g->AddComponent<UIBreadcrumbs>();    cases.push_back({g, K_Breadcrumbs}); }
+        { auto* g = mk("pg");  g->AddComponent<UIPagination>();     cases.push_back({g, K_Pagination}); }
+        { auto* g = mk("sk");  g->AddComponent<UISkeleton>();       cases.push_back({g, K_Skeleton}); }
+        { auto* g = mk("sh");  g->AddComponent<UIBottomSheet>();    cases.push_back({g, K_BottomSheet}); }
         for (const auto& c : cases) {
             CHECK(UIDefaultLayer(c.g) == c.kind);
             std::vector<int> k = KindsOf(c.g);

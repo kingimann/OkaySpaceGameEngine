@@ -73,6 +73,12 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# FLAC decoding against known samples, and audio import settings (mono, stream).
+add_executable(test_flac_import test_flac_import.cpp)
+target_link_libraries(test_flac_import PRIVATE okay::engine)
+target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_import COMMAND test_flac_import)
+
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)
 target_link_libraries(test_audio_stereo PRIVATE okay::engine)
@@ -265,6 +271,10 @@ add_test(NAME bitmap_font COMMAND test_bitmap_font)
 add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
+
+add_executable(test_ui_font_policy test_ui_font_policy.cpp)
+target_link_libraries(test_ui_font_policy PRIVATE okay::engine)
+add_test(NAME ui_font_policy COMMAND test_ui_font_policy)
 
 # Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
 add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
@@ -740,6 +750,10 @@ add_executable(test_uiwidgets test_uiwidgets.cpp)
 target_link_libraries(test_uiwidgets PRIVATE okay::engine)
 add_test(NAME uiwidgets COMMAND test_uiwidgets)
 
+add_executable(test_ui_widgets_more test_ui_widgets_more.cpp)
+target_link_libraries(test_ui_widgets_more PRIVATE okay::engine)
+add_test(NAME ui_widgets_more COMMAND test_ui_widgets_more)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -942,6 +956,12 @@ add_executable(test_npc_crafting test_npc_crafting.cpp)
 target_link_libraries(test_npc_crafting PRIVATE okay::engine)
 add_test(NAME npc_crafting COMMAND test_npc_crafting)
 
+# Melee hit window and arc, gun fire rate / ammo / reload, weapon files.
+add_executable(test_weapons test_weapons.cpp)
+target_link_libraries(test_weapons PRIVATE okay::engine)
+target_compile_definitions(test_weapons PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME weapons COMMAND test_weapons)
+
 add_executable(test_script_ui test_script_ui.cpp)
 target_link_libraries(test_script_ui PRIVATE okay::engine)
 add_test(NAME script_ui COMMAND test_script_ui)
@@ -1043,6 +1063,10 @@ add_test(NAME terrain_ops COMMAND test_terrain_ops)
 add_executable(test_npc_ai test_npc_ai.cpp)
 target_link_libraries(test_npc_ai PRIVATE okay::engine)
 add_test(NAME npc_ai COMMAND test_npc_ai)
+
+add_executable(test_perception test_perception.cpp)
+target_link_libraries(test_perception PRIVATE okay::engine)
+add_test(NAME perception COMMAND test_perception)
 
 add_executable(test_mp_controllers test_mp_controllers.cpp)
 target_link_libraries(test_mp_controllers PRIVATE okay::engine)
@@ -1934,6 +1958,12 @@ if(SDL2_FOUND)
     else()
         set(OKAY_TEST_SDL_LIB ${SDL2_LIBRARIES})
     endif()
+    add_executable(test_ui_widgets_more_shots test_ui_widgets_more_shots.cpp)
+    target_link_libraries(test_ui_widgets_more_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
+
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_renderer_golden PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -1947,6 +1977,10 @@ if(SDL2_FOUND)
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
 
+    # 1280x720 menu picture for the crisp-UI before/after. Not a ctest.
+    add_executable(crisp_ui_shot crisp_ui_shot.cpp)
+    target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
     add_executable(test_display_screen test_display_screen.cpp)
     target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -2014,6 +2048,12 @@ add_test(NAME ragdoll COMMAND test_ragdoll)
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
 add_test(NAME fixed_step COMMAND test_fixed_step)
+
+# Step rate is a setting; parented bodies follow and detach. Loads a real scene.
+add_executable(test_rigidbody_step_parent test_rigidbody_step_parent.cpp)
+target_link_libraries(test_rigidbody_step_parent PRIVATE okay::engine)
+target_compile_definitions(test_rigidbody_step_parent PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rigidbody_step_parent COMMAND test_rigidbody_step_parent)
 
 # Post-processing, sky, fog and weather: settings round trip, presets, the weather rig, sky / fog / tonemap maths
 add_executable(test_post_sky test_post_sky.cpp)

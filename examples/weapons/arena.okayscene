@@ -1,0 +1,48 @@
+okayscene 1
+name "Weapon arena"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 2.4 -6 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    text "The fighter's sword and the pistol are weapons in weapons.okayweapon. Open View, Editors and Tools, Weapons to edit them." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+end
+gameobject 2 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.15 2 0 0 0 1 16 0.3 16
+    mesh "Cube" 0.18 0.2 0.24 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 3 "Fighter"
+  active 1
+  parent -1
+  transform 0 0.9 0 0 0 0 1 0.7 1.6 0.7
+    mesh "Capsule" 0.3 0.55 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    melee 15 2.5 120 0.5 102 0 0 0 0 0 1 0.6 0.25 0 1.2 1.6 1.4 "sword" ""
+end
+gameobject 4 "Dummy"
+  active 1
+  parent -1
+  transform 0 0.9 2 0 0 0 1 0.8 1.6 0.8
+    mesh "Capsule" 0.85 0.28 0.25 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    stat_health 100 0 0 1 0.3 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0
+    boxcollider3d 1.2 1.8 1.2 0 0 0 0
+end
+gameobject 5 "Gun"
+  active 1
+  parent -1
+  transform 1.6 0.6 -1 0 0 0 1 0.35 0.28 1.1
+    mesh "Cube" 0.25 0.55 0.32 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    gun dmg=10 rate=4 range=30 mag=8 ammo=-1 reload=1.2 kb=3 spread=0 hitscan=1 auto=1 fireKey=0 fireBtn=0 reloadKey=114 muz=0 speed=30 weapon="pistol" file="" proj=""
+end

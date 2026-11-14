@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -76,6 +77,8 @@ public:
     bool     hasPrevPos = false;
     /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
     PoseHistory poseHistory;
+    /// Runtime: the parent this body was carried by last step. Not authored.
+    ParentSample parentCarry;
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }
@@ -131,6 +134,7 @@ public:
         groundedOnTerrain = false; groundNormal = Vec3{0.0f, 1.0f, 0.0f};
         prevPos = Vec3::Zero; hasPrevPos = false;
         poseHistory = PoseHistory{};
+        parentCarry = ParentSample{};
     }
 
     /// 1/mass for dynamic bodies, 0 for kinematic/static (treated as infinite).

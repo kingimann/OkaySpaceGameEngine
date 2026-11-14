@@ -7,8 +7,8 @@
 //   * model `scale`: multiplies the size of a model added to a scene from the editor.
 //   * model `normals` / `smoothingAngle` / `importAnimations`: applied when a model is brought into a scene
 //     (see ModelImport.cpp, which reads them through ReadModelImportOptions below).
-// Other keys in the meta (compress, sRGB, audio options ...) are stored but no importer reads them yet, and the
-// editor does not offer them.
+// compress and sRGB are stored but no importer reads them, and the editor does not offer them.
+// Audio `loadMode` and `forceMono` are read by the audio loader (quality is kept for old files and not applied).
 #include "okay/Graphics/Image.hpp"
 
 #include <cctype>
@@ -102,6 +102,35 @@ inline ModelImportOptions ReadModelImportOptions(const std::string& modelPath) {
     if (!a.empty()) { const float v = static_cast<float>(std::atof(a.c_str())); if (v >= 0.0f && v <= 180.0f) o.smoothingAngle = v; }
     const std::string ia = low(ReadImportSetting(modelPath, "model", "importAnimations"));
     if (ia == "0" || ia == "false" || ia == "off") o.importAnimations = false;
+    return o;
+}
+
+/// What an audio file's sidecar asks for when the file is loaded.
+/// `stream` is loadMode stream (or the older `stream 1` key). `forceMono` averages every channel into one
+/// (or the older `mono 1` key). `quality` is not here: clips are not re-encoded, so that number changes nothing.
+struct AudioImportOptions {
+    bool stream = false;
+    bool forceMono = false;
+};
+
+inline std::string ImportLower(std::string v) {
+    for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return v;
+}
+
+inline bool ImportFlagOn(const std::string& v) {
+    const std::string s = ImportLower(v);
+    return s == "1" || s == "true" || s == "on" || s == "yes";
+}
+
+inline AudioImportOptions ReadAudioImportOptions(const std::string& audioPath) {
+    AudioImportOptions o;
+    const std::string mode = ImportLower(ReadImportSetting(audioPath, "audio", "loadMode"));
+    if (!mode.empty()) o.stream = mode == "stream";
+    else o.stream = ImportFlagOn(ReadImportSetting(audioPath, "audio", "stream"));
+    std::string mono = ReadImportSetting(audioPath, "audio", "forceMono");
+    if (mono.empty()) mono = ReadImportSetting(audioPath, "audio", "mono");
+    o.forceMono = ImportFlagOn(mono);
     return o;
 }
 

@@ -11,6 +11,8 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Projectile3D.hpp"
+#include "okay/Components/RangedWeapon.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/DeathLock.hpp"
@@ -74,6 +76,7 @@ public:
     float bulletSize = 0.12f;
     Color bulletColor = Color::FromBytes(255, 214, 90);
     std::string projectile;              ///< prefab for FireMode::Prefab
+    std::string weapon;                  ///< a gun in the weapon list; empty keeps the numbers above
     float muzzleHeight = 1.0f;           ///< bullets start this high above the player origin
     float muzzleForward = 0.6f;          ///< ... and this far in front
 
@@ -114,7 +117,25 @@ public:
     bool  IsDashing() const { return m_dash > 0.0f; }
     int   ShotsFired() const { return m_shots; }
 
+    void AdoptWeapon() {
+        const WeaponDefinition* d = FindWeapon(weapon, "");
+        if (!d && weapon.empty()) d = WeaponForHolder(gameObject);
+        if (!d || d->kind != WeaponKind::Gun) { m_weaponSeen.clear(); return; }
+        if (m_weaponSeen == d->id) return;
+        m_weaponSeen = d->id;
+        damage = d->damage;
+        fireRate = std::max(0.1f, d->fireRate);
+        range = d->range;
+        reloadTime = d->reload;
+        impactForce = d->knockback;
+        spread = d->spread;
+        if (d->magazine > 0) magazineSize = d->magazine;
+        if (!d->projectile.empty()) projectile = d->projectile;
+        fireMode = d->hitscan ? (int)FireMode::Hitscan : (int)FireMode::Prefab;
+    }
+
     void Start() override {
+        AdoptWeapon();
         if (magazineSize > 0 && ammo <= 0) ammo = magazineSize;
         if (Character* ch = FindCharacter()) m_baseAnimSpeed = ch->animSpeed;
         Cursor::Capture(false);   // twin-stick: the cursor is the crosshair
@@ -124,6 +145,7 @@ public:
     /// Fire one shot now (ignores the fire rate; still uses ammo).
     void Fire() {
         if (!gameObject || !transform) return;
+        AdoptWeapon();
         if (magazineSize > 0) {
             if (m_reload > 0.0f) return;
             if (ammo <= 0) { CallScript("on_empty"); if (autoReload) Reload(); return; }
@@ -154,6 +176,7 @@ public:
 
     void Update(float dt) override {
         if (!transform || !gameObject) return;
+        AdoptWeapon();
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
         if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
@@ -265,7 +288,9 @@ public:
         bool pressed = !uiBlocked && ((fireButton >= 0 && Input::GetMouseButtonDown(fireButton)) ||
                                       (fireKey && Input::GetKeyDown(fireKey)) ||
                                       (fireGamepadButton >= 0 && Input::GetGamepadButtonDown(fireGamepadButton)));
-        if ((autoFire ? held : pressed) && m_fireCd <= 0.0f && m_dash <= 0.0f) {
+        // A Ranged Weapon on this object is the gun. This controller keeps moving and aiming.
+        if (!gameObject->GetComponent<RangedWeapon>() &&
+            (autoFire ? held : pressed) && m_fireCd <= 0.0f && m_dash <= 0.0f) {
             m_fireCd = 1.0f / Mathf::Max(0.1f, fireRate);
             Fire();
         }
@@ -317,6 +342,7 @@ private:
     Vec2  m_lastMouse{0, 0};
     bool  m_padActive = false, m_haveCam = false, m_haveAim = false, m_godSet = false, m_hpGod = false;
     float m_fireCd = 0.0f, m_reload = 0.0f, m_dash = 0.0f, m_dashCd = 0.0f, m_shake = 0.0f, m_time = 0.0f;
+    std::string m_weaponSeen;
     float m_baseAnimSpeed = 1.0f, m_moveSpeed = 0.0f;
     Vec3  m_lastPos{0, 0, 0};
     bool  m_havePos = false, m_backpedal = false;

@@ -30,6 +30,7 @@
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 
 namespace okay {
 namespace detail {
@@ -570,6 +571,122 @@ void RegisterUIDialogueBox() {
     b.Commit();
 }
 
+void RegisterMoreWidgets() {
+    {
+        PropertyBuilder<UISearchBar> b("UISearchBar", "uisearch", "UI");
+        b.AddVec2("position", &UISearchBar::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UISearchBar::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UISearchBar::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddString("query", &UISearchBar::query).Tooltip("The text to search for")
+         .AddString("placeholder", &UISearchBar::placeholder).Tooltip("Hint shown while the search is empty")
+         .AddBool("caseSensitive", &UISearchBar::caseSensitive).Tooltip("Match capital letters exactly")
+         .AddInt("value", &UISearchBar::value).Range(-1, 100000, 1).Tooltip("Chosen row in the full list, or -1")
+         .AddBool("interactable", &UISearchBar::interactable).Tooltip("When off, the search ignores clicks and typing")
+         .AddBool("focusable", &UISearchBar::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("background", &UISearchBar::background).Range(0, 1, 0.01).Tooltip("Colour behind the list")
+         .AddColor("textColor", &UISearchBar::textColor).Range(0, 1, 0.01).Tooltip("Colour of the text")
+         .AddColor("accent", &UISearchBar::accent).Range(0, 1, 0.01).Tooltip("Colour of the chosen row");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIDateTimePicker> b("UIDateTimePicker", "uidate", "UI");
+        b.AddVec2("position", &UIDateTimePicker::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIDateTimePicker::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIDateTimePicker::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddInt("year", &UIDateTimePicker::year).Range(1, 9999, 1).Tooltip("Year")
+         .AddInt("month", &UIDateTimePicker::month).Range(1, 12, 1).Tooltip("Month, from 1 to 12")
+         .AddInt("day", &UIDateTimePicker::day).Range(1, 31, 1).Tooltip("Day of the month. Days that month does not have are pulled back")
+         .AddInt("hour", &UIDateTimePicker::hour).Range(0, 23, 1).Tooltip("Hour, from 0 to 23")
+         .AddInt("minute", &UIDateTimePicker::minute).Range(0, 59, 1).Tooltip("Minute, from 0 to 59")
+         .AddInt("minYear", &UIDateTimePicker::minYear).Range(1, 9999, 1).Tooltip("Earliest year")
+         .AddInt("maxYear", &UIDateTimePicker::maxYear).Range(1, 9999, 1).Tooltip("Latest year")
+         .AddBool("showTime", &UIDateTimePicker::showTime).Tooltip("Show the time as well as the date")
+         .AddBool("interactable", &UIDateTimePicker::interactable).Tooltip("When off, the arrows do nothing")
+         .AddBool("focusable", &UIDateTimePicker::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("textColor", &UIDateTimePicker::textColor).Range(0, 1, 0.01).Tooltip("Colour of the numbers");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIFilePicker> b("UIFilePicker", "uifile", "UI");
+        b.AddVec2("position", &UIFilePicker::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIFilePicker::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIFilePicker::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddString("root", &UIFilePicker::root).Tooltip("The only folder this picker may open")
+         .AddString("current", &UIFilePicker::current).Tooltip("Folder on screen, inside that folder")
+         .AddString("selected", &UIFilePicker::selected).Tooltip("The chosen file, inside that folder")
+         .AddBool("showHidden", &UIFilePicker::showHidden).Tooltip("Show files whose names start with a dot")
+         .AddBool("interactable", &UIFilePicker::interactable).Tooltip("When off, rows do not open")
+         .AddBool("focusable", &UIFilePicker::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("textColor", &UIFilePicker::textColor).Range(0, 1, 0.01).Tooltip("Colour of the names");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIAccordion> b("UIAccordion", "uiaccordion", "UI");
+        b.AddVec2("position", &UIAccordion::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIAccordion::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIAccordion::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddBool("allowMultiple", &UIAccordion::allowMultiple).Tooltip("More than one section can be open")
+         .AddInt("value", &UIAccordion::value).Range(0, 1000, 1).Tooltip("The section last opened or closed")
+         .AddBool("interactable", &UIAccordion::interactable).Tooltip("When off, headings do not open")
+         .AddBool("focusable", &UIAccordion::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("textColor", &UIAccordion::textColor).Range(0, 1, 0.01).Tooltip("Colour of the headings");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIBreadcrumbs> b("UIBreadcrumbs", "uibreadcrumb", "UI");
+        b.AddVec2("position", &UIBreadcrumbs::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIBreadcrumbs::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIBreadcrumbs::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddString("pathText", &UIBreadcrumbs::pathText).Tooltip("The path. Folders are separated by /")
+         .AddInt("value", &UIBreadcrumbs::value).Range(0, 1000, 1).Tooltip("Which crumb is highlighted")
+         .AddBool("interactable", &UIBreadcrumbs::interactable).Tooltip("When off, crumbs do not respond")
+         .AddBool("focusable", &UIBreadcrumbs::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("accent", &UIBreadcrumbs::accent).Range(0, 1, 0.01).Tooltip("Colour of the highlighted crumb");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIPagination> b("UIPagination", "uipage", "UI");
+        b.AddVec2("position", &UIPagination::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIPagination::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UIPagination::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddInt("page", &UIPagination::page).Range(1, 100000, 1).Tooltip("The page on screen, starting at 1")
+         .AddInt("pageCount", &UIPagination::pageCount).Range(1, 100000, 1).Tooltip("How many pages there are")
+         .AddInt("pageSize", &UIPagination::pageSize).Range(1, 100000, 1).Tooltip("How many items are on each page")
+         .AddInt("totalItems", &UIPagination::totalItems).Range(0, 10000000, 1).Tooltip("How many items are in the whole list")
+         .AddBool("interactable", &UIPagination::interactable).Tooltip("When off, the page does not change")
+         .AddBool("focusable", &UIPagination::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("accent", &UIPagination::accent).Range(0, 1, 0.01).Tooltip("Colour of the current page");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UISkeleton> b("UISkeleton", "uiskeleton", "UI");
+        b.AddVec2("position", &UISkeleton::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UISkeleton::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+         .AddEnum("anchor", &UISkeleton::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddBool("loading", &UISkeleton::loading).Tooltip("Show the loading placeholder")
+         .AddInt("lines", &UISkeleton::lines).Range(1, 8, 1).Tooltip("How many text bars to show")
+         .AddBool("showAvatar", &UISkeleton::showAvatar).Tooltip("Show a round picture placeholder")
+         .AddColor("bar", &UISkeleton::bar).Range(0, 1, 0.01).Tooltip("Colour of the placeholder bars")
+         .AddColor("highlight", &UISkeleton::highlight).Range(0, 1, 0.01).Tooltip("Colour of the moving shine");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIBottomSheet> b("UIBottomSheet", "uibsheet", "UI");
+        b.AddVec2("position", &UIBottomSheet::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+         .AddVec2("size", &UIBottomSheet::size).Range(1, kBig, 0.1).Tooltip("Width and height of the open sheet, in pixels")
+         .AddEnum("anchor", &UIBottomSheet::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+         .AddBool("open", &UIBottomSheet::open).Tooltip("The sheet is open")
+         .AddFloat("duration", &UIBottomSheet::duration).Range(0, 10, 0.01).Tooltip("Seconds to slide open or closed. 0 snaps")
+         .AddBool("closeOnBackdrop", &UIBottomSheet::closeOnBackdrop).Tooltip("A click just above the sheet closes it")
+         .AddBool("dim", &UIBottomSheet::dim).Tooltip("Darken the screen behind the sheet")
+         .AddString("title", &UIBottomSheet::title).Tooltip("Title on the sheet")
+         .AddBool("interactable", &UIBottomSheet::interactable).Tooltip("When off, the handle does nothing")
+         .AddBool("focusable", &UIBottomSheet::focusable).Tooltip("A gamepad can move to this")
+         .AddColor("background", &UIBottomSheet::background).Range(0, 1, 0.01).Tooltip("Colour of the sheet");
+        b.Commit();
+    }
+}
+
 void RegisterUIInventoryBind() {
     PropertyBuilder<UIInventoryBind> b("UIInventoryBind", "uiinvbind", "UI");
     b.AddString("inventoryName", &UIInventoryBind::inventoryName).Tooltip("Object that holds the Inventory (empty = the Player, else the first Inventory in the scene)")
@@ -651,6 +768,7 @@ void RegisterUIProperties() {
     RegisterUIDamageNumbers();
     RegisterUIDialogueBox();
     RegisterUIInventoryBind();
+    RegisterMoreWidgets();
 }
 
 } // namespace detail

@@ -96,11 +96,44 @@ in, but it does switch readers and (on Linux) the window system. Do not tell pla
 configuring) also sets `OKAY_OWN_CRYPTO=ON`, and the startup line says `crypto=own(test)`. Without `OKAY_OWN_STACK` that
 variable is a configure error. CMake prints a warning when it is on.
 
-**Releases refuse it.** `scripts/check_release_own_stack.sh` fails when `OKAY_OWN_CRYPTO`, `OKAY_OWN_STACK_CRYPTO_TEST` or
-`OKAY_OWN_STACK` is on in the environment, on the cmake command line, or in a configured cache. It is called by
-`scripts/build-windows-dist.sh` (before configure and again on the build tree), by the `release.yml` Windows job (a
-step before the build) and by the Linux server job (on its cache). A ctest entry (`release_refuses_own_crypto`) runs the
-script's own self-test.
+**Releases refuse it, and refuse any build that does not really have libsodium.** Owner decision (2026-11-14, `CLAUDE.md`
+rule 18): libsodium stays the default in every release, `okay::crypto` stays off. The danger is not only a switch being
+turned on: without libsodium, `shared/AntiCheatCrypto.hpp` quietly falls back to `okay::crypto` for Ed25519 (update
+signatures, anti-cheat manifest, host identity) and CMake used to only print a status line. So there are four locks:
+
+1. **CMake: `-DOKAY_REQUIRE_SODIUM=ON`** (default OFF for developer builds). With it, configuring FAILS when libsodium is not
+   found, when `OKAY_SODIUM_PREFIX` does not hold `lib/libsodium.a` and `include/sodium.h`, when `OKAY_USE_SODIUM=OFF`, or when
+   `OKAY_OWN_CRYPTO` / `OKAY_OWN_STACK_CRYPTO_TEST` is on (also if a toolchain file sets the variable). Passed by
+   `scripts/build-windows-dist.sh`, `scripts/release-local.sh` (Linux server) and `release.yml` (Windows and Linux server).
+   Without the option, a missing libsodium prints a loud "NOT found ... UNREVIEWED okay::crypto" line and sets the internal
+   cache entry `OKAY_SODIUM_IN_BUILD=OFF`.
+2. **The download is pinned.** `scripts/fetch-tarball.sh --sha256 <hex>` (or `OKAY_FETCH_SHA256`) fails on a different hash,
+   and on a value that is not 64 hex digits (a `TODO` placeholder fails, it never skips). The libsodium MinGW prebuilt is
+   fetched by `scripts/fetch-libsodium-mingw.sh`, which reads `scripts/libsodium-mingw.pin`, and then checks that
+   `libsodium-win64/lib/libsodium.a` and `include/sodium.h` exist (a tarball with another folder name fails loudly).
+   Used by `release.yml`, `ci.yml` (Windows cross build) and `release-local.sh`. **The pin is trust on first use:** the hash is
+   of the file `download.libsodium.org` served on 2026-11-14 (1,104,214 bytes, SHA-256
+   `19f7e5f814f62f5bfdf6ea2208244adbddb80e73362879ddb0e4844bc1f12c82`, fetched twice with the same result). It was NOT
+   checked against a published signature: the project also publishes a `.minisig` next to the file, which was downloaded but
+   not verified (no minisign tool here, and no public key obtained from an independent source). The "-stable" name means
+   upstream may re-publish the file; if the pin fails, find out what changed before updating the hash.
+3. **The guard script checks the built result**, not only names. `scripts/check_release_own_stack.sh` refuses: the three
+   `OKAY_OWN_*` names set on in the environment, in a `-DNAME=ON` or `-D NAME=ON` argument (with a space), or in the cache;
+   `-DOKAY_USE_SODIUM=OFF` / `-DOKAY_REQUIRE_SODIUM=OFF`; and, with `--cache DIR`, a tree whose `CMakeCache.txt` does not say
+   `OKAY_SODIUM_IN_BUILD=ON` and `OKAY_REQUIRE_SODIUM=ON`, or whose `build.ninja` / `compile_commands.json` / Makefile flags
+   for the engine and the programs lack `-DOKAY_HAVE_SODIUM` or carry `-DOKAY_OWN_CRYPTO` (this catches
+   `set(OKAY_OWN_CRYPTO ON)` in a toolchain file, which leaves no cache entry). Test targets are not scanned (some define
+   `OKAY_OWN_CRYPTO` on purpose).
+4. **`--binary PATH` asks the program.** It runs the program with `OKAY_PRINT_STACK_AND_EXIT=1`; `Startup()` then prints the
+   stack line to stdout and exits 0 before doing anything else; the guard refuses unless the line says exactly
+   `crypto=libsodium`. Used by `release.yml` on the Linux server binary (it runs on the runner) and `release-local.sh`.
+   **A Windows .exe cannot run on the Linux build host**, so for the Windows programs only the cache and compiler-flag checks
+   (lock 3) run after configure; the programs' own line was not asked in CI. A run on real Windows would show it
+   (`set OKAY_PRINT_STACK_AND_EXIT=1` then start the exe): unverified.
+
+Called by `scripts/build-windows-dist.sh` (arguments before configure, the tree after), by the `release.yml` Windows job (a
+step before the build) and by the Linux server job. Ctest entries: `release_refuses_own_crypto` (the guard's self-test: each
+bypass above and a build without libsodium), `fetch_tarball_pin` (the pinning, offline), `own_stack` (the startup word).
 
 ## 4. The startup line
 
@@ -116,8 +149,11 @@ Each program writes one line to stderr when it starts, and the editor's About po
 * `http`: `curl`, `own`, or `winhttp` (Windows).
 * `readers`: `own(...)` lists the opt-in formats that read with our code now; `ufbx` is shown while FBX is still ufbx;
   `assimp` is shown when Assimp is compiled in. Our always-on readers (glTF, OBJ, STL, PLY) are not listed.
-* `crypto`: `libsodium`, `own`, `own(test)`, or `tweetnacl` (a build with neither: no packet encryption, anti-cheat
-  signatures through the TweetNaCl port).
+* `crypto`: what Ed25519 (updates, anti-cheat manifest, host identity) really uses, asked of `okayac::ed25519::UseSodium()` at
+  run time: `libsodium` (the only value a release may show), `own(no libsodium)` (libsodium is not in the build or did not
+  start: the fallback is `okay::crypto`, our own unreviewed code), `own(test)` (`OKAY_OWN_STACK_CRYPTO_TEST`) or `own`
+  (`OKAY_OWN_CRYPTO`). The TweetNaCl port that older text mentions is deleted.
+  `OKAY_PRINT_STACK_AND_EXIT=1` prints the line to stdout and exits (the release guard uses it).
 * `ui`: `imgui`, `okayui`, or `none` (the player). At the top of `main()` the line cannot know a UI choice saved in the
   settings of a developer build (`OKAY_DEV`); the About popup uses the resolved one.
 

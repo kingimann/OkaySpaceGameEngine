@@ -36,6 +36,16 @@ flags and CPU we ran, not a guarantee.
 `shared/AntiCheatCrypto.hpp` (Ed25519, SHA-512, key vetting; now a thin wrapper with no crypto code of its own) goes to it whenever libsodium is not used (no libsodium in the build, or `-DOKAY_OWN_CRYPTO`; SHA-512 always), and the crypto tests, fuzz
 targets and benchmark link only it.
 
+## Releases must have libsodium (the guard)
+
+Without libsodium in the build, Ed25519 (update signatures, the anti-cheat manifest, the host identity) silently goes to
+`okay::crypto`. For a developer build that is allowed (and tested: CI job "Anti-cheat crypto without libsodium"). For a
+release it is not: `-DOKAY_REQUIRE_SODIUM=ON` makes CMake fail if libsodium is missing or `OKAY_OWN_CRYPTO` is on, the
+libsodium MinGW download is pinned by SHA-256 (trust on first use, not checked against the project's signature), and
+`scripts/check_release_own_stack.sh` checks the built result (and, where the program can run, its own startup line:
+`crypto=libsodium`). The startup line says `crypto=own(no libsodium)` when the fallback is in use. Details and what is not
+verified: `docs/own_stack_rollout.md` section 3.3.
+
 ## Switching it on
 
 ```

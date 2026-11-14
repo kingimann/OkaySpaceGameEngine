@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
 #include "OkayUIBackend.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/Render/FbxReader.hpp"
@@ -96,7 +97,7 @@ struct Info {
     std::vector<std::string> ownReaders;   // short names of the opt-in formats read by our own reader
     bool ufbx = false;                  // FBX still goes through ufbx
     bool assimp = false;                // Assimp is compiled in (the fallback, and the reader of the formats not listed)
-    std::string crypto;                 // "libsodium" / "own" / "own(test)" / "tweetnacl"
+    std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
     std::string ui;                     // "imgui" / "okayui" / "none"
 };
 
@@ -113,6 +114,23 @@ inline std::string FormatLine(const Info& i) {
     if (i.assimp) add("assimp");
     if (readers.empty()) readers = "none";
     return "[okay] stack: platform=" + i.platform + " http=" + i.http + " readers=" + readers + " crypto=" + i.crypto + " ui=" + i.ui;
+}
+
+/// The `crypto=` word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
+///   libsodium            libsodium is built in and initialised (the only value a release may show),
+///   own(no libsodium)    libsodium is NOT in this build (or failed to start): okay::crypto, our own UNREVIEWED code, is doing it,
+///   own(test) / own      -DOKAY_OWN_CRYPTO=ON (with / without -DOKAY_OWN_STACK_CRYPTO_TEST=ON).
+/// scripts/check_release_own_stack.sh --binary refuses a release program unless this says exactly `libsodium`.
+inline std::string CryptoLabel(bool ownCryptoBuild, bool ownCryptoTest, bool sodiumInUse) {
+    if (ownCryptoBuild) return ownCryptoTest ? "own(test)" : "own";
+    return sodiumInUse ? "libsodium" : "own(no libsodium)";
+}
+
+/// OKAY_PRINT_STACK_AND_EXIT=1 (exactly "1"): Startup() prints the line to STDOUT and exits 0 before the program does anything
+/// else. Used by the release guard to ask a built program what it will really do.
+inline bool PrintAndExitRequested() {
+    const char* v = std::getenv("OKAY_PRINT_STACK_AND_EXIT");
+    return v && v[0] == '1' && v[1] == '\0';
 }
 
 /// What this process would use right now. `ui` is the UI toolkit the caller resolved ("imgui" / "okayui" / "none");
@@ -141,15 +159,15 @@ inline Info Gather(const char* ui = nullptr) {
 #endif
 
 #if defined(OKAY_OWN_CRYPTO)
+    i.crypto = CryptoLabel(true,
 #  if defined(OKAY_OWN_STACK_CRYPTO_TEST)
-    i.crypto = "own(test)";
+                           true,
 #  else
-    i.crypto = "own";
+                           false,
 #  endif
-#elif defined(OKAY_HAVE_SODIUM)
-    i.crypto = "libsodium";
+                           false);
 #else
-    i.crypto = "tweetnacl";   // no packet encryption in this build; the anti-cheat signatures use the TweetNaCl port
+    i.crypto = CryptoLabel(false, false, okayac::ed25519::UseSodium());   // asks the real backend, not just the build's names
 #endif
 
     if (ui) i.ui = ui;
@@ -163,6 +181,11 @@ inline std::string Describe(const char* ui = nullptr) { return FormatLine(Gather
 /// `ui` as for Gather(); the player has no UI toolkit and passes "none".
 inline void Startup(const char* ui = nullptr) {
     ApplyEnvironment();
+    if (PrintAndExitRequested()) {   // the release guard's question: print and stop, touching nothing else
+        std::printf("%s\n", Describe(ui).c_str());
+        std::fflush(stdout);
+        std::exit(0);
+    }
     std::fprintf(stderr, "%s\n", Describe(ui).c_str());
 }
 

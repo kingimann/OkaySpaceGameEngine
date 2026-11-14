@@ -393,14 +393,24 @@ endif()
 #  * Native: discovered via pkg-config (apt: libsodium-dev).
 #  * MinGW cross-compile: point -DOKAY_SODIUM_PREFIX at the prebuilt
 #    libsodium-win64 dir (the one containing include/sodium.h and lib/libsodium.a).
-# Without it the transport still builds and runs — just unencrypted (the
-# NetworkManager encryption toggle becomes a no-op), so it's a soft dependency.
+# Without it a DEVELOPER build still configures: packet encryption is off and the anti-cheat / update / host-identity
+# Ed25519 falls back to our own, unreviewed okay::crypto. A RELEASE must never do that: -DOKAY_REQUIRE_SODIUM=ON
+# (scripts/build-windows-dist.sh, release.yml, release-local.sh) turns every such case into a configure ERROR.
 # ---- Our own crypto (okay::crypto), side by side with libsodium ------
 # The primitives in src/Crypto are ALWAYS compiled (and tested); OKAY_OWN_CRYPTO only
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
 # removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
 target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
+set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
+if(OKAY_REQUIRE_SODIUM)
+    if(OKAY_OWN_CRYPTO OR OKAY_OWN_STACK_CRYPTO_TEST)
+        message(FATAL_ERROR "OKAY_REQUIRE_SODIUM=ON (a release build) but OKAY_OWN_CRYPTO / OKAY_OWN_STACK_CRYPTO_TEST is ON: our own crypto is unreviewed and must not ship (CLAUDE.md rule 18)")
+    endif()
+    if(NOT OKAY_USE_SODIUM)
+        message(FATAL_ERROR "OKAY_REQUIRE_SODIUM=ON (a release build) but OKAY_USE_SODIUM=OFF: a release must be built with libsodium")
+    endif()
+endif()
 if(OKAY_OWN_CRYPTO)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
     if(OKAY_OWN_STACK_CRYPTO_TEST)
@@ -413,11 +423,24 @@ elseif(OKAY_USE_SODIUM)
         # Explicit prefix (e.g. the MinGW prebuilt): reference the static lib directly
         # rather than via find_library, which is fussy across cross toolchains.
         set(_sodium_a "${OKAY_SODIUM_PREFIX}/lib/libsodium.a")
-        if(EXISTS "${_sodium_a}" AND EXISTS "${OKAY_SODIUM_PREFIX}/include/sodium.h")
+        if(EXISTS "${_sodium_a}")
+            set(_sodium_a_exists TRUE)
+        else()
+            set(_sodium_a_exists FALSE)
+        endif()
+        if(EXISTS "${OKAY_SODIUM_PREFIX}/include/sodium.h")
+            set(_sodium_h_exists TRUE)
+        else()
+            set(_sodium_h_exists FALSE)
+        endif()
+        if(_sodium_a_exists AND _sodium_h_exists)
             target_include_directories(okay_engine SYSTEM PUBLIC "${OKAY_SODIUM_PREFIX}/include")
             target_link_libraries(okay_engine PUBLIC "${_sodium_a}")
             target_compile_definitions(okay_engine PUBLIC SODIUM_STATIC=1)  # static .a on Windows
             set(_okay_sodium TRUE)
+        elseif(OKAY_REQUIRE_SODIUM)
+            message(FATAL_ERROR "OKAY_REQUIRE_SODIUM=ON but OKAY_SODIUM_PREFIX=${OKAY_SODIUM_PREFIX} does not hold lib/libsodium.a and include/sodium.h "
+                                "(libsodium.a exists: ${_sodium_a_exists}; sodium.h exists: ${_sodium_h_exists}). A release must not build without libsodium")
         endif()
     else()
         find_package(PkgConfig QUIET)
@@ -430,11 +453,18 @@ elseif(OKAY_USE_SODIUM)
             endif()
         endif()
     endif()
+    if(NOT _okay_sodium AND OKAY_REQUIRE_SODIUM)
+        message(FATAL_ERROR "OKAY_REQUIRE_SODIUM=ON but libsodium was not found (pkg-config libsodium, or -DOKAY_SODIUM_PREFIX=<dir with lib/libsodium.a>). "
+                            "A release must not build without libsodium: it would fall back to our own unreviewed crypto")
+    endif()
     if(_okay_sodium)
         target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_SODIUM OKAY_NET_CRYPTO)
+        # The built result the release guard reads (scripts/check_release_own_stack.sh): a cache entry that says libsodium is in.
+        set(OKAY_SODIUM_IN_BUILD ON CACHE INTERNAL "libsodium was found and linked into okay_engine")
         message(STATUS "OkaySpace: packet encryption ENABLED (libsodium)")
     else()
-        message(STATUS "OkaySpace: libsodium not found; packet encryption disabled")
+        set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")
+        message(STATUS "OkaySpace: libsodium NOT found: packet encryption disabled and Ed25519 (updates, anti-cheat, host identity) uses our own UNREVIEWED okay::crypto. Never for a release (use -DOKAY_REQUIRE_SODIUM=ON)")
     endif()
 endif()
 

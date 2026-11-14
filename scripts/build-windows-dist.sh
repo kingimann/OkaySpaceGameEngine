@@ -55,8 +55,14 @@ fi
 [ -n "${OKAY_UPDATE_TRUSTED_KEYS:-}" ] && EXTRA+=("-DOKAY_UPDATE_TRUSTED_KEYS=$OKAY_UPDATE_TRUSTED_KEYS")
 # Authenticated packet encryption (libsodium). Point OKAY_SODIUM_MINGW_PREFIX at the
 # extracted libsodium-win64 prebuilt (contains include/sodium.h and lib/libsodium.a).
-# It's statically linked, so no extra DLL ships. If unset, the build is unencrypted.
-[ -n "${OKAY_SODIUM_MINGW_PREFIX:-}" ] && EXTRA+=("-DOKAY_SODIUM_PREFIX=$OKAY_SODIUM_MINGW_PREFIX")
+# It's statically linked, so no extra DLL ships. REQUIRED: a release never builds without libsodium (it would fall back to
+# our own, unreviewed okay::crypto; CLAUDE.md rule 18), so a missing or wrong prefix stops here, and CMake gets
+# -DOKAY_REQUIRE_SODIUM=ON as the second lock. scripts/fetch-libsodium-mingw.sh makes the pinned prefix.
+: "${OKAY_SODIUM_MINGW_PREFIX:?Set OKAY_SODIUM_MINGW_PREFIX to the libsodium-win64 prefix (scripts/fetch-libsodium-mingw.sh <dir> prints it); a release must not build without libsodium}"
+for f in lib/libsodium.a include/sodium.h; do
+    [ -s "$OKAY_SODIUM_MINGW_PREFIX/$f" ] || { echo "error: $OKAY_SODIUM_MINGW_PREFIX/$f is missing: not a libsodium-win64 prefix; refusing to build a release without libsodium" >&2; exit 1; }
+done
+EXTRA+=("-DOKAY_SODIUM_PREFIX=$OKAY_SODIUM_MINGW_PREFIX" "-DOKAY_REQUIRE_SODIUM=ON")
 # Bake the Steam App ID into the release build (defaults to OkaySpace's app, 1172560;
 # override or set to 480 for a generic/dev build).
 OKAY_STEAM_APP_ID="${OKAY_STEAM_APP_ID:-1172560}"
@@ -80,7 +86,11 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
-scripts/check_release_own_stack.sh --cache "$BUILD_DIR"   # the configured tree too (a stale cache keeps old -D values)
+# The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
+# is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
+# programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
+# asked here; the Linux server build in release.yml is checked that way.
+scripts/check_release_own_stack.sh --cache "$BUILD_DIR"
 # One job per core: a bare -j lets make start every editor file at once, and the
 # big ones (editor and player main.cpp) together run a CI runner out of memory.
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"

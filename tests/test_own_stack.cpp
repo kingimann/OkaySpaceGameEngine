@@ -55,9 +55,36 @@ static void TestText() {
     all.platform = "own"; all.http = "own"; all.ownReaders = {"fbx"}; all.crypto = "own(test)"; all.ui = "okayui";
     CHECK(FormatLine(all) == "[okay] stack: platform=own http=own readers=own(fbx) crypto=own(test) ui=okayui");
     Info none;
-    none.platform = "sdl2"; none.http = "winhttp"; none.crypto = "tweetnacl"; none.ui = "none";
-    CHECK(FormatLine(none) == "[okay] stack: platform=sdl2 http=winhttp readers=none crypto=tweetnacl ui=none");
+    none.platform = "sdl2"; none.http = "winhttp"; none.crypto = "own(no libsodium)"; none.ui = "none";
+    CHECK(FormatLine(none) == "[okay] stack: platform=sdl2 http=winhttp readers=none crypto=own(no libsodium) ui=none");
     CHECK(FormatLine(none).find('\n') == std::string::npos);   // one line
+}
+
+// The crypto word is honest: libsodium only when it is really in use; the fallback says so; the own builds say "own".
+static void TestCryptoLabel() {
+    CHECK(CryptoLabel(false, false, true) == "libsodium");
+    CHECK(CryptoLabel(false, false, false) == "own(no libsodium)");   // libsodium missing or failed to start: the fallback is NOT hidden
+    CHECK(CryptoLabel(true, true, false) == "own(test)");
+    CHECK(CryptoLabel(true, false, false) == "own");
+    CHECK(CryptoLabel(true, true, true) == "own(test)");              // OKAY_OWN_CRYPTO wins even if libsodium is present
+    CHECK(CryptoLabel(true, false, true) == "own");
+    // The real build agrees with what the real backend answers.
+    const std::string c = Gather("none").crypto;
+#if defined(OKAY_OWN_CRYPTO)
+    CHECK(!okayac::ed25519::UseSodium());
+    CHECK(c == "own(test)" || c == "own");
+#elif defined(OKAY_HAVE_SODIUM)
+    CHECK(c == "libsodium" && okayac::ed25519::UseSodium() && std::string(okayac::ed25519::Backend()) == "libsodium");
+#else
+    CHECK(c == "own(no libsodium)" && std::string(okayac::ed25519::Backend()) == "okay::crypto");
+#endif
+    // The release guard's question (OKAY_PRINT_STACK_AND_EXIT) is exactly "1".
+    Unset("OKAY_PRINT_STACK_AND_EXIT");
+    CHECK(!PrintAndExitRequested());
+    Set("OKAY_PRINT_STACK_AND_EXIT", "1");  CHECK(PrintAndExitRequested());
+    Set("OKAY_PRINT_STACK_AND_EXIT", "0");  CHECK(!PrintAndExitRequested());
+    Set("OKAY_PRINT_STACK_AND_EXIT", "11"); CHECK(!PrintAndExitRequested());
+    Unset("OKAY_PRINT_STACK_AND_EXIT");
 }
 
 static void TestTables() {
@@ -186,6 +213,6 @@ int main(int argc, char** argv) {
     TestText();
     TestTables();
     if (argc > 1 && std::string(argv[1]) == "env") TestEnvironment();
-    else TestBuildDefaults();
+    else { TestCryptoLabel(); TestBuildDefaults(); }   // not in env mode: Gather() would fix the selectors before the environment is set
     TEST_MAIN_RESULT();
 }

@@ -1007,6 +1007,7 @@ target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME release_refuses_own_crypto COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/check_release_own_stack.sh --self-test)
+add_test(NAME fetch_tarball_pin COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/test_fetch_tarball.sh)   # SHA-256 pinning of downloads (offline)
 
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)

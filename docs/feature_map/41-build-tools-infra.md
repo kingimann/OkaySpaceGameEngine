@@ -208,10 +208,10 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.11.1 Build switch - `CMakeLists.txt` - `-DOKAY_OWN_STACK=ON` sets every `OKAY_OWN_<FMT>` option and `OKAY_OWN_FBX`, `OKAY_OWN_HTTP` (default on at run time), the own platform backend as the default on Linux, and OkayUI as the launcher and editor default; `-DOKAY_OWN_STACK_CRYPTO_TEST=ON` (test builds only) adds `OKAY_OWN_CRYPTO`
   - 41.11.2 Run-time switch - `shared/OwnStack.hpp` - `OKAY_OWN_STACK=1` sets the run-time variables (`OKAY_OWN_<FMT>`, `OKAY_OWN_HTTP`, `OKAY_PLATFORM_BACKEND=own` on Linux, `OKAY_UI_BACKEND=okayui`) when they are not already set; never crypto
   - 41.11.3 Startup line - `shared/OwnStack.hpp` - `[okay] stack: platform=... http=... readers=... crypto=... ui=...` written to stderr by the player, launcher and editor, and shown in the editor's About popup
-  - 41.11.4 Release guard - `scripts/check_release_own_stack.sh` - fails a release build when own crypto or the own-stack switch is on; called by `scripts/build-windows-dist.sh` and `release.yml`
+  - 41.11.4 Release guard - `scripts/check_release_own_stack.sh` - fails a release build when own crypto or the own-stack switch is on, or when libsodium is not really in the build (cache `OKAY_SODIUM_IN_BUILD`, compiler flags, `--binary` startup line `crypto=libsodium`); `-DOKAY_REQUIRE_SODIUM=ON` makes CMake fail too; the libsodium download is SHA-256 pinned (`scripts/fetch-tarball.sh --sha256`, `scripts/libsodium-mingw.pin`); called by `scripts/build-windows-dist.sh`, `release-local.sh` and `release.yml`
   - 41.11.5 CI job - `.github/workflows/ci.yml` - `own-stack` (not required): builds with the switch on and no libsodium and runs the own pieces' tests
-- **Code:** `CMakeLists.txt`, `shared/OwnStack.hpp`, `scripts/check_release_own_stack.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
-- **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `okay::ownstack::Startup`, `okay::ownstack::Describe`
+- **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `shared/OwnStack.hpp`, `scripts/check_release_own_stack.sh`, `scripts/fetch-tarball.sh`, `scripts/fetch-libsodium-mingw.sh`, `.github/workflows/ci.yml`, `cmake/OkayPlatform.cmake`
+- **API:** `OKAY_OWN_STACK`, `OKAY_OWN_STACK_CRYPTO_TEST`, `OKAY_REQUIRE_SODIUM`, `OKAY_PRINT_STACK_AND_EXIT`, `okay::ownstack::Startup`, `okay::ownstack::Describe`
 - **Editor:** Help > About OkaySpace (the stack line)
 - **Docs:** `docs/own_stack_rollout.md`, `docs/own_code_roadmap.md`
 - **Tests:** `own_stack`, `own_stack_env`, `release_refuses_own_crypto`

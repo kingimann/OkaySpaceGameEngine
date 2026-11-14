@@ -500,10 +500,7 @@ jobs:
             "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
-          bash scripts/fetch-tarball.sh libsodium-mingw.tar.gz \
-            "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
-          mkdir -p libsodium-mingw && tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
-          echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
+          echo "OKAY_SODIUM_MINGW_PREFIX=$(bash scripts/fetch-libsodium-mingw.sh "$PWD")" >> "$GITHUB_ENV"   # pinned SHA-256
 
       - name: Restore compiler cache
         uses: actions/cache@v5

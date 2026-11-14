@@ -1237,6 +1237,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Easing curves (1.2.6)
 - Easing functions (36.3.2)
 - Easy Save (1.7)
+- Easy setup (39.1.7)
 - Economy and state detectors (39.12.3)
 - ECS (1.9)
 - ECS replication (16.3.5)

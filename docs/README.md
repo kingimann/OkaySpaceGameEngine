@@ -109,6 +109,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [photon.md](photon.md): the opt-in Photon Realtime transport.
 - [net_providers.md](net_providers.md): the Photon, PlayFab and Custom provider stubs are C++ extension points only.
 - [accounts.md](accounts.md): player accounts.
+- [anticheat_quickstart.md](anticheat_quickstart.md): add anti-cheat to your game in 5 minutes (presets, checklist), and what it does not do.
 - [anticheat.md](anticheat.md): anti-cheat.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 - [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.

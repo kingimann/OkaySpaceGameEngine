@@ -7,6 +7,9 @@
 #include <string>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
+#ifdef OKAY_HAVE_OKAYUI
+namespace okayuihost { class Region; }
+#endif
 struct SDL_Texture;
 
 namespace oked {
@@ -16,6 +19,13 @@ extern bool g_showConsole;
 extern bool g_paused;              // the simulation is paused while staying in Play
 extern bool g_clearConsoleOnPlay;  // wipe the Console each time Play starts
 extern float g_editorFov;          // the Scene view's vertical field of view (degrees)
+extern float g_uiScale;            // the editor's UI scale (1.0 = 100%)
+// The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5). True when the setting or OKAY_UI_BACKEND picked OkayUI and this
+// build has it: the panels with an OkayUI port (the Console, today) are drawn by OkayUI into a rectangle they reserve in ImGui.
+bool UseOkayUIBackend();
+#ifdef OKAY_HAVE_OKAYUI
+okayuihost::Region& OkayUIRegion();   // where the hosted panel is, for the mouse (main.cpp)
+#endif
 
 // The timeline widgets the Animation window's editors share (main.cpp): the
 // Timeline window draws its transport, ruler, playhead and keys with the same

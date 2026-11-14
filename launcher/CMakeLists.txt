@@ -75,6 +75,16 @@ target_compile_features(okayspace-launcher PRIVATE cxx_std_17)
 target_include_directories(okayspace-launcher PRIVATE
     ${CMAKE_SOURCE_DIR}/shared
     ${CMAKE_SOURCE_DIR}/engine/include)
+target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL})
+# The opt-in OkayUI backend (Settings > Appearance > UI backend): the What's New page has an OkayUI port. Dear ImGui stays the
+# default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
+if(TARGET okay_ui_screens)
+    target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+endif()
 # okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
 if(TARGET okay_engine)

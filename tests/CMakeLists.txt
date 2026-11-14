@@ -3044,7 +3044,7 @@ set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 # (tests/batchc_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources only,
 # no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
 # OKAY_BATCHC_FUZZ_ITERS raises the sweep).
-foreach(_fmt md2)
+foreach(_fmt md2 md3)
     string(SUBSTRING ${_fmt} 0 1 _f0)
     string(TOUPPER ${_f0} _F0)
     string(SUBSTRING ${_fmt} 1 -1 _frest)
@@ -3055,6 +3055,7 @@ foreach(_fmt md2)
 endforeach()
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

@@ -76,8 +76,27 @@ static void Md2() {
         ImportedModel m; std::string e; CHECK(ReadMd2(s, m, e) && fx::Sane(m)); }
 }
 
+// ======================= MD3 =======================
+static bool ReadMd3(const std::string& b, ImportedModel& m, std::string& e) { return ReadMd3Buffer(b, m, &e); }
+static void Md3() {
+    const std::string good = fx::BuildMd3();
+    {   ImportedModel m; std::string e; CHECK(ReadMd3(good, m, e) && fx::Sane(m)); }
+    Sweep("md3", ReadMd3, good, Iters());
+    const std::uint32_t ext[] = {0u, 1u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu, 0xFFFFFFFEu, 4096u, 4097u, 100000u, 100001u, 2000000u, 2000001u, 4000001u};
+    for (std::size_t f = 2; f < 27; ++f) for (std::uint32_t v : ext) { std::string s = good; Put32(s, f * 4, v); Try(ReadMd3, s); }
+    // the surface header (the first surface starts after the header, 2 frames and the tag of each frame)
+    const std::size_t surf = 108 + 56 * 2 + 112 * 2;
+    for (std::size_t f = 0; f < 10; ++f) for (std::uint32_t v : ext) { std::string s = good; Put32(s, surf + 4 + 64 + f * 4, v); Try(ReadMd3, s); }   // flags .. offsetEnd
+    // NaN / inf / huge in a tag and in the texture coordinates
+    for (std::uint32_t bits : {0x7FC00000u, 0x7F800000u, 0xFF800000u, 0x7F7FFFFFu}) {
+        for (std::size_t k = 0; k < 12; ++k) { std::string s = good; Put32(s, 108 + 56 * 2 + 64 + k * 4, bits); Try(ReadMd3, s); }
+        for (std::size_t k = 0; k < 6; ++k) { std::string s = good; Put32(s, surf + 188 + k * 4, bits); Try(ReadMd3, s); }
+    }
+}
+
 int main() {
     RUN_SUITE("batchc_hostile");
     Md2();
+    Md3();
     TEST_MAIN_RESULT();
 }

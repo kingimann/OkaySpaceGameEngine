@@ -251,6 +251,7 @@ add_library(okay_engine
     src/Render/DxfReader.cpp
     src/Render/LwoReader.cpp
     src/Render/Md2Reader.cpp
+    src/Render/Md3Reader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -580,7 +581,7 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
 endforeach()
 
 # Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), same opt-in rules as 3DS: default OFF.
-foreach(_fmt MD2)
+foreach(_fmt MD2 MD3)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

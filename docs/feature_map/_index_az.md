@@ -3323,7 +3323,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - privacy (17.2, 48.3)
 - privacy policy (48.3)
 - probe grid (9.1)
-- Problem presentation (14.2.6)
+- Problem presentation (14.2.7)
 - problems (13.5, 15.11)
 - Problems and build gate (23.4.6)
 - Problems and inline errors (13.5.3)

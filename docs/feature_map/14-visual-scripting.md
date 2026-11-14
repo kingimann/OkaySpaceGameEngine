@@ -47,7 +47,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables", "Declared variables, lists, maps and structs")
 - **Tests:** `vs_types`, `vs_problems` (every rule has a fix line; grouping, order, counts), `vs_editor_model` (jump to a problem's node), `vs_pin_defaults`, `vs_acceptance`, `vs_variables` (literals, declarations, typing, copy versus reference, checker, save and scene round trips, hostile input)
 - **Status:** Works - table and checker are on main and exercised by `vs_types`; `vs_acceptance` saves and reloads real scenes
-- **Open:** none found; object variables and SyncVars are covered in 14.4
+- **Open:** the Problems list and node badges were not run in a real editor window (built and unit-tested only); the editor-wide Problems panel does not list Visual Script findings; object variables and SyncVars are covered in 14.4
 - **Related:** 14.1, 14.3, 15.7, 1.5
 - **Words:** pin types, typed pins, wire colours, graph checker, validation, variables, scene variable, global variable, object reference, VsValue, signature
 - **Seen as:** "this wire can't work"; a number pin refuses text; a variable is empty after loading another scene; the Console lists Visual Script errors when Play starts; a build stops with "visual script error(s) - see Build Settings"

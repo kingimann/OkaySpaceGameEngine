@@ -656,6 +656,9 @@ Every kind of finding has a rule id and a one-line fix in
 `VisualScript/VsProblems`; the `vs_problems` test fails when the checker gets a
 finding with no id or an id has no fix text.
 
+This list is for one graph. The editor-wide Problems panel (scene checks such as foliage) does not list
+Visual Script findings yet; on Play and in Build Settings they go to the Console and the build check.
+
 **Play** writes every problem in every graph of the scene to the Console.
 **Build** checks every graph in the scenes going into the build. If there are
 errors, the build stops and Build Settings lists them, with **Build anyway** and

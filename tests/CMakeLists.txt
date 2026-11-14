@@ -2677,6 +2677,11 @@ add_executable(test_lightmap test_lightmap.cpp)
 target_link_libraries(test_lightmap PRIVATE okay::engine)
 add_test(NAME lightmap COMMAND test_lightmap)
 
+# Global illumination foundation: BVH ray tracer, path-tracing probe baker, L2 SH, probe volume.
+add_executable(test_gi_probes test_gi_probes.cpp)
+target_link_libraries(test_gi_probes PRIVATE okay::engine)
+add_test(NAME gi_probes COMMAND test_gi_probes)
+
 add_executable(test_ui_touch_scroll test_ui_touch_scroll.cpp)
 target_link_libraries(test_ui_touch_scroll PRIVATE okay::engine)
 add_test(NAME ui_touch_scroll COMMAND test_ui_touch_scroll)

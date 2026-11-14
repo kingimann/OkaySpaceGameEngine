@@ -66,18 +66,25 @@ struct GiScene {
     }
 };
 
-/// Small deterministic generator (PCG32). Same seed, same stream, on any platform.
+/// Mixing step: spreads every input bit over the output (xor-shift, multiply, repeat).
+/// The two odd multipliers are the first 64 fractional bits of sqrt(2)-1 and sqrt(3)-1
+/// (computed by us; any odd constant with mixed bits works, quality is checked in the tests).
+inline uint64_t GiMix64(uint64_t z) {
+    z ^= z >> 31; z *= 0x6A09E667F3BCC909ULL;
+    z ^= z >> 29; z *= 0xBB67AE8584CAA73BULL;
+    z ^= z >> 32;
+    return z;
+}
+
+/// Small deterministic generator: a counter stepped by an odd constant (the first 64
+/// fractional bits of the golden ratio, which visits every 64-bit value), run through
+/// GiMix64. Same seed, same stream, on any platform.
 struct GiRng {
-    uint64_t state = 0x853c49e6748fea9bULL, inc = 0xda3e39cb94b95bdbULL;
-    explicit GiRng(uint64_t seed = 1, uint64_t seq = 1) {
-        state = 0; inc = (seq << 1u) | 1u; Next(); state += seed; Next();
-    }
+    uint64_t state = 0;
+    explicit GiRng(uint64_t seed = 1, uint64_t seq = 1) { state = GiMix64(seed ^ GiMix64(seq + 0x632BE59BD9B4E019ULL)); }
     uint32_t Next() {
-        const uint64_t old = state;
-        state = old * 6364136223846793005ULL + inc;
-        const uint32_t xs = (uint32_t)(((old >> 18u) ^ old) >> 27u);
-        const uint32_t rot = (uint32_t)(old >> 59u);
-        return (xs >> rot) | (xs << ((0u - rot) & 31u));
+        state += 0x9E3779B97F4A7C15ULL;
+        return (uint32_t)(GiMix64(state) >> 32);
     }
     /// Uniform in [0,1).
     float Float() { return (float)(Next() >> 8) * (1.0f / 16777216.0f); }
@@ -85,10 +92,7 @@ struct GiRng {
 
 /// Mix the user seed with a probe index into an independent stream seed.
 inline uint64_t GiMixSeed(uint64_t seed, uint64_t index) {
-    uint64_t z = seed + 0x9E3779B97F4A7C15ULL * (index + 1);
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    return z ^ (z >> 31);
+    return GiMix64(seed + 0x9E3779B97F4A7C15ULL * (index + 1));
 }
 
 struct GiBakeSettings {

@@ -1785,8 +1785,38 @@ public:
     /// compound model (e.g. a snowman) from primitive parts.
     void Combine(const Mesh& other) {
         int base = (int)vertices.size();
+        // Texture coordinates and per-face colours ride along. A part that has none gets
+        // zero UVs / white faces, so the part that does have them keeps its look
+        // (before, one missing array dropped the whole array and un-textured both).
+        const bool uv  = HasUVs() || other.HasUVs();
+        const bool fc  = HasFaceColors() || other.HasFaceColors();
+        const bool cuv = HasCornerUVs() || other.HasCornerUVs();
+        auto cornerOf = [](const Mesh& m) {
+            std::vector<Vec2> c(m.triangles.size(), Vec2{0, 0});
+            if (m.HasCornerUVs()) return m.cornerUVs;
+            if (m.HasUVs())
+                for (std::size_t i = 0; i < m.triangles.size(); ++i)
+                    if (m.triangles[i] >= 0 && m.triangles[i] < (int)m.uvs.size()) c[i] = m.uvs[m.triangles[i]];
+            return c;
+        };
+        std::vector<Vec2> myCorner, otherCorner;
+        if (cuv) { myCorner = cornerOf(*this); otherCorner = cornerOf(other); }
+        if (uv && !HasUVs()) uvs.assign(vertices.size(), Vec2{0, 0});
+        if (fc && !HasFaceColors()) triColors.assign((std::size_t)TriangleCount(), Color::White);
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
+        if (uv) {
+            if (other.HasUVs()) uvs.insert(uvs.end(), other.uvs.begin(), other.uvs.end());
+            else uvs.insert(uvs.end(), other.vertices.size(), Vec2{0, 0});
+        }
+        if (fc) {
+            if (other.HasFaceColors()) triColors.insert(triColors.end(), other.triColors.begin(), other.triColors.end());
+            else triColors.insert(triColors.end(), (std::size_t)other.TriangleCount(), Color::White);
+        }
+        if (cuv) {
+            cornerUVs = std::move(myCorner);
+            cornerUVs.insert(cornerUVs.end(), otherCorner.begin(), otherCorner.end());
+        }
         for (int t : other.triangles) triangles.push_back(t + base);
         RefreshNormals();
     }
@@ -1869,11 +1899,15 @@ public:
         }
         const bool faceCols = HasFaceColors();
         const bool hadNormals = HasNormals();
+        const bool hadUV = HasUVs(), hadCornerUV = HasCornerUVs();
         Mesh copy = *this;
         for (Vec3& v : copy.vertices) (&v.x)[axis] = -(&v.x)[axis];   // reflect
         copy.FlipWinding();                                          // keep faces outward
         int base = (int)vertices.size();
         vertices.insert(vertices.end(), copy.vertices.begin(), copy.vertices.end());
+        // The mirrored half keeps the same texture coordinates (the texture mirrors with it).
+        if (hadUV) uvs.insert(uvs.end(), copy.uvs.begin(), copy.uvs.end());
+        if (hadCornerUV) cornerUVs.insert(cornerUVs.end(), copy.cornerUVs.begin(), copy.cornerUVs.end());
         for (int t : copy.triangles) triangles.push_back(t + base);
         if (faceCols && copy.HasFaceColors())
             triColors.insert(triColors.end(), copy.triColors.begin(), copy.triColors.end());

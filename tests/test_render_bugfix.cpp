@@ -99,5 +99,36 @@ int main() {
         }
     }
 
+    RUN_SUITE("mirror and combine keep texture coordinates");
+    {
+        Mesh tri;
+        tri.vertices = {{1, 0, 0}, {2, 0, 0}, {1, 1, 0}};
+        tri.triangles = {0, 1, 2};
+        tri.uvs = {{0, 0}, {1, 0}, {0, 1}};
+        tri.triColors = {Color(1, 0, 0, 1)};
+        Mesh m = tri.Mirrored(0, false);
+        CHECK(m.vertices.size() == 6u);
+        CHECK(m.TriangleCount() == 2);
+        CHECK(m.HasUVs());
+        CHECK(m.HasFaceColors());
+        if (m.HasUVs()) {
+            CHECK_NEAR(m.uvs[4].x, 1.0f, 1e-6f);   // copy of vertex 1 keeps its UV
+            CHECK_NEAR(m.uvs[5].y, 1.0f, 1e-6f);
+        }
+        Mesh a = tri, b = tri;
+        b.vertices[0].z = 5.0f;
+        a.Combine(b);
+        CHECK(a.TriangleCount() == 2);
+        CHECK(a.HasUVs());
+        CHECK(a.HasFaceColors());
+        Mesh plain;                       // no UVs: the textured half must keep its own
+        plain.vertices = {{0, 0, 3}, {1, 0, 3}, {0, 1, 3}};
+        plain.triangles = {0, 1, 2};
+        Mesh c = tri;
+        c.Combine(plain);
+        CHECK(c.HasUVs());
+        if (c.HasUVs()) CHECK_NEAR(c.uvs[1].x, 1.0f, 1e-6f);
+    }
+
     TEST_MAIN_RESULT();
 }

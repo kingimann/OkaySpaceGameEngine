@@ -25,7 +25,8 @@
 //    start before the output) and every read is bounds checked;
 //  - the gzip CRC-32 and size, or the zlib Adler-32, must match; extra bytes after the stream are refused
 //    (no multi-member gzip).
-// The whole encoded body is held in memory by the caller (see Limits::maxEncodedBytes).
+// Memory: the working buffer never grows past `maxOut`, but a successful decode copies it into the caller's string, and the
+// caller holds the encoded body too (see Limits::maxEncodedBytes). So the peak is about three times the cap, not one.
 // ---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>
@@ -98,18 +99,18 @@ constexpr int kFastBits = 10;
 constexpr int kMaxBits = 15;
 
 struct Decoder {
-    // fast[i]: (symbol << 4 | length) for the code whose reversed bits are the low kFastBits of i, 0 if none
-    uint16_t fast[1 << kFastBits];
+    // quick[i]: (symbol << 4 | length) for the code whose reversed bits are the low kFastBits of i, 0 if none
+    uint16_t quick[1 << kFastBits];
     uint16_t sorted[288];                 // symbols ordered by (length, symbol)
-    uint16_t firstCode[kMaxBits + 1];     // first canonical code of each length
-    uint16_t firstSlot[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
+    uint16_t lowestCode[kMaxBits + 1];     // first canonical code of each length
+    uint16_t slotBase[kMaxBits + 1];     // index in `sorted` of the first symbol of each length
     uint16_t countOf[kMaxBits + 1];
     int used = 0;                         // symbols that have a code
 
     enum class Shape { Oversubscribed, Incomplete, Complete };
 
     Shape Build(const uint8_t* lens, int n) {
-        std::memset(fast, 0, sizeof fast);
+        std::memset(quick, 0, sizeof quick);
         for (int l = 0; l <= kMaxBits; ++l) countOf[l] = 0;
         for (int i = 0; i < n; ++i) ++countOf[lens[i]];
         used = n - countOf[0];
@@ -119,22 +120,22 @@ struct Decoder {
         if (kraft > (1u << kMaxBits)) return Shape::Oversubscribed;
         // RFC 1951 3.2.2: next_code[bits] = (next_code[bits-1] + bl_count[bits-1]) << 1
         uint32_t next[kMaxBits + 2]; uint32_t code = 0; uint16_t slot = 0;
-        firstCode[0] = 0; firstSlot[0] = 0;
+        lowestCode[0] = 0; slotBase[0] = 0;
         for (int l = 1; l <= kMaxBits; ++l) {
             code = (code + (l > 1 ? countOf[l - 1] : 0)) << 1;
-            next[l] = code; firstCode[l] = uint16_t(code);
-            firstSlot[l] = slot; slot = uint16_t(slot + countOf[l]);
+            next[l] = code; lowestCode[l] = uint16_t(code);
+            slotBase[l] = slot; slot = uint16_t(slot + countOf[l]);
         }
         uint16_t fill[kMaxBits + 1];
         for (int l = 0; l <= kMaxBits; ++l) fill[l] = 0;
         for (int sym = 0; sym < n; ++sym) {
             int l = lens[sym];
             if (!l) continue;
-            sorted[firstSlot[l] + fill[l]++] = uint16_t(sym);
+            sorted[slotBase[l] + fill[l]++] = uint16_t(sym);
             uint32_t c = next[l]++;
             if (l <= kFastBits) {
                 uint32_t rev = Reverse(c, l);
-                for (uint32_t i = rev; i < (1u << kFastBits); i += (1u << l)) fast[i] = uint16_t(sym << 4 | l);
+                for (uint32_t i = rev; i < (1u << kFastBits); i += (1u << l)) quick[i] = uint16_t(sym << 4 | l);
             }
         }
         return kraft == (1u << kMaxBits) ? Shape::Complete : Shape::Incomplete;
@@ -145,7 +146,7 @@ struct Decoder {
     // Returns the symbol, kBadCode (no such code) or kStarved (the input ends inside the code).
     int Next(BitReader& br) const {
         if (br.cnt < kMaxBits) br.Refill();
-        uint16_t e = fast[br.buf & ((1u << kFastBits) - 1)];
+        uint16_t e = quick[br.buf & ((1u << kFastBits) - 1)];
         if (e) {
             int l = e & 15;
             if (l > br.cnt) return kStarved;
@@ -157,11 +158,11 @@ struct Decoder {
         v = Reverse(v, kMaxBits);
         for (int l = kFastBits + 1; l <= kMaxBits; ++l) {
             uint32_t prefix = v >> (kMaxBits - l);
-            uint32_t k = prefix - firstCode[l];
-            if (prefix >= firstCode[l] && k < countOf[l]) {
+            uint32_t k = prefix - lowestCode[l];
+            if (prefix >= lowestCode[l] && k < countOf[l]) {
                 if (l > br.cnt) return kStarved;
                 br.Drop(l);
-                return sorted[firstSlot[l] + k];
+                return sorted[slotBase[l] + k];
             }
         }
         // no code matches; if the stream ended early the zero padding may be the reason

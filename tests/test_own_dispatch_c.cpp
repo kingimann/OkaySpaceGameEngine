@@ -18,6 +18,22 @@
 using namespace okay;
 namespace fs = std::filesystem;
 
+// setenv / unsetenv exist on POSIX only; the Windows C runtime has _putenv_s (an empty value removes the variable).
+static void TestSetEnv(const char* n, const char* v) {
+#ifdef _WIN32
+    _putenv_s(n, v);
+#else
+    ::setenv(n, v, 1);
+#endif
+}
+static void TestUnsetEnv(const char* n) {
+#ifdef _WIN32
+    _putenv_s(n, "");
+#else
+    ::unsetenv(n);
+#endif
+}
+
 static void WriteFile(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
 static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
 
@@ -61,13 +77,13 @@ int main() {
         CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
         // the format-specific variable decides when nothing was chosen at run time
         SetImportBackend(c.ext, ImportBackend::Default);
-        ::setenv(c.env, "1", 1);
+        TestSetEnv(c.env, "1");
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
         ImportedModel e1;
         CHECK(ImportModelData(path, e1, ImportBackend::Default, false, &err) && e1.backend == "own");
-        ::setenv(c.env, "0", 1);
+        TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
-        ::unsetenv(c.env);
+        TestUnsetEnv(c.env);
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
         if (!AssimpAvailable()) {
             ImportedModel d; std::string e2;

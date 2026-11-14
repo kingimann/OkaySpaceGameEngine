@@ -7,7 +7,8 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
+//     X3D, DXF, LWO, MD2, MD3, Irrlicht mesh, B3D, DirectX .x) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -246,7 +247,7 @@ bool ReadXFile(const std::string& path, ImportedModel& out, std::string* err = n
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase have one
+    Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 

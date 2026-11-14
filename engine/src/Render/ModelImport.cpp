@@ -514,7 +514,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_B3D",     "B3D",     kOwnB3dDefault},       // 20
     {"OKAY_OWN_X",       "X",       kOwnXDefault},         // 21
 };
-constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
+constexpr int kOwnSlots = 24;   // slots 22 and 23 are free; raise this (and add rows above) when a reader needs a slot beyond 23
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {

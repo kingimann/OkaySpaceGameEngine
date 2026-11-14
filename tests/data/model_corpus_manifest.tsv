@@ -195,3 +195,44 @@ gltf	models/glTF2/wrongTypes/badNumber.gltf	ok	area=6.0000	meshes=1	tris=12	bone
 gltf	models/glTF2/wrongTypes/badObject.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badString.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=3	uv=1	nrm=1
 gltf	models/glTF2/wrongTypes/badUint.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=3	uv=1	nrm=1
+# off: own OFF reader on the OFF files of the same corpus (readers batch A); FAIL rows are files the reader refuses, Cube and Wuson also read by Assimp
+off	models/OFF/Cube.off	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=8	tex=0	nodes=1	uv=0	nrm=1
+off	models/OFF/Wuson.off	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=3205	tex=0	nodes=1	uv=0	nrm=1
+off	models/OFF/invalid.off	FAIL	OFF: face 1 has fewer indices than its corner count
+off	models/invalid/OutOfMemory.off	FAIL	OFF: bad vertex or face count
+off	models/invalid/empty.off	FAIL	OFF: empty file
+# smd: own SMD reader (readers batch A)
+smd	models/SMD/WusonSMD.smd	ok	area=9.0258	meshes=1	tris=3732	bones=1	skinned=1	clips=0	dur=0.000	mat=1	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=1	nodes=2	uv=1	nrm=1
+smd	models/SMD/holy_grailref.smd	ok	area=1202.6491	meshes=1	tris=896	bones=1	skinned=1	clips=0	dur=0.000	mat=1	bbox=-8.374,0.109,-8.246,8.374,23.414,8.246	verts=511	tex=1	nodes=2	uv=1	nrm=1
+smd	models/SMD/triangle.smd	ok	area=0.5000	meshes=1	tris=1	bones=1	skinned=1	clips=0	dur=0.000	mat=1	bbox=0.000,-0.000,-1.000,1.000,0.000,0.000	verts=3	tex=1	nodes=2	uv=1	nrm=1
+smd	models/invalid/empty.smd	FAIL	SMD: no nodes, skeleton or triangles found: not an SMD file
+# md5: own MD5 reader, md5mesh (with its md5anim next to it) (readers batch A)
+md5	models/MD5/SimpleCube.md5mesh	ok	area=24576.0073	meshes=1	tris=12	bones=3	skinned=1	clips=0	dur=0.000	mat=1	bbox=-32.000,-32.000,-32.000,32.000,32.000,32.000	verts=24	tex=0	nodes=4	uv=1	nrm=1
+md5	models/invalid/empty.md5mesh	FAIL	MD5: empty file
+md5	models-nonbsd/MD5/BoarMan.md5mesh	ok	area=2146.1729	meshes=1	tris=2812	bones=1	skinned=1	clips=0	dur=0.000	mat=1	bbox=-21.834,-0.069,-9.901,21.834,29.388,5.361	verts=1552	tex=0	nodes=2	uv=1	nrm=1
+md5	models-nonbsd/MD5/Bob.md5mesh	ok	area=6832.9236	meshes=6	tris=1027	bones=33	skinned=6	clips=1	dur=5.792	mat=6	bbox=-42.881,0.081,-13.140,42.200,67.138,11.960	verts=875	tex=5	nodes=34	uv=1	nrm=1
+# md5anim: own MD5 reader on an md5anim read alone (skeleton and clip, no mesh)
+md5anim	models-nonbsd/MD5/Bob.md5anim	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=1	dur=5.792	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0	tex=0	nodes=34	uv=0	nrm=0
+# ms3d: own MS3D reader (readers batch A); none of these four files has joints
+ms3d	models/MS3D/Wuson.ms3d	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-0.001,-1.622,0.460,1.515,1.622	verts=2117	tex=0	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/jeep1.ms3d	ok	area=755.1954	meshes=7	tris=2032	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.529,-0.011,-8.537,5.529,7.629,8.109	verts=1948	tex=1	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/twospheres.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1
+ms3d	models/MS3D/twospheres_withmats.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1
+# ase: own ASE reader (readers batch A)
+ase	models/ASE/CameraRollAnim.ase	ok	area=15947.8918	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=4.000	mat=0	bbox=-24.786,-0.000,-23.077,45.869,38.746,24.786	verts=24	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/CameraRollAnimWithChildObject.ase	ok	area=30058.8192	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=4.000	mat=0	bbox=-54.889,-0.000,-23.077,45.869,38.746,97.416	verts=48	tex=0	nodes=4	uv=1	nrm=1
+ase	models/ASE/MotionCaptureROM.ase	ok	area=1724.5302	meshes=26	tris=2016	bones=0	skinned=0	clips=1	dur=45.167	mat=0	bbox=-31.566,0.906,-26.822,32.482,68.500,-12.514	verts=3982	tex=0	nodes=32	uv=0	nrm=1
+ase	models/ASE/RotatingCube.ASE	ok	area=18997.8876	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=6.000	mat=0	bbox=-29.345,-4.086,-29.259,37.322,49.208,34.181	verts=24	tex=0	nodes=2	uv=1	nrm=1
+ase	models/ASE/TargetCameraAnim.ase	ok	area=15947.8918	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=3.000	mat=0	bbox=-24.786,-0.000,-23.077,45.869,38.746,24.786	verts=24	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_Normal.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV1-2_OffsetUV0-0.9_Rotate-72_mirrorU.ase	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV2x.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV2x_Rotate45.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/ThreeCubesGreen.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/ThreeCubesGreen_UTF16BE.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/ThreeCubesGreen_UTF16LE.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/anim.ASE	ok	area=12839.1880	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=3.333	mat=0	bbox=-56.718,-0.000,-28.205,20.228,56.983,22.437	verts=48	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/anim2.ASE	ok	area=12839.1824	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=3.333	mat=0	bbox=-56.788,-0.000,-28.205,20.228,57.251,22.437	verts=48	tex=0	nodes=7	uv=1	nrm=1
+ase	models/invalid/empty.ase	FAIL	ASE: not an ASE file (no *3DSMAX_ASCIIEXPORT line)
+ase	models-nonbsd/ASE/Rifle.ase	ok	area=781.1530	meshes=1	tris=366	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.391,-31.482,-9.501,1.391,12.719,9.863	verts=513	tex=1	nodes=2	uv=1	nrm=1
+ase	models-nonbsd/ASE/Rifle2.ase	ok	area=8673.7679	meshes=1	tris=572	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.523,-44.979,-20.233,3.523,71.303,21.537	verts=759	tex=1	nodes=2	uv=1	nrm=1

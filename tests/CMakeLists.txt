@@ -2892,6 +2892,66 @@ target_compile_definitions(test_3ds_bvh_hostile PRIVATE OKAY_SOURCE_DIR="${PROJE
 add_test(NAME 3ds_bvh_hostile COMMAND test_3ds_bvh_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(3ds_bvh_hostile PROPERTIES TIMEOUT 300)
 
+# Our own OFF reader (okay/Render/ModelData.hpp): fixtures from scripts/gen_off_fixtures.py, values computed by hand,
+# the import seam, then a standalone hostile-input + mutation-fuzz test that builds under -fsanitize=address,undefined.
+add_executable(test_off_reader test_off_reader.cpp)
+target_link_libraries(test_off_reader PRIVATE okay::engine)
+target_compile_definitions(test_off_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME off_reader COMMAND test_off_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_off_hostile test_off_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/OffReader.cpp)
+target_include_directories(test_off_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_off_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME off_hostile COMMAND test_off_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(off_hostile PROPERTIES TIMEOUT 300)
+
+# Our own SMD reader: fixtures from scripts/gen_smd_fixtures.py, values computed by hand, the import seam (skinned and
+# animation-only scenes), then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_smd_reader test_smd_reader.cpp)
+target_link_libraries(test_smd_reader PRIVATE okay::engine)
+target_compile_definitions(test_smd_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME smd_reader COMMAND test_smd_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_smd_hostile test_smd_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/SmdReader.cpp)
+target_include_directories(test_smd_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_smd_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME smd_hostile COMMAND test_smd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(smd_hostile PROPERTIES TIMEOUT 300)
+
+# Our own MD5 reader: fixtures from scripts/gen_md5_fixtures.py (md5mesh + md5anim pairs), values computed by hand, the
+# import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_md5_reader test_md5_reader.cpp)
+target_link_libraries(test_md5_reader PRIVATE okay::engine)
+target_compile_definitions(test_md5_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_reader COMMAND test_md5_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_md5_hostile test_md5_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Md5Reader.cpp)
+target_include_directories(test_md5_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_md5_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_hostile COMMAND test_md5_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(md5_hostile PROPERTIES TIMEOUT 300)
+
+# Our own MS3D reader: binary fixtures from scripts/gen_ms3d_fixtures.py, values computed by hand, the import seam,
+# then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_ms3d_reader test_ms3d_reader.cpp)
+target_link_libraries(test_ms3d_reader PRIVATE okay::engine)
+target_compile_definitions(test_ms3d_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ms3d_reader COMMAND test_ms3d_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_ms3d_hostile test_ms3d_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Ms3dReader.cpp)
+target_include_directories(test_ms3d_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_ms3d_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ms3d_hostile COMMAND test_ms3d_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(ms3d_hostile PROPERTIES TIMEOUT 300)
+
+# Our own ASE reader: fixtures from scripts/gen_ase_fixtures.py (UTF-8, CRLF and UTF-16 variants), values computed by hand,
+# the import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_ase_reader test_ase_reader.cpp)
+target_link_libraries(test_ase_reader PRIVATE okay::engine)
+target_compile_definitions(test_ase_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_reader COMMAND test_ase_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_ase_hostile test_ase_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/AseReader.cpp)
+target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

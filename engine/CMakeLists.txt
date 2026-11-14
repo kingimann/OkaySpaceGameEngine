@@ -233,6 +233,11 @@ add_library(okay_engine
     src/Render/ColladaReader.cpp
     src/Render/Max3dsReader.cpp
     src/Render/BvhReader.cpp
+    src/Render/OffReader.cpp
+    src/Render/SmdReader.cpp
+    src/Render/Md5Reader.cpp
+    src/Render/Ms3dReader.cpp
+    src/Render/AseReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -527,6 +532,31 @@ endif()
 if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
+endif()
+# Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_OFF)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
+endif()
+# Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_SMD)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
+endif()
+# Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MD5)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
+endif()
+# Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_MS3D)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
+endif()
+# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_ASE)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

@@ -77,6 +77,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [model_import.md](model_import.md): which reader handles which model format, and the options that switch to our own readers.
 - [model_corpus.md](model_corpus.md): real-file checks of our own model readers against the outside libraries, and the flip-readiness verdict.
 - [own_fbx_reader.md](own_fbx_reader.md), [own_3ds_reader.md](own_3ds_reader.md), [own_bvh_reader.md](own_bvh_reader.md): our own FBX, 3DS and BVH readers.
+- [own_off_reader.md](own_off_reader.md), [own_smd_reader.md](own_smd_reader.md), [own_md5_reader.md](own_md5_reader.md), [own_ms3d_reader.md](own_ms3d_reader.md), [own_ase_reader.md](own_ase_reader.md): our own OFF, SMD, MD5, MS3D and ASE readers.
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.
 - [terrain_water.md](terrain_water.md): terrain and water.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.867.0
+    VERSION 2.868.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -104,6 +104,13 @@ set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's truste
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
 okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
 okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
+# Signed releases (docs/updater.md): the ed25519 PUBLIC keys that must have signed
+# the release index (versions.json.sig) before the launcher or editor will install
+# anything from it: the current key, and during a rotation the next one too.
+# Empty = none built in: an unsigned index is accepted (the transition for feeds
+# nobody has signed yet; set it once the first signed publish is out).
+set(OKAY_UPDATE_TRUSTED_KEYS "" CACHE STRING "Updater: ed25519 public keys (hex, comma-separated) that must sign versions.json (empty = unsigned feeds still accepted)")
+okay_ac_check_trusted_keys("${OKAY_UPDATE_TRUSTED_KEYS}")      # same rule: exactly 64 hex digits per key, or configure fails
 # The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
 # deployment its own so its hashes can't be matched with another's. Not a secret.
 set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
@@ -144,6 +151,9 @@ if(OKAY_BUILD_LAUNCHER)
     if(OKAY_AC_TRUSTED_KEYS AND TARGET okayspace-launcher)
         target_compile_definitions(okayspace-launcher PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
     endif()
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okayspace-launcher)
+        target_compile_definitions(okayspace-launcher PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Feature examples -------------------------------------------------
@@ -154,6 +164,9 @@ endif()
 # ---- Desktop GUI editor ----------------------------------------------
 if(OKAY_BUILD_EDITOR)
     add_subdirectory(editor)
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okay-editor)
+        target_compile_definitions(okay-editor PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Standalone game player ------------------------------------------

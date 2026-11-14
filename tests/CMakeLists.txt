@@ -1525,6 +1525,16 @@ target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
 # Anti-cheat plan phase 1: always-on holes, OkayScript handlers, uninstall, RPC rate limit
+# The detection engine (behavioural detectors, risk score, evidence bundle), driven with fake time
+add_executable(test_cheat_detect test_cheat_detect.cpp)
+target_link_libraries(test_cheat_detect PRIVATE okay::engine)
+add_test(NAME cheat_detect COMMAND test_cheat_detect)
+
+# Scripted cheating and honest players against the detection engine and a real NetworkManager server (prints detection / false-positive rates)
+add_executable(test_anticheat_sim test_anticheat_sim.cpp)
+target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
+add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
@@ -1635,6 +1645,31 @@ if(WIN32)
     target_link_libraries(test_self_update PRIVATE shell32)
 endif()
 add_test(NAME self_update COMMAND test_self_update)
+
+# Signed releases: versions.json must verify under a trusted ed25519 key (shared/UpdateSignature.hpp, LoadIndex), key rotation, refusal wording,
+# the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
+add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_update_signature PRIVATE cxx_std_17)
+target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME update_signature COMMAND test_update_signature)
+find_program(OKAY_BASH bash)
+find_program(OKAY_PYTHON3 python3)
+if(OKAY_PYTHON3 AND NOT WIN32)
+    # The reference account server (examples/account-server/server.py): body cap, rate limits, lock-out, token expiry / persistence, password rounds.
+    add_test(NAME account_server_hardening COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_account_server.py)
+endif()
+if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
+    add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+endif()
+add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+
+# The launcher / game side of the session-ticket flow: retries, 401, banned, clock skew, expiry, "no ticket, no join", and the whole chain through a real
+# local HTTP server standing in for the ticket service, a real ticket-requiring server NetworkManager and the client join gate. Loopback only.
+add_executable(test_ticket_client test_ticket_client.cpp)
+target_link_libraries(test_ticket_client PRIVATE okay::engine)
+target_include_directories(test_ticket_client PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ticket_client COMMAND test_ticket_client)
 
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)

@@ -13,9 +13,13 @@
 //
 //   * Local   — when no server URL is set, accounts live in a small on-disk
 //               database next to the launcher's config. Passwords are never
-//               stored in the clear: each one is salted and stretched with
-//               SHA-256 before being written. This lets the feature work out
-//               of the box (and offline) until a server is wired up.
+//               stored in the clear: each one gets a random salt from the OS
+//               and is stretched with PBKDF2-HMAC-SHA256 (600,000 rounds, the
+//               hash text says which, so the cost can go up later). Accounts
+//               made by older versions (a plain SHA-256 chain) still sign in
+//               and are re-hashed the same way on that sign-in. This lets the
+//               feature work out of the box (and offline) until a server is
+//               wired up. It is a development fallback, not a real server.
 //
 // The header is dependency-free (only the C++17 standard library + a bundled
 // public-domain SHA-256) so the launcher can use it without extra build glue.
@@ -81,6 +85,25 @@ public:
             out[i * 4 + 3] = std::uint8_t(h_[i] & 0xff);
         }
         Reset();
+        return out;
+    }
+
+    /// PBKDF2 helper: `*this` has absorbed exactly one 64-byte block (an HMAC key pad). The digest of that block followed by the 32 bytes
+    /// at `m`, in one compression, without touching `*this`.
+    std::array<std::uint8_t, 32> FinishWith32(const std::uint8_t* m) const {
+        std::uint8_t blk[64] = {0};
+        for (int i = 0; i < 32; ++i) blk[i] = m[i];
+        blk[32] = 0x80;
+        blk[62] = 0x03; blk[63] = 0x00;                  // (64 + 32) bytes = 768 bits
+        Sha256 t = *this;
+        t.Block(blk);
+        std::array<std::uint8_t, 32> out{};
+        for (int i = 0; i < 8; ++i) {
+            out[i * 4 + 0] = std::uint8_t((t.h_[i] >> 24) & 0xff);
+            out[i * 4 + 1] = std::uint8_t((t.h_[i] >> 16) & 0xff);
+            out[i * 4 + 2] = std::uint8_t((t.h_[i] >> 8) & 0xff);
+            out[i * 4 + 3] = std::uint8_t(t.h_[i] & 0xff);
+        }
         return out;
     }
 
@@ -161,15 +184,95 @@ inline std::string HashPassword(const std::string& password, const std::string& 
     return acc;
 }
 
+// Random bytes from the operating system's CSPRNG (never a seeded Mersenne Twister): getrandom-style /dev/urandom on POSIX,
+// RtlGenRandom (SystemFunction036) on Windows, found at run time so nothing extra is linked. False when the system has none.
+inline bool OsRandom(std::uint8_t* out, std::size_t n) {
+#if defined(_WIN32)
+    typedef unsigned char (__stdcall *RtlGenRandomFn)(void*, unsigned long);
+    static RtlGenRandomFn fn = [] {
+        HMODULE m = LoadLibraryA("advapi32.dll");
+        return m ? reinterpret_cast<RtlGenRandomFn>(reinterpret_cast<void*>(GetProcAddress(m, "SystemFunction036"))) : nullptr;
+    }();
+    return fn && fn(out, (unsigned long)n) != 0;
+#else
+    std::ifstream f("/dev/urandom", std::ios::binary);
+    if (!f) return false;
+    f.read(reinterpret_cast<char*>(out), (std::streamsize)n);
+    return (std::size_t)f.gcount() == n;
+#endif
+}
+
 inline std::string RandomHex(std::size_t bytes) {
-    std::random_device rd;
-    std::mt19937_64 gen(((std::uint64_t)rd() << 32) ^ rd());
-    std::uniform_int_distribution<int> dist(0, 255);
     std::vector<std::uint8_t> buf(bytes);
-    for (auto& b : buf) b = std::uint8_t(dist(gen));
+    if (!OsRandom(buf.data(), buf.size())) {      // no OS source: std::random_device per byte (still not a seeded generator)
+        std::random_device rd;
+        for (auto& b : buf) b = std::uint8_t(rd() & 0xff);
+    }
     return ToHex(buf.data(), buf.size());
 }
 
+// ---- PBKDF2-HMAC-SHA256 (RFC 8018 / RFC 2898), one 32-byte block ----------------------------------------------------------------
+inline std::vector<std::uint8_t> HexBytes(const std::string& hex) {
+    std::vector<std::uint8_t> out;
+    auto nib = [](char c) -> int { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    if (hex.size() % 2) return {};
+    for (std::size_t i = 0; i < hex.size(); i += 2) {
+        const int a = nib(hex[i]), b = nib(hex[i + 1]);
+        if (a < 0 || b < 0) return {};
+        out.push_back(std::uint8_t(a * 16 + b));
+    }
+    return out;
+}
+inline std::array<std::uint8_t, 32> Pbkdf2Sha256(const std::string& password, const std::vector<std::uint8_t>& salt, std::uint32_t iterations) {
+    std::array<std::uint8_t, 64> key{};
+    if (password.size() > 64) {
+        Sha256 h; h.Update(password);
+        const auto d = h.Digest();
+        for (std::size_t i = 0; i < 32; ++i) key[i] = d[i];
+    } else {
+        for (std::size_t i = 0; i < password.size(); ++i) key[i] = std::uint8_t(password[i]);
+    }
+    std::array<std::uint8_t, 64> ipad{}, opad{};
+    for (std::size_t i = 0; i < 64; ++i) { ipad[i] = key[i] ^ 0x36; opad[i] = key[i] ^ 0x5c; }
+    Sha256 inner, outer;
+    inner.Update(ipad.data(), 64);
+    outer.Update(opad.data(), 64);
+    // U1 = HMAC(P, salt || INT_32_BE(1))
+    Sha256 first = inner;
+    first.Update(salt.data(), salt.size());
+    const std::uint8_t one[4] = {0, 0, 0, 1};
+    first.Update(one, 4);
+    const auto in1 = first.Digest();
+    std::array<std::uint8_t, 32> u = outer.FinishWith32(in1.data());
+    std::array<std::uint8_t, 32> t = u;
+    for (std::uint32_t i = 1; i < iterations; ++i) {
+        const auto inD = inner.FinishWith32(u.data());
+        u = outer.FinishWith32(inD.data());
+        for (std::size_t k = 0; k < 32; ++k) t[k] ^= u[k];
+    }
+    return t;
+}
+
+// The stored form: "$pbkdf2-sha256$<iterations>$<hash hex>" (the salt sits in its own column). A bare 64-hex string is the old
+// SHA-256 chain (HashPassword). Raising kPasswordRounds later makes every sign-in with a weaker record re-hash it.
+inline constexpr std::uint32_t kPasswordRounds = 600000;
+inline constexpr std::uint32_t kMinRounds = 1000, kMaxRounds = 20000000;   // what a stored record may claim (a damaged file can't stall a login)
+inline std::string HashPasswordV2(const std::string& password, const std::string& saltHex, std::uint32_t rounds = kPasswordRounds) {
+    const std::vector<std::uint8_t> salt = HexBytes(saltHex);
+    const auto d = Pbkdf2Sha256(password, salt, rounds);
+    return "$pbkdf2-sha256$" + std::to_string(rounds) + "$" + ToHex(d.data(), d.size());
+}
+inline bool IsHashV2(const std::string& stored) { return stored.rfind("$pbkdf2-sha256$", 0) == 0; }
+inline bool StoredRounds(const std::string& stored, std::uint32_t& rounds) {
+    if (!IsHashV2(stored)) return false;
+    const std::size_t a = 15, b = stored.find('$', a);
+    if (b == std::string::npos || b == a || b - a > 9) return false;
+    std::uint64_t n = 0;
+    for (std::size_t i = a; i < b; ++i) { if (stored[i] < '0' || stored[i] > '9') return false; n = n * 10 + (std::uint64_t)(stored[i] - '0'); }
+    if (n < kMinRounds || n > kMaxRounds) return false;
+    rounds = (std::uint32_t)n;
+    return true;
+}
 // Constant-time string compare so a local login can't be timed.
 inline bool SecureEquals(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -531,7 +634,7 @@ public:
             for (auto& rec : records) {
                 if (Lower(rec.user) != key) continue;
                 rec.salt = detail::RandomHex(16);
-                rec.hash = detail::HashPassword(newPassword, rec.salt);
+                rec.hash = detail::HashPasswordV2(newPassword, rec.salt);
                 WriteDb(records);
                 Result ok; ok.ok = true; ok.session = session_; return ok;
             }
@@ -607,17 +710,24 @@ public:
     /// when no one is signed in.
     ApiResponse Api(const std::string& path, const std::string& method = "GET",
                     const std::string& jsonBody = {}, const std::string& extraHeader = {}) const {
+        return ApiTimed(path, method, jsonBody, extraHeader, 0);
+    }
+    /// Api with a time limit in seconds (0 = none, as Api). A request that is not answered in time comes back not-reached, so a caller
+    /// that must not hang (the join-time session ticket) can retry or give up. The limit is enforced by the curl fallback (Linux, macOS,
+    /// and Windows when the native client is off); the native Windows client keeps WinHTTP's own timeouts.
+    ApiResponse ApiTimed(const std::string& path, const std::string& method, const std::string& jsonBody,
+                         const std::string& extraHeader, int timeoutSec) const {
         if (!IsOnline() || !session_.loggedIn) return {};
         std::string url = serverUrl_;
         if (!url.empty() && url.back() == '/') url.pop_back();
         url += path.empty() || path.front() == '/' ? path : ("/" + path);
-        ApiResponse r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+        ApiResponse r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader, {}, {}, timeoutSec);
         // Expired access token: the launcher refreshes it (RefreshIfExpiring) and
         // saves it; workers built from the saved session pick that up and retry
         // once. (Workers never refresh themselves: Supabase rotates refresh
         // tokens, and racing refreshes can revoke the whole session.)
         if (r.status == 401 && provider_ == Provider::Supabase && ReloadSessionToken())
-            r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader);
+            r = HttpRequest(method, url, jsonBody, /*authToken=*/session_.token, extraHeader, {}, {}, timeoutSec);
         return r;
     }
 
@@ -1007,6 +1117,9 @@ private:
         std::ofstream f(DbPath(), std::ios::trunc);
         for (const auto& r : records)
             f << r.user << '\t' << r.salt << '\t' << r.hash << '\n';
+        f.close();
+        std::error_code ec;   // the hashes are for this user's eyes only
+        fs::permissions(DbPath(), fs::perms::owner_read | fs::perms::owner_write, fs::perm_options::replace, ec);
     }
 
     Result LocalRegister(const std::string& username, const std::string& password) {
@@ -1017,7 +1130,7 @@ private:
         Record r;
         r.user = username;
         r.salt = detail::RandomHex(16);
-        r.hash = detail::HashPassword(password, r.salt);
+        r.hash = detail::HashPasswordV2(password, r.salt);
         records.push_back(r);
         WriteDb(records);
         return Succeed(username, detail::RandomHex(24));
@@ -1026,12 +1139,24 @@ private:
     Result LocalLogin(const std::string& username, const std::string& password) {
         auto records = ReadDb();
         std::string key = Lower(username);
-        for (const auto& r : records) {
+        for (auto& r : records) {
             if (Lower(r.user) != key) continue;
-            std::string attempt = detail::HashPassword(password, r.salt);
-            if (detail::SecureEquals(attempt, r.hash))
-                return Succeed(r.user, detail::RandomHex(24));
-            return Fail("Incorrect password.");
+            bool good = false, upgrade = false;
+            std::uint32_t rounds = 0;
+            if (detail::StoredRounds(r.hash, rounds)) {                   // the current format
+                good = detail::SecureEquals(detail::HashPasswordV2(password, r.salt, rounds), r.hash);
+                upgrade = good && rounds < detail::kPasswordRounds;      // made when the cost was lower
+            } else if (!detail::IsHashV2(r.hash)) {                      // an older version's SHA-256 chain
+                good = detail::SecureEquals(detail::HashPassword(password, r.salt), r.hash);
+                upgrade = good;
+            }                                                            // (an unreadable v2 record never matches)
+            if (!good) return Fail("Incorrect password.");
+            if (upgrade) {                                               // transparent: the password is in hand, store it the new way
+                r.salt = detail::RandomHex(16);
+                r.hash = detail::HashPasswordV2(password, r.salt);
+                WriteDb(records);
+            }
+            return Succeed(r.user, detail::RandomHex(24));
         }
         return Fail("No account found with that username.");
     }
@@ -1156,7 +1281,8 @@ private:
                             const std::string& authToken,
                             const std::string& extraHeader = {},
                             const std::string& bodyFile = {},     // raw file body (uploads)
-                            const std::string& bodyType = {}) const {
+                            const std::string& bodyType = {},
+                            int timeoutSec = 0) const {
         // Native client first (Windows: WinHTTP, kept-alive connections, no
         // process spawn); fall back to curl if it can't reach the server.
         if (okay::http::NativeAvailable()) {
@@ -1183,7 +1309,10 @@ private:
         fs::path bodyF = dir / ("okay_acct_" + id + ".json");
         fs::path cfgF  = dir / ("okay_acct_" + id + ".cfg");
 
-        std::string cmd = "curl -s -X " + method +
+        std::string cmd = "curl -s -X " + method;
+        if (timeoutSec > 0)   // a stalled server must not hang the caller (the join-time ticket request)
+            cmd += " --connect-timeout " + std::to_string(timeoutSec < 5 ? timeoutSec : 5) + " --max-time " + std::to_string(timeoutSec);
+        cmd +=
             " -o \"" + resp.string() + "\" -w \"%{http_code}\"";
 
         // Headers/secrets go in a curl config file (-K), keeping them out of argv.

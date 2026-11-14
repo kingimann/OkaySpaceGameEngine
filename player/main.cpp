@@ -50,6 +50,7 @@
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
 #include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
+#include "TicketJoin.hpp"                // session tickets: the join gate (okay_tickets.cfg)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUI_SoftPainter.hpp"   // the software painter of the own platform backend (own code, not ready)
@@ -1537,6 +1538,18 @@ int main(int argc, char** argv) {
             if (nm->AuthToken().empty() && okay::Account::IsLoggedIn()) nm->SetAuthToken(okay::Account::Token());
     if (okay::Account::IsLoggedIn())   // also for networks scripts create later
         okay::NetworkManager::SetDefaultIdentity(okay::Account::Token(), okay::Account::Username());
+    {   // Session tickets (docs/anticheat.md "Joining a server that needs a ticket"): with okay_tickets.cfg next to the game, every join
+        // (the launcher's --join, a reconnect, a script's net_join) first gets a ticket from the ticket service and never goes out without
+        // one when the file says `mode required`. No file = no gate: joins behave as before.
+        okayac::ticket::Config tcfg = okayac::ticket::LoadConfig((std::filesystem::u8path(baseDir) / okayac::ticket::kConfigName).u8string());
+        if (tcfg.mode != okayac::ticket::Mode::Off) {
+            okayac::ticket::Hooks th;
+            th.hwHash = [] { return okayac::MachineHash(); };
+            th.onBanned = [pb] { pb->Log("Not joining: this account or machine has an anti-cheat ban. The launcher shows the details and how to appeal."); };
+            okayac::ticket::InstallJoinGate(tcfg, th);
+            pb->Log(std::string("Session tickets: ") + okayac::ticket::ModeName(tcfg.mode) + (tcfg.badLine ? " (some lines of okay_tickets.cfg were not understood)" : ""));
+        }
+    }
     if (!launchJoin.empty()) {
         pb->Log("Joining " + launchJoin);
         okay::NetworkManager::SetLaunchJoin(launchJoin);

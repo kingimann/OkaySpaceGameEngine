@@ -10,7 +10,7 @@ format at a time. The plan is in `docs/own_code_roadmap.md`.
 
 | Format | Reader | Scene import (nodes, skins, clips) | Notes |
 |---|---|---|---|
-| `.gltf` `.glb` | our own, `Render/Gltf` | yes | always built in |
+| `.gltf` `.glb` | our own, `Render/Gltf` (glTF 2.0 only; triangle, strip and fan primitives, points and lines are left out, a triangle with an index past the vertices is dropped; a file from which no mesh can be read, or that needs Draco or meshopt compression, fails the import with a message) | yes | always built in |
 | `.fbx` | ufbx (vendored in `engine/third_party/ufbx`); Assimp only as a fallback for files ufbx rejects | yes | always built in |
 | `.obj` (+ `.mtl`) | our own: `ReadObjFile` for scene import (one MeshRenderer per `usemtl`), `Mesh::LoadOBJ` for the merged-mesh path | materials only (no nodes) | always built in |
 | `.stl` (ascii and binary) | our own, `ReadStlFile`. Assimp first when built with `OKAY_USE_ASSIMP` unless `OKAY_PREFER_OWN_READERS` | one mesh per `solid` | in every build since this change |
@@ -41,7 +41,7 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh` h
 
 ## What our readers do
 
-* **OBJ + MTL**: `v` `vt` `vn` `f` with negative indices and `v//vn`; polygons fan-triangulated; one part per `usemtl`. From the `.mtl`: `Kd`, `Ke`, `Ns`, `Pm`, `Pr`, `map_Kd`, `map_Bump`/`bump`/`norm`, `map_Ks`/`map_Ns`; texture options (`-s`, `-o`, `-bm` ...) are skipped; a missing `.mtl` is not an error. UVs are kept as written (like `Mesh::LoadOBJ`).
+* **OBJ + MTL**: `v` `vt` `vn` `f` with negative indices and `v//vn`; convex polygons fan-triangulated from their first corner, concave ones ear clipped (so is PLY); points and lines are not read (a file with no faces fails); one part per `usemtl`. From the `.mtl`: `Kd`, `Ke`, `Ns`, `Pm`, `Pr`, `map_Kd`, `map_Bump`/`bump`/`norm`, `map_Ks`/`map_Ns`; texture options (`-s`, `-o`, `-bm` ...) are skipped; a missing `.mtl` is not an error. UVs are kept as written (like `Mesh::LoadOBJ`).
 * **STL**: ascii or binary (told apart by the size rule, so a binary file whose header says "solid" still works). Vertices are welded per position and normal; the file's facet normal is used, or the winding's when it is zero.
 * **PLY**: `x y z`, `nx ny nz`, `s t` / `u v` / `texture_u texture_v`; list `vertex_indices`; other elements and vertex colours are skipped. UV `v` is flipped like the other bottom-up formats. Without normals, smooth normals are generated (what Assimp's `GenSmoothNormals` does).
 * All three: every read is bounds-checked, element counts are checked against the bytes left before anything is allocated, indices are range-checked, non-finite numbers are rejected, files over 512 MiB are refused. They return `false` with a one-line message.
@@ -79,6 +79,10 @@ Blender (`.blend`), DirectX `.x`, MD2/MD3/MD5/MDL, SMD, MS3D, LWO, DXF, OFF, AC3
 Our reader was checked on fixtures we wrote and, in an Assimp build, against Assimp on those; since then it has also been run on 26 files from real exporters (`docs/model_corpus.md`: 24 read, two have no mesh) and compared with Assimp built from source, which found and fixed six bugs (deep node chains, decimal commas, UTF-16, triangle strips and fans, concave polygons, named takes). It stays off by default until more exporters have been tried, Windows has run it, and the owner approves.
 
 Known gaps: no morph targets, no `lines` / `linestrips`, no vertex colours or second UV set, no embedded texture data, no physics, kinematics or `extra` techniques other than a bump texture, polygons with holes keep only the outer ring (a hole written as one bridged ring is triangulated correctly), BEZIER/HERMITE/CARDINAL/BSPLINE curves are flattened to straight lines between keys (tangents are ignored), STEP is approximated by a 0.1 ms ramp, rotation is interpolated as a quaternion between the sampled keys, not as the file's angle, so very dense or very fast rotations are only as exact as the key spacing, a target sid is matched against the first node with that id so instanced nodes share one animation, animated materials, visibility and camera or light channels are not read, no COLLADA 1.5 `<instance_effect>` parameter overrides, and normals under non-uniform scale in flattened mode use the plain upper 3x3 matrix. With `<library_animation_clips>` present, animations no clip names are not imported.
+
+## Windows and locale
+
+Paths are UTF-8 strings. The readers open files by UTF-8 path (`_wfopen` on Windows), so a folder or file name outside the ANSI code page works, and they read numbers with `.` as the decimal point whatever `LC_NUMERIC` the host process set (`docs/model_corpus.md`: both found on the MinGW build under wine).
 
 ## Known inconsistency
 

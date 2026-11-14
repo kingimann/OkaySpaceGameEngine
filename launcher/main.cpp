@@ -18,6 +18,7 @@
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
 #include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
@@ -10866,6 +10867,7 @@ static void MpRemember(const okay::JoinLink& l) {   // history: direct servers o
 // ---- Joining -------------------------------------------------------------------
 static std::string g_mpPassLink;  static bool g_mpPassReq = false;   // ask for a password, then join
 static std::string g_mpPickLink;  static bool g_mpPickReq = false;   // "which of your games is this?"
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene);   // (defined with the anti-cheat ban code below)
 static void MpLaunch(const okay::JoinLink& in) {
     okay::JoinLink l = in;
     const std::string link = l.Format();
@@ -10884,6 +10886,9 @@ static void MpLaunch(const okay::JoinLink& in) {
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
     if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
+    // A server that needs a session ticket: ask the ticket service first (off the UI thread). A banned answer refreshes the ban banner and
+    // the game is not started; "required" without an answer doesn't start it either. When it passes, this runs again and goes through.
+    if (TicketPreflightHolds(l, g->scene)) return;
     if (SpawnTracked(player, "\"" + g->scene + "\" --join \"" + link + "\"", "game:" + g->title, g->title)) {
         RecordPlayed(g->scene);
         SavePrefs();
@@ -13630,6 +13635,92 @@ static void PumpAcMyBans(bool signedIn) {
     SDL_UnlockMutex(g_acMeMutex);
 }
 
+
+// ---- Session tickets before a join: the ban check + "no ticket, no join" --------------------------------------------------------
+// okay_tickets.cfg (next to the launcher, or next to the game's scene) turns this on (shared/TicketClient.hpp). The launcher asks the ticket
+// service on a worker thread before it starts a game to join a server: a banned answer refreshes my bans (the banner shows why) and the game
+// is not started; with `mode required` any failure stops the start too (the game would refuse to join anyway, this just says why now).
+// The game does the real, connection-bound request itself (player/main.cpp); this one is only the early answer, and its ticket is dropped.
+static SDL_mutex* g_tkMutex = nullptr;
+static volatile bool g_tkBusy = false;
+static std::string g_tkLink;                               // the link being checked (guarded)
+static std::string g_tkOkLink;                             // a link whose check passed: the next MpLaunch of it goes through (UI thread)
+static bool g_tkDone = false, g_tkBanned = false, g_tkAllow = false; static std::string g_tkMsg;   // the worker's answer (guarded)
+static okayac::ticket::Config TicketConfigFor(const std::string& scene) {
+    okayac::ticket::Config c = okayac::ticket::LoadConfig((fs::path(g_exeDir) / okayac::ticket::kConfigName).string());
+    if (c.mode == okayac::ticket::Mode::Off && !scene.empty()) {
+        std::error_code ec;
+        const fs::path beside = fs::path(scene).parent_path() / okayac::ticket::kConfigName;
+        if (fs::is_regular_file(beside, ec)) c = okayac::ticket::LoadConfig(beside.string());
+    }
+    return c;
+}
+struct TkJob { okayac::ticket::Config cfg; okay::JoinLink link; };
+static int TicketPreflightWorker(void* p) {
+    std::unique_ptr<TkJob> j(static_cast<TkJob*>(p));
+    bool allow = true, banned = false; std::string msg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okayac::ticket::Options opt;
+        opt.refreshSignIn = [&a] { return a.ReloadSessionToken(); };
+        okayac::ticket::Client client([&a](const okayac::backend::Request& r) {
+            const okay::account::ApiResponse x = a.ApiTimed(r.path, r.method, r.body, r.header, 8);
+            okayac::ticket::Reply out; out.reached = x.reached; out.status = x.status; out.body = x.body; return out;
+        }, opt);
+        okayac::ticket::Hooks hk;
+        hk.hwHash = [] { return okayac::MachineHash(); };
+        hk.signedIn = [&a] { return a.IsLoggedIn() && a.IsOnline(); };
+        okayac::ticket::JoinTarget t;
+        if (j->link.Relayed()) { t.relayed = true; t.relayCode = j->link.code; }
+        else { const std::string h = j->link.addr; const std::size_t c = h.rfind(':'); t.host = c == std::string::npos ? h : h.substr(0, c); t.port = c == std::string::npos ? 0 : (std::uint16_t)std::atoi(h.c_str() + c + 1); }
+        const okayac::ticket::Decision d = okayac::ticket::Decide(j->cfg, client, hk, t, "");
+        allow = d.allow; banned = d.outcome == okayac::ticket::Outcome::Banned; msg = d.message;
+    } catch (...) { allow = j->cfg.mode != okayac::ticket::Mode::Required; if (!allow) msg = "Couldn't check the session ticket."; }
+    SDL_LockMutex(g_tkMutex);
+    g_tkAllow = allow; g_tkBanned = banned; g_tkMsg = msg; g_tkDone = true;
+    SDL_UnlockMutex(g_tkMutex);
+    g_tkBusy = false;
+    return 0;
+}
+// True when the start must wait for (or stop at) the ticket check. Called by MpLaunch; false = go ahead.
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) {
+    if (!g_tkMutex) g_tkMutex = SDL_CreateMutex();
+    const std::string link = l.Format();
+    if (g_tkOkLink == link) { g_tkOkLink.clear(); return false; }            // checked a moment ago
+    okayac::ticket::Config cfg = TicketConfigFor(scene);
+    if (cfg.mode == okayac::ticket::Mode::Off || g_pollCfgDir.empty()) return false;
+    const long now = (long)std::time(nullptr);
+    for (const auto& b : g_acMyBans)                                         // already known: no need to ask
+        if (b.until == 0 || b.until > now) {
+            Toast("You can't join: this account has an anti-cheat ban (see the banner at the top).", 2);
+            return true;
+        }
+    if (g_tkBusy) { Toast("One moment\xE2\x80\xA6", 0); return true; }
+    g_tkBusy = true;
+    SDL_LockMutex(g_tkMutex); g_tkLink = link; g_tkDone = false; SDL_UnlockMutex(g_tkMutex);
+    TkJob* job = new TkJob{cfg, l};
+    Toast("Checking your session\xE2\x80\xA6", 0);
+    if (SDL_Thread* t = SDL_CreateThread(TicketPreflightWorker, "okay-ticket", job)) SDL_DetachThread(t);
+    else { g_tkBusy = false; delete job; return cfg.mode == okayac::ticket::Mode::Required; }
+    return true;
+}
+// Every frame: act on the worker's answer.
+static void PumpTicketPreflight() {
+    if (!g_tkMutex) return;
+    bool done = false, allow = false, banned = false; std::string msg, link;
+    SDL_LockMutex(g_tkMutex);
+    if (g_tkDone) { done = true; allow = g_tkAllow; banned = g_tkBanned; msg = g_tkMsg; link = g_tkLink; g_tkDone = false; }
+    SDL_UnlockMutex(g_tkMutex);
+    if (!done) return;
+    if (banned) {
+        AcMeQueue(new AcMeJob);   // refresh ac_my_bans: the banner at the top of every page shows the reason and the appeal
+        Toast("You can't join: this account or machine has an anti-cheat ban. Details are at the top of the page.", 2);
+        return;
+    }
+    if (!allow) { Toast(msg.empty() ? std::string("Couldn't get a session ticket, so the game was not started.") : msg, 2); return; }
+    okay::JoinLink l;
+    if (okay::JoinLink::Parse(link, l)) { g_tkOkLink = link; MpLaunch(l); }
+}
 
 // Banner + appeal for my active anti-cheat ban, at the top of every page.
 static void DrawAcBanBanner() {
@@ -18665,6 +18756,7 @@ int main(int argc, char** argv) {
         PumpBlocks(account);
         PumpPrivacy(account);
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
+        PumpTicketPreflight();
         PumpTokenRefresh(account);
         if (tab == 11 && g_myRank == 0) tab = 0;   // lost the role
 

@@ -1,5 +1,6 @@
 // okay::fbx layer 1: inflate + binary / ASCII FBX element tree. See FbxReader.hpp.
 // Written from the public description of the format; no third-party code.
+#include "NumParse.hpp"
 #include "okay/Render/FbxReader.hpp"
 
 #include <algorithm>
@@ -322,7 +323,7 @@ struct Text {
         if (pos == b) return Fail("unexpected character in ASCII FBX");
         std::string tok(s + b, pos - b);
         char* end = nullptr;
-        const double d = std::strtod(tok.c_str(), &end);
+        const double d = detail::StrToD(tok.c_str(), &end);
         if (end && *end == '\0' && !tok.empty() && (std::isdigit((unsigned char)tok[0]) || tok[0] == '-' || tok[0] == '+' || tok[0] == '.')) {
             if (tok.find_first_of(".eE") == std::string::npos) {
                 out.type = 'L'; out.i = std::strtoll(tok.c_str(), nullptr, 10);
@@ -364,7 +365,7 @@ struct Text {
             if (pos == b) return Fail("bad value in array block");
             const std::string tok(s + b, pos - b);
             char* end = nullptr;
-            const double d = std::strtod(tok.c_str(), &end);
+            const double d = detail::StrToD(tok.c_str(), &end);
             if (!end || *end) return Fail("bad number in array block");
             out.arr.push_back(d);
             if (out.arr.size() > lim->maxArrayBytes / 8) return Fail("arrays exceed the size limit");

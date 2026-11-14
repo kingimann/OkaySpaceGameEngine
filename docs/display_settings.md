@@ -81,7 +81,7 @@ switches and bumps `Generation()`. The table, `DisplaySettings::Preset(q)`:
 Medium is the look the renderer ships with. Shadows, the shadow map size, distance and
 cascades, bloom and ambient occlusion are read by the software renderer and the GPU backends
 (OpenGL and Direct3D 11 through `ShadowSetup.hpp`; Direct3D 12 reads the map size); FXAA and
-per-pixel lighting only change the software path.
+per-pixel lighting only change the software path. (With Shadows on, the software renderer lights per pixel while a shadow map exists even if per-pixel lighting is off: `ShadowsUsePerPixel()`, default on.)
 
 The preset is applied once the **player chose a level** (`QualityChosen()`: `SetQuality` was
 called, or a saved `video.quality` was loaded). Until then `ApplyQuality()` does nothing, so

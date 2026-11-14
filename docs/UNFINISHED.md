@@ -27,6 +27,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Six engine-API nodes: Input.DefineAction, Input.DefineDirection, Audio.SaveSettings, Rigidbody.AddTorque (covered by other suites); Input.Rumble and Fog.SetMode proven | Partly proven | Show nothing in a headless scene |
 | Photon, PlayFab and Custom net providers | C++ extension points only | Need the vendor SDKs and accounts; nothing in the editor selects them |
 | Play start hitch in the editor | `EditorState::Play()` still runs on the click frame: snapshot text, loading every AudioSource file (each source holds its own copy of the decoded clip), validating every visual script, and (in the editor) baking each NavMeshSurface with Bake Before Play | `tests/test_play_start_bench.cpp` times each step. Not done: skip the bake when nothing changed, share one decoded clip between sources, spread the work over frames. The GPU side (first draw of the Game view) cannot be measured headless |
+| Own HTTP client (`okay::ownhttp`) instead of curl | Off by default, Linux only (`-DOKAY_OWN_HTTP=ON` plus `OKAY_OWN_HTTP=1`); the launcher Versions download and the account calls try it first, curl is the fallback | Real-server run, a run on GitHub CI and on Windows (WinHTTP stays there), a soak, connection reuse, proxy credentials and SOCKS, moving the other curl uses (launcher game and official downloads, size probes, link preview, editor update, PlayFab), outside review of the parser, owner approval. Table and flip criteria: `docs/own_http_readiness.md` |
 | Steamworks backend | Off by default | Needs Valve's proprietary SDK |
 | Glass UI theme | Visible, no real blur | The shared draw path cannot read the framebuffer back |
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
@@ -37,19 +38,23 @@ The feature map currently has **123** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+| Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
+| Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
 
-## Own cryptography: waiting for an outside review
+## Own cryptography: no hired review, libsodium stays
 
 `okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
 
 | Step | State | Who |
 |---|---|---|
-| Decide whether to consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`, and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
-| Choose a reviewer, a budget and a date; send the request and the bundle (nobody has been asked; cost and start date unknown) | Not started | Owner |
-| The outside review itself, its report and findings | Not started | Reviewer |
-| Fix every finding or record why it is acceptable, re-run the evidence, send the fixes back for a re-check | Waiting on the report | Team |
+| Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto` (not done: `AccountService.hpp` `Sha256` is under the PBKDF2 password hashing and uses a copy-state shortcut, `OfficialGame.hpp` `FileSha256` and `AntiCheatChecks.hpp` `HmacSha256` sit on it; moving them is not a small change and needs a new HMAC with RFC 4231 tests), and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
+| Choose a reviewer, a budget and a date; send the request and the bundle | Decided: **no hired reviewer** (owner, 2026-11-14). libsodium stays the default; the package and request stay in the repo in case that changes | Owner |
+| Extra assurance without a hired reviewer: an internal review by a fresh agent, and a review by a second AI (Grok) from `review/CRYPTO_REVIEW_REQUEST.md` on branch `claude/crypto-review-grok` (pinned to commit `0a857395`). Reported as "not independently reviewed"; every claimed bug is reproduced by a test before any change | Internal review running; Grok review waiting for the owner to run it | Team and owner |
+| The outside review itself, its report and findings | Not planned (no reviewer hired) | n/a |
+| Fix every finding from the AI reviews that a test reproduces, or record why it is acceptable, and re-run the evidence | Waiting on the reports | Team |
 | CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
-| The flip decision: make it the default for new builds, then delete libsodium and the TweetNaCl port one release later | Owner decision, only after a reviewer's yes | Owner |
+| The flip decision: make it the default for new builds, then delete libsodium one release later (the TweetNaCl port is already deleted) | Owner decision, only after a reviewer's yes | Owner |
 
 ## Planned: visual-script core upgrade
 

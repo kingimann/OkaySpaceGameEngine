@@ -343,9 +343,9 @@ bool YIsCanonical(const std::uint8_t enc[32]) {      // public data: y < p, igno
 // those points are 0, 1, -1 and the two of order 8, and the encodings y = p and y = p + 1 (non-canonical forms of 0 and 1)
 // decode to small-order points too: seven values in all, libsodium's blocklist. Negating a point does not change its order,
 // so the sign bit is ignored; this also reports the two encodings RFC 8032 refuses to decode (x = 0 with the sign bit set:
-// 0100..80 and ecff..ff), as libsodium's blocklist and the port in shared/AntiCheatCrypto.hpp do.
+// 0100..80 and ecff..ff), as libsodium's blocklist does (and the TweetNaCl-derived port that used to be in shared/AntiCheatCrypto.hpp did).
 // (Earlier versions decoded the point and doubled it three times: same set, one square root more per call. The agreement is
-// tested against the port, which still decodes, and libsodium, on every structured encoding: tests/crypto_difftest.cpp.)
+// tested against libsodium (and, before it was deleted, the TweetNaCl-derived port, which still decoded) on every structured encoding: tests/crypto_difftest.cpp.)
 bool HasSmallOrderEncoding(const std::uint8_t enc[32]) {
     static const std::uint8_t kBlock[7][32] = {
         {0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00},

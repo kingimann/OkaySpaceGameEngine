@@ -39,7 +39,7 @@ itself does not run, so it still shows on Direct3D 12 and the software renderer.
 Sun shadows are drawn on all four. Spot and point light shadows are drawn on
 OpenGL, Direct3D 11 and the software renderer, and not on Direct3D 12; the Light
 Inspector says so under Cast Shadows. The software renderer draws shadows (sun,
-spot and point) only with Per-pixel lighting on. The separate Ambient Occlusion
+spot and point) by default (a mesh that receives shadows is lit per pixel while a shadow map exists; `ShadowsUsePerPixel()` = false gives the faster per-vertex frame with no shadows). The separate Ambient Occlusion
 switch in Build Settings is drawn by OpenGL and the software renderer, and by
 Direct3D 11 while the post chain runs. The Direct3D 11 pass is new and has not
 been run on a GPU. Direct3D 12 is a preview with no post-processing. For the

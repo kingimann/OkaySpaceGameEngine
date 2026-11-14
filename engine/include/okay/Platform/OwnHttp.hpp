@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include "okay/Platform/OwnHttpInflate.hpp"
+
 namespace okay::ownhttp {
 
 using Clock = std::chrono::steady_clock;
@@ -70,6 +72,8 @@ struct Limits {
     size_t   maxHeaders     = 100;
     uint64_t maxBodyBytes   = 64ull * 1024 * 1024;
     int      maxRedirects   = 10;
+    bool     allowGzip      = false;       ///< accept Content-Encoding gzip, x-gzip and deflate (else they are refused)
+    uint64_t maxEncodedBytes = 64ull * 1024 * 1024;   ///< compressed body held in memory before it is decoded
 };
 
 struct Header { std::string name, value; };
@@ -96,7 +100,7 @@ struct Response {
     int         minor = 1;                 ///< HTTP/1.x
     std::vector<Header> headers;
     std::string body;                      ///< unless a data callback took it
-    uint64_t    bodyBytes = 0;
+    uint64_t    bodyBytes = 0;                 ///< bytes handed on (decoded size for gzip)
     const std::string* Get(const std::string& name) const;
 };
 
@@ -267,7 +271,7 @@ inline bool ParseHeaderLine(const std::string& line, Header& h) {
 
 inline bool BuildRequest(const std::string& method, const Url& u, const std::vector<Header>& headers,
                          const std::string& body, bool absoluteForm, std::string& out,
-                         Err& e, std::string* msg = nullptr) {
+                         Err& e, std::string* msg = nullptr, bool acceptGzip = false) {
     using detail::Set;
     if (!detail::IsToken(method) || method.size() > 16) return Set(e, msg, Err::BadHeader, "bad method");
     if (u.host.empty() || u.target.empty() || u.target[0] != '/') return Set(e, msg, Err::BadUrl, "bad url");
@@ -284,7 +288,7 @@ inline bool BuildRequest(const std::string& method, const Url& u, const std::vec
     if (absoluteForm) r += u.scheme + "://" + u.HostPort();
     r += u.target + " HTTP/1.1\r\nHost: " + u.HostPort() + "\r\n";
     if (!haveUa) r += "User-Agent: OkaySpace/1.0\r\n";
-    r += "Accept-Encoding: identity\r\nConnection: close\r\n";
+    r += acceptGzip ? "Accept-Encoding: gzip, deflate\r\nConnection: close\r\n" : "Accept-Encoding: identity\r\nConnection: close\r\n";
     for (const Header& h : headers) r += h.name + ": " + h.value + "\r\n";
     if (!body.empty() || method == "POST" || method == "PUT" || method == "PATCH")
         r += "Content-Length: " + std::to_string(body.size()) + "\r\n";
@@ -392,12 +396,22 @@ inline bool ReadHead(Reader& rd, const Limits& lim, Response& out, Err& e, std::
 
 enum class Framing { None, Length, Chunked, UntilClose };
 
+/// 0 = none/identity or not decodable, 1 = gzip, 2 = zlib "deflate". Only when Limits::allowGzip.
+inline int ContentCoding(const Response& r, const Limits& lim) {
+    const std::string* ce = r.Get("content-encoding");
+    if (!ce || !lim.allowGzip) return 0;
+    std::string v = detail::Trim(*ce);
+    if (detail::IEq(v, "gzip") || detail::IEq(v, "x-gzip")) return 1;
+    if (detail::IEq(v, "deflate")) return 2;
+    return 0;
+}
+
 inline bool DetermineFraming(const Response& r, const std::string& method, const Limits& lim,
                              Framing& f, uint64_t& len, Err& e, std::string* m = nullptr) {
     using detail::Set;
     len = 0;
     if (const std::string* ce = r.Get("content-encoding"))
-        if (!detail::IEq(detail::Trim(*ce), "identity")) return Set(e, m, Err::Unsupported, "content encoding not supported");
+        if (!detail::IEq(detail::Trim(*ce), "identity") && ContentCoding(r, lim) == 0) return Set(e, m, Err::Unsupported, "content encoding not supported");
     std::string te; bool haveTe = false, haveCl = false; std::string clVal;
     for (const Header& h : r.headers) {
         if (detail::IEq(h.name, "transfer-encoding")) { te += (haveTe ? "," : "") + h.value; haveTe = true; }
@@ -432,10 +446,30 @@ inline bool ReadBody(Reader& rd, const Response& head, const std::string& method
     total = 0;
     Framing f; uint64_t len = 0;
     if (!DetermineFraming(head, method, lim, f, len, e, m)) return false;
+    // gzip / deflate: collect the encoded body (capped), decode it at the end (capped), hand the result on.
+    const int coding = (f == Framing::None) ? 0 : ContentCoding(head, lim);
+    std::string encoded;
+    uint64_t encodedTotal = 0;
     auto give = [&](size_t n) -> bool {
+        if (coding) {
+            if (encodedTotal + n > std::min(lim.maxEncodedBytes, lim.maxBodyBytes)) return Set(e, m, Err::TooLarge, "encoded body larger than the limit");
+            encoded.append(rd.buf.data() + rd.pos, n);
+            encodedTotal += n; rd.pos += n; return true;
+        }
         if (total + n > lim.maxBodyBytes) return Set(e, m, Err::TooLarge, "body larger than the limit");
         if (n && data && !data(rd.buf.data() + rd.pos, n)) return Set(e, m, Err::Aborted, "aborted by the caller");
         total += n; rd.pos += n; return true;
+    };
+    auto finish = [&]() -> bool {
+        if (!coding) return true;
+        std::string out, why;
+        if (!InflateBody(encoded, coding == 1, size_t(std::min<uint64_t>(lim.maxBodyBytes, SIZE_MAX / 2)), out, why)) {
+            Set(e, m, why.find("larger than the limit") != std::string::npos ? Err::TooLarge : Err::BadResponse, why.c_str());
+            return false;
+        }
+        encoded.clear(); encoded.shrink_to_fit();
+        if (!out.empty() && data && !data(out.data(), out.size())) return Set(e, m, Err::Aborted, "aborted by the caller");
+        total = out.size(); e = Err::None; return true;
     };
     if (f == Framing::None) { e = Err::None; return true; }
     if (f == Framing::Length) {
@@ -446,14 +480,14 @@ inline bool ReadBody(Reader& rd, const Response& head, const std::string& method
             if (!give(n)) return false;
             left -= n;
         }
-        e = Err::None; return true;
+        e = Err::None; return finish();
     }
     if (f == Framing::UntilClose) {
         for (;;) {
             if (rd.Avail() && !give(rd.Avail())) return false;
             if (!rd.Fill(e)) {
                 if (e != Err::None) { if (m) *m = "read failed"; return false; }
-                e = Err::None; return true;   // end of stream ends the body
+                e = Err::None; return finish();   // end of stream ends the body
             }
         }
     }
@@ -474,7 +508,7 @@ inline bool ReadBody(Reader& rd, const Response& head, const std::string& method
             size_t trailer = 0;
             for (;;) {   // trailers are read, validated and ignored
                 if (!rd.Line(4096, line, e, m)) return false;
-                if (line.empty()) { e = Err::None; return true; }
+                if (line.empty()) { e = Err::None; return finish(); }
                 trailer += line.size() + 2;
                 if (trailer > 16384) return Set(e, m, Err::TooLarge, "trailers too large");
                 if (line[0] == ' ' || line[0] == '\t' || line.find(':') == std::string::npos) return Set(e, m, Err::BadResponse, "bad trailer");
@@ -510,6 +544,7 @@ struct FetchRequest {
     std::string url;
     std::vector<std::string> headerLines;   ///< "Name: value"
     std::string body;
+    bool acceptGzip = false;                ///< ask for gzip/deflate and decode it (Limits::allowGzip is set for the call)
 };
 
 struct FetchHooks {
@@ -517,6 +552,9 @@ struct FetchHooks {
     std::function<bool(const Response&)> onHead;
     /// Body data of the final response. When empty the body is collected in Response::body.
     DataFn onData;
+    /// Progress of the final response body: bytes handed on so far and the expected total (Content-Length, 0 when
+    /// unknown or encoded). Return false to stop the transfer (Err::Aborted).
+    std::function<bool(uint64_t done, uint64_t total)> onProgress;
 };
 
 struct FetchResult {
@@ -526,7 +564,46 @@ struct FetchResult {
     Response    response;
     Url         finalUrl;
     int         redirects = 0;
+    bool        partial = false;        ///< the server answered a Range request with 206 (the body starts at rangeStart)
+    uint64_t    rangeStart = 0;
+    uint64_t    rangeTotal = 0;         ///< complete size from Content-Range, 0 when unknown ("*")
 };
+
+/// "bytes first-last/total" (total may be "*"). Strict: digits only, first <= last < total.
+inline bool ParseContentRange(const std::string& v, uint64_t& first, uint64_t& last, uint64_t& total) {
+    std::string s = detail::Trim(v);
+    if (!detail::IPrefix(s, "bytes ")) return false;
+    s = detail::Trim(s.substr(6));
+    size_t dash = s.find('-'), slash = s.find('/');
+    if (dash == std::string::npos || slash == std::string::npos || slash < dash) return false;
+    auto num = [](const std::string& t, uint64_t& o) {
+        if (t.empty() || t.size() > 18) return false;
+        o = 0; for (unsigned char c : t) { if (c < '0' || c > '9') return false; o = o * 10 + (c - '0'); }
+        return true;
+    };
+    std::string a = s.substr(0, dash), b = s.substr(dash + 1, slash - dash - 1), t = s.substr(slash + 1);
+    if (!num(a, first) || !num(b, last) || first > last) return false;
+    if (t == "*") total = 0;
+    else { if (!num(t, total) || last >= total) return false; }
+    return true;
+}
+
+/// First byte of a "Range: bytes=N-" or "bytes=N-M" request header; false when there is none or it is another shape.
+inline bool RequestedRangeStart(const std::vector<Header>& headers, uint64_t& start, bool& any) {
+    any = false;
+    for (const Header& h : headers) {
+        if (!detail::IEq(h.name, "range")) continue;
+        any = true;
+        std::string v = detail::Trim(h.value);
+        if (!detail::IPrefix(v, "bytes=")) return false;
+        v = v.substr(6);
+        size_t dash = v.find('-');
+        if (dash == std::string::npos || dash == 0 || dash > 18 || v.find(',') != std::string::npos) return false;
+        start = 0; for (size_t i = 0; i < dash; ++i) { if (v[i] < '0' || v[i] > '9') return false; start = start * 10 + uint64_t(v[i] - '0'); }
+        return true;
+    }
+    return false;
+}
 
 inline bool SensitiveHeader(const std::string& name) {
     std::string n = detail::Lower(name);
@@ -556,7 +633,7 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         std::unique_ptr<Stream> st = conn.Open(url, deadline, e, msg);
         if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
         std::string wire;
-        if (!BuildRequest(method, url, headers, body, conn.AbsoluteForm(url), wire, e, &msg)) return bad(e, msg);
+        if (!BuildRequest(method, url, headers, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip)) return bad(e, msg);
         if (!st->Write(wire.data(), wire.size(), e)) return bad(e == Err::None ? Err::Io : e, "write failed");
         Reader rd(*st);
         Response head;
@@ -589,11 +666,45 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
             ++res.redirects;
             continue;
         }
+        // A Range request: a 206 must be the part we asked for (never a different slice, never unasked).
+        uint64_t wantStart = 0; bool haveRange = false;
+        const bool rangeOk = RequestedRangeStart(headers, wantStart, haveRange);
+        if (head.status == 206) {
+            uint64_t a = 0, b = 0, t = 0;
+            const std::string* cr = head.Get("content-range");
+            if (!haveRange) return bad(Err::BadResponse, "206 answer to a request without Range");
+            if (!cr || !ParseContentRange(*cr, a, b, t)) return bad(Err::BadResponse, "206 without a valid Content-Range");
+            if (rangeOk && a != wantStart) return bad(Err::BadResponse, "Content-Range does not start where asked");
+            if (const std::string* cl = head.Get("content-length")) {
+                uint64_t n = 0; bool digits = !cl->empty() && cl->size() < 19;
+                for (unsigned char c : *cl) { if (c < '0' || c > '9') digits = false; else n = n * 10 + (c - '0'); }
+                if (digits && n != b - a + 1) return bad(Err::BadResponse, "Content-Length does not match Content-Range");
+            }
+            res.partial = true; res.rangeStart = a; res.rangeTotal = t;
+        }
         if (hooks.onHead && !hooks.onHead(head)) return bad(Err::Aborted, "aborted by the caller");
         uint64_t total = 0;
         DataFn sink = hooks.onData;
         if (!sink) sink = [&](const char* p, size_t n) { head.body.append(p, n); return true; };
-        if (!ReadBody(rd, head, method, lim, sink, total, e, &msg)) return bad(e, msg);
+        Limits bodyLim = lim;
+        if (req.acceptGzip) bodyLim.allowGzip = true;
+        uint64_t progressDone = 0;   // outlives the sink below
+        if (hooks.onProgress) {
+            uint64_t expect = 0;
+            if (const std::string* cl = head.Get("content-length")) {
+                if (!cl->empty() && cl->size() < 19 && !head.Get("content-encoding") && !head.Get("transfer-encoding")) {
+                    expect = 0;
+                    for (unsigned char c : *cl) { if (c < '0' || c > '9') { expect = 0; break; } expect = expect * 10 + (c - '0'); }
+                }
+            }
+            DataFn inner = sink;
+            sink = [&, inner, expect](const char* p, size_t n) {
+                if (!inner(p, n)) return false;
+                progressDone += n;
+                return hooks.onProgress(progressDone, expect);
+            };
+        }
+        if (!ReadBody(rd, head, method, bodyLim, sink, total, e, &msg)) return bad(e, msg);
         head.bodyBytes = total;
         res.ok = true; res.err = Err::None;
         res.response = std::move(head);

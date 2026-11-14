@@ -387,6 +387,129 @@ static void TestNativeHttp() {
     s.Stop();
 }
 
+
+// ---- gzip, Range / resume, progress, cancel, name resolution (loopback) ----------------------------------------
+static std::string StoredGzip(const std::string& d) {
+    std::string g("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03", 10);
+    g.push_back('\x01'); g.push_back(char(d.size() & 255)); g.push_back(char(d.size() >> 8));
+    g.push_back(char(~d.size() & 255)); g.push_back(char((~d.size() >> 8) & 255));
+    g += d;
+    uint32_t c = inflate_detail::Crc32(d), n = uint32_t(d.size());
+    for (int i = 0; i < 4; ++i) g.push_back(char(c >> (8 * i)));
+    for (int i = 0; i < 4; ++i) g.push_back(char(n >> (8 * i)));
+    return g;
+}
+
+static void TestDownloadFeatures() {
+    std::string content; for (int i = 0; i < 1000; ++i) content += char('a' + i % 26);
+    const std::string gz = StoredGzip("compressed hello");
+    Server s;
+    s.handler = [&](int c, const std::string& head, const std::string&) {
+        std::string path = PathOf(head);
+        size_t rp = head.find("Range: bytes=");
+        uint64_t from = rp == std::string::npos ? 0 : uint64_t(std::atoll(head.c_str() + rp + 13));
+        bool hasRange = rp != std::string::npos;
+        if (path == "/gz") {
+            bool asked = head.find("Accept-Encoding: gzip") != std::string::npos;
+            if (asked) SendAll(c, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + std::to_string(gz.size()) + "\r\n\r\n" + gz);
+            else SendAll(c, Ok("plain hello"));
+        } else if (path == "/gzbad") {
+            std::string b = gz; b[b.size() - 9] ^= 1;   // data byte flipped: CRC must catch it
+            SendAll(c, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + std::to_string(b.size()) + "\r\n\r\n" + b);
+        } else if (path == "/file") {
+            if (hasRange && from >= content.size()) SendAll(c, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */1000\r\nContent-Length: 0\r\n\r\n");
+            else if (hasRange) { std::string part = content.substr(size_t(from)); SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + std::to_string(from) + "-999/1000\r\nContent-Length: " + std::to_string(part.size()) + "\r\n\r\n" + part); }
+            else SendAll(c, Ok(content));
+        } else if (path == "/norange") SendAll(c, Ok(content));                       // ignores Range, sends 200
+        else if (path == "/wrongrange") SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-9/1000\r\nContent-Length: 10\r\n\r\n" + content.substr(0, 10));
+        else if (path == "/missing") SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\nnope");
+        else if (path == "/slowbody") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n"); std::string z(1000, 'z'); for (int i = 0; i < 100 && !s.stop; ++i) { SendAll(c, z); std::this_thread::sleep_for(std::chrono::milliseconds(20)); } }
+        else if (path == "/hang") { while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        else SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    NetOptions o = Opts();
+    // gzip through Perform
+    { o.acceptGzip = true;
+      FetchResult r = Perform("GET", base + "/gz", {}, "", o); CHECK(r.ok && r.response.body == "compressed hello");
+      CHECK(s.Request(s.Count() - 1).find("Accept-Encoding: gzip, deflate") != std::string::npos);
+      r = Perform("GET", base + "/gz", {}, "", o); CHECK(r.ok);
+      r = Perform("GET", base + "/gzbad", {}, "", o); CHECK_ERR(r, Err::BadResponse);
+      o.acceptGzip = false;
+      r = Perform("GET", base + "/gz", {}, "", o); CHECK(r.ok && r.response.body == "plain hello");   // never asked, never sent }
+      r = Perform("GET", base + "/gzbad", {}, "", o); CHECK_ERR(r, Err::Unsupported); }
+    // Range through Perform
+    { FetchResult r = Perform("GET", base + "/file", {"Range: bytes=990-"}, "", o);
+      CHECK(r.ok && r.partial && r.rangeStart == 990 && r.rangeTotal == 1000 && r.response.body == content.substr(990));
+      r = Perform("GET", base + "/wrongrange", {"Range: bytes=5-"}, "", o); CHECK_ERR(r, Err::BadResponse);
+      r = Perform("GET", base + "/file", {"Range: bytes=5000-"}, "", o); CHECK(r.ok && r.response.status == 416 && !r.partial); }
+    // RequestEx: resume, restart, 404 left alone, progress
+    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::setenv("NO_PROXY", "127.0.0.1", 1); ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::unsetenv("HTTPS_PROXY"); ::unsetenv("https_proxy");
+    char tmpl[] = "/tmp/okay_dl_XXXXXX"; int tfd = ::mkstemp(tmpl); ::close(tfd);
+    auto slurp = [&](const char* p) { std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), {}); };
+    { okay::http::RequestOptions ro;
+      std::vector<std::pair<uint64_t, uint64_t>> seen;
+      ro.progress = [&](uint64_t d, uint64_t t) { seen.push_back({d, t}); return true; };
+      okay::http::ExResult r = okay::http::RequestEx("GET", base + "/file", {}, "", "", tmpl, ro);   // fresh
+      CHECK(r.reached && r.status == 200 && !r.resumed && r.totalSize == 1000 && slurp(tmpl) == content);
+      CHECK(!seen.empty() && seen.back().first == 1000 && seen.back().second == 1000);
+      WriteFile(tmpl, content.substr(0, 400)); seen.clear(); ro.resumeFrom = 400;                   // resume
+      r = okay::http::RequestEx("GET", base + "/file", {}, "", "", tmpl, ro);
+      CHECK(r.reached && r.status == 206 && r.resumed && r.totalSize == 1000 && slurp(tmpl) == content);
+      CHECK(!seen.empty() && seen.back().first == 1000 && seen.back().second == 1000);              // counts from the offset
+      WriteFile(tmpl, "stale partial"); ro.resumeFrom = 13;                                          // server ignores Range: start over
+      r = okay::http::RequestEx("GET", base + "/norange", {}, "", "", tmpl, ro);
+      CHECK(r.reached && r.status == 200 && !r.resumed && slurp(tmpl) == content);
+      WriteFile(tmpl, content); ro.resumeFrom = 1000;                                                // already complete: 416, file untouched
+      r = okay::http::RequestEx("GET", base + "/file", {}, "", "", tmpl, ro);
+      CHECK(r.reached && r.status == 416 && !r.resumed && slurp(tmpl) == content);
+      WriteFile(tmpl, "keep me"); ro.resumeFrom = 0;
+      r = okay::http::RequestEx("GET", base + "/missing", {}, "", "", tmpl, ro);                    // 404 never overwrites the file
+      CHECK(r.reached && r.status == 404 && slurp(tmpl) == "keep me");
+      WriteFile(tmpl, "keep me"); ro.resumeFrom = 5;
+      r = okay::http::RequestEx("GET", base + "/wrongrange", {}, "", "", tmpl, ro);                 // wrong slice: refused, file untouched
+      CHECK(!r.reached && slurp(tmpl) == "keep me");
+      okay::http::RequestOptions mem; mem.acceptGzip = true;                                         // in-memory gzip
+      r = okay::http::RequestEx("GET", base + "/gz", {}, "", "", "", mem);
+      CHECK(r.reached && r.body == "compressed hello"); }
+    // cancel: from the progress callback, and while the server is silent (header never comes)
+    { okay::http::RequestOptions ro; int calls = 0;
+      ro.progress = [&](uint64_t, uint64_t) { return ++calls < 3; };
+      okay::http::ExResult r = okay::http::RequestEx("GET", base + "/slowbody", {}, "", "", tmpl, ro);
+      CHECK(!r.reached && r.error.find("aborted") != std::string::npos && calls == 3);
+      std::atomic<bool> stop{false};
+      ro = okay::http::RequestOptions(); ro.cancel = [&] { return stop.load(); }; ro.ioMs = 20000; ro.totalMs = 60000;
+      std::thread t([&] { std::this_thread::sleep_for(std::chrono::milliseconds(400)); stop = true; });
+      auto t0 = Clock::now();
+      r = okay::http::RequestEx("GET", base + "/hang", {}, "", "", "", ro);
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+      t.join();
+      CHECK(!r.reached && r.error.find("aborted") != std::string::npos && ms < 3000); }
+    // Request(..., timeoutMs): a stalled server cannot hold the caller (the account layer's join-time ticket call)
+    { auto t0 = Clock::now();
+      okay::http::Result r = okay::http::Request("GET", base + "/hang", {}, "", "", "", 600);
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
+      CHECK(!r.reached && r.error.find("timeout") == 0 && ms < 3000); }
+    // cancel before connecting at all
+    { okay::http::RequestOptions ro; ro.cancel = [] { return true; };
+      auto t0 = Clock::now();
+      okay::http::ExResult r = okay::http::RequestEx("GET", base + "/hang", {}, "", "", "", ro);
+      CHECK(!r.reached && std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count() < 2000); }
+    // name resolution: a name that does not exist fails quickly and cleanly; the resolve deadline is honoured
+    { NetOptions n = Opts(); n.resolveMs = 3000;
+      auto t0 = Clock::now();
+      FetchResult r = Perform("GET", "http://no-such-host.invalid/", {}, "", n);
+      CHECK(!r.ok && (r.err == Err::Connect || r.err == Err::Timeout));
+      CHECK(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count() < 8000);
+      n.cancel = [] { return true; };
+      r = Perform("GET", "http://no-such-host.invalid/", {}, "", n);
+      CHECK(!r.ok); }
+    ::unlink(tmpl); ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    s.Stop();
+}
+
 static void TestNoProxyList() {
     CHECK(HostBypassesProxy("localhost", "localhost,127.0.0.1"));
     CHECK(HostBypassesProxy("127.0.0.1", "localhost,127.0.0.1"));
@@ -723,6 +846,7 @@ int main(int argc, char** argv) {
     TestPlain();
     TestHostile();
     TestNativeHttp();
+    TestDownloadFeatures();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

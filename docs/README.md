@@ -76,6 +76,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [model_import.md](model_import.md): which reader handles which model format, and the options that switch to our own readers.
 - [model_corpus.md](model_corpus.md): real-file checks of our own model readers against the outside libraries, and the flip-readiness verdict.
 - [own_fbx_reader.md](own_fbx_reader.md), [own_3ds_reader.md](own_3ds_reader.md), [own_bvh_reader.md](own_bvh_reader.md): our own FBX, 3DS and BVH readers.
+- [own_lwo_reader.md](own_lwo_reader.md): our own LWO reader.
 - [own_dxf_reader.md](own_dxf_reader.md): our own DXF reader.
 - [own_x3d_reader.md](own_x3d_reader.md): our own X3D reader.
 - [own_amf_reader.md](own_amf_reader.md): our own AMF reader.

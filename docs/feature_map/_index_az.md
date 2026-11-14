@@ -2972,6 +2972,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - own FBX reader (3.6)
 - Own FBX reader (side by side, off by default) (3.6.10)
 - Own Linux backend (17.17.3)
+- Own LWO reader (side by side, off by default) (3.6.25)
 - Own STL and PLY readers, import seam (3.6.9)
 - Own Windows backend (17.17.4)
 - Own X3D reader (side by side, off by default) (3.6.23)

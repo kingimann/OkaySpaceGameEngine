@@ -26,6 +26,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | AMF | 11 | hand-made files: pyramids with materials, colours, volumes and constellations |
 | X3D | 4 | a keyboard (Extrusion), a sphere with text, a line set, a car model with 17 shapes |
 | DXF | 5 | 3DFACE meshes, polyface and polyline meshes in blocks, a line test |
+| LWO | 54 | LWO2 and LWOB: mapping modes, shaders, layers, concave and non-planar polygons, one empty file |
 
 ## Running it
 
@@ -119,7 +120,7 @@ Bugs the real files found, all fixed with a regression test (`tests/test_model_r
 
 ### 3MF, AMF, X3D, DXF and LWO (own readers vs Assimp)
 
-The batch-B readers were run on every file of their formats under `test/models` and `test/models-nonbsd` of the same Assimp v5.4.3 checkout and compared with Assimp built from those sources (`scripts/assimp_corpus_dump.cpp` with only the 3MF, AMF, X3D, DXF and LWO importers, `scripts/compare_model_corpus.py`; the rows are in the manifest). Assimp's test files for these formats are few and small: the only real-world evidence there is. Everything the files do not exercise is tested on synthetic fixtures built in memory and labelled as such in each reader's page.
+The batch-B readers were run on every file of their formats under `test/models` and `test/models-nonbsd` of the same Assimp v5.4.3 checkout and compared with Assimp built from those sources (`scripts/assimp_corpus_dump.cpp` with only the 3MF, AMF, X3D, DXF and LWO importers, `scripts/compare_model_corpus.py`; the rows are in the manifest). Assimp's test files for these formats are few and small: the only real-world evidence there is. Everything the files do not exercise is tested on synthetic fixtures built in memory and labelled as such in each reader's page. The standalone hostile test (`batchb_hostile`) was also run with 150,000 mutations per reader under `-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all` (`OKAY_BATCHB_FUZZ_ITERS=150000`): 924,301 checks, no failure; the engine-linked reader tests (`3mf_reader` ... `lwo_reader`) and `model_corpus` (all 265 manifest rows) were run without sanitizers.
 
 #### 3MF
 
@@ -136,6 +137,10 @@ One real file (`models/3MF/box.3mf`, a 10 x 20 x 30 millimetre box in a deflate-
 #### DXF
 
 5 files, all read by ours and by Assimp; 4 agree on everything compared, the fifth (`PinkEggFromLW.dxf`) has the same area and box and 48 fewer triangles in ours (zero-area pole triangles, dropped). Assimp turns every DXF Z-up to Y-up as `(x, y, z) -> (x, z, -y)`; ours does the same and the boxes are equal on all five. `docs/own_dxf_reader.md`.
+
+#### LWO
+
+54 files (LWO2, 5 LWOB, one empty). Ours reads 53, as Assimp does; both reject the empty one. 29 agree on everything compared, 25 differ: 16 only in `tex` (planar, cylindrical and spherical image maps, which Assimp turns into UVs and ours does not apply, named in the notes), `UglyVertexColors.lwo` in `tex` and 22 zero-area triangles, and 8 in triangle counts (concave, non-planar and self-intersecting polygons, zero-area triangles that ours drops, polygons with repeated indices). Bounding boxes equal Assimp's on all 53 files after the reader negates Z (LightWave is left-handed). `docs/own_lwo_reader.md`.
 
 ### Sanitizers and valgrind (engine-linked tests)
 
@@ -193,7 +198,7 @@ ufbx row:
 
 ### The formats that would be dropped
 
-Removing Assimp removes these importers, which `engine/CMakeLists.txt` enables in the Windows distribution build (`OKAY_USE_ASSIMP=ON`) and which no reader of ours covers: **`.blend`, `.x`, MD5 (`.md5mesh`), SMD, MilkShape (`.ms3d`), LightWave (`.lwo`, `.lws`), DXF, OFF, AC3D (`.ac`), B3D, 3MF, AMF, ASE, X3D, Ogre XML mesh, OpenGEX, Q3D (`.q3o`, `.q3s`), Q3BSP, `.irr` and `.irrmesh`, MD2, MD3, MDC, MDL, HMP, NFF, RAW, COB, CSM, Terragen, `.sib`, PMX, IQM, `.ndo`, XGL**. That is 36 importer switches.
+Removing Assimp removes these importers, which `engine/CMakeLists.txt` enables in the Windows distribution build (`OKAY_USE_ASSIMP=ON`) and which no reader of ours covers: **`.blend`, `.x`, MD5 (`.md5mesh`), SMD, MilkShape (`.ms3d`), LightWave scenes (`.lws`), OFF, AC3D (`.ac`), B3D, ASE, Ogre XML mesh, OpenGEX, Q3D (`.q3o`, `.q3s`), Q3BSP, `.irr` and `.irrmesh`, MD2, MD3, MDC, MDL, HMP, NFF, RAW, COB, CSM, Terragen, `.sib`, PMX, IQM, `.ndo`, XGL**. That is 31 importer switches: of the 36 the Windows build enables, the five readers of batch B (3MF, AMF, X3D, DXF and LWO objects, each off by default, `docs/own_3mf_reader.md` and siblings) now cover five (LightWave scenes are not covered; the readers of other batches are listed in their own pages).
 
 What changes for the formats we do read, in the Windows distribution: STL and PLY move from Assimp-first to ours (verified above: STL 8 of 8 agree, PLY 6 of 12 read with 2 more rejected by both and 4 not read by ours, all listed); `.dae`, `.3ds` and `.bvh` move from Assimp to ours (each opt-in today), and `.fbx` from ufbx to ours. glTF/GLB and OBJ are already ours in every build. Build options with Assimp off are unaffected; they never had these formats.
 

@@ -22,7 +22,8 @@ format at a time. The plan is in `docs/own_code_roadmap.md`.
 | `.amf` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadAmfFile`, sits beside it and is **off by default** (`OKAY_OWN_AMF`, same rules as `.3ds`; `docs/own_amf_reader.md`) | yes (one node per object or build item, transforms baked in) | without Assimp and without switching ours on, `.amf` fails with a message saying how to switch it on |
 | `.x3d` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadX3dFile`, sits beside it and is **off by default** (`OKAY_OWN_X3D`, same rules as `.3ds`; `docs/own_x3d_reader.md`) | yes (one node per shape, transforms baked in) | without Assimp and without switching ours on, `.x3d` fails with a message saying how to switch it on |
 | `.dxf` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadDxfFile`, sits beside it and is **off by default** (`OKAY_OWN_DXF`, same rules as `.3ds`; `docs/own_dxf_reader.md`) | yes (one node per layer, transforms baked in) | without Assimp and without switching ours on, `.dxf` fails with a message saying how to switch it on |
-| `.blend` `.x` `.md5mesh` `.smd` `.ms3d` `.lwo` `.off` `.ac` `.b3d` `.ase` `.md2` `.md3` `.mdl` and the rest of Assimp's list | Assimp, only when built with `-DOKAY_USE_ASSIMP=ON` | yes (hierarchy, skins, clips) | without Assimp these fail with `ok = false` |
+| `.lwo` | Assimp when built with `-DOKAY_USE_ASSIMP=ON`. Our own reader, `ReadLwoFile`, sits beside it and is **off by default** (`OKAY_OWN_LWO`, same rules as `.3ds`; `docs/own_lwo_reader.md`) | yes (one node per layer, transforms baked in) | without Assimp and without switching ours on, `.lwo` fails with a message saying how to switch it on |
+| `.blend` `.x` `.md5mesh` `.smd` `.ms3d` `.off` `.ac` `.b3d` `.ase` `.md2` `.md3` `.mdl` and the rest of Assimp's list | Assimp, only when built with `-DOKAY_USE_ASSIMP=ON` | yes (hierarchy, skins, clips) | without Assimp these fail with `ok = false` |
 
 `ImportableExtensions()` lists what the current build reads; the editor's file pickers use it.
 
@@ -57,6 +58,7 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh` h
 * **AMF** (`engine/src/Render/AmfReader.cpp`, off by default, `OKAY_OWN_AMF`): XML, optionally zip-compressed: objects, volumes, materials and colours (triangle, volume, object priority), constellations; Z-up root. Details, limits and what was checked against real files in `docs/own_amf_reader.md`.
 * **X3D** (`engine/src/Render/X3dReader.cpp`, off by default, `OKAY_OWN_X3D`): XML encoding: Transform / Group / Switch / LOD with DEF and USE, Shape with Material and ImageTexture, IndexedFaceSet (normals, UVs, crease angle), IndexedTriangleSet, TriangleSet, Box, Sphere, Cylinder, Cone, Extrusion; unread nodes named in the notes. Details, limits and what was checked against real files in `docs/own_x3d_reader.md`.
 * **DXF** (`engine/src/Render/DxfReader.cpp`, off by default, `OKAY_OWN_DXF`): ASCII DXF: 3DFACE, polyface and polygon-mesh POLYLINE, MESH, blocks and INSERT; one node per layer; lines, arcs, text and the rest counted by name in the notes. Details, limits and what was checked against real files in `docs/own_dxf_reader.md`.
+* **LWO** (`engine/src/Render/LwoReader.cpp`, off by default, `OKAY_OWN_LWO`): LWO2 and LWO1 (LWOB): layers, points, polygons, surfaces, per-point and per-corner UVs, the first UV image map; shaders, envelopes, projected maps and the rest named in the notes. Details, limits and what was checked against real files in `docs/own_lwo_reader.md`.
 * **What a reader did not read is said.** `ImportedModel::notes` lists it one line each, and `ImportModelData` logs every line as a warning. For Collada that covers: lines, line strips, geometry that is not a mesh, numbers written with a decimal comma (read, and said), vertex colours, UV sets after the first, morph (blend shape) controllers (the base mesh is imported), `<skew>` and `<lookat>`, animation channels whose target element or sid is not found, whose value count does not match, or whose keys are out of time order, interpolation other than LINEAR and STEP (read as linear), cameras and lights, malformed skins (the mesh is then imported unskinned), vertices with more than four weights, and skin joints that are not nodes of the scene.
 
 ## Tests
@@ -73,6 +75,8 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh` h
 
 `dxf_reader` (synthetic fixtures built in memory, hand-computed numbers, the seam) and the shared standalone `batchb_hostile` (hostile input and mutation fuzz of the 3MF / AMF / X3D / DXF / LWO readers, built on its own under sanitizers) test the DXF reader.
 
+`lwo_reader` (synthetic fixtures built in memory, hand-computed numbers, the seam) and the shared standalone `batchb_hostile` (hostile input and mutation fuzz of the 3MF / AMF / X3D / DXF / LWO readers, built on its own under sanitizers) test the LWO reader.
+
 `model_readers` (`tests/test_model_readers.cpp`, fixtures in `tests/data/models/`): every format and encoding, ascii equals binary, MTL fields, malformed input, a deterministic fuzz sweep (every truncation of every fixture plus mutations; run it under `-DOKAY_SANITIZE=address,undefined`), the backend switch, scene import of a two-material OBJ. In a build with Assimp it also reads the same files through both backends and compares part, vertex and triangle counts, the triangles themselves (positions, normals, UVs), the OBJ materials, and, for the glTF rig fixtures in `tests/assets/rigs`, Assimp's bone, skinned-mesh and clip counts against the glTF reader's.
 
 ## FBX limits (hostile files)
@@ -87,7 +91,7 @@ Cubic FBX keys store two slopes: the key's own outgoing (right) slope and the in
 
 ## Not covered yet (still Assimp-only)
 
-Blender (`.blend`), DirectX `.x`, MD2/MD3/MD5/MDL, SMD, MS3D, LWO, DXF, OFF, AC3D, B3D, 3MF, AMF, ASE, X3D and the rest of the Assimp list. FBX stays on ufbx unless `OKAY_OWN_FBX` is switched on. PLY triangle strips, PLY/STL vertex colours, STL colour attributes, and OBJ free-form curves and surfaces are not read.
+Blender (`.blend`), DirectX `.x`, MD2/MD3/MD5/MDL, SMD, MS3D, LightWave scenes (`.lws`), OFF, AC3D, B3D, ASE and the rest of the Assimp list (3MF, AMF, X3D, DXF and LWO objects have readers of ours, off by default, above). FBX stays on ufbx unless `OKAY_OWN_FBX` is switched on. PLY triangle strips, PLY/STL vertex colours, STL colour attributes, and OBJ free-form curves and surfaces are not read.
 
 ## Collada: what is proven and what is not
 

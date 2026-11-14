@@ -6,6 +6,7 @@
 #include "okay/Render/AmfReader.hpp"
 #include "okay/Render/X3dReader.hpp"
 #include "okay/Render/DxfReader.hpp"
+#include "okay/Render/LwoReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
 #include "okay/Core/ImportSidecar.hpp"
@@ -93,7 +94,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".3mf", ".amf", ".x3d", ".dxf"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".3mf", ".amf", ".x3d", ".dxf", ".lwo"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -421,6 +422,11 @@ constexpr bool kOwnDxfDefault = true;
 #else
 constexpr bool kOwnDxfDefault = false;
 #endif
+#ifdef OKAY_OWN_LWO_DEFAULT
+constexpr bool kOwnLwoDefault = true;
+#else
+constexpr bool kOwnLwoDefault = false;
+#endif
 struct BatchBFormat { const char* ext; const char* name; const char* env; bool dflt; };
 constexpr int kBatchBFirstSlot = 11;
 const BatchBFormat kBatchB[] = {
@@ -428,6 +434,7 @@ const BatchBFormat kBatchB[] = {
     {".amf", "AMF", "OKAY_OWN_AMF", kOwnAmfDefault},   // slot 12
     {".x3d", "X3D", "OKAY_OWN_X3D", kOwnX3dDefault},   // slot 13
     {".dxf", "DXF", "OKAY_OWN_DXF", kOwnDxfDefault},   // slot 14
+    {".lwo", "LWO", "OKAY_OWN_LWO", kOwnLwoDefault},   // slot 15
 };
 constexpr int kBatchBCount = (int)(sizeof(kBatchB) / sizeof(kBatchB[0]));
 bool ReadBatchBFile(int slot, const std::string& path, ImportedModel& out, std::string* err, bool flatten) {
@@ -436,6 +443,7 @@ bool ReadBatchBFile(int slot, const std::string& path, ImportedModel& out, std::
     case 1: return ReadAmfFile(path, out, err, flatten);
     case 2: return ReadX3dFile(path, out, err, flatten);
     case 3: return ReadDxfFile(path, out, err, flatten);
+    case 4: return ReadLwoFile(path, out, err);
     default: return false;
     }
 }

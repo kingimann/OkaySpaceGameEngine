@@ -11,6 +11,7 @@
 #include "okay/Render/AmfReader.hpp"
 #include "okay/Render/X3dReader.hpp"
 #include "okay/Render/DxfReader.hpp"
+#include "okay/Render/LwoReader.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -318,11 +319,84 @@ static void HostileDxf() {
 }
 
 
+// ======================= LWO =======================
+static bool ReadLwo(const std::string& b, ImportedModel& m, std::string& e) { return ReadLwoBuffer(b, "", m, &e); }
+static void W16(std::string& s, unsigned v) { s.push_back((char)(v >> 8)); s.push_back((char)v); }
+static void W32(std::string& s, std::uint32_t v) { for (int i = 3; i >= 0; --i) s.push_back((char)(v >> (8 * i))); }
+static void WF(std::string& s, float f) { std::uint32_t v; std::memcpy(&v, &f, 4); W32(s, v); }
+static void WS0(std::string& s, const std::string& x) { s += x; s.push_back(0); if ((x.size() + 1) & 1) s.push_back(0); }
+static std::string LC(const char* id, const std::string& body) { std::string s = id; W32(s, (std::uint32_t)body.size()); s += body; if (body.size() & 1) s.push_back(0); return s; }
+static std::string LS(const char* id, const std::string& body) { std::string s = id; W16(s, (unsigned)body.size()); s += body; if (body.size() & 1) s.push_back(0); return s; }
+static std::string LForm(const char* type, const std::string& chunks) { std::string s = "FORM"; W32(s, (std::uint32_t)(chunks.size() + 4)); s += type; s += chunks; return s; }
+static const std::string kLwo2 = [] {
+    std::string layr; W16(layr, 0); W16(layr, 0); WF(layr, 0); WF(layr, 0); WF(layr, 0); WS0(layr, "L");
+    std::string pn; const float P[4][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; for (auto& p : P) for (float f : p) WF(pn, f);
+    std::string pols = "FACE"; const int F[4][3] = {{0, 2, 1}, {0, 1, 3}, {1, 2, 3}, {2, 0, 3}}; for (auto& f : F) { W16(pols, 3); for (int i : f) W16(pols, (unsigned)i); }
+    std::string ptag = "SURF"; for (int i = 0; i < 4; ++i) { W16(ptag, (unsigned)i); W16(ptag, (unsigned)(i % 2)); }
+    std::string tags; WS0(tags, "A"); WS0(tags, "B");
+    std::string vm = "TXUV"; W16(vm, 2); WS0(vm, "uv"); for (int i = 0; i < 4; ++i) { W16(vm, (unsigned)i); WF(vm, 0.5f * i); WF(vm, 0.25f * i); }
+    std::string vd = "TXUV"; W16(vd, 2); WS0(vd, "uv"); W16(vd, 1); W16(vd, 0); WF(vd, 0.9f); WF(vd, 0.1f);
+    std::string clip; W32(clip, 1); { std::string st; WS0(st, "a.tga"); clip += LS("STIL", st); }
+    std::string surf; WS0(surf, "A"); WS0(surf, "");
+    { std::string c; WF(c, 1); WF(c, 0.5f); WF(c, 0); W16(c, 0); surf += LS("COLR", c); std::string g; WF(g, 0.3f); W16(g, 0); surf += LS("GLOS", g); std::string d; WF(d, 0.8f); W16(d, 0); surf += LS("DIFF", d); std::string sp; WF(sp, 0.7f); W16(sp, 0); surf += LS("SPEC", sp);
+      std::string sm; WF(sm, 1.0f); surf += LS("SMAN", sm);
+      std::string head; WS0(head, "\x80"); head += LS("CHAN", "COLR"); std::string blok = LS("IMAP", head) + LS("PROJ", [] { std::string q; W16(q, 5); return q; }()) + LS("IMAG", [] { std::string q; W16(q, 1); return q; }()) + LS("VMAP", [] { std::string q; WS0(q, "uv"); return q; }()); surf += LS("BLOK", blok); }
+    std::string surfB; WS0(surfB, "B"); WS0(surfB, "");
+    return LForm("LWO2", LC("TAGS", tags) + LC("LAYR", layr) + LC("PNTS", pn) + LC("BBOX", std::string(24, '\0')) + LC("VMAP", vm) + LC("VMAD", vd) + LC("POLS", pols) + LC("PTAG", ptag) + LC("CLIP", clip) + LC("SURF", surf) + LC("SURF", surfB));
+}();
+static const std::string kLwob = [] {
+    std::string pn; const float P[4][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; for (auto& p : P) for (float f : p) WF(pn, f);
+    std::string pols; const int F[4][3] = {{0, 2, 1}, {0, 1, 3}, {1, 2, 3}, {2, 0, 3}}; for (auto& f : F) { W16(pols, 3); for (int i : f) W16(pols, (unsigned)i); W16(pols, 1); }
+    std::string srfs; WS0(srfs, "S");
+    std::string surf; WS0(surf, "S"); surf += LS("COLR", std::string{(char)200, (char)100, (char)50, 0}); { std::string d; W16(d, 256); surf += LS("DIFF", d); std::string g; W16(g, 30); surf += LS("GLOS", g); std::string sm; WF(sm, 0.5f); surf += LS("SMAN", sm); }
+    return LForm("LWOB", LC("PNTS", pn) + LC("SRFS", srfs) + LC("POLS", pols) + LC("SURF", surf));
+}();
+
+static void HostileLwo() {
+    RUN_SUITE("lwo hostile");
+    for (const std::string* f : {&kLwo2, &kLwob}) {
+        { ImportedModel m; std::string e; CHECK(ReadLwo(*f, m, e) && m.parts.size() >= 1); }
+        for (std::size_t n = 0; n < f->size(); ++n) Try(ReadLwo, f->substr(0, n));
+    }
+    auto lwo = [&](const std::string& s) { ImportedModel m; std::string e; const bool ok = ReadLwo(s, m, e); if (ok) { CHECK(fx::Sane(m)); } else { CHECK(!e.empty() && m.parts.empty()); } return ok; };
+    // FORM lengths below the 4 bytes of the type: the chunk loop must not start past its end (found by the long mutation fuzz)
+    for (unsigned n : {0u, 1u, 3u, 4u, 5u}) { std::string f = kLwo2; f[4] = f[5] = f[6] = 0; f[7] = (char)n; CHECK(!lwo(f)); f = kLwob; f[4] = f[5] = f[6] = 0; f[7] = (char)n; CHECK(!lwo(f)); }
+    // lengths: FORM longer than the file, chunk length 0xFFFFFFFF, chunk length odd and past the end
+    { std::string f = kLwo2; f[4] = (char)0xFF; f[5] = (char)0xFF; f[6] = (char)0xFF; f[7] = (char)0xFF; lwo(f); }
+    { std::string f = kLwo2; for (std::size_t i = 12; i + 8 < f.size(); i += 4) if (f.compare(i, 4, "PNTS") == 0) { f[i + 4] = (char)0xFF; f[i + 5] = (char)0xFF; f[i + 6] = (char)0xFF; f[i + 7] = (char)0xFF; } lwo(f); }
+    // a polygon claiming 1023 corners with no room for them, many polygons, huge VX values
+    { std::string layr; W16(layr, 0); W16(layr, 0); WF(layr, 0); WF(layr, 0); WF(layr, 0); WS0(layr, "L");
+      std::string pn; for (int i = 0; i < 3; ++i) { WF(pn, (float)i); WF(pn, (float)(i * i)); WF(pn, 0); }
+      std::string p1 = "FACE"; W16(p1, 1023); W16(p1, 1); lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p1)));
+      std::string p2 = "FACE"; for (int i = 0; i < 200000; ++i) { W16(p2, 3); W16(p2, 0); W16(p2, 1); W16(p2, 2); }
+      const double t0 = Now(); CHECK(lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2)))); CHECK(Now() - t0 < 20.0);
+      std::string p3 = "FACE"; W16(p3, 3); p3 += std::string("\xFF\xFF\xFF\xFF", 4); W16(p3, 1); W16(p3, 2); lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p3)));
+      std::string pt = "SURF"; for (int i = 0; i < 100000; ++i) { W16(pt, (unsigned)(i % 3)); W16(pt, 0xFFFF); } lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2) + LC("PTAG", pt)));
+      // 10001 layers, 100001 surfaces, a million tags
+      std::string ls; for (int i = 0; i < 10001; ++i) ls += LC("LAYR", layr); CHECK(!lwo(LForm("LWO2", ls)));
+      std::string ss; for (int i = 0; i < 100001; ++i) { std::string sf; WS0(sf, "S" + std::to_string(i)); WS0(sf, ""); ss += LC("SURF", sf); } CHECK(!lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2) + ss)));
+      std::string tg; for (int i = 0; i < 1000001; ++i) tg += std::string("a\0", 2); lwo(LForm("LWO2", LC("TAGS", tg) + LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2)));
+      // strings without a terminator, UV maps with absurd counts and indices, surface sub-chunks that overrun
+      lwo(LForm("LWO2", LC("TAGS", std::string(50000, 'x'))));
+      std::string vm = "TXUV"; W16(vm, 2); WS0(vm, "uv"); for (int i = 0; i < 100000; ++i) { W16(vm, (unsigned)(i & 0xFFFF)); WF(vm, std::nanf("")); WF(vm, 1e30f); }
+      lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("VMAP", vm) + LC("POLS", p2)));
+      std::string sf; WS0(sf, "S"); WS0(sf, ""); sf += "COLR"; W16(sf, 60000); sf += "xxxx"; lwo(LForm("LWO2", LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2) + LC("SURF", sf)));
+      std::string sg; WS0(sg, "S"); WS0(sg, ""); { std::string c; WF(c, std::nanf("")); WF(c, 1e30f); WF(c, -1e30f); W16(c, 0); sg += LS("COLR", c); std::string g; WF(g, 1e30f); W16(g, 0); sg += LS("GLOS", g); std::string sp; WF(sp, 1.0f); sg += LS("SPEC", sp); std::string sm; WF(sm, std::nanf("")); sg += LS("SMAN", sm); std::string tr; WF(tr, -5.0f); sg += LS("TRAN", tr); }
+      std::string tg2; WS0(tg2, "S"); std::string pt2 = "SURF"; for (int i = 0; i < 200000; ++i) { W16(pt2, (unsigned)(i & 0xFFFF)); W16(pt2, 0); }
+      lwo(LForm("LWO2", LC("TAGS", tg2) + LC("LAYR", layr) + LC("PNTS", pn) + LC("POLS", p2) + LC("PTAG", pt2) + LC("SURF", sg)));
+      // LWOB with negative surface, absurd detail counts
+      std::string pb; W16(pb, 3); W16(pb, 0); W16(pb, 1); W16(pb, 2); W16(pb, 0xFFFF); W16(pb, 60000); W16(pb, 3); lwo(LForm("LWOB", LC("PNTS", pn) + LC("POLS", pb)));
+    }
+    RUN_SUITE("lwo fuzz");
+    const long n = Iters();
+    for (long i = 0; i < n; ++i) { Try(ReadLwo, Mutate(kLwo2)); if (i % 2) Try(ReadLwo, Mutate(kLwob)); }
+}
 
 int main() {
     Hostile3mf();
     HostileAmf();
     HostileX3d();
     HostileDxf();
+    HostileLwo();
     TEST_MAIN_RESULT();
 }

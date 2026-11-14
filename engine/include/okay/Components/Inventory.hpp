@@ -4,6 +4,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include <cmath>
 #include <functional>
 #include <map>
 #include <string>
@@ -27,6 +28,10 @@ public:
     int capacity = 20;            // max distinct stacks
     int maxStack = 0;             // container-wide cap per stack (0 = none; the item definition's stack size still applies)
     float weightLimit = 0.0f;     // carry limit from the item definitions' weights (0 = none)
+    /// When set (and weightLimit > 0), adds, crafting results and moves that would take the
+    /// carried weight over the limit are refused / trimmed instead of only slowing the
+    /// character. Off by default, so existing bags behave as before.
+    bool  enforceWeight = false;
     bool  slowWhenOverWeight = false;   // controllers move at overWeightSpeed while over the limit
     float overWeightSpeed = 0.5f;
     /// Carry the contents into the next scene loaded with load_scene: the object with
@@ -80,9 +85,24 @@ public:
         return inv ? inv->SpeedFactor() : 1.0f;
     }
 
+    /// How many of `n` items the enforced weight limit still lets in (n when not enforced).
+    int WeightFit(const std::string& item, int n) const {
+        if (n <= 0) return 0;
+        if (!enforceWeight || weightLimit <= 0.0f) return n;
+        const ItemDefinition* d = ItemDatabase::Get().Find(item);
+        const float each = d ? d->weight : 0.0f;
+        if (!(each > 0.0f)) return n;
+        const float room = weightLimit + 1e-4f - TotalWeight();
+        if (!(room > 0.0f)) return 0;
+        const float fit = std::floor(room / each);
+        return fit < (float)n ? (int)fit : n;
+    }
+
     /// How many of `n` items would fit right now (a dry run; nothing changes).
     int CanAdd(const std::string& item, int n) const {
         if (n <= 0 || item.empty()) return 0;
+        n = WeightFit(item, n);
+        if (n <= 0) return 0;
         const long long cap = StackCap(item);
         long long need = n, fit = 0;
         for (const auto& s : slots) {                 // room in existing plain stacks
@@ -215,6 +235,8 @@ private:
     /// Add up to `n` without notifying; returns the leftover that didn't fit.
     int AddRaw(const std::string& item, int n) {
         if (n <= 0 || item.empty()) return n < 0 ? 0 : n;
+        const int blocked = n - WeightFit(item, n);   // over the enforced weight limit: stays out
+        n -= blocked;
         const long long cap = StackCap(item);
         for (auto& s : slots) {                     // 1) top up existing plain stacks
             if (n <= 0) break;
@@ -233,7 +255,7 @@ private:
             }
             dst->item = item; dst->count = put; dst->data = ItemInstanceData{}; n -= put;
         }
-        return n;
+        return n + blocked;
     }
     /// Remove up to `n` without notifying; returns how many were still missing.
     int RemoveRaw(const std::string& item, int n) {

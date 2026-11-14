@@ -310,6 +310,12 @@ target_compile_features(okay_engine PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
+# Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
+    target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
 # Networking needs the Windows sockets library when targeting Windows.
 if(WIN32)
     target_link_libraries(okay_engine PUBLIC ws2_32 winhttp)   # winhttp: NativeHttp (backend calls without spawning curl)
@@ -470,6 +476,13 @@ if(OKAY_USE_ASSIMP)
         GIT_TAG        v5.4.3
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(assimp)
+    # MinGW-w64 13 (the Ubuntu 26.04 runner) defaults __MSVCRT_VERSION__ to 0x600. Assimp's
+    # DefaultIOStream.cpp then takes its old-CRT branch and calls _fstat32, which the 64-bit msvcrt
+    # import library does not export (link error "undefined reference to __imp__fstat32"). Older
+    # MinGW headers defaulted to 0x700, which picks _fstat64. Say 0x700 for Assimp only.
+    if(MINGW AND TARGET assimp)
+        target_compile_definitions(assimp PRIVATE __MSVCRT_VERSION__=0x700)
+    endif()
     target_link_libraries(okay_engine PUBLIC assimp)
     target_compile_definitions(okay_engine PUBLIC OKAY_HAVE_ASSIMP)
     target_sources(okay_engine PRIVATE src/Render/ModelImportAssimp.cpp)   # the only file that includes Assimp

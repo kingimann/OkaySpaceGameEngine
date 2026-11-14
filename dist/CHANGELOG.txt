@@ -1,5 +1,31 @@
 OkaySpace Game Engine — Changelog
 
+v2.869.0
+  Anti-cheat
+  - A server-side detection engine can watch for speed hacks, flying,
+    no-clip, aim bots, rapid fire, item duplication and message floods. It
+    is off until a game turns it on, and it has an observe mode that only
+    records. Existing games are not affected.
+
+  Importing models
+  - Concave faces in OBJ and PLY files are triangulated properly instead of
+    being fanned, which fixed warped surfaces.
+  - PLY files with a free-text header line load. glTF files with strips,
+    fans or a bad index load what they can, and a glTF with no usable mesh
+    now says so instead of importing an empty model.
+  - On Windows, model files in folders with non-English names load. Files
+    with decimal commas in a different language setting no longer break.
+  - FBX files from 3ds Max keep their PBR material values.
+
+  Launcher
+  - Removed a setting that did nothing. The offline What's New page no
+    longer shows an outdated list.
+
+  Behind the scenes (off by default, nothing changes for players)
+  - OkayUI, our own interface toolkit, gained window stacking, colour
+    widgets, tables that skip off-screen rows, plots and drawing backends.
+    The editor and launcher still use Dear ImGui.
+
 v2.868.0
   Accounts and anti-cheat
   - Joining a server that needs a session ticket now asks the account

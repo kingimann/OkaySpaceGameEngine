@@ -24,7 +24,7 @@ No open PR touches this area.
 - **API:** `Inventory`, `InventoryUI`, `GridInventory`, `ChestInventory`, `Equipment`, `InventoryOps::Move`, `InventoryPersistence::SaveObject`, `FindInventoryPlayer`, script `inv_add`, `inv_remove`, `inv_count`, `inv_has`, `inv_move`, `equip`, `on_item_added`, `on_inventory_full`, visual-script inventory nodes
 - **Editor:** Add Component > RPG / Turn-Based (Inventory, Equipment, Chest / Container); Inventory UI and Grid Inventory come from the GameObject > UI inventory templates; inspectors with item name pickers backed by the Item Database
 - **Docs:** `docs/survival_kit.md` (items feed survival stats only); no inventory doc
-- **Tests:** `inventory_core`, `inventory_wiring`, `inventory_ops`, `inventory_ui`, `grid_inventory`, `grid_inventory_fixes`, `inventory_equipment`, `inventory_holding`, `inventory_script`, `inventory_persist_craft`, `vs_inventory`
+- **Tests:** `inventory_core`, `inventory_wiring`, `inventory_ops`, `inventory_ui`, `grid_inventory`, `grid_inventory_fixes`, `inventory_equipment`, `inventory_holding`, `inventory_script`, `inventory_persist_craft`, `vs_inventory`, `item_presentation`
 - **Status:** Works - Inventory.hpp, InventoryOps::Move (checks first, leaves containers unchanged on rejection) and Equipment::EquipFrom (rolls the bag back when there is no room) read; correctness (no dupes, no item loss, stack caps) and wiring covered by the tests above
 - **Open:** ROADMAP "Unturned-style inventory improvements" and inventory plan items 6-9 are listed open there (gameplay features, scripting, UI polish, networking) although parts exist (see 11.8); no doc for the inventory system; the old `Inventory` slot model and `GridInventory` are two separate data models
 - **Related:** 11.2, 11.3, 11.8, 5.9, 12.2, 8.5, 1.7
@@ -85,7 +85,7 @@ No open PR touches this area.
 - **API:** `SurvivalStats`, `HealthStat`, `HungerStat`, `StaminaStat`, `StatusEffectStat`, `CarryWeightStat`, `SurvivalSave`, `SurvivalZone`, `Consumables`, `MoveSpeedScale`, `DeathLocksInput`, messages `died`, `starving`, `dehydrated`, script `Stats` and `SurvivalStats` access
 - **Editor:** Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On Click (native UI actions)
 - **Docs:** `docs/survival_kit.md`
-- **Tests:** `survival`
+- **Tests:** `survival`, `death_lock`
 - **Status:** Works - SurvivalComponents.hpp (HealthStat read in detail), SurvivalSystems.hpp and the docs read; drain, damage, armor, death and save round trip covered by the 728-line `survival` test
 - **Open:** three separate health models exist: HealthStat, SurvivalStats' own health and the older RPG `Stats` (11.9) plus `NPCController`'s own `health` (9.5) (possible duplication, not unified)
 - **Related:** 11.1, 11.7, 9.5, 6.6, 12.2, 5.8

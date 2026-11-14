@@ -2611,6 +2611,27 @@ endif()
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Safety nets for library code that previously had no test naming it.
+add_executable(test_lightmap test_lightmap.cpp)
+target_link_libraries(test_lightmap PRIVATE okay::engine)
+add_test(NAME lightmap COMMAND test_lightmap)
+
+add_executable(test_ui_touch_scroll test_ui_touch_scroll.cpp)
+target_link_libraries(test_ui_touch_scroll PRIVATE okay::engine)
+add_test(NAME ui_touch_scroll COMMAND test_ui_touch_scroll)
+
+add_executable(test_item_presentation test_item_presentation.cpp)
+target_link_libraries(test_item_presentation PRIVATE okay::engine)
+add_test(NAME item_presentation COMMAND test_item_presentation)
+
+add_executable(test_loading_screen_layout test_loading_screen_layout.cpp)
+target_link_libraries(test_loading_screen_layout PRIVATE okay::engine)
+add_test(NAME loading_screen_layout COMMAND test_loading_screen_layout)
+
+add_executable(test_death_lock test_death_lock.cpp)
+target_link_libraries(test_death_lock PRIVATE okay::engine)
+add_test(NAME death_lock COMMAND test_death_lock)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)

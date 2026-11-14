@@ -141,6 +141,7 @@ Nothing user-visible, nothing default.
 | UI frame rotation and scale | John | `john/ui-frame-transform` |
 | UI focus ring for keyboard and gamepad | John | `john/ui-focus-visuals` |
 | Item, loot-table and recipe editors | John | `john/item-loot-recipe-editors` |
+| Safety-net tests for lightmap bake, touch scroll, item tooltips, loading layout, death lock and gamepad feed; pause menu pushes an input context | John | `john/untested-features-tests` |
 
 ## Free (unclaimed, safe small tasks)
 

@@ -319,13 +319,13 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
     }
 
     // ---- skeleton: every node with a BONE chunk is a bone; bind pose = inverse of its rest world matrix ----
+    // The engine skins a vertex as jointWorld * inverseBind * v, so inverseBind maps the mesh's own coordinates to the joint's:
+    // inverse(jointWorld) * meshNodeWorld (the mesh node's world matrix is the identity in files that follow Blitz3D's rules).
     std::vector<int> boneOfNode(nodes.size(), -1);
-    std::vector<ImportedBone> boneList;
+    std::vector<ImportedBone> boneList;   // inverseBind here is inverse(jointWorld); each part multiplies in its mesh node's world matrix
     for (std::size_t i = 0; i < nodes.size(); ++i)
         if (hasBone[i]) { boneOfNode[i] = (int)boneList.size(); ImportedBone ib; ib.name = nodeName[i]; ib.inverseBind = world[i].Inverse(); boneList.push_back(ib); }
     int unweighted = 0;
-    bool needRoot = false;
-    int rootBone = -1;
 
     // ---- parts: one per TRIS chunk ----
     std::size_t outVerts = 0;
@@ -339,7 +339,7 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
         if (skinnedMesh) for (std::size_t i = 0; i < m.nv && !anyWeight; ++i) if (verts[m.v0 + i].bone[0] >= 0) anyWeight = true;
         const bool skinned = skinnedMesh && anyWeight;
         const Mat4& wm = world[(std::size_t)m.node];
-        const Mat4 wInv = wm.Inverse();
+        bool needRoot = false;
         for (std::size_t i = 0; i + 2 < t.idx.size(); i += 3) {
             const std::uint32_t a = t.idx[i], bq = t.idx[i + 1], cc = t.idx[i + 2];
             if (a >= m.nv || bq >= m.nv || cc >= m.nv) { ++badTris; continue; }
@@ -349,13 +349,8 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
                     if (++outVerts > kMaxVerts) return Fail(err, "too many output vertices");
                     const Vtx& v = verts[m.v0 + k];
                     remap[k] = (int)part.mesh.vertices.size();
-                    Vec3 p = v.p, n = v.n;
-                    if (skinned) {   // skinned vertices are placed in model space at the rest pose: the mesh's own node transform is baked in
-                        p = wm.MultiplyPoint(p);
-                        n = Vec3{wInv.at(0, 0) * n.x + wInv.at(0, 1) * n.y + wInv.at(0, 2) * n.z, wInv.at(1, 0) * n.x + wInv.at(1, 1) * n.y + wInv.at(1, 2) * n.z, wInv.at(2, 0) * n.x + wInv.at(2, 1) * n.y + wInv.at(2, 2) * n.z};
-                    }
-                    part.mesh.vertices.push_back(p);
-                    if (m.haveN) part.mesh.normals.push_back(n);
+                    part.mesh.vertices.push_back(v.p);
+                    if (m.haveN) part.mesh.normals.push_back(v.n);
                     if (m.haveUv) part.mesh.uvs.push_back(v.uv);
                     if (skinned) {
                         std::array<int, 4> ji{0, 0, 0, 0};
@@ -363,7 +358,7 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
                         int cnt = 0; float sum = 0;
                         for (int q = 0; q < 4; ++q) if (v.bone[q] >= 0 && v.w[q] > 0 && boneOfNode[(std::size_t)v.bone[q]] >= 0) { ji[(std::size_t)cnt] = boneOfNode[(std::size_t)v.bone[q]]; jw[(std::size_t)cnt] = v.w[q]; sum += v.w[q]; ++cnt; }
                         if (cnt == 0 || !(sum > 0)) {   // no weight: stays where it is, tied to the root node
-                            ++unweighted; needRoot = true; ji = {-2, 0, 0, 0}; jw = {1, 0, 0, 0};
+                            ++unweighted; ji = {-2, 0, 0, 0}; jw = {1, 0, 0, 0}; needRoot = true;
                         } else for (float& w : jw) w /= sum;
                         part.jointIdx.push_back(ji);
                         part.jointWt.push_back(jw);
@@ -380,24 +375,24 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
         } else part.mesh.ComputeSmoothNormals();
         if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
         part.mesh.name = nodeName[(std::size_t)m.node];
-        part.node = skinned ? shift : m.node + shift;
+        part.node = m.node + shift;
         const int brush = t.brush >= 0 ? t.brush : m.brush;
         if (brush >= 0 && (std::size_t)brush < out.materials.size()) part.material = brush;
         else if (brush >= 0) ++badBrush;
-        if (skinned) ++skinnedParts;
+        if (skinned) {
+            ++skinnedParts;
+            part.bones = boneList;
+            for (ImportedBone& ib : part.bones) ib.inverseBind = ib.inverseBind * wm;
+            if (needRoot) {   // vertices without a weight follow the root node
+                const int rootBone = (int)part.bones.size();
+                ImportedBone rb; rb.name = out.nodes[0].name; rb.inverseBind = (synthRoot ? Mat4::Identity() : world[0].Inverse()) * wm;
+                part.bones.push_back(rb);
+                for (auto& ji : part.jointIdx) for (int& x : ji) if (x == -2) x = rootBone;
+            }
+        }
         out.parts.push_back(std::move(part));
     }
     if (out.parts.empty()) return Fail(err, "the file has no triangles");
-    if (needRoot) {   // a skinned part has vertices without a weight: they follow the root node
-        rootBone = (int)boneList.size();
-        ImportedBone rb; rb.name = out.nodes[0].name; rb.inverseBind = (synthRoot ? Mat4::Identity() : world[0].Inverse());
-        boneList.push_back(rb);
-    }
-    for (ImportedPart& p : out.parts) {
-        if (p.jointIdx.empty()) continue;
-        for (auto& ji : p.jointIdx) for (int& x : ji) if (x == -2) x = rootBone;
-        p.bones = boneList;
-    }
 
     // ---- animation: times in frames at the ANIM chunk's rate ----
     if (!keys.empty()) {
@@ -431,7 +426,6 @@ static bool ReadB3dImpl(const std::string& bytes, const std::string& baseDir, Im
     note("Blitz3D is left-handed: Z was mirrored and the winding reversed to make the model right-handed");
     if (version != 1) note("file version " + std::to_string(version) + " (1 is the version the notes describe): read the same way");
     if (synthRoot) note(std::to_string(topNodes) + " top-level nodes: they were put under a new root node");
-    if (skinnedParts) note("skinned vertices are placed in model space at the rest pose (the mesh's own node transform is baked in)");
     if (unweighted) note(std::to_string(unweighted) + " vertex(es) of skinned meshes have no weight and follow the root node");
     if (droppedWeights) note(std::to_string(droppedWeights) + " bone weight(s) beyond four per vertex: the four strongest were kept");
     if (badBoneRefs) note(std::to_string(badBoneRefs) + " bone weight(s) naming a vertex that does not exist or a weight that is not finite skipped");

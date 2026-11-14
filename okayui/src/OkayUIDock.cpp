@@ -117,7 +117,7 @@ DockDropInfo EvalDrop(Ctx& c, Vec2 m) {
 
 void DrawGuides(Ctx& c, const DockDropInfo& d) {
     const DrawList& fg = GetForegroundDrawList();
-    const Color32 acc = GetColorU32(Col_Accent), accSoft = ColorMulAlpha(acc, 0.30f), border = GetColorU32(Col_Border), panel = GetColorU32(Col_Panel);
+    const Color32 acc = GetColorU32(Col_Accent), accSoft = GetColorU32(Col_DockingPreview), border = GetColorU32(Col_Border), panel = GetColorU32(Col_Panel);
     fg.AddRectFilled(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), accSoft);
     fg.AddRect(V(d.preview.x, d.preview.y), V(d.preview.x + d.preview.w, d.preview.y + d.preview.h), acc, 0.0f, 2.0f);
     // the five guide boxes over the leaf under the pointer
@@ -263,12 +263,12 @@ void DockSpace(Rect area) {
 
     // ---- draw ----
     const DrawList& dl = GetWindowDrawList();
-    const Color32 panel = GetColorU32(Col_Panel), track = GetColorU32(Col_Track), border = GetColorU32(Col_Border), acc = GetColorU32(Col_Accent);
+    const Color32 panel = GetColorU32(Col_Panel), track = GetColorU32(Col_Track), emptyBg = GetColorU32(Col_DockingEmptyBg), border = GetColorU32(Col_Border), acc = GetColorU32(Col_Accent);
     const Color32 dim = GetColorU32(Col_Text, 0.55f), txt = GetColorU32(Col_Text);
     for (const DockLayout::Node& n : c.layout.Nodes()) {
         if (n.IsSplit()) continue;
         const Rect& r = n.rect;
-        dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), panel);
+        dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), n.tabs.empty() ? emptyBg : panel);
         dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + std::min(c.tabH, r.h)), track);
         dl.AddRect(V(r.x, r.y), V(r.x + r.w, r.y + r.h), border);
         if (n.tabs.empty()) {
@@ -335,7 +335,7 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
         const Rect r = c.layout.ContentRect(node);
         SetNextWindowPos(V(r.x, r.y), Cond_Always);
         SetNextWindowSize(V(std::max(1.0f, r.w), std::max(1.0f, r.h)), Cond_Always);
-        Begin(title, nullptr, flags | Window_NoMove | Window_NoResize | Window_NoTitleBar);
+        Begin(title, nullptr, flags | Window_NoMove | Window_NoResize | Window_NoTitleBar | Window_NoBringToFront);   // docked content sits below every floating window
         c.began = true;
         PushClipRect(r.x, r.y, std::max(1.0f, r.w), std::max(1.0f, r.h));
         c.clipped = true;
@@ -358,10 +358,11 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     c.began = true;
     const Vec2 wp = GetWindowPos(), ws = GetWindowSize();
     const float th = GetFrameHeight();
-    // a press on the title strip (between the collapse caret and the close button) starts a drag that can dock
+    // a press on the title strip (between the collapse caret and the close button, and not through a window in front) starts a drag that can dock
     if (c.kind == Ctx::None && IsMouseClicked(0)) {
-        const Rect strip{wp.x + th, wp.y, ws.x - th - (p_open ? th : 0.0f), th};
-        if (In(strip, m)) { c.kind = Ctx::WinDrag; c.dragWin = name; c.press = m; c.grab = V(m.x - wp.x, m.y - wp.y); c.moving = false; c.fromTab = false; }
+        const float caret = (flags & Window_NoCollapse) ? 0.0f : th;
+        const Rect strip{wp.x + caret, wp.y, ws.x - caret - (p_open ? th : 0.0f), th};
+        if (In(strip, m) && IsWindowHovered()) { c.kind = Ctx::WinDrag; c.dragWin = name; c.press = m; c.grab = V(m.x - wp.x, m.y - wp.y); c.moving = false; c.fromTab = false; }
     }
     return vis;
 }

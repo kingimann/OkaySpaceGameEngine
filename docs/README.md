@@ -128,6 +128,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [WORK_BOARD.md](WORK_BOARD.md): who is working on what.
 - [visual_scripting_nodes.md](visual_scripting_nodes.md), [visual_script_coverage.md](visual_script_coverage.md): the visual scripting nodes and how well they are covered.
 - [visual_script_clarity_audit.md](visual_script_clarity_audit.md), [visual_scripting_naming.md](visual_scripting_naming.md): audits of how clear the visual scripting nodes and their names are.
+- [../CLAUDE.md](../CLAUDE.md): the owner's standing rules for every session and agent (merging, CI, releases, secrets, own-code goal, disk).
 - [qa_workflow.md](qa_workflow.md): a developer and a QA session working together.
 - [../ROADMAP.md](../ROADMAP.md): releases and plans.
 - [archive/](archive/): old reports kept for history.

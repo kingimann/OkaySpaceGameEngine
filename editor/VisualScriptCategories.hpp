@@ -78,7 +78,7 @@ inline int VsSubOrder(const char* sub) {
         "Loops", "Timing", "Functions",
         "Compare", "Change", "Shared", "Saved", "Story",
         "Random", "Vectors", "Angles", "Curves",
-        "Lists", "Maps",
+        "Lists", "Maps", "Structs", "Color",
         "Items", "Appearance", "Lines", "Survival",
         "Turn", "Size", "Tweens",
         "Character", "IK", "Cutscenes",
@@ -110,6 +110,7 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     std::string low = name ? name : "";
     for (char& c : low) c = (char)std::tolower((unsigned char)c);
     auto has = [&](const char* t) { return VsTokenIs(low, t); };
+    if (has("clipboard")) return VsAt("Text");   // get_clipboard_text, set_clipboard_text
     if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
         return VsAt("Debug");
     if (low.rfind("game_", 0) == 0 && (has("save") || has("load") || has("slot") || has("continue") || has("autosave")))
@@ -119,10 +120,11 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");
     if (has("ui") || has("button") || has("slider") || has("toast") || has("tooltip") || has("font"))
         return VsAt("UI");
-    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input"))
+    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input") ||
+        has("gesture") || has("swipe") || has("pinch") || has("twist") || has("touch"))
         return VsAt("Input");
-    if (has("raycast") || has("overlap") || has("rigid") || has("force") || has("impulse") ||
-        has("velocity") || has("physics") || has("gravity"))
+    if (has("raycast") || has("overlap") || has("cast") || has("explosion") || has("rigid") ||
+        has("force") || has("impulse") || has("velocity") || has("physics") || has("gravity"))
         return VsAt("Physics");
     if (has("net") || has("steam") || has("rpc") || has("lobby")) return VsAt("Online");
     if (has("wait") || has("delay") || has("timescale") || has("pause") || has("timer") || has("cooldown"))
@@ -173,6 +175,10 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
         return VsAt("Events");
     if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
         return VsAt("Input", "Controls");
+    if (VsIs(type, "OnTap") || VsIs(type, "OnDoubleTap") || VsIs(type, "OnLongPress") ||
+        VsIs(type, "OnSwipe") || VsIs(type, "OnPinch") || VsIs(type, "OnRotate") ||
+        VsIs(type, "GestureSwipeDirection") || VsIs(type, "GesturePinchScale") || VsIs(type, "GestureTwist"))
+        return VsAt("Input");
     if (VsIs(type, "GetMoveAxis")) return VsAt("Input", "Axes");
     if (VsIs(type, "ScoreAdd") || VsIs(type, "ScoreSet") || VsIs(type, "ScoreGet")) return VsAt("Variables");
     if (VsIs(type, "CheckpointSave") || VsIs(type, "CheckpointLoad")) return VsAt("Variables", "Saved");
@@ -191,6 +197,8 @@ inline VsPlace VsPlaceForNewNode(const char* type) {
     if (VsIs(type, "ShuffleList") || VsIs(type, "ListMin") || VsIs(type, "ListMax"))
         return VsAt("Lists & Maps", "Lists");
     if (VsPre(type, "Map") || VsIs(type, "NewMap")) return VsAt("Lists & Maps", "Maps");
+    if (VsIs(type, "StructNew") || VsIs(type, "StructGet") || VsIs(type, "StructSet")) return VsAt("Lists & Maps", "Structs");
+    if (VsIs(type, "MakeColor") || VsIs(type, "SplitColor")) return VsAt("Math", "Color");
     if (VsIs(type, "IsValid")) return VsAt("Math", "Compare");
     if (VsIs(type, "NotAnd") || VsIs(type, "NotOr") || VsIs(type, "AllTrue") || VsIs(type, "AnyTrue") ||
         VsIs(type, "IsEven") || VsIs(type, "IsOdd") || VsIs(type, "PickByIndex") || VsIs(type, "FirstValid") ||
@@ -318,8 +326,12 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsPre(type, "Axis")) return VsAt("Input", "Axes");
     // Physics
     if (VsIs(type, "ContactPoint") || VsIs(type, "ContactNormal") || VsIs(type, "ImpactSpeed")) return VsAt("Physics", "Collisions");
-    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D")) return VsAt("Physics", "Queries");
-    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity")) return VsAt("Physics");
+    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D") ||
+        VsIs(type, "BoxCast2D") || VsIs(type, "CapsuleCast2D"))
+        return VsAt("Physics", "Queries");
+    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity") ||
+        VsIs(type, "AddExplosionForce"))
+        return VsAt("Physics");
     // Animation
     if (VsPre(type, "Ik")) return VsAt("Animation", "IK");
     if (VsIs(type, "Die") || VsIs(type, "Revive") || VsIs(type, "Dive") || VsIs(type, "Sit") || VsIs(type, "StandUp") ||
@@ -344,6 +356,7 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
     if (VsIs(type, "LoadScene") || VsIs(type, "PauseGame") || VsIs(type, "QuitGame")) return VsAt("Scene");
     if (VsPre(type, "Nav") || VsIs(type, "NavArrived")) return VsAt("Scene", "Navigation");
+    if (VsPre(type, "Grid")) return VsAt("Scene", "Navigation");
     if (VsIs(type, "PlaySequence") || VsIs(type, "StopSequence") || VsIs(type, "StartDialogue") ||
         VsIs(type, "StartQuest") || VsIs(type, "CompleteObjective") || VsIs(type, "QuestState") ||
         VsIs(type, "EventValue") || VsIs(type, "EventName")) return VsAt("Scene", "Story");
@@ -354,6 +367,9 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "HasItem") || VsIs(type, "ItemCount") || VsIs(type, "AddItem") || VsIs(type, "RemoveItem") ||
         VsIs(type, "EquipItem") || VsIs(type, "CraftItem") || VsIs(type, "LootRoll") || VsIs(type, "SpawnPickup"))
         return VsAt("Objects", "Items");
+    if (VsIs(type, "SwingWeapon") || VsIs(type, "FireWeapon") || VsIs(type, "ReloadWeapon") ||
+        VsIs(type, "WeaponAmmo") || VsIs(type, "SetWeapon"))
+        return VsAt("Objects", "Combat");
     if (VsIs(type, "Spawn") || VsIs(type, "Destroy") || VsIs(type, "SetActive") || VsIs(type, "SetVisible") ||
         VsIs(type, "SetColor") || VsPre(type, "Particle") || VsIs(type, "SetLinePoints") || VsIs(type, "ClearTrail") ||
         VsIs(type, "GetSplinePoint") || VsIs(type, "SplineLength") || VsIs(type, "ObjectExists") ||
@@ -418,6 +434,8 @@ inline VsPlace VsPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "Sequence")) return VsAt("Animation", "Cutscenes");
     if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather")) return VsAt("Scene", "Atmosphere");
     if (VsIs(apiType, "NavMeshAgent")) return VsAt("Scene", "Navigation");
+    if (VsIs(apiType, "GridPathAgent2D") || VsIs(apiType, "GridCostLayer") || VsIs(apiType, "GridObstacle2D"))
+        return VsAt("Scene", "Navigation");
     if (VsIs(apiType, "Dialogue") || VsIs(apiType, "Story") || VsIs(apiType, "Quest")) return VsAt("Scene", "Story");
     if (VsIs(apiType, "BehaviorTree")) return VsAt("Advanced", "Behavior");
     if (VsIs(apiType, "Animator")) return VsAt("Animation");

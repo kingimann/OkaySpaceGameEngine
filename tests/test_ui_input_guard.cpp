@@ -144,6 +144,45 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Lean steps aside for a use or bag press (Q / E clash). ---
+    {
+        Scene s("Lean");
+        GameObject* player = s.CreateGameObject("Player");
+        player->tag = "Player";
+        player->AddComponent<Inventory>();
+        auto* ui = player->AddComponent<InventoryUI>();
+        ui->toggleKey = 'e';
+        Input::FeedKeys({});
+        CHECK(!LeanKeyTaken(&s, 'e'));             // not pressed: a held lean is fine
+        Input::FeedKeys({'e'});
+        CHECK(LeanKeyTaken(&s, 'e'));              // the press that opens the bag is not a lean
+        CHECK(!LeanKeyTaken(&s, 'q'));             // Q is nobody else's key
+        ui->toggleKey = 'b';
+        CHECK(!LeanKeyTaken(&s, 'e'));
+        Input::FeedKeys({});
+    }
+
+    // --- A top-down player does not shoot through an open bag or a text field. ---
+    {
+        Scene s("TDFire");
+        GameObject* p = s.CreateGameObject("Player");
+        auto* c = p->AddComponent<TopDownController2D>();
+        c->fireButton = 0;
+        Input::FeedMouse({10, 10}, 1u);
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) != 0);
+        auto* bag = s.CreateGameObject("Bag")->AddComponent<InventoryUI>();
+        bag->open = true;
+        Input::FeedMouse({10, 10}, 1u);
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) == 0);
+        bag->open = false;
+        auto* field = s.CreateGameObject("Chat")->AddComponent<UIInputField>();
+        field->focused = true;
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) == 0);
+        field->focused = false;
+        CHECK((c->ReadLocalInput().held & PlayerInput::Fire) != 0);
+        Input::FeedMouse({0, 0}, 0);
+    }
+
     // --- Settings screen bindings. ---
     {
         UICanvas::Set(1280, 720);
@@ -174,11 +213,25 @@ int main() {
         screen->Update(0.016f);
         CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::SFX], 0.4f, 0.001f);
         CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::UI], 0.4f, 0.001f);
-        auto* full = s.Find("FullscreenToggle") ? s.Find("FullscreenToggle")->GetComponent<UIToggle>() : nullptr;
-        CHECK(full != nullptr);
-        if (full) full->on = true;
+        auto* mode = s.Find("DisplayModeDropdown") ? s.Find("DisplayModeDropdown")->GetComponent<UIDropdown>() : nullptr;
+        CHECK(mode != nullptr);
+        if (mode) mode->value = 1;                 // Borderless
         screen->Update(0.016f);
-        CHECK(DisplaySettings::Fullscreen());
+        GameObject* applyGo = s.Find("ApplyButton");
+        auto* apply = applyGo ? applyGo->GetComponent<UIButton>() : nullptr;
+        CHECK(apply != nullptr);
+        if (apply) {
+            Vec2 o, sz;
+            CHECK(GetUIScreenRect(applyGo, 1280, 720, o, sz));
+            Vec2 c{o.x + sz.x * 0.5f, o.y + sz.y * 0.5f};
+            Input::FeedMouse(c, 0);
+            Input::FeedMouse(c, 1u);
+            apply->Update(0.016f);
+            screen->LateUpdate(0.016f);
+            Input::FeedMouse({0, 0}, 0);
+        }
+        CHECK(DisplaySettings::Fullscreen() && DisplaySettings::Mode() == WindowMode::Borderless);
+        CHECK(DisplaySettings::TrialActive());
         auto* vs = s.Find("VsyncToggle") ? s.Find("VsyncToggle")->GetComponent<UIToggle>() : nullptr;
         if (vs) vs->on = false;
         screen->Update(0.016f);
@@ -205,6 +258,7 @@ int main() {
         CHECK(settings->active == false);
         CHECK(pause->active);                      // back to the pause menu
         CHECK(!SettingsScreen::AnyOpen(&s));
+        CHECK(!DisplaySettings::TrialActive());    // Done keeps the display change
         UIWorld().rectOf = nullptr;
         DisplaySettings::SetFullscreen(false);
         DisplaySettings::SetVSync(true);

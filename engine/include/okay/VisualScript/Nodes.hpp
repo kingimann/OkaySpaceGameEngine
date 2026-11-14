@@ -16,6 +16,7 @@
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Gestures.hpp"
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -323,6 +324,15 @@ struct MouseXNode : VsNode {
 struct MouseYNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return Input::MousePosition().y; }
 };
+struct GestureSwipeDirectionNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue(Gestures::SwipeDirection()); }
+};
+struct GesturePinchScaleNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return Gestures::PinchScale(); }
+};
+struct GestureTwistNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return Gestures::TwistDegrees(); }
+};
 
 // Transform getters (read this object's local position).
 struct GetPositionNode : VsNode {
@@ -346,15 +356,30 @@ struct SetVarNode : VsNode {
     explicit SetVarNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        ctx.variables[name] = In(0, g, ctx);
+        VsValue v = In(0, g, ctx);
+        std::string err;
+        // A declared variable keeps its type: a value that doesn't fit is reported and not stored.
+        if (!g.CoerceForStore(name, VarScope::Object, v, &err)) {
+            g.Error(this, ctx, "Set Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        ctx.variables[name] = std::move(v);
         return 0;
     }
 };
 
+// Pin 0 is the message (typed or wired, as it always was); pin 1 is an optional
+// value of any type. Text only prints the text, Value only prints the value, both
+// print "text: value". A graph saved before pin 1 existed has nothing on it, so
+// it prints exactly what it did.
 struct PrintNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        Log::Info(In(0, g, ctx).AsString());   // exactly what was typed / wired in
+        const bool hasText = HasInput(0), hasValue = HasInput(1);
+        if (hasText && hasValue)
+            Log::Info(In(0, g, ctx).AsString() + ": " + In(1, g, ctx).AsString());
+        else if (hasValue) Log::Info(In(1, g, ctx).AsString());
+        else Log::Info(In(0, g, ctx).AsString());
         return 0;
     }
 };
@@ -402,9 +427,18 @@ struct AddVarNode : VsNode {
     explicit AddVarNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        float cur = 0.0f;
-        if (auto it = ctx.variables.find(name); it != ctx.variables.end()) cur = it->second.AsFloat();
-        ctx.variables[name] = cur + In(0, g, ctx).AsFloat();
+        VsValue cur;
+        if (auto it = ctx.variables.find(name); it != ctx.variables.end()) cur = it->second;
+        const VsValue add = In(0, g, ctx);
+        // Vectors add component by component; everything else adds as numbers.
+        VsValue next = (cur.IsVec3() || add.IsVec3()) ? VsValue(cur.AsVec3() + add.AsVec3())
+                                                      : VsValue(cur.AsFloat() + add.AsFloat());
+        std::string err;
+        if (!g.CoerceForStore(name, VarScope::Object, next, &err)) {
+            g.Error(this, ctx, "Add Var '" + name + "': " + err + "; the variable keeps its value");
+            return 0;
+        }
+        ctx.variables[name] = std::move(next);
         return 0;
     }
 };

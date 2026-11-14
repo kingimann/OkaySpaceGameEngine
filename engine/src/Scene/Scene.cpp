@@ -9,6 +9,7 @@
 #include "okay/Scene/ObjectPool.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Math/Mathf.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
@@ -25,6 +26,7 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include "okay/Environment/Weather.hpp"   // rain / snow / storm rig following the camera
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include <cmath>
@@ -295,10 +297,18 @@ void Scene::FlushPending() {
     // Update the first frame it can run.
 }
 
-void Scene::StartComponent(Component* c) {
+bool Scene::StartComponent(Component* c) {
+    // OnEnable may remove or destroy this component (or its whole object); the watch
+    // records the removals by address (compare only, never a dereference), so the
+    // callbacks below are skipped for a component a previous one freed (#735).
+    RemovalWatch watch(*this);
     if (!c->m_live) { c->m_live = true; c->OnEnable(); }   // OnEnable, then the first Start
+    bool gone = watch.Gone(c);
+    if (!gone && c->gameObject && IsDestroyPending(c->gameObject)) gone = true;   // OnEnable queued its whole object for destruction (#735)
+    if (gone) return false;                       // OnEnable removed/destroyed it: Start would be a use-after-free
     c->Start();
     c->m_started = true;
+    return true;
 }
 
 void Scene::Start() {
@@ -430,7 +440,7 @@ void Scene::Update(float deltaTime) {
         for (Component* c : m_active) {
             if (c && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy()) {
                 if (!c->m_started) {   // switched on since it joined: its Start comes first
-                    StartComponent(c);
+                    if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone
                     if (!CanRun(c)) continue;
                 }
                 c->Update(deltaTime);
@@ -532,27 +542,125 @@ bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
 }
 // Before stepping: put the body back at its real physics pose (it was drawn at an
 // in-between one). If game code moved it since, it was teleported: keep that.
+// A parent moving does not count: the local pose the solver wrote is still there,
+// and restoring it carries the body with the parent.
 void RestorePose(Transform* t, PoseHistory& h) {
     if (!h.valid) return;
+    if (h.shownLocalValid) {
+        const bool moved =
+            (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f ||
+            std::fabs(Quat::Dot(t->localRotation, h.shownLocalRot)) < 1.0f - 1e-6f;
+        if (moved) { h.valid = false; h.shownLocalValid = false; return; }
+        t->localPosition = h.physLocal;
+        t->localRotation = h.physLocalRot;
+        return;
+    }
     if (SamePose(t, h.shownPos, h.shownRot)) { t->SetPosition(h.curPos); t->SetRotation(h.curRot); }
     else h.valid = false;
 }
 void BeginStep(Transform* t, PoseHistory& h) {
     h.prevPos = t->Position();
     h.prevRot = t->Rotation();
+    h.prevLocal = t->localPosition;
+    h.prevLocalRot = t->localRotation;
+    h.prevHadParent = t->Parent() != nullptr;
 }
 void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
     if (!h.valid && !stepped) return;            // not simulated yet: draw where it is
     if (!h.valid) { h.valid = true; }
     h.curPos = t->Position();
     h.curRot = t->Rotation();
-    h.shownPos = Vec3::LerpUnclamped(h.prevPos, h.curPos, alpha);
-    h.shownRot = Quat::Slerp(h.prevRot, h.curRot, alpha);
+    h.physLocal = t->localPosition;
+    h.physLocalRot = t->localRotation;
+    const bool parented = t->Parent() != nullptr;
+    if (parented && h.prevHadParent) {
+        // Both poses are parent-local, so a parent that moved this frame carries
+        // the whole blend. Lerping the old and new world positions would drag the
+        // body back toward where the parent used to be.
+        const Mat4& m = t->Parent()->LocalToWorldMatrix();
+        const Quat pr = t->Parent()->Rotation();
+        const Vec3 prevW = m.MultiplyPoint(h.prevLocal);
+        const Vec3 curW = m.MultiplyPoint(h.physLocal);
+        h.shownPos = Vec3::LerpUnclamped(prevW, curW, alpha);
+        h.shownRot = Quat::Slerp(pr * h.prevLocalRot, pr * h.physLocalRot, alpha);
+    } else {
+        h.shownPos = Vec3::LerpUnclamped(h.prevPos, h.curPos, alpha);
+        h.shownRot = Quat::Slerp(h.prevRot, h.curRot, alpha);
+    }
     t->SetPosition(h.shownPos);
     t->SetRotation(h.shownRot);
+    h.shownLocal = t->localPosition;
+    h.shownLocalRot = t->localRotation;
+    h.shownLocalValid = true;
+}
+
+void CarryParents(Scene& scene, float frameDt) {
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        if (!rb->transform || rb->bodyType == Rigidbody3D::BodyType::Static) continue;
+        Vec3 spin;
+        const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
+                                              rb->transform->Position(), frameDt, spin);
+        if (add.SqrMagnitude() > 1e-8f || spin.SqrMagnitude() > 1e-8f) {
+            rb->velocity = rb->velocity + add;
+            if (!rb->freezeRotation) rb->angularVelocity = rb->angularVelocity + spin;
+            rb->WakeUp();
+        }
+    }
+    for (Rigidbody2D* rb : scene.FindObjectsOfType<Rigidbody2D>()) {
+        if (!rb->transform || rb->bodyType == Rigidbody2D::BodyType::Static) continue;
+        Vec3 spin;
+        const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
+                                              rb->transform->Position(), frameDt, spin);
+        if (add.SqrMagnitude() > 1e-8f || std::fabs(spin.z) > 1e-8f) {
+            rb->velocity += Vec2{add.x, add.y};
+            if (!rb->freezeRotation) rb->angularVelocity += spin.z * Mathf::Rad2Deg;
+            rb->WakeUp();
+        }
+    }
 }
 
 } // namespace
+
+namespace {
+float g_projectPhysicsHz = 0.0f;
+bool g_projectPhysicsSmooth = true;
+bool g_projectPhysicsSet = false;
+}
+
+void Scene::SetProjectPhysicsRate(float stepsPerSecond, bool smooth) {
+    g_projectPhysicsSet = true;
+    g_projectPhysicsHz = stepsPerSecond;
+    g_projectPhysicsSmooth = smooth;
+}
+
+void Scene::SetPhysicsStepsPerSecond(float stepsPerSecond) {
+    if (!std::isfinite(stepsPerSecond) || stepsPerSecond <= 0.0f) {
+        fixedTimeStep = 0.0f;
+        return;
+    }
+    if (stepsPerSecond < 1.0f) stepsPerSecond = 1.0f;
+    if (stepsPerSecond > 500.0f) stepsPerSecond = 500.0f;
+    fixedTimeStep = 1.0f / stepsPerSecond;
+}
+
+float Scene::PhysicsStepsPerSecond() const {
+    return fixedTimeStep > 1e-8f ? 1.0f / fixedTimeStep : 0.0f;
+}
+
+void Scene::UseFixedStepPhysics(bool on) {
+    if (!on) {
+        fixedTimeStep = 0.0f;
+        interpolatePhysics = false;
+        return;
+    }
+    if (g_projectPhysicsSet) {
+        SetPhysicsStepsPerSecond(g_projectPhysicsHz);
+        interpolatePhysics = g_projectPhysicsSmooth && fixedTimeStep > 0.0f;
+    } else {
+        fixedTimeStep = kDefaultFixedStep;
+        interpolatePhysics = true;
+    }
+}
 
 void Scene::RunFixedUpdate(float step) {
     // Index loop: a FixedUpdate may remove components (slots are nulled) or add them (they wait in m_pending).
@@ -564,6 +672,7 @@ void Scene::RunFixedUpdate(float step) {
 }
 
 void Scene::StepPhysics(float deltaTime) {
+    CarryParents(*this, deltaTime);
     const float step = fixedTimeStep;
     if (step <= 0.0f) {   // one step per frame, sized to the frame
         RunFixedUpdate(deltaTime);

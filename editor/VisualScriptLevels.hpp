@@ -96,7 +96,8 @@ inline const VsSharedLevel kSharedLevels[] = {
     {"DestroyAfter", VsLevel::Intermediate}, {"PlaySoundAt", VsLevel::Intermediate}, {"StopSound", VsLevel::Intermediate},
     {"StopAnimation", VsLevel::Intermediate}, {"CrossfadeClip", VsLevel::Intermediate}, {"WaitAnimEnd", VsLevel::Intermediate},
     {"PoolGet", VsLevel::Intermediate}, {"PoolRelease", VsLevel::Intermediate},
-    {"NewMap", VsLevel::Intermediate}, {"MapGet", VsLevel::Intermediate}, {"MapSet", VsLevel::Intermediate},
+    {"NewMap", VsLevel::Intermediate},
+    {"MapGet", VsLevel::Intermediate}, {"MapSet", VsLevel::Intermediate},
     {"MapHas", VsLevel::Intermediate}, {"MapRemove", VsLevel::Intermediate}, {"MapKeys", VsLevel::Intermediate},
     {"MapValues", VsLevel::Intermediate}, {"ForEachMap", VsLevel::Intermediate}, {"ShuffleList", VsLevel::Intermediate},
     {"ListMin", VsLevel::Intermediate}, {"ListMax", VsLevel::Intermediate}, {"RandomPick", VsLevel::Intermediate},
@@ -118,11 +119,25 @@ inline const VsSharedLevel kLogicLevels[] = {
 #include "generated/gplib_levels.inc"
 };
 
+// The list / map / struct / colour nodes (declared variables work). Their own table so the shared one stays at 84.
+inline const VsSharedLevel kCollectionLevels[] = {
+    {"ListInsert", VsLevel::Intermediate}, {"ListSet", VsLevel::Intermediate}, {"ListFind", VsLevel::Intermediate},
+    {"ListRemoveItem", VsLevel::Intermediate}, {"ListSort", VsLevel::Intermediate}, {"ListReverse", VsLevel::Intermediate},
+    {"ListClear", VsLevel::Intermediate}, {"ListCopy", VsLevel::Intermediate}, {"MapClear", VsLevel::Intermediate},
+    {"MapCount", VsLevel::Intermediate}, {"MapCopy", VsLevel::Intermediate},
+    {"ListAppend", VsLevel::Intermediate}, {"ListSlice", VsLevel::Intermediate}, {"ListPop", VsLevel::Intermediate},
+    {"MapGetOr", VsLevel::Intermediate}, {"MapMerge", VsLevel::Intermediate}, {"StructNew", VsLevel::Advanced},
+    {"StructGet", VsLevel::Advanced}, {"StructSet", VsLevel::Advanced}, {"MakeColor", VsLevel::Intermediate},
+    {"SplitColor", VsLevel::Intermediate},
+};
+
 inline int VsLogicLevelCount() { return (int)(sizeof kLogicLevels / sizeof kLogicLevels[0]); }
 
 inline const VsLevel* VsLogicLevel(const char* type) {
     if (!type) return nullptr;
     for (const VsSharedLevel& s : kLogicLevels)
+        if (std::strcmp(s.type, type) == 0) return &s.level;
+    for (const VsSharedLevel& s : kCollectionLevels)
         if (std::strcmp(s.type, type) == 0) return &s.level;
     return nullptr;
 }

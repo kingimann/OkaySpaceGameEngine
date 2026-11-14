@@ -10,8 +10,11 @@ namespace okay {
 
 inline bool DeathLocksInput(GameObject* go) {
     if (!go) return false;
+    // Health is the authority when the body has it. A leftover animator `dead`
+    // flag must not freeze a living (or revived) character. A script die() with
+    // no health component sets that flag instead, and only the base layer counts.
     if (auto* hp = go->GetComponent<HealthStat>())
-        if (hp->IsDead()) return true;
+        return hp->IsDead();
     for (AnimStateMachine* sm : go->GetComponents<AnimStateMachine>())
         if (sm && sm->layer == 0 && sm->GetBool("dead")) return true;
     return false;

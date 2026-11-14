@@ -39,12 +39,13 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
   - 14.2.3 Values - `VisualScript/VsValue` - one value type; `VsObject` holds an instance id, never a pointer
   - 14.2.4 Scene and global variables - `VisualScript/VsVariables` - scene variables go with the scene, globals survive loading another scene
   - 14.2.5 Function signatures - `VisualScript/VsTypes` - `FunctionSig` parsing for Function / Call / Return nodes
-  - 14.2.6 Problem presentation - `VisualScript/VsProblems` - rule id and one-line fix for every checker finding, grouping of repeats with a count, worst-first order, counts ("2 errors, 3 warnings"), kind filters, next / previous problem; the editor's Problems list and node badges draw from it
-- **Code:** `VisualScript/VsTypes`, `VisualScript/VsProblems`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `editor/EditorState.*`
+  - 14.2.6 Declared variables and structs - `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp` - `decl` and `struct` lines: typed variables (Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>`, structs) at object, scene or global scope with editable defaults; Set nodes fit or refuse a value; value literals; the Variables panel and the Inspector edit the defaults
+  - 14.2.7 Problem presentation - `VisualScript/VsProblems` - rule id and one-line fix for every checker finding, grouping of repeats with a count, worst-first order, counts ("2 errors, 3 warnings"), kind filters, next / previous problem; the editor's Problems list and node badges draw from it
+- **Code:** `VisualScript/VsTypes`, `VisualScript/VsProblems`, `VisualScript/VsValue`, `VisualScript/VsVariables`, `VisualScript/VsDecl`, `editor/VsVariablePanel.hpp`, `editor/EditorState.*`
 - **API:** `vs::PinType`, `vs::SignatureFor`, `vs::ValidateGraphText`, `vs::ValidateSceneGraphs`, `vs::VsValue`, `vs::VsObject`
 - **Editor:** pin colours and wire refusal in the graph editor; problems list in the toolbar; Play logs graph errors and warnings to the Console (`EditorState::Play`); Build Settings stops the build on graph errors and offers a retry
-- **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables")
-- **Tests:** `vs_types`, `vs_problems` (every rule has a fix line; grouping, order, counts), `vs_editor_model` (jump to a problem's node), `vs_pin_defaults`, `vs_acceptance`
+- **Docs:** `docs/visual_scripting.md` ("Pin types and the graph checker", "Scene and global variables", "Declared variables, lists, maps and structs")
+- **Tests:** `vs_types`, `vs_problems` (every rule has a fix line; grouping, order, counts), `vs_editor_model` (jump to a problem's node), `vs_pin_defaults`, `vs_acceptance`, `vs_variables` (literals, declarations, typing, copy versus reference, checker, save and scene round trips, hostile input)
 - **Status:** Works - table and checker are on main and exercised by `vs_types`; `vs_acceptance` saves and reloads real scenes
 - **Open:** none found; object variables and SyncVars are covered in 14.4
 - **Related:** 14.1, 14.3, 15.7, 1.5
@@ -57,7 +58,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **Parts:**
   - 14.3.1 Functions - `VisualScript/NodesFunctions` - Function start (signature in its text field), Return, Call Function, local variables for one call
   - 14.3.2 Loops - `VisualScript/NodesLoops` - While, For Each, Break and Continue (loop jump)
-  - 14.3.3 Lists - `VisualScript/NodesLoops` - New List, Add, Remove At, Get, Length, Contains, all objects with a tag
+  - 14.3.3 Lists, maps and structs - `VisualScript/NodesLoops`, `VisualScript/NodesLogic` - New List, Add, Insert, Set, Get, Find, Remove At / Item, Sort, Reverse, Clear, Copy, Length, Contains; maps with Clear, Count, Copy; New Struct / Get Field / Set Field; Make / Split Color; all objects with a tag
   - 14.3.4 Core flow nodes - `VisualScript/Nodes` - Branch, Sequence, Once, Repeat, Toggle, Flip Flop, Timer, Wait, Select, Chance
   - 14.3.5 Event entries - `VisualScript/Nodes`, `VisualScript/NodesWave4` - On Start, On Update, On Key, timers, custom events, collision and mouse entries
 - **Code:** `VisualScript/NodesFunctions`, `VisualScript/NodesLoops`, `VisualScript/Nodes`
@@ -159,17 +160,17 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** Moving between the two ways of scripting: the graph editor shows a live OkayScript version of the graph, an Actions list can be turned into OkayScript, and simple OkayScript can be turned back into Actions.
 - **Parts:**
   - 14.8.1 Graph to OkayScript - `editor/VisualScriptEditor.hpp` (`CompileToOkayScript`) - live preview beside the canvas, Copy to clipboard
-  - 14.8.2 Actions to OkayScript - `editor/main.cpp` (~18839-18974) - readable script from an Actions list, unmapped ops become TODO comments
+  - 14.8.2 Actions to OkayScript - `editor/ActionExport.hpp` (`ActionListToCode`) - the list's own text passed to `actions_load`, so every step and trigger runs on an Actions component
   - 14.8.3 OkayScript to Actions - `editor/main.cpp` (~18975-19134) - best-effort import of simple calls
   - 14.8.4 Script recipes - `editor/main.cpp` (~19135-19491) - one-click starter handlers ("Jump on Space")
-- **Code:** `editor/VisualScriptEditor.hpp`, `editor/main.cpp`
+- **Code:** `editor/VisualScriptEditor.hpp`, `editor/ActionExport.hpp`, `editor/main.cpp`
 - **API:** menu items in the graph editor (OkayScript preview, Copy); Inspector Actions card conversion buttons
 - **Editor:** Visual Script window preview panel; Inspector Actions card
 - **Docs:** `docs/visual_scripting.md`
-- **Tests:** `vs_editor_model` (model), no tests of the generators found
-- **Status:** Basic - best-effort generators with no dedicated tests
-- **Open:** two separate generators with different inputs (graph versus Actions list) in two files; neither is tested for equivalence with the runtime
+- **Tests:** `vs_editor_model` (`export_wait_delay_matches_runtime`, `export_timer_matches_runtime`, `export_actions_matches_runtime`)
+- **Status:** Works for Wait, Delay, Timer, and every Actions step. A graph node with no script fails the export by name instead of becoming a comment
+- **Open:** some graph nodes (object references, functions, lists, scene and global variables, springs) are still listed as not translated; Cooldown is still a comment
 - **Related:** 14.1, 14.6, 13.1
 - **Words:** convert graph to script, OkayScript preview, export to code, import script, recipes
-- **Seen as:** the generated script behaves differently from the graph; a TODO comment appears in generated code; import loses a step
+- **Seen as:** the generated script behaves differently from the graph; View as OkayScript names a node it cannot export; import loses a step
 - **Ask me like:** "work on 14.8.1, make the preview round-trip back into the graph"

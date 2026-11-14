@@ -74,6 +74,17 @@ public:
         if (!b) return;
         for (int i = 0, n = b->GamepadDeviceCount(); i < n; ++i) if (b->IsGamepad(i)) Add(i);
     }
+    /// Put an already-open controller in the first free slot. A null pad returns -1.
+    /// The same instance id already in the set returns that slot and drops `pad`.
+    /// Returns the player index, or -1 when every slot is full (and drops `pad`).
+    int Attach(std::unique_ptr<platform::Gamepad> pad) {
+        if (!pad) return -1;
+        for (int q = 0; q < Input::kMaxGamepads; ++q)
+            if (m_pads[q] && m_pads[q]->InstanceId() == pad->InstanceId()) return q;
+        for (int p = 0; p < Input::kMaxGamepads; ++p)
+            if (!m_pads[p]) { m_pads[p] = std::move(pad); return p; }
+        return -1;
+    }
     /// Open device `index` into the first free slot; returns the player index or -1.
     int Add(int deviceIndex) {
         platform::Backend* b = platform::Default();

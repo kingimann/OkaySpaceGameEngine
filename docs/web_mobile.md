@@ -44,9 +44,11 @@ SDL2 officially supports Android and iOS, and the player is a standard SDL2
 4. Build and run from Xcode.
 
 ### Touch input
-SDL delivers touches as mouse events by default, so `Input::MousePosition()` /
-`GetMouseButton(0)` and **UI buttons** already respond to taps. For multi-touch
-or gestures, read `SDL_FINGER*` events in `player/main.cpp` and feed them in.
+The player reads SDL finger events on desktop and in the web build and keeps
+every finger (`Input::FeedTouch`). The first finger still drives the mouse, so
+ordinary buttons respond to a tap. Further fingers, and the gesture recogniser
+(tap, double tap, long press, swipe, pinch, two-finger rotate), are described in
+`docs/input.md`, along with the on-screen joystick, D-pad and touch button.
 
 ## Notes
 

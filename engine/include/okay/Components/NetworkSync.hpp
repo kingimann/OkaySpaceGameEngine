@@ -22,7 +22,9 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include <deque>
 #include <string>
+#include <vector>
 #include <sstream>
 #include <algorithm>
 #include <cmath>
@@ -129,12 +131,35 @@ inline void ApplyRemoteAction(Character* c, int id, float param = 0.0f) {
     }
 }
 
-/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
-/// Each later group is optional. An older peer stops when the stream runs out.
+/// Play a replicated one-shot on a proxy: 5 dive, 6 hit (param = direction 0..3, +4 when
+/// heavy), 7 traverse (param = HumanoidActions::TraverseClip), 8 emote (param = which).
+/// An unknown id or a param that is not a number plays nothing; a param out of range is clamped.
+inline bool ApplyRemoteEvent(Character* c, int id, float param) {
+    if (!c || !c->gameObject || id < 5 || id > 8 || !std::isfinite(param)) return false;
+    GameObject* go = c->gameObject;
+    AnimStateMachine* sm = HumanoidLibrary::EnsureAnimator(go);
+    if (sm) HumanoidActions::MergeMissing(*sm, c, false);
+    auto clampi = [](float v, int lo, int hi) { return std::max(lo, std::min(hi, (int)std::lround(std::max(-1e6f, std::min(1e6f, v))))); };
+    switch (id) {
+        case 5: return HumanoidActions::BeginDive(go);
+        case 6: {
+            const int v = clampi(param, 0, 7);
+            return HumanoidActions::HitReact(go, v & 3, v >= 4);
+        }
+        case 7: return HumanoidActions::PlayTraverse(go, (HumanoidActions::TraverseClip)clampi(param, 0, 5));
+        default: return HumanoidActions::PlayEmote(go, clampi(param, 0, 2));
+    }
+}
+
+/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam> [<eventSeq> <eventId> <eventParam> [<n> (<seq> <id> <param>)*n]]]]]]".
+/// Each later group is optional. An older peer stops when the stream runs out. The last group is the
+/// one-shots before the newest (oldest first); a count above 3 or a cut or non-finite entry drops the group.
+struct AnimSyncEventView { int seq = 0, id = 0; float param = 0.0f; };
 struct AnimSyncView {
-    int anim = 0, punch = 0, actionSeq = 0, actionId = 0;
-    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f;
-    bool haveGait = false, haveAction = false, haveParam = false;
+    int anim = 0, punch = 0, actionSeq = 0, actionId = 0, eventSeq = 0, eventId = 0;
+    std::vector<AnimSyncEventView> earlier;   ///< the one-shots before the newest, oldest first (at most 3)
+    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f, eventParam = 0.0f;
+    bool haveGait = false, haveAction = false, haveParam = false, haveEvent = false;
 };
 
 /// False when `s` has no anim field. Gait, action and actionParam are optional.
@@ -152,7 +177,23 @@ inline bool ParseAnimSync(const std::string& s, AnimSyncView& o) {
     if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
         o.actionSeq = aseq; o.actionId = aid; o.lookYaw = ly; o.lookPitch = lp; o.haveAction = true;
         float param = 0.0f;
-        if (ss >> param && std::isfinite(param)) { o.actionParam = param; o.haveParam = true; }
+        if (ss >> param && std::isfinite(param)) {
+            o.actionParam = param; o.haveParam = true;
+            int eseq = 0, eid = 0; float ep = 0.0f;
+            if (ss >> eseq >> eid >> ep && std::isfinite(ep)) {
+                o.eventSeq = eseq; o.eventId = eid; o.eventParam = ep; o.haveEvent = true;
+                int n = 0;
+                if (ss >> n && n >= 0 && n <= 3) {
+                    std::vector<AnimSyncEventView> list;
+                    for (int i = 0; i < n; ++i) {
+                        AnimSyncEventView e;
+                        if (!(ss >> e.seq >> e.id >> e.param) || !std::isfinite(e.param)) { list.clear(); break; }
+                        list.push_back(e);
+                    }
+                    o.earlier = std::move(list);
+                }
+            }
+        }
     }
     return true;
 }
@@ -218,6 +259,7 @@ public:
         // (Our own predicted player is animated by its controller, not as a proxy.)
         if (m_char && syncAnimation && !OwnedNow() && !m_nm->Predicted(m_id)) {
             DriveProxyGait(dt);
+            DrainEvents(dt);
             // A machine created to play the action has Start() clear its state
             // on the next frame. Keep asking until it is actually in it.
             // Once it has stayed in it past that first frame, leave it alone: a
@@ -243,10 +285,20 @@ private:
     int             m_punchSeq = 0;       // owner: bumped on each new punch
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     int             m_lastActionSeq = -1; // remote: last action sequence applied
+    int             m_lastEventSeq = -1;  // remote: last one-shot (dive / hit / traverse / emote) played
     int             m_wantAction = 0;     // remote: action to hold until the proxy is in it
     bool            m_actionSeen = false; // remote: the proxy has held m_wantAction (don't replay it)
     int             m_actionFrames = 0;   // remote: consecutive frames the proxy has been in it
     float           m_actionParam = 0.0f; // remote: direction / swim speed; 0 if the sender omitted it
+    // Remote one-shots waiting to play: at most kMaxQueuedEvents (the oldest is dropped past that),
+    // one every kEventSpacing seconds, and once one has played the next waits for the animator to be back
+    // in locomotion (or kEventMaxWait seconds).
+    struct QueuedEvent { int id; float param; };
+    static constexpr std::size_t kMaxQueuedEvents = 4;
+    static constexpr float kEventSpacing = 0.35f, kEventMaxWait = 1.5f;
+    std::deque<QueuedEvent> m_eventQueue;
+    float           m_eventCooldown = 0.0f, m_eventWait = 0.0f;
+    bool            m_eventGate = false;  // an event played and the queue has not emptied since
     bool            m_wasPunching = false;
     // Proxy gait: what the owner reported, and the smoothed speed this copy
     // actually moves at (the interpolated position, so the feet match it).
@@ -255,6 +307,22 @@ private:
     Vec3            m_lastPos;
     bool            m_haveLast = false;
     float           m_vx = 0.0f, m_vz = 0.0f;
+
+    void QueueEvent(int id, float param) {
+        if (m_eventQueue.size() >= kMaxQueuedEvents) m_eventQueue.pop_front();
+        m_eventQueue.push_back({id, param});
+    }
+    void DrainEvents(float dt) {
+        if (m_eventCooldown > 0.0f) m_eventCooldown -= dt;
+        if (m_eventQueue.empty()) { if (m_eventCooldown <= 0.0f) m_eventGate = false; m_eventWait = 0.0f; return; }
+        m_eventWait += dt;
+        if (m_eventCooldown > 0.0f) return;
+        if (m_eventGate && m_eventWait < kEventMaxWait && !ProxyInAction(m_char, 0)) return;
+        const QueuedEvent e = m_eventQueue.front();
+        m_eventQueue.pop_front();
+        ApplyRemoteEvent(m_char, e.id, e.param);
+        m_eventCooldown = kEventSpacing; m_eventGate = true; m_eventWait = 0.0f;
+    }
 
     // A remote copy's Character gets the speed it is really moving at here (the
     // eased position), so its stride matches the ground it covers instead of
@@ -310,7 +378,13 @@ private:
                     o << c->anim << ' ' << self->m_punchSeq << ' ' << c->moveSpeed << ' ' << c->moveAngle
                       << ' ' << c->netActionSeq << ' ' << c->netActionId
                       << ' ' << c->lookYaw << ' ' << c->lookPitch
-                      << ' ' << c->netActionParam;
+                      << ' ' << c->netActionParam
+                      << ' ' << c->netEventSeq << ' ' << c->netEventId << ' ' << c->netEventParam;
+                    // The one-shots before the newest, so two inside one interval both arrive.
+                    const std::size_t earlier = std::min<std::size_t>(c->netEventEarlier.size(), 3);
+                    o << ' ' << earlier;
+                    for (std::size_t i = c->netEventEarlier.size() - earlier; i < c->netEventEarlier.size(); ++i)
+                        o << ' ' << c->netEventEarlier[i].seq << ' ' << c->netEventEarlier[i].id << ' ' << c->netEventEarlier[i].param;
                     return o.str();
                 },
                 [c, self](const std::string& s) {
@@ -343,6 +417,20 @@ private:
                         self->m_lastActionSeq = v.actionSeq;
                         c->lookYaw = ly;
                         c->lookPitch = lp;
+                    }
+                    // A one-shot (dive, hit, traverse, emote) plays once per new sequence number.
+                    // The first sample only syncs the counter, so joining mid-session replays nothing.
+                    // Two that started inside one sync interval both come (the earlier ones ride in the
+                    // message too) and play one after the other, not the older dropped.
+                    if (v.haveEvent) {
+                        if (self->m_lastEventSeq >= 0) {
+                            for (const auto& e : v.earlier)
+                                if (e.seq - self->m_lastEventSeq > 0 && e.seq - v.eventSeq < 0)
+                                    self->QueueEvent(e.id, e.param);
+                            if (v.eventSeq != self->m_lastEventSeq) self->QueueEvent(v.eventId, v.eventParam);
+                        }
+                        self->m_lastEventSeq = v.eventSeq;
+                        self->DrainEvents(0.0f);
                     }
                 });
         }

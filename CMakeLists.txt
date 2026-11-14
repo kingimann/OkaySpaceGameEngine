@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.860.0
+    VERSION 2.870.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -29,8 +29,29 @@ option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     O
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+# The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
+# OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
+set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
+set_property(CACHE OKAY_UI_DEFAULT_BACKEND PROPERTY STRINGS imgui okayui)
+if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
+endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/own_http_client.md)" OFF)
+option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_LWO       "Read .lwo with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWO=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
@@ -101,6 +122,13 @@ set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's truste
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
 okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
 okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
+# Signed releases (docs/updater.md): the ed25519 PUBLIC keys that must have signed
+# the release index (versions.json.sig) before the launcher or editor will install
+# anything from it: the current key, and during a rotation the next one too.
+# Empty = none built in: an unsigned index is accepted (the transition for feeds
+# nobody has signed yet; set it once the first signed publish is out).
+set(OKAY_UPDATE_TRUSTED_KEYS "" CACHE STRING "Updater: ed25519 public keys (hex, comma-separated) that must sign versions.json (empty = unsigned feeds still accepted)")
+okay_ac_check_trusted_keys("${OKAY_UPDATE_TRUSTED_KEYS}")      # same rule: exactly 64 hex digits per key, or configure fails
 # The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
 # deployment its own so its hashes can't be matched with another's. Not a secret.
 set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
@@ -126,7 +154,7 @@ add_subdirectory(engine)
 # so both can link okay::ui. Only needed by SDL-based hosts and its own test.
 # Skip OkayUI on Emscripten/WebGL: the web player links only okay::engine, and the
 # toolkit includes a Direct3D 11 backend that can't compile to WASM.
-if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
+if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_LAUNCHER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
     add_subdirectory(okayui)
 endif()
 
@@ -141,6 +169,9 @@ if(OKAY_BUILD_LAUNCHER)
     if(OKAY_AC_TRUSTED_KEYS AND TARGET okayspace-launcher)
         target_compile_definitions(okayspace-launcher PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
     endif()
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okayspace-launcher)
+        target_compile_definitions(okayspace-launcher PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Feature examples -------------------------------------------------
@@ -151,6 +182,9 @@ endif()
 # ---- Desktop GUI editor ----------------------------------------------
 if(OKAY_BUILD_EDITOR)
     add_subdirectory(editor)
+    if(OKAY_UPDATE_TRUSTED_KEYS AND TARGET okay-editor)
+        target_compile_definitions(okay-editor PRIVATE OKAY_UPDATE_TRUSTED_KEYS="${OKAY_UPDATE_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Standalone game player ------------------------------------------

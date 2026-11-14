@@ -12,19 +12,19 @@ No open PR touches this area.
 ### 11.1 Inventory: bag, grid, chests, equipment
 - **What:** Items live in a slot Inventory (hotbar and backpack), a DayZ-style Grid Inventory, chests and crates, and an Equipment component of worn and held slots; all player actions go through one shared set of operations so the player and the editor Play view behave the same.
 - **Parts:**
-  - 11.1.1 Slot inventory - `Components/Inventory` - stacks with item id, count and per-instance data; capacity, max stack, weight limit and slow-when-overweight; Add, Remove, Count, dry-run fit; keep across scenes
+  - 11.1.1 Slot inventory - `Components/Inventory` - stacks with item id, count and per-instance data; capacity, max stack, weight limit, optional enforced weight limit and slow-when-overweight; Add, Remove, Count, dry-run fit; keep across scenes
   - 11.1.2 Hotbar and backpack UI - `Components/InventoryUI`, `Inventory/InventoryInput` - number-key hotbar, wheel select, backpack grid, layout, hit-testing, drag state machine, equipment column
   - 11.1.3 Grid bag - `Components/GridInventory`, `Components/GridInventoryUI` - items with a w by h footprint placed on cells, rotation, fit tests, weight, drag between containers
   - 11.1.4 Chests and "the player" lookup - `Components/ChestInventory`, `Components/InventoryPlayer` - open key, nearest-in-range only, take and stash; `FindInventoryPlayer` and the `InventoryInteractable` base shared by chests and benches
   - 11.1.5 Equipment - `Components/Equipment`, `engine/src/Inventory/Equipment.cpp`, `Components/Sockets` - named slots (Head to Off Hand), shown at sockets, main-hand item goes to the hands, armor bonus; `FindSocket` is shared with object holding
-  - 11.1.6 Shared operations and events - `Inventory/InventoryOps`, `Inventory/InventoryEvents` - Move, Split, QuickMove, Transfer, Sort, Drop, Use, Craft with all-or-nothing results; `on_item_added` style events to scripts and visual scripts
+  - 11.1.6 Shared operations and events - `Inventory/InventoryOps`, `Inventory/InventoryEvents` - Move, Split, QuickMove, Transfer, Sort, Drop, Use, Craft, slot-to-grid ToGrid and FromGrid with all-or-nothing results, stack and weight limits and bounded inputs; `on_item_added` style events to scripts and visual scripts
   - 11.1.7 Persistence - `Inventory/InventoryPersistence` - carry the bag into the next scene; save and load one object's inventories to a small text file
   - 11.1.8 Tooltips and glyphs - `Inventory/ItemPresentation` - item tooltip with compare-to-equipped, coloured fallback tile with initials, duplicate-hotkey warning
 - **Code:** `Components/Inventory`, `Components/InventoryUI`, `Components/GridInventory`, `Components/GridInventoryUI`, `Components/ChestInventory`, `Components/InventoryPlayer`, `Components/Equipment`, `Components/Sockets`, `engine/src/Inventory/Equipment.cpp`, `Inventory/InventoryOps`, `Inventory/InventoryInput`, `Inventory/InventoryEvents`, `Inventory/InventoryPersistence`, `Inventory/ItemPresentation`
 - **API:** `Inventory`, `InventoryUI`, `GridInventory`, `ChestInventory`, `Equipment`, `InventoryOps::Move`, `InventoryPersistence::SaveObject`, `FindInventoryPlayer`, script `inv_add`, `inv_remove`, `inv_count`, `inv_has`, `inv_move`, `equip`, `on_item_added`, `on_inventory_full`, visual-script inventory nodes
 - **Editor:** Add Component > RPG / Turn-Based (Inventory, Equipment, Chest / Container); Inventory UI and Grid Inventory come from the GameObject > UI inventory templates; inspectors with item name pickers backed by the Item Database
 - **Docs:** `docs/survival_kit.md` (items feed survival stats only); no inventory doc
-- **Tests:** `inventory_core`, `inventory_wiring`, `inventory_ops`, `inventory_ui`, `grid_inventory`, `grid_inventory_fixes`, `inventory_equipment`, `inventory_holding`, `inventory_script`, `inventory_persist_craft`, `vs_inventory`
+- **Tests:** `inventory_core`, `inventory_wiring`, `inventory_ops`, `inventory_ui`, `grid_inventory`, `grid_inventory_fixes`, `inventory_equipment`, `inventory_holding`, `inventory_script`, `inventory_persist_craft`, `vs_inventory`, `item_presentation`
 - **Status:** Works - Inventory.hpp, InventoryOps::Move (checks first, leaves containers unchanged on rejection) and Equipment::EquipFrom (rolls the bag back when there is no room) read; correctness (no dupes, no item loss, stack caps) and wiring covered by the tests above
 - **Open:** ROADMAP "Unturned-style inventory improvements" and inventory plan items 6-9 are listed open there (gameplay features, scripting, UI polish, networking) although parts exist (see 11.8); no doc for the inventory system; the old `Inventory` slot model and `GridInventory` are two separate data models
 - **Related:** 11.2, 11.3, 11.8, 5.9, 12.2, 8.5, 1.7
@@ -39,14 +39,14 @@ No open PR touches this area.
   - 11.2.2 Loot tables - `Inventory/LootTable` - weighted entries with min, max and chance, several rolls, cached per path
   - 11.2.3 Item pickups - `Components/ItemPickup` - walk into, auto radius or interact key, magnet, takes what fits, drops spawn a pickup so nothing is lost, "hold in hands" items
   - 11.2.4 Loot source - `Components/LootSource` - rolls a table at start, on first chest open or on death; refill timer; repeatable seed
-  - 11.2.5 Item Database window - `editor/main.cpp` - View > Editors & Tools > Item Database edits `items.okayitems`
-- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/main.cpp` (Item Database window)
-- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
-- **Editor:** View > Editors & Tools > Item Database; Add Component > RPG / Turn-Based > Item Pickup, Loot Source
-- **Docs:** `docs/asset_database.md` (lists the extensions only); no item or loot doc
-- **Tests:** `item_database`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
-- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops and loot rolls covered by `item_database` and `inventory_gameplay`
-- **Open:** no doc for `.okayitems` or `.okayloot` formats; no editor for loot tables (text files only); unknown item names become "loose" definitions that are never saved
+  - 11.2.5 Items, Loot & Recipes window - `editor/ContentEditors.cpp` - Window menu and View > Editors & Tools; items, loot tables (weights, quantity, roll preview) and the same window's recipe tab
+- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/ContentEditors.cpp`
+- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `LootTable::Shares`, `LootTable::Issues`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
+- **Editor:** Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
+- **Docs:** `docs/asset_database.md` (lists the extensions only); `docs/editor.md`
+- **Tests:** `item_database`, `item_loot_recipes`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
+- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops, loot rolls, file round trip and roll distribution covered by `item_database`, `item_loot_recipes` and `inventory_gameplay`
+- **Open:** no separate doc page that spells the `.okayitems` or `.okayloot` text format out line by line; unknown item names become "loose" definitions that are never saved until Define it is used
 - **Related:** 11.1, 11.3, 20, 9.5, 5.9
 - **Words:** item database, .okayitems, item definition, rarity, stack size, loot table, .okayloot, drop, pickup, ItemPickup, LootSource, loot chest, durability, item uid, legacy item names
 - **Seen as:** an item shows as plain text with no icon; a renamed item disappears from old saves; enemies drop nothing; a pickup cannot be picked up; loot rolls the same every time or differs between runs
@@ -61,11 +61,11 @@ No open PR touches this area.
   - 11.3.4 Crafting station - `Components/CraftingStation` - bench with its own panel, station tag, shift-click to craft many, nearest-in-range only
 - **Code:** `Inventory/Recipe`, `Components/Crafting`, `Components/CraftingMenu`, `Components/CraftingStation`, `editor/main.cpp` (crafting inspectors)
 - **API:** `Recipe`, `Ingredient`, `RecipeBook`, `CraftQueue`, `Crafting::Craft`, `CraftingStation`, script `craft`, visual-script Craft, `on_craft`, `on_craft_failed`
-- **Editor:** Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station; recipe editor in the inspector; optional `.okayrecipes` picker
-- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only)
-- **Tests:** `inventory_persist_craft`, `npc_crafting`, `vs_inventory`
-- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks and craft counts covered by `inventory_persist_craft`
-- **Open:** no recipe book editor window (text file only); `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
+- **Editor:** Window > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
+- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor.md`
+- **Tests:** `inventory_persist_craft`, `item_loot_recipes`, `npc_crafting`, `vs_inventory`
+- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks, craft counts and the recipe file round trip covered by `inventory_persist_craft` and `item_loot_recipes`
+- **Open:** `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
 - **Related:** 11.1, 11.2, 11.5, 9.5
 - **Words:** crafting, recipe, .okayrecipes, workbench, crafting station, craft time, byproduct, craft queue, ingredients, CraftingMenu, unlock recipe
 - **Seen as:** crafting takes items but gives nothing; the same button appears twice after loading; a bench opens for the wrong player; craft time never finishes
@@ -85,7 +85,7 @@ No open PR touches this area.
 - **API:** `SurvivalStats`, `HealthStat`, `HungerStat`, `StaminaStat`, `StatusEffectStat`, `CarryWeightStat`, `SurvivalSave`, `SurvivalZone`, `Consumables`, `MoveSpeedScale`, `DeathLocksInput`, messages `died`, `starving`, `dehydrated`, script `Stats` and `SurvivalStats` access
 - **Editor:** Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On Click (native UI actions)
 - **Docs:** `docs/survival_kit.md`
-- **Tests:** `survival`
+- **Tests:** `survival`, `death_lock`
 - **Status:** Works - SurvivalComponents.hpp (HealthStat read in detail), SurvivalSystems.hpp and the docs read; drain, damage, armor, death and save round trip covered by the 728-line `survival` test
 - **Open:** three separate health models exist: HealthStat, SurvivalStats' own health and the older RPG `Stats` (11.9) plus `NPCController`'s own `health` (9.5) (possible duplication, not unified)
 - **Related:** 11.1, 11.7, 9.5, 6.6, 12.2, 5.8
@@ -107,7 +107,7 @@ No open PR touches this area.
 - **Docs:** `docs/build_mode.md`
 - **Tests:** `build_mode`, `io_links`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
 - **Status:** Works - BuildMode.hpp, Buildable.hpp, LogicLinks.hpp and the other builder headers read; placement, undo, links and charging for pieces covered by `build_mode`, `structure_builder` and `inventory_build_charge`
-- **Open:** per `docs/build_mode.md` "Not covered yet": placements and links are not synced between players, building is 3D only, pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
+- **Open:** per `docs/build_mode.md` "Not covered yet": building is 3D only (multiplayer building is server checked and synced, 16.8.8; door and mover state is not), pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
 - **Related:** 6.6, 11.1, 11.3, 12.8, 16.8, 2.6
 - **Words:** build mode, building, place objects, Buildable, logic link, button door, pressure plate, creation, structure builder, Rust building, foundation, wall, block builder, Minecraft, Builder Mode, F2, snap to grid
 - **Seen as:** a piece will not place (red ghost); players can delete the level floor; a link stops working after loading; a built structure floats; pieces do not snap together
@@ -122,10 +122,10 @@ No open PR touches this area.
 - **Code:** `Components/Spawner`, `Components/TurnManager`, `Components/Minimap`, `editor/main.cpp` (Spawner, Turn Manager, Minimap rows)
 - **API:** `Spawner`, `SpawnOne`, `AliveCount`, `StartWaves`, `TurnManager`, `EndTurn`, `Minimap`, `MinimapBlip`, script `spawner_start`, `spawner_stop`, `spawner_alive`
 - **Editor:** Add Component > Gameplay > Spawner; RPG / Turn-Based > Turn Manager; UI > Minimap and Minimap Blip
-- **Docs:** `docs/npcs_and_crafting.md` (Spawner only)
+- **Docs:** `docs/minimap.md` (minimap and turn manager), `docs/npcs_and_crafting.md` (Spawner only)
 - **Tests:** `rpg`, `minimap`, `npc_crafting`
-- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`
-- **Open:** no docs for Turn Manager or Minimap; Spawner has no object pooling hook (see pooling in area 1.4); Minimap is 2D top-down only
+- **Status:** Works - Spawner.hpp, TurnManager.hpp and Minimap.hpp read; covered by `rpg` (turn order), `minimap` and `npc_crafting`. The minimap and the turn manager are written up in `docs/minimap.md`
+- **Open:** Spawner has no object pooling hook (see pooling in area 1.4); the minimap is a flat top-down picture (no tilted or perspective view)
 - **Related:** 9.5, 12.8, 1.4, 16.8
 - **Words:** spawner, enemy waves, wave spawner, spawn point, turn manager, turn-based, initiative, round, minimap, radar, blip, MinimapBlip
 - **Seen as:** nothing spawns; too many enemies pile up; the template object is visible in the scene; turns skip a unit; minimap shows nothing or the wrong area
@@ -143,7 +143,7 @@ No open PR touches this area.
 - **Docs:** `docs/npcs_and_crafting.md` (Melee Attacker)
 - **Tests:** `npc_crafting`
 - **Status:** Works for melee (MeleeAttacker.hpp read; covered by `npc_crafting`); Basic for dodge and dive (headers read; used by the player controllers in area 4, no dedicated test file found)
-- **Open:** melee hits NPCController targets only per its header; no hit detection on arbitrary HealthStat objects, no weapon definitions tied to items, no ranged weapon component besides Projectile3D (6.6) and the shooter controllers (4.4)
+- **Open:** dodge and dive still have no test of their own. Melee now hits Health, survival health, RPG stats and NPCs, and only during its hit window and arc or hit box. Weapon definitions live in `.okayweapon` (View > Editors & Tools > Weapons), name the item they belong to, and drive Melee Attacker, Ranged Weapon and the top-down shooter. See `docs/weapons.md`.
 - **Related:** 9.5, 6.6, 4.2, 4.4, 11.4, 8.6
 - **Words:** melee, attack, sword swing, MeleeAttacker, hit arc, cooldown, dodge, roll, dive, dolphin dive, combat, weapon, player_attack
 - **Seen as:** swinging hits nothing; hits through walls; dodge does nothing because it is off by default; the player dives when it should slide
@@ -220,22 +220,23 @@ No open PR touches this area.
 - **Ask me like:** "drag ingredients onto a cauldron"; "snap puzzle pieces to a grid"
 
 ### 11.12 Volumes and zones
-- **What:** One region shape (box, sphere or cylinder, no collider needed) with five zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera) and ambience (a sound that fades in around the camera). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
+- **What:** One region shape (box, sphere or cylinder, no collider needed) with six zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera), ambience (a sound that fades in around the camera) and reverb (a room, hall, cave or outdoor echo on 3D sounds, blended at the edges). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
 - **Parts:**
   - 11.12.1 Shape - `Components/Volume` - `VolumeGeometry`: box, sphere (ellipsoid) and cylinder from one `size` and `offset`; `Contains`, `DepthAt`, `DragFace` (move one face, the opposite stays), `FromGroundDrag`
   - 11.12.2 Checkpoint and Kill - `Components/Volume` - a body inside a Checkpoint takes the floor middle as its respawn point; a body entering a Kill takes `killDamage` and goes back to its checkpoint (or where it was first seen), or is destroyed; optional On Logic Signal `eventName`
   - 11.12.3 Force - `Components/Volume` - pushes dynamic Rigidbody 3D bodies each physics step: one direction (turning with the object or fixed to the world) or radial, in m/s squared
   - 11.12.4 Atmosphere and Ambience - `Components/Volume` - while the camera is inside, the scene fog and vignette blend to the volume's (several volumes blend, the scene's own values come back on exit); an Audio Source on the object fades in and out
+  - 11.12.7 Reverb - `Components/Volume`, `Audio/SpatialFx` - while the listener is inside, 3D sources are sent to the Schroeder reverb at the zone's preset (room, hall, cave, outdoor) and strength; `blend` fades that from the edge; overlapping zones mix; 2D sources are not sent
   - 11.12.5 Scene view tooling - `editor/VolumeTools.*` - translucent shape and label per volume in a colour per kind, six face handles on the selection, GameObject > Volume (draw by dragging on the ground, or create at the view), Scene Overlays > Volumes (show or hide by kind), Inspector, Add Component rows; Logic Source plates and trigger zones get the same shape, handles and switch
   - 11.12.6 Save and checks - `Scene/SceneSerializer`, `Testing/SceneValidator` - `volume` scene and prefab record (several per object), property registry entries, validator codes `volume.zero_size`, `volume.force_zero`, `volume.no_audio`
 - **Code:** `Components/Volume`, `editor/VolumeTools.*`, `Scene/SceneSerializer`, `Scene/BuiltinPropertiesGameplay`, `Testing/SceneValidator`
 - **API:** `Volume`, `Volume::Kind`, `VolumeGeometry`, `Volume::RespawnPoint`, `Volume::SetRespawnPoint`, `Volume::Occupants`, `Volume::ViewerWeight`
 - **Editor:** GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
 - **Docs:** `docs/volumes.md`
-- **Tests:** `volumes`, `save_coverage`, `property_registry`
-- **Status:** Works - all five kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, scene and prefab round trip, validator); the Scene view tools were driven in the real editor
-- **Open:** no reverb (the mixer has only a low-pass), no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it
+- **Tests:** `volumes`, `spatial_audio`, `save_coverage`, `property_registry`
+- **Status:** Works - all six kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, reverb weight and tail, scene and prefab round trip, validator) and `spatial_audio` (presets, edge blend, the demo scene); the Scene view tools were driven in the real editor
+- **Open:** no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it; reverb follows the listener only (a sound does not carry the room it is standing in once you have left)
 - **Related:** 6.2, 11.4, 11.6, 11.5, 2.4, 7.1, 15.3, 44.4
-- **Words:** volume, zone, trigger volume, checkpoint, respawn, kill zone, kill plane, out of bounds, wind zone, force field, updraft, current, fog volume, ambient sound zone, region, box, sphere, cylinder, draw volume
+- **Words:** volume, zone, trigger volume, checkpoint, respawn, kill zone, kill plane, out of bounds, wind zone, force field, updraft, current, fog volume, ambient sound zone, reverb zone, room echo, region, box, sphere, cylinder, draw volume
 - **Seen as:** cannot see where my zones are; the player falls into lava and stays dead; no checkpoint between rooms; need a wind tunnel or a fan; fog should change in a cave; a room needs its own background sound
 - **Ask me like:** "add a kill zone under the bridge that sends the player to the last checkpoint"; "a wind tunnel that blows crates along"; "fog that thickens when I enter the swamp"

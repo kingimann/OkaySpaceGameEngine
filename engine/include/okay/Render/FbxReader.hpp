@@ -36,6 +36,13 @@ struct Limits {
     std::size_t maxCorners      = 8u * 1024 * 1024;   ///< triangle corners built, whole scene
     std::size_t maxNodes        = 1u * 1024 * 1024;   ///< scene nodes (models)
     std::size_t maxNodeDepth    = 2048;               ///< scene hierarchy depth
+    // Animation. A small file can claim many stacks/curves/keys, or point many stacks at the same curves,
+    // so besides the per-clip cap above there is a budget for the whole file.
+    std::size_t maxAnimStacks   = 128;                ///< AnimationStack objects (takes)
+    std::size_t maxAnimLayers   = 1024;               ///< AnimationLayer objects
+    std::size_t maxAnimCurves   = 128u * 1024;        ///< AnimationCurve objects, and AnimationCurveNode objects, each
+    std::size_t maxAnimKeys     = 4u * 1024 * 1024;   ///< keys over all curves
+    std::size_t maxTotalBakedSamples = 4u * 1024 * 1024;   ///< baked evaluations over all clips: samples x animated curve nodes
 };
 
 // ---- Layer 1: the element tree -------------------------------------------
@@ -90,6 +97,11 @@ struct Material {
     bool hasRoughness = false; double roughness = 0.5;
     bool hasMetalness = false; double metalness = 0.0;
     int diffuseTexture = -1, normalTexture = -1;   ///< index into Scene::textures
+    int aoTexture = -1;                            ///< ambient occlusion map (PBR property sets only)
+    /// Which property set the values came from: "" / "lambert" / "phong" for the classic FBX material, or the PBR
+    /// set a modelling tool wrote ("3dsmax-physical", "3dsmax-pbr-metal-rough", "3dsmax-pbr-spec-gloss",
+    /// "gltf", "openpbr"). The set is recognised the way ufbx does it (the tool's class id in the material).
+    std::string shaderSet;
 };
 
 /// One corner of one triangle, in the mesh's geometry space (axes/unit converted).

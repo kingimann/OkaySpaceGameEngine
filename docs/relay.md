@@ -22,7 +22,7 @@ you *have* forwarded, etc.):
 ```
 okayspace-relay                       # listens on UDP 45100
 okayspace-relay 50000                 # custom port
-okayspace-relay --legacy-hello=off    # refuse version-1/2 hellos (see below)
+okayspace-relay --legacy-hello=on     # accept version-1/2 hellos again (off by default, see below)
 ```
 
 It prints the bound port and then forwards quietly. One relay handles many
@@ -68,6 +68,25 @@ get there changes.
 - The relay assigns each peer a **slot** and tells it (and, for clients, the
   host's slot) in a `RelayWelcome`. The host's welcome also carries the
   session's **host key**.
+- Each game picks a random 64-bit **nonce** per attempt and puts it in its hellos
+  (after the cookie). The relay echoes it in every welcome for that peer, and the
+  game ignores a welcome that doesn't carry it, so a welcome forged by someone who
+  can't see the game's traffic can't pair it, point it at another slot, or end its
+  session as "the host left". A host also ignores a welcome too short to carry its
+  host key.
+- If the relay doesn't answer within `NetworkManager::relayTimeoutSeconds` (15 by
+  default, 0 waits forever) the attempt ends and `RelayError()` says so. A client
+  whose code has no host yet hears nothing either, so it times out the same way.
+- A hello from an address that is already registered is not proof of life by
+  itself: it is rate-limited like any other, must carry the address's cookie (the
+  relay answers one without it with a fresh cookie, which a real peer picks up and
+  repeats), and a peer that proved its address can't be re-helloed at an older
+  version. Spoofed hellos can't keep dead peers in the table. A bad port argument
+  (`okayspace-relay 70000`, `abc`) is an error, not a wrapped number.
+- A refusal is reported as what it is: a code taken, a protocol version the relay
+  doesn't speak, or "refused for an unknown reason (code N)".
+- All multi-byte numbers on the wire, in the relay frames and in the game's own
+  packets, are little-endian, whatever the host's byte order.
 - App traffic is wrapped as `RelayData{destSlot}` to the relay, which forwards it
   as `RelayData{srcSlot}` to the destination.
 - Inside `NetworkManager`, a relayed peer is keyed by a synthetic
@@ -110,15 +129,23 @@ The relay is on the internet, so it doesn't trust its peers:
   that as a burst. A host's caps are multiplied by its client count. Each peer
   also receives at most 4 MiB per second from its whole session, so a host's
   clients can't add up to a flood.
-- **Versions.** Hellos and welcomes carry the relay protocol version (3 now).
+- **Versions.** Hellos and welcomes carry the relay protocol version (4 now).
   The relay refuses a version older than it supports with
-  `RelayRefused{version}`.
+  `RelayRefused{version}`. Version 4 only adds the nonce: a version-3 game
+  still works against a version-4 relay (it gets the old, shorter welcome), and a
+  version-4 game that meets an older relay drops its welcomes as unverifiable and
+  gives up with "the relay's welcome could not be verified". To use an older relay
+  anyway, set `allowUnverifiedRelay = true` on that game; its welcomes are then
+  trusted as before, so a forged one can't be told from the real one. Update the
+  relay instead where you can.
 
 **Legacy hellos.** Version-1 and -2 hellos carry no cookie. The relay still
-accepts them while `--legacy-hello` is on (the default for now), and logs how
-many arrived each minute ("N legacy (version 1/2) hellos in the last minute").
-Once that stays at zero, run with `--legacy-hello=off`: they're refused with
-`RelayRefused{version}`. The launcher's voice calls speak version 3 (they fall
+refuses them by default (`--legacy-hello=off`) with `RelayRefused{version}`,
+because anyone can forge the source address of a cookie-less hello. Games too
+old to send a cookie can be let in again with `--legacy-hello=on`; the relay then
+logs how many arrived each minute ("N legacy (version 1/2) hellos in the last
+minute"). (The `RelayServer` class itself still defaults to on, for embedding
+and tests; only the standalone program changed.) The launcher's voice calls speak version 3 (they fall
 back to version 1 only against a relay older than that), so turning legacy
 hellos off doesn't cut them off. A version-3 game talks to a version-2 relay
 unchanged: the older relay ignores the cookie and padding.
@@ -128,6 +155,13 @@ voice calls, where every member announces the host role) still work. They get th
 forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
+
+**A peer's address changes.** The relay knows a peer by its source address. If a host's
+NAT rebinds, its next hello comes from a new address with the host key, and the relay moves
+the host there and keeps its slot: clients notice nothing. If a client's address changes it
+is a new peer with a new slot; the client sees the new slot in the next welcome and reports
+the connection lost ("this connection's address changed on the relay"), and with
+`autoReconnect` rejoins and resumes its state through the new address within a couple of seconds.
 
 **Hub sessions.** Version 3 keeps that hand-over for sessions that want it with
 the `RelayHub` role (the launcher's voice calls): every member says hub, the
@@ -144,6 +178,17 @@ the game, so this is squatting, not a takeover. Use random session codes
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.
+
+## Game channels the relay carries (round 4)
+
+Build mode, the quest log and death / respawn replication ride on the ordinary game channels, so the
+relay needs no change and reads none of it (with encryption on it cannot): a client's build and quest
+requests go out on `__req/build` and `__req/quest` (reliable, ordered, host only: the host's handler
+reads them and nothing is passed on to the other clients), and the host's answers on `__bld`, `__qst`
+and `__life` (ordered). A late joiner's snapshot is sent in chunks of at most 24 KB, a few dozen
+datagrams for a full 250-piece build, well inside the relay's per-peer caps above. The relay session
+tests (`net_relay`, `net_relay_clients`, `net_relay_nat`) were re-run; the new suites were run over a
+direct connection and NetSim, not through a relay.
 
 ## Voice calls in the launcher
 

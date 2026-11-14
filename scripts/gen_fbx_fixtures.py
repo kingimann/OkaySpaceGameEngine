@@ -31,6 +31,7 @@ def AD(v): return P('d', list(v))
 def AI(v): return P('i', list(v))
 def AL(v): return P('l', list(v))
 def AF(v): return P('f', list(v))
+def AC(v): return P('c', list(v))   # byte array ('c', written by newer SDKs for thumbnails)
 
 
 class N:
@@ -51,7 +52,7 @@ def bin_prop(p, compress):
         b = v.encode('latin-1')
         return b'S' + struct.pack('<I', len(b)) + b
     if k == 'R': return b'R' + struct.pack('<I', len(v)) + v
-    fmt = {'d': 'd', 'f': 'f', 'l': 'q', 'i': 'i', 'b': 'B'}[k]
+    fmt = {'d': 'd', 'f': 'f', 'l': 'q', 'i': 'i', 'b': 'B', 'c': 'B'}[k]
     raw = struct.pack('<%d%s' % (len(v), fmt), *v)
     if compress and len(raw) >= 64:
         z = zlib.compress(raw, 9)
@@ -419,6 +420,110 @@ def rig_scene(ascii_names):
     return sc.top(up=1, unit=1.0)
 
 
+def takes_scene():
+    """Three takes that share one timeline (found in a real exporter file): each has its own layer, curve node and
+    copy of the curves, and a time span (LocalStart / LocalStop) saying which part of them it plays.
+    The header carries a byte-array ('c') thumbnail, which newer SDKs write."""
+    sc = Scene(False)
+    g = sc.geometry('Geo', geo_children(CUBE_V, quad_polys(CUBE_Q), [n for n in CUBE_N for _ in range(4)]))
+    m = sc.model('Mover', 0)
+    sc.connect(g, m)
+    for name, span in (('first', (0.0, 1.0)), ('second', (1.0, 2.0)), ('whole', None)):
+        stack = sc.nid()
+        pl = [prop70('LocalStart', 'KTime', 'Time', '', span[0] * KTIME), prop70('LocalStop', 'KTime', 'Time', '', span[1] * KTIME)] if span else []
+        sc.objects.append(N('AnimationStack', [L(stack), sc.nm('AnimStack', name), S('')], [props70(*pl)]))
+        layer = sc.nid()
+        sc.objects.append(N('AnimationLayer', [L(layer), sc.nm('AnimLayer', 'BaseLayer'), S('')], []))
+        sc.connect(layer, stack)
+        cx = curve(sc, 'x', [(0.0, 0.0), (1.0, 10.0), (2.0, 0.0)], 0x4)   # linear: up to 10 at t=1, back to 0 at t=2
+        cn = curve_node(sc, 'T', m, 'Lcl Translation', (0, 0, 0), [cx, None, None])
+        sc.connect(cn, layer)
+    top = sc.top()
+    top[0].children.append(N('Thumbnail', [], [N('Version', [I(100)]), N('Format', [I(0)]), N('ImageData', [AC([1, 2, 3, 4, 250, 251, 252, 253] * 20)])]))
+    return top
+
+
+def bridge_scene():
+    """A square with a square hole cut into it, written as ONE polygon with a bridge: the outer ring, back to its
+    start, the inner ring (opposite direction), back to its start. Corners repeat; area 16 - 4 = 12."""
+    sc = Scene(False)
+    verts = [(0, 0, 0), (4, 0, 0), (4, 4, 0), (0, 4, 0), (1, 1, 0), (1, 3, 0), (3, 3, 0), (3, 1, 0)]
+    polys = [0, 1, 2, 3, 0, 4, 5, 6, 7, ~4]   # inner ring ends on its first corner, then the polygon closes back to corner 0
+    g = sc.geometry('Annulus', geo_children(verts, polys, [(0, 0, 1)] * len(verts), 'ByVertice'))
+    m = sc.model('Annulus', 0)
+    sc.connect(g, m)
+    return sc.top()
+
+
+PBR_SETS = [
+    # (name, class id a, class id b, prefix, base colour prop, texture prop for the base colour, normal prop, extra props)
+    ('Physical', 0x3d6b1cec, 0xdeadc001, '3dsMax|Parameters|', 'base_color', 'bump_map', [('roughness', 0.3), ('metalness', 0.9), ('emission', 2.0)], 'emit_color'),
+    ('MetalRough', 0xd00f1e00, 0xbe77e500, '3dsMax|main|', 'basecolor', 'norm_map', [('roughness', 0.25), ('metalness', 1.0), ('useGlossiness', 2.0)], 'emit_color'),
+    ('SpecGloss', 0xd00f1e00, 0x01dbad33, '3dsMax|main|', 'basecolor', 'norm_map', [('glossiness', 0.8), ('useGlossiness', 1.0)], 'emit_color'),
+    ('Gltf', 0x38420192, 0x45fe4e1b, '3dsMax|', 'main|baseColor', 'main|normal', [('main|roughness', 0.6), ('main|metalness', 0.5)], 'main|emissionColor'),
+]
+
+
+def pbr_scene():
+    """One triangle per PBR property set a modelling tool writes (3ds Max Physical Material, the two 3ds Max PBR
+    materials, the 3ds Max glTF material), each with a base colour, roughness / glossiness, metalness, emission, a
+    base colour texture and a normal map plugged into the prefixed property; plus a classic Phong material. The
+    class ids are written the way the SDK does, as signed 32-bit integers (so 0xdeadc001 is negative)."""
+    sc = Scene(False)
+    def signed(v):
+        return v - (1 << 32) if v >= (1 << 31) else v
+    verts = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    for k, (name, ca, cb, pre, base, norm, extra, emit) in enumerate(PBR_SETS):
+        g = sc.geometry(name + 'Geo', geo_children(verts, [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+        m = sc.model(name, 0, t=(k * 2, 0, 0))
+        mid = sc.nid()
+        pl = [prop70('3dsMax|ClassIDa', 'int', 'Integer', '', signed(ca)), prop70('3dsMax|ClassIDb', 'int', 'Integer', '', signed(cb)),
+              prop70(pre + base, 'Color', '', 'A', 0.2, 0.4, 0.6), prop70(pre + emit, 'Color', '', 'A', 0.5, 0.25, 0.125)]
+        # a classic property that must NOT win over the PBR set
+        pl.append(prop70('DiffuseColor', 'Color', '', 'A', 0.9, 0.9, 0.9))
+        for pn, pv in extra:
+            pl.append(prop70(pre + pn, 'Number', '', 'A', pv))
+        sm = 'unknown'
+        sc.objects.append(N('Material', [L(mid), sc.nm('Material', name + 'Mat'), S('')], [N('Version', [I(102)]), N('ShadingModel', [S(sm)]), props70(*pl)]))
+        t0 = sc.texture(name + 'Albedo', 'C:\\art\\' + name + '_albedo.png')
+        t1 = sc.texture(name + 'Normal', 'C:\\art\\' + name + '_normal.png')
+        sc.connect(t0, mid, pre + ('base_color_map' if base == 'basecolor' else base + '_map' if base != 'main|baseColor' else base))
+        sc.connect(t1, mid, pre + norm)
+        sc.connect(g, m)
+        sc.connect(mid, m)
+    # control: the same class id on a material that says phong keeps the classic reading (ufbx's rule)
+    g = sc.geometry('PhongGeo', geo_children(verts, [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+    m = sc.model('Phong', 0, t=(20, 0, 0))
+    mid = sc.nid()
+    pl = [prop70('3dsMax|ClassIDa', 'int', 'Integer', '', signed(PBR_SETS[0][1])), prop70('3dsMax|ClassIDb', 'int', 'Integer', '', signed(PBR_SETS[0][2])),
+          prop70('3dsMax|Parameters|base_color', 'Color', '', 'A', 0.2, 0.4, 0.6), prop70('DiffuseColor', 'Color', '', 'A', 0.9, 0.8, 0.7),
+          prop70('ShininessExponent', 'Number', '', 'A', 25.0)]
+    sc.objects.append(N('Material', [L(mid), sc.nm('Material', 'PhongMat'), S('')], [N('Version', [I(102)]), N('ShadingModel', [S('phong')]), props70(*pl)]))
+    sc.connect(g, m); sc.connect(mid, m)
+    return sc.top()
+
+
+def orphan_video_scene(content):
+    """A texture whose connected Video has no picture while another Video (not connected to anything) carries it: matched
+    by file name. One triangle with a material that has the texture on DiffuseColor."""
+    sc = Scene(False)
+    g = sc.geometry('TriGeo', geo_children([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, ~2], [(0, 0, 1)] * 3, 'ByVertice', None, None, [0], 'AllSame'))
+    m = sc.model('Tri', 0)
+    mat = sc.material('M', (0.5, 0.5, 0.5))
+    tex = sc.texture('Map', 'C:\\art\\grid.png')
+    own = sc.nid()   # the video connected to the texture: same file name, no picture
+    sc.objects.append(N('Video', [L(own), sc.nm('Video', 'Map'), S('Clip')], [
+        N('Type', [S('Clip')]), N('FileName', [S('C:\\art\\grid.png')]), N('RelativeFilename', [S('grid.png')])]))
+    sc.connect(own, tex)
+    v = sc.nid()
+    sc.objects.append(N('Video', [L(v), sc.nm('Video', 'Map'), S('Clip')], [
+        N('Type', [S('Clip')]), N('FileName', [S('C:\\art\\grid.png')]), N('RelativeFilename', [S('grid.png')]), N('Content', [R(content)])]))
+    sc.connect(tex, mat, 'DiffuseColor')
+    sc.connect(g, m)
+    sc.connect(mat, m)
+    return sc.top()
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -436,6 +541,10 @@ def main():
     write_binary(os.path.join(out, 'pivot_bin.fbx'), pivot_scene(), 7400)
     write_binary(os.path.join(out, 'rig_bin75.fbx'), rig_scene(False), 7500)
     write_ascii(os.path.join(out, 'rig_ascii.fbx'), rig_scene(True), 7400)
+    write_binary(os.path.join(out, 'takes_bin.fbx'), takes_scene(), 7400)
+    write_binary(os.path.join(out, 'bridge_bin.fbx'), bridge_scene(), 7400, compress=False)
+    write_binary(os.path.join(out, 'orphan_video_bin.fbx'), orphan_video_scene(png), 7400, compress=False)
+    write_binary(os.path.join(out, 'pbr_bin.fbx'), pbr_scene(), 7400, compress=False)
     for f in sorted(os.listdir(out)):
         print(f, os.path.getsize(os.path.join(out, f)))
 

@@ -1,5 +1,345 @@
 OkaySpace Game Engine — Changelog
 
+v2.870.0
+  Multiplayer and anti-cheat
+  - The relay program now refuses old game versions that do not send the
+    safety cookie. This stops fake packets from filling the relay. A server
+    owner can allow old games again with --legacy-hello=on.
+  - Anti-cheat: a kick report can carry the evidence behind it. The launcher
+    admin pages show linked accounts and evidence, and the editor has a
+    Detection engine section with a master switch and an observe mode.
+
+  Inventory
+  - Fixed a bug where inventory slots grew wrongly when sent over the
+    network. The weight limit is now enforced. Bags and chests scale with the
+    screen and scroll with the mouse wheel when they are tall.
+  - The top-down fire button no longer shoots through an open bag or menu.
+    Lean keys step aside when a chest or bag wants the same key.
+
+  Scripting
+  - Visual script: new List Append, List Slice, List Pop, Map Get Or and Map
+    Merge nodes. Typed scripts can pass arguments to events.
+
+  Importing models
+  - A texture path in a model's material file that points to an absolute
+    location is now ignored, so a downloaded model cannot point the engine at
+    files elsewhere on the computer.
+
+  Behind the scenes
+  - Fixed the Windows build on the newest build tools, and fixed four tests
+    that failed on the build servers. The web build is faster and times out
+    instead of hanging.
+
+v2.869.0
+  Anti-cheat
+  - A server-side detection engine can watch for speed hacks, flying,
+    no-clip, aim bots, rapid fire, item duplication and message floods. It
+    is off until a game turns it on, and it has an observe mode that only
+    records. Existing games are not affected.
+
+  Importing models
+  - Concave faces in OBJ and PLY files are triangulated properly instead of
+    being fanned, which fixed warped surfaces.
+  - PLY files with a free-text header line load. glTF files with strips,
+    fans or a bad index load what they can, and a glTF with no usable mesh
+    now says so instead of importing an empty model.
+  - On Windows, model files in folders with non-English names load. Files
+    with decimal commas in a different language setting no longer break.
+  - FBX files from 3ds Max keep their PBR material values.
+
+  Launcher
+  - Removed a setting that did nothing. The offline What's New page no
+    longer shows an outdated list.
+
+  Behind the scenes (off by default, nothing changes for players)
+  - OkayUI, our own interface toolkit, gained window stacking, colour
+    widgets, tables that skip off-screen rows, plots and drawing backends.
+    The editor and launcher still use Dear ImGui.
+
+v2.868.0
+  Accounts and anti-cheat
+  - Joining a server that needs a session ticket now asks the account
+    service for one first. A banned answer is final and the game does not
+    join. Servers that do not need tickets are not affected.
+  - Account passwords stored on this computer use a much slower, safer hash.
+    Older accounts upgrade the next time you sign in.
+  - The update feed can be digitally signed. Until a signing key is set up
+    in a build, updates work exactly as before.
+  - Behind the scenes: ban and appeal records are kept in an audit log,
+    report and appeal spam is limited, and repeat evasion by device is
+    tracked on the server side.
+
+  Releases
+  - The key used to publish updates was replaced, so new versions are
+    published with their checksums again.
+
+v2.867.0
+  Updates and releases
+  - A new version is only offered to players after its files and checksums
+    are published, so the "no checksum" update error should not come back.
+  - Windows programs and the installer are signed with a code-signing
+    certificate when one is configured. Until then they stay unsigned, as
+    before.
+
+  Behind the scenes (all off by default, nothing changes for players)
+  - Our own readers for 3DS and BVH files, and checks of the own FBX and
+    COLLADA readers against real files from other tools.
+  - More tests of our own encryption code (published test vectors and
+    comparisons with libsodium). It is not used and is not ready for use.
+  - OkayUI (our own interface toolkit) gained more widgets and a code
+    editor widget. The editor and launcher still use Dear ImGui.
+
+v2.866.0
+  Gameplay and physics
+  - A 3D hinge can stop at a minimum and maximum angle, so doors and levers
+    no longer swing all the way round. Limits are off until you turn them
+    on, so existing hinges behave as before.
+  - A moving body can use a mesh collider: it collides as the convex hull
+    of its mesh. A body that lands on a solid mesh now gets collision
+    enter, stay and exit callbacks.
+  - 2D games can sweep a box or a capsule, check what is inside those
+    shapes, and push 2D bodies with an explosion force. Text scripts and
+    visual scripts both have these.
+  - Behaviour trees can run another tree as a sub-tree, with its own
+    blackboard and optional key mapping. A tree that would run itself
+    fails instead of looping. A breakpoint on a node pauses Play on that
+    node until you resume.
+  - Two components of the same type on one object (for example two
+    colliders or two lights) are both saved now. Before, only the first
+    was kept. Older scene files still load.
+
+  Cutscenes and audio
+  - Sequences can key letterbox bars, a camera shake, a coloured screen
+    fade, and another sequence played inside this one. Reduce motion turns
+    the shake off. See examples/cutscene.
+  - 3D sound can echo in Reverb zones (Room, Hall, Cave, Outdoor), change
+    pitch with speed, get quieter behind walls, and sound duller with
+    distance. Every effect is off until you turn it on, so existing scenes
+    sound the same. See examples/spatial_audio.
+
+  Settings and accessibility
+  - The Settings screen can pick a monitor, a display mode (windowed,
+    borderless or fullscreen), a resolution and a refresh rate. Apply asks
+    "Keep these settings?" for 10 seconds and goes back on its own if
+    nobody answers. The choice is saved for the next launch.
+  - Subtitles and sound captions are drawn in the game. Hold to toggle
+    keeps sprint, aim and crouch on after you let go. Aim assist pulls
+    right-stick aiming a short way toward a nearby target (mouse aiming is
+    never pulled). All three are on the Settings screen.
+  - Keyboard and gamepad menus draw one focus ring that follows the UI
+    theme. The Settings screen can make it high-visibility (thick yellow
+    with a dark edge) or thicker. A mouse click hides it.
+
+  UI and input
+  - On-screen touch controls: a virtual joystick, a D-pad and touch
+    buttons that drive the same actions as keys and pads. Tap, double tap,
+    long press, swipe, pinch and two-finger rotate are available to scripts.
+    See examples/touch_controls.
+  - UI frames can be rotated and scaled. Their children turn and scale with
+    them, and clicks follow the new shape.
+  - Games can copy and paste text. Input fields support Ctrl or Command
+    with C, X and V. Scripts and visual scripts can read and set the
+    clipboard.
+
+  Editor
+  - Window > Items, Loot & Recipes edits items, loot tables and crafting
+    recipes in one window, with search, undo and a live loot roll preview.
+  - The Localization window shows missing translations and placeholder
+    mismatches, scans the project for unused and missing keys, and
+    previews a pseudo-locale and right-to-left text.
+  - The Lighting window, Build Settings and the Light Inspector say which
+    lighting, post-processing, fog and sky switches a renderer does not
+    draw.
+  - Exporting a visual script now turns Timer into working code, and an
+    Actions list into actions_load, so every step still runs. A node that
+    cannot be exported is reported by name instead of being skipped.
+
+  Fixes
+  - A PLY model that declares its vertex list twice is refused, instead of
+    loading with mismatched normals.
+
+v2.865.0
+  Editor and visual scripting
+  - Exporting a visual script turns Wait and Delay into after(seconds, fn).
+    The nodes that follow run in that function after the delay, instead of
+    running immediately. A test runs the exported script and the graph for
+    the same Wait and Delay.
+  - A built-in file dialog is cancelled when the scene is rebuilt (undo,
+    redo, load, new scene, delete, play and stop). Scene shortcuts do not
+    fire while one is open.
+  - Creating a prefab variant fails the step if the new file cannot be read
+    back, instead of recording an empty file for undo.
+  - The prefab override count is remembered by object id, and stale entries
+    are dropped, so a new object cannot inherit a destroyed object's count.
+
+  Saving
+  - A negative number, such as an audio pitch of -1, no longer looks like
+    missing fields, so the rest of that component is kept on the next save.
+  - Build profile names cannot inject extra keys, and profile text values
+    are escaped.
+  - A guid written on an object's header line is used when diffing and
+    merging scenes.
+
+  Launcher
+  - Content-Length is parsed without overflow. A download that announces
+    itself over 2 GiB is refused, and curl is given the same cap.
+  - Link previews are not fetched when the host is loopback, private,
+    link-local, or does not resolve.
+  - Tenor preview sizes are read from the tinygif dims, and the read stays
+    inside the response.
+  - A voice clip copies the loaded WAV into its own buffer and frees SDL's
+    buffer at load.
+
+  Scripts and models
+  - repeat, pad_left and pad_right truncate huge counts instead of hanging
+    or running out of memory. format() with an index past the arguments
+    yields an empty field.
+  - An MTL texture path that is absolute, or that climbs out of the model's
+    directory with "..", is dropped.
+  - FBX up, front and coord axis selectors are clamped to 0, 1 or 2.
+  - A corrupted FBX deflate block can no longer shift by 63 or more bits.
+
+  OkayUI
+  - BeginChild past 8 deep and a popup past 4 deep do not start, so the
+    matching end cannot restore a layout that was never saved.
+  - BeginFrame clears the per-frame stacks. PushID past 32 deep is skipped,
+    and the matching PopID does not restore a seed that was never saved.
+
+v2.864.0
+  Editor and visual scripting
+  - Visual scripts can declare typed variables (numbers, text, colours, lists,
+    maps and structs) with scopes. The editor has panels for variables and
+    structs, the Inspector edits them live, and the debugger can watch them.
+    Note: Add Var on a Vector3 now adds component by component.
+  - Pins show a tooltip saying what can connect, and nodes show what they do,
+    need and give.
+  - New navigation obstacles can carve holes in the navigation mesh; the editor
+    previews them.
+  - The Build window follows a <Name>_Data folder layout, strips unused assets,
+    supports StreamingAssets and writes a build report (with a dry run). The
+    player has --build-info.
+
+  Multiplayer
+  - A client now notices when the host has gone away or refuses the join,
+    instead of waiting forever.
+  - The relay only accepts a repeated hello with a valid cookie, limits how
+    fast one address can send them, and will not downgrade the protocol
+    version. Session codes no longer appear in logs, the relay checks its port
+    range, and the per-address session count follows a host that moves.
+  - Games in this release speak relay protocol version 4. The live relay has
+    to be upgraded with this release. A game drops welcomes from an older
+    relay unless it sets allowUnverifiedRelay.
+  - Position updates at the edge of the number range no longer overflow.
+
+  Engine
+  - Hostile or damaged model files (FBX, GLB, PLY) no longer crash or hang:
+    depth, node and animation limits are enforced and out-of-range numbers are
+    clamped. Skinned meshes with bad joint indices are repaired.
+  - Physics sweeps with NaN or huge distances, huge navigation grids and path
+    searches, and array functions that changed the list while walking it no
+    longer hang or overflow.
+  - Fixed data races in the server browser and voice chat.
+
+v2.863.0
+  Launcher and updates
+  - Updates are checked before they are used. The Versions page no longer has
+    an "Install anyway" button: a file without a published checksum is refused.
+    The editor's own update and the player download use the same checks.
+  - An update swaps the launcher, editor and player together or not at all. If
+    the swap fails nothing is left half replaced.
+  - After an update restarts the launcher, the new program is asked to confirm
+    its version before it is started for real. A file that cannot start, or
+    reports the wrong version, is rolled back: the previous launcher is put
+    back and started, and the bad file is kept next to it for inspection.
+  - If an update fails, the update window says why and what to do. At most two
+    automatic attempts are made for the same version; the Retry button always
+    works.
+  - On Linux the restart now starts the new file instead of the renamed old one.
+
+  Engine
+  - Reliable ordered messages are no longer silently dropped when more than 32
+    are waiting for acknowledgement; they are queued and sent in order.
+  - Hostile or damaged data no longer crashes or hangs: network position
+    updates at the edge of the number range, subtitle timestamps that are far
+    too large, localization files with unusual whitespace, model files that
+    declare absurd sizes, and a console view with a NaN background.
+
+  Editor
+  - The editor no longer re-checks the whole scene for unsaved changes on every
+    frame while you play, which saves time on every frame.
+
+  Project
+  - The project license is now a proprietary license: games made with the
+    engine can be sold without royalty. See LICENSE.
+
+v2.862.0
+  Editor
+  - Visual script: right-click a node and choose Connect to... to see what can
+    plug into it. Every pin of the node has its own list of nodes that fit that
+    pin (easiest and exact-type matches first). Pick one and it is added already
+    wired, or choose "Search all" to open the full list for that pin.
+  - Visual script: the Print node now has a Text input and an optional Value
+    input, so it can print your own text, a value, or both ("Text: Value").
+  - Visual script: the Add Node menu opens faster the first time (the list is
+    built about three times quicker).
+  - Visual script: one flow output can now be wired to several nodes. They run
+    in the order they were connected. Alt+click a wire to remove just that wire.
+
+v2.861.2
+  Editor
+  - Visual script: the Add Node menu is much lighter while it is open. It now
+    draws only the rows you can see and keeps the results, topic counts and
+    search matches until something changes, so scrolling, hovering and idle
+    time in the menu cost almost nothing.
+
+v2.861.1
+  Editor
+  - Visual script: the Add Node menu no longer lowers the frame rate when it
+    opens or while you type in its search box. The node list is built once and
+    reused instead of being rebuilt on every frame.
+
+v2.861.0
+  Editor
+  - Prefabs: an override header shows what an instance changes, with revert and
+    apply per property or for all (#666). Open on a prefab enters prefab mode,
+    with its own scene view, a leave prompt for unsaved edits and undo (#676).
+    Prefab variants are changed by their overrides or by opening their base
+    prefab; they are not opened directly.
+  - Level design: foliage painting (paint, erase, rescale; slope, height and
+    spacing limits; merged into chunks for speed), up to four painted terrain
+    texture layers, decal projector, cable between two objects, true
+    orthographic Top/Front/Side views, and a measuring tool (#677). Volumes
+    and logic zones: checkpoint, kill, force, atmosphere and ambience regions
+    drawn in the scene view; an ambience region fades in the Audio Source on
+    its object while the camera is inside (#675). I/O links on logic objects:
+    when a named output fires, any object's input is triggered, with a delay
+    and a once option (#672). Navigation areas, costs and off-mesh links
+    (#661). Mesh Collider 3D uses the real triangles for static objects (#663).
+  - Project panel rebuilt on the asset database (#673). Undo records named
+    scene steps that survive Play (#662).
+  - Scene view and layout: the camera readout is an optional overlay that no
+    longer overlaps the stats line; toolbar tooltips and an icon-plus-label
+    mode, with overflow moved into the "..." menu on narrow views; Compact and
+    Comfortable inspector density; object and camera/light names avoid each
+    other and the gizmo; Shift+Space maximizes the Scene view; panel groups
+    collapse and expand; the last layout is restored at start (#682).
+  Game features
+  - The player's Settings screen has Text size, Colour filter, High contrast,
+    Reduce motion and Reduce flashing, and the engine and UI components honour
+    them (#657).
+  - Save games without code: a Saveable component, Save Settings, Save / Load /
+    Delete / Continue as nodes, actions and script functions, and a Save Slots
+    screen (#664).
+  Launcher
+  - "Download my data" and "Delete my account" in Account > Sign-in & security;
+    deleting needs your password and removes or anonymises your rows (#651;
+    needs the delete-account function deployed, see docs/account_data.md; until
+    then the launcher says deletion is not set up).
+  - Report a message, post, item or profile; reports are reviewed by staff
+    (#652, needs docs/sql/reports.sql, applied to the live project).
+  Fonts
+  - TrueType fonts are rasterised by our own code (#655).
+
 v2.860.0
   Audio
   - Clips keep their stereo channels and long music streams from disk in a

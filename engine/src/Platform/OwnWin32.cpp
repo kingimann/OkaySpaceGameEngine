@@ -125,6 +125,32 @@ public:
         m_full = on;
     }
     bool IsFocused() const override { return GetFocus() == m_hwnd; }
+    bool PresentPixels(const uint8_t* rgba, int w, int h) override {
+        if (!rgba || w <= 0 || h <= 0) return false;
+        RECT rc; GetClientRect(m_hwnd, &rc);
+        const int cw = w < rc.right ? w : (int)rc.right, ch = h < rc.bottom ? h : (int)rc.bottom;   // what fits
+        if (cw <= 0 || ch <= 0) return false;
+        // 32-bit BGRX, top-down (negative height), the layout GDI takes without a palette.
+        m_present.resize((size_t)cw * (size_t)ch * 4);
+        for (int y = 0; y < ch; ++y) {
+            const uint8_t* src = rgba + (size_t)y * (size_t)w * 4;
+            uint8_t* dst = m_present.data() + (size_t)y * (size_t)cw * 4;
+            for (int x = 0; x < cw; ++x, src += 4, dst += 4) { dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = 255; }
+        }
+        BITMAPINFO bi;
+        ZeroMemory(&bi, sizeof(bi));
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = cw;
+        bi.bmiHeader.biHeight = -ch;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        HDC dc = GetDC(m_hwnd);   // not m_dc: that one belongs to the GL context
+        if (!dc) return false;
+        const int lines = StretchDIBits(dc, 0, 0, cw, ch, 0, 0, cw, ch, m_present.data(), &bi, DIB_RGB_COLORS, SRCCOPY);
+        ReleaseDC(m_hwnd, dc);
+        return lines == ch;
+    }
 
     bool CreateGLContext(const GLAttributes& a) override;
     void DestroyGLContext() override {
@@ -153,6 +179,7 @@ public:
     LONG m_style = 0;
     RECT m_rect = {0, 0, 0, 0};
     wchar_t m_highSurrogate = 0;
+    std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
 };
 
 class WinPad final : public Gamepad {

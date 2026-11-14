@@ -5,6 +5,7 @@
 // Nodes that cannot run headless (hosting, Steam, PlayFab) must still build; events are
 // built and registered. A node that is none of these and not on the known list fails.
 #include "test_framework.hpp"
+#include "test_sandbox.hpp"
 #include "VisualScriptEditor.hpp"
 #include "VisualScriptPalette.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -14,12 +15,15 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/Tilemap.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -42,6 +46,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
@@ -67,6 +72,9 @@ static const char* kKnownUnproven[] = {
 // proven above. This list is a ratchet: a new silent binding fails the test, and a proven one must leave.
 static const char* kKnownSilentBindings[] = {
     "Rigidbody.AddTorque/1", "Input.DefineAction/3", "Input.DefineDirection/3", "Audio.SaveSettings/0",
+    // Drawing between steps does not move the saved pose. With one step per frame the
+    // drawn pose and the physics pose are the same, so the snapshot does not change.
+    "Time.smoothPhysics=",
 };
 
 static std::vector<std::string> g_errs;
@@ -81,6 +89,18 @@ static std::string Str(const vs::VsValue& v) {
 
 // Process-wide state a node can change (the quit flag, pauses, the mixer): put back before every run so
 // one run cannot leak into the next.
+static void ClearFingers() {
+    std::vector<long long> ids;
+    std::vector<Vec2> at;
+    for (int i = 0; i < Input::TouchCount(); ++i) {
+        ids.push_back(Input::GetTouch(i).id);
+        at.push_back(Input::GetTouch(i).position);
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) Input::FeedTouch(ids[i], 2, at[i]);
+    Input::ClearTypedText();
+    Gestures::Reset();
+}
+
 static void ResetStatics() {
     Game::CancelQuit();
     for (const std::string& r : Game::PauseReasons()) Game::ClearPause(r);
@@ -121,6 +141,7 @@ static std::string Snapshot(Scene& s) {
         if (auto* st = g->GetComponent<Seat>()) { std::snprintf(b, sizeof b, "ST%d", (int)st->occupied); out += b; }
         if (auto* ch = g->GetComponent<Character>()) { std::snprintf(b, sizeof b, "CH%d", (int)ch->IsPlayingClip()); out += b; }
         if (auto* nv = g->GetComponent<NavMeshAgent>()) { const Vec3 d = nv->Destination(); std::snprintf(b, sizeof b, "NV%.2f,%.2f,%.2f,%d,%d", d.x, d.y, d.z, (int)nv->IsStopped(), (int)nv->Arrived()); out += b; }
+        if (auto* gp = g->GetComponent<GridPathAgent2D>()) { std::snprintf(b, sizeof b, "GP%d,%d,%d", (int)gp->HasGoal(), (int)gp->HasPath(), (int)gp->Arrived()); out += b; }
         if (auto* bt = g->GetComponent<BehaviorTreeRunner>()) { for (const char* k : {"x", "Other", "1", "key"}) if (const BtValue* v = bt->blackboard.Find(k)) out += std::string("BT") + k + Str(v->ToVs()); }
         if (auto* ik = g->GetComponent<FullBodyIK>()) { std::snprintf(b, sizeof b, "IK%d,%.2f,%.2f,%.2f,%.2f", (int)ik->lookEnabled, ik->lookPosition.x, ik->lookPosition.y, ik->lookPosition.z, ik->lookWeight); out += b;
             for (int l : {(int)FullBodyIK::LeftHand, (int)FullBodyIK::RightHand}) { const auto& e = ik->effectors[l]; std::snprintf(b, sizeof b, "E%d,%.2f,%.2f,%.2f,%.2f", (int)e.enabled, e.position.x, e.position.y, e.position.z, e.positionWeight); out += b; } }
@@ -214,6 +235,15 @@ static void RichPopulate(Scene& s, GameObject*& me, int variant) {
         sm->states.push_back(st);
     }
     me->AddComponent<NavMeshAgent>();
+    auto* tiles = s.CreateGameObject("Tiles")->AddComponent<Tilemap>();
+    tiles->Resize(8, 8);
+    me->AddComponent<GridPathAgent2D>();
+    if (variant == 1) {
+        auto* grid = me->GetComponent<GridPathAgent2D>();
+        grid->speed = 0.4f;
+        me->transform->SetPosition(tiles->CellToWorld(0, 0));
+        grid->SetCell(6, 0);
+    }
     me->AddComponent<BehaviorTreeRunner>();
     me->AddComponent<FullBodyIK>();
     auto* ps = me->AddComponent<ParticleSystem>();
@@ -309,6 +339,20 @@ static std::vector<Fix> BuildFixes() {
         add(x);
     }
     { Fix x{"ClearTrail"}; x.setup = [](Scene&, GameObject* me) { me->AddComponent<TrailRenderer>(); if (auto* rb = me->GetComponent<Rigidbody3D>()) rb->velocity = Vec3(0, 0, -6); }; add(x); }
+    {
+        // The plain graph's blast centre is a unit away and its radius is 1, so it misses.
+        // This one is centred on the body. A 2D body with gravity off slides; the graph without the node stays put.
+        Fix x{"AddExplosionForce"};
+        x.graph = "node 1 OnStart\nentry OnStart 1\nnode 2 AddExplosionForce\ndefault 2 1 20\ndefault 2 2 10\ndefault 2 3 0\n"
+                  "node 3 MakeVec3\ndefault 3 0 0\ndefault 3 1 0\ndefault 3 2 0\nexec 1 0 2\ndata 2 0 3 0\n";
+        x.base = "node 1 OnStart\nentry OnStart 1\n";
+        x.setup = [](Scene&, GameObject* me) {
+            if (auto* r3 = me->GetComponent<Rigidbody3D>()) r3->gravityScale = 0.0f;
+            auto* rb = me->AddComponent<Rigidbody2D>();
+            rb->gravityScale = 0.0f;
+        };
+        add(x);
+    }
     { Fix x{"MusicResume"}; x.setup = [](Scene& s, GameObject*) { if (auto* mp = Find(s, "Music")->GetComponent<MusicPlayer>()) { mp->Play(0); mp->Pause(); } }; add(x); }
     { Fix x{"StopAnimation"}; x.setup = [](Scene&, GameObject* me) { auto* c = me->AddComponent<Character>(); AnimClip k; k.name = "wave"; k.loop = true; c->AddClip(k); c->PlayClip("wave"); }; add(x); }
     {
@@ -552,6 +596,67 @@ static std::vector<Ev> BuildEvents() {
     }});
     for (const char* t : {"OnObjectPlaced", "OnObjectRemoved", "OnLogicSignal", "OnCheatDetected", "OnValidateRpc", "OnValidateHit", "OnLanguageChanged"})
         e.push_back({t, "", "bus", "Me", raise(t, "")});
+    // A finger stream the recogniser turns into one gesture, then one scene update so the
+    // graph's event runs. The clock starts far from any earlier sample.
+    auto gesture = [](auto feed) {
+        return [feed](Scene& s, GameObject*, VC*) {
+            ClearFingers();
+            Input::SetTouchScreen(true);
+            feed();
+            s.Update(1.0f / 60.0f);
+            ClearFingers();
+        };
+    };
+    e.push_back({"OnTap", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {12, 12});
+        Gestures::Tick(20.0);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {12, 12});
+        Gestures::Tick(20.10);
+        Gestures::Tick(20.60);
+    })});
+    e.push_back({"OnDoubleTap", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {20, 20});
+        Gestures::Tick(30.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {20, 20});
+        Gestures::Tick(30.10);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 0, {22, 22});
+        Gestures::Tick(30.20);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {22, 22});
+        Gestures::Tick(30.28);
+    })});
+    e.push_back({"OnLongPress", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {30, 30});
+        Gestures::Tick(40.00);
+        Input::ClearTypedText();
+        Gestures::Tick(40.60);
+    })});
+    e.push_back({"OnSwipe", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 80});
+        Gestures::Tick(50.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(1, 2, {160, 80});
+        Gestures::Tick(50.12);
+    })});
+    e.push_back({"OnPinch", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 0});
+        Input::FeedTouch(2, 0, {100, 0});
+        Gestures::Tick(60.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(2, 1, {260, 0});
+        Gestures::Tick(60.20);
+    })});
+    e.push_back({"OnRotate", "", "real", "Me", gesture([] {
+        Input::FeedTouch(1, 0, {0, 0});
+        Input::FeedTouch(2, 0, {100, 0});
+        Gestures::Tick(70.00);
+        Input::ClearTypedText();
+        Input::FeedTouch(2, 1, {0, 100});
+        Gestures::Tick(70.20);
+    })});
     e.push_back({"OnNetRpc", "ping", "bus", "Me", raise("OnNetRpc", "ping")});
     return e;
 }
@@ -639,6 +744,7 @@ static void CheckStaleTraversal() {
 
 int main() {
     RUN_SUITE("vs_registry_effect");
+    okaytest::Sandbox sandbox("vs_registry_effect", OKAY_SOURCE_DIR);   // files the nodes write land in a temp folder, not the checkout
     g_wav = MakeWav("registry_effect_silence.wav");
     auto oldSink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) { ++g_logLines; };
@@ -855,5 +961,6 @@ int main() {
     CheckEvents();
     CheckStaleTraversal();
     Game::CancelQuit();
+    CHECK(sandbox.Verify());   // nothing was written into the source tree
     TEST_MAIN_RESULT();
 }

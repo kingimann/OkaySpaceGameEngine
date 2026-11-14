@@ -84,6 +84,11 @@ public:
     /// Distance from the pen line (glyph top) down to the baseline at this height.
     float Ascent(float pixelHeight) const { return m_ascent * ScaleFor(pixelHeight); }
 
+    /// This face baked so the em is `pixelHeight` screen pixels (rounded, clamped).
+    /// The result is cached on this font. Drawing at that size is one atlas pixel
+    /// per screen pixel; linear filtering only has to cover sub-pixel placement.
+    TtfFont* ForPixelHeight(float pixelHeight) const;
+
 private:
     struct Info;   // the parsed font (ttf::Face) over m_bytes
     bool  Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name);
@@ -103,6 +108,7 @@ private:
     mutable int m_shelfX = 0, m_shelfY = 0, m_shelfH = 0;
     mutable std::uint32_t m_generation = 0;
     mutable bool m_fullReported = false;
+    mutable std::unordered_map<int, std::unique_ptr<TtfFont>> m_sized;  // bake height -> face
 };
 
 /// Process-wide font cache: returns a loaded font for `path` (baked once and reused),

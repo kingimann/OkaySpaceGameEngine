@@ -14,6 +14,7 @@ namespace okay::net {
 namespace {
 
 struct Held {
+    const UdpSocket* sock = nullptr;   // the socket this datagram belongs to (two managers can share a process)
     Endpoint to;
     std::vector<std::uint8_t> bytes;
     double release = 0.0;
@@ -74,13 +75,20 @@ void ResetSimulator() {
     g_in.clear();
 }
 
+void ResetSimulator(const UdpSocket& socket) {
+    auto mine = [&](const Held& h) { return h.sock == &socket; };
+    g_out.erase(std::remove_if(g_out.begin(), g_out.end(), mine), g_out.end());
+    g_in.erase(std::remove_if(g_in.begin(), g_in.end(), mine), g_in.end());
+}
+
 void PumpSimulator(UdpSocket& socket) {
-    if (!socket.IsOpen()) { g_out.clear(); return; }
+    if (!socket.IsOpen()) { ResetSimulator(socket); return; }
     const double now = Now();
     std::vector<Held> keep;
     keep.reserve(g_out.size());
     for (auto& h : g_out) {
-        if (h.release <= now) SendNow(socket, h.to, h.bytes.data(), h.bytes.size());
+        if (h.sock != &socket) keep.push_back(std::move(h));          // another socket's: its own pump sends it
+        else if (h.release <= now) SendNow(socket, h.to, h.bytes.data(), h.bytes.size());
         else keep.push_back(std::move(h));
     }
     g_out.swap(keep);
@@ -95,6 +103,7 @@ bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::
         SendNow(socket, to, bytes, size);
     } else {
         Held h;
+        h.sock = &socket;
         h.to = to;
         h.bytes.assign(bytes, bytes + size);
         h.release = release;
@@ -103,6 +112,7 @@ bool HoldDatagram(UdpSocket& socket, const Endpoint& to, const void* data, std::
     }
     if (g_sim.duplicate > 0.0f && Unit() < g_sim.duplicate) {
         Held copy;
+        copy.sock = &socket;
         copy.to = to;
         copy.bytes.assign(bytes, bytes + size);
         copy.release = Now() + (double)DelaySeconds() + 0.001;
@@ -123,6 +133,7 @@ int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint
             NoteWire(static_cast<std::size_t>(n), true);
             if (Dropped()) continue;
             Held h;
+            h.sock = &socket;
             h.to = ep;
             h.bytes.assign(tmp.begin(), tmp.begin() + n);
             h.release = Now() + (double)DelaySeconds();
@@ -138,7 +149,10 @@ int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint
     }
     if (!g_in.empty()) {
         const double now = Now();
+        bool any = false;
         for (auto it = g_in.begin(); it != g_in.end(); ++it) {
+            if (it->sock != &socket) continue;   // held for another socket
+            any = true;
             if (SimulatorActive() && it->release > now) continue;
             const std::size_t n = std::min(capacity, it->bytes.size());
             if (buffer && n) std::memcpy(buffer, it->bytes.data(), n);
@@ -146,7 +160,7 @@ int TakeDatagram(UdpSocket& socket, void* buffer, std::size_t capacity, Endpoint
             g_in.erase(it);
             return (int)n;
         }
-        if (SimulatorActive()) return 0;   // socket is drained; nothing is due yet
+        if (SimulatorActive() && any) return 0;   // socket is drained; nothing is due yet
     }
     const int n = socket.RecvFrom(buffer, capacity, from);
     if (n > 0) NoteWire(static_cast<std::size_t>(n), true);

@@ -86,6 +86,10 @@ namespace {
     F(int, XConvertSelection, (Display*, Atom, Atom, Atom, ::Window, Time)) \
     F(XErrorHandler, XSetErrorHandler, (XErrorHandler)) \
     F(XImage*, XGetImage, (Display*, ::Drawable, int, int, unsigned, unsigned, unsigned long, int)) \
+    F(GC, XCreateGC, (Display*, ::Drawable, unsigned long, XGCValues*)) \
+    F(int, XFreeGC, (Display*, GC)) \
+    F(XImage*, XCreateImage, (Display*, Visual*, unsigned, int, int, char*, unsigned, unsigned, int, int)) \
+    F(int, XPutImage, (Display*, ::Drawable, GC, XImage*, int, int, int, int, unsigned, unsigned)) \
     F(Bool, XFilterEvent, (XEvent*, ::Window)) \
     F(char*, XSetLocaleModifiers, (const char*)) \
     F(Bool, XSupportsLocale, (void)) \
@@ -225,6 +229,7 @@ public:
     bool IsFocused() const override;
     bool IsFullscreen() const override { return m_fullscreen; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
+    bool PresentPixels(const uint8_t* rgba, int w, int h) override;
     bool CreateGLContext(const GLAttributes& a) override;
     void DestroyGLContext() override;
     bool MakeCurrent() override;
@@ -243,6 +248,8 @@ public:
     int m_minW = 0, m_minH = 0;
     int m_w = 0, m_h = 0;      // last size seen in ConfigureNotify (or requested)
     XIC m_ic = nullptr;
+    GC m_gc = nullptr;                // PresentPixels: made on first use
+    std::vector<uint8_t> m_present;   // PresentPixels: the frame in the server's pixel layout
 };
 
 class X11Impl final : public X11System {
@@ -725,6 +732,7 @@ public:
 X11Win::~X11Win() {
     DestroyGLContext();
     if (m_ic) XF.XDestroyIC(m_ic);
+    if (m_gc) XF.XFreeGC(XD, m_gc);
     m_sys->Unregister(m_win);
     XF.XDestroyWindow(XD, m_win);
     XF.XFreeColormap(XD, m_cmap);
@@ -791,6 +799,47 @@ bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
                        (const unsigned char*)data.data(), (int)data.size());
     XF.XFlush(XD);
     return true;
+}
+bool X11Win::PresentPixels(const uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return false;
+    XWindowAttributes at;
+    if (!XF.XGetWindowAttributes(XD, m_win, &at) || !at.visual) return false;
+    if (at.visual->c_class != TrueColor && at.visual->c_class != DirectColor) return false;
+    const int cw = w < at.width ? w : at.width, ch = h < at.height ? h : at.height;   // what fits
+    if (cw <= 0 || ch <= 0) return false;
+    // The server's pixel layout: 32 bits per pixel with the visual's channel masks (the usual 24/32-bit
+    // TrueColor, B G R X in memory on a little-endian host). Anything else (16-bit depth, palettes) is not
+    // worth a slow path here and reports false.
+    const unsigned long rm = at.visual->red_mask, gm = at.visual->green_mask, bm = at.visual->blue_mask;
+    if (!rm || !gm || !bm || at.depth < 24) return false;
+    auto shiftOf = [](unsigned long m) { int s = 0; while (m && !(m & 1)) { m >>= 1; ++s; } return s; };
+    const int rs = shiftOf(rm), gs = shiftOf(gm), bs = shiftOf(bm);
+    m_present.resize((size_t)cw * (size_t)ch * 4);
+    uint32_t* out = (uint32_t*)m_present.data();
+    for (int y = 0; y < ch; ++y) {
+        const uint8_t* src = rgba + (size_t)y * (size_t)w * 4;
+        uint32_t* row = out + (size_t)y * (size_t)cw;
+        for (int x = 0; x < cw; ++x, src += 4)
+            row[x] = ((uint32_t)src[0] << rs) | ((uint32_t)src[1] << gs) | ((uint32_t)src[2] << bs);
+    }
+    if (!m_gc) m_gc = XF.XCreateGC(XD, m_win, 0, nullptr);
+    if (!m_gc) return false;
+    XImage* img = XF.XCreateImage(XD, at.visual, (unsigned)at.depth, ZPixmap, 0, (char*)m_present.data(),
+                                  (unsigned)cw, (unsigned)ch, 32, cw * 4);
+    if (!img) return false;
+    if (img->byte_order != LSBFirst || img->bits_per_pixel != 32) {   // the loop above writes native little-endian 32-bit words
+        img->data = nullptr; img->f.destroy_image(img);
+        return false;
+    }
+    const int before = g_lastXError;
+    g_lastXError = 0;
+    XF.XPutImage(XD, m_win, m_gc, img, 0, 0, 0, 0, (unsigned)cw, (unsigned)ch);
+    img->data = nullptr;                       // ours (m_present), not Xlib's to free
+    img->f.destroy_image(img);
+    XF.XSync(XD, False);                       // the server has it before the next frame starts: no queue of frames
+    const bool ok = g_lastXError == 0;
+    if (before) g_lastXError = before;
+    return ok;
 }
 void X11Win::SetFullscreen(bool on) {
     m_fullscreen = on;

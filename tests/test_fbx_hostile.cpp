@@ -9,6 +9,10 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 // Hostile-input tests for okay::fbx. Pure standard C++ (links no engine code), so CI can also build
 // it with -fsanitize=address,undefined and run the bigger mutation fuzz:
@@ -213,6 +217,30 @@ static std::string ModelChain(int n, bool cycle) {
 static void Hierarchies() {
     RUN_SUITE("hostile scene graphs");
     auto A = [](const std::string& s) { return Bytes(s.begin(), s.end()); };
+    // #754: GlobalSettings axis selectors cast to int without a range check made sanitizer
+    // builds abort (float-cast-overflow) on a hostile file; Release had wraparound UB.
+    {
+        const std::string probe =
+            "; FBX 7.4.0 project file\n"
+            "GlobalSettings: 1, \"GlobalSettings::\", \"\" {\n"
+            "\tProperties70:  {\n"
+            "\t\tP: \"UpAxis\", \"int\", \"Integer\", \"\", 4.6e18\n"
+            "\t\tP: \"FrontAxis\", \"int\", \"Integer\", \"\", -4.6e18\n"
+            "\t\tP: \"CoordAxis\", \"int\", \"Integer\", \"\", 1e300\n"
+            "\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\", 1.0\n"
+            "\t}\n"
+            "}\n"
+            "Objects:  {\n"
+            "}\n"
+            "Connections:  {\n"
+            "}\n";
+        fbx::Scene s;
+        std::string err;
+        CHECK(fbx::LoadMemory(A(probe).data(), probe.size(), s, &err, Tight()));   // must not crash: clamped into [0..2]
+        CHECK(s.settings.upAxis >= 0 && s.settings.upAxis <= 2);
+        CHECK(s.settings.frontAxis >= 0 && s.settings.frontAxis <= 2);
+        CHECK(s.settings.coordAxis >= 0 && s.settings.coordAxis <= 2);
+    }
     fbx::Scene s; std::string err;
     CHECK(fbx::LoadMemory(A(ModelChain(1000, false)).data(), ModelChain(1000, false).size(), s, &err) && s.nodes.size() == 1000);
     if (s.nodes.size() == 1000) { CHECK(s.nodes[999].parent == 998 && s.roots.size() == 1); }
@@ -239,12 +267,78 @@ static void Hierarchies() {
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == (std::uint32_t)(n - 2));
         CHECK(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count() < 20);
     }
+    {   // 100000 models in one parent chain: refused by the depth cap (never walked recursively); the shipped limits
+        const std::string chain = ModelChain(100000, false);
+        std::string e2; fbx::BuildOptions def;
+        CHECK(!fbx::LoadMemory((const std::uint8_t*)chain.data(), chain.size(), s, &e2, def));
+        CHECK(e2.find("too deep") != std::string::npos);
+        const std::string ok2 = ModelChain((int)def.limits.maxNodeDepth, false);   // exactly at the cap: accepted
+        CHECK(fbx::LoadMemory((const std::uint8_t*)ok2.data(), ok2.size(), s, &e2, def) && s.nodes.size() == def.limits.maxNodeDepth);
+    }
     // polygon indices out of range, NaN weights, NaN keys
     {
         const std::string t = "Objects: {\n Geometry: 2, \"Geometry::G\", \"Mesh\" {\n  Vertices: *9 { a: 0,0,0,1,0,0,0,1,0 }\n  PolygonVertexIndex: *6 { a: 0,1,-3,0,1,-9999 }\n }\n"
                               " Model: 1, \"Model::A\", \"Mesh\" {\n }\n}\nConnections: {\n C: \"OO\",2,1\n C: \"OO\",1,0\n}\n";
         CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err));
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == 1);
+    }
+}
+
+// ASCII scene with one animated model. `stacks` takes share ONE layer and ONE curve node (the cheap-file /
+// expensive-bake shape), the curve spans `spanSec` seconds with `keys` keys; plus `extraCurves` bare curves.
+static std::string AnimText(int stacks, int layers, int keys, double spanSec, int extraCurves = 0) {
+    std::string s = "Objects: {\n\tModel: 1, \"Model::M\", \"Null\" {\n\t}\n";
+    for (int i = 0; i < stacks; ++i) s += "\tAnimationStack: " + std::to_string(100 + i) + ", \"AnimStack::T" + std::to_string(i) + "\", \"\" {\n\t}\n";
+    for (int i = 0; i < layers; ++i) s += "\tAnimationLayer: " + std::to_string(10000 + i) + ", \"AnimLayer::L" + std::to_string(i) + "\", \"\"\n";
+    s += "\tAnimationCurveNode: 2, \"AnimCurveNode::T\", \"\" {\n\t}\n\tAnimationCurve: 3, \"AnimCurve::x\", \"\" {\n\t\tKeyTime: *" + std::to_string(keys) + " {\n\t\t\ta: ";
+    for (int i = 0; i < keys; ++i) s += (i ? "," : "") + std::to_string((long long)(spanSec * 46186158000.0 * i / (keys > 1 ? keys - 1 : 1)));
+    s += "\n\t\t}\n\t\tKeyValueFloat: *" + std::to_string(keys) + " {\n\t\t\ta: ";
+    for (int i = 0; i < keys; ++i) s += (i ? "," : "") + std::string(i & 1 ? "1" : "0");
+    s += "\n\t\t}\n\t}\n";
+    for (int i = 0; i < extraCurves; ++i) s += "\tAnimationCurve: " + std::to_string(500000 + i) + ", \"AnimCurve::c\", \"\" {\n\t}\n";
+    s += "}\nConnections: {\n\tC: \"OO\", 1, 0\n\tC: \"OP\", 2, 1, \"Lcl Translation\"\n\tC: \"OP\", 3, 2, \"d|X\"\n";
+    if (layers) { s += "\tC: \"OO\", 2, 10000\n"; for (int i = 0; i < stacks; ++i) s += "\tC: \"OO\", 10000, " + std::to_string(100 + i) + "\n"; }
+    s += "}\n";
+    return s;
+}
+static bool LoadText(const std::string& t, const fbx::BuildOptions& o, std::string* err, fbx::Scene* out = nullptr) {
+    fbx::Scene s;
+    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), out ? *out : s, err, o);
+    return ok;
+}
+
+static void AnimationBudgets() {
+    RUN_SUITE("hostile animation: stacks, layers, curves, keys and the whole-file bake budget");
+    std::string err;
+    fbx::BuildOptions def;   // the shipped limits
+    // sane: 3 takes sharing one curve node load and bake 3 clips
+    { fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 4, 10.0), def, &err, &s) && s.clips.size() == 3); }
+    // number of stacks
+    { err.clear(); CHECK(!LoadText(AnimText((int)def.limits.maxAnimStacks + 1, 1, 2, 1.0), def, &err)); CHECK(err.find("animation stacks") != std::string::npos); }
+    // number of layers
+    { err.clear(); CHECK(!LoadText(AnimText(1, (int)def.limits.maxAnimLayers + 1, 2, 1.0), def, &err)); CHECK(err.find("animation layers") != std::string::npos); }
+    // number of curves: one more than the limit, each a few bytes in the file
+    { err.clear(); CHECK(!LoadText(AnimText(1, 1, 2, 1.0, (int)def.limits.maxAnimCurves), def, &err)); CHECK(err.find("animation curves") != std::string::npos); }
+    { fbx::BuildOptions o = def; o.limits.maxAnimCurves = 50; err.clear(); CHECK(!LoadText(AnimText(1, 1, 2, 1.0, 60), o, &err)); CHECK(err.find("animation curves") != std::string::npos); }
+    // keys: one curve with more than the whole-file limit (and a crafted claimed count of 10 million)
+    { fbx::BuildOptions o = def; o.limits.maxAnimKeys = 1000; err.clear(); CHECK(!LoadText(AnimText(1, 1, 2000, 1.0), o, &err)); CHECK(err.find("animation keys") != std::string::npos); }
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        err.clear(); CHECK(!LoadText(AnimText(1, 1, (int)def.limits.maxAnimKeys + 1, 1.0), def, &err)); CHECK(err.find("animation keys") != std::string::npos);
+        CHECK(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count() < 60);
+    }
+    { err.clear(); CHECK(!LoadText("Objects: {\n AnimationCurve: 3, \"AnimCurve::x\", \"\" {\n  KeyTime: *10000000 {\n   a: 1,2\n  }\n  KeyValueFloat: *10000000 {\n   a: 1,2\n  }\n }\n}\n", Tight(), &err)); }
+    // aggregate bake budget: every stack alone is within the per-clip cap, together they are not
+    {
+        fbx::BuildOptions o = Tight(); o.limits.maxBakedSamples = 20000; o.limits.maxTotalBakedSamples = 100000; o.limits.maxAnimStacks = 1000;
+        fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o, &err, &s) && s.clips.size() == 3);   // 3 x 20000 samples: inside 100000
+        CHECK(s.clips.size() == 3 && s.clips[0].nodes.size() == 1 && s.clips[0].nodes[0].translation.size() == 20000);
+        err.clear(); CHECK(!LoadText(AnimText(50, 1, 2, 1000.0), o, &err)); CHECK(err.find("bake budget") != std::string::npos);
+        // with the shipped limits: 128 takes of a long clip would be 128 x 20000 evaluations = 2.6M (inside 4M), so it loads...
+        fbx::Scene big; CHECK(LoadText(AnimText((int)def.limits.maxAnimStacks, 1, 2, 1000.0), def, &err, &big) && big.clips.size() == def.limits.maxAnimStacks);
+        // ...and what is baked in total never passes the budget, whatever the file asks for
+        std::size_t total = 0; for (const fbx::Clip& c : big.clips) for (const fbx::NodeAnim& n : c.nodes) total += n.translation.size();
+        CHECK(total <= def.limits.maxTotalBakedSamples);
     }
 }
 
@@ -285,12 +379,49 @@ static void Fuzz() {
     CHECK(bad > 0 && ok > 0);   // the mutations bite, and some still load
 }
 
+// The ASCII header's "; FBX 7.3" version is read from the caller's bytes, which are not
+// NUL-terminated. Put the buffer flush against an inaccessible page: any read past its
+// last byte faults (plain ASan misses it, libc's scanf is uninstrumented). Heap
+// buffers sized exactly cover the ASan side of the same check.
+static void HeaderEndsAtBuffer() {
+    RUN_SUITE("ascii header at buffer end");
+    const std::string cases[] = {"; FBX 7.3", "; FBX 7.", "; FBX 7", "; FBX ",
+                                 "; FBX 7." + std::string(40, '3'), "; FBX " + std::string(60, '9')};
+    for (const std::string& c : cases) {
+        auto* heap = new std::uint8_t[c.size()];   // exactly sized, no terminator
+        std::memcpy(heap, c.data(), c.size());
+        fbx::Document d;
+        std::string err;
+        (void)fbx::Parse(heap, c.size(), d, &err, fbx::Limits());
+        if (c == "; FBX 7.3") CHECK(d.version == 7300);
+        delete[] heap;
+    }
+#if defined(__linux__)
+    const long pg = sysconf(_SC_PAGESIZE);
+    void* base = mmap(nullptr, (std::size_t)pg * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(base != MAP_FAILED);
+    if (base == MAP_FAILED) return;
+    CHECK(mprotect((char*)base + pg, (std::size_t)pg, PROT_NONE) == 0);
+    for (const std::string& c : cases) {
+        std::uint8_t* at = (std::uint8_t*)base + pg - c.size();   // last byte is the last byte of the page
+        std::memcpy(at, c.data(), c.size());
+        fbx::Document d;
+        std::string err;
+        (void)fbx::Parse(at, c.size(), d, &err, fbx::Limits());
+        if (c == "; FBX 7.3") CHECK(d.version == 7300);
+    }
+    munmap(base, (std::size_t)pg * 2);
+#endif
+}
+
 int main() {
     Truncation();
     CraftedBinary();
     Bombs();
     CraftedAscii();
     Hierarchies();
+    HeaderEndsAtBuffer();
+    AnimationBudgets();
     Fuzz();
     TEST_MAIN_RESULT();
 }

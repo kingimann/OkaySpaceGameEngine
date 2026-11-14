@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!-- Hand-written test fixture: a triangle plus content our reader reports as not read:
-     lines, a tristrip, a vertex-color input, a camera, a lookat, a polygon hole. -->
+     lines, a linestrip, a vertex-color input, a camera, a lookat, a polygon hole. -->
 <COLLADA version="1.4.1">
   <asset><up_axis>Y_UP</up_axis></asset>
   <library_geometries>
@@ -17,7 +17,7 @@
           <p>0 0  1 1  2 2</p>
         </triangles>
         <lines count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1</p></lines>
-        <tristrips count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1 2</p></tristrips>
+        <linestrips count="1"><input semantic="VERTEX" source="#v" offset="0"/><p>0 1 2</p></linestrips>
         <polygons count="1"><input semantic="VERTEX" source="#v" offset="0"/><ph><p>0 1 2</p><h>0 1 2</h></ph></polygons>
       </mesh>
     </geometry>

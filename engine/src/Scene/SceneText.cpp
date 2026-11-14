@@ -80,7 +80,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "animsmactions", "animsmany", "animsmanyint", "animsmanypos", "animsmev", "animsmfall", "animsmfb",
     "animsmikc", "animsmint", "animsmlayer", "animsmlayerx", "animsmlk", "animsmlname", "animsmmatch",
     "animsmmir", "animsmmute", "animsmnoint", "animsmparams", "animsmpdef", "animsmpos", "animsmstance",
-    "animsmsync", "animsmx", "animsmxfade", "animx", "anticheat", "anticheathit", "anticheatsafety",
+    "animsmsync", "animsmx", "animsmxfade", "animx", "anticheat", "anticheatdetect", "anticheathit", "anticheatsafety",
     "anticheatweapon", "aomap", "audio", "autosave", "blendshapes", "blockbuilder", "boxcollider2d",
     "boxcollider3d", "btrunner", "buildable", "buildermode", "buildmode", "buildpiece", "camera",
     "camerafollow", "canvas", "capsulecollider2d", "capsulecollider3d", "cc3dstance", "chainik", "chainx2",
@@ -90,7 +90,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "destructible", "dialoguerunner", "dollycart", "dollypath", "draggable", "dropzone", "edgecollider2d",
     "equipment", "eventsystem", "fbik", "fbikx", "flashlight", "follow2d", "footik",
     "fpctrl", "fpfeel", "fphand", "fphands", "fphands2", "fpstance", "frctrl",
-    "gridinventory", "gridinventoryui", "groundshadow", "guid", "holdable", "holdprompt", "humretarget",
+    "gridinventory", "gridinventoryui", "groundshadow", "guid", "gun", "holdable", "holdprompt", "humretarget",
     "iktarget", "ikx", "inventory", "inventoryui", "itempickup", "joint2d", "joint3d",
     "jumppad", "layer", "lifetime", "light", "limbik", "linerenderer", "loadingscreen",
     "loc", "locked", "logicsource", "logictarget", "lookatik", "lootsource", "material",
@@ -468,9 +468,29 @@ bool SceneText::BuildModel(const Document& d, Model& m, std::string* error) {
         const DocObject& o = d.objects[i];
         ModelObject& mo = m.objects[i];
         mo.name = o.name;
-        mo.headerTail = o.headerTail;
-        mo.fileIndex = o.index;
         bool haveGuid = false;
+        // A guid may also sit on the header line after the name (the loader takes it):
+        // parse it here so the model, the validator and diff/merge all see the same
+        // identity, instead of the object silently degrading to path matching.
+        std::string tailRest, guidToken;
+        {
+            const auto toks = Tokenize("x " + o.headerTail);   // "x" stands in for the name
+            bool wantValue = false;
+            for (std::size_t t = 1; t < toks.size(); ++t) {
+                if (wantValue) { guidToken = toks[t].text; wantValue = false; continue; }
+                if (toks[t].text == "guid" && !haveGuid) { haveGuid = true; wantValue = true; continue; }
+                if (!tailRest.empty()) tailRest += ' ';
+                tailRest += toks[t].text;
+            }
+        }
+        if (haveGuid) {
+            const std::string g = Unquote(guidToken);
+            if (!IsValidGuid(g)) m.warnings.push_back("ignored malformed guid on object " + std::to_string(o.index));
+            else if (!seenGuids.insert(g).second) m.warnings.push_back("duplicate guid on object " + std::to_string(o.index));
+            else mo.guid = g;
+        }
+        mo.headerTail = tailRest;
+        mo.fileIndex = o.index;
         for (const Record& r : o.records) {
             if (r.key == "guid") {
                 const auto toks = Tokenize(r.text);

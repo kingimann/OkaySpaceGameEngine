@@ -141,5 +141,51 @@ int main() {
         CHECK(!ui->dragInv && bag->items[0].x == 3 && bag->items[0].y == 0);
     }
 
+    // --- Layout: one scale, fit to the width, scroll when too tall ---
+    {
+        Scene s("T");
+        GameObject* p = s.CreateGameObject("P");
+        auto* bag = p->AddComponent<GridInventory>();
+        bag->cols = 10; bag->rows = 12; bag->open = true;
+        auto* ui = p->AddComponent<GridInventoryUI>();
+        const auto tall = InventoryInput::LayoutGrid(*ui, *bag, 1280, 720);
+        CHECK_NEAR(tall.scale, 1.0f, 0.001f);          // 720 high = the authored size
+        const auto big = InventoryInput::LayoutGrid(*ui, *bag, 2560, 1440);
+        CHECK_NEAR(big.scale, 2.0f, 0.001f);
+        CHECK_NEAR(big.cs, tall.cs * 2.0f, 0.01f);
+        const auto narrow = InventoryInput::LayoutGrid(*ui, *bag, 300, 1440);
+        CHECK(narrow.panels[0].ox >= 0.0f && narrow.panels[0].ox + narrow.panels[0].gw <= 300.0f);
+        // Twelve rows do not fit 300 high: the block scrolls and keeps its top reachable.
+        ui->scroll = 0.0f;
+        const auto sh = InventoryInput::LayoutGrid(*ui, *bag, 1280, 300);
+        CHECK(sh.scrolling && sh.maxScroll > 0.0f);
+        ui->scroll = 100000.0f;
+        const auto sh2 = InventoryInput::LayoutGrid(*ui, *bag, 1280, 300);
+        CHECK_NEAR(sh2.scroll, sh2.maxScroll, 0.01f);   // clamped to the end
+        CHECK(sh2.panels[0].oy + sh2.panels[0].gh <= 300.0f);   // the last row is on screen
+        ui->scroll = 0.0f;
+        bag->rows = 4;
+        const auto fits = InventoryInput::LayoutGrid(*ui, *bag, 1280, 1440);
+        CHECK(!fits.scrolling && ui->scroll == 0.0f);
+
+        // Backpack taller than the screen scrolls; one that fits does not move.
+        GameObject* q = s.CreateGameObject("Q");
+        auto* inv = q->AddComponent<Inventory>(); inv->capacity = 90;
+        auto* hb = q->AddComponent<InventoryUI>();
+        hb->hotbarSlots = 9; hb->scaleToScreen = false; hb->open = true;
+        const auto h0 = InventoryInput::LayoutHotbar(*hb, 800, 300);
+        CHECK(h0.maxScroll > 0.0f && h0.bagScroll == 0.0f);
+        hb->scroll = 100000.0f;
+        const auto h1 = InventoryInput::LayoutHotbar(*hb, 800, 300);
+        CHECK_NEAR(h1.bagScroll, h1.maxScroll, 0.01f);
+        float x, y; h1.SlotXY(9, x, y);                // the farthest row is now on screen
+        const auto top = InventoryInput::LayoutHotbar(*hb, 800, 300);
+        float fx, fy; top.SlotXY(inv->capacity - 1, fx, fy);
+        CHECK(fy >= 0.0f);
+        inv->capacity = 18; hb->scroll = 50.0f;
+        const auto h2 = InventoryInput::LayoutHotbar(*hb, 800, 600);
+        CHECK(h2.maxScroll == 0.0f && h2.bagScroll == 0.0f);
+    }
+
     TEST_MAIN_RESULT();
 }

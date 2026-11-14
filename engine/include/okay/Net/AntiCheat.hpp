@@ -21,6 +21,7 @@
 // format and the behaviour with anti-cheat off are exactly as before.
 // ---------------------------------------------------------------------------
 #include "okay/Math/Vec3.hpp"
+#include "okay/Net/CheatDetect.hpp"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -117,6 +118,11 @@ struct AntiCheatSettings {
     /// slack allow for, however slow a client makes its pings look.
     float maxRewindRtt = 0.3f;
 
+    // ---- Detection engine (okay/Net/CheatDetect.hpp): behavioural detectors, a
+    // risk score and graduated responses. Off unless detect.enabled; the
+    // .okayac keys are "detect.<key> <value>" (see docs/anticheat.md).
+    DetectSettings detect;
+
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
@@ -127,6 +133,7 @@ struct AntiCheatSettings {
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
     ///   hitsNeedMoveCheck true | maxRewindRtt 0.3
+    ///   detect.enabled true | detect.maxSpeed 8 | detect.weapon <name> <shots/s> <max damage> ... (see CheatDetect.hpp)
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -169,6 +176,16 @@ struct CheatReport {
 class AntiCheat {
 public:
     AntiCheatSettings settings;
+    /// The detection engine; follows settings.detect (applied on the next Tick
+    /// or ApplyDetectSettings). Does nothing unless settings.detect.enabled.
+    CheatDetector detector;
+    /// A peer's risk crossed a rung of the response ladder (log ... ban request).
+    std::function<void(const DetectResponse&)> onDetectResponse;
+    /// Copy settings.detect into the detector (keeps its per-player state).
+    void ApplyDetectSettings();
+    bool DetectOn() const { return settings.enabled && settings.detect.enabled; }
+    /// Time the detector uses (seconds since the anti-cheat started).
+    double Clock() const { return m_clock; }
 
     /// A message a client sent on `channel` (before the server applies or relays
     /// it). False = refuse it (it's reported and counted).
@@ -196,6 +213,8 @@ public:
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.
     std::function<void(const CheatReport&)> onCheat;
+    /// A peer's round trip in seconds (-1 = unknown), for the detector's ping tolerance.
+    std::function<float(std::uint32_t peer)> rttOf;
     /// Does game code rule on this RPC's rate / size itself (a NetValidator with
     /// its own calls/s or max bytes)? Then maxRpcsPerSecond / maxRpcBytes don't apply.
     std::function<void(const std::string& rpc, bool& ownRate, bool& ownSize)> rpcRulesFor;
@@ -275,11 +294,14 @@ private:
     std::unordered_map<std::uint32_t, PeerInfo> m_peers;
     std::unordered_map<std::string, std::uint32_t> m_owner;   // netId -> owning peer
     std::unordered_map<std::string, Track> m_track;           // netId -> last accepted position
-    struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; };
+    struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; float risk = 0.0f; };
     std::unordered_map<std::string, Parked> m_parked;         // ident -> what a peer that left had
     int m_total = 0;
     int m_unclaimed = 0;
     double m_clock = 0.0;
+    bool m_detectApplied = false;
+    void EnsureDetect();
+    void DetectFeedMove(std::uint32_t peer, const std::string& data);
     std::unordered_set<std::string> m_unclaimedLogged;   // object ids already named this session
 
     bool Refuse(std::uint32_t peer, CheatKind k, const std::string& detail);

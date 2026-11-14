@@ -16,10 +16,13 @@
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
+#include "AntiCheatAdminTools.hpp"  // linked accounts, ban with devices, report evidence (Admin > Anti-cheat)
 #include "UserReports.hpp"          // "Report" for players, messages, posts, listings, servers (Admin > Reports)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
+#include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
@@ -48,6 +51,20 @@
 // Our own image decoder (engine/src/Core/ImageDecode*.cpp, compiled straight into the
 // launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
 #include "okay/Core/ImageDecode.hpp"
+
+// The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
+#include "OkayUIBackend.hpp"
+#include "LauncherTips.hpp"
+#ifdef OKAY_HAVE_OKAYUI
+#include "OkayUIHost.hpp"
+#include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
+#include "okay/UI/OkayUI.hpp"
+#include "OkayUIScreens.hpp"
+#include "OkayUIPanels.hpp"
+#else
+// Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
+namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -154,6 +171,7 @@ SDL_mutex* g_upMutex = nullptr;
 std::string g_upMessage = "Checking for updates...";
 std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
+bool g_upVerdictShown = false;    // the start-up verdict of the last launcher update is on screen: the launch check leaves it alone
 SDL_Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
@@ -434,18 +452,10 @@ long long HeadSize(const std::string& url) {
     std::string cmd = "curl -sIL -A \"OkaySpace-Launcher\" -o \"" + devnull +
                       "\" -D \"" + hdr.string() + "\" \"" + url + "\"";
     RunCmd(cmd, true);
-    long long total = 0;
     std::ifstream f(hdr);
-    std::string line;
-    while (std::getline(f, line)) {
-        std::string low = line;
-        for (char& c : low) c = (char)std::tolower((unsigned char)c);
-        if (low.rfind("content-length:", 0) == 0) {
-            try { total = std::stoll(line.substr(15)); } catch (...) {}
-        }
-    }
+    std::string dump((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close(); fs::remove(hdr, ec);
-    return total;
+    return okay::netguard::ParseLastContentLength(dump);
 }
 
 struct DlItem {
@@ -466,16 +476,25 @@ long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
 }
 
+// Hard cap for launcher downloads (2 GiB): a malicious or wrong URL must not
+// be able to fill the user's disk. Enforced both as a curl flag and against
+// the HEAD-probed Content-Length.
+static constexpr long long kMaxDownloadBytes = 2ll << 30;
+
 int DlWorker(void* data) {
     DlItem* d = static_cast<DlItem*>(data);
     auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
     set([&]{ d->status = 1; });
     long long total = HeadSize(d->url);
     set([&]{ d->total = total; });
+    // HeadSize is a hard limit, not just a progress hint: refuse to download
+    // anything that already announced itself larger than the cap.
+    if (total > kMaxDownloadBytes) { set([&]{ d->status = 3; }); return 0; }
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
-    std::string cmd = "curl -L -s -f -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
+    std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
+                      " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
     if (!p.valid()) { set([&]{ d->status = 3; }); return 0; }
     set([&]{ d->proc = p; });
@@ -687,13 +706,8 @@ long long RemoteSize(const std::string& url) {
         for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
         auto p = low.find("content-length:");
         if (p != std::string::npos) {
-            long long v = 0; bool any = false;
-            for (std::size_t i = p + 15; i < line.size(); ++i) {
-                char d = line[i];
-                if (d >= '0' && d <= '9') { v = v * 10 + (d - '0'); any = true; }
-                else if (any) break;
-            }
-            if (any) sz = v;
+            const long long v = okay::netguard::ParseContentLengthLine(line);
+            if (v > 0) sz = v;
         }
     }
     f.close(); fs::remove(hf, ec);
@@ -713,7 +727,7 @@ int DlMonitorThread(void* p) {
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)RemoteSize(url));   // 0 if unknown
+    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
     DlMonitor d; d.url = url; d.out = out;
     SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
     SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
@@ -745,6 +759,47 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
         });
     if (!o.ok) UpFail(o.reason);
     return o.ok;
+}
+// The launcher's own file as it was when this process started. CurrentExecutable() is wrong after the swap on Linux
+// (/proc/self/exe follows the renamed file to "<name>.old"), so the path captured at start is the one to swap and to restart.
+static fs::path SelfProgramPath() {
+    if (!g_selfPath.empty()) return fs::path(g_selfPath);
+    return okay::restart::CurrentExecutable();
+}
+static fs::path SelfUpdateStateFile() { return okay::selfupdate::StatePath(fs::path(g_exeDir)); }
+// Remember how the last self-update went (see shared/SelfUpdate.hpp); a failure to write it is logged, never silent.
+static void RecordSelfUpdate(const std::string& from, const std::string& to, bool swapped, const std::string& reason) {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State next = okay::selfupdate::AfterAttempt(okay::selfupdate::Read(file), from, to, swapped, reason);
+    std::string err;
+    if (!okay::selfupdate::Write(file, next, err)) okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "could not record the update state: " + err);
+}
+// Runs once at start (main thread, before the first frame): decides from the state file whether the last launcher update was confirmed,
+// did not apply, or failed, and puts the answer where the person sees it (the update dialog and the sidebar note) and in okay_update.log.
+static void ApplyStartupUpdateVerdict() {
+    const fs::path file = SelfUpdateStateFile();
+    const okay::selfupdate::State st = okay::selfupdate::Read(file);
+    const okay::selfupdate::Startup v = okay::selfupdate::EvaluateStartup(st, OKAY_ENGINE_VERSION);
+    if (v.kind == okay::selfupdate::StartupKind::Nothing) return;
+    const fs::path log = fs::path(g_exeDir) / "okay_update.log";
+    okay::restart::AppendLog(log, v.logLine);
+    std::error_code ec;
+    if (v.removeBackup && !g_selfPath.empty()) fs::remove(okay::selfupdate::BackupPath(fs::path(g_selfPath)), ec);
+    if (v.resetVersionFile) {   // VERSION.txt must not claim a version that is not installed (it would hide the update from the next check)
+        std::ofstream(fs::path(g_exeDir) / "VERSION.txt") << OKAY_ENGINE_VERSION << "\n";
+    }
+    if (v.clearState) okay::selfupdate::Clear(file);
+    else {
+        std::string err;
+        if (!okay::selfupdate::Write(file, v.next, err)) okay::restart::AppendLog(log, "could not record the update state: " + err);
+    }
+    if (v.message.empty()) return;
+    SetUpMsg(v.message);
+    SetUpStep("Update failed: your current version is unchanged", 0, 3);
+    SetUpVers(OKAY_ENGINE_VERSION, v.next.to);
+    SetState(Up_Failed);
+    g_upModalOpen = v.showDialog;
+    g_upVerdictShown = v.showDialog;   // the dialog is the person's first sight of it: the launch check stays out of its way once; later starts may retry (AutoRetryAllowed stops it after 2)
 }
 bool CommitFile(const std::string& name, const fs::path& dest, bool inUse) {
     const okayupdater::Outcome o = okayupdater::Commit(name, dest, 100000, /*keepBackup=*/inUse);
@@ -916,6 +971,7 @@ static void FetchSupabaseNews(const std::string& ver) {
 }
 
 okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
+bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
@@ -974,6 +1030,16 @@ int RunUpdateCheck(void*) {
         return 0;
     }
 
+    if (newer && g_upAutomatic) {   // the check at launch must not retry a release that already failed twice (a click on Retry always may)
+        std::string why;
+        if (!okay::selfupdate::AutoRetryAllowed(okay::selfupdate::Read(SelfUpdateStateFile()), latest, why)) {
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "automatic update skipped: " + why);
+            SetUpMsg(why);
+            SetUpStep("Update paused after repeated failures", 0, 3);
+            SetState(Up_Failed);
+            return 0;
+        }
+    }
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -990,7 +1056,8 @@ int RunUpdateCheck(void*) {
     };
     if (const std::string why = okayupdater::IndexProblem(vindex, ventry, latest); !why.empty()) {
         UpFail(why);
-        SetUpMsg(why);
+        if (newer) RecordSelfUpdate(local, latest, false, why);
+        SetUpMsg("Update refused. " + why);
         SetUpStep("Update refused: no checksums", 0, kSteps);
         SetState(Up_Failed);
         return 0;
@@ -1036,8 +1103,7 @@ int RunUpdateCheck(void*) {
     if (ok && newer) {
         SetUpMsg("Updating launcher...");
         SetUpStep("Updating launcher (OkaySpace)", 2, kSteps);
-        fs::path selfExe = okay::restart::CurrentExecutable();
-        if (selfExe.empty() && !g_selfPath.empty()) selfExe = fs::path(g_selfPath);
+        const fs::path selfExe = SelfProgramPath();
         if (selfExe.empty()) {
             UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
             ok = false;
@@ -1049,19 +1115,24 @@ int RunUpdateCheck(void*) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
         SetUpMsg("Installing...");
-        for (const Item& it : items) {
-            if (!CommitFile(it.name, it.dest, it.inUse)) {
-                ok = false;
-                for (const Item& rest : items) okayupdater::Discard(rest.dest);   // (a failed swap already put its old file back)
-                break;
-            }
-            if (it.name == "OkaySpace.exe") launcherOk = true;
+        // The launcher goes first (the swap most likely to be refused: a security scanner holding the file) and the others only if it worked;
+        // if any swap fails everything already swapped is put back, so the install stays whole (okayupdater::CommitAll).
+        std::vector<okayupdater::CommitItem> order;
+        for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
+        for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
+        const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
+        if (!co.ok) {
+            UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
+            ok = false;
+        } else {
+            for (const Item& it : items) if (it.name == "OkaySpace.exe") launcherOk = true;
         }
     }
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
         g_upRelaunchNeeded = launcherOk;
+        if (launcherOk) RecordSelfUpdate(local, latest, true, "");
         // The kept copies beyond "Keep previous versions: N" go (never the LTS line's newest installed patch, never the default editor).
         if (newer) {
             okayversions::RemoveGuards guards;
@@ -1080,6 +1151,7 @@ int RunUpdateCheck(void*) {
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
         const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
+        if (newer) RecordSelfUpdate(local, latest, false, why);
         SetUpMsg("Update failed. " + why);
         SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
@@ -1093,6 +1165,7 @@ void StartUpdateCheck(bool showDialog = true) {
     if (s == Up_Checking || s == Up_Downloading) return;
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
+    g_upAutomatic = !showDialog;
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
@@ -1372,17 +1445,29 @@ static bool BeginUpdatedRestart() {
     static bool started = false;
     if (started) return true;
     okay::restart::Request req;
-    req.executable = okay::restart::CurrentExecutable();
-    if (req.executable.empty() && !g_selfPath.empty()) req.executable = fs::path(g_selfPath);
+    req.executable = SelfProgramPath();
     req.arguments = okay::restart::CurrentArguments();
     std::error_code ec;
     req.workingDirectory = fs::current_path(ec);
     req.waitForPid = CurrentPid();
     req.keepBackup = true;
     if (!req.executable.empty()) req.logFile = req.executable.parent_path() / "okay_update.log";
+    {   // the helper checks the new file is the published version before starting it, and puts the previous launcher back if it is not
+        std::string fromV, toV; GetUpVers(fromV, toV);
+        const okay::selfupdate::State pending = okay::selfupdate::Read(req.stateFile.empty() ? SelfUpdateStateFile() : req.stateFile);
+        req.expectVersion = pending.phase == okay::selfupdate::Phase::Swapped ? pending.to : toV;   // (the state file survives a later update check that cleared `toV`)
+        if (req.expectVersion.empty())
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart without a start-up check: the version that was installed is not known");
+        req.rollbackTarget = req.executable;
+        req.replaceBackup = okay::selfupdate::BackupPath(req.executable);
+        req.stateFile = SelfUpdateStateFile();
+    }
     std::string err;
     if (!okay::restart::StartHelper(req, err)) {
-        Toast(err.empty() ? "Couldn't restart after the update. See okay_update.log next to the app." : err, 2);
+        const std::string msg = (err.empty() ? std::string("Couldn't restart the launcher.") : "Couldn't restart the launcher (" + err + ").") +
+            " The update is installed: close OkaySpace and open it again to finish. Details: okay_update.log next to the app.";
+        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "restart after the update failed: " + msg);
+        Toast(msg, 2);
         return false;
     }
     started = true;
@@ -1704,7 +1789,6 @@ std::vector<SchedMsg>              g_scheduled;
 std::string                        g_myStatus;
 bool                               g_myStatusKnown = false;
 long                               g_statusUntil = 0;
-bool                               g_minimizeToTray = false;  // opt-in Steam-style tray (off by default: a normal minimize always restores from the taskbar)
 
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
@@ -1740,6 +1824,9 @@ bool  g_splashShowBar = true;                     // show the progress bar
 SDL_Texture* g_splashLogoTex = nullptr;           // loaded at startup from g_splashLogo
 int g_themeIndex = 0;             // 0 Dark, 1 Midnight, 2 Light (persisted)
 float g_uiScale = 1.0f;           // font/UI scale for high-DPI (persisted)
+std::string g_uiBackendSetting;   // "" = never chosen, else "imgui" / "okayui" (persisted as ui_backend; OKAY_UI_BACKEND overrides it)
+okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;   // what the setting + environment resolve to (ResolveUiBackend)
+static void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool g_navCollapsed = false;      // left sidebar collapsed to an icon-only rail (persisted)
 bool g_webNeedRescan = false;     // a dropped web game asks the Play tab to rescan
 int g_winW = 1160, g_winH = 752;
@@ -2874,7 +2961,10 @@ static int LinkPreviewWorker(void*) {
         url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
         SDL_UnlockMutex(g_lpMutex);
         LinkPreview lp; lp.state = 2;
-        if (ShellSafeUrl(url)) {
+        // SSRF guard: never fetch a link whose host resolves to a private,
+        // loopback or link-local address (chat links come from other people).
+        if (ShellSafeUrl(url) &&
+            okay::netguard::HostIsPubliclyRoutable(okay::netguard::UrlHostForResolve(url))) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
@@ -4305,6 +4395,39 @@ static void SyncNewsHistory() {
     SaveNewsHistory();
 }
 
+#ifdef OKAY_HAVE_OKAYUI
+// ---- The OkayUI backend host (docs/own_ui_toolkit.md, section 5) ----
+// With Settings > Appearance > UI backend on "OkayUI (preview)" (or OKAY_UI_BACKEND=okayui), the pages that have an OkayUI
+// port (What's New) are drawn by OkayUI into a rectangle the ImGui page reserves; everything else stays Dear ImGui. OkayUI
+// shares ImGui's SDL_Renderer and is flushed after ImGui's draw data, so it needs no window or renderer of its own.
+okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events
+okayuihost::Region         g_okayRegion;  // where the hosted page was last frame: who owns the mouse there
+
+static void OkayUIFrameBegin() {
+    static bool looked = false;
+    if (!looked) { looked = true; OkayUI::SetFont(OkayUI::FontDefault()); OkayUI::UseLauncherLook(true); }
+    OkayUI::Theme& t = OkayUI::Style();   // follow the launcher's UI scale and accent, so the page does not look like a stranger
+    t.textScale = OkayUI::SlateTheme().textScale * g_uiScale;
+    t.accent[0] = (unsigned char)(kAccent.x * 255.0f + 0.5f); t.accent[1] = (unsigned char)(kAccent.y * 255.0f + 0.5f);
+    t.accent[2] = (unsigned char)(kAccent.z * 255.0f + 0.5f);
+    ImGuiIO& io = ImGui::GetIO();
+    g_okayRegion.NextFrame();
+    int mx = 0, my = 0;
+    const Uint32 mb = SDL_GetMouseState(&mx, &my);
+    const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
+    const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
+    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
+                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+}
+// ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
+static void OkayUIClaimKeyboard() {
+    if (!OkayUI::WantsTextInput()) return;
+    GImGui->PlatformImeData.WantTextInput = true;
+    ImGui::SetNextFrameWantCaptureKeyboard(true);
+    SDL_StartTextInput();
+}
+#endif
+
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
     std::string line;
@@ -4316,6 +4439,7 @@ void LoadPrefs() {
         if (k == "accent") { try { g_accentIndex = std::stoi(v); } catch (...) {} }
         else if (k == "theme") { try { g_themeIndex = std::stoi(v); } catch (...) {} }
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
+        else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
@@ -4366,7 +4490,6 @@ void LoadPrefs() {
                 } catch (...) {}
             }
         }
-        else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
@@ -4433,6 +4556,7 @@ void SavePrefs() {
     f << "accent=" << g_accentIndex << "\n";
     f << "theme=" << g_themeIndex << "\n";
     f << "ui_scale=" << g_uiScale << "\n";
+    if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     okayversions::WriteSettings(okayversions::GlobalSettings(), f);
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
@@ -4489,7 +4613,6 @@ void SavePrefs() {
     for (const auto& kv : g_chatColor) if (kv.second > 0) f << "chatcolor=" << kv.first << "|" << kv.second << "\n";
     for (const auto& kv : g_starred)
         f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
-    f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
@@ -4895,12 +5018,30 @@ static void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;
+    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
     SDL_AudioSpec spec{};
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the converted samples when the file was not native 16-bit / float
+    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
+    VoiceClip() = default;
+    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
+    // released at load, so there is no SDL buffer left for this destructor to free (#718).
+    ~VoiceClip() = default;
+    VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
+    VoiceClip& operator=(const VoiceClip&) = delete;
+    VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
+    VoiceClip& operator=(VoiceClip&& o) noexcept {
+        if (this != &o) {
+            ok = o.ok; pcm = o.pcm; len = o.len; spec = o.spec;
+            secs = o.secs; bytesPerSec = o.bytesPerSec;
+            for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
+            owned = std::move(o.owned); fast = std::move(o.fast);
+            // pcm pointed into o.owned; vector move transfers that buffer, so the pointer stays valid.
+            o.pcm = nullptr; o.len = 0; o.ok = false;
+        }
+        return *this;
+    }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
 // The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
@@ -4910,6 +5051,10 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
     const int width = SDL_AUDIO_BITSIZE(f) / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
+    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
+    // and frees it before this runs, so the bytes are read from `owned` and the
+    // old vector storage is released when it is replaced. SDL_FreeWAV here would
+    // free that storage a second time (#718).
     const std::size_t n = c.len / (std::size_t)width;
     std::vector<Uint8> out(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
@@ -5008,7 +5153,17 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &c.spec, &c.pcm, &c.len)) {
+        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
+        // clip's own storage and free SDL's at once, so no path (a converted clip, an
+        // unsupported width, a replaced entry) can leave it behind (#718).
+        Uint8* wavBuf = nullptr; Uint32 wavLen = 0; SDL_AudioSpec wavSpec{};
+        if (!failed && SDL_LoadWAV(cache.string().c_str(), &wavSpec, &wavBuf, &wavLen)) {
+            c.spec = wavSpec;
+            if (wavBuf && wavLen) c.owned.assign(wavBuf, wavBuf + wavLen);
+            else c.owned.clear();
+            SDL_FreeWAV(wavBuf);
+            c.pcm = c.owned.empty() ? nullptr : c.owned.data();
+            c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);
             const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
@@ -10762,6 +10917,7 @@ static void MpRemember(const okay::JoinLink& l) {   // history: direct servers o
 // ---- Joining -------------------------------------------------------------------
 static std::string g_mpPassLink;  static bool g_mpPassReq = false;   // ask for a password, then join
 static std::string g_mpPickLink;  static bool g_mpPickReq = false;   // "which of your games is this?"
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene);   // (defined with the anti-cheat ban code below)
 static void MpLaunch(const okay::JoinLink& in) {
     okay::JoinLink l = in;
     const std::string link = l.Format();
@@ -10780,6 +10936,9 @@ static void MpLaunch(const okay::JoinLink& in) {
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
     if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
+    // A server that needs a session ticket: ask the ticket service first (off the UI thread). A banned answer refreshes the ban banner and
+    // the game is not started; "required" without an answer doesn't start it either. When it passes, this runs again and goes through.
+    if (TicketPreflightHolds(l, g->scene)) return;
     if (SpawnTracked(player, "\"" + g->scene + "\" --join \"" + link + "\"", "game:" + g->title, g->title)) {
         RecordPlayed(g->scene);
         SavePrefs();
@@ -13092,12 +13251,19 @@ struct AcAdminData {
     std::vector<acb::Ban> bans;
     std::vector<acb::Appeal> appeals;
     std::map<std::string, std::string> names;   // uid -> username
+    std::string linkedFor;                      // the account "Linked accounts" was asked for ("" = none)
+    std::vector<acb::LinkedAccount> linked;
+    long evidenceFor = 0;                       // the report "Evidence" was asked for (0 = none)
+    std::string evidence;                       // its bundle JSON ("" = none attached)
     std::string loadError;                      // "" = loaded
 };
 struct AcAdminJob {
     bool hasAction = false;
     acb::Request action;
     std::string okMsg;
+    bool countBans = false;     // the action is ac_ban_with_devices: add "(N bans)" to the message
+    std::string linkedFor;      // fetch ac_linked_accounts for this account (kept across refreshes)
+    long evidenceFor = 0;       // fetch this report's evidence bundle
     std::string reportStatus;   // the Reports filter ("" = all)
     std::string banUser;        // "Ban a player": look this username up, then ban it with:
     std::string banReason; long banUntil = 0;
@@ -13126,6 +13292,24 @@ static int AcAdminWorker(void* p) {
             const auto r = acb::Send(a, j->action);
             msg = r.ok ? j->okMsg : acb::ErrorText(r.status, r.body);
             err = !r.ok;
+            int made = 0;
+            if (r.ok && j->countBans && acb::ParseBanCount(r.body, made)) msg += " (" + std::to_string(made) + (made == 1 ? " ban)" : " bans)");
+        }
+        if (!j->linkedFor.empty()) {
+            acb::Request q;
+            if (acb::LinkedAccounts(j->linkedFor, q)) {
+                const auto r = acb::Send(a, q);
+                if (r.ok && acb::ParseLinkedAccounts(r.body, d.linked)) d.linkedFor = j->linkedFor;
+                else { msg = acb::ErrorText(r.status, r.body); err = true; }
+            }
+        }
+        if (j->evidenceFor > 0) {
+            acb::Request q;
+            if (acb::ReportEvidence(j->evidenceFor, q)) {
+                const auto r = acb::Send(a, q);
+                if (r.ok) { d.evidence = acb::ParseReportEvidence(r.body); d.evidenceFor = j->evidenceFor; if (d.evidence.empty()) { msg = "No evidence bundle on that report"; } }
+                else { msg = acb::ErrorText(r.status, r.body); err = true; }
+            }
         }
         const long now = (long)std::time(nullptr);
         auto load = [&](const acb::Request& q, auto parse, auto& into) {
@@ -13139,6 +13323,7 @@ static int AcAdminWorker(void* p) {
         for (const auto& x : d.reports) { ids.push_back(x.reporter); ids.push_back(x.reported); }
         for (const auto& x : d.bans) ids.push_back(x.userId);
         for (const auto& x : d.appeals) ids.push_back(x.userId);
+        for (const auto& x : d.linked) ids.push_back(x.userId);
         std::sort(ids.begin(), ids.end());
         ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
         for (std::size_t i = 0; i < ids.size(); i += 80) {   // keep each URL short
@@ -13198,13 +13383,15 @@ static void DrawAntiCheatAdmin() {
     static bool loaded = false, firstFrame = true;
     static int repFilter = 0;          // Open, Reviewing, Actioned, Dismissed, All
     static long selReport = 0;
+    static std::string linkedUid;      // "Linked accounts" shows for this account (re-fetched with every refresh)
+    static long evidenceId = 0;        // "Evidence" shows for this report
     static bool activeOnly = true;
     static char note[300] = "";
     // The ban dialog.
     static bool banOpen = false;
     static std::string banUid, banHw, banWho; static long banReport = 0;
     static char banReason[300] = "", banName[64] = "";
-    static int banDur = 0; static bool banMachine = true;
+    static int banDur = 0; static bool banMachine = true, banDevices = false;
     // The unban / decide dialogs.
     static long unbanId = 0; static char unbanWhy[300] = "";
     static long decideId = 0; static bool decideAccept = true; static char decideNote[300] = "";
@@ -13217,6 +13404,8 @@ static void DrawAntiCheatAdmin() {
         if (kDemo) { delete j; Toast("Demo: nothing is sent", 0); return; }
         if (g_acAdBusy) { delete j; Toast("Still working on the last action\xE2\x80\xA6", 0); return; }
         j->reportStatus = kRepStatus[repFilter];
+        if (j->linkedFor.empty()) j->linkedFor = linkedUid;
+        if (!j->evidenceFor && evidenceId) j->evidenceFor = evidenceId;
         g_acAdBusy = true;
         if (SDL_Thread* t = SDL_CreateThread(AcAdminWorker, "okay-acadmin", j)) SDL_DetachThread(t);
         else { g_acAdBusy = false; delete j; }
@@ -13225,7 +13414,7 @@ static void DrawAntiCheatAdmin() {
     if (!kDemo) {
         if (firstFrame) { firstFrame = false; queue(new AcAdminJob); }
         SDL_LockMutex(g_acAdMutex);
-        if (g_acAdReady) { g_acAdReady = false; D = g_acAdNew; loaded = true; }
+        if (g_acAdReady) { g_acAdReady = false; D = g_acAdNew; loaded = true; }   // (linkedUid / evidenceId are re-fetched by the next job)
         if (!g_acAdMsg.empty()) { Toast(g_acAdMsg, g_acAdMsgErr ? 2 : 1); g_acAdMsg.clear(); }
         SDL_UnlockMutex(g_acAdMutex);
     }
@@ -13256,7 +13445,7 @@ static void DrawAntiCheatAdmin() {
     };
     auto openBan = [&](const std::string& uid, const std::string& hw, long report, const std::string& reason) {
         banOpen = true; banUid = uid; banHw = hw; banReport = report; banWho = uid.empty() ? std::string() : name(uid);
-        std::snprintf(banReason, sizeof(banReason), "%s", reason.c_str()); banName[0] = '\0'; banDur = 0; banMachine = !hw.empty();
+        std::snprintf(banReason, sizeof(banReason), "%s", reason.c_str()); banName[0] = '\0'; banDur = 0; banMachine = !hw.empty(); banDevices = false;
     };
 
     // ---- Views ----
@@ -13333,9 +13522,30 @@ static void DrawAntiCheatAdmin() {
                 ImGui::SameLine();
                 if (r.status != "dismissed" && ImGui::Button("Dismiss") && acb::SetReportStatus(r.id, "dismissed", note, q)) { act(q, "Report dismissed"); note[0] = '\0'; }
                 ImGui::SameLine();
+                const std::string subject = client ? r.reporter : r.reported;
+                if (ImGui::Button("Linked accounts") && acb::IsUuid(subject)) {
+                    linkedUid = subject;
+                    AcAdminJob* j = new AcAdminJob; j->linkedFor = subject; queue(j);
+                }
+                if (r.kind == "server_kick") {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Evidence")) { evidenceId = r.id; AcAdminJob* j = new AcAdminJob; j->evidenceFor = r.id; queue(j); }
+                }
+                ImGui::SameLine();
                 if (PrimaryButton("Ban\xE2\x80\xA6", ImVec2(80, 0)))
                     openBan(client ? r.reporter : r.reported, client ? r.hwHash : std::string(), r.id,
                             client ? r.reason + ": " + r.details : r.reason);
+                if (linkedUid == subject && D.linkedFor == subject) {
+                    ImGui::TextDisabled("Accounts that used a machine this account used (a lead, not proof: machines can be shared):");
+                    if (D.linked.empty()) ImGui::TextDisabled("None.");
+                    for (const auto& l : D.linked)
+                        ImGui::BulletText("%s  \xC2\xB7  %s  \xC2\xB7  last seen %s", name(l.userId).c_str(), acb::LinkedSummary(l).c_str(),
+                                          l.lastSeen ? RelTime(l.lastSeen).c_str() : "-");
+                }
+                if (evidenceId == r.id && D.evidenceFor == r.id && !D.evidence.empty()) {
+                    ImGui::TextDisabled("Detection evidence (no account or address unless the server opted in):");
+                    ImGui::TextWrapped("%s", D.evidence.c_str());
+                }
                 ImGui::Unindent(96);
                 ImGui::Dummy(ImVec2(0, 4));
             }
@@ -13421,6 +13631,7 @@ static void DrawAntiCheatAdmin() {
         ImGui::SetNextItemWidth(200);
         ImGui::Combo("Length", &banDur, "Permanent\0" "1 day\0" "7 days\0" "30 days\0" "1 year\0");
         if (acb::IsHwHash(banHw)) ImGui::Checkbox("Also ban this machine (salted hardware hash)", &banMachine);
+        if (!banUid.empty()) ImGui::Checkbox("Also ban every machine this account used (ac_ban_with_devices)", &banDevices);
         ImGui::Dummy(ImVec2(0, 4));
         acb::Request q; std::string err;
         const std::string hw = banMachine && acb::IsHwHash(banHw) ? banHw : std::string();
@@ -13434,6 +13645,12 @@ static void DrawAntiCheatAdmin() {
                 j->banUser = uname; j->banReason = banReason; j->banUntil = acb::ExpiryFor(banDur, now); j->okMsg = "Banned";
                 queue(j);
                 ImGui::CloseCurrentPopup();
+            } else if (banDevices) {   // the account and every machine it used, in one step
+                if (!acb::BanWithDevices(banUid, banReason, acb::ExpiryFor(banDur, now), banReport, now, q, &err)) Toast(err, 2);
+                else {
+                    AcAdminJob* j = new AcAdminJob; j->hasAction = true; j->action = q; j->okMsg = "Banned"; j->countBans = true;
+                    queue(j); ImGui::CloseCurrentPopup();
+                }
             } else if (!acb::BanPlayer(banUid, hw, banReason, acb::ExpiryFor(banDur, now), banReport, now, q, &err)) Toast(err, 2);
             else { act(q, "Banned"); ImGui::CloseCurrentPopup(); }
         }
@@ -13526,6 +13743,92 @@ static void PumpAcMyBans(bool signedIn) {
     SDL_UnlockMutex(g_acMeMutex);
 }
 
+
+// ---- Session tickets before a join: the ban check + "no ticket, no join" --------------------------------------------------------
+// okay_tickets.cfg (next to the launcher, or next to the game's scene) turns this on (shared/TicketClient.hpp). The launcher asks the ticket
+// service on a worker thread before it starts a game to join a server: a banned answer refreshes my bans (the banner shows why) and the game
+// is not started; with `mode required` any failure stops the start too (the game would refuse to join anyway, this just says why now).
+// The game does the real, connection-bound request itself (player/main.cpp); this one is only the early answer, and its ticket is dropped.
+static SDL_mutex* g_tkMutex = nullptr;
+static volatile bool g_tkBusy = false;
+static std::string g_tkLink;                               // the link being checked (guarded)
+static std::string g_tkOkLink;                             // a link whose check passed: the next MpLaunch of it goes through (UI thread)
+static bool g_tkDone = false, g_tkBanned = false, g_tkAllow = false; static std::string g_tkMsg;   // the worker's answer (guarded)
+static okayac::ticket::Config TicketConfigFor(const std::string& scene) {
+    okayac::ticket::Config c = okayac::ticket::LoadConfig((fs::path(g_exeDir) / okayac::ticket::kConfigName).string());
+    if (c.mode == okayac::ticket::Mode::Off && !scene.empty()) {
+        std::error_code ec;
+        const fs::path beside = fs::path(scene).parent_path() / okayac::ticket::kConfigName;
+        if (fs::is_regular_file(beside, ec)) c = okayac::ticket::LoadConfig(beside.string());
+    }
+    return c;
+}
+struct TkJob { okayac::ticket::Config cfg; okay::JoinLink link; };
+static int TicketPreflightWorker(void* p) {
+    std::unique_ptr<TkJob> j(static_cast<TkJob*>(p));
+    bool allow = true, banned = false; std::string msg;
+    try {
+        okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        okayac::ticket::Options opt;
+        opt.refreshSignIn = [&a] { return a.ReloadSessionToken(); };
+        okayac::ticket::Client client([&a](const okayac::backend::Request& r) {
+            const okay::account::ApiResponse x = a.ApiTimed(r.path, r.method, r.body, r.header, 8);
+            okayac::ticket::Reply out; out.reached = x.reached; out.status = x.status; out.body = x.body; return out;
+        }, opt);
+        okayac::ticket::Hooks hk;
+        hk.hwHash = [] { return okayac::MachineHash(); };
+        hk.signedIn = [&a] { return a.IsLoggedIn() && a.IsOnline(); };
+        okayac::ticket::JoinTarget t;
+        if (j->link.Relayed()) { t.relayed = true; t.relayCode = j->link.code; }
+        else { const std::string h = j->link.addr; const std::size_t c = h.rfind(':'); t.host = c == std::string::npos ? h : h.substr(0, c); t.port = c == std::string::npos ? 0 : (std::uint16_t)std::atoi(h.c_str() + c + 1); }
+        const okayac::ticket::Decision d = okayac::ticket::Decide(j->cfg, client, hk, t, "");
+        allow = d.allow; banned = d.outcome == okayac::ticket::Outcome::Banned; msg = d.message;
+    } catch (...) { allow = j->cfg.mode != okayac::ticket::Mode::Required; if (!allow) msg = "Couldn't check the session ticket."; }
+    SDL_LockMutex(g_tkMutex);
+    g_tkAllow = allow; g_tkBanned = banned; g_tkMsg = msg; g_tkDone = true;
+    SDL_UnlockMutex(g_tkMutex);
+    g_tkBusy = false;
+    return 0;
+}
+// True when the start must wait for (or stop at) the ticket check. Called by MpLaunch; false = go ahead.
+static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) {
+    if (!g_tkMutex) g_tkMutex = SDL_CreateMutex();
+    const std::string link = l.Format();
+    if (g_tkOkLink == link) { g_tkOkLink.clear(); return false; }            // checked a moment ago
+    okayac::ticket::Config cfg = TicketConfigFor(scene);
+    if (cfg.mode == okayac::ticket::Mode::Off || g_pollCfgDir.empty()) return false;
+    const long now = (long)std::time(nullptr);
+    for (const auto& b : g_acMyBans)                                         // already known: no need to ask
+        if (b.until == 0 || b.until > now) {
+            Toast("You can't join: this account has an anti-cheat ban (see the banner at the top).", 2);
+            return true;
+        }
+    if (g_tkBusy) { Toast("One moment\xE2\x80\xA6", 0); return true; }
+    g_tkBusy = true;
+    SDL_LockMutex(g_tkMutex); g_tkLink = link; g_tkDone = false; SDL_UnlockMutex(g_tkMutex);
+    TkJob* job = new TkJob{cfg, l};
+    Toast("Checking your session\xE2\x80\xA6", 0);
+    if (SDL_Thread* t = SDL_CreateThread(TicketPreflightWorker, "okay-ticket", job)) SDL_DetachThread(t);
+    else { g_tkBusy = false; delete job; return cfg.mode == okayac::ticket::Mode::Required; }
+    return true;
+}
+// Every frame: act on the worker's answer.
+static void PumpTicketPreflight() {
+    if (!g_tkMutex) return;
+    bool done = false, allow = false, banned = false; std::string msg, link;
+    SDL_LockMutex(g_tkMutex);
+    if (g_tkDone) { done = true; allow = g_tkAllow; banned = g_tkBanned; msg = g_tkMsg; link = g_tkLink; g_tkDone = false; }
+    SDL_UnlockMutex(g_tkMutex);
+    if (!done) return;
+    if (banned) {
+        AcMeQueue(new AcMeJob);   // refresh ac_my_bans: the banner at the top of every page shows the reason and the appeal
+        Toast("You can't join: this account or machine has an anti-cheat ban. Details are at the top of the page.", 2);
+        return;
+    }
+    if (!allow) { Toast(msg.empty() ? std::string("Couldn't get a session ticket, so the game was not started.") : msg, 2); return; }
+    okay::JoinLink l;
+    if (okay::JoinLink::Parse(link, l)) { g_tkOkLink = link; MpLaunch(l); }
+}
 
 // Banner + appeal for my active anti-cheat ban, at the top of every page.
 static void DrawAcBanBanner() {
@@ -15659,11 +15962,9 @@ static int GifSearchWorker(void*) {
                         g.preview = urlIn("\"tinygif\"");
                         g.full = urlIn("\"gif\":");
                         g.desc = okay::Messages::Field(o, "content_description");
-                        std::size_t tp = o.find("\"tinygif\"");
-                        if (tp != std::string::npos) {
-                            std::size_t d = o.find("\"dims\"", tp);
-                            if (d != std::string::npos) std::sscanf(o.c_str() + o.find('[', d), "[%d,%d]", &g.w, &g.h);
-                        }
+                        // start after the format the preview uses: the first "dims" in the object may belong to another one
+                        const std::size_t tg = o.find("\"tinygif\"");
+                        okay::netguard::ParseGifDims(o, tg, g.w, g.h);   // bounds-checked; npos-safe
                         if (!g.preview.empty()) out.push_back(g);
                     }
                 } else if (c == ']' && depth == 0) break;
@@ -17403,7 +17704,6 @@ static const okayversionsui::Host& VersionsHost() {
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now
         h.fetchText = [](const std::string& url, std::string& out) { return FetchTextFile(url, out); };
-        h.headSize = [](const std::string& url) { return (std::uint64_t)std::max<long long>(0, RemoteSize(url)); };
     }
     if (builtAt == 0 || now - builtAt > 1000) {
         builtAt = now;
@@ -17422,6 +17722,7 @@ static const okayversionsui::Host& VersionsHost() {
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
+    if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     SDL_SetMainReady();
     {
@@ -17468,8 +17769,10 @@ int main(int argc, char** argv) {
     g_dlMutex = SDL_CreateMutex();
     g_gitMutex = SDL_CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
+    ApplyStartupUpdateVerdict();   // was the last launcher update confirmed, not applied, or rolled back? Say so before anything else.
 
     LoadPrefs();                 // preferences (incl. last window size) from launcher.cfg
+    ResolveUiBackend();          // Dear ImGui unless the setting or OKAY_UI_BACKEND says OkayUI
     LoadNotifs();                // the notifications feed + what was read / cleared
     LoadNewsHistory();           // release notes seen before (What's New page)
     LoadScheduled();             // chat messages waiting to be sent later
@@ -17686,7 +17989,7 @@ int main(int argc, char** argv) {
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    if (g_updateOnLaunch && !g_upVerdictShown) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
@@ -17699,6 +18002,7 @@ int main(int argc, char** argv) {
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
+        bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
@@ -17708,6 +18012,9 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             ImGui_ImplSDL2_ProcessEvent(&e);
+#ifdef OKAY_HAVE_OKAYUI
+            g_okayInput.Feed(e);   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
+#endif
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
@@ -17963,6 +18270,10 @@ int main(int argc, char** argv) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+        okayFrame = false;
+#ifdef OKAY_HAVE_OKAYUI
+        if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
+#endif
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
         // Closing the launcher asks first, so an accidental [X] doesn't quit mid-task;
@@ -18108,6 +18419,16 @@ int main(int argc, char** argv) {
                     ImGui::Dummy(ImVec2(rad * 2 + 6, rad * 2 + 2)); ImGui::SameLine();
                 }
                 ImGui::TextUnformatted(GetUpStep().c_str());
+                if (us == Up_Failed) {   // the reason and what to do, in full (the sidebar note only has room for the start of it)
+                    const std::string why = GetUpMsg();
+                    if (!why.empty()) {
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextColored(ImVec4(0.95f, 0.50f, 0.45f, 1.0f), "%s", why.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::Dummy(ImVec2(0, 2));
+                    }
+                }
 
                 // Overall step progress (engine / player / launcher).
                 int si = SDL_AtomicGet(&g_upStepIdx), stt = SDL_AtomicGet(&g_upStepTotal);
@@ -18145,7 +18466,7 @@ int main(int argc, char** argv) {
 
                 // Changelog / what's-new.
                 std::string cl = GetUpChangelog();
-                if (!cl.empty()) {
+                if (!cl.empty() && us != Up_Failed) {   // (a failure needs the room for its reason and the Retry button)
                     ImGui::Dummy(ImVec2(0, 4));
                     ImGui::TextDisabled("What's new%s%s", toV.empty() ? "" : " in v",
                                         toV.empty() ? "" : toV.c_str());
@@ -18552,6 +18873,7 @@ int main(int argc, char** argv) {
         PumpBlocks(account);
         PumpPrivacy(account);
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
+        PumpTicketPreflight();
         PumpTokenRefresh(account);
         if (tab == 11 && g_myRank == 0) tab = 0;   // lost the role
 
@@ -19778,6 +20100,50 @@ int main(int argc, char** argv) {
 
         } else if (tab == 14) {                           // ---- Multiplayer ----
             DrawMultiplayerPage(account.IsLoggedIn() || kUiDemoUser);
+        } else if (tab == 12 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- What's New, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
+            // the newest notes, the earlier releases, the link to all releases. Differences are listed in
+            // docs/own_ui_toolkit.md section 5.
+            if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
+            const UpState us = GetState();
+            const bool busy = us == Up_Checking || us == Up_Downloading;
+            const bool avail = !g_upAvailable.empty() && !busy && us != Up_Updated;
+            okayuiscreens::WhatsNewModel wn;
+            wn.currentVersion = OKAY_ENGINE_VERSION;
+            wn.availableVersion = g_upAvailable;
+            wn.restartNeeded = g_upRelaunchNeeded;
+            if (avail) wn.state = okayuiscreens::UpdateState::Available;
+            else if (busy) { wn.state = okayuiscreens::UpdateState::Checking; wn.message = GetUpMsg(); }
+            else if (us == Up_Updated) wn.state = okayuiscreens::UpdateState::Installed;
+            else if (us == Up_Failed) { wn.state = okayuiscreens::UpdateState::Failed; wn.message = GetUpMsg(); }
+            else if (!g_upLatest.empty() && CompareVersions(OKAY_ENGINE_VERSION, g_upLatest) >= 0) wn.state = okayuiscreens::UpdateState::UpToDate;
+            for (const NewsRelease& r : g_newsHistory) wn.releases.push_back({r.ver, r.lines});
+            if (wn.releases.empty()) {
+                wn.placeholder = true;
+                wn.releases.push_back({"Highlights", {
+                    "Script Editor: errors and warnings as you type, examples in autocomplete",
+                    "Game view: preview phone and tablet screen sizes",
+                    "Build Settings: choose the scenes in your build",
+                    "Camera: zoom, shake, dutch angle and lens shift",
+                    "Updates download straight from the OkaySpace update server",
+                }});
+            }
+            // The page's rectangle: an invisible item the size of the free space, so ImGui sees an item under the mouse
+            // (it neither drags the window nor scrolls the page) and says whether another window covers it.
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (version, Docs, GitHub) stays below, pinned by ImGui
+            ImGui::InvisibleButton("##okayui_whatsnew", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
+            if (wr.installNow) StartUpdateCheck(true);
+            if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
+            if (wr.checkForUpdates) StartUpdateCheck();
+            if (wr.openReleasesPage) OpenExternal(okayuiscreens::WhatsNewReleasesUrl());
+#endif
         } else if (tab == 12) {                           // ---- What's New ----
             sectionHeader("What's New", "Release notes for OkaySpace, newest first.");
             if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
@@ -19859,47 +20225,38 @@ int main(int argc, char** argv) {
                     }
                 }
             } else {
-                NewsRelease hl{"Highlights", {
-                    "Script Editor: errors and warnings as you type, examples in autocomplete",
-                    "Game view: preview phone and tablet screen sizes",
-                    "Build Settings: choose the scenes in your build",
-                    "Camera: zoom, shake, dutch angle and lens shift",
-                    "Updates download straight from the OkaySpace update server",
-                }};
-                releaseCard(hl, false);
-                ImGui::TextDisabled("Notes for each release show up here once the launcher has checked for updates.");
+                ImGui::TextWrapped("Release notes are not loaded yet. They appear here once the launcher has checked for updates (you may be offline).");
             }
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))
                 OpenExternal("https://github.com/kingimann/OkaySpaceGameEngine/releases");
+        } else if (tab == 13 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
+            // differences are listed in docs/own_ui_toolkit.md section 6.
+            static okayuiscreens::TipsModel tm;
+            static okayuiscreens::TipsState ts;
+            if (tm.tips.empty()) {
+                for (int i = 0; i < launchertips::kCatCount; ++i) tm.cats.push_back(launchertips::kCats[i]);
+                for (int i = 0; i < launchertips::kTipCount; ++i) tm.tips.push_back({launchertips::kTips[i].cat, launchertips::kTips[i].title, launchertips::kTips[i].body});
+            }
+            tm.dayNumber = (long long)(std::time(nullptr) / 86400);
+            if (focusSearch) { ts.focusSearch = true; focusSearch = false; }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ImGui::InvisibleButton("##okayui_tips", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
+#endif
         } else if (tab == 13) {                           // ---- Tips ----
             sectionHeader("Tips", "Shortcuts and tricks for the editor, scripting, building and the launcher.");
-            struct Tip { int cat; const char* title; const char* body; };
-            static const char* kCats[] = {"All", "Editor", "Scripting", "Building", "Launcher"};
-            static const Tip kTips[] = {
-                {1, "Test instantly", "Press Play in the editor toolbar to try the scene right away."},
-                {1, "Save everything", "Ctrl+S saves the scene, Ctrl+Shift+S saves it under a new name and Ctrl+Alt+S saves the whole project."},
-                {1, "Test on phone screens", "In the Game view, pick a Device to preview phone and tablet sizes. Flip to landscape and show the safe area around notches."},
-                {1, "Drag assets onto objects", "Drag textures, models and scripts from the Project panel onto objects in the Scene or Hierarchy."},
-                {1, "Add UI", "GameObject > UI adds buttons, sliders, text and radial loaders."},
-                {1, "Camera feel", "The Camera inspector has Zoom, Dutch Angle, Lens Shift and Camera Shake. Use Test Shake to preview it."},
-                {2, "Autocomplete with examples", "Ctrl+Space opens suggestions. The panel beside the list shows what the selected item does, with an example."},
-                {2, "Jump between problems", "Errors and warnings appear while you type. Press F2 to jump to the next one."},
-                {2, "More room to code", "Alt+1 folds the scripts sidebar in the Script Editor."},
-                {2, "One-line timers", "if (timer(\"spawn\", 2)) runs every 2 seconds, cooldown(\"shoot\", 0.3) limits how often something happens and once(\"intro\") runs a single time."},
-                {2, "Shake the camera from code", "camera_shake(0.6) for hits and explosions; camera_zoom_to(2, 0.5) zooms in over half a second."},
-                {2, "Movement in one line", "on_key_move(5) moves with WASD or the arrow keys; platformer(6, 8) is a whole 2D side-scroller controller."},
-                {3, "Choose the scenes you ship", "File > Build Settings > Scenes In Build: tick the scenes to include. The top one loads first."},
-                {3, "Fullscreen toggle", "Turn on the fullscreen toggle in Build Settings so players can press Alt+Enter or F11."},
-                {3, "Share on GitHub", "Right-click a project on the Create page to publish it to GitHub, then use Commit & Push for later changes."},
-                {3, "Play web games", "Drop an .html game (or a folder with index.html) into your games folder and it shows up under Play."},
-                {4, "Jump between pages", "When you're not typing, the number keys switch pages (1 Create, 2 Play, 3 Community). Ctrl+F searches the current page."},
-                {4, "Chat your way", "Chat can open in its own window or dock inside the launcher. Use the dock / pop-out button in the chat window."},
-                {4, "Collapse the sidebar", "The panel button next to the logo shrinks the sidebar to icons."},
-                {4, "Check for updates", "Click the version number under the logo to check for an update right now."},
-                {4, "Notifications", "The bell keeps friend requests, mentions and release news. Read and cleared items stay that way after a restart."},
-            };
-            const int nTips = (int)(sizeof(kTips) / sizeof(kTips[0]));
+            using launchertips::Tip;   // the words live in shared/LauncherTips.hpp, so the OkayUI page shows the same ones
+            const char* const* kCats = launchertips::kCats;
+            const Tip* kTips = launchertips::kTips;
+            const int nTips = launchertips::kTipCount;
             static int s_cat = 0;
             static char s_q[96] = "";
             static int s_daily = -1;
@@ -21900,6 +22257,34 @@ int main(int argc, char** argv) {
                         // Persist + restyle when the drag ends — no separate Apply click.
                         if (ImGui::IsItemDeactivatedAfterEdit()) { DarkTheme(); SavePrefs(); }
                     });
+                    if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
+                    rowDivider();
+                    {   // Which toolkit draws the pages that have an OkayUI port (today: What's New). Dear ImGui stays the default.
+                        const char* envBackend = std::getenv("OKAY_UI_BACKEND");
+                        const int src = okayuibackend::Source(envBackend, g_uiBackendSetting, true);
+                        const bool can = okayuibackend::CompiledIn();
+                        char bdesc[300];
+                        std::snprintf(bdesc, sizeof(bdesc), "%s%s", can
+                            ? "OkayUI is the toolkit being built to replace Dear ImGui. Preview: only the What's New page is ported; every other page stays as it is. Applies at once."
+                            : "This build has no OkayUI, so every page uses Dear ImGui.",
+                            src == 2 ? " The OKAY_UI_BACKEND environment variable is set and decides this." : "");
+                        settingRow("UI backend", bdesc, 220.0f, ImGui::GetFrameHeight(), [&](float w) {
+                            ImGui::SetNextItemWidth(std::min(w, 240.0f));
+                            ImGui::BeginDisabled(!can || src == 2);
+                            if (ImGui::BeginCombo("##uibackend", okayuibackend::Label(g_uiBackend))) {
+                                for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI}) {
+                                    if (ImGui::Selectable(okayuibackend::Label(opt), g_uiBackend == opt) && g_uiBackend != opt) {
+                                        g_uiBackendSetting = okayuibackend::Name(opt);
+                                        ResolveUiBackend();
+                                        SavePrefs();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::EndDisabled();
+                        });
+                    }
+                    }   // developer-only row
                     cardEnd();
                 } else if (setCat == 1) {   // ---- Chat & Notifications ----
                     cardBegin("##sc_chat", "CHAT");
@@ -26182,10 +26567,16 @@ int main(int argc, char** argv) {
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
         DrawToastOverlay();
 
+#ifdef OKAY_HAVE_OKAYUI
+        if (okayFrame) OkayUIClaimKeyboard();   // before Render: ImGui learns that a hosted OkayUI field has the keyboard
+#endif
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 32, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+#ifdef OKAY_HAVE_OKAYUI
+        if (okayFrame) OkayUI::EndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
+#endif
         SDL_RenderPresent(renderer);
         ChatHostFrame(account);
 

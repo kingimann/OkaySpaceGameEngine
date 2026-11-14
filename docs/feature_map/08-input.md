@@ -37,7 +37,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedPad`, `PadSet`, `platform::Gamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
 - **Docs:** `docs/input.md`
-- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`
+- **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`, `platform_gamepad`
 - **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view still feeds one pad
 - **Open:** the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand
 - **Related:** 8.3, 8.6, 12.4, 32.1
@@ -60,7 +60,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Docs:** `docs/input.md`
 - **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
 - **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
-- **Open:** no game or UI uses input contexts yet (a pause menu has to call `PushContext` itself; `Input::SetUICaptured` is the older separate mechanism, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
+- **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
@@ -76,9 +76,9 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **API:** `Cursor::Capture`, `Cursor::SetLock`, `Cursor::SetVisible`, `Cursor::IsLocked`, `Input::TouchCount`, `Input::GetTouch`, `Input::PointerIsTouch`
 - **Editor:** none
 - **Docs:** `docs/input.md`, `docs/web_mobile.md`
-- **Tests:** `ui_nav_touch`, `uicapture_look`
+- **Tests:** `ui_nav_touch`, `uicapture_look`, `ui_touch_scroll`
 - **Status:** Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`)
-- **Open:** no gesture recognition (pinch, swipe, long press, rotate); `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself although the player and the editor already call `Input::FeedTouch`; no on-screen virtual stick or touch buttons
+- **Open:** none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised (`Input/GestureRecognizer`, `Gestures`). A virtual joystick, D-pad and touch button drive the action map and can hide until a touch screen is present (`Components/TouchControls`). `docs/input.md` and `docs/web_mobile.md` describe them.
 - **Related:** 8.5, 12.9, 18.2, 37.1
 - **Words:** cursor, lock cursor, hide cursor, mouse capture, relative mouse, touch, touchscreen, finger, tap, drag, fling, mobile, phone, multi-touch, gestures, pinch
 - **Seen as:** the cursor stays visible during mouse-look or escapes the window; a tap does nothing on a phone; scrolling a list with a finger also presses buttons; the cursor does not come back after Esc

@@ -42,7 +42,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** none as ctest; the `web-build` CI job (18.3.5)
 - **Status:** Partial - web builds and is checked in CI; Android and iOS are instructions only (the export writes `assets/` and a README, not a Gradle project)
-- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); no touch or gesture feed beyond mouse emulation; the web build excludes the relay and OkayUI's Direct3D backend
+- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build excludes the relay and OkayUI's Direct3D backend. Touch gestures and on-screen controls are fed from SDL finger events on desktop and web (`docs/input.md`)
 - **Related:** 18.3, 15.7, 42.6
 - **Words:** web, WebGL, WASM, WebAssembly, Emscripten, emsdk, Android, iOS, mobile, APK, touch, okay-player.html
 - **Seen as:** the web page is blank or the game doesn't load from a file:// URL; Android export gives no APK; a feature missing on the web build (networking relay, encryption)
@@ -110,24 +110,28 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Ask me like:** "publish 2.852.0 to Supabase with a dry run", "why does the editor changelog differ from the launcher's?"
 
 ### 18.6 Desktop game export (Build Game) and the export check
-- **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `Data/` folder with scenes, config and every referenced asset), and the CI check that exports a small game and compares what its visual scripts print.
+- **What:** Turning the open project into a shippable game folder (`<Game>.exe`, `SDL2.dll`, a `<Game>_Data/` folder with the scenes, config, `build.json`, only the assets the scenes use and the project's StreamingAssets; or the older compact `Data/` layout; or one zip), with a report of what went in and what was left out, a dry run, and the CI checks that export a small game and run it.
 - **Parts:**
-  - 18.6.1 Build - `editor/main.cpp` (`builder::Build`, near L3590) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, assets, icon, splash, localization, `Data/manifest.json`, size report
+  - 18.6.1 Build - `editor/main.cpp` (`builder::Build`) - refuses dangerous folders (a drive root, home, the project), cleans only files it writes, scenes in build order, `game.okayconfig`, player copied as `<Game>.exe`, SDL2, the dependency walk's assets, StreamingAssets, icon, splash, localization, `build.json`, the report, the archive; `Data/manifest.json` only with anti-cheat
   - 18.6.2 Player lookup and download - `editor/main.cpp` (`builder::FindPlayer`) - looks beside the editor and in a few sibling folders, downloads the runtime from the latest release if missing
-  - 18.6.3 Command line - `editor/main.cpp` (`RunBuildGameCli`, near L43644) - `OkayEngine --build-game SCENE OUT_DIR [--name GAME]`
+  - 18.6.3 Command line - `editor/main.cpp` (`RunBuildGameCli`) - `OkayEngine --build-game SCENE OUT_DIR [--name GAME] [--layout folder|compact|zip] [--dry-run] [--report FILE] [--no-strip] [--no-compress] [--zip] [--version V] [--build-number N] [--archive-name PATTERN] [--dev]`, starting from the project's saved Build Settings
   - 18.6.4 Optional data obfuscation - `Core/DataPack` - scenes and config packed so they can't be read in a text editor (39.10)
   - 18.6.5 Export check - `tests/export/verify.sh`, `tests/export/verify.ps1` - exports `vs_export.okayscene` with the editor's real Build, runs it headless and requires the output to equal `expected.txt`; assets `tests/export/*.okayvs`, `Tower.okaymesh`
-- **Code:** `editor/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`
-- **API:** `builder::Build`, `OkayEngine --build-game`, `OKAY_AC_SIGNING_KEY_FILE`
-- **Editor:** File > Build Settings or Engine > Build Settings (Ctrl+B): scenes in build, window, platform, anti-cheat, build profiles
-- **Docs:** `docs/making_a_game.md`, `docs/editor.md`, `docs/packaging.md`
-- **Tests:** none in ctest; the export check runs on Linux and on Windows in CI (18.3)
-- **Status:** Works - read the builder code; the export check proves the player runs a built game end to end
-- **Open:** the build code lives inside the huge `editor/main.cpp` (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or networking
+  - 18.6.6 Build pipeline logic - `engine/include/okay/Core/BuildPipeline.hpp`, `engine/src/Core/BuildPipeline.cpp` - layout planner, the player's `FindDataDir`, the dependency walk (asset stripping), `build.json`, the report, the zip writer and reader
+  - 18.6.7 Layout check - `tests/export/verify_layout.sh` - exports a project with an unused asset and StreamingAssets, checks the Folder, flat (old), Compact, no-strip, Zip and dry-run outputs, and runs the player from the Folder, flat and Compact layouts
+  - 18.6.8 Build report - `editor/main.cpp` (Build Result window), `.okay/build_report.txt` - by kind, by type, files with why, left out with reason, warnings, time, archive size
+  - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`
+- **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
+- **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
+- **Editor:** File > Build Settings or Engine > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
+- **Docs:** `docs/build_pipeline.md`, `docs/making_a_game.md`, `docs/editor.md`, `docs/packaging.md`
+- **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
+- **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/build_pipeline.md, known gaps)
+- **Open:** the build code lives inside the huge `editor/main.cpp` (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
 - **Related:** 15.7, 18.3, 39.4, 42.6
-- **Words:** Build Game, export, Build Settings, Data folder, game.okayconfig, player runtime, scenes in build, --build-game, verify.sh, manifest
-- **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name
-- **Ask me like:** "build the game from the command line", "the exported game doesn't include my audio"
+- **Words:** Build Game, export, Build Settings, Data folder, _Data, Folder layout, Compact layout, Zip archive, build.json, build number, StreamingAssets, asset stripping, dependency walk, dry run, build report, game.okayconfig, player runtime, scenes in build, --build-game, --build-info, verify.sh, manifest
+- **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build
+- **Ask me like:** "build the game from the command line", "why isn't my audio file in the build?", "what is in the build and how big is it?"
 
 ### 18.7 Dedicated server export and Linux server build
 - **What:** The editor's "Server" platform writes a ready-to-run server folder for Linux or Windows; the release workflow builds and attaches the Linux runtime it needs.

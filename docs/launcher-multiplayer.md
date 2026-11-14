@@ -101,6 +101,15 @@ write any extra code.
   players, and password / dedicated / sign-in flags, without anyone joining.
   The LAN tab broadcasts the same query on ports 45000–45015.
 
+## Joining a game in progress
+
+A player who joins (or rejoins after a drop) is sent what it missed, so the world matches the others': the
+pieces players built in build mode, the quest log and story variables (the shared ones, and that
+player's own), who is dead and who is hurt. Nothing for the game to do: it comes with the join, after the
+welcome, in order. Details: `docs/multiplayer_audit.md` 18-21, `docs/build_mode.md` "Multiplayer",
+`docs/dialogue_quests.md` "Multiplayer". The launcher's join, invite and server-browser screens were not
+run for this (they need live services); the engine side is covered by the `net_*` test suites.
+
 ## In-game server browser
 
 Games get a ready-made **Find a server** window, in addition to the

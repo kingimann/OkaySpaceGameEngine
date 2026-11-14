@@ -66,12 +66,15 @@ struct VolumeGeometry {
 ///  - Atmosphere: while the camera is inside, the scene's fog and vignette fade to this volume's, and fade back
 ///    when it leaves.
 ///  - Ambience: plays the AudioSource on the same object while the camera is inside, fading in and out.
+///  - Reverb: while the listener is inside, 3D sounds gain this room's echo (room, hall, cave or outdoor),
+///    blending in across `blend` of the way from the edge. 2D sounds stay dry. Nothing echoes until a
+///    Reverb volume exists.
 /// A body is an object with a Rigidbody 3D, or any object whose tag (or name text) matches `activatorTag`.
 /// No collider is needed: the volume tests the shape itself.
 class Volume : public Behaviour {
 public:
-    enum class Kind { Checkpoint = 0, Kill = 1, Force = 2, Atmosphere = 3, Ambience = 4 };
-    static constexpr int kKindCount = 5;
+    enum class Kind { Checkpoint = 0, Kill = 1, Force = 2, Atmosphere = 3, Ambience = 4, Reverb = 5 };
+    static constexpr int kKindCount = 6;
     enum class KillAction { Respawn = 0, Destroy = 1 };
     enum class ForceShape { Direction = 0, Radial = 1 };
 
@@ -103,13 +106,20 @@ public:
     // ---- Ambience ----
     float fadeTime = 1.5f;             ///< seconds to fade the sound in and out
 
+    // ---- Reverb ----
+    int   reverbPreset = 0;            ///< 0 room, 1 hall, 2 cave, 3 outdoor
+    float reverbAmount = 1.0f;         ///< scales the preset's echo, 0 = dry, 1 = the preset
+
     // ---- Read-outs ----
     VolumeGeometry Geometry() const { return {shape, size, offset}; }
     bool Contains(const Vec3& world) const;
     /// Bodies inside it right now (as of the last update).
     int Occupants() const { return (int)m_inside.size(); }
-    /// The camera is inside (Atmosphere / Ambience) and how strongly, 0..1.
+    /// The camera is inside (Atmosphere / Ambience / Reverb) and how strongly, 0..1.
     float ViewerWeight() const { return m_weight; }
+    /// 0 outside, 1 at full strength. `blend` is how far in from the edge (0..1 of
+    /// the depth) it takes to reach 1. The same fade Atmosphere and Reverb use.
+    float WeightAt(const Vec3& world) const;
     /// Where this body respawns: false when nothing is known about it yet.
     static bool RespawnPoint(const GameObject* body, Vec3& out);
     /// Set a body's respawn point by hand (scripts, tests).

@@ -24,6 +24,7 @@
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/GameSaves.hpp"
+#include "okay/Core/Clipboard.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/LocCheck.hpp"
 #include "okay/Core/LocTable.hpp"
@@ -45,6 +46,9 @@
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/GestureRecognizer.hpp"
+#include "okay/Input/Gestures.hpp"
+#include "okay/Components/TouchControls.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -190,6 +194,7 @@
 #include "okay/UI/UILayoutUpdate.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UITextBind.hpp"
@@ -226,6 +231,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/NavMeshBake.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/Perception.hpp"
 #include "okay/AI/BehaviorTree.hpp"
 
 // Starter scene templates
@@ -289,6 +295,8 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
 // Dialogue and quests
@@ -311,7 +319,11 @@
 #include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Audio/SpatialFx.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Audio/AudioByteSource.hpp"

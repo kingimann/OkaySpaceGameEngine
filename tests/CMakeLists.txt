@@ -1,3 +1,8 @@
+# The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
+add_executable(test_sandbox test_sandbox.cpp)
+target_link_libraries(test_sandbox PRIVATE okay::engine)
+add_test(NAME sandbox COMMAND test_sandbox)
+
 add_executable(test_math test_math.cpp)
 target_link_libraries(test_math PRIVATE okay::engine)
 add_test(NAME math COMMAND test_math)
@@ -58,10 +63,21 @@ add_executable(test_audio_mixer test_audio_mixer.cpp)
 target_link_libraries(test_audio_mixer PRIVATE okay::engine)
 add_test(NAME audio_mixer COMMAND test_audio_mixer)
 
+add_executable(test_spatial_audio test_spatial_audio.cpp)
+target_link_libraries(test_spatial_audio PRIVATE okay::engine)
+target_compile_definitions(test_spatial_audio PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME spatial_audio COMMAND test_spatial_audio)
+
 add_executable(test_audio_formats test_audio_formats.cpp)
 target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
+
+# FLAC decoding against known samples, and audio import settings (mono, stream).
+add_executable(test_flac_import test_flac_import.cpp)
+target_link_libraries(test_flac_import PRIVATE okay::engine)
+target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_import COMMAND test_flac_import)
 
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)
@@ -183,10 +199,20 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
+add_executable(test_inventory_moves test_inventory_moves.cpp)
+target_link_libraries(test_inventory_moves PRIVATE okay::engine)
+add_test(NAME inventory_moves COMMAND test_inventory_moves)
+
 # Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
 add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
 add_test(NAME item_database COMMAND test_item_database)
+
+# Item, loot and recipe files: round trip, plain-English missing-item checks, loot roll distribution
+add_executable(test_item_loot_recipes test_item_loot_recipes.cpp)
+target_link_libraries(test_item_loot_recipes PRIVATE okay::engine)
+add_test(NAME item_loot_recipes COMMAND test_item_loot_recipes)
 
 # Inventory gameplay: pickups/drops, using the held item, encumbrance, loot tables
 add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
@@ -245,6 +271,10 @@ add_test(NAME bitmap_font COMMAND test_bitmap_font)
 add_executable(test_ttf test_ttf.cpp)
 target_link_libraries(test_ttf PRIVATE okay::engine)
 add_test(NAME ttf COMMAND test_ttf)
+
+add_executable(test_ui_font_policy test_ui_font_policy.cpp)
+target_link_libraries(test_ui_font_policy PRIVATE okay::engine)
+add_test(NAME ui_font_policy COMMAND test_ui_font_policy)
 
 # Our own TrueType reader / rasterizer: synthetic fonts, DejaVu references, fuzzed files.
 add_executable(test_ttf_rasterizer test_ttf_rasterizer.cpp)
@@ -494,6 +524,10 @@ add_executable(test_net test_net.cpp)
 target_link_libraries(test_net PRIVATE okay::engine)
 add_test(NAME net COMMAND test_net)
 
+add_executable(test_net_guard test_net_guard.cpp)
+target_include_directories(test_net_guard PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/launcher)
+add_test(NAME net_guard COMMAND test_net_guard)
+
 add_executable(test_net_auth test_net_auth.cpp)
 target_link_libraries(test_net_auth PRIVATE okay::engine)
 add_test(NAME net_auth COMMAND test_net_auth)
@@ -644,6 +678,12 @@ add_test(NAME scene_pointer COMMAND test_scene_pointer)
 add_executable(test_light_shadows test_light_shadows.cpp)
 target_link_libraries(test_light_shadows PRIVATE okay::engine)
 add_test(NAME light_shadows COMMAND test_light_shadows)
+add_executable(test_software_local_shadows test_software_local_shadows.cpp)
+target_link_libraries(test_software_local_shadows PRIVATE okay::engine)
+add_test(NAME software_local_shadows COMMAND test_software_local_shadows)
+add_executable(test_ssao_math test_ssao_math.cpp)
+target_link_libraries(test_ssao_math PRIVATE okay::engine)
+add_test(NAME ssao_math COMMAND test_ssao_math)
 
 add_executable(test_modifiers test_modifiers.cpp)
 target_link_libraries(test_modifiers PRIVATE okay::engine)
@@ -716,6 +756,10 @@ add_executable(test_uiwidgets test_uiwidgets.cpp)
 target_link_libraries(test_uiwidgets PRIVATE okay::engine)
 add_test(NAME uiwidgets COMMAND test_uiwidgets)
 
+add_executable(test_ui_widgets_more test_ui_widgets_more.cpp)
+target_link_libraries(test_ui_widgets_more PRIVATE okay::engine)
+add_test(NAME ui_widgets_more COMMAND test_ui_widgets_more)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -726,7 +770,7 @@ target_compile_definitions(test_runtime_ui PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE
 add_test(NAME runtime_ui COMMAND test_runtime_ui)
 
 # File > Examples: the UI Gallery builds and saves itself into the project (ImGui-free part of the editor).
-add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+add_executable(test_example_scenes test_example_scenes.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
 target_include_directories(test_example_scenes PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
@@ -755,48 +799,59 @@ target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
 add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
 
 # UIFrame conversion and mirroring; also drives the editor's (ImGui-free) undo stack.
-add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
-add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # EditorState cancels queued built-in dialogs on scene rebuilds (#732)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
+target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_play_start_bench PRIVATE okay::engine)
+add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
-add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
 # The editor's undo (EditorState + SceneUndo.hpp on okay::UndoStack): every kind of edit does / undoes / redoes to the same scene text, merging, delete restores GUIDs, limits, new scene / Play, saved tracking.
-add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_undo test_editor_undo.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
-add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_mode PRIVATE okay::engine)
 add_test(NAME prefab_mode COMMAND test_prefab_mode)
 
 # The editor's prefab actions (editor/PrefabEdit; ImGui-free): override detection, per-field and per-component Revert / Apply, Apply updating the
 # other instances, nested prefabs and variants, objects added to or lost from an instance, Create Variant, and undo / redo that moves the prefab files too.
-add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_prefab_editor test_prefab_editor.cpp ${PROJECT_SOURCE_DIR}/editor/PrefabEdit.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_editor PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_prefab_editor PRIVATE okay::engine)
 add_test(NAME prefab_editor COMMAND test_prefab_editor)
 
 # Save, load and unsaved changes in the editor (ImGui-free EditorState): atomic saves, all-or-nothing Open and New Project, Play edits never saved.
-add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_project_save test_project_save.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_link_libraries(test_project_save PRIVATE okay::engine)
 add_test(NAME project_save COMMAND test_project_save)
 
 # The project's own state (project.okayproj, build settings, profiles, tags, layers): every field set, written, read back; old files load.
+# The build pipeline's pure logic (okay/Core/BuildPipeline.hpp): layout planner, data-folder lookup, dependency walk,
+# build manifest, report, zip, and the Build Settings text. The end-to-end export check is tests/export/verify_layout.sh.
+add_executable(test_build_pipeline test_build_pipeline.cpp)
+target_link_libraries(test_build_pipeline PRIVATE okay::engine)
+add_test(NAME build_pipeline COMMAND test_build_pipeline)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
@@ -828,6 +883,12 @@ add_test(NAME import_settings_real COMMAND test_import_settings_real)
 add_executable(test_save_coverage test_save_coverage.cpp)
 target_link_libraries(test_save_coverage PRIVATE okay::engine)
 add_test(NAME save_coverage COMMAND test_save_coverage)
+
+# Two of every serializable component, plus prefab apply, undo deltas, diff/merge, copy and export.
+add_executable(test_duplicate_components test_duplicate_components.cpp)
+target_link_libraries(test_duplicate_components PRIVATE okay::engine)
+target_compile_definitions(test_duplicate_components PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME duplicate_components COMMAND test_duplicate_components)
 
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
@@ -906,6 +967,12 @@ add_executable(test_npc_crafting test_npc_crafting.cpp)
 target_link_libraries(test_npc_crafting PRIVATE okay::engine)
 add_test(NAME npc_crafting COMMAND test_npc_crafting)
 
+# Melee hit window and arc, gun fire rate / ammo / reload, weapon files.
+add_executable(test_weapons test_weapons.cpp)
+target_link_libraries(test_weapons PRIVATE okay::engine)
+target_compile_definitions(test_weapons PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME weapons COMMAND test_weapons)
+
 add_executable(test_script_ui test_script_ui.cpp)
 target_link_libraries(test_script_ui PRIVATE okay::engine)
 add_test(NAME script_ui COMMAND test_script_ui)
@@ -917,6 +984,11 @@ if(TARGET okay_ui)
     target_link_libraries(test_okayui PRIVATE okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
 endif()
+
+# The launcher / editor UI backend switch (Dear ImGui default, OkayUI preview): parse, persist, precedence. Std only.
+add_executable(test_ui_backend test_ui_backend.cpp)
+target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ui_backend COMMAND test_ui_backend)
 
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)
@@ -983,6 +1055,11 @@ add_executable(test_physics_explode test_physics_explode.cpp)
 target_link_libraries(test_physics_explode PRIVATE okay::engine)
 add_test(NAME physics_explode COMMAND test_physics_explode)
 
+add_executable(test_physics2d_casts test_physics2d_casts.cpp)
+target_link_libraries(test_physics2d_casts PRIVATE okay::engine)
+target_compile_definitions(test_physics2d_casts PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME physics2d_casts COMMAND test_physics2d_casts)
+
 add_executable(test_subtree test_subtree.cpp)
 target_link_libraries(test_subtree PRIVATE okay::engine)
 add_test(NAME subtree COMMAND test_subtree)
@@ -1002,6 +1079,10 @@ add_test(NAME terrain_ops COMMAND test_terrain_ops)
 add_executable(test_npc_ai test_npc_ai.cpp)
 target_link_libraries(test_npc_ai PRIVATE okay::engine)
 add_test(NAME npc_ai COMMAND test_npc_ai)
+
+add_executable(test_perception test_perception.cpp)
+target_link_libraries(test_perception PRIVATE okay::engine)
+add_test(NAME perception COMMAND test_perception)
 
 add_executable(test_mp_controllers test_mp_controllers.cpp)
 target_link_libraries(test_mp_controllers PRIVATE okay::engine)
@@ -1028,6 +1109,10 @@ add_test(NAME obj_import COMMAND test_obj_import)
 add_executable(test_gltf_import test_gltf_import.cpp)
 target_link_libraries(test_gltf_import PRIVATE okay::engine)
 add_test(NAME gltf_import COMMAND test_gltf_import)
+
+add_executable(test_glb_container test_glb_container.cpp)
+target_link_libraries(test_glb_container PRIVATE okay::engine)
+add_test(NAME glb_container COMMAND test_glb_container)
 
 add_executable(test_skinning test_skinning.cpp)
 target_link_libraries(test_skinning PRIVATE okay::engine)
@@ -1105,6 +1190,7 @@ add_test(NAME ik_state_weight COMMAND test_ik_state_weight)
 # Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
 add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
+target_compile_definitions(test_sequence PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME sequence COMMAND test_sequence)
 
 # Localization: .okayloc / CSV round trips, fallback, plurals, settings, localized widgets, scripts, fonts
@@ -1116,6 +1202,13 @@ add_test(NAME localization COMMAND test_localization)
 add_executable(test_loc_tools test_loc_tools.cpp)
 target_link_libraries(test_loc_tools PRIVATE okay::engine)
 add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# The Localization window's path onto those tools (editor/LocalizationTools, ImGui-free): a missing
+# key, a placeholder mismatch and a pseudo-locale preview, the same functions DrawLocalizationWindow calls.
+add_executable(test_loc_window test_loc_window.cpp ${PROJECT_SOURCE_DIR}/editor/LocalizationTools.cpp)
+target_include_directories(test_loc_window PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_loc_window PRIVATE okay::engine)
+add_test(NAME loc_window COMMAND test_loc_window)
 
 # Localization runtime, second pass: keys, language matching, plural rules, number/select placeholders, CSV
 add_executable(test_loc_runtime test_loc_runtime.cpp)
@@ -1167,6 +1260,7 @@ target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
 add_executable(test_vs_inventory test_vs_inventory.cpp)
 target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+target_compile_definitions(test_vs_inventory PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
@@ -1185,6 +1279,7 @@ endif()
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
 target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
+target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
 add_executable(test_vs_names test_vs_names.cpp)
@@ -1219,6 +1314,11 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_vs_clarity test_vs_clarity.cpp)
+target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_clarity PRIVATE okay::engine)
+add_test(NAME vs_clarity COMMAND test_vs_clarity)
 
 add_executable(test_doc_recovery test_doc_recovery.cpp)
 target_include_directories(test_doc_recovery PRIVATE ${CMAKE_SOURCE_DIR}/editor)
@@ -1271,6 +1371,11 @@ add_test(NAME frustum_culling COMMAND test_frustum_culling)
 add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
+
+add_executable(test_vs_variables test_vs_variables.cpp)
+target_link_libraries(test_vs_variables PRIVATE okay::engine)
+target_compile_definitions(test_vs_variables PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_variables COMMAND test_vs_variables)
 
 add_executable(test_vs_refs test_vs_refs.cpp)
 target_link_libraries(test_vs_refs PRIVATE okay::engine)
@@ -1385,6 +1490,7 @@ add_test(NAME vs_runtime COMMAND test_vs_runtime)
 
 add_executable(test_vs_gameplay test_vs_gameplay.cpp)
 target_link_libraries(test_vs_gameplay PRIVATE okay::engine)
+target_compile_definitions(test_vs_gameplay PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_gameplay COMMAND test_vs_gameplay)
 
 add_executable(test_vs_node_behavior test_vs_node_behavior.cpp)
@@ -1412,6 +1518,7 @@ add_test(NAME vs_flow_playground COMMAND test_vs_flow_playground)
 add_executable(test_vs_registry_effect test_vs_registry_effect.cpp)
 target_include_directories(test_vs_registry_effect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_registry_effect PRIVATE okay::engine)
+target_compile_definitions(test_vs_registry_effect PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_registry_effect COMMAND test_vs_registry_effect)
 
 add_executable(test_vs_node_effect test_vs_node_effect.cpp)
@@ -1463,6 +1570,16 @@ target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
 # Anti-cheat plan phase 1: always-on holes, OkayScript handlers, uninstall, RPC rate limit
+# The detection engine (behavioural detectors, risk score, evidence bundle), driven with fake time
+add_executable(test_cheat_detect test_cheat_detect.cpp)
+target_link_libraries(test_cheat_detect PRIVATE okay::engine)
+add_test(NAME cheat_detect COMMAND test_cheat_detect)
+
+# Scripted cheating and honest players against the detection engine and a real NetworkManager server (prints detection / false-positive rates)
+add_executable(test_anticheat_sim test_anticheat_sim.cpp)
+target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
+add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
@@ -1563,6 +1680,42 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The self-update decisions (shared/SelfUpdate.hpp, launcher/UpdaterCore.hpp): state file, start-up verdict, retry rule, self-check, rollback,
+# all-or-nothing swap, hostile versions.json. Temp folders only; no window, no network.
+add_executable(test_self_update test_self_update.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_self_update PRIVATE cxx_std_17)
+target_include_directories(test_self_update PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_self_update PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_self_update PRIVATE shell32)
+endif()
+add_test(NAME self_update COMMAND test_self_update)
+
+# Signed releases: versions.json must verify under a trusted ed25519 key (shared/UpdateSignature.hpp, LoadIndex), key rotation, refusal wording,
+# the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
+add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_update_signature PRIVATE cxx_std_17)
+target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME update_signature COMMAND test_update_signature)
+find_program(OKAY_BASH bash)
+find_program(OKAY_PYTHON3 python3)
+if(OKAY_PYTHON3 AND NOT WIN32)
+    # The reference account server (examples/account-server/server.py): body cap, rate limits, lock-out, token expiry / persistence, password rounds.
+    add_test(NAME account_server_hardening COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_account_server.py)
+endif()
+if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
+    add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+endif()
+add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+
+# The launcher / game side of the session-ticket flow: retries, 401, banned, clock skew, expiry, "no ticket, no join", and the whole chain through a real
+# local HTTP server standing in for the ticket service, a real ticket-requiring server NetworkManager and the client join gate. Loopback only.
+add_executable(test_ticket_client test_ticket_client.cpp)
+target_link_libraries(test_ticket_client PRIVATE okay::engine)
+target_include_directories(test_ticket_client PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ticket_client COMMAND test_ticket_client)
+
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)
@@ -1626,6 +1779,17 @@ add_executable(test_anticheat_integrity test_anticheat_integrity.cpp)
 target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
 target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
+# The same test compiled two more ways WITHOUT the engine, so shared/AntiCheatCrypto.hpp is proven to work where the
+# engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone (Ed25519 and SHA-512 from our own library,
+# the port only as the reference the test compares with), (b) with neither libsodium nor okay::crypto (the portable port).
+add_executable(test_anticheat_integrity_ownlib test_anticheat_integrity.cpp)
+target_link_libraries(test_anticheat_integrity_ownlib PRIVATE okay::crypto)
+target_include_directories(test_anticheat_integrity_ownlib PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_compile_definitions(test_anticheat_integrity_ownlib PRIVATE OKAY_OWN_CRYPTO)
+add_test(NAME anticheat_integrity_ownlib COMMAND test_anticheat_integrity_ownlib)
+add_executable(test_anticheat_integrity_portable test_anticheat_integrity.cpp)
+target_include_directories(test_anticheat_integrity_portable PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME anticheat_integrity_portable COMMAND test_anticheat_integrity_portable)
 add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
@@ -1647,6 +1811,10 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
+target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
+target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)
@@ -1662,6 +1830,9 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # scripts/sign-windows.sh (Authenticode signing of the Windows programs) with a throwaway certificate; needs osslsigncode, openssl and MinGW.
+    add_test(NAME sign_windows COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_windows.sh)
+    set_tests_properties(sign_windows PROPERTIES SKIP_RETURN_CODE 77)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
@@ -1779,6 +1950,16 @@ add_executable(test_relay_security test_relay_security.cpp)
 target_link_libraries(test_relay_security PRIVATE okay::engine)
 add_test(NAME relay_security COMMAND test_relay_security)
 
+# The relay client trusts nothing on its socket: welcome timeout, nonce echo, refusal codes
+add_executable(test_net_relay_hardening test_net_relay_hardening.cpp)
+target_link_libraries(test_net_relay_hardening PRIVATE okay::engine)
+add_test(NAME net_relay_hardening COMMAND test_net_relay_hardening)
+
+# The packet wire format is little-endian on every host: pinned byte for byte
+add_executable(test_net_packet_layout test_net_packet_layout.cpp)
+target_link_libraries(test_net_packet_layout PRIVATE okay::engine)
+add_test(NAME net_packet_layout COMMAND test_net_packet_layout)
+
 # Script file APIs stay inside the game's folders (no absolute paths, no "..")
 add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)
@@ -1793,6 +1974,12 @@ if(SDL2_FOUND)
     else()
         set(OKAY_TEST_SDL_LIB ${SDL2_LIBRARIES})
     endif()
+    add_executable(test_ui_widgets_more_shots test_ui_widgets_more_shots.cpp)
+    target_link_libraries(test_ui_widgets_more_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_widgets_more_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_widgets_more_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_widgets_more_shots COMMAND test_ui_widgets_more_shots)
+
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_renderer_golden PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -1805,6 +1992,19 @@ if(SDL2_FOUND)
     target_link_libraries(test_accessibility_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_accessibility_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME accessibility_render COMMAND test_accessibility_render)
+
+    # 1280x720 menu picture for the crisp-UI before/after. Not a ctest.
+    add_executable(crisp_ui_shot crisp_ui_shot.cpp)
+    target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_executable(test_display_screen test_display_screen.cpp)
+    target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME display_screen COMMAND test_display_screen)
+    add_executable(test_ui_focus_render test_ui_focus_render.cpp)
+    target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -1816,6 +2016,17 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+add_executable(test_net_multiplayer_fixes test_net_multiplayer_fixes.cpp)
+target_link_libraries(test_net_multiplayer_fixes PRIVATE okay::engine)
+add_test(NAME net_multiplayer_fixes COMMAND test_net_multiplayer_fixes)
+
+# The launcher's voice session (header-only, SDL): its net thread's failure text vs the per-frame Error() read. Needs SDL2.
+if(SDL2_FOUND)
+    add_executable(test_voice_races test_voice_races.cpp)
+    target_link_libraries(test_voice_races PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_voice_races PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_test(NAME voice_races COMMAND test_voice_races)
+endif()
 
 # Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
 add_executable(test_object_holding test_object_holding.cpp)
@@ -1827,6 +2038,12 @@ add_test(NAME object_holding COMMAND test_object_holding)
 add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
+
+# Touch: gesture recogniser (synthetic finger streams) and on-screen controls driving the action map.
+add_executable(test_touch_controls test_touch_controls.cpp)
+target_link_libraries(test_touch_controls PRIVATE okay::engine)
+target_compile_definitions(test_touch_controls PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME touch_controls COMMAND test_touch_controls)
 
 # Input: F-keys / nav keys / left-right modifiers, input contexts that swallow keys, gamepad dead zones,
 # response curves, trigger thresholds and several controllers
@@ -1848,10 +2065,20 @@ add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
 add_test(NAME fixed_step COMMAND test_fixed_step)
 
+# Step rate is a setting; parented bodies follow and detach. Loads a real scene.
+add_executable(test_rigidbody_step_parent test_rigidbody_step_parent.cpp)
+target_link_libraries(test_rigidbody_step_parent PRIVATE okay::engine)
+target_compile_definitions(test_rigidbody_step_parent PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rigidbody_step_parent COMMAND test_rigidbody_step_parent)
+
 # Post-processing, sky, fog and weather: settings round trip, presets, the weather rig, sky / fog / tonemap maths
 add_executable(test_post_sky test_post_sky.cpp)
 target_link_libraries(test_post_sky PRIVATE okay::engine)
 add_test(NAME post_sky COMMAND test_post_sky)
+# Which lighting / post / fog / sky switches each renderer actually draws
+add_executable(test_renderer_features test_renderer_features.cpp)
+target_link_libraries(test_renderer_features PRIVATE okay::engine)
+add_test(NAME renderer_features COMMAND test_renderer_features)
 # Navigation mesh: bake (walls, doorways, slopes, steps, bridges), queries, agents, files, records
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
@@ -1860,6 +2087,10 @@ add_test(NAME navmesh COMMAND test_navmesh)
 add_executable(test_navmesh_areas test_navmesh_areas.cpp)
 target_link_libraries(test_navmesh_areas PRIVATE okay::engine)
 add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
+# Navigation obstacle carving: footprint strips, polygon subtraction, portals, stationary timing, agents replanning, scene file, validator
+add_executable(test_navmesh_carving test_navmesh_carving.cpp)
+target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
+add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)
@@ -2382,6 +2613,12 @@ add_test(NAME file_dialog COMMAND test_file_dialog)
 add_executable(test_accessibility_wired test_accessibility_wired.cpp)
 target_link_libraries(test_accessibility_wired PRIVATE okay::engine)
 add_test(NAME accessibility_wired COMMAND test_accessibility_wired)
+add_executable(test_accessibility_remaining test_accessibility_remaining.cpp)
+target_link_libraries(test_accessibility_remaining PRIVATE okay::engine)
+add_test(NAME accessibility_remaining COMMAND test_accessibility_remaining)
+add_executable(test_ui_focus test_ui_focus.cpp)
+target_link_libraries(test_ui_focus PRIVATE okay::engine)
+add_test(NAME ui_focus COMMAND test_ui_focus)
 # okay::platform (engine/include/okay/Platform): the seam over SDL2 and our own backends.
 # platform: registry, timers, audio devices, controllers on each compiled-in backend (no
 # display needed; SDL's dummy audio driver, ALSA's null device) + the own evdev mapping.
@@ -2415,31 +2652,138 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endforeach()
 endif()
 
+# The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
+# the X server holds. Own code, not ready, off by default; the test only checks it.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_painter_window test_platform_painter_window.cpp)
+    target_link_libraries(test_platform_painter_window PRIVATE okay_ui_soft)
+    target_include_directories(test_platform_painter_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_painter_window
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_painter_window>)
+    set_tests_properties(platform_painter_window PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
+
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Safety nets for library code that previously had no test naming it.
+add_executable(test_lightmap test_lightmap.cpp)
+target_link_libraries(test_lightmap PRIVATE okay::engine)
+add_test(NAME lightmap COMMAND test_lightmap)
+
+add_executable(test_ui_touch_scroll test_ui_touch_scroll.cpp)
+target_link_libraries(test_ui_touch_scroll PRIVATE okay::engine)
+add_test(NAME ui_touch_scroll COMMAND test_ui_touch_scroll)
+
+add_executable(test_item_presentation test_item_presentation.cpp)
+target_link_libraries(test_item_presentation PRIVATE okay::engine)
+add_test(NAME item_presentation COMMAND test_item_presentation)
+
+add_executable(test_loading_screen_layout test_loading_screen_layout.cpp)
+target_link_libraries(test_loading_screen_layout PRIVATE okay::engine)
+add_test(NAME loading_screen_layout COMMAND test_loading_screen_layout)
+
+add_executable(test_death_lock test_death_lock.cpp)
+target_link_libraries(test_death_lock PRIVATE okay::engine)
+add_test(NAME death_lock COMMAND test_death_lock)
 # okay::crypto (our own, UNREVIEWED crypto primitives; docs/crypto.md): RFC known-answer vectors,
 # tamper tests, edge cases. tests/crypto_rfc_vectors.hpp is extracted from the RFC text.
 add_executable(test_crypto test_crypto.cpp)
-target_link_libraries(test_crypto PRIVATE okay::engine)
+target_link_libraries(test_crypto PRIVATE okay::crypto)
 add_test(NAME crypto COMMAND test_crypto)
 
+# The embedded fonts in our own OKF1 container (shared/OkfDecode.hpp): decoded bytes must equal the original TrueType files
+# (pinned by size and SHA-256 in assets/fonts/embedded_fonts.sha256), the decoder's every token form and damaged input.
+# EmbeddedFont.cpp is compiled in directly, so this needs only okay::crypto (for SHA-256), not the engine.
+add_executable(test_embedded_font test_embedded_font.cpp ${CMAKE_SOURCE_DIR}/engine/src/Graphics/EmbeddedFont.cpp)
+target_link_libraries(test_embedded_font PRIVATE okay::crypto)
+target_include_directories(test_embedded_font PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_embedded_font PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME embedded_font COMMAND test_embedded_font)
+add_test(NAME embedded_font_generator COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/gen_embedded_fonts.py --check)
+
+# The internal arithmetic: the 51-bit and the portable 16-bit field against each other, the Barrett scalar
+# reduction against a bit-by-bit reference (includes engine/src/Crypto headers; needs __int128).
+add_executable(test_crypto_field test_crypto_field.cpp)
+target_include_directories(test_crypto_field PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME crypto_field COMMAND test_crypto_field)
+# The whole primitive test again with the portable 16-bit field forced on (what MSVC and WebAssembly use),
+# so the fallback cannot rot: the same sources compiled with OKAY_CRYPTO_FE16.
+add_executable(test_crypto_fe16 test_crypto.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Util.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Random.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/ChaCha20.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Poly1305.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Aead.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Blake2b.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha256.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/X25519.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Ed25519.cpp)
+target_include_directories(test_crypto_fe16 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_crypto_fe16 PRIVATE OKAY_CRYPTO_FE16)
+if(WIN32)
+    target_link_libraries(test_crypto_fe16 PRIVATE bcrypt)
+endif()
+add_test(NAME crypto_fe16 COMMAND test_crypto_fe16)
+
+# Constant-time audit 1 of 2: valgrind marks every secret undefined and reports any branch or address that
+# depends on one (docs/crypto_review_package.md section 4). Built only when the valgrind headers exist; the
+# ctest runs it under valgrind and is skipped when valgrind itself is missing.
+find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
+find_program(OKAY_VALGRIND valgrind)
+if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
+    set(_okay_ct_srcs "")
+    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519)
+        list(APPEND _okay_ct_srcs ${CMAKE_SOURCE_DIR}/engine/src/Crypto/${_f}.cpp)
+    endforeach()
+    add_executable(crypto_ct_valgrind crypto_ct_valgrind.cpp ${_okay_ct_srcs})
+    target_include_directories(crypto_ct_valgrind PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VALGRIND_INCLUDE})
+    target_compile_definitions(crypto_ct_valgrind PRIVATE OKAY_CRYPTO_CTGRIND)
+    target_compile_options(crypto_ct_valgrind PRIVATE -g)
+    if(OKAY_VALGRIND)
+        add_test(NAME crypto_ct_valgrind COMMAND ${OKAY_VALGRIND} -q $<TARGET_FILE:crypto_ct_valgrind>)
+    endif()
+endif()
+
 # Fuzz target. Default: a built-in mutator drives it for a few hundred iterations (a quick
-# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more).
-# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binary `fuzz_crypto` instead.
+# smoke test; run `fuzz_crypto_smoke 100000` under -DOKAY_SANITIZE=address,undefined for more, or
+# scripts/crypto_fuzz_sanitized.sh).
+# -DOKAY_CRYPTO_LIBFUZZER=ON (clang) builds the real libFuzzer binaries `fuzz_crypto` and `fuzz_net_crypto` instead.
 option(OKAY_CRYPTO_LIBFUZZER "Build the okay::crypto libFuzzer target (clang -fsanitize=fuzzer)" OFF)
 if(OKAY_CRYPTO_LIBFUZZER)
     add_executable(fuzz_crypto fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto PRIVATE okay::crypto)
     target_compile_definitions(fuzz_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER)
     target_compile_options(fuzz_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
     target_link_options(fuzz_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
 else()
     add_executable(fuzz_crypto_smoke fuzz_crypto.cpp)
-    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::engine)
+    target_link_libraries(fuzz_crypto_smoke PRIVATE okay::crypto)
     add_test(NAME crypto_fuzz_smoke COMMAND fuzz_crypto_smoke 300)
 endif()
+# Fuzz target for what parses attacker bytes around the primitives: key exchange, sealed-message open and the replay
+# window, session tickets, mutated valid signatures and AEAD messages (fuzz_net_crypto.cpp). Compiled against okay::crypto
+# alone (SessionTicket.cpp and the header-only SecureChannel are built in), so it needs neither libsodium nor the engine.
+set(_okay_fuzznet_defs OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+if(OKAY_CRYPTO_LIBFUZZER)
+    add_executable(fuzz_net_crypto fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto PRIVATE OKAY_CRYPTO_LIBFUZZER ${_okay_fuzznet_defs})
+    target_compile_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer-no-link,address,undefined)
+    target_link_options(fuzz_net_crypto PRIVATE -fsanitize=fuzzer,address,undefined)
+else()
+    add_executable(fuzz_net_crypto_smoke fuzz_net_crypto.cpp ${CMAKE_SOURCE_DIR}/engine/src/Net/SessionTicket.cpp)
+    target_link_libraries(fuzz_net_crypto_smoke PRIVATE okay::crypto)
+    target_compile_definitions(fuzz_net_crypto_smoke PRIVATE ${_okay_fuzznet_defs})
+    add_test(NAME crypto_fuzz_net_smoke COMMAND fuzz_net_crypto_smoke 300)
+endif()
+
+# Project Wycheproof vectors (Apache-2.0, copied unmodified into tests/wycheproof/): every X25519, Ed25519, ChaCha20-Poly1305,
+# XChaCha20-Poly1305, HMAC (built on our SHA-2), HKDF and ChaCha20 counter vector. OKAY_WYCHEPROOF_DIR points the test at another
+# copy (e.g. a fresh clone's testvectors_v1/). With libsodium installed (found below) every X25519 and Ed25519 vector is also
+# compared with it.
+add_executable(test_crypto_wycheproof test_crypto_wycheproof.cpp)
+target_link_libraries(test_crypto_wycheproof PRIVATE okay::crypto)
+target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WYCHEPROOF_DEFAULT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/wycheproof")
+add_test(NAME crypto_wycheproof COMMAND test_crypto_wycheproof)
 
 # Cross-checks against other implementations (both directions, thousands of random cases).
 # 1) libsodium, in process (only when it is installed; independent of OKAY_USE_SODIUM / OKAY_OWN_CRYPTO).
@@ -2452,14 +2796,24 @@ if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find t
     endif()
 endif()
 if(_okay_xc_sodium)
+    target_link_libraries(test_crypto_wycheproof PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(test_crypto_wycheproof SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WY_SODIUM)
     add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
-    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
+    # The large differential test (libsodium and the TweetNaCl-derived port; structured edge-case inputs). The ctest is a smoke run;
+    # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/crypto_review_package.md).
+    add_executable(crypto_difftest crypto_difftest.cpp)
+    target_link_libraries(crypto_difftest PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_difftest SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_include_directories(crypto_difftest PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME crypto_difftest_smoke COMMAND crypto_difftest 1500)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
 add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)
-target_link_libraries(crypto_xcheck_tool PRIVATE okay::engine)
+target_link_libraries(crypto_xcheck_tool PRIVATE okay::crypto)
 set(_okay_xc_python "")
 foreach(_py IN ITEMS python3 /usr/bin/python3 python)
     if(NOT _okay_xc_python)
@@ -2477,15 +2831,36 @@ else()
     message(STATUS "OkaySpace tests: python 'cryptography' not found; crypto_python_xcheck skipped")
 endif()
 
+# Benchmark (not a test): microseconds per operation, next to libsodium when it is installed.
+add_executable(bench_crypto bench_crypto.cpp)
+target_link_libraries(bench_crypto PRIVATE okay::crypto)
+if(_okay_xc_sodium)
+    target_link_libraries(bench_crypto PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(bench_crypto SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(bench_crypto PRIVATE OKAY_BENCH_SODIUM)
+endif()
+
+# Constant-time audit 2 of 2: a fixed-versus-random statistical timing test. NOT run by ctest at full length (it needs
+# a quiet machine and millions of measurements); the ctest is a short smoke run that only checks that the
+# harness runs. See the header of crypto_timing.cpp and docs/crypto_review_package.md section 4.
+add_executable(crypto_timing crypto_timing.cpp)
+target_link_libraries(crypto_timing PRIVATE okay::crypto)
+add_test(NAME crypto_timing_smoke COMMAND crypto_timing 300 X25519Base)
+if(_okay_xc_sodium)   # reference rows: libsodium under the same harness, to tell CPU/measurement effects from ours
+    target_link_libraries(crypto_timing PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_timing SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(crypto_timing PRIVATE OKAY_TIMING_SODIUM)
+endif()
+
 # The existing SecureChannel test, compiled once per backend IN THE SAME BUILD (tests/test_net_crypto_*.cpp
 # rename the class so the two copies never meet at link time). With -DOKAY_OWN_CRYPTO=ON the engine's
 # own net code (net_*, net_auth, dedicated_server, ...) runs on okay::crypto as well.
 add_executable(test_net_crypto_own test_net_crypto_own.cpp)
-target_link_libraries(test_net_crypto_own PRIVATE okay::engine)
+target_link_libraries(test_net_crypto_own PRIVATE okay::crypto)
 add_test(NAME net_crypto_own COMMAND test_net_crypto_own)
 if(_okay_xc_sodium)
     add_executable(test_net_crypto_sodium test_net_crypto_sodium.cpp)
-    target_link_libraries(test_net_crypto_sodium PRIVATE okay::engine ${OKAY_XC_SODIUM_LIBRARIES})
+    target_link_libraries(test_net_crypto_sodium PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_net_crypto_sodium SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME net_crypto_sodium COMMAND test_net_crypto_sodium)
 endif()
@@ -2530,6 +2905,11 @@ target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
+# Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
+add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
+target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
+add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
+
 # Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
 #   cmake -DOKAY_SANITIZE=address,undefined ...   (CI's sanitizer job), OKAY_FBX_FUZZ_ITERS=20000 for a longer fuzz.
 add_executable(test_fbx_hostile test_fbx_hostile.cpp
@@ -2547,3 +2927,223 @@ add_test(NAME editor_layout COMMAND test_editor_layout)
 add_executable(test_vs_problems test_vs_problems.cpp)
 target_link_libraries(test_vs_problems PRIVATE okay::engine)
 add_test(NAME vs_problems COMMAND test_vs_problems)
+
+add_executable(test_net_reconnect test_net_reconnect.cpp)
+target_link_libraries(test_net_reconnect PRIVATE okay::engine)
+add_test(NAME net_reconnect COMMAND test_net_reconnect)
+
+add_executable(test_net_relay_clients test_net_relay_clients.cpp)
+target_link_libraries(test_net_relay_clients PRIVATE okay::engine)
+add_test(NAME net_relay_clients COMMAND test_net_relay_clients)
+
+add_executable(test_net_resume_resend test_net_resume_resend.cpp)
+target_link_libraries(test_net_resume_resend PRIVATE okay::engine)
+add_test(NAME net_resume_resend COMMAND test_net_resume_resend)
+
+add_executable(test_net_resume_token test_net_resume_token.cpp)
+target_link_libraries(test_net_resume_token PRIVATE okay::engine)
+add_test(NAME net_resume_token COMMAND test_net_resume_token)
+
+add_executable(test_net_relay_nat test_net_relay_nat.cpp)
+target_link_libraries(test_net_relay_nat PRIVATE okay::engine)
+add_test(NAME net_relay_nat COMMAND test_net_relay_nat)
+
+add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
+target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
+add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
+
+add_executable(test_net_lossy test_net_lossy.cpp)
+target_link_libraries(test_net_lossy PRIVATE okay::engine)
+add_test(NAME net_lossy COMMAND test_net_lossy)
+
+add_executable(test_net_build_sync test_net_build_sync.cpp)
+target_link_libraries(test_net_build_sync PRIVATE okay::engine)
+add_test(NAME net_build_sync COMMAND test_net_build_sync)
+
+add_executable(test_net_quest_sync test_net_quest_sync.cpp)
+target_link_libraries(test_net_quest_sync PRIVATE okay::engine)
+add_test(NAME net_quest_sync COMMAND test_net_quest_sync)
+
+add_executable(test_net_life_late test_net_life_late.cpp)
+target_link_libraries(test_net_life_late PRIVATE okay::engine)
+add_test(NAME net_life_late COMMAND test_net_life_late)
+
+add_executable(test_net_build_quest_lossy test_net_build_quest_lossy.cpp)
+target_link_libraries(test_net_build_quest_lossy PRIVATE okay::engine)
+add_test(NAME net_build_quest_lossy COMMAND test_net_build_quest_lossy)
+
+add_executable(test_net_fuzz test_net_fuzz.cpp)
+target_link_libraries(test_net_fuzz PRIVATE okay::engine)
+add_test(NAME net_fuzz COMMAND test_net_fuzz)
+
+add_executable(test_net_rejoin test_net_rejoin.cpp)
+target_link_libraries(test_net_rejoin PRIVATE okay::engine)
+add_test(NAME net_rejoin COMMAND test_net_rejoin)
+
+
+add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
+target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
+add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
+
+# Our own 3DS and BVH readers (okay/Render/ModelData.hpp): fixtures from scripts/gen_3ds_fixtures.py and
+# scripts/gen_bvh_fixtures.py in tests/data/models, checked by hand-computed values and through the import seam.
+add_executable(test_3ds_reader test_3ds_reader.cpp)
+target_link_libraries(test_3ds_reader PRIVATE okay::engine)
+target_compile_definitions(test_3ds_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_reader COMMAND test_3ds_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_bvh_reader test_bvh_reader.cpp)
+target_link_libraries(test_bvh_reader PRIVATE okay::engine)
+target_compile_definitions(test_bvh_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME bvh_reader COMMAND test_bvh_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Hostile input + mutation fuzz for the 3DS and BVH readers. Standalone (no engine library, only the two reader files)
+# so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_3DS_FUZZ_ITERS raises the sweep.
+add_executable(test_3ds_bvh_hostile test_3ds_bvh_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Max3dsReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BvhReader.cpp)
+target_include_directories(test_3ds_bvh_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_3ds_bvh_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_bvh_hostile COMMAND test_3ds_bvh_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(3ds_bvh_hostile PROPERTIES TIMEOUT 300)
+
+# Our own OFF reader (okay/Render/ModelData.hpp): fixtures from scripts/gen_off_fixtures.py, values computed by hand,
+# the import seam, then a standalone hostile-input + mutation-fuzz test that builds under -fsanitize=address,undefined.
+add_executable(test_off_reader test_off_reader.cpp)
+target_link_libraries(test_off_reader PRIVATE okay::engine)
+target_compile_definitions(test_off_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME off_reader COMMAND test_off_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_off_hostile test_off_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/OffReader.cpp)
+target_include_directories(test_off_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_off_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME off_hostile COMMAND test_off_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(off_hostile PROPERTIES TIMEOUT 300)
+
+# Our own SMD reader: fixtures from scripts/gen_smd_fixtures.py, values computed by hand, the import seam (skinned and
+# animation-only scenes), then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_smd_reader test_smd_reader.cpp)
+target_link_libraries(test_smd_reader PRIVATE okay::engine)
+target_compile_definitions(test_smd_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME smd_reader COMMAND test_smd_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_smd_hostile test_smd_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/SmdReader.cpp)
+target_include_directories(test_smd_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_smd_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME smd_hostile COMMAND test_smd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(smd_hostile PROPERTIES TIMEOUT 300)
+
+# Our own MD5 reader: fixtures from scripts/gen_md5_fixtures.py (md5mesh + md5anim pairs), values computed by hand, the
+# import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_md5_reader test_md5_reader.cpp)
+target_link_libraries(test_md5_reader PRIVATE okay::engine)
+target_compile_definitions(test_md5_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_reader COMMAND test_md5_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_md5_hostile test_md5_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Md5Reader.cpp)
+target_include_directories(test_md5_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_md5_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME md5_hostile COMMAND test_md5_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(md5_hostile PROPERTIES TIMEOUT 300)
+
+# Our own MS3D reader: binary fixtures from scripts/gen_ms3d_fixtures.py, values computed by hand, the import seam,
+# then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_ms3d_reader test_ms3d_reader.cpp)
+target_link_libraries(test_ms3d_reader PRIVATE okay::engine)
+target_compile_definitions(test_ms3d_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ms3d_reader COMMAND test_ms3d_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_ms3d_hostile test_ms3d_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/Ms3dReader.cpp)
+target_include_directories(test_ms3d_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_ms3d_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ms3d_hostile COMMAND test_ms3d_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(ms3d_hostile PROPERTIES TIMEOUT 300)
+
+# Our own ASE reader: fixtures from scripts/gen_ase_fixtures.py (UTF-8, CRLF and UTF-16 variants), values computed by hand,
+# the import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_ase_reader test_ase_reader.cpp)
+target_link_libraries(test_ase_reader PRIVATE okay::engine)
+target_compile_definitions(test_ase_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_reader COMMAND test_ase_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_ase_hostile test_ase_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/AseReader.cpp)
+target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
+# hand-computed values and through the import seam; the hostile test is standalone (reader + the in-tree inflate) so it can also be
+# built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_BLEND_FUZZ_ITERS raises the sweep.
+add_executable(test_blend_reader test_blend_reader.cpp)
+target_link_libraries(test_blend_reader PRIVATE okay::engine)
+target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_blend_hostile test_blend_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
+# Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
+# standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
+# inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_BATCHB_FUZZ_ITERS raises the sweep).
+add_executable(test_3mf_reader test_3mf_reader.cpp)
+target_link_libraries(test_3mf_reader PRIVATE okay::engine)
+add_test(NAME 3mf_reader COMMAND test_3mf_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_amf_reader test_amf_reader.cpp)
+target_link_libraries(test_amf_reader PRIVATE okay::engine)
+add_test(NAME amf_reader COMMAND test_amf_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+foreach(_fmt x3d dxf lwo)
+    add_executable(test_${_fmt}_reader test_${_fmt}_reader.cpp)
+    target_link_libraries(test_${_fmt}_reader PRIVATE okay::engine)
+    add_test(NAME ${_fmt}_reader COMMAND test_${_fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+add_executable(test_batchb_hostile test_batchb_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ThreeMfReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/AmfReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/X3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/DxfReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/LwoReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchb_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
+
+# Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
+# real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
+add_executable(test_model_corpus test_model_corpus.cpp)
+target_link_libraries(test_model_corpus PRIVATE okay::engine)
+target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
+
+# Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
+add_executable(test_clipboard test_clipboard.cpp)
+target_link_libraries(test_clipboard PRIVATE okay::engine)
+target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME clipboard COMMAND test_clipboard)
+
+# Our own HTTP/1.1 client (docs/own_http_client.md). The pure layer (parser, builder, redirects) is tested and
+# fuzzed over in-memory streams; the transports (TCP, CONNECT proxy, OpenSSL loaded with dlopen) are tested against
+# local servers, `openssl s_server` and throw-away certificates from tests/scripts/gen_http_test_certs.sh.
+# Header-only: neither links the engine. The TLS cases skip (and say so) when libssl or the openssl program is missing.
+add_executable(test_own_http test_own_http.cpp)
+target_include_directories(test_own_http PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME own_http COMMAND test_own_http)
+if(UNIX AND NOT APPLE)
+    add_executable(test_own_http_net test_own_http_net.cpp)
+    target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_own_http_net PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+    add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
+    set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
+endif()
+
+add_executable(test_editor_play_input test_editor_play_input.cpp)
+target_link_libraries(test_editor_play_input PRIVATE okay::engine)
+target_compile_definitions(test_editor_play_input PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_play_input COMMAND test_editor_play_input)
+
+# The import seam routes every opt-in own-reader format (slots 3-16) to its own reader (one tiny fixture each).
+add_executable(test_own_dispatch test_own_dispatch.cpp)
+target_link_libraries(test_own_dispatch PRIVATE okay::engine)
+target_compile_definitions(test_own_dispatch PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

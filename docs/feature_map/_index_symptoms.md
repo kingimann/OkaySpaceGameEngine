@@ -95,6 +95,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
+| a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | a flood fills the relay | [39.8](39-security-anticheat.md#398-relay-hardening) Relay hardening |
 | a frame hitch when many bullets spawn | [1.13](01-core-scene.md#113-object-pooling) Object pooling |
@@ -185,6 +186,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a piece will not place (red ghost) | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a platform cannot be jumped up through | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a player is kicked for "speed hack | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
+| a player kicked with a risk score and evidence in the kick report | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | a player moves faster than allowed | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
 | a player says "it crashed" and I have nothing | [48.1](43-proposals.md#481-crash-reports) Crash reports |
 | a plugin does not load or shows "(error) | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
@@ -280,7 +282,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a ticket rejected as expired | [39.3](39-security-anticheat.md#393-session-tickets-and-the-ticket-service) Session tickets and the ticket service |
 | a timer fires on a destroyed object | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a toast is the wrong colour | [40.2](40-okayui-library.md#402-launcher-look-theme-and-fonts) Launcher look, theme and fonts |
-| a TODO comment appears in generated code | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | a token or key in a log | [39.11](39-security-anticheat.md#3911-account-backend-and-updater-hardening) Account, backend and updater hardening |
 | a tool is greyed out | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | a tooltip runs off the screen or never shows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
@@ -320,6 +321,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | after dying I restart the whole level | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | aim cursor offset from the crosshair | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
 | alignment tools are greyed out | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
+| ambient occlusion looking wrong or missing on Windows (the pass is unrun) | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | an Actions list does nothing | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an admin page is empty for a normal user | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
 | an agent gives up on a path | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
@@ -407,7 +409,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | cannot make a custom effect without editing engine code | [26.1](20-35-planned.md#261-visual-shader-graphs) Visual shader graphs |
 | cannot paint a path or sand patch | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
 | cannot paint tiles in the editor | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
-| cannot paste into a game text field | [37.2](37-platform-windowing.md#372-focus-cursor-and-clipboard) Focus, cursor and clipboard |
 | cannot play a pre-rendered cutscene or intro movie | [50.4](43-proposals.md#504-video-playback) Video playback |
 | cannot publish to the Play Store from the editor | [56.2](43-proposals.md#562-mobile-packaging) Mobile packaging |
 | cannot reach a button with the gamepad | [32.1](20-35-planned.md#321-controller-navigation) Controller navigation |
@@ -572,6 +573,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | hitch when walking into a new area | [27.4](20-35-planned.md#274-streaming) Streaming |
 | hits through walls | [11.7](11-gameplay-systems.md#117-combat-actions-melee-dodge-dive) Combat actions: melee, dodge, dive |
 | holding two keys drops one | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
+| honest players with bad ping flagged when the thresholds are too tight | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | HTML game opens in the browser | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | huge map uses too much memory | [27.4](20-35-planned.md#274-streaming) Streaming |
 | huge terrain is heavy | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
@@ -661,7 +663,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | metal looks like plastic | [26.4](20-35-planned.md#264-pbr) PBR |
 | MinGW configure can't find windres | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
 | minimap shows nothing or the wrong area | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
-| missing SSAO on Windows | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | missing translation shows the key | [31.1](20-35-planned.md#311-translation-tables) Translation tables |
 | model dark, inside out or without textures | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | model faces the wrong way after rigging | [30.2](20-35-planned.md#302-rig-generation) Rig generation |
@@ -709,9 +710,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | no search | [57.1](43-proposals.md#571-static-documentation-site) Static documentation site |
+| no shadows at all until Per-pixel lighting is on | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sign the game saved | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
-| no soft shadows from point lights | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | no sound in a call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | no warning before building | [33.2](20-35-planned.md#332-scene-validation) Scene validation |
@@ -865,6 +866,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sound plays from the start every time it should resume | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | sound stops when the window loses focus | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | spawned bullets stutter (pooling) | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |
+| speed window", "teleport", "through wall" evidence in the log | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | sprite pivot is always the centre | [43.2](43-proposals.md#432-sprite-atlas-and-slicing) Sprite atlas and slicing |
 | sprites draw in the wrong order | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | squares instead of letters in a language | [31.2](20-35-planned.md#312-font-fallback) Font fallback |
@@ -1191,6 +1193,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | V does not switch view or the camera pops | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | values reset after editing | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
+| View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |

@@ -1,9 +1,9 @@
 # 9. AI & navigation
 
 Baked navigation meshes with agents and obstacles, the older probe grid and 2D grid A*, behavior trees with a blackboard, and
-the NPC Controller with built-in perception. Code is `engine/include/okay/AI/*` (6 headers), `engine/src/AI/*` (about 4.5k lines),
+the NPC Controller with built-in perception. Code is `engine/include/okay/AI/*` (7 headers), `engine/src/AI/*` (about 4.5k lines),
 seven navigation components and two editor windows. Docs: `docs/navigation.md`, `docs/behavior_trees.md`, `docs/npcs_and_crafting.md`.
-No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
+The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/OkayScriptVM` (area 13).
 
 ## 9. AI & navigation
 
@@ -19,45 +19,47 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **API:** `NavMeshSurface`, `NavMesh`, `NavMeshBuildSettings`, `Navigation::FindPath`, `Navigation::SamplePosition`, `Navigation::Raycast`, `Navigation::RandomPoint`, `NavGrid3D::FindPath`, script `nav_path_exists`, `nav_path_length`, `nav_point_walkable`, `nav_nearest_point`
 - **Editor:** View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add Component > Gameplay > Nav Mesh Surface
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `script_nav`
-- **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`
-- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; no obstacle carving (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
+- **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`; a `.okaynav` with a non-finite vertex is refused and the lookup grid is capped at 2048 cells a side (`navmesh`)
+- **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; obstacle carving is 9.2.5 (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
 - **Related:** 9.2, 9.5, 4.4, 6.2, 2.6, 27.4
 - **Words:** navmesh, nav mesh, NavMeshSurface, bake, .okaynav, pathfinding, funnel, walkable, navigation window, NavGrid3D, probe grid, agent radius, max slope, step height
 - **Seen as:** enemies walk straight into walls or cannot find a way around; the mesh is missing near a doorway; enemies ignore a ramp; the Bake button does nothing; the blue overlay does not match the level; a character cannot reach a platform
 - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
 ### 9.2 Nav agents and obstacles
-- **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a moving box agents dodge.
+- **What:** A Nav Mesh Agent walks its object to a destination along the mesh path, steers around other agents and moving obstacles, replans when stuck and reports arrival; a Nav Mesh Obstacle is a box or capsule agents dodge, and with Carve on it cuts a hole in the mesh so paths go around it.
 - **Parts:**
   - 9.2.1 Agent movement - `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp` - `SetDestination`, `Stop`, `Resume`, `Warp`, speed, acceleration, turn rate, stopping distance, auto braking, drives a Rigidbody3D by velocity or the Transform
   - 9.2.2 Local avoidance - `Components/NavMeshAgent` - reciprocal velocity sampling against other agents and obstacles, avoidance priority and range
   - 9.2.3 Replanning and arrival - `Components/NavMeshAgent` - repath interval, stuck replans, `nav_arrived` message to Action Lists; hands the destination to an NPCController or ClickToMoveController when one is on the object
-  - 9.2.4 Obstacle - `Components/NavMeshObstacle` - a moving box that is never baked and tracks its own velocity
-- **Code:** `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp`, `Components/NavMeshObstacle`, `editor/NavigationWindow.*`
-- **API:** `NavMeshAgent`, `NavMeshObstacle`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
-- **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle; Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
+  - 9.2.4 Obstacle - `Components/NavMeshObstacle` - a box or capsule that is never baked and tracks its own velocity; local avoidance always
+  - 9.2.5 Obstacle carving - `AI/NavMeshCarve.cpp`, `Components/NavMeshSurface`, `AI/Navigation` - Carve cuts the obstacle's footprint out of a copy of the baked mesh at run time (carve only when stationary after a time, or follow it past a move threshold); agents already walking replan at once; `navobstacle` scene record, property registry entries, validator codes `navobstacle.zero_size`, `navobstacle.carve_no_surface`, `navobstacle.carve_no_mesh`, `navobstacle.carve_every_frame`
+- **Code:** `Components/NavMeshAgent`, `engine/src/AI/NavMeshAgent.cpp`, `Components/NavMeshObstacle`, `engine/src/AI/NavMeshCarve.cpp`, `editor/NavigationWindow.*`
+- **API:** `NavMeshAgent`, `NavMeshObstacle`, `Carve`, `Carving`, `NavMesh::Carve`, `Navigation::CarveGeneration`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
+- **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle (box or capsule, Carve fields, red carve footprint in the Scene view); Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `script_nav`
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
 - **Status:** Works - NavMeshAgent.hpp and the function layout of NavMeshAgent.cpp read (Replan, Avoid, Move, Face, Animate, Update); behaviour covered by `navmesh` per its agent cases
-- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; obstacles do not carve the mesh; area costs and links are 9.6
+- **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; carving is run time only (the editor previews the footprint), is a hole in the shared mesh for every agent and rebuilds the carved copy whole; area costs and links are 9.6
 - **Related:** 9.1, 9.4, 9.5, 4.4
-- **Words:** NavMeshAgent, agent, avoidance, steering, crowd, obstacle, destination, stopping distance, SetDestination, repath, stuck
+- **Words:** NavMeshAgent, agent, avoidance, steering, crowd, obstacle, carve, carving, nav mesh obstacle, moving obstacle, destination, stopping distance, SetDestination, repath, stuck
 - **Seen as:** enemies bunch up in a doorway; an agent jitters when it arrives; two agents block each other; an agent slides instead of walking; an agent gives up on a path
 - **Ask me like:** "make the guard walk to the player and stop 2 m away"; "enemies keep stacking on each other"
 
 ### 9.3 Grid pathfinding (older)
-- **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, with optional diagonal moves, for 2D games and tower-defense routing.
+- **What:** A* over a rectangular grid of walkable flags or directly over a Tilemap, for 2D games and tower-defense routing. Optional per-cell costs, diagonal steps and line-of-sight smoothing; a Grid Obstacle blocks cells and replans only the agents it covers. All three stay off unless the agent or the call asks, so an old path is unchanged.
 - **Parts:**
-  - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls
-  - 9.3.2 Tilemap paths - `AI/Pathfinding` - `OnTilemap` treats tile id 0 as walkable and any other tile as a wall
-- **Code:** `AI/Pathfinding`
-- **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::Cell`
-- **Editor:** none
+  - 9.3.1 Grid A* - `AI/Pathfinding` - `AStar` over a width by height walkable array, returns cells start to goal; diagonal moves never squeeze between two walls; an optional cost per cell (0 or less blocks); `smooth` string-pulls the line of sight
+  - 9.3.2 Tilemap paths - `AI/Pathfinding` - `OnTilemap` treats tile id 0 as walkable and any other tile as a wall, unless a tile-id cost table is passed
+  - 9.3.3 Agent, costs and obstacles - `Components/GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D` - the agent walks the tilemap; the cost layer prices a road tile and a mud tile (and script-set tiles or cells); an obstacle blocks a rectangle of cells and replans agents whose current path used one
+- **Code:** `AI/Pathfinding`, `AI/GridPath2D.cpp`, `Components/GridPathAgent2D`, `Components/GridCostLayer`, `Components/GridObstacle2D`
+- **API:** `Pathfinding::AStar`, `Pathfinding::OnTilemap`, `Pathfinding::LineClear`, `Pathfinding::Smooth`, `Pathfinding::Cell`, `GridPathAgent2D`, `GridCostLayer`, `GridObstacle2D`, script `grid_move_to`, `grid_move_cell`, `grid_stop`, `grid_arrived`, `grid_set_tile_cost`, `grid_set_cell_cost`, `grid_block`, `grid_clear`, visual-script Walk the Grid, Stop Grid Walk, Grid Arrived
+- **Editor:** Add Component > Gameplay > Grid Path Agent (2D), Grid Movement Costs, Grid Obstacle (2D). Inspector labels: Which tilemap, Walk speed, Stop this close, Allow diagonal steps, Smooth the path, Pay for mud and roads, Plan again every (seconds), Road tile number, Road cost, Mud tile number, Mud cost, How many cells across, How many cells down, Block the path
 - **Docs:** `docs/navigation.md`
 - **Tests:** `pathfinding`
-- **Status:** Works - Pathfinding.hpp and Pathfinding.cpp read in full (A* with Manhattan or octile cost); covered by `pathfinding` (detours, no path, diagonals, tilemap)
-- **Open:** 2D grid only; no weighted cells, no path smoothing, no moving obstacles; a start or goal on a wall returns no path; not used by the 3D agents, which go through `Navigation` (9.1.4)
+- **Status:** Works - covered by `pathfinding` (detours, no path, diagonals that do not cut a corner, tilemap, a cheap road preferred over mud, a smoothed path shorter than the staircase and clear of walls, an obstacle on the path replans that agent and leaves another agent's path alone)
+- **Open:** 2D grid only; a start or goal on a wall returns no path; a grid over `Pathfinding::kMaxCells` (4096 x 4096) returns no path; smoothing does not re-price the route (it only refuses walls); not used by the 3D agents, which go through `Navigation` (9.1.4)
 - **Related:** 9.1, 4.3, 2.6
 - **Words:** A*, astar, grid pathfinding, tilemap path, walkable grid, tower defense, 2D pathfinding, Pathfinding
 - **Seen as:** 2D enemies cut through walls or cannot find a route on a tilemap; a path zig-zags; no route is found when one exists
@@ -70,15 +72,17 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
   - 9.4.2 Runner - `Components/BehaviorTreeRunner`, `engine/src/AI/BehaviorTreeRunner.cpp` - ticking, abort, services, composites, decorators and all tasks (move, patrol, wander, chase, flee, look, animate, attack, events, script call, sound, start dialogue)
   - 9.4.3 Body control - `Components/BehaviorTreeRunner` - moves through a NavMeshAgent, else an NPCController in external-brain mode, else navigation directly
   - 9.4.4 Behavior Tree window - `editor/BehaviorTreeWindow.*` - canvas, palette, node and blackboard tabs, issues tab, runner tab with live node status, copy and paste of subtrees, own undo
+  - 9.4.5 Run Sub-Tree - `AI/BehaviorTree` (`RunSubtree`), `Components/BehaviorTreeRunner` - runs another `.okaybt` with its own blackboard, optional key mapping, a recursion guard, and the nested files shipped with the scene
+  - 9.4.6 Breakpoints - `BtNode.breakpoint`, `BehaviorTreeRunner` pause - a saved breakpoint pauses Play on that node and the window highlights it
 - **Code:** `AI/BehaviorTree`, `engine/src/AI/BehaviorTreeRunner.cpp`, `Components/BehaviorTreeRunner`, `editor/BehaviorTreeWindow.*`
 - **API:** `BehaviorTree`, `BehaviorTreeRunner`, `Blackboard`, `BtValue`, `BtStatus`, `BtNodeType`, script `bt_set`, `bt_get`, `bt_run`, `bt_stop`, `on_bt_event`, C# `BehaviorTree.Set`, visual-script Set Blackboard, Get Blackboard, Run Tree
 - **Editor:** View > Editors & Tools > Behavior Tree; Add Component > Gameplay > Behavior Tree Runner; double-click a `.okaybt` in the Project panel
 - **Docs:** `docs/behavior_trees.md`
 - **Tests:** `behavior_tree`
 - **Status:** Works - BehaviorTreeRunner.hpp and the tick structure in BehaviorTreeRunner.cpp read; node behaviour covered by the 826-line `behavior_tree` test
-- **Open:** the window has a live view but no breakpoints or stepping; the node catalogue has no node that runs another tree asset (copy and paste of subtrees only); Start Dialogue is the only task that links to story (10.2)
+- **Open:** no step-over or step-into (a breakpoint pauses Play, and the toolbar step runs one frame); Start Dialogue is the only task that links to story (10.2); perception is still a separate copy of the NPC controller's sight (9.5)
 - **Related:** 9.2, 9.5, 10.2, 11.7, 7.3
-- **Words:** AI, behavior tree, BT, blackboard, .okaybt, selector, sequence, decorator, service, patrol, chase, flee, Guard sample, BehaviorTreeRunner, AI brain, bt_set
+- **Words:** AI, behavior tree, BT, blackboard, .okaybt, selector, sequence, decorator, service, patrol, chase, flee, Guard sample, BehaviorTreeRunner, AI brain, bt_set, Run Sub-Tree, sub-tree, breakpoint
 - **Seen as:** an NPC stands still with a tree assigned; the tree restarts every frame; nodes do not light up in Play; the guard patrols but never notices the player; the Issues tab shows missing waypoints
 - **Ask me like:** "make a guard that patrols and chases the player"; "add a node that plays a sound then waits"
 
@@ -86,18 +90,18 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **What:** The NPC Controller is a ready-made brain for wildlife, enemies, guards and companions: base behaviours (idle, wander, patrol, guard, follow, flee, chase) with sight cone, line of sight, hearing, detection time, search and leash, plus combat numbers and health.
 - **Parts:**
   - 9.5.1 Base behaviours - `Components/NPCController` - Idle, Wander, Patrol, Guard, Follow, Flee, Chase with waypoints, speeds, acceleration and turning
-  - 9.5.2 Perception - `Components/NPCController` - sight range and field of view, optional physics line of sight from eye height, hearing range, detection time (stealth), lose-sight and search timers
+  - 9.5.2 Perception - `AI/Perception`, shared by `Components/NPCController` and the behavior tree Perception service - sight range and field of view, optional physics line of sight from eye height, hearing range; the controller also keeps detection time (stealth), lose-sight and search timers. Each keeps its own numbers
   - 9.5.3 Combat and health - `Components/NPCController` - attack range, damage, interval, windup, flee at low health, provoke, `Damage`, death broadcast
   - 9.5.4 Pathfinding use and animation - `Components/NPCController` - routes through `Navigation` when Use Pathfinding is on; drives a sibling Character's idle, walk, run and head look; broadcasts `npc_alert`, `npc_lost`, `npc_died` and more to Action Lists
   - 9.5.5 Behavior-tree brain mode - `Components/NPCController` - `SetExternalBrain` makes it take orders (`CommandGoTo`, `AttackNow`) from a BehaviorTreeRunner
   - 9.5.6 Follow target (2D chase) - `Components/FollowTarget2D` - no-code chase: moves toward a named object each frame, stops within a stop distance, drives a sibling Rigidbody2D when present (enemies seeking the player, homing pickups, companions)
-- **Code:** `Components/NPCController`, `Components/FollowTarget2D`, `editor/main.cpp` (NPC Controller inspector)
+- **Code:** `AI/Perception`, `Components/NPCController`, `Components/FollowTarget2D`, `editor/main.cpp` (NPC Controller inspector)
 - **API:** `NPCController`, `NPCController::Behavior`, `CommandGoTo`, `SetExternalBrain`, `Damage`, script `npc_goto`, Action List messages `npc_alert`, `npc_lost`, `npc_died`
 - **Editor:** Add Component > Gameplay > NPC Controller; Inspector groups for movement, perception, aggression, combat
 - **Docs:** `docs/npcs_and_crafting.md`
-- **Tests:** `npc_ai`, `npc_crafting`
-- **Status:** Works - NPCController.hpp read in full (states, perception, external-brain hooks); behaviours covered by `npc_ai` (sight cone, search, patrol, flee, leash)
-- **Open:** perception code lives inside this component, and per docs the behavior tree has its own Perception service (two copies of the idea, no shared Perception component); health is a built-in `health` field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius
+- **Tests:** `npc_ai`, `npc_crafting`, `perception`
+- **Status:** Works - NPCController.hpp read in full (states, perception, external-brain hooks); behaviours covered by `npc_ai` (sight cone, search, patrol, flee, leash) and `perception` (the controller, the tree service and the tree's line-of-sight test agree)
+- **Open:** health is a built-in `health` field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius. Visual-script Can See, In Cone and Has Line of Sight stay a separate full-3D check (no hearing, no eye height)
 - **Related:** 9.1, 9.2, 9.4, 11.4, 11.7, 5.8
 - **Words:** AI, NPC, NPCController, enemy, wildlife, guard, patrol, wander, chase, flee, perception, sight cone, field of view, hearing, stealth, detection meter, leash, aggro
 - **Seen as:** an enemy sees through walls; an enemy never notices the player or notices from behind; an NPC returns to its spawn after a chase; the NPC dies but nothing drops; enemies stack on each other
@@ -117,7 +121,7 @@ No open PR touches it; the `nav_*`, `bt_*` and `npc_*` script builtins live in `
 - **Docs:** `docs/navigation.md`
 - **Tests:** `navmesh_areas`, `navmesh`
 - **Status:** Works - covered by `navmesh_areas` (cheaper road over shorter swamp, blocked area never entered, per-agent mask, link used / ignored when disabled, masked or too costly, one-way and two-way, crossing ends on the end point with events in order, scene round trip)
-- **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh; no obstacle carving
+- **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh
 - **Related:** 9.1, 9.2
 - **Words:** nav area, area cost, area mask, NavMeshModifier, NavMeshLink, off-mesh link, jump link, drop, ladder, swamp, mud, water, road, traversal cost, nav_link_start
 - **Seen as:** NPCs wade through mud instead of walking round; NPCs will not jump a gap; an enemy cannot climb a ladder; a path ignores the road; an agent walks into lava

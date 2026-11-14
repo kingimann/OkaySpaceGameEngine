@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ProjectVersion.hpp"
+#include "UpdateSignature.hpp"
 
 namespace okayversions {
 namespace fs = std::filesystem;
@@ -70,6 +71,8 @@ struct Entry {
 struct Index {
     bool ok = false;                     ///< a usable list (schema known, versions read)
     bool fallback = false;               ///< built from VERSION.txt / LTS.txt: no checksums
+    bool signatureRefused = false;       ///< a trusted key is built in and versions.json is unsigned or wrongly signed (`error` says so)
+    bool signedByPublisher = false;      ///< versions.json verified against a trusted key (false when no key is built in)
     std::string error;                   ///< why `ok` is false (plain words)
     std::string note;                    ///< a plain sentence about how complete the list is ("" = nothing to say)
     int schema = 0;
@@ -101,6 +104,9 @@ struct Sources {
     std::string bucketBase;                       ///< "https://.../releases/" ("" = no releases bucket is configured)
     std::string archiveTemplate;                  ///< GitHub address pattern ("https://.../download/v{version}/{file}"), "" = none
     std::vector<std::string> versionTxtUrls;      ///< other places a VERSION.txt lives (GitHub); the bucket's own is added
+    /// ed25519 public keys (hex, comma-separated) that must have signed versions.json (shared/UpdateSignature.hpp). Defaults to the keys
+    /// built into this program (-DOKAY_UPDATE_TRUSTED_KEYS); "" = none, unsigned indexes are accepted (the transition).
+    std::string trustedKeys = okayupdate::BuiltInTrustedKeys();
 };
 /// Find out which versions exist: <bucket>/versions.json; its channel heads are then checked against <bucket>/VERSION.txt and
 /// LTS.txt (the index is written last and can lag: a newer head there is added, without checksums). When there is no usable
@@ -118,9 +124,9 @@ struct PlanFile {
     Asset asset = Asset::Editor;
     std::string indexName, diskName;
     std::vector<std::string> urls;       ///< tried in order (the bucket first, then GitHub)
-    std::uint64_t size = 0;              ///< expected size; 0 = not known yet (see FillUnknownSizes)
-    std::string sha256;                  ///< expected checksum; "" = the index has none
-    bool verified = false;               ///< the checksum is known (or the file is the launcher's own SDL2.dll)
+    std::uint64_t size = 0;              ///< expected size from the index (a file without one is never planned)
+    std::string sha256;                  ///< expected checksum from the index (always 64 hex digits for a downloaded file)
+    bool verified = false;               ///< the checksum is known (or the file is the launcher's own SDL2.dll); Install refuses a downloaded file where this is false
     fs::path localCopy;                  ///< when set: copied from here instead of downloaded (the launcher's own SDL2.dll)
 };
 struct InstallPlan {
@@ -128,17 +134,13 @@ struct InstallPlan {
     std::string error;
     std::string version;
     std::vector<PlanFile> files;
-    bool needsConfirmation = false;      ///< some file has no checksum: the person must agree
     std::uint64_t totalBytes() const;    ///< the known sizes added up
 };
 /// Work out what installing `version` takes. `bucketBase` is "https://.../releases/" ("" = no bucket); `localSdl` the
-/// launcher's own SDL2.dll, used when the index lists none. A version that is not in the index but is one of its heads
-/// is planned without checksums. Errors (no such version, nowhere to download from) come back as `ok = false`.
+/// launcher's own SDL2.dll, used when the index lists none. A checksum is REQUIRED for every downloaded file: a version that is not in the
+/// index, a fallback index (no versions.json) or a file without a SHA-256 is `ok = false` with the reason, never an install anyway.
 InstallPlan PlanInstall(const Index& index, const std::string& version, const std::string& bucketBase, const fs::path& localSdl,
                         bool requireSdl = kRequireSdl);
-/// For every downloaded file without a size, ask the server (`headSize(url)`, 0 = unknown). Returns false when an
-/// unverified file's size could not be found out (such a file will be refused).
-bool FillUnknownSizes(InstallPlan& plan, const std::function<std::uint64_t(const std::string& url)>& headSize);
 
 // ---- doing it --------------------------------------------------------------------------------------------------------------
 
@@ -168,11 +170,10 @@ struct IO {
     std::function<bool(const std::string& step)> fail;                 ///< tests only: true = this step fails (as a full disk would)
 };
 struct InstallOptions {
-    bool confirmedUnverified = false;    ///< the person agreed to files that have no checksum
     bool markKept = false;               ///< install.txt says "kept" (used by KeepCurrent) rather than "installed"
 };
 
-enum class Outcome { Installed, AlreadyInstalled, Removed, Cancelled, NeedsConfirmation, NotEnoughSpace, Failed, Refused, Skipped };
+enum class Outcome { Installed, AlreadyInstalled, Removed, Cancelled, NotEnoughSpace, Failed, Refused, Skipped };
 const char* OutcomeName(Outcome o);
 struct Result {
     Outcome outcome = Outcome::Failed;

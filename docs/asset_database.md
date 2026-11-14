@@ -120,7 +120,7 @@ Built-in extractors:
 |---|---|---|
 | `scene` | `okayscene`, `okayprefab` | Quoted strings that end in a known asset extension, and the paths on `prefab`, `srcscene`, `netprefab` and `visualscriptpath` lines. `gameobject`, `name` and `tag` lines are skipped, so a name like `"hero.png"` is not a reference. The scene writer quotes every path field (`CollectAssetPaths` reads the same fields from a live scene), and a test checks both agree on a scene that uses 17 component types. |
 | `material` | `okaymat` | The `texture <path>` line. |
-| `text` | `okayanim`, `okayclip`, `okaydialog`, `okayquest`, `okaybt`, `okayvs`, `okayseq`, `okayloot`, `okayitems`, `okayrecipes`, `okaydata`, `okaynav`, `gltf` | Quoted strings, `key=value` values and bare words that end in a known asset extension (dialogue portraits and sounds, behavior tree parameters, cutscene audio cues, glTF `uri`s). |
+| `text` | `okayanim`, `okayclip`, `okaydialog`, `okayquest`, `okaybt`, `okayvs`, `okayseq`, `okayloot`, `okayitems`, `okayweapon`, `okayrecipes`, `okaydata`, `okaynav`, `gltf` | Quoted strings, `key=value` values and bare words that end in a known asset extension (dialogue portraits and sounds, behavior tree parameters, cutscene audio cues, glTF `uri`s). |
 
 A value counts as an asset path only when its extension belongs to a known asset type (`AssetTypeFromExtension`),
 it has no control characters, is not a URL or `data:` URI, and a value with spaces has a folder part (so a
@@ -246,8 +246,9 @@ frame. `Thumb::placeholder` and `Thumb::failed` tell them apart. `Invalidate(gui
 - Binary formats are not parsed: a `.fbx` that points at external textures has no edges (a `.gltf` does).
 - Import settings are stored and signalled. These are read (through `okay/Core/ImportSidecar.hpp`): a texture's
   `maxSize`, `filter`, `wrap` and `mipmaps` (software and OpenGL renderers; the Direct3D renderers do not read them, so the editor hides those three controls until they do), and a model's `scale` (the editor),
-  `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). The other keys (`srgb`, `compress`, the
-  audio options) are stored but no importer reads them yet.
+  `normals`, `smoothingAngle` and `importAnimations` (`ImportModelScene`). Audio `loadMode` and `forceMono` are read
+  when the file is loaded (`ReadAudioImportOptions`). `quality` is kept so older files round-trip and is not applied,
+  because audio is not re-encoded. `srgb` and `compress` are still stored and unread.
 - GUID references inside scene files do not exist yet (scenes store paths); `FixStaleReferences` is the bridge.
 - Meta files are matched by content hash, which is not a cryptographic hash.
 

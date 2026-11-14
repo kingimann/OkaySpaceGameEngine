@@ -22,40 +22,75 @@ int UsableSlots(const Inventory& inv, int shown) {
     return inv.capacity > 0 ? inv.capacity : shown;
 }
 
-InvResult Move(Inventory* src, int si, Inventory* dst, int di, int amount, int dstSlots) {
+namespace {
+constexpr int kMaxSlots = 4096;   // no UI or request may grow a bag past this many slots
+
+float UnitWeight(const std::string& item) {
+    const ItemDefinition* d = ItemDatabase::Get().Find(item);
+    return d ? d->weight : 0.0f;
+}
+/// Would `inv` still be within its enforced weight limit after losing `out` and gaining `in`?
+bool WeightOk(const Inventory& inv, float in, float out) {
+    if (!inv.enforceWeight || inv.weightLimit <= 0.0f || in <= out) return true;
+    return inv.TotalWeight() - out + in <= inv.weightLimit + 1e-4f;
+}
+
+InvResult MoveImpl(Inventory* src, int si, Inventory* dst, int di, int amount, int dstSlots, bool notice) {
     if (!ValidSlot(src, si) || !dst || di < 0) return InvResult::No("bad slot");
+    if (amount < 0) return InvResult::No("bad amount");
     if (src == dst && si == di) return InvResult::No("same slot");
-    const int limit = dstSlots > 0 ? dstSlots : UsableSlots(*dst);
-    if (limit > 0 && di >= limit) return InvResult::No("past the last slot");
+    int limit = dstSlots > 0 ? dstSlots : UsableSlots(*dst);
+    if (limit <= 0 || limit > kMaxSlots) limit = kMaxSlots;
+    if (di >= limit) return InvResult::No("past the last slot");
     if (Inventory::Empty(src->slots[si])) return InvResult::No("empty slot");
     const int have = src->slots[si].count;
-    const int n = (amount <= 0 || amount >= have) ? have : amount;
+    const int n = (amount == 0 || amount >= have) ? have : amount;
+    if (n < have && src->slots[si].data.uid != 0) return InvResult::No("unique items move whole");
     while ((int)dst->slots.size() <= di) dst->slots.push_back(Inventory::Slot{});
     Inventory::Slot& a = src->slots[si];   // (after the grow: src may be dst)
     Inventory::Slot& b = dst->slots[di];
+    const bool other = src != dst;
     int moved = 0;
+    const char* why = "stack full";
     if (Inventory::Empty(b)) {
-        b = a; b.count = n; a.count -= n; moved = n;
+        int m = (int)std::min<long long>(n, dst->StackCap(a.item));   // the target's own stack limit
+        if (other) { const int w = dst->WeightFit(a.item, m); if (w < m) why = "too heavy"; m = w; }
+        if (m > 0 && m < have && a.data.uid != 0) m = 0;
+        if (m <= 0) { TrimTail(*dst); return InvResult::No(why); }
+        b = a; b.count = m; a.count -= m; moved = m;
     } else if (Inventory::Stackable(b, a)) {
         const long long room = dst->StackCap(b.item) - b.count;
-        moved = (int)std::min<long long>(n, room > 0 ? room : 0);
-        if (moved <= 0) { TrimTail(*dst); return InvResult::No("stack full"); }
+        long long m = std::min<long long>(n, room > 0 ? room : 0);
+        if (other) { const int w = dst->WeightFit(a.item, (int)m); if (w < m) why = "too heavy"; m = w; }
+        if (m <= 0) { TrimTail(*dst); return InvResult::No(why); }
+        moved = (int)m;
         b.count += moved; a.count -= moved;
     } else {
         if (n != have) { TrimTail(*dst); return InvResult::No("different item there"); }
+        if (have > dst->StackCap(a.item) || b.count > src->StackCap(b.item)) { TrimTail(*dst); return InvResult::No("stack too big for the other bag"); }
+        if (other && (!WeightOk(*dst, UnitWeight(a.item) * a.count, UnitWeight(b.item) * b.count) ||
+                      !WeightOk(*src, UnitWeight(b.item) * b.count, UnitWeight(a.item) * a.count))) {
+            TrimTail(*dst); return InvResult::No("too heavy");
+        }
         std::swap(a, b); moved = n;
     }
     if (a.count <= 0) a = Inventory::Slot{};
     TrimTail(*src); TrimTail(*dst);
     Notify(src, dst);
-    const InvResult r = moved < n ? InvResult::Part(moved, "stack full") : InvResult::Done(moved);
-    NetInventory::NoticeMove(src, si, dst, di, amount, r.Ok());
+    const InvResult r = moved < n ? InvResult::Part(moved, why) : InvResult::Done(moved);
+    if (notice) NetInventory::NoticeMove(src, si, dst, di, amount, r.Ok());
     return r;
+}
+} // namespace
+
+InvResult Move(Inventory* src, int si, Inventory* dst, int di, int amount, int dstSlots) {
+    return MoveImpl(src, si, dst, di, amount, dstSlots, true);
 }
 
 InvResult Split(Inventory* inv, int i, int amount, int slots) {
     if (!ValidSlot(inv, i) || Inventory::Empty(inv->slots[i])) return InvResult::No("empty slot");
     if (amount < 1 || amount >= inv->slots[i].count) return InvResult::No("nothing to split");
+    if (inv->slots[i].data.uid != 0) return InvResult::No("unique items cannot be split");
     const int limit = UsableSlots(*inv, slots);
     int to = -1;
     for (int k = 0; k < (int)inv->slots.size() && (limit <= 0 || k < limit); ++k)
@@ -75,7 +110,7 @@ InvResult Split(Inventory* inv, int i, int amount, int slots) {
 
 InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots) {
     if (!ValidSlot(inv, from) || Inventory::Empty(inv->slots[from])) return InvResult::No("empty slot");
-    const int n = hotbar < 1 ? 1 : hotbar, total = UsableSlots(*inv, slots);
+    const int n = hotbar < 1 ? 1 : hotbar, total = std::min(UsableSlots(*inv, slots), kMaxSlots);
     const int lo = (from < n) ? n : 0, hi = (from < n) ? total : std::min(n, total);
     while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
     Inventory::Slot& s = inv->slots[from];
@@ -115,6 +150,7 @@ InvResult Transfer(Inventory* from, int i, Inventory* to) {
             to->slots.push_back(Inventory::Slot{});
         }
         const int n = from->slots[i].count;
+        if (to->WeightFit(from->slots[i].item, n) < n) { TrimTail(*to); return InvResult::No("too heavy"); }
         std::swap(to->slots[hole], from->slots[i]);
         TrimTail(*from);
         Notify(from, to);
@@ -264,6 +300,60 @@ InvResult Split(GridInventory* inv, int index, int n) {
     if (!inv || inv->Split(index, n) < 0) return InvResult::No("no room to split");
     NetInventory::NoticeGridSplit(inv, index, n, true);
     return InvResult::Done(n);
+}
+
+InvResult ToGrid(Inventory* src, int si, GridInventory* dst, int x, int y, bool rotated, int amount) {
+    if (!ValidSlot(src, si) || !dst) return InvResult::No("bad slot");
+    if (amount < 0) return InvResult::No("bad amount");
+    if (Inventory::Empty(src->slots[si])) return InvResult::No("empty slot");
+    const Inventory::Slot slot = src->slots[si];
+    const int have = slot.count;
+    int n = (amount == 0 || amount >= have) ? have : amount;
+    if (n < have && slot.data.uid != 0) return InvResult::No("unique items move whole");
+    const ItemDefinition* def = ItemDatabase::Get().Def(slot.item);
+    if (!def) return InvResult::No("unknown item");
+    const int lim = ItemDatabase::Get().StackLimit(slot.item, dst->maxStack);
+    if (lim > 0 && n > lim) { if (slot.data.uid != 0) return InvResult::No("stack too big for the grid"); n = lim; }
+    // A scratch grid holds the lifted stack; the destination's own MoveTo decides where it
+    // goes (bounds, overlap, merge, weight), so the rules are the grid's, not a copy of them.
+    GridInventory tmp;
+    const int side = std::max(1, std::max(def->gridW, def->gridH));
+    tmp.cols = tmp.rows = side;
+    tmp.maxStack = 0; tmp.enforceWeight = false; tmp.weightLimit = 0.0f;
+    GridItem it{def->id, std::max(1, def->gridW), std::max(1, def->gridH), 0, 0, n, def->weight, slot.data};
+    tmp.items.push_back(it);
+    if (!tmp.MoveTo(0, *dst, x, y, rotated)) return InvResult::No("doesn't fit there");
+    const int left = tmp.items.empty() ? 0 : tmp.items[0].count;
+    const int moved = n - left;
+    if (moved <= 0) return InvResult::No("doesn't fit there");
+    src->slots[si].count -= moved;
+    if (src->slots[si].count <= 0) src->slots[si] = Inventory::Slot{};
+    TrimTail(*src);
+    src->NotifyChanged();
+    const int asked = (amount == 0 || amount >= have) ? have : amount;
+    return moved < asked ? InvResult::Part(moved, "stack full") : InvResult::Done(moved);
+}
+
+InvResult FromGrid(GridInventory* src, int index, Inventory* dst, int di, int amount, int dstSlots) {
+    if (!src || !dst || index < 0 || index >= (int)src->items.size() || di < 0) return InvResult::No("bad item");
+    if (amount < 0) return InvResult::No("bad amount");
+    const GridItem gi = src->items[index];
+    if (gi.count < 1) return InvResult::No("bad item");
+    const int n = (amount == 0 || amount >= gi.count) ? gi.count : amount;
+    if (n < gi.count && gi.data.uid != 0) return InvResult::No("unique items move whole");
+    if (di < (int)dst->slots.size() && !Inventory::Empty(dst->slots[di])) {
+        Inventory::Slot probe; probe.item = gi.name; probe.count = 1; probe.data = gi.data;
+        if (!Inventory::Stackable(dst->slots[di], probe)) return InvResult::No("different item there");
+    }
+    Inventory tmp;
+    tmp.capacity = 1;
+    Inventory::Slot lifted; lifted.item = gi.name; lifted.count = n; lifted.data = gi.data;
+    tmp.slots.push_back(lifted);
+    const InvResult r = MoveImpl(&tmp, 0, dst, di, 0, dstSlots, false);
+    if (!r.Ok()) return r;
+    src->items[index].count -= r.moved;
+    if (src->items[index].count <= 0) src->RemoveAt(index);
+    return r;
 }
 
 } // namespace InventoryOps

@@ -133,7 +133,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Docs:** `docs/navigation.md`, `docs/behavior_trees.md`, `docs/dialogue_quests.md`, `docs/localization.md`, `docs/modeling.md`, `docs/editor.md`
 - **Tests:** `editor` (selftest only); engine side: `navmesh`, `behavior_tree`, `dialogue`, `quests`, `localization`, `meshedit`
 - **Status:** Works - each window has its own file or function; none has a unit test
-- **Open:** #574 added localization tools on the engine side (translation tables, missing-key reports, language previews, 31.1); per its docs the Localization window is not wired to them yet; Modeling and UV Editor still live in `main.cpp`
+- **Open:** Modeling and UV Editor still live in `main.cpp`. The Localization window calls the translation grid, the missing-key and placeholder report, the project scan and the pseudo-locale preview (31.1, 31.3).
 - **Related:** 9.1, 9.4, 10.2, 10.3, 1.8, 3.1, 31
 - **Words:** Navigation window, bake navmesh, Behavior Tree window, Dialogue window, Quests tab, Localization window, string table, Modeling window, UV Editor
 - **Seen as:** the navmesh does not bake or shows wrong polygons; a tree node cannot be wired; the dialogue Test panel does not match Play; a language preview shows keys; CJK text shows boxes
@@ -271,17 +271,17 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.13.1 Sprite Editor - `editor/main.cpp` (`DrawSpriteEditor` ~42208-42417) - pixel paint, shapes, flood fill
   - 15.13.2 Material editor - `editor/main.cpp` (`DrawMaterialEditor` ~10174) - `.okaymat` albedo, emissive, specular, texture, tiling, Apply to Selection
   - 15.13.3 Data Asset editor - `editor/main.cpp` (`DrawDataAssetEditor` ~10009) - data assets for scripts
-  - 15.13.4 Item Database - `editor/main.cpp` (`DrawItemDatabase` ~42480) - item definitions for inventory (11.2)
+  - 15.13.4 Items, Loot & Recipes - `editor/ContentEditors.cpp` - items, loot tables and crafting recipes (11.2, 11.3); Window menu and View > Editors & Tools
   - 15.13.5 Save Manager - `editor/main.cpp` (`DrawSaveManager` ~10046) - browse and edit `.okaysave` files
   - 15.13.6 Audio Mixer - `editor/main.cpp` (`DrawAudioMixer` ~6588) - mixer buses and volumes (7.1)
   - 15.13.7 UI Theme window - `editor/main.cpp` (`DrawUIThemer` ~42586) - see 12.7
   - 15.13.8 Custom Actions window - `editor/main.cpp` (`DrawCustomActions` ~2219) - see 14.6
-- **Code:** `editor/main.cpp`
-- **API:** View > Editors & Tools and View > Panels menus
+- **Code:** `editor/main.cpp`, `editor/ContentEditors.cpp`
+- **API:** View > Editors & Tools, View > Panels, and Window > Items, Loot & Recipes
 - **Editor:** each window
 - **Docs:** `docs/editor.md`, `docs/save_games.md`, `docs/audio.md`
-- **Tests:** `dataasset`, `savedata`, `item_database`, `audio_mixer` (engine side)
-- **Status:** Works - implemented as functions in `main.cpp`
+- **Tests:** `dataasset`, `savedata`, `item_database`, `item_loot_recipes`, `audio_mixer` (engine side)
+- **Status:** Works - most of these windows are functions in `main.cpp`; items, loot and recipes are `ContentEditors.cpp`
 - **Open:** none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs
 - **Related:** 2.2, 7.1, 11.2, 1.7, 26, 12.7
 - **Words:** Sprite Editor, Material editor, Data Asset, Item Database, Save Manager, Audio Mixer, UI Theme window
@@ -315,7 +315,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.15.2 Main loop - `editor/main.cpp` (`main` ~43674-45136) - frame loop, panel draw order with profiler scopes, camera safety, dev screenshot hooks (`OKAY_UI_*` variables)
   - 15.15.3 Launcher gate and handshake - `editor/main.cpp` (~43267, ~43572, `DrawProjectGate` ~16655, `DrawNewProjectPopup` ~16748) - open a project from the launcher, "save and close" requests
   - 15.15.4 Single instance and multi-window - `editor/main.cpp` (~43329-43571) - hand-off to a running editor, dual-monitor viewport windows
-  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher
+  - 15.15.5 Self-updater - `editor/main.cpp` (~1439-2114) - download and relaunch updates, runtime fetcher; the editor update and the player fetch now require a SHA-256 from `versions.json` (`updater::FetchVerified`) and the restart helper self-checks the new editor and rolls back (`docs/updater.md`)
   - 15.15.6 Theme and fonts - `editor/main.cpp` (~4273), `shared/OkayTheme.hpp` - Slate theme, accent colours, UI scale
   - 15.15.7 Headless selftest - `editor/main.cpp` (~1-445, `RunSelfTest`) - ctest `editor` runs `OkayEngine --selftest` with no display
 - **Code:** `editor/main.cpp`, `editor/EditorCommon.hpp`, `editor/EditorWidgets.*`, `editor/okayspace.rc`, `editor/okayspace.ico`

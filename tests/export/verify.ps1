@@ -28,6 +28,7 @@ if ($rc -ne 0) { throw "export failed (exit $rc)" }
 $game = Join-Path $out "VsExport.exe"
 if (-not (Test-Path $game)) { throw "export didn't produce $game" }
 if (-not (Test-Path (Join-Path $out "SDL2.dll"))) { throw "export didn't copy SDL2.dll beside the game" }
+if (-not (Test-Path (Join-Path $out "VsExport_Data/build.json"))) { throw "export didn't write VsExport_Data/build.json (the Folder layout)" }
 
 # Run from elsewhere, so the game can only use what the export embedded.
 $log = Join-Path $Work "run.log"

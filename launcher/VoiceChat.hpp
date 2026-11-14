@@ -16,8 +16,10 @@
 #pragma once
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Net/RelayHello.hpp"      // the shared relay hello (version 4: cookie + nonce) and welcome check
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -235,10 +237,11 @@ public:
         m_room = room; m_uid = myUid; m_name = myName;
         m_key = Sha256("okayspace-voice-v1|" + keyText);
         std::random_device rd; m_sid = ((std::uint32_t)rd() << 1) | 1u; m_seq = 0;
-        m_state = Connecting; m_error.clear(); m_since = 0; m_startTicks = okay::platform::TicksMs32();
+        SetError(std::string()); m_state = Connecting; m_since = 0; m_startTicks = okay::platform::TicksMs32();
         m_mySlot = m_hubSlot = 0;
         m_cookie.fill(0); m_v1Hello = m_relayAnswered = false; m_unanswered = 0;
-        if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { m_state = Failed; m_error = "Can't reach the voice server " + relayHost; m_udp.Close(); return false; }
+        do { m_nonce = ((std::uint64_t)rd() << 32) | rd(); } while (m_nonce == 0);
+        if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { Fail("Can't reach the voice server " + relayHost); m_udp.Close(); return false; }
         // Audio devices (the platform layer converts to/from our 16 kHz mono s16).
         okay::platform::AudioSpec want; want.freq = kRate; want.format = okay::platform::SampleFormat::S16; want.channels = 1; want.frames = kFrame;
         want.callback = &Session::CaptureCb; want.user = this;
@@ -247,8 +250,8 @@ public:
         okay::platform::AudioSpec pw = want; pw.callback = &Session::PlayCb;
         m_play = OpenDevice(m_outDev, false, pw);
         if (!m_play && !m_outDev.empty()) m_play = OpenDevice(std::string(), false, pw);
-        if (!m_play) { m_state = Failed; m_error = "No audio output device"; Stop(); return false; }
-        if (!m_cap) m_error = "No microphone found \xE2\x80\x94 you can listen but not talk";
+        if (!m_play) { Fail("No audio output device"); Stop(); return false; }
+        if (!m_cap) SetError("No microphone found \xE2\x80\x94 you can listen but not talk");
         m_run = true;
         m_thread = SDL_CreateThread(&Session::NetThread, "okay-voice", this);
         if (m_cap) m_cap->Pause(false);
@@ -269,7 +272,7 @@ public:
     }
     bool Active() const { return m_state == Connecting || m_state == Connected; }
     int StateNow() const { return m_state; }
-    const std::string& Error() const { return m_error; }
+    std::string Error() const { Guard g(m_mx); return m_error; }   // a copy: the net thread rewrites it
     const std::string& Room() const { return m_room; }
     Uint32 ConnectedSince() const { return m_since; }
     void SetMuted(bool m) { m_muted = m; }
@@ -300,6 +303,12 @@ public:
     }
 
 private:
+    struct Guard {
+        SDL_mutex* m; explicit Guard(SDL_mutex* mx) : m(mx) { if (m) SDL_LockMutex(m); }
+        ~Guard() { if (m) SDL_UnlockMutex(m); }
+    };
+    void SetError(const std::string& e) { Guard g(m_mx); m_error = e; }
+    void Fail(const std::string& e) { Guard g(m_mx); m_error = e; m_state = Failed; }   // the text is visible before the state flips
     struct Peer {
         std::string uid, name; bool muted = false, deaf = false;
         Uint32 lastHeard = 0, lastVoice = 0;
@@ -307,7 +316,7 @@ private:
         std::deque<std::array<std::int16_t, kFrame>> jitter; bool primed = false; int readPos = 0;
         std::uint32_t sid = 0;
     };
-    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93, kCookie = 0x95 };
+    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93, kRefused = 0x94, kCookie = 0x95 };
     enum : std::uint8_t { kAudio = 1, kInfo = 2, kLeave = 3 };
 
     static void Put32(std::vector<std::uint8_t>& v, std::uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((std::uint8_t)(x >> (i * 8))); }
@@ -385,20 +394,28 @@ private:
         SDL_UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
     }
-    // Relay protocol v3 (engine/include/okay/Net/RelayProtocol.hpp): the hub role
-    // (first one in is the hub, the next takes over when it leaves), the relay's
-    // cookie for our address, zero-padded to 32 bytes. A relay older than v3
-    // ignores the hub role, so after 3 unanswered hellos we fall back to v1.
+    // Relay protocol v4 (engine/include/okay/Net/RelayHello.hpp, the same builder the
+    // game's NetworkManager uses): the hub role (first one in is the hub, the next takes
+    // over when it leaves), the relay's cookie for our address and a random nonce its
+    // welcome must echo, so a relay can refuse legacy hellos (docs/relay.md). A relay
+    // older than v3 ignores the hub role and never answers a v3+ hello, so only after
+    // kLegacyAfter unanswered hellos do we fall back to the legacy v1 hello (and then
+    // accept its un-echoed welcome); a current relay always answers the first one.
+    static constexpr int kLegacyAfter = 5;
     void SendHello() {
-        std::vector<std::uint8_t> pk = {kHello, (std::uint8_t)(m_v1Hello ? 0 : 2)};
-        Put32(pk, (std::uint32_t)m_room.size());
-        pk.insert(pk.end(), m_room.begin(), m_room.end());
-        if (!m_v1Hello) {
-            pk.push_back(3);
-            Put32(pk, 0); Put32(pk, 0);   // no host key: a hub session is never protected
-            pk.insert(pk.end(), m_cookie.begin(), m_cookie.end());
-            while (pk.size() < 32) pk.push_back(0);
-            if (!m_relayAnswered && ++m_unanswered > 3) m_v1Hello = true;
+        std::vector<std::uint8_t> pk;
+        if (m_v1Hello) {
+            pk = {kHello, 0};
+            Put32(pk, (std::uint32_t)m_room.size());
+            pk.insert(pk.end(), m_room.begin(), m_room.end());
+        } else {
+            okay::net::RelayHelloParams h;
+            h.role = okay::net::RelayHub;
+            h.code = m_room;                // no host key: a hub session is never protected
+            h.cookie = m_cookie;
+            h.nonce = m_nonce;
+            pk = okay::net::BuildRelayHello(h);
+            if (!m_relayAnswered && ++m_unanswered > kLegacyAfter) m_v1Hello = true;
         }
         m_udp.Send(pk.data(), pk.size());
     }
@@ -466,9 +483,15 @@ private:
                     std::memcpy(s->m_cookie.data(), &buf[2], 16);
                     s->m_relayAnswered = true;
                     nextHello = now;
+                } else if (buf[0] == kRefused && n >= 2) {   // a relay that turned our hello away
+                    s->Fail("The voice server refused this launcher version \xE2\x80\x94 update the launcher");
                 } else if (buf[0] == kWelcome && n >= 9) {
+                    // Only a welcome that echoes our nonce counts (anyone can forge a source
+                    // address); a legacy-fallback relay can't echo one, so those are accepted.
+                    okay::net::RelayWelcomeInfo w;
+                    if (!okay::net::ParseRelayWelcome(buf.data(), (std::size_t)n, s->m_nonce, s->m_v1Hello, w)) { ++s->m_badWelcome; continue; }
                     s->m_relayAnswered = true;
-                    const std::uint32_t mine = Get32(&buf[1]), hub = Get32(&buf[5]);
+                    const std::uint32_t mine = w.slot, hub = w.hostSlot;
                     if (hub != s->m_hubSlot) { SDL_LockMutex(s->m_mx); s->m_peers.clear(); SDL_UnlockMutex(s->m_mx); }
                     s->m_mySlot = mine; s->m_hubSlot = hub; lastWelcome = now;
                     if (s->m_state != Connected) { s->m_state = Connected; s->m_since = now; nextInfo = 0; }
@@ -477,7 +500,7 @@ private:
                 }
             }
             if (s->m_state == Connecting && now - s->m_startTicks > 8000 && lastWelcome == 0) {
-                s->m_error = "The voice server isn't answering"; s->m_state = Failed;
+                s->Fail("The voice server isn't answering");
             }
             if (s->m_state == Connected && now >= nextInfo) {   // who I am + mute state, every 2 s
                 std::vector<std::uint8_t> b;
@@ -519,21 +542,25 @@ private:
     Udp m_udp;
     SDL_mutex* m_mx = nullptr;
     SDL_Thread* m_thread = nullptr;
-    volatile bool m_run = false;
+    std::atomic<bool> m_run{false};
     std::unique_ptr<okay::platform::AudioDevice> m_cap, m_play;
     std::array<std::uint8_t, 32> m_key{};
-    std::string m_room, m_uid, m_name, m_error;
+    std::string m_room, m_uid, m_name;
+    std::string m_error;   // (m_mx) written by the net thread, read by the UI every frame
     std::uint32_t m_sid = 0, m_seq = 0;
-    volatile std::uint32_t m_mySlot = 0, m_hubSlot = 0;
-    volatile int m_state = Idle;
-    Uint32 m_since = 0, m_startTicks = okay::platform::TicksMs32();
-    volatile bool m_muted = false, m_deaf = false, m_selfSpeaking = false;
-    volatile float m_selfLevel = 0.0f, m_gateDb = -46.0f;
+    std::atomic<std::uint32_t> m_mySlot{0}, m_hubSlot{0};
+    std::atomic<int> m_state{Idle};   // (m_error changes with it, under m_mx)
+    std::atomic<Uint32> m_since{0};
+    Uint32 m_startTicks = okay::platform::TicksMs32();
+    std::atomic<bool> m_muted{false}, m_deaf{false}, m_selfSpeaking{false};
+    std::atomic<float> m_selfLevel{0.0f}, m_gateDb{-46.0f};
     int m_badKey = 0;
     std::array<std::uint8_t, 16> m_cookie{};    // (net thread) the relay's cookie for our address
     bool m_v1Hello = false, m_relayAnswered = false; int m_unanswered = 0;   // (net thread)
+    std::uint64_t m_nonce = 0;                  // the random value the relay's welcome must echo
+    int m_badWelcome = 0;                       // (net thread) welcomes dropped for a wrong or missing echo
     std::string m_inDev, m_outDev;
-    volatile float m_inGain = 1.0f, m_outVol = 1.0f;
+    std::atomic<float> m_inGain{1.0f}, m_outVol{1.0f};
     float m_hp = 0.0f, m_hpPrev = 0.0f;   // capture high-pass state (audio thread)
     std::map<std::uint32_t, Peer> m_peers;                    // (m_mx) by relay slot
     std::deque<std::array<std::int16_t, kFrame>> m_capQ;      // (m_mx) mic frames to send
@@ -584,7 +611,7 @@ private:
         if (t->m_out && t->m_out->QueuedBytes() < 16000) t->m_out->Queue(stream, (std::uint32_t)len);   // hear yourself
     }
     std::unique_ptr<okay::platform::AudioDevice> m_cap, m_out;
-    volatile float m_level = 0.0f, m_db = -90.0f, m_gain = 1.0f;
+    std::atomic<float> m_level{0.0f}, m_db{-90.0f}, m_gain{1.0f};
 };
 
 } // namespace okay::voice

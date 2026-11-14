@@ -1,11 +1,11 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/Perception.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
-#include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
@@ -185,9 +185,21 @@ public:
             m_state = State::Idle;
             canSee = acquired = m_extAlert;
         } else {
-        // ---- Perception ----------------------------------------------------
-        canSee = tgt && distT <= sightRange && InFov(pos, tp) && (!lineOfSight || LosClear(pos, tp, distT));
-        bool heard  = tgt && hearingRange > 0.0f && distT <= hearingRange;
+        // ---- Perception (the same check a behavior tree's Perception service uses)
+        bool heard = false;
+        if (tgt) {
+            SenseSettings sense;
+            sense.sightRange = sightRange;
+            sense.fieldOfView = fieldOfView;
+            sense.lineOfSight = lineOfSight;
+            sense.eyeHeight = eyeHeight;
+            sense.hearingRange = hearingRange;
+            // Local facing: FaceToward writes localRotation, including on a parented NPC.
+            const Vec3 fwd = transform->localRotation * Vec3{0, 0, 1};
+            const SenseResult sr = Sense(gameObject ? gameObject->scene() : nullptr, pos, fwd, tp, gameObject, tgt, sense);
+            canSee = sr.canSee;
+            heard = sr.heard;
+        }
         if (canSee) { m_detect = std::fmin(m_detect + dt, detectionTime + 0.001f); m_lastKnown = tp; m_sightLost = 0.0f; }
         else        { m_detect = std::fmax(m_detect - dt * 0.6f, 0.0f); m_sightLost += dt; }
         acquired = canSee && (detectionTime <= 0.0f || m_detect >= detectionTime);
@@ -362,33 +374,6 @@ private:
         return s ? s->Find(targetName) : nullptr;
     }
     Vec3 TP(GameObject* t) const { return t && t->transform ? t->transform->Position() : Vec3{0, 0, 0}; }
-
-    bool InFov(const Vec3& pos, const Vec3& tp) const {
-        if (fieldOfView >= 359.0f) return true;
-        Vec3 to = Dir(pos, tp);
-        if (to.x == 0.0f && to.z == 0.0f) return true;
-        Vec3 fwd = transform->localRotation * Vec3{0, 0, 1};   // facing (faceMovement aligns +Z to heading)
-        float fm = std::sqrt(fwd.x * fwd.x + fwd.z * fwd.z);
-        if (fm < 1e-5f) return true;
-        float dot = (to.x * fwd.x + to.z * fwd.z) / fm;
-        if (dot > 1.0f) dot = 1.0f;
-        if (dot < -1.0f) dot = -1.0f;
-        return std::acos(dot) * 57.29578f <= fieldOfView * 0.5f;
-    }
-    bool LosClear(const Vec3& pos, const Vec3& tp, float distT) const {
-        if (!gameObject || !gameObject->scene()) return true;
-        Vec3 o = {pos.x, pos.y + eyeHeight, pos.z};
-        Vec3 e = {tp.x,  tp.y  + eyeHeight, tp.z};
-        Vec3 d = {e.x - o.x, e.y - o.y, e.z - o.z};
-        float m = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-        if (m < 1e-4f) return true;
-        d = {d.x / m, d.y / m, d.z / m};
-        Physics3D phys;
-        RaycastHit3D hit = phys.Raycast(*gameObject->scene(), o, d, m - 0.3f, gameObject);
-        // A hit before the target means a wall is in the way (the target has no collider
-        // in the path, or we'd ignore it — close enough for a sight check).
-        return !hit || hit.distance >= distT - 0.3f;
-    }
 
     void FaceToward(const Vec3& dir, float dt) {
         if (dir.x == 0.0f && dir.z == 0.0f) return;

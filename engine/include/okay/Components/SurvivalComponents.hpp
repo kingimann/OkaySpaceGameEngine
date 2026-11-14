@@ -77,6 +77,17 @@ protected:
 /// (the Quest Log counts kills for its objectives here).
 inline std::function<void(GameObject*)>& HealthDeathHook() { static std::function<void(GameObject*)> f; return f; }
 
+/// Multiplayer: tells a hosting NetworkManager that this object just respawned, so it can
+/// send the respawn (health and position) to every other player. Defined in the engine
+/// library; does nothing when no server runs in this object's scene.
+void NetNoteRespawn(GameObject* go);
+
+/// Multiplayer: tells a hosting NetworkManager that this object just died, so the other players'
+/// copies die too ("__death", reliable). Covers deaths no replicated hit caused (a kill volume, a
+/// script's die(), starvation); a death from a replicated hit travels with that hit instead.
+/// `hasFrom`/`from` is where the killing blow came from (the body falls away from it).
+void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
+
 /// HP with flat armor, optional delayed regen, low/death flags. On death it
 /// broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
 class HealthStat : public StatComponent {
@@ -132,7 +143,9 @@ public:
                 m_deathAge += dt;
                 if (HumanoidActions::DeathPoseSettled(gameObject) || m_deathAge >= 2.5f) FinishDeathPose();
             }
-            if (respawn && m_respawnTimer > 0.0f) {
+            // A copy that died by the server's word waits for the server's respawn (its own
+            // timer would bring it back at its own start point, on its own clock).
+            if (respawn && m_respawnTimer > 0.0f && !m_awaitServerRespawn) {
                 m_respawnTimer -= dt;
                 if (m_respawnTimer <= 0.0f) Respawn();
             }
@@ -192,7 +205,26 @@ public:
     void SetHealthFromServer(float h) {
         if (dead || !std::isfinite(h)) return;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
-        if (health <= 0.0f) OnDeath();
+        if (health <= 0.0f) { OnDeath(); m_awaitServerRespawn = true; }
+        Publish();
+    }
+    /// Multiplayer: the server respawned this object with `h` health (where it now stands is
+    /// the transform's business). Brings a dead copy back, or just sets the health of a live
+    /// one; a non-finite `h` is ignored and the value is kept within the maximum.
+    void RespawnFromServer(float h) {
+        if (!std::isfinite(h)) return;
+        Respawn(false);
+        health = Mathf::Max(1.0f, Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h));
+        Publish();
+    }
+    /// Multiplayer: the server's word that this object died by something other than a replicated hit
+    /// (a kill volume, a script). Does what the death does here; ignored if it is already dead. Like a
+    /// death by the server's health, only the server's respawn brings it back.
+    void DieFromServer(bool hasFrom, const Vec3& from) {
+        if (dead) return;
+        if (hasFrom) { lastHitFrom = from; hasLastHit = true; } else hasLastHit = false;
+        OnDeath();
+        m_awaitServerRespawn = true;
         Publish();
     }
     void SetGodMode(bool on) { godMode = on; }
@@ -200,6 +232,7 @@ public:
 private:
     void OnDeath() {
         health = 0.0f; dead = true;
+        NetNoteDeath(gameObject, hasLastHit, lastHitFrom);
         m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
         if (auto& hook = HealthDeathHook()) hook(gameObject);
@@ -230,18 +263,21 @@ private:
         // holds the body. A body with no death clip still deactivates in OnDeath.
         if (destroyOnDeath && gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
     }
-    void Respawn() {
+    void Respawn(bool moveToStart = true) {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;
+        m_awaitServerRespawn = false;
         m_deathPlayed = false; m_settled = false; m_waitDeath = false; m_deathAge = 0.0f;
         HumanoidActions::RestoreDeadBody(gameObject, m_deathShape);
         HumanoidActions::ReviveAnim(gameObject);
         if (gameObject) {
             gameObject->active = true;
-            if (gameObject->transform && respawn) gameObject->transform->SetPosition(m_start);
+            if (moveToStart && gameObject->transform && respawn) gameObject->transform->SetPosition(m_start);
         }
         Broadcast("respawned");
         Publish();
+        if (moveToStart) NetNoteRespawn(gameObject);
     }
+    bool m_awaitServerRespawn = false;   // died by the server's word: only its respawn brings it back
     void Publish() { SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;
     int   m_livesLeft = 0;

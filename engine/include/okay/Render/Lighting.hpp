@@ -120,14 +120,23 @@ struct SceneLights {
     static Vec3 ShadeColor(const Vec3& p, const Vec3& n) { return ShadeNormalized(p, n.Normalized()); }
     /// Same as ShadeColor but assumes `nn` is already unit length (skips the
     /// per-pixel sqrt) — the per-pixel renderer passes a normalized normal.
-    static Vec3 ShadeNormalized(const Vec3& p, const Vec3& nn) {
+    ///
+    /// `perLight` (optional): one 0..1 shadow factor per light, indexed like
+    /// List() (only the first kMaxShadowedLights are read). A light's whole
+    /// contribution is multiplied by its factor. The software renderer passes it
+    /// when spot / point shadows are on, so each light is shadowed by its own map
+    /// and not by the sun's. With nullptr the result is exactly as before.
+    static constexpr int kMaxShadowedLights = 16;
+    static Vec3 ShadeNormalized(const Vec3& p, const Vec3& nn, const float* perLight = nullptr) {
         const auto& lights = List();
         if (lights.empty()) {
             float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
             return Vec3{s, s, s};
         }
         Vec3 acc = AmbientAt(nn);
+        int li = -1;
         for (const auto& L : lights) {
+            ++li;
             float ndl, atten = 1.0f;
             if (L.type == 0) {
                 ndl = Vec3::Dot(nn, L.dir.Normalized() * -1.0f);
@@ -149,6 +158,7 @@ struct SceneLights {
             }
             if (ndl < 0.0f) ndl = 0.0f;
             float k = ndl * atten;
+            if (perLight && li < kMaxShadowedLights) k *= perLight[li];
             acc.x += L.color.x * k; acc.y += L.color.y * k; acc.z += L.color.z * k;
         }
         if (acc.x > 1.0f) acc.x = 1.0f;
@@ -167,8 +177,11 @@ struct SceneLights {
         return SpecularN(p, n.Normalized(), toEye, shininess, dirShadow);
     }
     /// Specular variant that assumes `nn` is already unit length (skips the sqrt).
+    /// `perLight` (optional) works as in ShadeNormalized and replaces `dirShadow`
+    /// for every light, the sun included.
     static Vec3 SpecularN(const Vec3& p, const Vec3& nn, const Vec3& toEye,
-                          float shininess, float dirShadow = 1.0f) {
+                          float shininess, float dirShadow = 1.0f,
+                          const float* perLight = nullptr) {
         const auto& lights = List();
         if (lights.empty()) {
             Vec3 ld = SceneLight::Direction().Normalized() * -1.0f;
@@ -181,7 +194,9 @@ struct SceneLights {
             return Vec3{s, s, s};
         }
         Vec3 spec{0, 0, 0};
+        int li = -1;
         for (const auto& L : lights) {
+            ++li;
             Vec3 ld; float atten = 1.0f;
             if (L.type == 0) {
                 ld = L.dir.Normalized() * -1.0f;
@@ -205,7 +220,8 @@ struct SceneLights {
             float nh = Vec3::Dot(nn, h);
             if (nh <= 0.0f) continue;
             float s = std::pow(nh, shininess) * atten;
-            if (L.type == 0) s *= dirShadow;          // only the sun is shadow-mapped
+            if (perLight) { if (li < kMaxShadowedLights) s *= perLight[li]; }
+            else if (L.type == 0) s *= dirShadow;     // only the sun is shadow-mapped
             spec.x += L.color.x * s; spec.y += L.color.y * s; spec.z += L.color.z * s;
         }
         return spec;

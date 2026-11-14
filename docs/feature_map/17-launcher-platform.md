@@ -1,6 +1,6 @@
 # 17. Launcher & platform
 
-The OkaySpace launcher (`launcher/`, one 24,802-line `main.cpp` plus `VoiceChat.hpp`) and the online platform it talks to:
+The OkaySpace launcher (`launcher/`, one 26,450-line `main.cpp` plus `VoiceChat.hpp`) and the online platform it talks to:
 accounts, friends, chat, forums, marketplace, profiles, admin, the official game, Steam and PlayFab. The client code for the
 online services is header-only in `engine/include/okay/Platform`; the server side is Supabase (SQL in `docs/sql`, one Edge
 function in `supabase/functions`). Anything in `shared/` that the launcher, editor and player all use is mapped here too.
@@ -12,11 +12,11 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **What:** The launcher program players double-click (`OkaySpace.exe`): window and sidebar, the pages, settings, notifications, the loading screen, and the self-updater that keeps the launcher, editor and player current.
 - **Parts:**
   - 17.1.1 Window, sidebar and pages - `launcher/main.cpp` - SDL2 plus Dear ImGui; tabs Create, Play, Community, Account, Settings, Achievements, Friends, Market, Servers, Forums, Downloads, plus Multiplayer, What's New, Tips and Admin; `main()` starts near L16377, the tab pages from L17892; number keys switch pages
-  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; every file must have a SHA-256 in `versions.json` (`launcher/UpdaterCore.hpp`: no checksum, mismatch, failed download or failed swap = refused with a reason, nothing replaced); `ShellSafeUrl` refuses URLs that could break out of the shell command; `versions.json` itself is unsigned (see 17.11)
+  - 17.1.2 Self-updater - `launcher/main.cpp` (L136-326) - compares its baked version with the published `VERSION.txt` and downloads the launcher, editor and player; every file must have a SHA-256 in `versions.json` (`launcher/UpdaterCore.hpp`: no checksum, mismatch, failed download or failed swap = refused with a reason, nothing replaced); a replaced launcher is self-checked before it starts and rolled back if it cannot start or is another version (`shared/SelfUpdate.hpp`, state file `okay_selfupdate.state`; see `docs/updater.md`); `ShellSafeUrl` refuses URLs that could break out of the shell command; `versions.json` itself is unsigned (see 17.11)
   - 17.1.3 Supabase mirror and periodic check - `launcher/main.cpp` (L810-1031) - uses whichever of the Supabase `releases` bucket and GitHub Releases has the newer version; `OKAY_UPDATE_SERVER` overrides; "newer version" badge
   - 17.1.4 What's New and Tips - `launcher/main.cpp` (L4050, tabs 12 and 13) - release history cards and a searchable tips list with a tip of the day
   - 17.1.5 Settings page - `launcher/main.cpp` (tab 4, L20333) - Appearance, Chat & Notifications, Loading screen, Behavior, Game libraries, Account, About, Privacy & Safety, Voice & Audio, Crash reports; saved in `launcher.cfg` next to the exe
-  - 17.1.6 Tray, single instance, notifications - `launcher/main.cpp` (L9614, L9696, L1682, L14945) - minimize to the Windows tray, one launcher per machine, a notification bell and toast pop-ups
+  - 17.1.6 Tray, single instance, notifications - `launcher/main.cpp` (L9614, L9696, L1682, L14945) - Windows tray icon code exists but is not used (the launcher never hides to the tray; the old `min_to_tray` setting was removed), one launcher per machine, a notification bell and toast pop-ups
   - 17.1.7 Shared look and startup frame - `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h` - the Slate theme shared with the editor, a branded splash drawn before ImGui starts, a procedural window icon, embedded fonts
   - 17.1.8 Windows resources and build - `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico` - target `okayspace-launcher` builds `OkaySpace.exe`; it does not link the engine library (only engine headers plus `ServerQuery.cpp` and `UdpSocket.cpp`)
   - 17.1.9 Script UI bridge and test panel - `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp` - not launcher code: OkayUI widgets for script `ui_*` calls and the F1 "Test UI" panel, used by the editor and the player
@@ -24,7 +24,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **API:** `OkaySpace.exe`, `launcher.cfg`, env `OKAY_UPDATE_SERVER`, `OKAY_ACCOUNT_SERVER`, dev hooks `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`
 - **Editor:** none (the launcher starts `OkayEngine.exe` and `OkaySpacePlayer.exe` from `Tools/`)
 - **Docs:** `docs/packaging.md`, `docs/releasing.md`, `docs/launcher-multiplayer.md`
-- **Tests:** none for the shell itself; the updater rules and helpers have tests (`launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
+- **Tests:** none for the shell itself; the updater rules and helpers have tests (`self_update`, `app_restart` verified-restart cases, `launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
 - **Status:** Works - the shipping app, structure read from `main.cpp`; no automated UI test
 - **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums
 - **Related:** 18.1, 18.5, 17.12, 17.13, 41.1
@@ -38,7 +38,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted, stretched SHA-256 file), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
   - 17.2.2 Account facade - `Platform/Account/Account` - process-wide `okay::Account` used by editor, player and the `account_*` script builtins; `OKAY_ACCOUNT_SERVER`
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
-  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files
+  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/own_http_client.md`)
   - 17.2.5 Account page - `launcher/main.cpp` (tab 3, L19634) - sign in or create, profile, sign-in and security, privacy, more
   - 17.2.7 Download my data - `Platform/Account/AccountData` and launcher Account > Sign-in & security > Your data - reads only rows the signed-in user may read (RLS) and saves one JSON in `exports/` next to the launcher, with honest progress, "not set up" sections and a failed-sections list
   - 17.2.8 Delete my account - `supabase/functions/delete-account` and the same card - type the username and the password, then the Edge Function (user id from the JWT only) deletes or anonymises the user's rows in every table in `docs/sql/`, removes uploaded files and the auth user; the launcher shows server step errors, "function not deployed", and signs out on success; see `docs/account_data.md`
@@ -188,7 +188,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Docs:** `docs/supabase-backend.md`
 - **Tests:** none for `Admin`; the anti-cheat parts of `admin.sql` are exercised by `anticheat_sql`; user reports by `user_reports` (requests, outcomes) and `reports_sql` (RLS on a local Postgres)
 - **Status:** Works - shipping page; untested client
-- **Open:** create test servers without a game (old map)
+- **Open:** create test servers without a game (old map). Needs a definition of "test server" from the owner first (see docs/unfinished_launcher.md)
 - **Related:** 39.6, 17.14, 17.5, 17.6
 - **Words:** admin, moderator, staff, role, badge, ban, unban, audit log, admin_log, site_bans, dashboard
 - **Seen as:** Admin tab missing (rank 0); ban banner on sign-in; a moderation action is refused
@@ -330,20 +330,21 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "show me the latest editor crash"
 
 ### 17.17 Platform layer (`okay::platform`) and the own backend
-- **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The editor's and launcher's windows and event loops still call SDL directly, and so does everything drawn through `SDL_Renderer` (the player included), so the own backend cannot run an app yet.
+- **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The player's 2D drawing goes through `okay::platform::Painter` (stage 3): the sdl2 painter is the default and unchanged, a CPU software painter on the own backend is built but **off and not ready** (only reachable with `OKAY_PLATFORM_BACKEND=own` in the environment). The editor's and launcher's windows, event loops and drawing still call SDL directly (`SDL_Renderer`, ImGui's SDL backends), so the own backend cannot run them yet.
 - **Parts:**
   - 17.17.1 Interface - `Platform/Platform` - `Backend`, `Window`, `Event` (incl. touch), `Key` (USB HID numbering = SDL scancodes), `AudioDevice`, `Gamepad`, free timer functions; `Get(kind)`, `Default()`; run-time override `OKAY_PLATFORM_BACKEND=sdl2|own`; also `RelativeMouseState`, `ModState`, `KeyForChar`, `BasePath`, `PrefPath`, `PreferredLocales`, `ShowErrorBox`, `Window::SetIcon` / `IsFullscreen` / `RefreshRateHz`
   - 17.17.2 SDL2 backend - `engine/src/Platform/SdlBackend.cpp` - thin wrapper, the default
   - 17.17.3 Own Linux backend - `engine/src/Platform/OwnLinuxX11.cpp`, `OwnLinuxAudio.cpp`, `OwnLinuxEvdev.cpp`, `OwnLinux.cpp` - X11 + GLX window, keys, text, mouse, clipboard; ALSA playback and capture; evdev controllers; all `dlopen`
   - 17.17.4 Own Windows backend - `engine/src/Platform/OwnWin32.cpp` - Win32, WGL, XInput; compiles under MinGW, never run
   - 17.17.5 Build switch - `cmake/OkayPlatform.cmake` - `-DOKAY_PLATFORM_BACKEND=sdl2|own` picks `Default()`; both are built
-- **Code:** `Platform/Platform`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
-- **API:** `okay::platform::Backend`, `Window`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
+  - 17.17.6 2D painter - `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp` - one interface for a window's 2D drawing (rects, lines, clip, textures, triangles, present, vsync); sdl2 implementation over `SDL_Renderer` (default), software implementation (CPU, okayui rasteriser, `Window::PresentPixels` = X11 `XPutImage` / Win32 `StretchDIBits`; off, not ready)
+- **Code:** `Platform/Platform`, `Platform/Painter`, `engine/src/Platform/Painter.cpp`, `engine/src/Platform/SdlPainter.cpp`, `okayui/soft/OkayUI_SoftPainter.cpp`, `engine/src/Platform/Platform.cpp`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinux.cpp`, `engine/src/Platform/OwnLinuxX11.cpp`, `engine/src/Platform/OwnLinuxAudio.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Platform/OwnWin32.cpp`
+- **API:** `okay::platform::Backend`, `Window`, `Window::PresentPixels`, `Painter`, `CreateSdl2Painter`, `OkayUI::soft::CreateWindowPainter`, `AudioDevice`, `Gamepad`, `Get`, `Default`, `TicksMs32`
 - **Editor:** none
 - **Docs:** `docs/platform_layer.md` (the SDL audit, what is and is not behind the seam, what was tested)
-- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (these two need Xvfb and xdotool and skip without them), `platform_default_env_sdl2`, `platform_default_env_own`
-- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not
-- **Open:** editor and launcher windows, events and GL still use SDL, and all three apps draw through `SDL_Renderer` / ImGui's SDL backends, which need an `SDL_Window` (with the own backend the player says so and exits with code 2); no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
+- **Tests:** `platform`, `platform_window_sdl2`, `platform_window_own` (these two need Xvfb and xdotool and skip without them), `platform_default_env_sdl2`, `platform_default_env_own`, `okayui_painter`, `platform_painter_window` (needs Xvfb)
+- **Status:** Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not. The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform_layer.md`); that path is off by default and not ready
+- **Open:** editor and launcher windows, events and GL still use SDL, and they draw through `SDL_Renderer` / ImGui's SDL backends, which need an `SDL_Window`; the software painter has no GPU, no XShm, no HiDPI, and the Win32 present was only syntax-checked; no Wayland, XDND file drop, touch or DPI queries in the own Linux backend; no Windows audio; no macOS
 - **Related:** 7.1, 8.2, 17.1
 - **Words:** SDL2, platform layer, backend, own backend, X11, GLX, ALSA, evdev, Win32, WGL, XInput, window, event loop, OKAY_PLATFORM_BACKEND, Xvfb
 - **Seen as:** a controller or the audio device behaves differently with the own backend; the own backend cannot open a display; SDL is still needed to build the editor

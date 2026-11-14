@@ -104,7 +104,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   1. M - Inspector for the selected asset (texture, model, audio blocks) writing through `SetSettings`. Depends on: 20.1 package 2.
   2. M - Texture loader applies `maxSize`, `mipmaps`, `sRGB` from the meta when the image is loaded (`AssetManager` Image loader). Depends on: package 1.
   3. M - Model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations`. Depends on: package 1, 3.6.
-  4. S - Audio loader honours `loadMode`, `forceMono`, `quality`. Depends on: package 1, 7.2.
+  4. S - Audio loader honours `loadMode` and `forceMono` (done; `quality` is not applied because audio is not re-encoded). Depends on: package 1, 7.2.
   5. S - On `SettingsChanged` reload the asset in the open scene. Depends on: packages 2-4.
 - **Open:** no UI; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
 - **Related:** 20.1, 3.6, 2.2, 7.2
@@ -840,7 +840,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** WorldStreamer Inspector section
 - **Docs:** `docs/scene_management.md`, `docs/asset_manager.md`; `docs/optimization_tools.md`
 - **Tests:** `worldstreamer`, `scene_load_pool`, `assetmanager`; `optimize_streaming`
-- **Status:** Partial - cell streaming of prefabs works; `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
+- **Status:** Partial - cell streaming of prefabs works (cells are held by instance id, so a cell root destroyed by a script is skipped, not freed twice); `StreamingGrid` and `MipBudget` (budgeted, prioritised loads, #574, test `optimize_streaming`) are on main but `WorldStreamer` does not use them.
 - **Exists today:** `WorldStreamer` instantiates and destroys cell prefabs on the main thread. Cells must be authored by hand as separate prefab files. Missing cell files are skipped.
 - **Work packages:**
   1. M - Streamer uses `StreamingGrid` decisions and `AssetManager::LoadAsync` so a cell load never blocks a frame. Depends on: #574 (on main).
@@ -1169,17 +1169,17 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `Localization::Get`, `Localize`, `PluralText`, `FormatNumber`, `FormatDate`; script `loc`, `set_language`; `LocTable`, `LocGrid`, `LocCheck`, `LocScanProject`
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
 - **Docs:** `docs/localization.md`, `docs/localization_prefs_time.md`; `docs/localization_tools.md`
-- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`
-- **Status:** Partial - the window with grid, CSV, missing and unused filters works; the stricter checker, JSON and key scanner (#574, test `loc_tools`) are on main but not wired to the window.
-- **Exists today:** The window and file format (docs say it all in `docs/localization.md`). The old map listed "translation table editor window, missing-key report, import and export (CSV)" as missing: those are done. `docs/localization_tools.md` says the window still draws its own grid and "wiring it to LocTable ... is the next step".
+- **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
+- **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
+- **Exists today:** The window and file format (`docs/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
 - **Work packages:**
-  1. M - Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter. Depends on: #574 (on main).
-  2. S - Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key. Depends on: package 1.
-  3. S - Import preview: show what an import will change before applying it. Depends on: package 1.
+  1. M - Done. Window uses `LocTable` for cell states (same-as-source, placeholder mismatch, extra) and a state filter.
+  2. S - Done. Checker report panel (`LocCheck`): broken placeholders and plural forms, click to jump to the key.
+  3. S - Import preview: the status line reports the diff after a CSV import (`LocDiffTables`). A confirm step before applying it is still open. Depends on: package 1.
   4. S - JSON import and export (one file per language) for web translators. Depends on: package 1.
-  5. M - Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys. Depends on: package 1.
+  5. M - Done. Key scan uses `LocScanProject` for "used in code, scenes, dialogue" and flags undefined keys.
   6. M - Translation memory and machine-translation suggestion hook (optional). Depends on: package 1.
-- **Open:** the window and the new `LocTable` duplicate the grid logic until package 1 lands; right-to-left scripts are drawn left to right (see 31.3).
+- **Open:** JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`. Right-to-left scripts are drawn left to right (see 31.3).
 - **Related:** 1.8, 12.2, 31.2, 31.3, 10.2
 - **Words:** localization, translation, string table, strings.okayloc, CSV, missing keys, unused keys, plural, translators, languages, i18n
 - **Seen as:** missing translation shows the key; placeholder `{0}` lost in a translation; cannot hand translators a spreadsheet
@@ -1220,15 +1220,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `OKAY_UI_LANG` dev hook; `LocPreview`, `LocPseudoText`, `LocMirrorText`
 - **Editor:** toolbar language menu, Localization window "Pseudo-localize"
 - **Docs:** `docs/localization.md`; `docs/localization_tools.md`
-- **Tests:** `localization`; `loc_tools`
-- **Status:** Partial - language switch and pseudo-localization work in the editor; the `LocPreview` model with mirrored text is on main (#574) but not wired to a window.
-- **Exists today:** Both preview features in the editor. The new `LocPreview` can preview without switching the running language or logging missing keys.
+- **Tests:** `localization`; `loc_tools`, `loc_window`
+- **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers, and mirrored text for a right-to-left language) and does not change the table.
+- **Exists today:** The Scene view follows the toolbar language, including pseudo-localization. The window's preview line is `LocPreview`. Layout does not mirror.
 - **Work packages:**
   1. S - Pseudo-localize options (expansion percent, markers) in the window, using `LocPseudoOptions`. Depends on: #574 (on main).
   2. M - Mirrored preview for right-to-left languages in the Game view. Depends on: package 1, 31.2 package 3.
   3. M - "Show all strings" screenshot sheet: render every UI screen in each language to image files for review. Depends on: 33.3.
   4. S - Overflow warning when a localized text no longer fits its UI box. Depends on: package 1.
-- **Open:** layout does not mirror for right-to-left languages yet.
+- **Open:** the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key.
 - **Related:** 1.8, 12.1, 31.1, 31.2, 33.3
 - **Words:** language preview, pseudo-localization, pseudo loc, switch language, ploc, overflow, text expansion
 - **Seen as:** German text overflows buttons; I cannot see what my game looks like in Japanese
@@ -1247,16 +1247,16 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **API:** `NavigateUI(scene)`, widget `IsFocused()`; `FocusGraph`, `BuildFocusGraph`
 - **Editor:** none (the editor itself is not controller-navigable)
 - **Docs:** `docs/input.md`, `docs/game_ui.md`; `docs/accessibility.md`
-- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`
+- **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Partial - directional navigation works (per code and `ui_nav_touch`); `FocusGraph` and `BuildFocusGraph` (tab order, links, traps, #574, test `focus_remap`) are on main but `NavigateUI` does not use the graph; keys are fixed.
 - **Exists today:** `NavigateUI` as described, called by the player every frame. The navigation keys are fixed in code (`docs/accessibility.md`: "WASD, Enter, Space, the D-pad and A").
 - **Work packages:**
   1. M - `NavigateUI` builds a `FocusGraph` so a designer can set neighbours, tab order and focus traps. Depends on: #574 (on main).
   2. S - Navigation keys and buttons come from `InputActions` (remappable, 32.4). Depends on: package 1.
-  3. S - Focus ring style and focus sound in the UI theme. Depends on: 12.7.
+  3. S - Focus ring style is done (theme colour, thickness, padding, pulse; high-visibility and thickness scale in Accessibility). A focus sound is not. Depends on: 12.7.
   4. S - Scene check that every interactive widget can be reached by navigation (reports in 33.2). Depends on: package 1.
   5. M - Same navigation for world-space and HTML UI. Depends on: package 1.
-- **Open:** the focus visuals depend on each widget's own `IsFocused` drawing; the graph is built from screen rectangles each time it is asked.
+- **Open:** one shared ring is drawn from the theme and the accessibility settings (tests `ui_focus`, `ui_focus_render`); there is no focus sound; the graph is built from screen rectangles each time it is asked and `NavigateUI` does not use its links.
 - **Related:** 8.2, 8.3, 12.2, 12.4, 12.7, 32.4
 - **Words:** controller navigation, gamepad menus, focus, D-pad, tab order, NavigateUI, FocusGraph, keyboard navigation, menu focus
 - **Seen as:** cannot reach a button with the gamepad; focus jumps to a surprising widget; focus lost after a popup closes
@@ -1273,15 +1273,15 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** Timeline window (subtitle actions)
 - **Docs:** `docs/cutscenes.md`; `docs/accessibility.md`
 - **Tests:** `accessibility`
-- **Status:** Partial - cutscenes show subtitles with their own fixed look; the shared `CaptionManager` (#574, test `accessibility`) is on main but nothing connects the Sequencer, dialogue or audio to it, and there is no widget.
-- **Exists today:** The cutscene subtitle card. `docs/accessibility.md` says the Sequencer's subtitle still shows its own text rather than going through `CaptionManager`, and there is no ready-made subtitle widget.
+- **Status:** Partial - `CaptionOverlay` draws `CaptionManager` lines in the player and in editor Play (test `accessibility_remaining`). Cutscene subtitles and dialogue call `Say`. An Audio Source `caption` calls `Sound` when sound captions are on. The Settings screen turns subtitles and sound captions on or off. Still open: subtitle size, background and speaker-name rows, and SRT import.
+- **Exists today:** `CaptionOverlay` draws the caption lines. Cutscene subtitles and dialogue call `Say`. An Audio Source has a caption field. The old cutscene card is skipped while the widget is in the scene. Size, background, speaker-name rows and SRT import are still open.
 - **Work packages:**
   1. M - Subtitle widget component drawing `CaptionManager::Lines()` with the player's settings. Depends on: #574 (on main), 12.2.
   2. S - Sequence subtitle action and dialogue lines go through `CaptionManager`. Depends on: package 1.
   3. S - Audio Source option "caption text" so a sound can show `[door slams]`. Depends on: package 1, 7.3.
   4. S - Settings screen section: size, background, speaker names, sound captions. Depends on: package 1, 12.8.
   5. M - SRT import for recorded voice-over in the Timeline. Depends on: package 1.
-- **Open:** speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources.
+- **Open:** speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on.
 - **Related:** 10.1, 10.2, 7.3, 31.1, 32.3
 - **Words:** subtitles, captions, closed captions, CaptionManager, speaker names, SRT, sound captions, dialogue text, subtitle size
 - **Seen as:** subtitles too small or hard to read; no captions for sounds; subtitles ignore the language setting
@@ -1291,14 +1291,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Let players with colour vision differences read the game: filters, safe palettes and contrast, without changing the art by hand.
 - **Parts:**
   - 32.3.1 Colour vision maths (#574) - `Graphics/ColorVision` - simulate and correct for protanopia, deuteranopia, tritanopia, achromatopsia on colours and images; a colour-vision-safe palette; contrast checks
-  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, saved in Prefs, with change listeners; text size, colour filter, high contrast, reduce motion and reduce flashing are read by the player and set on the Settings screen (12.8.4); hold-to-toggle, aim assist, screen-reader hints and subtitle settings have no reader and no control
+  - 32.3.2 Accessibility settings (#574) - `Core/AccessibilitySettings` - `colorblind` mode and strength, high contrast, text scale, reduce motion and flashing, subtitles, hold-to-toggle and aim assist, saved in Prefs, with change listeners; those rows are on the Settings screen (12.8.4). Screen-reader hints still have no reader and no control
   - 32.3.3 Colour filter - `Graphics/ColorVision`, `player/main.cpp` - the rendered 3D frame of every renderer and the flat colours and text of the screen UI are daltonized (protanopia, deuteranopia, tritanopia); UI images are not; the editor has no preview
 - **Code:** `Graphics/ColorVision`, `Core/AccessibilitySettings`
 - **API:** `SimulateColorblind`, `DaltonizeColor`, `Accessibility::FilterColor`, `TextColor`, `SetColorblind`
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
 - **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
-- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion and reduce flashing change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`); the editor has no preview, UI images are not filtered, and the settings with no reader (subtitles, hold-to-toggle, aim assist, screen reader) are not offered.
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
 - **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
   1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).

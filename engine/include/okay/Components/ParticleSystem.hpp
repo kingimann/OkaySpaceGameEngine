@@ -138,6 +138,7 @@ public:
         float rotation = 0.0f; // billboard spin, degrees
         float angularVel = 0.0f;  // degrees/second
         Color color = Color::White;
+        float baseAlpha = 1.0f; // alpha before the fade-out (fade is applied to this, never to itself)
         bool  alive = false;
     };
 
@@ -531,7 +532,11 @@ public:
                 p.color.b = startColor.b + (endColor.b - startColor.b) * t;
                 p.color.a = startColor.a + (endColor.a - startColor.a) * t;
             }
-            if (fadeOverLife) p.color.a *= Mathf::Clamp01(p.life / p.maxLife);
+            // Fade from the alpha the particle had before fading: the colour-over-life
+            // code above only rewrites alpha when it is on, so multiplying p.color.a by
+            // itself every frame made the default (colour off, fade on) vanish far too fast.
+            if (colorOverLife) p.baseAlpha = p.color.a;
+            if (fadeOverLife) p.color.a = p.baseAlpha * Mathf::Clamp01(p.life / p.maxLife);
         }
     }
 
@@ -562,6 +567,7 @@ private:
             p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
                            ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
             p.color = startColor;
+            p.baseAlpha = startColor.a;
 
             Vec3 origin = transform ? transform->Position() : Vec3::Zero;
             Vec3 off{0.0f, 0.0f, 0.0f};

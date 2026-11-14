@@ -74,7 +74,7 @@ int main() {
         for (const auto& p : ps->Particles()) {
             if (!p.alive) continue;
             if (k == 0) { CHECK_NEAR(p.position.x, 3.851500f, 1e-4f); CHECK_NEAR(p.position.y, 2.167596f, 1e-4f);
-                          CHECK_NEAR(p.position.z, 4.133247f, 1e-4f); CHECK_NEAR(p.color.a, 0.0f, 1e-4f); }
+                          CHECK_NEAR(p.position.z, 4.133247f, 1e-4f); CHECK_NEAR(p.color.a, 0.0444445f, 1e-4f); }   // fade = life left / life (it was a compounded ~0 before round 2)
             if (k == 1) { CHECK_NEAR(p.position.x, 5.671357f, 1e-4f); CHECK_NEAR(p.position.y, 6.232997f, 1e-4f);
                           CHECK_NEAR(p.position.z, 3.987682f, 1e-4f); }
             ++k;

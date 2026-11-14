@@ -26,5 +26,25 @@ int main() {
         CHECK(k[1].Evaluate(nan) == 2.0f);
     }
 
+    RUN_SUITE("particles fade out without compounding");
+    {
+        Scene s;
+        GameObject* go = s.CreateGameObject("Fx");
+        auto* ps = go->AddComponent<ParticleSystem>();
+        ps->Awake();
+        ps->emissionRate = 0.0f;
+        ps->maxParticles = 4;
+        ps->startLifetime = 1.0f; ps->startLifetimeRandom = 0.0f;
+        ps->startColor = Color(1, 1, 1, 1);
+        ps->colorOverLife = false;        // the defaults: no colour over life...
+        ps->fadeOverLife = true;          // ...but fade out
+        ps->Emit(1);
+        for (int i = 0; i < 5; ++i) ps->Update(0.1f);   // life left 0.5 of 1.0 (the first step also emitted)
+        float a = -1.0f;
+        for (const auto& p : ps->Particles()) if (p.alive) a = p.color.a;
+        CHECK(a > 0.0f);
+        CHECK_NEAR(a, 0.5f, 0.02f);       // linear in remaining life; it used to be 0.9*0.8*0.7*0.6*0.5
+    }
+
     TEST_MAIN_RESULT();
 }

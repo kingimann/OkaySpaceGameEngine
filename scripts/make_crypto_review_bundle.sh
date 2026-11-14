@@ -152,8 +152,10 @@ for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519
 BASE=(-std=c++17 -O2 -Iengine/include)
 have_sodium=0
 if command -v pkg-config >/dev/null && pkg-config --exists libsodium; then have_sodium=1; SODIUM_CF=($(pkg-config --cflags libsodium)); SODIUM_LD=($(pkg-config --libs libsodium)); fi
-have_py=0
-python3 -c "from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey" >/dev/null 2>&1 && have_py=1
+have_py=0; PY=""
+for py in python3 /usr/bin/python3 python; do
+    if "$py" -c "from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey" >/dev/null 2>&1; then have_py=1; PY="$py"; break; fi
+done
 
 results=()
 note() { results+=("$1"); echo "$1"; }
@@ -195,7 +197,7 @@ build fuzz_net_crypto_smoke "${BASE[@]}" -DOKAY_OWN_CRYPTO -DOKAY_NET_CRYPTO tes
 if [ $have_py = 1 ]; then
     build crypto_xcheck_tool "${BASE[@]}" tests/crypto_xcheck_tool.cpp "${CORE[@]}" && {
         t0=$SECONDS
-        if python3 tests/scripts/crypto_xcheck.py "$OUT/crypto_xcheck_tool" 1500 >"$OUT/crypto_python_xcheck.log" 2>&1; then
+        if "$PY" tests/scripts/crypto_xcheck.py "$OUT/crypto_xcheck_tool" 1500 >"$OUT/crypto_python_xcheck.log" 2>&1; then
             note "PASS     crypto_python_xcheck ($((SECONDS - t0)) s) $(tail -n1 "$OUT/crypto_python_xcheck.log")"
         else note "FAIL     crypto_python_xcheck (see $OUT/crypto_python_xcheck.log)"; fi
     }

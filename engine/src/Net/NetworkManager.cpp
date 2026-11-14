@@ -26,6 +26,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Net/NetBuildSync.hpp"
+#include "okay/Net/NetQuestSync.hpp"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -97,7 +99,9 @@ std::mutex g_liveMutex;
 std::unordered_set<const NetworkManager*>& LiveManagers() { static std::unordered_set<const NetworkManager*> s; return s; }
 } // namespace
 
-NetworkManager::NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this); }
+NetworkManager::NetworkManager() : m_buildSync(std::make_unique<net::BuildSync>(*this)), m_questSync(std::make_unique<net::QuestSync>(*this)) {
+    std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this);
+}
 NetworkManager::~NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().erase(this); }
 bool NetworkManager::IsLive(const NetworkManager* nm) {
     std::lock_guard<std::mutex> l(g_liveMutex);
@@ -447,6 +451,8 @@ void NetworkManager::Stop() {
     m_inbox.clear();
     m_rpcObserver = nullptr;
     m_syncVars.clear();
+    m_dead.clear();
+    if (!m_keepResume) { m_buildSync->Reset(); m_questSync->Reset(); }
     m_rtt = 0.0f;
     m_ready = false;
     m_matchStarted = false;
@@ -992,6 +998,8 @@ double NetworkManager::ViewTick() const {
 void NetworkManager::Update(float dt) {
     net::PumpSimulator(m_socket);
     net::ProfileAdvance(dt);
+    m_buildSync->Tick(GetScene(), dt);
+    m_questSync->Tick(GetScene(), dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     else if (m_reconnecting) ReconnectTick(dt);
@@ -1002,6 +1010,21 @@ void NetworkManager::Update(float dt) {
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
     net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), true);
+    if (channel.compare(0, 6, "__req/") == 0) return;   // a request is the server's to handle, never a message
+    if (channel == "__bld") {   // build mode: what players built, from the server
+        if (m_mode == Mode::Client && from == 0) m_buildSync->OnServerMessage(data);
+        return;
+    }
+    if (channel == "__qst") {   // quests and story variables, from the server
+        if (m_mode == Mode::Client && from == 0) m_questSync->OnServerMessage(data);
+        return;
+    }
+    if (channel == "__life") {   // the server's ordered death / respawn / health stream: "D|R|H" + the old message
+        if (m_mode != Mode::Client || from != 0 || data.size() < 2) return;
+        const char* old = data[0] == 'D' ? "__death" : data[0] == 'R' ? "__respawn" : data[0] == 'H' ? "__dmg" : nullptr;
+        if (old) Deliver(from, old, data.substr(1));
+        return;
+    }
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
     if (channel == "__match_start") {   // lobby: the match has begun for this room
@@ -1442,6 +1465,8 @@ void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo
     if (sender && !seen) {
         if (channel == "__hit") {
             HandleHitClaim(*sender, data);
+        } else if (channel.compare(0, 6, "__req/") == 0) {
+            deliver = true;   // a request for the server: run in order, below (never relayed or queued)
         } else {
             deliver = ClientMessageOk(*sender, channel, data) && AntiCheatAllows(sender->id, channel, data);
         }
@@ -1453,7 +1478,10 @@ void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo
         auto bytes = net::BuildChanRelAck(channel, ack);
         SendDatagram(ackTo, bytes.data(), bytes.size());
     }
-    for (const net::ChanMsg& m : got) Deliver(m.from, m.channel, m.data);
+    for (const net::ChanMsg& m : got) {
+        if (sender && m.channel.compare(0, 6, "__req/") == 0) { HandleClientRequest(*sender, m.channel, m.data); continue; }
+        Deliver(m.from, m.channel, m.data);
+    }
 }
 
 void NetworkManager::OnOrderedAck(net::ChannelEnd& link, net::Packet& p) {
@@ -1474,6 +1502,7 @@ void NetworkManager::OnSequencedFromClient(Client& from, net::Packet& p, std::si
     if (!from.pipes.sequencedRx.IsStale(from.id, channel, seq) && !AllowMessage(from, len)) return;
     if (!from.pipes.sequencedRx.Accept(from.id, channel, seq)) return;
     if (channel == "__hit") { HandleHitClaim(from, data); return; }
+    if (HandleClientRequest(from, channel, data)) return;
     if (!ClientMessageOk(from, channel, data)) return;
     if (!AntiCheatAllows(from.id, channel, data)) return;
     const std::uint32_t sender = from.id;
@@ -2023,7 +2052,7 @@ void NetworkManager::ApplyHit(HitClaim& claim) {
     ++m_hitsApplied;
     char buf[96];
     std::snprintf(buf, sizeof buf, "|%.9g|%.9g|%u", hs->health, claim.damage, (unsigned)claim.shooter);
-    SendReliable("__dmg", claim.target + buf);
+    SendLife('H', claim.target + buf);
 }
 
 void NetworkManager::NoteRespawn(GameObject* go) {
@@ -2053,21 +2082,95 @@ void NetworkManager::NoteRespawn(GameObject* go) {
     if (owner != 0 && anticheat.DetectOn()) anticheat.detector.NoteRespawn(owner, anticheat.Clock());   // grace: its next positions and shots
     char buf[160];
     std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
-    SendReliable("__respawn", std::string(buf) + id);
+    m_dead.erase(id);
+    SendLife('R', std::string(buf) + id);
 }
 
 void NetworkManager::NoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
-    if (m_mode != Mode::Server || m_applyingHit || !go || !go->transform || go->scene() != GetScene()) return;
+    if (m_mode != Mode::Server || !go || !go->transform || go->scene() != GetScene()) return;
     NetworkSync* ns = go->GetComponent<NetworkSync>();
     if (!ns) return;
     const std::string id = ns->netId.empty() ? go->name : ns->netId;
     auto it = m_syncObjs.find(id);
     if (it == m_syncObjs.end() || it->second.t != go->transform) return;
+    // Remembered either way (a death a hit carried too) for a client that joins while it is dead.
+    if (m_dead.size() < kMaxDeadTracked || m_dead.count(id)) m_dead[id] = DeadInfo{hasFrom, hasFrom ? from : Vec3{}};
+    if (m_applyingHit) return;   // the hit's "__dmg" carries it
     char buf[160];
     std::snprintf(buf, sizeof buf, "%d|%.9g|%.9g|%.9g|", hasFrom ? 1 : 0, hasFrom ? from.x : 0.0f,
                   hasFrom ? from.y : 0.0f, hasFrom ? from.z : 0.0f);
-    SendReliable("__death", std::string(buf) + id);
+    SendLife('D', std::string(buf) + id);
     ++m_deathsSent;
+}
+
+void NetworkManager::SendLife(char kind, const std::string& body, std::int64_t only) {
+    if (m_mode != Mode::Server) return;
+    const std::string data = std::string(1, kind) + body;
+    if (only >= 0) SendOrderedTo((std::uint32_t)only, "__life", data);
+    else SendOrdered("__life", data);
+}
+
+// A client that joins now missed every death and every damage hit so far. Tell it what is true now:
+// who is dead (where the blow came from, for the fall) and who is hurt. Ordered with what follows, so a
+// respawn that comes next cannot overtake it.
+void NetworkManager::SendLifeSnapshot(std::uint32_t peer) {
+    for (auto it = m_dead.begin(); it != m_dead.end();) {
+        auto obj = m_syncObjs.find(it->first);
+        // Still here and alive (revived without a respawn message): not dead any more.
+        if (obj != m_syncObjs.end() && obj->second.t && obj->second.t->gameObject) {
+            if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>()) if (!hs->dead) { it = m_dead.erase(it); continue; }
+        }
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "%d|%.9g|%.9g|%.9g|", it->second.hasFrom ? 1 : 0, it->second.from.x, it->second.from.y, it->second.from.z);
+        SendLife('D', std::string(buf) + it->first, peer);
+        ++m_lateLifeSent;
+        ++it;
+    }
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.t || !o.t->gameObject || m_dead.count(id)) continue;
+        auto* hs = o.t->gameObject->GetComponent<HealthStat>();
+        if (!hs || hs->dead || !std::isfinite(hs->health) || hs->health >= hs->maxHealth) continue;
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "|%.9g|0|0", hs->health);
+        SendLife('H', id + buf, peer);
+        ++m_lateLifeSent;
+    }
+}
+
+void NetworkManager::SetRequestHandler(const std::string& channel, RequestHandler handler) {
+    if (channel.compare(0, 6, "__req/") != 0 || channel.size() <= 6) return;
+    if (handler) m_requestHandlers[channel] = std::move(handler);
+    else m_requestHandlers.erase(channel);
+}
+void NetworkManager::ClearRequestHandler(const std::string& channel) { m_requestHandlers.erase(channel); }
+
+int NetworkManager::AddJoinHook(std::function<void(std::uint32_t)> hook) {
+    if (!hook) return 0;
+    m_joinHooks.emplace_back(m_nextJoinHook, std::move(hook));
+    return m_nextJoinHook++;
+}
+void NetworkManager::RemoveJoinHook(int id) {
+    m_joinHooks.erase(std::remove_if(m_joinHooks.begin(), m_joinHooks.end(),
+                                     [&](const auto& h) { return h.first == id; }), m_joinHooks.end());
+}
+
+bool NetworkManager::PeerPosition(std::uint32_t id, Vec3& out) const {
+    for (const auto& [ep, c] : m_clients)
+        if (c.id == id && c.hasState) { out = Vec3(c.state.x, c.state.y, c.state.z); return true; }
+    return false;
+}
+
+bool NetworkManager::HandleClientRequest(Client& from, const std::string& channel, const std::string& data) {
+    if (channel.compare(0, 6, "__req/") != 0) return false;
+    auto it = m_requestHandlers.find(channel);
+    if (it == m_requestHandlers.end()) return true;
+    if (maxRelayedBytes > 0 && channel.size() + data.size() > (std::size_t)maxRelayedBytes) return true;
+    if (!dedicated && m_localRoom != from.room) return true;
+    if (!AntiCheatAllows(from.id, channel, data)) return true;
+    const std::uint32_t id = from.id;
+    RequestHandler h = it->second;   // a copy: the handler may unregister itself
+    h(id, data);
+    return true;
 }
 
 void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
@@ -3210,6 +3313,12 @@ void NetworkManager::ServerTick(float dt) {
                     net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
                     SendDatagram(from, sv.Data(), sv.Size());
                 }
+                SendLifeSnapshot(c.id);   // who is dead or hurt right now
+                {   // replicated systems (build mode, quests) send what the newcomer missed
+                    const std::uint32_t joined = c.id;
+                    const auto hooks = m_joinHooks;   // a hook may add or remove hooks
+                    for (const auto& h : hooks) if (h.second) h.second(joined);
+                }
             }
         } else if (type == SyncVar) {
             // A client requested a variable change; apply it and fan out to all.
@@ -3360,6 +3469,7 @@ void NetworkManager::ServerTick(float dt) {
                 SendDatagram(from, ack.Data(), ack.Size());
                 if (!it->second.relSeen.Accept(seq)) continue;   // a repeat (the rate was charged before the ack)
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
+                if (HandleClientRequest(it->second, channel, data)) continue;
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
@@ -3470,6 +3580,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 if (!CookieOk(it->second, p)) continue;
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // never relayed
+                if (HandleClientRequest(it->second, channel, data)) continue;   // a request for the server, never relayed
                 if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
                 if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)

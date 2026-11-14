@@ -89,6 +89,8 @@ add_library(okay_engine
     src/Components/Ragdoll.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetBuildSync.cpp
+    src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
     src/Net/NetChannels.cpp
     src/Net/NetSim.cpp

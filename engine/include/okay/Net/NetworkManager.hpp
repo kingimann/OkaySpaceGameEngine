@@ -25,7 +25,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
-namespace net { class Packet; }
+namespace net { class Packet; class BuildSync; class QuestSync; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -690,6 +690,32 @@ public:
     void NoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
     /// Server: deaths sent by NoteDeath since it started (not the ones a hit carried).
     int DeathsSent() const { return m_deathsSent; }
+
+    /// Build mode over the network: client placements, removals, moves, links and undo are requests the
+    /// server checks; what players built reaches late joiners. Rules and counters live here. On by default
+    /// and idle while the scene has no BuildMode. See okay/Net/NetBuildSync.hpp and docs/build_mode.md.
+    net::BuildSync& Build() { return *m_buildSync; }
+    /// Quest log and story variables over the network (server authoritative). See okay/Net/NetQuestSync.hpp.
+    net::QuestSync& Quests() { return *m_questSync; }
+
+    // ---- Request channels and join hooks (for replicated game systems) -------------
+    /// Server: a client's message on `channel` (it must start with "__req/") goes to `handler`
+    /// (sender id, payload) and nowhere else: it is not relayed to other clients, not put in the
+    /// inbox, and a channel nobody registered is dropped. It still goes through the same checks as
+    /// any client message first (cookie, per-client rate and size limits, the anti-cheat's rate
+    /// limits and kick rules). The handler decides what the request means and must treat the
+    /// payload as hostile. Used by build mode and the quest log. Not cleared by Stop().
+    using RequestHandler = std::function<void(std::uint32_t from, const std::string& data)>;
+    void SetRequestHandler(const std::string& channel, RequestHandler handler);
+    void ClearRequestHandler(const std::string& channel);
+    /// Server: called when a client joins (or rejoins) with its id, once the Welcome is sent, so a
+    /// replicated system can send it the state it missed. Returns an id for RemoveJoinHook.
+    int  AddJoinHook(std::function<void(std::uint32_t peer)> hook);
+    void RemoveJoinHook(int id);
+    /// Server: where the client's avatar last reported being (false if it has not reported one yet).
+    bool PeerPosition(std::uint32_t id, Vec3& out) const;
+    /// Server: deaths and damaged health a client that joined late was told about since this manager started.
+    int LateJoinLifeSent() const { return m_lateLifeSent; }
     /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
     /// verified account ("" if anonymous) and its last refusals, oldest first.
     struct AntiCheatKick {
@@ -932,6 +958,21 @@ private:
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
     bool m_applyingHit = false;   // server: inside ApplyHit (its __dmg carries the death)
+    int m_lateLifeSent = 0;
+    std::unique_ptr<net::BuildSync> m_buildSync;
+    std::unique_ptr<net::QuestSync> m_questSync;
+    std::unordered_map<std::string, RequestHandler> m_requestHandlers;
+    std::vector<std::pair<int, std::function<void(std::uint32_t)>>> m_joinHooks;
+    int m_nextJoinHook = 1;
+    /// A client's message on a "__req/" channel: true if it was one (handled or dropped).
+    bool HandleClientRequest(Client& from, const std::string& channel, const std::string& data);
+    /// Server: object life events (death, respawn, health) go out on one ordered channel so a
+    /// respawn can never be applied before the death it follows, whatever the network does.
+    void SendLife(char kind, const std::string& body, std::int64_t only = -1);
+    struct DeadInfo { bool hasFrom = false; Vec3 from{}; };
+    std::unordered_map<std::string, DeadInfo> m_dead;   // synced objects the server knows are dead (cleared by a respawn)
+    static constexpr std::size_t kMaxDeadTracked = 4096;
+    void SendLifeSnapshot(std::uint32_t peer);
     int m_deathsSent = 0;
     float m_hitDist = 0.0f, m_hitOff = 0.0f, m_hitAllowed = 0.0f;   // the last CheckHitView's numbers (for the detector)
     void FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why);

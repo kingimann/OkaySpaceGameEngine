@@ -3133,6 +3133,11 @@ if(UNIX AND NOT APPLE)
     set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()
 
+add_executable(test_editor_play_input test_editor_play_input.cpp)
+target_link_libraries(test_editor_play_input PRIVATE okay::engine)
+target_compile_definitions(test_editor_play_input PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_play_input COMMAND test_editor_play_input)
+
 # The import seam routes every opt-in own-reader format (slots 3-16) to its own reader (one tiny fixture each).
 add_executable(test_own_dispatch test_own_dispatch.cpp)
 target_link_libraries(test_own_dispatch PRIVATE okay::engine)

@@ -11,6 +11,7 @@
 namespace {
 using namespace okay;
 namespace be = okayac::backend;
+namespace og = okayac::og;
 
 bool Has(const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; }
 const std::string kUid = "6f94da84-5a9b-48c6-a2d0-90059bd6bf79";

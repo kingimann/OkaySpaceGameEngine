@@ -237,6 +237,7 @@ add_library(okay_engine
     src/Render/SmdReader.cpp
     src/Render/Md5Reader.cpp
     src/Render/Ms3dReader.cpp
+    src/Render/AseReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -538,6 +539,11 @@ endif()
 if(OKAY_OWN_MS3D)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
+endif()
+# Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
+if(OKAY_OWN_ASE)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

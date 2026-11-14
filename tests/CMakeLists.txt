@@ -2931,6 +2931,18 @@ target_compile_definitions(test_ms3d_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_
 add_test(NAME ms3d_hostile COMMAND test_ms3d_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(ms3d_hostile PROPERTIES TIMEOUT 300)
 
+# Our own ASE reader: fixtures from scripts/gen_ase_fixtures.py (UTF-8, CRLF and UTF-16 variants), values computed by hand,
+# the import seam, then a standalone hostile-input + mutation-fuzz test.
+add_executable(test_ase_reader test_ase_reader.cpp)
+target_link_libraries(test_ase_reader PRIVATE okay::engine)
+target_compile_definitions(test_ase_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_reader COMMAND test_ase_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_ase_hostile test_ase_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/AseReader.cpp)
+target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

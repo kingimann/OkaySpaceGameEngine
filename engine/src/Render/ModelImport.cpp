@@ -89,7 +89,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -419,6 +419,12 @@ constexpr bool kOwnMs3dDefault = true;
 constexpr bool kOwnMs3dDefault = false;
 #endif
 
+#ifdef OKAY_OWN_ASE_DEFAULT
+constexpr bool kOwnAseDefault = true;
+#else
+constexpr bool kOwnAseDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -430,6 +436,7 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_SMD",     "SMD",     kOwnSmdDefault},       // 7
     {"OKAY_OWN_MD5",     "MD5",     kOwnMd5Default},       // 8
     {"OKAY_OWN_MS3D",    "MS3D",    kOwnMs3dDefault},       // 9
+    {"OKAY_OWN_ASE",     "ASE",     kOwnAseDefault},       // 10
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -446,6 +453,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".smd") return 7;
     if (e == ".md5mesh" || e == ".md5anim") return 8;
     if (e == ".ms3d") return 9;
+    if (e == ".ase") return 10;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -565,7 +573,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 6 ? ReadOffFile(path, out, &e1)
                   : s == 7 ? ReadSmdFile(path, out, &e1)
                   : s == 8 ? ReadMd5File(path, out, &e1)
-                  : ReadMs3dFile(path, out, &e1);
+                  : s == 9 ? ReadMs3dFile(path, out, &e1)
+                  : ReadAseFile(path, out, &e1);
         if (good && flatten && s >= 6) FlattenImportedModel(out);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);

@@ -218,3 +218,21 @@ ms3d	models/MS3D/Wuson.ms3d	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	
 ms3d	models/MS3D/jeep1.ms3d	ok	area=755.1954	meshes=7	tris=2032	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-5.529,-0.011,-8.537,5.529,7.629,8.109	verts=1948	tex=1	nodes=1	uv=1	nrm=1
 ms3d	models/MS3D/twospheres.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1
 ms3d	models/MS3D/twospheres_withmats.ms3d	ok	area=122847.3647	meshes=2	tris=240	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-63.000,-13.500,-94.000,167.000,181.000,94.000	verts=178	tex=0	nodes=1	uv=1	nrm=1
+# ase: own ASE reader (readers batch A)
+ase	models/ASE/CameraRollAnim.ase	ok	area=15947.8918	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=4.000	mat=0	bbox=-24.786,-0.000,-23.077,45.869,38.746,24.786	verts=24	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/CameraRollAnimWithChildObject.ase	ok	area=30058.8192	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=4.000	mat=0	bbox=-54.889,-0.000,-23.077,45.869,38.746,97.416	verts=48	tex=0	nodes=4	uv=1	nrm=1
+ase	models/ASE/MotionCaptureROM.ase	ok	area=1724.5302	meshes=26	tris=2016	bones=0	skinned=0	clips=1	dur=45.167	mat=0	bbox=-31.566,0.906,-26.822,32.482,68.500,-12.514	verts=3982	tex=0	nodes=32	uv=0	nrm=1
+ase	models/ASE/RotatingCube.ASE	ok	area=18997.8876	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=6.000	mat=0	bbox=-29.345,-4.086,-29.259,37.322,49.208,34.181	verts=24	tex=0	nodes=2	uv=1	nrm=1
+ase	models/ASE/TargetCameraAnim.ase	ok	area=15947.8918	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=3.000	mat=0	bbox=-24.786,-0.000,-23.077,45.869,38.746,24.786	verts=24	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_Normal.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV1-2_OffsetUV0-0.9_Rotate-72_mirrorU.ase	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV2x.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/TestUVTransform/UVTransform_ScaleUV2x_Rotate45.ASE	ok	area=5654.1642	meshes=1	tris=32	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-38.461,-0.000,-30.484,38.461,0.000,43.020	verts=25	tex=1	nodes=2	uv=1	nrm=1
+ase	models/ASE/ThreeCubesGreen.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/ThreeCubesGreen_UTF16BE.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/ThreeCubesGreen_UTF16LE.ASE	ok	area=840000.1201	meshes=3	tris=36	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-300.000,-130.748,-241.413,0.000,326.731,152.493	verts=72	tex=0	nodes=4	uv=0	nrm=1
+ase	models/ASE/anim.ASE	ok	area=12839.1880	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=3.333	mat=0	bbox=-56.718,-0.000,-28.205,20.228,56.983,22.437	verts=48	tex=0	nodes=3	uv=1	nrm=1
+ase	models/ASE/anim2.ASE	ok	area=12839.1824	meshes=2	tris=24	bones=0	skinned=0	clips=1	dur=3.333	mat=0	bbox=-56.788,-0.000,-28.205,20.228,57.251,22.437	verts=48	tex=0	nodes=7	uv=1	nrm=1
+ase	models/invalid/empty.ase	FAIL	ASE: not an ASE file (no *3DSMAX_ASCIIEXPORT line)
+ase	models-nonbsd/ASE/Rifle.ase	ok	area=781.1530	meshes=1	tris=366	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.391,-31.482,-9.501,1.391,12.719,9.863	verts=513	tex=1	nodes=2	uv=1	nrm=1
+ase	models-nonbsd/ASE/Rifle2.ase	ok	area=8673.7679	meshes=1	tris=572	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-3.523,-44.979,-20.233,3.523,71.303,21.537	verts=759	tex=1	nodes=2	uv=1	nrm=1

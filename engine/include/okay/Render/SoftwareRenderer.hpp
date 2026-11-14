@@ -5,6 +5,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -77,6 +78,11 @@ struct ShadowMap {
 };
 inline ShadowMap& Shadows();
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n);
+
+// Spot / point / area light shadows (software). Declared here so the per-pixel
+// shading can ask for them; the maps and the sampling live below ShadowFactor.
+inline bool  LocalShadowsActive();
+inline void  LocalShadowFactors(const Vec3& wpos, const Vec3& n, float* perLight);
 
 // Fresnel rim light: a soft glow on surfaces facing away from the camera (grazing
 // angles), which separates objects from the background and reads as a subtle
@@ -517,6 +523,7 @@ public:
         const float rimPow    = RimPower();
         const bool  shadowsOn = Shadows().enabled && receiveShadows;
         const bool  envOn     = EnvSky().enabled;
+        const bool  localShadowsOn = receiveShadows && LocalShadowsActive();
         // Incremental barycentric (linear in x): per-scanline init, per-pixel step.
         // Double precision avoids float cancellation across screen-filling triangles.
         const double dInv = (double)inv;
@@ -571,7 +578,24 @@ public:
                 Vec3 wpos{a0 * WXa[0] + a1 * WXa[1] + a2 * WXa[2],
                           a0 * WYa[0] + a1 * WYa[1] + a2 * WYa[2],
                           a0 * WZa[0] + a1 * WZa[1] + a2 * WZa[2]};
-                Vec3 lit = SceneLights::ShadeNormalized(wpos, n);   // n already unit
+                // Spot / point / area shadows: every light gets its own 0..1 factor
+                // (the sun's comes from its cascades), so a lamp's shadow does not
+                // darken the sun and the other way round. Off = the original path.
+                float lightSh[SceneLights::kMaxShadowedLights];
+                const bool perLightSh = localShadowsOn;
+                float sh = 1.0f;
+                Vec3 lit;
+                if (perLightSh) {
+                    LocalShadowFactors(wpos, n, lightSh);
+                    if (shadowsOn) {
+                        sh = ShadowFactor(wpos, n);
+                        const int sunI = SceneLights::SunIndex();
+                        if (sunI >= 0 && sunI < SceneLights::kMaxShadowedLights) lightSh[sunI] = sh;
+                    }
+                    lit = SceneLights::ShadeNormalized(wpos, n, lightSh);
+                } else {
+                    lit = SceneLights::ShadeNormalized(wpos, n);   // n already unit
+                }
                 // Specular/gloss map: a grayscale texture whose luminance scales the
                 // specular highlight + reflection per texel (shiny tape on a matte
                 // box, wet patches, worn metal). 1.0 (full) when no map is bound.
@@ -600,8 +624,7 @@ public:
                 }
                 // Cast shadows: fade the direct light toward the ambient floor for
                 // fragments occluded from the light (specular is shadowed below).
-                float sh = 1.0f;
-                if (shadowsOn) {
+                if (shadowsOn && !perLightSh) {
                     sh = ShadowFactor(wpos, n);
                     if (sh < 0.999f) {
                         Vec3 amb = SceneLights::AmbientAt(n);
@@ -625,7 +648,7 @@ public:
                 Vec3 spec{0, 0, 0};
                 if (specularK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
-                    spec = SceneLights::SpecularN(wpos, n, toEye, shininess, sh);
+                    spec = SceneLights::SpecularN(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr);
                     float ks = specularK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
                     // Toon: collapse the highlight to a single hard glint (on/off).
@@ -1224,6 +1247,215 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     return 1.0f;
 }
 
+// ---- Spot / point / area light shadows -------------------------------------
+// The software renderer's local light shadows. Each shadow-casting spot light gets
+// one perspective depth map, each point or area light six cube-face maps, built
+// with the same views the GPU backends use (BuildLocalLightView). Maps store the
+// distance along the view axis (1/w is linear on screen, so it is interpolated
+// and inverted per texel), which lets the bias be a plain world distance.
+//
+// Gates: ShadowsEnabled() (the same switch as the sun), the light's own Cast
+// Shadows and Strength, the mesh's Cast / Receive Shadows. Like the sun's shadow
+// it is drawn only on the per-pixel lighting path (PerPixelLighting, or a shader
+// that forces it). Up to 16 tiles per frame, nearest lights first (a spot is 1
+// tile, a point light 6), the same budget as the GPU atlas.
+struct LocalShadowMapSW {
+    int light = -1;                       // index into SceneLights::List()
+    LocalLightView view;
+    std::vector<float> depth[6];          // view distance per texel; 1e30 = empty
+};
+struct LocalShadowSet {
+    static const int kMaxTiles = 16;
+    std::vector<LocalShadowMapSW> maps;
+    int  size = 0;                        // texels per tile edge
+    int  lightMap[SceneLights::kMaxShadowedLights];   // light index -> maps index, -1 = none
+    bool enabled = false;
+    LocalShadowSet() { for (int& m : lightMap) m = -1; }
+};
+inline LocalShadowSet& LocalShadows() { static LocalShadowSet s; return s; }
+/// Texels per local shadow tile edge (software). 256 keeps 16 tiles near 4 MB.
+inline int& LocalShadowResolution() { static int v = 256; return v; }
+inline bool LocalShadowsActive() { return LocalShadows().enabled; }
+
+namespace detail {
+/// Rasterize one clip-space triangle's view distance into a local shadow tile.
+/// The triangle is cut against the near plane first (w > nearZ), so a big ground
+/// quad that reaches behind the light still shadows what is in front of it.
+inline void RasterLocalDepth(std::vector<float>& depth, int S, const Vec4 in[3], float nearZ) {
+    Vec4 poly[4]; int n = 0;
+    for (int i = 0; i < 3; ++i) {
+        const Vec4& a = in[i]; const Vec4& b = in[(i + 1) % 3];
+        const float da = a.w - nearZ, db = b.w - nearZ;
+        if (da >= 0.0f) { if (n < 4) poly[n++] = a; }
+        if ((da >= 0.0f) != (db >= 0.0f)) {
+            float t = da / (da - db);
+            if (n < 4) poly[n++] = Vec4{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                                        a.z + (b.z - a.z) * t, nearZ};
+        }
+    }
+    if (n < 3) return;
+    for (int j = 1; j + 1 < n; ++j) {
+        const Vec4* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
+        float sx[3], sy[3], iw[3];
+        for (int k = 0; k < 3; ++k) {
+            iw[k] = 1.0f / tri[k]->w;
+            sx[k] = (tri[k]->x * iw[k] * 0.5f + 0.5f) * S;
+            sy[k] = (1.0f - (tri[k]->y * iw[k] * 0.5f + 0.5f)) * S;
+        }
+        float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+        if (area == 0.0f) continue;
+        float inv = 1.0f / area;
+        int minx = (int)std::floor(std::fmin(sx[0], std::fmin(sx[1], sx[2])));
+        int maxx = (int)std::ceil (std::fmax(sx[0], std::fmax(sx[1], sx[2])));
+        int miny = (int)std::floor(std::fmin(sy[0], std::fmin(sy[1], sy[2])));
+        int maxy = (int)std::ceil (std::fmax(sy[0], std::fmax(sy[1], sy[2])));
+        if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+        if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+        for (int y = miny; y <= maxy; ++y)
+            for (int x = minx; x <= maxx; ++x) {
+                float px = x + 0.5f, py = y + 0.5f;
+                float w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) * inv;
+                float w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) * inv;
+                float w2 = 1.0f - w0 - w1;
+                const float e = -1e-4f;                       // a hair wide: no cracks along fan edges
+                if (w0 < e || w1 < e || w2 < e) continue;
+                float ivw = w0 * iw[0] + w1 * iw[1] + w2 * iw[2];
+                if (ivw <= 0.0f) continue;
+                float d = 1.0f / ivw;
+                float& dref = depth[(std::size_t)y * S + x];
+                if (d < dref) dref = d;
+            }
+    }
+}
+} // namespace detail
+
+/// Build this frame's spot / point / area shadow maps. Called by RenderMeshes
+/// after the sun's cascades. Leaves LocalShadows().enabled false when nothing in
+/// the scene needs one.
+inline void RenderLocalShadowMaps(const Scene& scene, const Mat4& camVp, const Vec3& eye) {
+    LocalShadowSet& ls = LocalShadows();
+    ls.maps.clear(); ls.enabled = false;
+    for (int& m : ls.lightMap) m = -1;
+    if (!ShadowsEnabled()) return;
+    const auto& lights = SceneLights::List();
+    if (lights.empty()) return;
+
+    struct Cand { int index; float key; };
+    std::vector<Cand> cands;
+    const Frustum camFr = Frustum::FromVP(camVp);
+    for (int i = 0; i < (int)lights.size() && i < SceneLights::kMaxShadowedLights; ++i) {
+        const LightSample& s = lights[i];
+        if (s.type == 0 || !s.castShadows || s.shadowStrength <= 0.0f || s.range <= 0.0f) continue;
+        if (s.color.x + s.color.y + s.color.z <= 1e-4f) continue;
+        if (!camFr.SphereVisible(s.pos, s.range)) continue;      // its light cannot reach the view
+        cands.push_back({i, (s.pos - eye).Magnitude() - s.range});
+    }
+    if (cands.empty()) return;
+    std::stable_sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.key < b.key; });
+
+    int S = LocalShadowResolution(); if (S < 32) S = 32; if (S > 2048) S = 2048;
+    int used = 0;
+    for (const Cand& c : cands) {
+        const LightSample& s = lights[c.index];
+        const int need = s.type == 2 ? 1 : 6;
+        if (used + need > LocalShadowSet::kMaxTiles) continue;   // a spot may still fit
+        used += need;
+        LocalShadowMapSW m;
+        m.light = c.index;
+        m.view = BuildLocalLightView(s, S);
+        for (int f = 0; f < m.view.tiles; ++f) m.depth[f].assign((std::size_t)S * S, 1e30f);
+        ls.lightMap[c.index] = (int)ls.maps.size();
+        ls.maps.push_back(std::move(m));
+    }
+    ls.size = S;
+
+    // Rasterize every shadow caster into each map that can reach it.
+    std::vector<Vec4> clip;
+    for (const auto& go : scene.Objects()) {
+        if (!go || go->firstPersonOnly) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || !go->ActiveInHierarchy() || !mr->enabled || mr->wireframe || !mr->castShadows) continue;
+        const Mesh* shMesh = visibility::Current().ShadowMesh(go.get(), mr);
+        if (!shMesh || shMesh->vertices.empty()) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
+        Vec3 wlo{1e30f, 1e30f, 1e30f}, whi{-1e30f, -1e30f, -1e30f};
+        for (int k = 0; k < 8; ++k) {
+            Vec3 w = model.MultiplyPoint({(k & 1) ? bhi.x : blo.x, (k & 2) ? bhi.y : blo.y, (k & 4) ? bhi.z : blo.z});
+            wlo.x = std::fmin(wlo.x, w.x); wlo.y = std::fmin(wlo.y, w.y); wlo.z = std::fmin(wlo.z, w.z);
+            whi.x = std::fmax(whi.x, w.x); whi.y = std::fmax(whi.y, w.y); whi.z = std::fmax(whi.z, w.z);
+        }
+        const auto& V = shMesh->vertices; const auto& T = shMesh->triangles;
+        for (LocalShadowMapSW& m : ls.maps) {
+            const LightSample& s = lights[m.light];
+            // Skip a caster wholly outside the light's reach (box vs sphere).
+            float qx = std::fmax(wlo.x, std::fmin(s.pos.x, whi.x)) - s.pos.x;
+            float qy = std::fmax(wlo.y, std::fmin(s.pos.y, whi.y)) - s.pos.y;
+            float qz = std::fmax(wlo.z, std::fmin(s.pos.z, whi.z)) - s.pos.z;
+            if (qx * qx + qy * qy + qz * qz > s.range * s.range) continue;
+            for (int f = 0; f < m.view.tiles; ++f) {
+                Mat4 mvp = m.view.vp[f] * model;
+                clip.resize(V.size());
+                for (std::size_t v = 0; v < V.size(); ++v) clip[v] = mvp * Vec4{V[v], 1.0f};
+                for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+                    const Vec4 tri[3] = {clip[T[i]], clip[T[i + 1]], clip[T[i + 2]]};
+                    detail::RasterLocalDepth(m.depth[f], S, tri, m.view.nearZ);
+                }
+            }
+        }
+    }
+    ls.enabled = true;
+}
+
+/// 0 = fully shadowed, 1 = fully lit, for light `li` at world point `wpos` with
+/// unit normal `n`. 1 when the light has no map. The receiver is moved along its
+/// normal and toward the light by a few texels (a world-space bias, like the GPU
+/// shaders), then a 6-tap Poisson filter reads the map.
+inline float LocalShadowFactor(int li, const Vec3& wpos, const Vec3& n) {
+    LocalShadowSet& ls = LocalShadows();
+    if (!ls.enabled || li < 0 || li >= SceneLights::kMaxShadowedLights) return 1.0f;
+    const int mi = ls.lightMap[li];
+    if (mi < 0) return 1.0f;
+    const LocalShadowMapSW& m = ls.maps[mi];
+    const LightSample& L = SceneLights::List()[li];
+    Vec3 toL = L.pos - wpos;
+    const float dist = toL.Magnitude();
+    if (dist < 1e-4f || dist >= L.range) return 1.0f;           // at the light, or out of its reach
+    const Vec3 dir = toL * (1.0f / dist);
+    const int face = m.view.tiles == 6 ? CubeFace(wpos - L.pos) : 0;
+    const float texel = m.view.texelAt1 * dist;                  // world size of a texel here
+    Vec3 p = wpos + n * (texel * 2.0f * L.shadowBias) + dir * (texel * 1.5f * L.shadowBias);
+    Vec4 c = m.view.vp[face] * Vec4{p, 1.0f};
+    if (c.w <= m.view.nearZ) return 1.0f;                        // behind the spot's view
+    const float iw = 1.0f / c.w, x = c.x * iw, y = c.y * iw;
+    if (x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) return 1.0f;   // outside the cone's view
+    static const float kPoisson[6][2] = {
+        { 0.000f,  0.000f}, {-0.326f, -0.406f}, { 0.840f, -0.074f},
+        {-0.696f,  0.457f}, { 0.185f,  0.893f}, { 0.507f, -0.640f},
+    };
+    const int S = ls.size;
+    const float fx = (x * 0.5f + 0.5f) * S, fy = (1.0f - (y * 0.5f + 0.5f)) * S;
+    const float radius = ShadowSoftness() * 0.6f;
+    const float eps = texel * 0.75f * L.shadowBias;
+    float lit = 0.0f;
+    for (int k = 0; k < 6; ++k) {
+        int px = (int)(fx + kPoisson[k][0] * radius), py = (int)(fy + kPoisson[k][1] * radius);
+        if (px < 0 || py < 0 || px >= S || py >= S) { lit += 1.0f; continue; }
+        if (c.w <= m.depth[face][(std::size_t)py * S + px] + eps) lit += 1.0f;
+    }
+    return 1.0f - L.shadowStrength * (1.0f - lit / 6.0f);
+}
+
+/// Fill `perLight[0 .. kMaxShadowedLights)` with every light's local shadow
+/// factor (1 for the sun, for lights without a map, and past the light count).
+inline void LocalShadowFactors(const Vec3& wpos, const Vec3& n, float* perLight) {
+    const auto& lights = SceneLights::List();
+    for (int i = 0; i < SceneLights::kMaxShadowedLights; ++i) {
+        perLight[i] = (i < (int)lights.size() && lights[i].type != 0)
+                          ? LocalShadowFactor(i, wpos, n) : 1.0f;
+    }
+}
+
 // ---- Screen-space ambient occlusion ----------------------------------------
 inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by default (perf); opt-in
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
@@ -1577,6 +1809,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     SceneAmbientColors(rs, SceneLights::AmbientColor(), SceneLights::SkyAmbient(), SceneLights::GroundAmbient());
     const visibility::Frame& vis = visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore);
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
+    RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});

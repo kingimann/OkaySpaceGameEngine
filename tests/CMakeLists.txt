@@ -678,6 +678,12 @@ add_test(NAME scene_pointer COMMAND test_scene_pointer)
 add_executable(test_light_shadows test_light_shadows.cpp)
 target_link_libraries(test_light_shadows PRIVATE okay::engine)
 add_test(NAME light_shadows COMMAND test_light_shadows)
+add_executable(test_software_local_shadows test_software_local_shadows.cpp)
+target_link_libraries(test_software_local_shadows PRIVATE okay::engine)
+add_test(NAME software_local_shadows COMMAND test_software_local_shadows)
+add_executable(test_ssao_math test_ssao_math.cpp)
+target_link_libraries(test_ssao_math PRIVATE okay::engine)
+add_test(NAME ssao_math COMMAND test_ssao_math)
 
 add_executable(test_modifiers test_modifiers.cpp)
 target_link_libraries(test_modifiers PRIVATE okay::engine)
@@ -2926,6 +2932,22 @@ add_executable(test_net_reconnect test_net_reconnect.cpp)
 target_link_libraries(test_net_reconnect PRIVATE okay::engine)
 add_test(NAME net_reconnect COMMAND test_net_reconnect)
 
+add_executable(test_net_relay_clients test_net_relay_clients.cpp)
+target_link_libraries(test_net_relay_clients PRIVATE okay::engine)
+add_test(NAME net_relay_clients COMMAND test_net_relay_clients)
+
+add_executable(test_net_resume_resend test_net_resume_resend.cpp)
+target_link_libraries(test_net_resume_resend PRIVATE okay::engine)
+add_test(NAME net_resume_resend COMMAND test_net_resume_resend)
+
+add_executable(test_net_resume_token test_net_resume_token.cpp)
+target_link_libraries(test_net_resume_token PRIVATE okay::engine)
+add_test(NAME net_resume_token COMMAND test_net_resume_token)
+
+add_executable(test_net_relay_nat test_net_relay_nat.cpp)
+target_link_libraries(test_net_relay_nat PRIVATE okay::engine)
+add_test(NAME net_relay_nat COMMAND test_net_relay_nat)
+
 add_executable(test_net_respawn_anim test_net_respawn_anim.cpp)
 target_link_libraries(test_net_respawn_anim PRIVATE okay::engine)
 add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
@@ -2933,6 +2955,22 @@ add_test(NAME net_respawn_anim COMMAND test_net_respawn_anim)
 add_executable(test_net_lossy test_net_lossy.cpp)
 target_link_libraries(test_net_lossy PRIVATE okay::engine)
 add_test(NAME net_lossy COMMAND test_net_lossy)
+
+add_executable(test_net_build_sync test_net_build_sync.cpp)
+target_link_libraries(test_net_build_sync PRIVATE okay::engine)
+add_test(NAME net_build_sync COMMAND test_net_build_sync)
+
+add_executable(test_net_quest_sync test_net_quest_sync.cpp)
+target_link_libraries(test_net_quest_sync PRIVATE okay::engine)
+add_test(NAME net_quest_sync COMMAND test_net_quest_sync)
+
+add_executable(test_net_life_late test_net_life_late.cpp)
+target_link_libraries(test_net_life_late PRIVATE okay::engine)
+add_test(NAME net_life_late COMMAND test_net_life_late)
+
+add_executable(test_net_build_quest_lossy test_net_build_quest_lossy.cpp)
+target_link_libraries(test_net_build_quest_lossy PRIVATE okay::engine)
+add_test(NAME net_build_quest_lossy COMMAND test_net_build_quest_lossy)
 
 add_executable(test_net_fuzz test_net_fuzz.cpp)
 target_link_libraries(test_net_fuzz PRIVATE okay::engine)
@@ -3098,6 +3136,11 @@ if(UNIX AND NOT APPLE)
     add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
     set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()
+
+add_executable(test_editor_play_input test_editor_play_input.cpp)
+target_link_libraries(test_editor_play_input PRIVATE okay::engine)
+target_compile_definitions(test_editor_play_input PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_play_input COMMAND test_editor_play_input)
 
 # The import seam routes every opt-in own-reader format (slots 3-16) to its own reader (one tiny fixture each).
 add_executable(test_own_dispatch test_own_dispatch.cpp)

@@ -36,11 +36,7 @@ namespace {
 // network layer can send it once (see Character::netEventSeq).
 void NoteNetEvent(GameObject* go, int id, float param) {
     if (!go) return;
-    if (Character* c = go->GetComponent<Character>()) {
-        c->netEventId = id;
-        c->netEventParam = param;
-        ++c->netEventSeq;
-    }
+    if (Character* c = go->GetComponent<Character>()) c->RecordNetEvent(id, param);
 }
 } // namespace
 namespace {

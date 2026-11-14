@@ -258,6 +258,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
                     (static_cast<std::uint64_t>(LoadU32LE(data + nat + 4)) << 32);
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
+    ++m_helloVersions[version < m_helloVersions.size() ? version : m_helloVersions.size() - 1];
 
     // Re-hellos from the same address keep the slot, session and role they
     // started with, so a NAT-keepalive hello is idempotent.
@@ -471,7 +472,8 @@ void RelayServer::Poll(float dt, float timeout) {
         m_legacyLogAt = m_now + 60.0;
         if (m_legacyHellos != m_legacyLogged)
             OKAY_INFO("relay: ", m_legacyHellos - m_legacyLogged, " legacy (version 1/2) hellos in the last minute",
-                      m_legacyHello ? "" : ", refused");
+                      m_legacyHello ? "" : ", refused", "; ", LegacyPeers(), " legacy peers registered; hellos so far v1=",
+                      HellosByVersion(1), " v2=", HellosByVersion(2), " v3=", HellosByVersion(3), " v4=", HellosByVersion(4));
         m_legacyLogged = m_legacyHellos;
     }
     // Expire peers we haven't heard from in a while (NAT mapping likely gone).

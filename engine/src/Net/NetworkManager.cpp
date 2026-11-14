@@ -11,6 +11,7 @@
 #include <mutex>
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/RelayProtocol.hpp"
+#include "okay/Net/RelayHello.hpp"
 #include "okay/Net/ServerQuery.hpp"
 #include "okay/Net/JoinLink.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -25,6 +26,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Net/NetBuildSync.hpp"
+#include "okay/Net/NetQuestSync.hpp"
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -96,7 +99,9 @@ std::mutex g_liveMutex;
 std::unordered_set<const NetworkManager*>& LiveManagers() { static std::unordered_set<const NetworkManager*> s; return s; }
 } // namespace
 
-NetworkManager::NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this); }
+NetworkManager::NetworkManager() : m_buildSync(std::make_unique<net::BuildSync>(*this)), m_questSync(std::make_unique<net::QuestSync>(*this)) {
+    std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this);
+}
 NetworkManager::~NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().erase(this); }
 bool NetworkManager::IsLive(const NetworkManager* nm) {
     std::lock_guard<std::mutex> l(g_liveMutex);
@@ -312,7 +317,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
         m_connectionLost = false; m_connectionLostReason.clear();
         m_lastConn = ConnTarget{1, host, port, std::string()};
         m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
-        m_ownSpawns.clear();
+        m_ownSpawns.clear(); m_resendQ.clear();
     }
     m_serverSilence = 0.0f; m_joinWait = 0.0f;
     m_localUserId.clear();
@@ -352,6 +357,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayHelloTimer = 0.0f;
     m_relayWait = 0.0f;
     m_relayBadWelcomes = 0;
+    m_relaySlot = 0;
     {   // The welcome must echo this back (see RelayProtocol.hpp, version 4).
         std::random_device rd;
         do { m_relayNonce = (static_cast<std::uint64_t>(rd()) << 32) | rd(); } while (m_relayNonce == 0);
@@ -369,7 +375,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
             m_connectionLost = false; m_connectionLostReason.clear();
             m_lastConn = ConnTarget{2, relayHost, relayPort, code};
             m_reconnectGaveUp = false; m_reconnectCount = 0; m_resumed = false;
-            m_ownSpawns.clear();
+            m_ownSpawns.clear(); m_resendQ.clear();
         }
         m_serverSilence = 0.0f; m_joinWait = 0.0f;
         m_localUserId.clear();
@@ -407,17 +413,14 @@ void NetworkManager::RelayKeepAlive(float dt) {
     m_relayHelloTimer -= dt;
     if (m_relayHelloTimer > 0.0f) return;
     m_relayHelloTimer = 1.0f;
-    net::Packet h(net::RelayHello);
-    h.Write(std::uint8_t(m_mode == Mode::Server ? net::RelayHost : net::RelayClient));
-    h.Write(m_relayCode);
-    h.Write(net::kRelayProtocolVersion);
-    h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
-    h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
-    for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
-    h.Write(static_cast<std::uint32_t>(m_relayNonce));           // version 4: the welcome echoes it
-    h.Write(static_cast<std::uint32_t>(m_relayNonce >> 32));
-    while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
-    m_socket.SendTo(m_relayEp, h.Data(), h.Size());
+    net::RelayHelloParams hp;
+    hp.role = m_mode == Mode::Server ? net::RelayHost : net::RelayClient;
+    hp.code = m_relayCode;
+    hp.hostKey = m_relayHostKey;                 // 0 until the relay gives one
+    std::memcpy(hp.cookie.data(), m_relayCookie, hp.cookie.size());   // zero until the relay sends one
+    hp.nonce = m_relayNonce;                     // version 4: the welcome echoes it
+    const std::vector<std::uint8_t> hello = net::BuildRelayHello(hp);
+    m_socket.SendTo(m_relayEp, hello.data(), hello.size());
 }
 
 void NetworkManager::Stop() {
@@ -448,6 +451,8 @@ void NetworkManager::Stop() {
     m_inbox.clear();
     m_rpcObserver = nullptr;
     m_syncVars.clear();
+    m_dead.clear();
+    if (!m_keepResume) { m_buildSync->Reset(); m_questSync->Reset(); }
     m_rtt = 0.0f;
     m_ready = false;
     m_matchStarted = false;
@@ -489,7 +494,7 @@ void NetworkManager::Stop() {
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
     m_parked.clear();
-    if (!m_keepResume) { m_reconnecting = false; m_reconnectTrying = false; m_resumeToken = 0; }
+    if (!m_keepResume) { m_reconnecting = false; m_reconnectTrying = false; m_resumeToken = 0; m_resendQ.clear(); }
     m_pendingJoins.clear();
     m_joinLimits.clear();
     m_kickBans.clear();
@@ -993,6 +998,8 @@ double NetworkManager::ViewTick() const {
 void NetworkManager::Update(float dt) {
     net::PumpSimulator(m_socket);
     net::ProfileAdvance(dt);
+    m_buildSync->Tick(GetScene(), dt);
+    m_questSync->Tick(GetScene(), dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     else if (m_reconnecting) ReconnectTick(dt);
@@ -1003,6 +1010,21 @@ void NetworkManager::Update(float dt) {
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
     net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), true);
+    if (channel.compare(0, 6, "__req/") == 0) return;   // a request is the server's to handle, never a message
+    if (channel == "__bld") {   // build mode: what players built, from the server
+        if (m_mode == Mode::Client && from == 0) m_buildSync->OnServerMessage(data);
+        return;
+    }
+    if (channel == "__qst") {   // quests and story variables, from the server
+        if (m_mode == Mode::Client && from == 0) m_questSync->OnServerMessage(data);
+        return;
+    }
+    if (channel == "__life") {   // the server's ordered death / respawn / health stream: "D|R|H" + the old message
+        if (m_mode != Mode::Client || from != 0 || data.size() < 2) return;
+        const char* old = data[0] == 'D' ? "__death" : data[0] == 'R' ? "__respawn" : data[0] == 'H' ? "__dmg" : nullptr;
+        if (old) Deliver(from, old, data.substr(1));
+        return;
+    }
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
     if (channel == "__match_start") {   // lobby: the match has begun for this room
@@ -1041,6 +1063,27 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
         if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>())
             hs->SetHealthFromServer(std::strtof(data.c_str() + a + 1, nullptr));
+        return;
+    }
+    if (channel == "__death") {   // "<hasFrom 0|1>|<x>|<y>|<z>|<netId>": the server killed an object (not by a hit)
+        if (m_mode != Mode::Client || from != 0) return;
+        float v[4] = {0, 0, 0, 0};
+        std::size_t at = 0;
+        for (int i = 0; i < 4; ++i) {
+            const std::size_t bar = data.find('|', at);
+            if (bar == std::string::npos) return;
+            const std::string num = data.substr(at, bar - at);
+            char* end = nullptr;
+            v[i] = std::strtof(num.c_str(), &end);
+            if (num.empty() || end != num.c_str() + num.size() || !std::isfinite(v[i])) return;
+            at = bar + 1;
+        }
+        if (v[0] != 0.0f && v[0] != 1.0f) return;
+        for (int i = 1; i < 4; ++i) if (std::fabs(v[i]) > 1.0e7f) return;
+        auto obj = m_syncObjs.find(data.substr(at));
+        if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+        if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>())
+            hs->DieFromServer(v[0] == 1.0f, Vec3(v[1], v[2], v[3]));
         return;
     }
     if (channel == "__respawn") {   // "<health>|<x>|<y>|<z>|<netId>": the server respawned an object
@@ -1422,6 +1465,8 @@ void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo
     if (sender && !seen) {
         if (channel == "__hit") {
             HandleHitClaim(*sender, data);
+        } else if (channel.compare(0, 6, "__req/") == 0) {
+            deliver = true;   // a request for the server: run in order, below (never relayed or queued)
         } else {
             deliver = ClientMessageOk(*sender, channel, data) && AntiCheatAllows(sender->id, channel, data);
         }
@@ -1433,7 +1478,10 @@ void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo
         auto bytes = net::BuildChanRelAck(channel, ack);
         SendDatagram(ackTo, bytes.data(), bytes.size());
     }
-    for (const net::ChanMsg& m : got) Deliver(m.from, m.channel, m.data);
+    for (const net::ChanMsg& m : got) {
+        if (sender && m.channel.compare(0, 6, "__req/") == 0) { HandleClientRequest(*sender, m.channel, m.data); continue; }
+        Deliver(m.from, m.channel, m.data);
+    }
 }
 
 void NetworkManager::OnOrderedAck(net::ChannelEnd& link, net::Packet& p) {
@@ -1454,6 +1502,7 @@ void NetworkManager::OnSequencedFromClient(Client& from, net::Packet& p, std::si
     if (!from.pipes.sequencedRx.IsStale(from.id, channel, seq) && !AllowMessage(from, len)) return;
     if (!from.pipes.sequencedRx.Accept(from.id, channel, seq)) return;
     if (channel == "__hit") { HandleHitClaim(from, data); return; }
+    if (HandleClientRequest(from, channel, data)) return;
     if (!ClientMessageOk(from, channel, data)) return;
     if (!AntiCheatAllows(from.id, channel, data)) return;
     const std::uint32_t sender = from.id;
@@ -1582,38 +1631,40 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
         auto* b = static_cast<std::uint8_t*>(buffer);
         std::uint8_t tag = b[0];
         if (tag == net::RelayWelcome) {
-            net::Packet p(b, static_cast<std::size_t>(n));
-            p.ReadU8();
-            p.ReadU32();   // our slot: the relay routes by it, we never need it
-            std::uint32_t hostSlot = p.ReadU32();
-            if (!p.Ok()) continue;
             // Version 2 relays add [u8 version][u64 host key]; the key comes
             // only to the host, which sends it back in every hello so only it
             // can host this code (from this address or a new one). Version 4
-            // adds the u64 nonce our hello carried.
-            p.ReadU8();
-            const std::uint32_t keyLo = p.ReadU32(), keyHi = p.ReadU32();
-            const bool haveKey = p.Ok();
-            bool haveNonce = false;
-            std::uint64_t echoed = 0;
-            if (haveKey && p.Remaining() >= 8) {
-                const std::uint32_t nLo = p.ReadU32(), nHi = p.ReadU32();
-                echoed = (static_cast<std::uint64_t>(nHi) << 32) | nLo;
-                haveNonce = true;
-            }
-            // Anyone can forge a UDP source address, so a welcome counts only if it
-            // proves the sender saw our hello: it echoes our nonce. A wrong echo is
-            // never accepted; a missing one only from an older relay when allowed.
-            if ((haveNonce && echoed != m_relayNonce) || (!haveNonce && !allowUnverifiedRelay)) {
+            // adds the u64 nonce our hello carried. Anyone can forge a UDP
+            // source address, so a welcome counts only if it echoes that nonce
+            // (a missing one only from an older relay when allowed).
+            net::RelayWelcomeInfo w;
+            if (n < 9) continue;
+            if (!net::ParseRelayWelcome(b, static_cast<std::size_t>(n), m_relayNonce, allowUnverifiedRelay, w)) {
                 ++m_relayBadWelcomes;
                 continue;
             }
+            const std::uint32_t hostSlot = w.hostSlot;
+            const bool haveKey = w.haveKey;
+            const std::uint32_t keyLo = static_cast<std::uint32_t>(w.hostKey), keyHi = static_cast<std::uint32_t>(w.hostKey >> 32);
             // A host needs the key fields: without them it would hello with key 0
             // and be refused as if the code were taken.
             if (m_mode == Mode::Server && !haveKey) continue;
             if (m_mode == Mode::Server && (keyLo | keyHi))
                 m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
             if (m_mode == Mode::Client) {
+                // The relay knows us by our source address, and a new address (a NAT rebinding, a
+                // phone changing network) is a new peer with a new slot: the host still lists the old
+                // slot, which now leads nowhere. Say so now rather than after the silence timeout; the
+                // automatic reconnect then resumes the player through the new address.
+                if (m_relayWelcomed && m_joined && m_relaySlot != 0 && w.slot != m_relaySlot) {
+                    m_relayError = "this connection's address changed on the relay";
+                    OKAY_WARN("net: relay slot ", m_relaySlot, " -> ", w.slot, ": ", m_relayError);
+                    m_connectionLost = true;
+                    m_connectionLostReason = m_relayError;
+                    m_relayLost = true;
+                    return 0;
+                }
+                m_relaySlot = w.slot;
                 // The host we were paired with is the only server we talk to.
                 // Any change (it left: slot 0, or another host took the code)
                 // ends this session instead of re-pointing us at someone else.
@@ -1995,11 +2046,13 @@ void NetworkManager::ApplyHit(HitClaim& claim) {
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
     auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>();
     if (!hs || claim.damage <= 0.0f || !std::isfinite(claim.damage)) return;
+    m_applyingHit = true;   // a death it causes goes out in the __dmg below, not as a __death
     hs->Damage(claim.damage);
+    m_applyingHit = false;
     ++m_hitsApplied;
     char buf[96];
     std::snprintf(buf, sizeof buf, "|%.9g|%.9g|%u", hs->health, claim.damage, (unsigned)claim.shooter);
-    SendReliable("__dmg", claim.target + buf);
+    SendLife('H', claim.target + buf);
 }
 
 void NetworkManager::NoteRespawn(GameObject* go) {
@@ -2029,7 +2082,104 @@ void NetworkManager::NoteRespawn(GameObject* go) {
     if (owner != 0 && anticheat.DetectOn()) anticheat.detector.NoteRespawn(owner, anticheat.Clock());   // grace: its next positions and shots
     char buf[160];
     std::snprintf(buf, sizeof buf, "%.9g|%.9g|%.9g|%.9g|", hs ? hs->health : 0.0f, pos.x, pos.y, pos.z);
-    SendReliable("__respawn", std::string(buf) + id);
+    m_dead.erase(id);
+    SendLife('R', std::string(buf) + id);
+}
+
+void NetworkManager::NoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
+    if (m_mode != Mode::Server || !go || !go->transform || go->scene() != GetScene()) return;
+    NetworkSync* ns = go->GetComponent<NetworkSync>();
+    if (!ns) return;
+    const std::string id = ns->netId.empty() ? go->name : ns->netId;
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.t != go->transform) return;
+    // Remembered either way (a death a hit carried too) for a client that joins while it is dead.
+    if (m_dead.size() < kMaxDeadTracked || m_dead.count(id)) m_dead[id] = DeadInfo{hasFrom, hasFrom ? from : Vec3{}};
+    if (m_applyingHit) return;   // the hit's "__dmg" carries it
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%d|%.9g|%.9g|%.9g|", hasFrom ? 1 : 0, hasFrom ? from.x : 0.0f,
+                  hasFrom ? from.y : 0.0f, hasFrom ? from.z : 0.0f);
+    SendLife('D', std::string(buf) + id);
+    ++m_deathsSent;
+}
+
+void NetworkManager::SendLife(char kind, const std::string& body, std::int64_t only) {
+    if (m_mode != Mode::Server) return;
+    const std::string data = std::string(1, kind) + body;
+    if (only >= 0) SendOrderedTo((std::uint32_t)only, "__life", data);
+    else SendOrdered("__life", data);
+}
+
+// A client that joins now missed every death and every damage hit so far. Tell it what is true now:
+// who is dead (where the blow came from, for the fall) and who is hurt. Ordered with what follows, so a
+// respawn that comes next cannot overtake it.
+void NetworkManager::SendLifeSnapshot(std::uint32_t peer) {
+    for (auto it = m_dead.begin(); it != m_dead.end();) {
+        auto obj = m_syncObjs.find(it->first);
+        // Still here and alive (revived without a respawn message): not dead any more.
+        if (obj != m_syncObjs.end() && obj->second.t && obj->second.t->gameObject) {
+            if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>()) if (!hs->dead) { it = m_dead.erase(it); continue; }
+        }
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "%d|%.9g|%.9g|%.9g|", it->second.hasFrom ? 1 : 0, it->second.from.x, it->second.from.y, it->second.from.z);
+        SendLife('D', std::string(buf) + it->first, peer);
+        ++m_lateLifeSent;
+        ++it;
+    }
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.t || !o.t->gameObject || m_dead.count(id)) continue;
+        auto* hs = o.t->gameObject->GetComponent<HealthStat>();
+        if (!hs || hs->dead || !std::isfinite(hs->health) || hs->health >= hs->maxHealth) continue;
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "|%.9g|0|0", hs->health);
+        SendLife('H', id + buf, peer);
+        ++m_lateLifeSent;
+    }
+}
+
+void NetworkManager::SetRequestHandler(const std::string& channel, RequestHandler handler) {
+    if (channel.compare(0, 6, "__req/") != 0 || channel.size() <= 6) return;
+    if (handler) m_requestHandlers[channel] = std::move(handler);
+    else m_requestHandlers.erase(channel);
+}
+void NetworkManager::ClearRequestHandler(const std::string& channel) { m_requestHandlers.erase(channel); }
+
+int NetworkManager::AddJoinHook(std::function<void(std::uint32_t)> hook) {
+    if (!hook) return 0;
+    m_joinHooks.emplace_back(m_nextJoinHook, std::move(hook));
+    return m_nextJoinHook++;
+}
+void NetworkManager::RemoveJoinHook(int id) {
+    m_joinHooks.erase(std::remove_if(m_joinHooks.begin(), m_joinHooks.end(),
+                                     [&](const auto& h) { return h.first == id; }), m_joinHooks.end());
+}
+
+bool NetworkManager::PeerPosition(std::uint32_t id, Vec3& out) const {
+    for (const auto& [ep, c] : m_clients)
+        if (c.id == id && c.hasState) { out = Vec3(c.state.x, c.state.y, c.state.z); return true; }
+    return false;
+}
+
+bool NetworkManager::HandleClientRequest(Client& from, const std::string& channel, const std::string& data) {
+    if (channel.compare(0, 6, "__req/") != 0) return false;
+    auto it = m_requestHandlers.find(channel);
+    if (it == m_requestHandlers.end()) return true;
+    if (maxRelayedBytes > 0 && channel.size() + data.size() > (std::size_t)maxRelayedBytes) return true;
+    if (!dedicated && m_localRoom != from.room) return true;
+    if (!AntiCheatAllows(from.id, channel, data)) return true;
+    const std::uint32_t id = from.id;
+    RequestHandler h = it->second;   // a copy: the handler may unregister itself
+    h(id, data);
+    return true;
+}
+
+void NetNoteDeath(GameObject* go, bool hasFrom, const Vec3& from) {
+    std::vector<NetworkManager*> live;
+    {
+        std::lock_guard<std::mutex> l(g_liveMutex);
+        for (const NetworkManager* nm : LiveManagers()) live.push_back(const_cast<NetworkManager*>(nm));
+    }
+    for (NetworkManager* nm : live) nm->NoteDeath(go, hasFrom, from);
 }
 
 void NetNoteRespawn(GameObject* go) {
@@ -2060,6 +2210,38 @@ void NetworkManager::ReleaseClient(std::unordered_map<net::Endpoint, Client, net
     if (m_peerLeft) m_peerLeft(id);
 }
 
+std::size_t NetworkManager::CollectUnacked(
+    const std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& relOut,
+    const net::OrderedEnd& ordered, std::vector<Unacked>& out) const {
+    std::size_t left = 0, bytes = 0, taken = 0;
+    std::map<std::uint32_t, const std::vector<std::uint8_t>*> bySeq;   // oldest first
+    for (const auto& [seq, e] : relOut) bySeq[seq] = &e.first;
+    for (const auto& [seq, raw] : bySeq) {
+        net::Packet p(raw->data(), raw->size());   // [ReliableMsg][u32 seq][channel][data]
+        p.ReadU8(); p.ReadU32();
+        std::string channel = p.ReadString();
+        std::string data = p.ReadString();
+        if (!p.Ok()) continue;
+        if (taken >= kMaxResendMessages || bytes + data.size() > kMaxResendBytes) { ++left; continue; }
+        bytes += data.size(); ++taken;
+        out.push_back(Unacked{false, std::move(channel), std::move(data)});
+    }
+    std::vector<std::pair<std::string, std::string>> ord;
+    left += ordered.Unacked(ord, kMaxResendMessages - taken, kMaxResendBytes - bytes);
+    for (auto& [channel, data] : ord) out.push_back(Unacked{true, std::move(channel), std::move(data)});
+    return left;
+}
+
+void NetworkManager::ResendUnacked(std::uint32_t target, std::vector<Unacked>& q) {
+    std::vector<Unacked> work;
+    work.swap(q);
+    for (const Unacked& u : work) {
+        if (u.ordered) SendOrderedTo(target, u.channel, u.data);
+        else SendReliableTo(target, u.channel, u.data);
+        ++m_resentTotal;
+    }
+}
+
 void NetworkManager::ParkClient(const Client& c) {
     if (resumeGraceSeconds <= 0.0f || c.resumeToken == 0) return;
     for (auto it = m_parked.begin(); it != m_parked.end();)
@@ -2069,7 +2251,8 @@ void NetworkManager::ParkClient(const Client& c) {
     p.token = c.resumeToken; p.id = c.id; p.userId = c.userId;
     p.pos = Vec3{c.state.x, c.state.y, c.state.z}; p.hasState = c.hasState; p.glyph = c.state.glyph;
     p.score = c.score; p.ready = c.ready;
-    m_parked.push_back(p);
+    m_resendDropped += CollectUnacked(c.relOut, c.pipes.ordered, p.resend);
+    m_parked.push_back(std::move(p));
 }
 
 // The host went silent (or the relay session ended) and autoReconnect is on:
@@ -2081,6 +2264,9 @@ void NetworkManager::BeginReconnect() {
     for (auto& [id, go] : m_remotes)
         if (GetScene() && go) GetScene()->Destroy(go);
     m_remotes.clear();
+    // Reliable messages the host never acked: kept, and sent again if the rejoin resumes.
+    m_resendQ.clear();
+    m_resendDropped += CollectUnacked(m_relOut, m_toServer.ordered, m_resendQ);
     m_keepResume = true;
     Stop();
     m_keepResume = false;
@@ -2119,6 +2305,7 @@ void NetworkManager::FailReconnectTry() {
     m_reconnectTrying = false;
     if (final) {
         m_reconnecting = false; m_reconnectGaveUp = true; m_resumeToken = 0;
+        m_resendDropped += m_resendQ.size(); m_resendQ.clear();
         OKAY_WARN("net: giving up on reconnecting after ", m_reconnectAttempt, " tries");
         if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::GaveUp, m_reconnectAttempt);
         return;
@@ -3050,7 +3237,9 @@ void NetworkManager::ServerTick(float dt) {
                     c.ready = resumed.ready;
                     c.resumed = true;
                 }
-                if (resumeGraceSeconds > 0.0f) {
+                // The token is a bearer secret: with resumeRequiresEncryption it is only issued
+                // where the Welcome that carries it is sealed (the join came through a key exchange: viaPending).
+                if (resumeGraceSeconds > 0.0f && (!resumeRequiresEncryption || viaPending)) {
                     std::random_device rdt;
                     do { c.resumeToken = (static_cast<std::uint64_t>(rdt()) << 32) | rdt(); } while (c.resumeToken == 0);
                 }
@@ -3118,10 +3307,17 @@ void NetworkManager::ServerTick(float dt) {
                     rp.score = c.score; rp.ready = c.ready;
                     m_peerResumed(rp);
                 }
+                if (haveResumed) ResendUnacked(c.id, resumed.resend);   // what it had not acked when it dropped
                 // Full sync: send every current synced variable to the newcomer.
                 for (auto& [k, v] : m_syncVars) {
                     net::Packet sv(SyncVar); sv.Write(k); sv.Write(v);
                     SendDatagram(from, sv.Data(), sv.Size());
+                }
+                SendLifeSnapshot(c.id);   // who is dead or hurt right now
+                {   // replicated systems (build mode, quests) send what the newcomer missed
+                    const std::uint32_t joined = c.id;
+                    const auto hooks = m_joinHooks;   // a hook may add or remove hooks
+                    for (const auto& h : hooks) if (h.second) h.second(joined);
                 }
             }
         } else if (type == SyncVar) {
@@ -3273,6 +3469,7 @@ void NetworkManager::ServerTick(float dt) {
                 SendDatagram(from, ack.Data(), ack.Size());
                 if (!it->second.relSeen.Accept(seq)) continue;   // a repeat (the rate was charged before the ack)
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
+                if (HandleClientRequest(it->second, channel, data)) continue;
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
@@ -3383,6 +3580,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 if (!CookieOk(it->second, p)) continue;
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // never relayed
+                if (HandleClientRequest(it->second, channel, data)) continue;   // a request for the server, never relayed
                 if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
                 if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)
@@ -3933,6 +4131,8 @@ void NetworkManager::ClientTick(float dt) {
             OKAY_INFO("net: rejoined '", m_serverName, "' as peer ", m_localId, m_resumed ? " (state resumed)" : "");
             if (m_wasReady) SetReady(true);
             ReannounceOwnSpawns();
+            if (m_resumed) ResendUnacked(0, m_resendQ);   // what the host had not acked, after the spawns
+            else { m_resendDropped += m_resendQ.size(); m_resendQ.clear(); }   // a new peer: not addressed to it
             if (m_reconnectHandler) m_reconnectHandler(ReconnectEvent::Restored, m_reconnectAttempt);
         } else if (m_joinRejected) {
             FailReconnectTry();

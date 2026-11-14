@@ -11,6 +11,7 @@
 #include "ActionExport.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
+#include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
@@ -659,7 +660,7 @@ static int RunSelfTest() {
             check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
         }
         check(std::strstr(FeatureGapNote(RenderFeature::SpotPointShadows),
-                          "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer.") != nullptr,
+                          "Spot and point light shadows are not drawn on Direct3D 12.") != nullptr,
               "spot and point shadow note");
         check(FeatureGapNote(RenderFeature::Fog)[0] == 0, "fog is drawn on every renderer");
         check(FeatureGapNote(RenderFeature::VignetteAmount)[0] == 0, "vignette amount is drawn on every renderer");
@@ -3674,7 +3675,7 @@ ImVec2 g_uiMarqueeA{0, 0}, g_uiMarqueeB{0, 0};   // absolute screen corners of t
 int   g_spriteHandle = -1;   // 0..7 sprite resize handle being dragged in the 2D view
 
 // First connected game controller (opened in main); fed into Input during Play.
-std::unique_ptr<okay::platform::Gamepad> g_pad;
+okay::PadSet g_pads;   // every connected controller, one per player (as in the player)
 // Top-left of the canvas the running game is previewed in (Game view if shown,
 // otherwise the Scene viewport). Mouse input is fed relative to this so UI
 // buttons hit-test correctly while playing.
@@ -18022,8 +18023,8 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
                 if (g_build.gpuRenderer) {
                     ImGui::Indent();
-                    ImGui::Checkbox("Prefer Direct3D 12 (Windows)", &g_build.preferD3D12);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nNewer API; for this read-back renderer it performs like D3D11.");
+                    ImGui::Checkbox("Prefer Direct3D 12 (Windows, preview)", &g_build.preferD3D12);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview: no post-processing, no spot or point shadows.\nUse the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nIt has no exposure, tonemap, bloom, grading, anti-aliasing, ambient occlusion or depth of field, and draws one sun shadow map only. A game that looks right on Direct3D 11 looks flatter here. For this read-back renderer it performs like D3D11.");
                     ImGui::Unindent();
                 }
                 ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
@@ -47763,9 +47764,7 @@ int main(int argc, char** argv) {
 
     // Open the first connected game controller (optional) so the playable
     // templates can be driven with a gamepad inside the editor's Play mode.
-    if (okay::platform::Backend* pb = okay::platform::Default())
-        for (int i = 0, n = pb->GamepadDeviceCount(); i < n; ++i)
-            if (pb->IsGamepad(i)) { g_pad = pb->OpenGamepad(i); if (g_pad) break; }
+    g_pads.OpenAll();
 
     // Open a stereo float audio device (queue mode); audio is optional. Take
     // whatever rate and channel count the device gives us.
@@ -48261,10 +48260,8 @@ int main(int argc, char** argv) {
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
                 ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
-            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad)
-                if (okay::platform::Backend* pb = okay::platform::Default()) g_pad = pb->OpenGamepad(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad && e.cdevice.which == g_pad->InstanceId())
-                g_pad.reset();
+            if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED) g_pads.Remove(e.cdevice.which);
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
@@ -48466,7 +48463,9 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
             if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-            okay::FeedPad(g_pad.get(), down);
+            // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
+            if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
+            g_pads.Feed(down);   // every controller; the first also types WASD / Space
             Input::FeedKeys(down);
 
             // A modal inventory/crafting/chest releases capture so you can click it.
@@ -49783,7 +49782,7 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     if (g_d3dRenderer) { g_d3dRenderer->Destroy(); delete g_d3dRenderer; g_d3dRenderer = nullptr; g_d3dReady = false; }
 #endif
-    g_pad.reset();
+    g_pads.CloseAll();
     audioDev.reset();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

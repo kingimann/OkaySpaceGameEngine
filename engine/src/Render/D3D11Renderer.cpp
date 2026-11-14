@@ -10,6 +10,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/SsaoMath.hpp"   // shared SSAO constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/Atmosphere.hpp"   // sky palette, fog modes, post settings
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
@@ -341,7 +342,7 @@ const char* kHLSL =
     "  float4 uGammaThresh;\n"                // xyz gamma, w bloom threshold
     "  float4 uGainRadius;\n"                 // xyz gain, w blur / downsample radius
     "  float4 uTexelDir;\n"                   // xy source texel, zw blur direction (uv)
-    "  float4 uP7;\n"                         // x strength
+    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength
     "  float4 uTopMode;\n"                    // Colour sky: xyz top, w mode (0 colour, 1 procedural)
     "  float4 uHorHp;\n"                      // xyz horizon, w horizon position
     "  float4 uBotStars;\n"                   // xyz bottom, w stars on
@@ -488,7 +489,9 @@ const char* kHLSL =
     "  float4 rgbB = rgbA * 0.5 + 0.25 * (uTex.Sample(uSampClamp, i.uv + dir * -0.5) + uTex.Sample(uSampClamp, i.uv + dir * 0.5));\n"
     "  float lB = lumaF(rgbB.rgb);\n"
     "  return (lB < lMin || lB > lMax) ? rgbA : rgbB;\n"
-    "}\n";
+    "}\n"
+    // Ambient occlusion (SsaoMath.hpp): depth, estimate and multiply pixel shaders.
+    OKAY_SSAO_HLSL;
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
 // rules: each float3 is followed by a float to fill its 16-byte row).
@@ -625,6 +628,24 @@ struct D3D11Renderer::Impl {
     // Post chain / sky pipeline objects, compiled on first use.
     ID3D11VertexShader* vsQuad = nullptr;
     ID3D11PixelShader *psSky = nullptr, *psDown = nullptr, *psBlur = nullptr, *psUber = nullptr, *psFxaa = nullptr;
+    // Ambient occlusion (the Ambient Occlusion switch; see SsaoMath.hpp). Own
+    // shaders and half-resolution targets, built on first use, so a failure here
+    // only turns SSAO off. UNVERIFIED on a real GPU.
+    ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr;
+    bool ssaoTried = false, ssaoReady = false;
+    struct SsaoSet {
+        int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+        RT depth, aoA, aoB, mul;                 // half res: R32F depth, two AO images; full res: lit frame * AO
+        ID3D11Texture2D* dsTex = nullptr; ID3D11DepthStencilView* dsv = nullptr;   // half-res depth buffer
+        unsigned lastUse = 0;
+        void Release() {
+            depth.Release(); aoA.Release(); aoB.Release(); mul.Release();
+            if (dsv) dsv->Release(); if (dsTex) dsTex->Release(); dsv = nullptr; dsTex = nullptr; w = h = 0;
+        }
+    };
+    std::vector<SsaoSet> ssaoSets;               // a few sizes (editor views differ), oldest evicted
+    bool EnsureSsaoShaders();
+    SsaoSet* EnsureSsaoSet();                    // for the live w/h/fmt, or nullptr
     ID3D11Buffer* postCB = nullptr;
     ID3D11SamplerState* sampClamp = nullptr;
     ID3D11DepthStencilState* depthOff = nullptr;
@@ -952,6 +973,55 @@ bool D3D11Renderer::Impl::EnsurePost() {
     postReady = ok;
     if (!ok) Log::Warning("[d3d11] sky / post-processing unavailable on this device");
     return ok;
+}
+
+// Ambient occlusion shaders (SsaoMath.hpp). Separate from EnsurePost so a compile
+// failure here costs only the SSAO pass, never the sky or the rest of the chain.
+bool D3D11Renderer::Impl::EnsureSsaoShaders() {
+    if (ssaoTried) return ssaoReady;
+    ssaoTried = true;
+    if (!postReady) return false;
+    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
+    auto ps = [&](const char* entry, ID3D11PixelShader*& outPs) {
+        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
+        const bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, "ps_4_0", 0, 0, &b, &e)) && b &&
+                        SUCCEEDED(dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &outPs));
+        if (!ok && e) Log::Warning(std::string("[d3d11] ssao shader ") + entry + ": " + (const char*)e->GetBufferPointer());
+        if (b) b->Release(); if (e) e->Release();
+        return ok;
+    };
+    ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
+    if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
+    return ssaoReady;
+}
+
+// The AO targets for the live frame size and format: half-res depth (R32F + a depth
+// buffer) and two AO images, plus a full-res copy of the lit frame (*AO).
+D3D11Renderer::Impl::SsaoSet* D3D11Renderer::Impl::EnsureSsaoSet() {
+    for (SsaoSet& s : ssaoSets)
+        if (s.w == w && s.h == h && s.fmt == fmt) { s.lastUse = ++targetUse; return &s; }
+    while (ssaoSets.size() >= 3) {
+        std::size_t oldest = 0;
+        for (std::size_t i = 1; i < ssaoSets.size(); ++i) if (ssaoSets[i].lastUse < ssaoSets[oldest].lastUse) oldest = i;
+        ssaoSets[oldest].Release();
+        ssaoSets.erase(ssaoSets.begin() + (std::ptrdiff_t)oldest);
+    }
+    const int hw = w / 2 > 0 ? w / 2 : 1, hh = h / 2 > 0 ? h / 2 : 1;
+    SsaoSet s; s.w = w; s.h = h; s.fmt = fmt; s.lastUse = ++targetUse;
+    bool ok = MakeRT(s.depth, hw, hh, DXGI_FORMAT_R32_FLOAT) &&
+              MakeRT(s.aoA, hw, hh, DXGI_FORMAT_R8G8B8A8_UNORM) && MakeRT(s.aoB, hw, hh, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+              MakeRT(s.mul, w, h, fmt);
+    if (ok) {
+        D3D11_TEXTURE2D_DESC dz; std::memset(&dz, 0, sizeof(dz));
+        dz.Width = hw; dz.Height = hh; dz.MipLevels = 1; dz.ArraySize = 1;
+        dz.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; dz.SampleDesc.Count = 1;
+        dz.Usage = D3D11_USAGE_DEFAULT; dz.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        ok = SUCCEEDED(dev->CreateTexture2D(&dz, nullptr, &s.dsTex)) && s.dsTex &&
+             SUCCEEDED(dev->CreateDepthStencilView(s.dsTex, nullptr, &s.dsv));
+    }
+    if (!ok) { s.Release(); return nullptr; }
+    ssaoSets.push_back(s);
+    return &ssaoSets.back();
 }
 
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
@@ -1464,14 +1534,16 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     // PlanShadows (ShadowSetup.hpp) decides the cascades and tile assignment.
     ShadowPlan plan;
     bool shadowOn = false, localOn = false;
-    auto drawCasters = [&](const Mat4& lightVP, const LightSample* local) {
+    // `forView`: the ambient-occlusion depth pass reuses this loop with the CAMERA's
+    // view-projection; it draws every opaque mesh, not only the shadow casters.
+    auto drawCasters = [&](const Mat4& lightVP, const LightSample* local, bool forView = false) {
         const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the light's view
         for (const auto& up : scene.Objects()) {
             GameObject* go = up.get();
             if (!go || !go->ActiveInHierarchy() || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
             auto* mr = go->GetComponent<MeshRenderer>();
-            if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
-            if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
+            if (!mr || mr->wireframe || !mr->enabled || (!forView && !mr->castShadows)) continue;
+            if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast / occlude
             const Mesh* lodMesh = visibility::Current().ShadowMesh(go, mr);
             if (!lodMesh) continue;
             const Mesh& mesh = *lodMesh;
@@ -1925,6 +1997,41 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
     const bool useChain = chain && p->EnsurePostTargets();
     PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+
+    // ---- Ambient occlusion depth pre-pass (UNVERIFIED on a real GPU) -------------
+    // Runs only when the post chain is on AND an Ambient Occlusion switch is on
+    // (the scene's post.ssao, or the Build Settings / Rendering SSAOEnabled), as on
+    // OpenGL. Opaque geometry is drawn again at half resolution as view depth / far
+    // into an R32F target; the chain below estimates, blurs and applies it
+    // (SsaoMath.hpp has the algorithm, shared with the OpenGL renderer's numbers).
+    Impl::SsaoSet* aoSet = nullptr;
+    if (useChain && (rsTop.post.ssao || SSAOEnabled()) && p->EnsureSsaoShaders()) aoSet = p->EnsureSsaoSet();
+    if (aoSet) {
+        const int ahw = w / 2 > 0 ? w / 2 : 1, ahh = h / 2 > 0 ? h / 2 : 1;
+        pc.p7[0] = rsTop.post.ssao ? rsTop.post.ssaoRadius : SSAORadius();
+        pc.p7[1] = ssao::kFar;
+        pc.p7[2] = rsTop.post.ssao ? rsTop.post.ssaoIntensity : SSAOStrength();
+        uploadPc();
+        { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
+        c->OMSetRenderTargets(1, &aoSet->depth.rtv, aoSet->dsv);
+        D3D11_VIEWPORT av; std::memset(&av, 0, sizeof(av));
+        av.Width = (FLOAT)ahw; av.Height = (FLOAT)ahh; av.MaxDepth = 1.0f;
+        c->RSSetViewports(1, &av);
+        const float farDepth[4] = {1.0f, 0.0f, 0.0f, 1.0f};       // nothing drawn = far = no occlusion
+        c->ClearRenderTargetView(aoSet->depth.rtv, farDepth);
+        c->ClearDepthStencilView(aoSet->dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        c->IASetInputLayout(p->layoutDepth);
+        c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        c->VSSetShader(p->vsDepth, nullptr, 0);
+        c->PSSetShader(p->psAoDepth, nullptr, 0);
+        c->VSSetConstantBuffers(0, 1, &p->cb);
+        c->PSSetConstantBuffers(3, 1, &p->postCB);
+        c->RSSetState(p->raster);
+        c->OMSetDepthStencilState(p->depth, 0);
+        const float abf[4] = {0, 0, 0, 0};
+        c->OMSetBlendState(nullptr, abf, 0xffffffff);
+        drawCasters(vp, nullptr, /*forView=*/true);
+    }
     // RenderToTexture without the chain: resolve straight into the host's texture and stop here.
     if (p->directDst && !useChain) {
         if (p->samples > 1) c->ResolveSubresource(p->directDst, 0, p->colorTex, 0, p->fmt);
@@ -1954,6 +2061,21 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             uploadPc();
             c->Draw(3, 0);
         };
+        // 0) Ambient occlusion: estimate at half res, one gaussian round (horizontal
+        //    then vertical), then lit frame * mix(1, ao, strength) into the AO target
+        //    set. Bloom and the uber pass read that instead of the plain resolve.
+        ID3D11ShaderResourceView* frameSrv = p->resolveSrv;
+        if (aoSet) {
+            const int ahw = aoSet->depth.w, ahh = aoSet->depth.h;
+            pc.texel[0] = 1.0f / (float)ahw; pc.texel[1] = 1.0f / (float)ahh;
+            pass(p->psAo, aoSet->aoA.rtv, ahw, ahh, aoSet->depth.srv, nullptr, nullptr);
+            pc.dir[0] = 1.0f / (float)ahw; pc.dir[1] = 0.0f;
+            pass(p->psBlur, aoSet->aoB.rtv, ahw, ahh, aoSet->aoA.srv, nullptr, nullptr);
+            pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)ahh;
+            pass(p->psBlur, aoSet->aoA.rtv, ahw, ahh, aoSet->aoB.srv, nullptr, nullptr);
+            pass(p->psAoMul, aoSet->mul.rtv, w, h, p->resolveSrv, aoSet->aoA.srv, nullptr);
+            frameSrv = aoSet->mul.srv;
+        }
         // 1) Bloom: bright-pass to half res, blur, down to quarter, blur (the uber pass adds both).
         const bool bloomOn = ps.bloom || BloomEnabled();
         const float bloomThresh = ps.bloom ? ps.bloomThreshold : BloomThreshold();
@@ -1962,7 +2084,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         Impl::RT& bA = p->bloom[0]; Impl::RT& bB = p->bloom[1]; Impl::RT& bC = p->bloom[2]; Impl::RT& bD = p->bloom[3];
         if (bloomOn) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = bloomThresh; pc.radius = 1.0f;
-            pass(p->psDown, bA.rtv, bA.w, bA.h, p->resolveSrv, nullptr, nullptr);
+            pass(p->psDown, bA.rtv, bA.w, bA.h, frameSrv, nullptr, nullptr);
             for (int it = 0; it < 2; ++it) {
                 pc.dir[0] = bloomRadius / (float)bA.w; pc.dir[1] = 0.0f;
                 pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
@@ -1989,7 +2111,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         pc.lift[0] = ps.lift.x; pc.lift[1] = ps.lift.y; pc.lift[2] = ps.lift.z; pc.aspect = (float)w / (float)h;
         pc.gamma[0] = ps.gamma.x; pc.gamma[1] = ps.gamma.y; pc.gamma[2] = ps.gamma.z;
         pc.gain[0] = ps.gain.x; pc.gain[1] = ps.gain.y; pc.gain[2] = ps.gain.z;
-        pass(p->psUber, ps.fxaa ? p->ping[0].rtv : finalRtv, w, h, p->resolveSrv, bA.srv, bC.srv);
+        pass(p->psUber, ps.fxaa ? p->ping[0].rtv : finalRtv, w, h, frameSrv, bA.srv, bC.srv);
         // 3) FXAA last, on the display image.
         if (ps.fxaa) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h;
@@ -2113,7 +2235,9 @@ void D3D11Renderer::Destroy() {
     if (p->sampClamp) p->sampClamp->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul}) if (s) s->Release();
+    for (auto& t : p->ssaoSets) t.Release();
+    p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();
     if (p->vbDepth)   p->vbDepth->Release();
     if (p->layoutDepth) p->layoutDepth->Release();

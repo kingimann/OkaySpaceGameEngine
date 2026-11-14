@@ -30,16 +30,19 @@
 //              Same mesh fog modes, filmic flag, sun cascades and localShadow
 //              tiles as OpenGL. Post chain draws exposure, the tonemap curve,
 //              bloom (post.bloom or BloomEnabled), grading, vignette smoothness
-//              and post.fxaa. No SSAO and no depth of field. BloomEnabled does
+//              and post.fxaa. No depth of field. BloomEnabled does
 //              nothing unless the chain is already running (it does not start
-//              the chain). SSAOEnabled and FXAAEnabled are not read. Procedural
+//              the chain). SSAO (post.ssao, or SSAOEnabled while the chain runs)
+//              is an extra pass inside the chain (SsaoMath.hpp). UNVERIFIED on a
+//              real GPU: compile-checked with MinGW only. FXAAEnabled is not
+//              read. Procedural
 //              sky shader draws the disc, halo, haze, clouds and stars.
 //
 //   Direct3D12 engine/src/Render/D3D12Renderer.cpp
 //              Fog modes and EffectiveFogColor. One directional shadow map
 //              (ComputeDirectionalShadowVP, which uses ShadowDistance and not
 //              ShadowCascades). Non-directional lights are forced lit
-//              (lsh = 1). No post chain: exposure, tonemap, bloom, grading,
+//              (lsh = 1). Preview backend: no post chain: exposure, tonemap, bloom, grading,
 //              FXAA, SSAO and depth of field are absent. The host paints the
 //              vignette (PostVignetteHandled is never set). Procedural sky
 //              detail is absent; EffectiveSkyColors still feeds the gradient.
@@ -119,7 +122,7 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
         {"Anti-aliasing in Post-processing", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
         {"Ambient occlusion in Post-processing", false,
          "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.",
-         nullptr, {S::No, S::Yes, S::No, S::No}},
+         nullptr, {S::No, S::Yes, S::Yes, S::No}},
         {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::No, S::No}},
         {"The procedural sun disc, halo, clouds and stars", true,
          "Direct3D 12 and the software renderer show the sun's colours as a plain gradient.",
@@ -130,12 +133,13 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
          "Direct3D 12 draws one sun shadow map. Shadow distance still applies there.",
          nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Spot and point light shadows", true,
-         "Area lights use the same shadow path, so they are not drawn there either.",
-         nullptr, {S::No, S::Yes, S::Yes, S::No}},
+         "Area lights use the same shadow path, so they are not drawn there either. "
+         "The software renderer draws them, like sun shadows, only with Per-pixel lighting on.",
+         nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Bloom in Build Settings and Rendering", false, nullptr, nullptr,
          {S::Yes, S::Yes, S::WhenPostChainRuns, S::No}},
         {"Ambient occlusion in Build Settings and Rendering", false, nullptr, nullptr,
-         {S::Yes, S::Yes, S::No, S::No}},
+         {S::Yes, S::Yes, S::WhenPostChainRuns, S::No}},
         {"Anti-aliasing in Build Settings and Rendering", false, nullptr, nullptr,
          {S::Yes, S::No, S::No, S::No}},
         {"Per-pixel lighting", false, nullptr,

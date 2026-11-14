@@ -27,13 +27,21 @@ fi
 # (the engine's CMake already skips the last two under Emscripten). SDL2 comes from
 # Emscripten's own port (-sUSE_SDL=2), which Emscripten fetches once on the first
 # build (needs network access to github); after that it's cached locally.
+# With OKAY_WEB_CCACHE=1 and ccache installed, compiles go through ccache (CI uses this so an
+# unchanged engine is not recompiled from scratch on every run).
+LAUNCHER=()
+if [ "${OKAY_WEB_CCACHE:-0}" = "1" ] && command -v ccache >/dev/null 2>&1; then
+    LAUNCHER=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
+
 emcmake cmake -S . -B build-web \
     -DCMAKE_BUILD_TYPE=Release \
+    ${LAUNCHER[@]+"${LAUNCHER[@]}"} \
     -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF \
     -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF \
     -DOKAY_USE_SODIUM=OFF -DOKAY_USE_ASSIMP=OFF \
     -DCMAKE_EXE_LINKER_FLAGS="${PRELOAD}"
-cmake --build build-web -j
+cmake --build build-web -j "$(nproc 2>/dev/null || echo 2)"
 
 echo
 echo "Built build-web/web/okay-player.html"

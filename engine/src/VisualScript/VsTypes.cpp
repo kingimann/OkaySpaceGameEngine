@@ -382,6 +382,11 @@ const Row kRows[] = {
         {"MapClear", true, "M", ""},
         {"MapCount", false, "M", "N"},
         {"MapCopy", false, "MB", "M"},
+        {"ListAppend", true, "LL", ""},
+        {"ListSlice", false, "LNN", "L"},
+        {"ListPop", true, "L", "AB"},
+        {"MapGetOr", false, "MTA", "A"},
+        {"MapMerge", true, "MM", ""},
         {"StructNew", false, "", "M"},
         {"StructGet", false, "M", "A"},
         {"StructSet", true, "MA", ""},
@@ -923,7 +928,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             if (!n.arg.empty() && ParseVarType(n.arg, structDefs, vt) && !vt.IsStruct()) return vt.base;
             return PinType::Any;
         }
-        if ((n.type == "ListCopy" || n.type == "MapCopy" || n.type == "MapValues" || n.type == "ShuffleList") && in0 != srcOf.end())
+        if ((n.type == "ListCopy" || n.type == "ListSlice" || n.type == "MapCopy" || n.type == "MapValues" || n.type == "ShuffleList") && in0 != srcOf.end())
             return elemOf(in0->second.first, in0->second.second, depth + 1);
         if (n.type == "MapKeys") return PinType::Text;
         return PinType::Any;
@@ -960,12 +965,12 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         if (const PinType dt = DeclOutType(n.type, n.arg, pin, decls); dt != PinType::Any) return dt;
         if (n.type == "StructNew") return PinType::Map;
         if (n.type == "StructGet" && pin == 0) return fieldType(id, 0);
-        if (pin == 0 && (n.type == "ListGet" || n.type == "ForEach")) {
+        if (pin == 0 && (n.type == "ListGet" || n.type == "ListPop" || n.type == "ForEach")) {
             const PinType e = srcElem(id, 0);
             if (e != PinType::Any) return e;
         }
         if (n.type == "ForEachMap" && pin == 1) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
-        if (n.type == "MapGet" && pin == 0) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
+        if ((n.type == "MapGet" || n.type == "MapGetOr") && pin == 0) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
         if (n.type == "FunctionStart" || n.type == "CallFunction") {
             const FunctionSig* f = fnOf(n);
             const auto& pins = !f ? std::vector<FunctionSig::Pin>{} : n.type == "FunctionStart" ? f->params : f->returns;
@@ -981,7 +986,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             int listPin = -1;
             if (n.type == "ListAdd" || n.type == "ListContains" || n.type == "ListFind" || n.type == "ListRemoveItem") listPin = 1;
             else if (n.type == "ListInsert" || n.type == "ListSet") listPin = 2;
-            else if (n.type == "MapSet") listPin = 2;
+            else if (n.type == "MapSet" || n.type == "MapGetOr") listPin = 2;
             if (pin == listPin) { const PinType e = srcElem(id, 0); if (e != PinType::Any) return e; }
         }
         if (n.type == "Return" || n.type == "CallFunction") {

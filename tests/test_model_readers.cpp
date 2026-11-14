@@ -283,6 +283,12 @@ int main() {
             ImportedModel t1;
             CHECK(ReadObjFile("mr_trav.obj", t1, &err));
             CHECK(t1.materials.size() == 1 && t1.materials[0].texture.empty());   // dropped, not stored
+            Spit("mr_abs.obj", "mtllib mr_abs.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl a\nf 1 2 3\n");
+            Spit("mr_abs.mtl", "newmtl a\nmap_Kd /etc/hostname\n");
+            ImportedModel t3;
+            CHECK(ReadObjFile("mr_abs.obj", t3, &err));
+            CHECK(t3.materials.size() == 1 && t3.materials[0].texture.empty());   // absolute path dropped (#753)
+            std::remove("mr_abs.obj"); std::remove("mr_abs.mtl");
             Spit("mr_inside.obj", "mtllib mr_inside.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl ok\nf 1 2 3\n");
             Spit("mr_inside.mtl", "newmtl ok\nmap_Kd ./sub/../mr_inside.png\n");
             ImportedModel t2;

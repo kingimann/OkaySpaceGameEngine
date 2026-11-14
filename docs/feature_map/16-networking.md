@@ -275,7 +275,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Parts:**
   - 16.14.1 Relay protocol - `Net/RelayProtocol` - outer frames Hello (0x90), Welcome, Data, Bye, Refused; versions 1 to 4 (4 adds the welcome nonce); little-endian throughout; the relay strips its header so inner messages are untouched
   - 16.14.2 Relay server core - `Net/RelayServer` - sessions by code, slot ids, host-secret key for version-2 hosts, cookie round trip for version-3, per-address and global caps, rate limits, idle expiry
-  - 16.14.3 Standalone program - `relay/main.cpp` - `okayspace-relay [port] [--legacy-hello=on|off]`, default port 45100; target `okayspace-relay` (always built except for Emscripten)
+  - 16.14.3 Standalone program - `relay/main.cpp` - `okayspace-relay [port] [--legacy-hello=on|off]`, default port 45100, legacy hellos off; target `okayspace-relay` (always built except for Emscripten)
   - 16.14.4 Using it from a game - `Net/NetworkManager` - `HostViaRelay`, `JoinViaRelay`, `RelayReady`, `RelayError`; welcome timeout (`relayTimeoutSeconds`) and nonce check (`allowUnverifiedRelay`); scripts `net_host_relay`, `net_join_relay`
   - 16.14.5 Hosting kits - `deploy/voice-server/Dockerfile` - Dockerfile, docker-compose, systemd unit and `install.sh` for a VPS (built without libsodium, port 45100/udp)
 - **Code:** `Net/RelayProtocol`, `Net/RelayServer`, `relay/main.cpp`, `relay/CMakeLists.txt`, `deploy/voice-server/Dockerfile`, `deploy/voice-server/docker-compose.yml`, `deploy/voice-server/install.sh`, `deploy/voice-server/okayspace-voice.service`
@@ -284,7 +284,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Docs:** `docs/relay.md`, `docs/voice-server.md`
 - **Tests:** `net_relay`, `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`
 - **Status:** Works - `net_relay` joins through an in-process relay, `relay_security` covers isolation, unguessable slots, floods and random datagrams
-- **Open:** whether the live relay was redeployed with the cookie hardening can't be told from the repo (ROADMAP item 7); `--legacy-hello` still defaults to on, to be turned off once the log's legacy count stays zero; no deploy automation (manual `install.sh` or Docker)
+- **Open:** whether the live relay was redeployed with the cookie hardening can't be told from the repo (ROADMAP item 7); `--legacy-hello` now defaults to off (#733); `=on` re-allows old games; no deploy automation (manual `install.sh` or Docker)
 - **Related:** 16.5, 16.7, 39.8, 41.5
 - **Words:** relay, NAT, TURN, port forwarding, okayspace-relay, session code, slot, hello, cookie, legacy hello, HostViaRelay, JoinViaRelay, RelayServer
 - **Seen as:** friends can't join without port forwarding; "relay refused" or the code is hosted by someone else; the relay is flooded or runs out of slots

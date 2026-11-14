@@ -557,11 +557,25 @@ static void CompareWithUfbx() {
                 };
                 std::unordered_map<std::string, std::size_t> inB;
                 for (std::size_t i = 0; i < sb->bind.vertices.size(); ++i) inB[key(sb->bind, i)] = i;
+                // Fixtures are small, so match them by closeness instead of by printed text: a value a hair either side of a
+                // rounding boundary (or -0 against 0) prints differently on different compilers, which is not a real difference.
+                auto close = [](const Mesh& ma, std::size_t i, const Mesh& mb, std::size_t j) {
+                    auto d = [](float p, float q) { return std::fabs(p - q); };
+                    const Vec3 na = ma.normals.size() > i ? ma.normals[i] : Vec3{0, 0, 0}, nb = mb.normals.size() > j ? mb.normals[j] : Vec3{0, 0, 0};
+                    return d(ma.vertices[i].x, mb.vertices[j].x) < 2e-5f && d(ma.vertices[i].y, mb.vertices[j].y) < 2e-5f && d(ma.vertices[i].z, mb.vertices[j].z) < 2e-5f &&
+                           d(na.x, nb.x) < 2e-4f && d(na.y, nb.y) < 2e-4f && d(na.z, nb.z) < 2e-4f &&
+                           d(ma.uvs[i].x, mb.uvs[j].x) < 2e-4f && d(ma.uvs[i].y, mb.uvs[j].y) < 2e-4f;
+                };
                 double worst = 0; std::size_t unmatched = 0;
                 for (std::size_t i = 0; i < sa->bind.vertices.size(); ++i) {
-                    auto it = inB.find(key(sa->bind, i));
-                    if (it == inB.end()) { ++unmatched; continue; }
-                    const std::size_t j = it->second;
+                    std::size_t j = 0; bool found = false;
+                    if (isReal) {
+                        auto it = inB.find(key(sa->bind, i));
+                        if (it != inB.end()) { j = it->second; found = true; }
+                    } else {
+                        for (std::size_t q = 0; q < sb->bind.vertices.size() && !found; ++q) if (close(sa->bind, i, sb->bind, q)) { j = q; found = true; }
+                    }
+                    if (!found) { ++unmatched; continue; }
                     for (int k = 0; k < 4; ++k) {
                         const float wa = sa->jointWt[i][(std::size_t)k];
                         if (wa <= 0) continue;

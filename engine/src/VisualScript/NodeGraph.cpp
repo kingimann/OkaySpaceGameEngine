@@ -761,6 +761,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "MapClear")       return std::make_unique<MapClearNode>();
     if (type == "MapCount")       return std::make_unique<MapCountNode>();
     if (type == "MapCopy")        return std::make_unique<MapCopyNode>();
+    if (type == "ListAppend")     return std::make_unique<ListAppendNode>();
+    if (type == "ListSlice")      return std::make_unique<ListSliceNode>();
+    if (type == "ListPop")        return std::make_unique<ListPopNode>();
+    if (type == "MapGetOr")       return std::make_unique<MapGetOrNode>();
+    if (type == "MapMerge")       return std::make_unique<MapMergeNode>();
     if (type == "StructNew")      return std::make_unique<StructNewNode>(argOr(""));
     if (type == "StructGet")      return std::make_unique<StructGetNode>(argOr(""));
     if (type == "StructSet")      return std::make_unique<StructSetNode>(argOr(""));

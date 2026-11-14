@@ -554,3 +554,55 @@ begin
   perform t.ok('...but the machine bans stay', public.ac_is_banned(null, repeat('1a', 32)));
 exception when others then perform t.ok('deleting a banned account with devices', false, sqlerrm);
 end $$;
+
+-- ---- Evidence bundles on server-kick reports ----------------------------------------
+reset role;
+select set_config('request.jwt.claims', '', false);
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-0000000000f1', 'evserver@x'), ('00000000-0000-0000-0000-0000000000f2', 'evcheater@x'), ('00000000-0000-0000-0000-0000000000f3', 'evplayer@x');
+insert into public.ac_report_servers (user_id, note) values ('00000000-0000-0000-0000-0000000000f1', 'test server');
+select t.as_user('00000000-0000-0000-0000-0000000000f1');
+set role authenticated;
+insert into public.ac_reports (reported, kind, reason, evidence)
+  values ('00000000-0000-0000-0000-0000000000f2', 'server_kick', '[server check] kicked', '{"version":1,"risk":9.5,"counts":[["speed",3]]}');
+do $$
+declare refused boolean := false;
+begin
+  -- Too big: refused by the size cap.
+  begin
+    insert into public.ac_reports (reported, kind, reason, evidence)
+      values ('00000000-0000-0000-0000-0000000000f2', 'server_kick', '[server check] big', jsonb_build_object('pad', repeat('x', 17000)));
+  exception when check_violation then refused := true; end;
+  perform t.ok('evidence: over 16 KiB is refused', refused);
+  refused := false;
+  begin
+    insert into public.ac_reports (reported, kind, reason, evidence)
+      values ('00000000-0000-0000-0000-0000000000f2', 'server_kick', '[server check] arr', '[1,2]');
+  exception when check_violation then refused := true; end;
+  perform t.ok('evidence: must be a JSON object', refused);
+end $$;
+reset role;
+select t.as_user('00000000-0000-0000-0000-0000000000f3');
+set role authenticated;
+insert into public.ac_reports (reported, reason, evidence)
+  values ('00000000-0000-0000-0000-0000000000f2', 'player report with evidence', '{"sneaky":true}');
+do $$
+declare n int;
+begin
+  select count(*) into n from public.ac_reports;
+  perform t.ok('evidence: a player can not read reports (or evidence)', n = 0, n::text);
+end $$;
+reset role;
+select t.as_user('00000000-0000-0000-0000-00000000000a');
+set role authenticated;
+do $$
+declare ev jsonb; n int;
+begin
+  select evidence into ev from public.ac_reports where reason = '[server check] kicked';
+  perform t.ok('evidence: an admin reads the server bundle', ev is not null and (ev->>'risk')::numeric = 9.5, coalesce(ev::text, 'null'));
+  select count(*) into n from public.ac_reports where reason = 'player report with evidence' and evidence is null;
+  perform t.ok('evidence: a non-server account''s bundle is dropped', n = 1, n::text);
+  update public.ac_reports set status = 'reviewing', evidence = '{"tampered":1}' where reason = '[server check] kicked';
+  select evidence into ev from public.ac_reports where reason = '[server check] kicked';
+  perform t.ok('evidence: a review does not change it', (ev->>'risk')::numeric = 9.5, coalesce(ev::text, 'null'));
+end $$;
+reset role;

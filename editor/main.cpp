@@ -18,6 +18,7 @@
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
@@ -30801,6 +30802,50 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse players' hit claims unless the server can check where the shooter is: a max move speed (net_max_speed / --max-speed), or Authoritative movement. Without either, a client could claim to fire from anywhere.");
                 if (ImGui::DragFloat("Max ping allowance##ac", &s.maxRewindRtt, 0.01f, 0.0f, 2.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
+                using namespace okay::detectui;
+                DetectSettings& d = s.detect;
+                static std::map<const void*, ObserveMemory> observeMem;   // what observe mode replaced, per component
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("Behavioural checks and a risk score for cheats that send possible-looking messages. Off by default. "
+                                    "Game-specific detectors (speed, flight, weapons, abilities, economy) stay off until given their numbers.");
+                ImGui::PopTextWrapPos();
+                if (ImGui::Checkbox("Enabled##acd", &d.enabled)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("detect.enabled: the master switch. Off: every detector is a no-op and nothing is stored.");
+                bool observe = IsObserveMode(d);
+                if (ImGui::Checkbox("Observe mode (no kicks or bans)##acd", &observe)) { SetObserveMode(d, observe, observeMem[ac]); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets kickAt, banAt, shadowAt and rateLimitAt to 0: the detectors still score and keep their evidence "
+                                                              "(log / flag only), but nothing is done to a player. Run real matches this way first, read the evidence, then raise a "
+                                                              "threshold or lower a weight for any detector that scored an honest player. Untick to bring the old values back.");
+                if (d.enabled && observe) ImGui::TextDisabled("Observing: no player is kicked, restricted or reported for a ban.");
+                const char* group = "";
+                for (const Field& f : Fields()) {
+                    if (std::strcmp(group, f.group) != 0) { group = f.group; ImGui::SeparatorText(group); }
+                    char lbl[96]; std::snprintf(lbl, sizeof(lbl), "%s##acd_%s", f.label, f.key);
+                    bool changed = false;
+                    if (f.i) { int v = d.*f.i; changed = ImGui::DragInt(lbl, &v, f.speed, (int)f.lo, (int)f.hi, f.fmt); if (changed) d.*f.i = v; }
+                    else { float v = d.*f.f; changed = ImGui::DragFloat(lbl, &v, f.speed, f.lo, f.hi, f.fmt); if (changed) d.*f.f = v; }
+                    if (changed) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("detect.%s: %s", f.key, f.tip);
+                }
+                ImGui::SeparatorText("All detect.* lines");
+                // The same lines the .okayac file and the scene hold: weapons, abilities, economy counters, weights and every key above.
+                static const void* textOwner = nullptr; static char text[8192]; static std::string textErr;
+                if (textOwner != ac || !ImGui::IsAnyItemActive()) {   // refill unless the box is being typed in
+                    if (textOwner != ac) textErr.clear();
+                    textOwner = ac;
+                    std::snprintf(text, sizeof(text), "%s", ToText(d).c_str());
+                }
+                ImGui::InputTextMultiline("##acdtext", text, sizeof(text), ImVec2(-1, 110));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
+                if (ImGui::SmallButton("Apply text##acd")) {
+                    std::string err;
+                    if (FromText(d, text, &err)) { textErr.clear(); ed.dirty = true; textOwner = nullptr; }
+                    else textErr = err;
+                }
+                if (!textErr.empty()) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", textErr.c_str()); }
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;

@@ -11,6 +11,7 @@
 #include "okay/Scene/SceneSerializer.hpp"   // spawn projectiles
 #include <string>
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -107,7 +108,9 @@ public:
             if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad; }
         if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
         if (dashKey && Input::GetKeyDown(dashKey)) in.pressed |= PlayerInput::Dash;
-        if ((fireKey && Input::GetKey(fireKey)) || (fireButton >= 0 && Input::GetMouseButton(fireButton)))
+        // An open bag, a text field, a menu or a click on a button is not a shot.
+        if (!GameInputBlocked(gameObject ? gameObject->scene() : nullptr) &&
+            ((fireKey && Input::GetKey(fireKey)) || (fireButton >= 0 && Input::GetMouseButton(fireButton))))
             in.held |= PlayerInput::Fire;
         m_haveCursor = false;
         if ((FaceMode)faceMode == FaceMode::Mouse) {

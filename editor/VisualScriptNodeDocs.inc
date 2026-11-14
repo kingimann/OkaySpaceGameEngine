@@ -17415,6 +17415,97 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "ListAppend";
+        d.title = "List Append";
+        d.description = "Adds every item of Other to the end of List. Appending a list to itself doubles it.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put List Append after an event such as On Start or On Update, and wire a value into List.";
+        d.related = "";
+        d.keywords = "list append";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. List Append runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After List Append finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({true, false, "Other", "List", "The Other input of List Append. It is a List. Unwired, this is an empty list.", "an empty list"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ListSlice";
+        d.title = "List Slice";
+        d.description = "A new list with Count items starting at Start (nothing wired into Count means everything from Start). Start past the end of the list is reported.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire List Slice's Slice output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "list slice";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({true, false, "Start", "Number", "Where the effect begins, in world units from the camera. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Count", "Number", "How many. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Slice", "List", "What List Slice produces on Slice. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ListPop";
+        d.title = "List Pop";
+        d.description = "Removes the last item of a list and gives it back. On an empty list Popped is false and nothing changes.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put List Pop after an event such as On Start or On Update, and wire a value into List.";
+        d.related = "";
+        d.keywords = "list pop";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. List Pop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After List Pop finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({false, false, "Item", "Any", "The current list entry. It is an Any. Wire it into an input that expects an Any.", ""});
+        d.pins.push_back({false, false, "Popped", "Bool", "What List Pop produces on Popped. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "MapGetOr";
+        d.title = "Map Get Or";
+        d.description = "The value stored under Key, or Default when the map has no such key.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Map Get Or's Value output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "map get or";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Map", "Map", "The Map input of Map Get Or. It is a Map. Unwired, this is an empty map.", "an empty map"});
+        d.pins.push_back({true, false, "Key", "Text", "The Key input of Map Get Or. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Default", "Any", "Used when nothing has been saved under this key yet. It is an Any. Unwired, this is nothing.", "nothing"});
+        d.pins.push_back({false, false, "Value", "Any", "The value that was read. It is an Any. Wire it into an input that expects an Any.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "MapMerge";
+        d.title = "Map Merge";
+        d.description = "Copies every entry of From into Into. A key in both takes the value from From.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put Map Merge after an event such as On Start or On Update, and wire a value into Into.";
+        d.related = "";
+        d.keywords = "map merge";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Map Merge runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Map Merge finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Into", "Map", "The Into input of Map Merge. It is a Map. Unwired, this is an empty map.", "an empty map"});
+        d.pins.push_back({true, false, "From", "Map", "The angle you are coming from, in degrees. It is a Map. Unwired, this is an empty map.", "an empty map"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "StructNew";
         d.title = "New Struct";
         d.description = "A new struct of the type named in the text field, every field at its default. Declare structs in the Variables panel.";

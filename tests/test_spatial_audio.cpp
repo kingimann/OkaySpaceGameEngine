@@ -258,13 +258,14 @@ int main() {
             const double corr = lr / std::sqrt(ll * rr);
             if (width == 1.0f) CHECK(std::fabs(corr) < 0.15); else CHECK(corr > 0.999);
         }
-        // level: the Room preset's tail over the first second, at 48 kHz, stays where it was calibrated (-23.2 dB),
-        // so the presets' wet values keep their meaning
+        // level: the Room preset's tail over the first second, at 48 kHz, stays where it was calibrated: -23.2337 dB is
+        // what the reverb this replaced gave on the same measure (ours gives -23.2295), so the presets' wet values keep
+        // their meaning. 0.05 dB tolerance: a real change of level fails this.
         rev.Clear();
         rev.Configure(PresetSettings(ReverbPreset::Room));
         double energy = 0;
         for (int i = 0; i < 48000; ++i) { float l = 0, r = 0; rev.Process(i == 0 ? 1.0f : 0.0f, l, r); energy += l * l + r * r; }
-        CHECK(std::fabs(10.0 * std::log10(energy) - (-23.23)) < 0.5);
+        CHECK(std::fabs(10.0 * std::log10(energy) - (-23.2337)) < 0.05);
         // stability at the extremes: the longest, brightest setting stays finite and keeps decaying; bad input is ignored
         ReverbSettings longest; longest.room = 1.0f; longest.damp = 0.0f; longest.wet = 1.0f;
         rev.Clear();

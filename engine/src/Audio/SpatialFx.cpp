@@ -27,7 +27,8 @@ constexpr double kRt60Curve = 2.5;
 constexpr float  kDampMin   = 0.05f;
 constexpr float  kDampRange = 0.60f;
 // Input level: calibrated on the Room preset so the tail's energy over the first second matches the reverb this replaced
-// within 0.5 dB, so the presets' `wet` values keep their meaning (tests/test_spatial_audio.cpp checks the level).
+// within 0.01 dB (measured: -23.2295 against -23.2337 dB at 48 kHz), so the presets' `wet` values keep their meaning;
+// tests/test_spatial_audio.cpp holds it to 0.05 dB.
 constexpr float  kInputScale = 0.226f;
 
 bool IsPrime(int n) {

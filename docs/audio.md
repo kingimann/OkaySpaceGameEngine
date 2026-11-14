@@ -137,15 +137,17 @@ The echo is a **feedback delay network** (`RoomReverb` in `engine/src/Audio/Spat
 - Diffusers: 5.3 ms and 1.9 ms (also primes in samples), gain 0.62.
 - Decay time: `0.2 + 6.5 x room^2.5` seconds, so `room` 0 is 0.2 s and 1 is 6.7 s.
 - Damping: a one-pole low-pass from 0.05 (bright) to 0.65 (dark).
-- Level: the Room preset is as loud as the reverb this replaced (within 0.01 dB over the first second), so the presets' `wet` values mean what they did.
+- Level: the Room preset is as loud as the reverb this replaced (within 0.01 dB over the first second at 48 kHz; the test holds it to 0.05 dB), so the presets' `wet` values mean what they did.
 - Width: a mid and side blend.
 
 **What changed for players (2026-11-14).** The reverb before this was a comb-and-all-pass design whose delay lengths and gains were the published numbers of a well-known public-domain reverb. Under the rule that all our code and numbers are our own, it was replaced. The presets sound close to before. Measured on an impulse at 48 kHz:
 
 - Room: same loudness, its tail falls a little sooner.
-- Hall and Cave: start at the same level and ring a little longer.
-- Outdoor: dies away faster (a short 0.2 s decay, as open air should).
+- Hall and Cave: within about 1 dB of before over the first second (an independent review measured Hall +0.56 dB, Cave -1.05 dB), and they ring a little longer.
+- Outdoor: about 0.4 dB quieter over the first second, and it dies away faster (a short 0.2 s decay, as open air should).
 - Stereo spread: follows `width` as before.
+
+`docs/UNFINISHED.md` needed no change for this: it has no reverb row, and the reverb's behaviour (one bus, four presets, on only inside a Reverb volume) is the same.
 
 | Echo | What you hear |
 | --- | --- |

@@ -38,6 +38,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | IRRMESH | 5 | `cellar` and `spider` as UTF-8 and UTF-16LE (`models/IRRMesh`) and a `cellar` in `models/IRR` |
 | B3D | 3 | `WusonBlitz` (static), `dwarf2` (47 nodes, 46 joints, 14,148 keys) and `turtle1` (25 nodes, 24 joints, 1,724 keys) |
 | X (DirectX) | 12 | 11 models (text: `test.x`, `test_cube_text.x`, `anim_test.x`, `BCN_Epileptic.X`, `Testwuson.X`, `kwxport_test_cubewithvcolors.x`, `dwarf.x` twice; binary: `fromtruespace_bin32.x`, `test_cube_binary.x`; MSZIP: `test_cube_compressed.x`) and one empty file |
+| Terragen | 2 | `models/TER`: `RealisticTerrain` (257 x 257 points, 30 m) and `RealisticTerrain_Large` (513 x 513, 19.53 m); both flat. Compared with Assimp v5.4.3 built with only its Terragen importer: same triangles and bounding box, area within 2e-6 (`docs/own_terragen_reader.md`) |
 
 ## Running it
 

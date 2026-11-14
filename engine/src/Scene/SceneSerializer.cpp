@@ -1532,6 +1532,17 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0)
                 << " " << s.maxRewindRtt << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
+        {   // the rules the "anticheat" line has no room for (spawn limits, client-writable prefixes, the ticket check): one ".okayac" line each, only when set
+            auto rule = [&](const std::string& l) { out << "  anticheatrule " << Quote(l) << "\n"; };
+            std::ostringstream num;
+            if (s.maxSpawnsPerSecond != d.maxSpawnsPerSecond) rule("maxSpawnsPerSecond " + std::to_string(s.maxSpawnsPerSecond));
+            if (s.maxLiveSpawnsPerPeer != d.maxLiveSpawnsPerPeer) rule("maxLiveSpawnsPerPeer " + std::to_string(s.maxLiveSpawnsPerPeer));
+            if (s.spawnRadius != d.spawnRadius) { num << "spawnRadius " << s.spawnRadius; rule(num.str()); }
+            for (const auto& v : s.clientVars) rule("clientVar " + v);
+            if (!s.ticketKey.empty()) rule("ticketKey " + s.ticketKey);
+            if (!s.ticketAudience.empty()) rule("ticketAudience " + s.ticketAudience);
+            if (s.ticketAnyAudience) rule("ticketAnyAudience true");
+        }
         {   // the detection engine's keys (only those that differ from the defaults), one quoted ".okayac" line each
             std::istringstream dl(s.detect.ToText());
             for (std::string line; std::getline(dl, line);)
@@ -7586,6 +7597,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);
                     if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && !w.empty()) ac->settings.weapons.push_back(w);
+                } else if (field == "anticheatrule") {   // one ".okayac" line the "anticheat" line has no room for, after it
+                    const std::string line = ReadQuoted(in);
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && !line.empty()) {
+                        AntiCheatSettings one;   // a line this build doesn't know is skipped, not fatal
+                        AntiCheatSettings& s = ac->settings;
+                        if (AntiCheatSettings::Parse(line, one)) {
+                            if (line.rfind("maxSpawnsPerSecond", 0) == 0) s.maxSpawnsPerSecond = one.maxSpawnsPerSecond;
+                            else if (line.rfind("maxLiveSpawnsPerPeer", 0) == 0) s.maxLiveSpawnsPerPeer = one.maxLiveSpawnsPerPeer;
+                            else if (line.rfind("spawnRadius", 0) == 0) s.spawnRadius = one.spawnRadius;
+                            else if (line.rfind("clientVar", 0) == 0) s.clientVars.insert(s.clientVars.end(), one.clientVars.begin(), one.clientVars.end());
+                            else if (line.rfind("ticketKey", 0) == 0) s.ticketKey = one.ticketKey;
+                            else if (line.rfind("ticketAudience", 0) == 0) s.ticketAudience = one.ticketAudience;
+                            else if (line.rfind("ticketAnyAudience", 0) == 0) s.ticketAnyAudience = one.ticketAnyAudience;
+                        }
+                    }
                 } else if (field == "anticheatdetect") {   // one detection setting, "detect.<key> <value>", after "anticheat"
                     const std::string line = ReadQuoted(in);
                     if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && line.rfind("detect.", 0) == 0) {

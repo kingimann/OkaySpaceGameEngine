@@ -276,6 +276,109 @@ void TestChecklistScene() {
     std::error_code ec; fs::remove_all(proj, ec);
 }
 
+// ---- (3) the chosen settings reach the build ----------------------------------------------------------
+void TestSceneRoundTrip() {
+    RUN_SUITE("anti-cheat settings round trip: scene file");
+    Scene a("A");
+    GameObject* go = a.CreateGameObject("Net");
+    go->AddComponent<NetworkManager>();
+    auto* ac = go->AddComponent<AntiCheatConfig>();
+    as::ApplyPreset(ac->settings, as::Preset::Economy, {"prefabs/crate.okayprefab", "prefabs/coin.okayprefab"}, true);
+    // The rules the older "anticheat" line had no room for.
+    ac->settings.clientVars = {"player.", "chat."};
+    ac->settings.maxSpawnsPerSecond = 3; ac->settings.maxLiveSpawnsPerPeer = 12; ac->settings.spawnRadius = 25.5f;
+    ac->settings.ticketKey = "BtZ2_7yBo4vR9-1xq3N8mH0cJkQe5wLpT6uYdAaSgFo"; ac->settings.ticketAudience = "arena-1"; ac->settings.ticketAnyAudience = true;
+    ac->settings.weapons = {"rifle"};
+    ac->settings.detect.maxSpeed = 11.5f;
+    const std::string text = SceneSerializer::Serialize(a);
+    Scene b("B");
+    CHECK(SceneSerializer::Deserialize(b, text));
+    GameObject* r = b.Find("Net");
+    auto* bac = r ? r->GetComponent<AntiCheatConfig>() : nullptr;
+    CHECK(bac != nullptr);
+    if (bac) {
+        // Every rule the editor can set survives save and load: compare the whole .okayac text.
+        CHECK(bac->settings.ToText() == ac->settings.ToText());
+        CHECK(bac->settings.clientVars == ac->settings.clientVars && bac->settings.ticketKey == ac->settings.ticketKey &&
+              bac->settings.ticketAudience == "arena-1" && bac->settings.ticketAnyAudience);
+        CHECK(bac->settings.maxSpawnsPerSecond == 3 && bac->settings.maxLiveSpawnsPerPeer == 12 && bac->settings.spawnRadius == 25.5f);
+        CHECK(bac->settings.requireEncryption && detectui::IsObserveMode(bac->settings.detect) && bac->settings.detect.maxSpeed == 11.5f);
+        CHECK(SceneSerializer::Serialize(b) == text);   // and it is stable
+    }
+    // A scene that has none of those rules saves exactly as before (no new lines).
+    Scene plain("P");
+    plain.CreateGameObject("X")->AddComponent<AntiCheatConfig>();
+    CHECK(!Has(SceneSerializer::Serialize(plain), "anticheatrule"));
+    // A line a future build wrote that this one does not know is skipped, not fatal.
+    std::string future = text;
+    const std::size_t at = future.find("  anticheatrule ");
+    CHECK(at != std::string::npos);
+    if (at != std::string::npos) future.insert(at, "  anticheatrule \"bogusKey 1\"\n");
+    Scene c("C");
+    CHECK(SceneSerializer::Deserialize(c, future));
+    CHECK(c.Find("Net") && c.Find("Net")->GetComponent<AntiCheatConfig>() && c.Find("Net")->GetComponent<AntiCheatConfig>()->settings.ToText() == ac->settings.ToText());
+}
+
+void TestBuildSettingsRoundTrip() {
+    RUN_SUITE("anti-cheat settings round trip: Build Settings");
+    for (int mode = 0; mode <= 2; ++mode) {
+        oked::BuildProfile a;
+        a.name = "Release"; a.settings.antiCheat = mode;
+        const auto back = oked::ParseBuildProfiles(oked::WriteBuildProfiles({a}));
+        CHECK(back.size() == 1 && back[0].settings.antiCheat == mode);
+    }
+    // An out-of-range value is clamped.
+    auto clamp = oked::ParseBuildProfiles("@profile X\nantiCheat=9\n");
+    CHECK(clamp.size() == 1 && clamp[0].settings.antiCheat == 2);
+    // An old profile without the key: anti-cheat stays off (opt-in).
+    auto old = oked::ParseBuildProfiles("@profile Old\nversion=1.0.0\n");
+    CHECK(old.size() == 1 && old[0].settings.antiCheat == 0);
+}
+
+void TestBuildShipsRules() {
+    RUN_SUITE("anti-cheat settings round trip: what a build ships");
+    const fs::path proj = TempDir("ship");
+    Write(proj / "Assets/prefabs/crate.okayprefab", "gameobject Crate\n  netsync 0 0 0 \"crate\"\n");
+    Write(proj / "Assets/prefabs/coin.okayprefab", "gameobject Coin\n  netsync 0 0 0 \"coin\"\n");
+    Write(proj / "Assets/prefabs/boss.okayprefab", "gameobject Boss\n");   // not on any list
+    Write(proj / "Assets/rules/arena.okayac", "enabled true\nspawn prefabs/boss.okayprefab\n");
+
+    // The scene's anti-cheat line names the rules file and two spawnable prefabs.
+    Scene s("S");
+    auto* ac = s.CreateGameObject("Net")->AddComponent<AntiCheatConfig>();
+    ac->file = "rules/arena.okayac";
+    ac->settings.spawnAllowlist = {"prefabs/crate.okayprefab", "prefabs/coin.okayprefab"};
+    const std::string sceneText = SceneSerializer::Serialize(s);
+    Write(proj / "Assets/main.okayscene", sceneText);
+
+    namespace bp = okay::buildpipe;
+    bp::WalkSettings ws; ws.projectDir = proj.string();
+    bp::WalkResult w = bp::WalkAssets({{(proj / "Assets/main.okayscene").string(), ""}}, ws);
+    auto shipped = [&](const std::string& dest) { for (const auto& a : w.assets) if (a.dest == dest) return true; return false; };
+    CHECK(shipped("rules/arena.okayac"));            // the rules file
+    CHECK(shipped("prefabs/crate.okayprefab") && shipped("prefabs/coin.okayprefab"));   // both spawn-list prefabs, not just one
+    CHECK(shipped("prefabs/boss.okayprefab"));       // a prefab the rules file allows is shipped too
+    CHECK(w.missing.empty());
+    std::error_code ec; fs::remove_all(proj, ec);
+}
+
+void TestRulesFileFoundInDataFolder() {
+    RUN_SUITE("anti-cheat settings round trip: rules file in the game's data folder");
+    const fs::path data = TempDir("data");
+    Write(data / "rules/arena.okayac", "enabled true\nmaxSyncSpeed 9\n");
+    Scene s("S");
+    GameObject* go = s.CreateGameObject("Net");
+    go->AddComponent<NetworkManager>();
+    auto* ac = go->AddComponent<AntiCheatConfig>();
+    ac->file = "rules/arena.okayac";
+    AntiCheatConfig::SetAssetBaseDir("");
+    CHECK(!ac->Apply() && !ac->LoadError().empty());   // not beside the working folder, no data folder known: refuses joins (fails closed)
+    AntiCheatConfig::SetAssetBaseDir(data.string());
+    CHECK(ac->Apply() && ac->LoadError().empty() && ac->Active().maxSyncSpeed == 9.0f);   // found in the data folder
+    AntiCheatConfig::SetAssetBaseDir("");
+    std::error_code ec; fs::remove_all(data, ec);
+}
+
 } // namespace
 
 int main() {
@@ -286,6 +389,10 @@ int main() {
     TestAddAntiCheat();
     TestChecklistFacts();
     TestChecklistScene();
+    TestSceneRoundTrip();
+    TestBuildSettingsRoundTrip();
+    TestBuildShipsRules();
+    TestRulesFileFoundInDataFolder();
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

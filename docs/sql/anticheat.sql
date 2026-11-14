@@ -109,6 +109,14 @@ create table if not exists public.ac_reports (
 -- 'server_kick' came later: an older install's check doesn't allow it.
 alter table public.ac_reports drop constraint if exists ac_reports_kind_check;
 alter table public.ac_reports add constraint ac_reports_kind_check check (kind in ('player', 'client_check', 'server_kick'));
+-- The detection engine's evidence bundle for a server kick / ban request (CheatDetect.hpp,
+-- EvidenceBundle::ToJson): a JSON object, at most 16 KiB. Read only through the "admins read
+-- reports" policy below (no other policy on this table lets anyone select), kept as filed by the
+-- guard trigger, and only a report server's own insert may carry one.
+alter table public.ac_reports add column if not exists evidence jsonb;
+alter table public.ac_reports drop constraint if exists ac_reports_evidence_check;
+alter table public.ac_reports add constraint ac_reports_evidence_check
+  check (evidence is null or (jsonb_typeof(evidence) = 'object' and octet_length(evidence::text) <= 16384));
 create index if not exists ac_reports_status  on public.ac_reports (status, created_at desc);
 create index if not exists ac_reports_created on public.ac_reports (created_at);
 create index if not exists ac_reports_reporter on public.ac_reports (reporter, created_at desc);
@@ -155,6 +163,10 @@ begin
          and not exists (select 1 from public.ac_report_servers s where s.user_id = auth.uid()) then
         raise exception 'Only a game server''s account files server reports' using errcode = 'insufficient_privilege';
       end if;
+      -- Evidence bundles come from a game server's account only; from anyone else it is dropped, not an error.
+      if new.evidence is not null and not exists (select 1 from public.ac_report_servers s where s.user_id = auth.uid()) then
+        new.evidence := null;
+      end if;
       perform public.ac_rate_hit('report-day:' || auth.uid(), 60, interval '1 day');
       -- Player reports: no repeats, and no reporting for a while when nearly all of them were thrown out.
       if new.kind = 'player' and new.reported is not null then
@@ -179,6 +191,7 @@ begin
   -- UPDATE (admins only, by RLS): what a report says stays as filed.
   new.reporter := old.reporter; new.reported := old.reported; new.kind := old.kind; new.game := old.game;
   new.reason := old.reason; new.details := old.details; new.hw_hash := old.hw_hash; new.created_at := old.created_at;
+  new.evidence := old.evidence;
   if new.status is distinct from old.status or new.review_note is distinct from old.review_note then
     new.reviewed_by := auth.uid(); new.reviewed_at := now();
     if auth.uid() is not null then

@@ -520,6 +520,52 @@ static void TestRange() {
         CHECK(!fr.ok && fr.err == Err::Aborted && n2 == 3); }
 }
 
+static void TestRangeStrict() {
+    Limits lim;
+    auto fetch = [&](const std::string& reply, const std::string& range) {
+        ScriptConnForGzip c; c.reply = reply;
+        FetchRequest rq; rq.url = "https://h/x"; rq.headerLines = {"Range: " + range};
+        return Fetch(c, rq, lim, 5000); };
+    auto p206 = [](const std::string& cr, size_t len, const std::string& extra = std::string()) {
+        return "HTTP/1.1 206 P\r\nContent-Range: " + cr + "\r\n" + extra + "Content-Length: " + std::to_string(len) + "\r\n\r\n" + std::string(len, 'x'); };
+    RangeSpec rs = ParseRangeRequest({{"Range", "bytes=-500"}});
+    CHECK(rs.kind == RangeSpec::Suffix && rs.first == 500);
+    rs = ParseRangeRequest({{"Range", "bytes=5-9"}}); CHECK(rs.kind == RangeSpec::Bounded && rs.first == 5 && rs.last == 9);
+    rs = ParseRangeRequest({{"Range", "bytes=5-"}}); CHECK(rs.kind == RangeSpec::From && rs.first == 5);
+    rs = ParseRangeRequest({{"Range", "bytes=1-2,5-6"}}); CHECK(rs.kind == RangeSpec::Unverifiable);
+    rs = ParseRangeRequest({{"Range", "bytes=-0"}}); CHECK(rs.kind == RangeSpec::Unverifiable);
+    rs = ParseRangeRequest({{"Range", "bytes=9-5"}}); CHECK(rs.kind == RangeSpec::Unverifiable);
+    rs = ParseRangeRequest({{"Range", "items=1-2"}}); CHECK(rs.kind == RangeSpec::Unverifiable);
+    rs = ParseRangeRequest({}); CHECK(rs.kind == RangeSpec::None);
+    // suffix: bytes=-10 of a 100 byte file is bytes 90-99/100
+    FetchResult r = fetch(p206("bytes 90-99/100", 10), "bytes=-10");
+    CHECK(r.ok && r.partial && r.rangeStart == 90 && r.rangeTotal == 100);
+    CHECK(fetch(p206("bytes 95-99/100", 5), "bytes=-10").ok);                          // shorter than N is allowed (file smaller or server chose less)
+    CHECK(fetch(p206("bytes 0-9/100", 10), "bytes=-10").err == Err::BadResponse);      // not the end of the file
+    CHECK(fetch(p206("bytes 80-98/100", 19), "bytes=-10").err == Err::BadResponse);    // does not end at the last byte
+    CHECK(fetch(p206("bytes 89-99/100", 11), "bytes=-10").err == Err::BadResponse);    // longer than the suffix
+    CHECK(fetch(p206("bytes 90-99/*", 10), "bytes=-10").err == Err::BadResponse);      // size unknown: cannot verify
+    // bounded: bytes=5-9
+    CHECK(fetch(p206("bytes 5-9/100", 5), "bytes=5-9").ok);
+    CHECK(fetch(p206("bytes 5-7/100", 3), "bytes=5-9").ok);                            // fewer bytes is fine
+    CHECK(fetch(p206("bytes 5-20/100", 16), "bytes=5-9").err == Err::BadResponse);     // runs past the end asked for
+    CHECK(fetch(p206("bytes 4-9/100", 6), "bytes=5-9").err == Err::BadResponse);       // wrong start
+    // open ended keeps working for a slice
+    CHECK(fetch(p206("bytes 5-9/20", 5), "bytes=5-").ok);
+    // multi-range and multipart are refused
+    CHECK(fetch(p206("bytes 1-2/100", 2), "bytes=1-2,5-6").err == Err::BadResponse);   // cannot verify a multi-range request
+    CHECK(fetch("HTTP/1.1 206 P\r\nContent-Type: multipart/byteranges; boundary=B\r\nContent-Length: 5\r\n\r\nxxxxx", "bytes=1-2,5-6").err == Err::BadResponse);
+    CHECK(fetch(p206("bytes 5-9/100", 5, "Content-Type: multipart/byteranges; boundary=B\r\n"), "bytes=5-9").err == Err::BadResponse);
+    CHECK(fetch(p206("bytes 5-9/100", 5), "bytes=garbage").err == Err::BadResponse);   // malformed Range: any 206 refused
+    // a 200 to any of these shapes is still a plain answer
+    CHECK(fetch("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc", "bytes=-10").ok);
+    // RequestSent is set once a stream was opened, not for a connect failure
+    {   ScriptConn c; c.serve = [](const Url&, const std::string&) { return std::string("garbage\r\n\r\n"); };
+        FetchRequest rq; rq.url = "https://h/x"; FetchResult fr = Fetch(c, rq, lim, 5000);
+        CHECK(!fr.ok && fr.requestSent);
+        rq.url = "https://unreachable.example/"; fr = Fetch(c, rq, lim, 5000); CHECK(!fr.ok && !fr.requestSent); }
+}
+
 static void Fuzz(int iters) {
     const std::vector<std::string> corpus = {
         kOk,
@@ -587,7 +633,7 @@ int main(int argc, char** argv) {
     int iters = 20000;
     if (const char* e = std::getenv("OKAY_FUZZ_ITERS")) iters = std::atoi(e);
     if (argc > 1) iters = std::atoi(argv[1]);
-    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); Fuzz(iters);
+    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); TestRangeStrict(); Fuzz(iters);
     std::printf("own_http: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

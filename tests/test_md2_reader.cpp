@@ -12,7 +12,7 @@ using namespace okay;
 
 int main() {
     RUN_SUITE("md2_reader");
-    {   // geometry, uv, winding, node, material (all numbers by hand, see the builder)
+    {   // geometry, uv (as written), winding, node, material (all numbers by hand, see the builder)
         ImportedModel m; std::string err;
         CHECK(ReadMd2Buffer(fx::BuildMd2(), "models/", m, &err));
         CHECK(m.backend == "own");
@@ -32,9 +32,9 @@ int main() {
         CHECK_NEAR(a.y, 22.0f, 1e-5f); CHECK_NEAR(a.x, 10.0f, 1e-5f);   // v2
         CHECK_NEAR(b.x, 11.0f, 1e-5f);                                 // v1
         CHECK(me.normals[(std::size_t)me.triangles[1]].z < -0.5f);      // v1 belongs to the first triangle only
-        // uv: s/64 and 1 - t/32: v1 has (64,0) -> (1, 1); v2 has (0,32) -> (0, 0)
-        CHECK_NEAR(me.uvs[(std::size_t)me.triangles[1]].x, 1.0f, 1e-5f); CHECK_NEAR(me.uvs[(std::size_t)me.triangles[1]].y, 1.0f, 1e-5f);
-        CHECK_NEAR(me.uvs[(std::size_t)me.triangles[0]].x, 0.0f, 1e-5f); CHECK_NEAR(me.uvs[(std::size_t)me.triangles[0]].y, 0.0f, 1e-5f);
+        // uv: s/64 and t/32 as written (top-down): v1 has (64,0) -> (1, 0); v2 has (0,32) -> (0, 1)
+        CHECK_NEAR(me.uvs[(std::size_t)me.triangles[1]].x, 1.0f, 1e-5f); CHECK_NEAR(me.uvs[(std::size_t)me.triangles[1]].y, 0.0f, 1e-5f);
+        CHECK_NEAR(me.uvs[(std::size_t)me.triangles[0]].x, 0.0f, 1e-5f); CHECK_NEAR(me.uvs[(std::size_t)me.triangles[0]].y, 1.0f, 1e-5f);
         // the root turns Z-up into Y-up: -90 degrees about X
         CHECK(m.nodes.size() == 1);
         CHECK_NEAR(m.nodes[0].rotation.x, -0.70710678f, 1e-5f); CHECK_NEAR(m.nodes[0].rotation.w, 0.70710678f, 1e-5f);

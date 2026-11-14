@@ -118,7 +118,7 @@ static bool ReadMd3Impl(const std::string& bytes, ImportedModel& out, std::strin
         for (Vec2& u : uv) {
             float a = t.F32(), c = t.F32();
             if (!std::isfinite(a) || !std::isfinite(c) || std::fabs(a) > 1e9f || std::fabs(c) > 1e9f) { a = 0; c = 0; ++nonFiniteUv; }
-            u = Vec2{a, 1.0f - c};
+            u = Vec2{a, c};   // top-down like the picture rows, as written (the engine's convention for Quake and DirectX formats)
         }
         // triangles: three vertex numbers each; Quake III winds clockwise, so two corners swap
         Br tr(bytes);

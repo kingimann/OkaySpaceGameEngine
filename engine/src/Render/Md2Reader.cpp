@@ -71,7 +71,7 @@ bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, Importe
         if (!b.Seek((std::uint64_t)ofsSt) || !b.Fits((std::uint64_t)numSt, 4)) return Fail(err, "the file ends inside the texture coordinates");
         const float du = skinW > 0 ? (float)skinW : 1.0f, dv = skinH > 0 ? (float)skinH : 1.0f;
         st.resize((std::size_t)numSt);
-        for (Vec2& t : st) { const float s = (float)b.I16(), tt = (float)b.I16(); t = Vec2{s / du, 1.0f - tt / dv}; }
+        for (Vec2& t : st) { const float s = (float)b.I16(), tt = (float)b.I16(); t = Vec2{s / du, tt / dv}; }
     }
 
     // ---- triangles: 3 vertex indices then 3 texture indices, 16 bit each; Quake winds clockwise, the order is flipped ----

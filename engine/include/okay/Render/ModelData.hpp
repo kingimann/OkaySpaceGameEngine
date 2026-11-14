@@ -188,13 +188,13 @@ bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, Import
 /// texture transforms are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
 bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// MD2 (Quake II model, binary): the first frame of the vertex animation as one static part (vertices welded on
-/// position and texture coordinate, smooth normals generated, winding reversed to counter clockwise, v flipped), the
+/// position and texture coordinate, smooth normals generated, winding reversed to counter clockwise, texture coordinates as written), the
 /// first skin name as the texture. The root node turns Z-up into Y-up. Further frames (vertex animation, which the engine
 /// has no clip type for), the stored normals and the OpenGL command list are not read (reported in `out.notes`).
 /// `baseDir` ends with a slash or is empty (it prefixes the skin path).
 bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// MD3 (Quake III Arena model, binary): the first frame of the vertex animation, one static part per surface (vertices
-/// welded, the stored normals decoded, winding reversed to counter clockwise, v flipped), the first shader name of each
+/// welded, the stored normals decoded, winding reversed to counter clockwise, texture coordinates as written), the first shader name of each
 /// surface as its texture (as written: Quake paths are relative to the game folder), and each tag (attachment point) of the
 /// first frame as an empty child node of the root, which turns Z-up into Y-up. Further frames, tag animation, `.skin` and
 /// `.shader` files are not read (reported in `out.notes`).

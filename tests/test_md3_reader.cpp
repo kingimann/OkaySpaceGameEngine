@@ -25,9 +25,9 @@ int main() {
         bool seen[3] = {false, false, false};
         for (std::size_t i = 0; i < me.vertices.size(); ++i) {
             const Vec3 p = me.vertices[i], n = me.normals[i]; const Vec2 u = me.uvs[i];
-            if (fx::Near(p.x, 0) && fx::Near(p.y, 0)) { seen[0] = true; CHECK(fx::Near(n.z, 1) && fx::Near(u.x, 0) && fx::Near(u.y, 1)); }       // v flipped: 1 - 0
-            else if (fx::Near(p.x, 1) && fx::Near(p.y, 0)) { seen[1] = true; CHECK(fx::Near(n.x, 1) && fx::Near(u.x, 1) && fx::Near(u.y, 1)); }
-            else if (fx::Near(p.x, 0) && fx::Near(p.y, 2)) { seen[2] = true; CHECK(fx::Near(n.y, 1) && fx::Near(u.x, 0) && fx::Near(u.y, 0)); }
+            if (fx::Near(p.x, 0) && fx::Near(p.y, 0)) { seen[0] = true; CHECK(fx::Near(n.z, 1) && fx::Near(u.x, 0) && fx::Near(u.y, 0)); }       // uv as written
+            else if (fx::Near(p.x, 1) && fx::Near(p.y, 0)) { seen[1] = true; CHECK(fx::Near(n.x, 1) && fx::Near(u.x, 1) && fx::Near(u.y, 0)); }
+            else if (fx::Near(p.x, 0) && fx::Near(p.y, 2)) { seen[2] = true; CHECK(fx::Near(n.y, 1) && fx::Near(u.x, 0) && fx::Near(u.y, 1)); }
         }
         CHECK(seen[0] && seen[1] && seen[2]);
         // winding reversed: the file's (0,1,2) is (0,2,1): the geometric normal of that triangle is -Z

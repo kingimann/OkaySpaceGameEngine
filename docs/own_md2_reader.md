@@ -17,7 +17,7 @@ MD2 is the model format of Quake II (1997). A file holds a list of vertex positi
 
 ## What it reads
 
-- The header (`IDP2`, version 8), the **first frame** (scale, offset and one byte per axis per vertex), the triangle list, the texture coordinates (pixels, divided by the skin size; `v` is flipped) and the name of the **first skin** as the texture.
+- The header (`IDP2`, version 8), the **first frame** (scale, offset and one byte per axis per vertex), the triangle list, the texture coordinates (pixels, divided by the skin size, top-down as written: the engine's Assimp path applies `FlipUVs` to Assimp's already flipped value, so the end result is the file's own, the same as the MD5 and OBJ readers give) and the name of the **first skin** as the texture.
 - Quake winds triangles clockwise: the corner order is reversed. Quake is Z-up: the root node carries the turn to Y-up.
 - Vertices are welded per position and texture coordinate; normals are **generated** (smooth).
 
@@ -33,7 +33,7 @@ File 256 MiB; vertices 1,000,000; triangles 2,000,000; texture coordinates 4,000
 
 ## Tests and what was checked
 
-- `md2_reader`: **synthetic** file built in memory (4 vertices, scale (1,2,3), offset (10,20,30), 2 triangles; area 1 + 3 = 4 by hand): positions, welding, reversed winding and normal direction, `v` flip, skin path with and without a base folder, the Z-up root, a multi-frame file (note), a missing skin, bad vertex and texture indices (skipped, noted), refusals (empty, wrong magic, wrong version, zero vertices, NaN scale), and **every truncation** of the file.
+- `md2_reader`: **synthetic** file built in memory (4 vertices, scale (1,2,3), offset (10,20,30), 2 triangles; area 1 + 3 = 4 by hand): positions, welding, reversed winding and normal direction, texture coordinates as written, skin path with and without a base folder, the Z-up root, a multi-frame file (note), a missing skin, bad vertex and texture indices (skipped, noted), refusals (empty, wrong magic, wrong version, zero vertices, NaN scale), and **every truncation** of the file.
 - `batchc_hostile` (MD2 section): every header field set to 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, the caps and one past them; NaN, infinity and 3.4e38 in the scale and offset; 1e9 scale; every truncation; then 200,000 mutations (byte flips, insertions, deletions, number-like text, truncation). Run under `-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all`: clean.
 
 ### Real files

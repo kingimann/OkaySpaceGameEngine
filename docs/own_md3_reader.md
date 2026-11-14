@@ -16,7 +16,7 @@ MD3 is the model format of Quake III Arena (1999) and the many games built on it
 
 ## What it reads
 
-- Header (`IDP3`, version 15), every surface: **frame 0** positions (16-bit values in 1/64 units), the **stored normals** (two bytes: latitude and longitude), texture coordinates (`v` flipped), triangles (winding reversed), the first shader name as the texture. One part and one material per surface.
+- Header (`IDP3`, version 15), every surface: **frame 0** positions (16-bit values in 1/64 units), the **stored normals** (two bytes: latitude and longitude), texture coordinates (as written, top-down, see `docs/own_md2_reader.md`), triangles (winding reversed), the first shader name as the texture. One part and one material per surface.
 - **Tags** of frame 0 become empty child nodes of the root (position, and a rotation made from the three axis vectors; axes that are not a rotation, for example scaled or mirrored, leave the node unrotated and say so). The root turns Z-up into Y-up.
 
 ## Not handled (each is a line in `out.notes`)
@@ -31,7 +31,7 @@ File 256 MiB; surfaces 4,096; vertices per surface 2,000,000; triangles per surf
 
 ## Tests and what was checked
 
-- `md3_reader`: **synthetic** file built in memory (one triangle with edges 1 and 2, area 1 by hand; decoded normals (0,0,1), (1,0,0), (0,1,0); an empty second surface; a second frame that must be ignored; a tag at (5,6,7) turned 90 degrees about Z), the `v` flip, winding, node tree, notes, a skewed tag axis, refusals and **every truncation**.
+- `md3_reader`: **synthetic** file built in memory (one triangle with edges 1 and 2, area 1 by hand; decoded normals (0,0,1), (1,0,0), (0,1,0); an empty second surface; a second frame that must be ignored; a tag at (5,6,7) turned 90 degrees about Z), texture coordinates, winding, node tree, notes, a skewed tag axis, refusals and **every truncation**.
 - `batchc_hostile` (MD3 section): every header and surface-header field at 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF and at and over each cap; NaN, infinity and 3.4e38 in tags and texture coordinates; every truncation; 200,000 mutations. Sanitizers (`address,undefined,float-cast-overflow`): clean.
 
 ### Real files

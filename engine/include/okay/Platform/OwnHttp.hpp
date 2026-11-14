@@ -559,7 +559,7 @@ struct FetchHooks {
 
 struct FetchResult {
     bool        ok = false;       ///< a final response was read completely
-    /// A connection was opened and the request may have reached the server (set before the first write). A failure with
+    /// A connection was opened and the request may have reached the server (set immediately before every write of request bytes). A failure with
     /// this set is NOT a clean "not reached": callers must not send a POST, PUT, PATCH or DELETE again by another route.
     bool        requestSent = false;
     Err         err = Err::None;
@@ -668,9 +668,10 @@ inline FetchResult Fetch(Connector& conn, const FetchRequest& req, const Limits&
         Err e = Err::None; std::string msg;
         std::unique_ptr<Stream> st = conn.Open(url, deadline, e, msg);
         if (!st) return bad(e == Err::None ? Err::Connect : e, msg);
-        res.requestSent = true;
         std::string wire;
         if (!BuildRequest(method, url, headers, body, conn.AbsoluteForm(url), wire, e, &msg, req.acceptGzip)) return bad(e, msg);
+        // Rule: set requestSent immediately before EVERY Write of request bytes (fresh and reused connections alike).
+        res.requestSent = true;
         if (!st->Write(wire.data(), wire.size(), e)) return bad(e == Err::None ? Err::Io : e, "write failed");
         Reader rd(*st);
         Response head;

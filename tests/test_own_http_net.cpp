@@ -8,6 +8,7 @@
 //   test_own_http_net <path to gen_http_test_certs.sh>
 #define OKAY_OWN_HTTP 1   // the NativeHttp wiring test below
 #include "okay/Platform/NativeHttp.hpp"
+#include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/OwnHttpNet.hpp"
 
 #include <atomic>
@@ -563,6 +564,68 @@ static void TestReviewFixes() {
     s.Stop();
 }
 
+// ---- the no-re-send decision, and the real AccountService path (review fixes) ------------------------------------
+static void TestNoResendDecision() {
+    using okay::http::Result; using okay::http::ShouldFallBackToCurl;
+    Result ok; ok.reached = true; ok.status = 200;
+    Result clean; clean.reached = false; clean.maybeSent = false;
+    Result sent; sent.reached = false; sent.maybeSent = true;
+    for (const char* m : {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}) {
+        const bool idem = std::string(m) == "GET" || std::string(m) == "HEAD";
+        CHECK(!ShouldFallBackToCurl(m, ok));       // success: nothing to fall back to
+        CHECK(ShouldFallBackToCurl(m, clean));     // clean failure: curl may always run
+        CHECK(ShouldFallBackToCurl(m, sent) == idem);   // maybe sent: only GET / HEAD may be repeated
+    }
+}
+
+static int CountLines(const std::string& path) {
+    std::ifstream f(path); std::string l; int n = 0; while (std::getline(f, l)) ++n; return n;
+}
+
+static void TestAccountNoResend() {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("okay_resend_" + okay::account::detail::RandomHex(8));
+    fs::create_directories(dir / "bin");
+    const std::string log = (dir / "curl.log").string();
+    WriteFile((dir / "bin" / "curl").string(), "#!/bin/sh\necho run >> '" + log + "'\nexit 7\n");
+    Sh("chmod +x '" + (dir / "bin" / "curl").string() + "'");
+    const char* oldPath = std::getenv("PATH"); const std::string savedPath = oldPath ? oldPath : "";
+    ::setenv("PATH", (dir / "bin").string().c_str(), 1);   // only the fake curl: a fallback is counted, not run for real
+    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
+
+    Server s;   // accepts, reads the whole request, then closes without answering
+    s.handler = [](int, const std::string&, const std::string&) {};
+    s.Start();
+    okay::account::AccountService svc(dir / "cfg", "http://127.0.0.1:" + std::to_string(s.port));
+    for (const char* m : {"POST", "PUT", "PATCH", "DELETE"}) {
+        const size_t before = s.Count();
+        okay::account::ApiResponse r = svc.ApiAnon("/act", m, "{\"a\":1}");
+        CHECK(!r.reached);
+        CHECK(s.Count() - before == 1);            // the server saw exactly one request
+        CHECK(!fs::exists(log));                   // and curl never ran (no re-send)
+    }
+    for (const char* m : {"GET", "HEAD"}) {        // a repeat is allowed here: curl (fake) runs once each
+        const int beforeCurl = fs::exists(log) ? CountLines(log) : 0;
+        const size_t before = s.Count();
+        okay::account::ApiResponse r = svc.ApiAnon("/act", m);
+        CHECK(!r.reached);
+        CHECK(s.Count() - before == 1);
+        CHECK(CountLines(log) == beforeCurl + 1);
+    }
+    s.Stop();
+    {   // a clean failure (connection refused): curl is tried, also for a POST
+        int port = 0; int lf = Listen(port); ::close(lf);
+        okay::account::AccountService dead(dir / "cfg2", "http://127.0.0.1:" + std::to_string(port));
+        const int beforeCurl = CountLines(log);
+        okay::account::ApiResponse r = dead.ApiAnon("/act", "POST", "{}");
+        CHECK(!r.reached && CountLines(log) == beforeCurl + 1);
+    }
+    ::setenv("PATH", savedPath.c_str(), 1);
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    std::error_code ec; fs::remove_all(dir, ec);
+}
+
 static void TestNoProxyList() {
     CHECK(HostBypassesProxy("localhost", "localhost,127.0.0.1"));
     CHECK(HostBypassesProxy("127.0.0.1", "localhost,127.0.0.1"));
@@ -901,6 +964,8 @@ int main(int argc, char** argv) {
     TestNativeHttp();
     TestDownloadFeatures();
     TestReviewFixes();
+    TestNoResendDecision();
+    TestAccountNoResend();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

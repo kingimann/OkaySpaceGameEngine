@@ -17,6 +17,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | What | State | What is missing |
 |---|---|---|
 | Direct3D 11 depth of field, ambient occlusion, Bloom Softness and AO Power | Compile-checked only | Never run on a GPU or compiled by `D3DCompile`; the shared maths is CPU tested (`dof_math`, `ssao_math`, `post_quality_math`). The software renderer and Direct3D 12 ignore Bloom Softness and AO Power |
+| Virtual geometry (auto LOD chains, meshlets) | CPU code and tests only, not used by any renderer or the editor | `Optimize/AutoLod` and `Optimize/Meshlet` exist with tests. Missing: an editor button, any GPU compute culling or cluster draw path (UNVERIFIED, no GPU here), the cluster hierarchy with screen-space error, streaming. Plan and honest sizes: `docs/foundations/virtual_geometry.md` |
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |
 | OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
@@ -230,7 +231,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [27.1](feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
+| [27.1](feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned...; `AutoLod` not wired into the editor; meshlets are CPU-only (no GPU culling or cluster hierarchy) |
 | [27.2](feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | Partial | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
 | [27.3](feature_map/20-35-planned.md#273-batching) | Batching | Partial | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
 | [27.4](feature_map/20-35-planned.md#274-streaming) | Streaming | Partial | a loaded cell is created in one frame (hitch risk); saves do not know about unloaded cells (see 35.3); cells are on the XZ plane... |

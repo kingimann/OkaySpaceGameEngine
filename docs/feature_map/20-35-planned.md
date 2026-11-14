@@ -757,11 +757,13 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 27.1.2 LOD group data and selection (#574) - `Optimize/LodGroup` - `SelectLod` with hysteresis and cross-fade, switch distances from screen error
   - 27.1.3 Existing vertex-clustering Decimate - `Modeling/Modifiers`, `Render/Mesh` - a simple Decimate modifier (merge vertices in grid cells) on main; not topology-safe
   - 27.1.4 Mip budget (#574) - `Optimize/MipBudget` - which texture mip levels to keep resident for a memory budget
-- **Code:** `Components/LODGroup`, `Render/Visibility`, `Optimize/MeshSimplify`, `Optimize/LodGroup`, `Optimize/MipBudget`, `Modeling/Modifiers`, `Render/Mesh`
-- **API:** `SimplifyMesh`, `GenerateLodChain`, `LodGroup`, `SelectLod`, `MakeLodGroup`; on main: `Mesh::Decimate`, Decimate modifier
+  - 27.1.5 Auto LOD chain - `Optimize/AutoLod` - `GenerateAutoLod`: 100/50/25/12.5 percent levels with an error budget, hostile-input cleaning, screen-size thresholds and a `FillLodGroup` hook (editor not wired)
+  - 27.1.6 Meshlets and cluster culling (reference) - `Optimize/Meshlet` - clusters of at most 64 vertices and 126 triangles with bounding sphere and normal cone; CPU frustum, cone and distance culling checked against a per-triangle brute force; CPU only, no GPU path (virtual geometry phase 2, `docs/foundations/virtual_geometry.md`)
+- **Code:** `Components/LODGroup`, `Render/Visibility`, `Optimize/MeshSimplify`, `Optimize/AutoLod`, `Optimize/Meshlet`, `Optimize/LodGroup`, `Optimize/MipBudget`, `Modeling/Modifiers`, `Render/Mesh`
+- **API:** `SimplifyMesh`, `GenerateLodChain`, `GenerateAutoLod`, `FillLodGroup`, `BuildMeshlets`, `CullMeshlets`, `LodGroup`, `SelectLod`, `MakeLodGroup`; on main: `Mesh::Decimate`, Decimate modifier
 - **Editor:** LOD Group inspector (Add Component > Rendering) and distance rings in the Scene view
-- **Docs:** `docs/optimization_tools.md`
-- **Tests:** `optimize_simplify`, `visibility_lod`
+- **Docs:** `docs/optimization_tools.md`, `docs/foundations/virtual_geometry.md`
+- **Tests:** `optimize_simplify`, `visibility_lod`, `auto_lod`, `meshlet`
 - **Status:** Partial - `LODGroup` is a component with an Inspector, distances or screen size, Generate LODs and Scene-view rings. OpenGL, Direct3D 11, Direct3D 12 and the software renderer pick the level with `SelectLod`. The mip budget is still unused.
 - **Exists today:** A Mesh Renderer with an LOD Group switches meshes by distance or screen size in every backend. Hysteresis uses the last choice. Skinned meshes stay on the full mesh. Generate builds 100/50/25/10 percent levels.
 - **Work packages:**
@@ -770,7 +772,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. S - "Generate LODs" button on a MeshRenderer: ratios 100/50/25/10 percent through `GenerateLodChain`. Depends on: package 1.
   4. M - Scene view LOD preview: tint by level, force a level, show triangle savings. Depends on: package 2.
   5. S - LOD saving shown in the Stats panel and the optimization report (27.3). Depends on: package 2.
-- **Open:** simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned meshes need skin data passed in by hand.
+- **Open:** simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned meshes need skin data passed in by hand; `AutoLod` is not wired into the editor; meshlets have no GPU path (no compute culling, no cluster draw, no cluster hierarchy or per-cluster error selection yet).
 - **Related:** 2.8, 3.3, 3.5, 27.3, 23.1
 - **Words:** LOD, level of detail, mesh simplify, decimate, LODGroup, switch distance, cross fade, GenerateLodChain, MeshSimplify
 - **Seen as:** frame rate drops with many high-poly objects far away; objects pop when they change detail

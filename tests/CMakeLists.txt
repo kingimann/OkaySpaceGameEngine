@@ -3159,3 +3159,8 @@ add_test(NAME post_quality_math COMMAND test_post_quality_math)
 add_executable(test_auto_lod test_auto_lod.cpp)
 target_link_libraries(test_auto_lod PRIVATE okay::engine)
 add_test(NAME auto_lod COMMAND test_auto_lod)
+
+# Virtual geometry phase 2 start: meshlet (cluster) builder and CPU culling reference
+add_executable(test_meshlet test_meshlet.cpp)
+target_link_libraries(test_meshlet PRIVATE okay::engine)
+add_test(NAME meshlet COMMAND test_meshlet)

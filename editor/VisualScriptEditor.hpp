@@ -37,6 +37,7 @@
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptFriendly.hpp"
 #include "DocRecovery.hpp"
+#include "VsGraphNaming.hpp"   // names for graph files: suggest, check, rename (no ImGui; tested)
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
@@ -48,6 +49,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -2650,6 +2652,9 @@ struct VsSession {
     int askTab = -1;
     bool newStarter = true;   ///< New graph vs New empty graph, once the save prompt is answered
     bool forceSelect = false; ///< select `active` once; not every frame (that blocked tab clicks)
+    std::vector<int> nameQueue;   ///< tab ids still to be asked for a name (Save all graphs)
+    bool nameInFlight = false;    ///< a name prompt from the queue is open
+    bool nameAnswered = false;    ///< ... and it was accepted (not cancelled)
 };
 inline VsSession& Session() { static VsSession s; return s; }
 
@@ -2748,6 +2753,20 @@ inline void Log(const std::string& m, int lv = 0) { if (LogFn) LogFn(m, lv); }
 inline bool (*SaveTextFile)(const std::string& path, const std::string& content) = nullptr;
 /// Host draws "Restore previous version" entries for this path (BackupManager).
 inline void (*VsBackupMenu)(const std::string& path) = nullptr;
+/// A question for a graph's name. `accept` gets the file name with ".okayvs" on it and returns "" when it worked (the
+/// prompt closes) or a message (the prompt stays open and shows it). Enter confirms, Esc cancels. The editor
+/// (main.cpp) fills AskGraphName in with the Project panel's name prompt. Without it (headless), Save keeps the
+/// old automatic name.
+struct VsNameRequest {
+    std::string title, hint, initial;   ///< initial: the name without ".okayvs"
+    std::string okLabel = "Save";
+    std::function<std::string(const std::string& fileName)> accept;
+};
+inline void (*AskGraphName)(const VsNameRequest&) = nullptr;
+/// True while that prompt is open.
+inline bool (*GraphNamePromptBusy)() = nullptr;
+/// Rename a graph file through the Project panel (keeps references in scenes and prefabs). "" or a message.
+inline std::string (*RenameGraphFile)(const std::string& path, const std::string& typedName) = nullptr;
 
 // ---- The Actions step library (the editor fills these in) -------------------
 // One graph editor covers both styles: wired nodes, and the no-code steps
@@ -3042,12 +3061,13 @@ inline void VsRestoreTabs() {
     if (active >= 0 && active < (int)s.tabs.size()) s.active = active;
     s.forceSelect = true;
 }
-/// Save every dirty tab. Untitled graphs land in Assets with a free name.
-inline int VsSaveAllTabs(const std::string& projectDir) {
+/// Save every dirty tab. Untitled graphs land in Assets with a free name, unless `skipUntitled` (then the caller asks for a name).
+inline int VsSaveAllTabs(const std::string& projectDir, bool skipUntitled = false) {
     int n = 0;
     namespace fs = std::filesystem;
     for (auto& tp : Session().tabs) {
         if (!tp || !tp->g.dirty || tp->missing) continue;
+        if (skipUntitled && tp->g.path.empty()) continue;   // the editor asks for its name
         VsEditState& st = *tp;
         std::string p = st.g.path;
         if (p.empty()) {
@@ -3063,6 +3083,132 @@ inline int VsSaveAllTabs(const std::string& projectDir) {
     }
     if (n) VsSaveTabList();
     return n;
+}
+
+// ---- Naming: Save of an untitled graph, Save As, Rename, Save all --------------------------------
+inline VsEditState* VsTabById(int id) {
+    for (auto& t : Session().tabs) if (t && t->tabId == id) return t.get();
+    return nullptr;
+}
+/// The name of the object a graph is bound to ("" when none), for the suggested file name.
+inline std::string VsBoundObjectName(EditorState& ed, const VsEditState& st) {
+    if (st.boundGuids.empty()) return {};
+    if (okay::GameObject* o = ed.scene().FindByGuid(st.boundGuids.front())) return o->name;
+    return {};
+}
+/// Write one tab's graph to `path` (which becomes its path). The active tab goes through PublishOpenGraph so every
+/// object that runs the graph reloads; other tabs are only written. False when the write failed (path is put back).
+inline bool VsWriteTabTo(EditorState& ed, VsEditState& st, const std::string& path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    const std::string old = st.g.path;
+    st.g.path = path;
+    bool ok = false;
+    if (&st == &State()) ok = PublishOpenGraph(ed, false);
+    else {
+        if (SaveTextFile) ok = SaveTextFile(path, st.g.toText());
+        else ok = st.g.save(path);
+        if (ok) VsMarkClean(st);
+    }
+    if (!ok) { st.g.path = old; return false; }
+    st.missing = false;
+    VsSaveTabList();
+    return true;
+}
+/// Ask for a name for tab `tabId` and save it there. `saveAs` is for a graph that already has a file (the prompt
+/// starts from its name). Returns false when no prompt could be opened (the host has none): the caller then saves
+/// under an automatic name as before. Esc leaves the graph open, unsaved and unchanged.
+inline bool VsPromptSaveName(EditorState& ed, int tabId, bool saveAs, bool fromQueue = false) {
+    if (!AskGraphName) return false;
+    VsEditState* t = VsTabById(tabId);
+    if (!t) return false;
+    namespace fs = std::filesystem;
+    const std::string dir = vsname::ScriptsDir(ed.projectDir());
+    VsNameRequest rq;
+    rq.title = saveAs ? "Save graph as" : "Name this graph";
+    rq.hint = "Saved in Assets as <name>.okayvs. Enter saves, Esc cancels.";
+    rq.okLabel = "Save";
+    if (saveAs && !t->g.path.empty()) rq.initial = vsname::StripExt(fs::path(t->g.path).filename().string());
+    else rq.initial = vsname::SuggestName(dir, VsBoundObjectName(ed, *t));
+    auto gate = std::make_shared<vsname::ReplaceGate>();
+    EditorState* edp = &ed;
+    Session().nameInFlight = fromQueue;
+    Session().nameAnswered = false;
+    rq.accept = [edp, tabId, dir, gate](const std::string& fileName) -> std::string {
+        VsEditState* tab = VsTabById(tabId);
+        if (!tab) return "That graph was closed.";
+        const vsname::TargetCheck c = gate->Check(dir, fileName, tab->g.path);
+        if (!c.ok) return c.needsConfirm ? c.message : c.error;
+        if (!VsWriteTabTo(*edp, *tab, c.path)) return "Couldn't write " + c.path + ".";
+        Session().nameAnswered = true;
+        Log("Saved visual script " + c.path);
+        return {};
+    };
+    AskGraphName(rq);
+    return true;
+}
+/// Rename the file of tab `tabId` (Graph > Rename). Scenes and prefabs that point at it follow.
+inline bool VsPromptRename(EditorState&, int tabId) {
+    if (!AskGraphName || !RenameGraphFile) return false;
+    VsEditState* t = VsTabById(tabId);
+    if (!t || t->g.path.empty()) return false;
+    namespace fs = std::filesystem;
+    VsNameRequest rq;
+    rq.title = "Rename graph";
+    rq.hint = "The file is renamed; scenes and prefabs that use it follow.";
+    rq.okLabel = "Rename";
+    rq.initial = vsname::StripExt(fs::path(t->g.path).filename().string());
+    const std::string from = t->g.path;
+    rq.accept = [tabId, from](const std::string& fileName) -> std::string {
+        VsEditState* tab = VsTabById(tabId);
+        if (!tab) return "That graph was closed.";
+        return RenameGraphFile(tab->g.path.empty() ? from : tab->g.path, fileName);
+    };
+    AskGraphName(rq);
+    return true;
+}
+/// A project file moved or was renamed (Project panel, or Graph > Rename): open tabs follow it.
+inline void VsFollowMoves(const std::vector<std::pair<std::string, std::string>>& moves) {
+    bool any = false;
+    for (auto& t : Session().tabs) {
+        if (!t || t->g.path.empty()) continue;
+        const std::string np = vsname::RemapPath(t->g.path, moves);
+        if (np != t->g.path) { t->g.path = np; any = true; }
+    }
+    if (any) VsSaveTabList();
+}
+/// Save what has a name, then ask for the names of the untitled graphs one by one (queued; the next question opens
+/// when the previous one is answered, Esc stops the rest). True when names are still to be asked.
+inline bool VsSaveAllOrPrompt(EditorState& ed) {
+    if (!AskGraphName) { VsSaveAllTabs(ed.projectDir()); return false; }
+    VsSaveAllTabs(ed.projectDir(), true);
+    VsSession& s = Session();
+    s.nameQueue.clear();
+    for (auto& t : s.tabs)
+        if (t && t->g.dirty && !t->missing && t->g.path.empty()) s.nameQueue.push_back(t->tabId);
+    return !s.nameQueue.empty();
+}
+/// Called every frame: opens the next queued name question when the previous one is done.
+inline void VsPumpNameQueue(EditorState& ed) {
+    VsSession& s = Session();
+    if (!AskGraphName) return;
+    const bool busy = GraphNamePromptBusy && GraphNamePromptBusy();
+    if (busy) return;
+    if (s.nameInFlight) {
+        s.nameInFlight = false;
+        if (!s.nameAnswered) { s.nameQueue.clear(); return; }   // Esc: leave the rest unsaved
+    }
+    while (!s.nameQueue.empty()) {
+        const int id = s.nameQueue.front();
+        s.nameQueue.erase(s.nameQueue.begin());
+        VsEditState* t = VsTabById(id);
+        if (!t || !t->g.dirty || !t->g.path.empty()) continue;
+        s.active = (int)(std::find_if(s.tabs.begin(), s.tabs.end(), [&](const auto& u) { return u.get() == t; }) - s.tabs.begin());
+        s.forceSelect = true;
+        VsPromptSaveName(ed, id, false, true);
+        return;
+    }
 }
 
 // File > Examples and "Try it" on a node. The editor (main.cpp) fills this in.
@@ -3585,6 +3731,8 @@ inline void Draw(EditorState& ed, bool* open) {
     // Kept short on purpose: everything else is a shortcut, the right-click menu,
     // or one of these menus.
     auto doSave = [&]() {
+        // An untitled graph with something in it: ask for its name first (Esc keeps it open and unsaved).
+        if (g.path.empty() && (!g.nodes.empty() || !st.boundGuids.empty()) && VsPromptSaveName(ed, st.tabId, false)) return;
         // Saving writes the file and reloads every object that runs this graph,
         // including ones whose path was stored differently and embedded copies.
         if (!PublishOpenGraph(ed, false)) { Log("Save failed", 2); return; }
@@ -3618,7 +3766,9 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::BeginPopup("##vsfile")) {
         if (ImGui::MenuItem("New graph")) RequestNewGraph(true);
         if (ImGui::MenuItem("New empty graph")) RequestNewGraph(false);
-        if (ImGui::MenuItem("Save all graphs")) VsSaveAllTabs(ed.projectDir());
+        if (ImGui::MenuItem("Save all graphs")) {
+            if (VsSaveAllOrPrompt(ed)) Log("Name each untitled graph to save it.");
+        }
         if (ImGui::BeginMenu("Restore previous version", !g.path.empty())) {
             // Filled by the host when backups are wired. The menu stays so the
             // command is visible; the host draws the versions via VsBackupMenu.
@@ -3640,6 +3790,11 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem("Save", "Ctrl+S")) doSave();
+        if (ImGui::MenuItem("Save As...", nullptr, false, AskGraphName != nullptr)) VsPromptSaveName(ed, st.tabId, true);
+        if (ImGui::MenuItem("Rename...", nullptr, false, AskGraphName != nullptr && RenameGraphFile != nullptr && !g.path.empty() && !st.missing))
+            VsPromptRename(ed, st.tabId);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && g.path.empty())
+            ImGui::SetTooltip("Save the graph first. It is named when you save.");
         ImGui::Separator();
         GameObject* selObj = ed.selected();
         std::string attachLbl = selObj ? "Attach to " + selObj->name : std::string("Attach to selected object");
@@ -3812,7 +3967,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(nm.c_str());
         if (g.dirty) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.93f, 0.78f, 0.45f, 1.0f), "Unsaved"); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g.path.empty() ? "Not saved yet. Save puts it in Assets." : g.path.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g.path.empty() ? "Not saved yet. Save asks for a name and puts it in Assets." : g.path.c_str());
     }
     // The graph checker: re-run whenever the graph changes (wires that can't
     // work, nodes nothing runs, unset variables, bad key names, missing prefabs).
@@ -5498,6 +5653,7 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
 
+    VsPumpNameQueue(ed);   // the next "name this graph" question of Save all graphs
     // Save prompt. Save is the focused button. Don't Save is not.
     if (Session().ask != VsSession::Ask::None) ImGui::OpenPopup("Save this graph?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -5528,7 +5684,12 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::TextDisabled("Nothing unsaved. The window will hide; the tabs stay.");
         ImGui::Spacing();
         if (ImGui::Button("Save", ImVec2(120, 0))) {
-            VsSaveAllTabs(ed.projectDir());
+            if (VsSaveAllOrPrompt(ed)) {
+                // Untitled graphs need a name first: nothing is closed or replaced until they are saved.
+                Log("Name the untitled graph(s), then try again.");
+                ses.ask = VsSession::Ask::None;
+                ImGui::CloseCurrentPopup();
+            } else {
             s_closeRemember = false;
             if (ses.ask == VsSession::Ask::NewGraph) {
                 const bool starter = ses.newStarter;
@@ -5543,6 +5704,7 @@ inline void Draw(EditorState& ed, bool* open) {
             } else if (ses.ask == VsSession::Ask::CloseWindow && open) *open = false;
             ses.ask = VsSession::Ask::None;
             ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();

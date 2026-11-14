@@ -397,6 +397,28 @@ Every N Times.
   toolbar names the object being watched.
 - **Space** opens the palette at the mouse, **Home** frames the whole graph.
 
+## Saving and naming graphs
+
+A graph is a `.okayvs` file in your project's `Assets` folder.
+
+- **Save (Ctrl+S) on a new graph asks for a name.** The box is filled in for you
+  (`<ObjectName>Graph`, or `Script`; a number is added if that file exists). Press
+  **Enter** to save, **Esc** to cancel: the graph stays open and unsaved.
+- A name cannot hold `/ \ : * ? " < > |`, cannot start with a dot or end with a dot
+  or space, cannot be a Windows reserved name (`CON`, `NUL`, `COM1`, ...), and is
+  at most 100 letters. `.okayvs` is always added for you.
+- If a graph with that name exists, the prompt says so; press the button again to
+  replace it, or type another name.
+- **Graph > Save As...** saves a copy under a new name; the tab then shows the new name.
+- **Graph > Rename...** renames the file. Scenes and prefabs that point at it are
+  updated, and open tabs follow (the same code as the Project panel's rename).
+- **Graph > Save all graphs** saves the named graphs and then asks for a name for
+  each untitled one, one after another. Esc stops the rest. When you close a tab or
+  start a new graph and choose Save with untitled graphs open, you are asked for
+  their names first and nothing is closed until they are saved.
+- Attaching a graph to an object and pressing Play still give an untitled graph an
+  automatic name, so they never stop to ask.
+
 ## One graph editor (Actions merged in)
 
 The Flow Graph window and the Actions list are gone as separate editors: everything

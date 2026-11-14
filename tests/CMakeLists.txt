@@ -877,6 +877,12 @@ target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/edit
 target_link_libraries(test_project_panel PRIVATE okay::engine)
 add_test(NAME project_panel COMMAND test_project_panel)
 
+# Naming a visual-script graph file (editor/VsGraphNaming.hpp, ImGui-free): suggested names and de-duplication, every invalid name, reserved Windows names, forced .okayvs extension, replace needs a confirm, rename keeps the references that point at the file (temp folders).
+add_executable(test_vs_graph_naming test_vs_graph_naming.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_vs_graph_naming PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_vs_graph_naming PRIVATE okay::engine)
+add_test(NAME vs_graph_naming COMMAND test_vs_graph_naming)
+
 # The Project panel on the asset database and the thumbnail cache: listing / search / filters / used-by / info from the database, incremental refresh (5,000 assets timed), thumbnails by GUID + hash (hit, miss, invalidate, disk, frame budget), rename / move / delete keep GUIDs and badge broken references.
 add_executable(test_project_panel_db test_project_panel_db.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
 target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/editor)

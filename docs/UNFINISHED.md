@@ -38,6 +38,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
+| Visual-script graph naming prompts (Save, Save As, Rename, Save all) | Compiled, not run | The naming rules are tested (`vs_graph_naming`), but the editor GUI that uses them was only compiled (`g++ -fsyntax-only` on `editor/main.cpp`), never run here. Check by hand: Save on an untitled graph shows the name box, Enter saves, Esc leaves it unsaved, an existing name needs a second press, Rename updates a scene that uses the graph. Play and Attach still use an automatic name |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
 
 ## Own cryptography: no hired review, libsodium stays

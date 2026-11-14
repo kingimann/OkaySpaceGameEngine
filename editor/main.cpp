@@ -9770,6 +9770,7 @@ static void DrawBrokenBadge(ImDrawList* dl, ImVec2 c, float r) {
 // After a rename / move / undo of assets: labels follow the files, the open scene follows its own file and
 // every asset path in it (and in its undo history) is rewritten.
 static void ProjectApplyMoves(const okaypb::Result& r) {
+    if (!r.moved.empty()) okay::editor::vsed::VsFollowMoves(r.moved);   // open graph tabs follow a renamed or moved .okayvs
     if (r.moved.empty() || !g_projEd || !g_pb) return;
     EditorState& ed = *g_projEd;
     const std::string proj = g_assetLabelsProj;
@@ -47921,6 +47922,24 @@ int main(int argc, char** argv) {
     okay::editor::vsed::LogFn = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
     okay::editor::vsed::SaveTextFile = [](const std::string& path, const std::string& content) {
         return SaveEditorDocument(path, content);
+    };
+    // Graph names: the Project panel's name prompt, and Rename through the Project panel's Browser (references follow).
+    okay::editor::vsed::AskGraphName = [](const okay::editor::vsed::VsNameRequest& q) {
+        oked::projectpanel::NameRequest rq;
+        rq.title = q.title; rq.hint = q.hint; rq.initial = q.initial; rq.suffix = ".okayvs"; rq.okLabel = q.okLabel;
+        rq.accept = q.accept;
+        oked::projectpanel::AskName(std::move(rq));
+    };
+    okay::editor::vsed::GraphNamePromptBusy = []() { return oked::projectpanel::NamePromptOpen(); };
+    okay::editor::vsed::RenameGraphFile = [](const std::string& path, const std::string& typed) -> std::string {
+        if (!g_pb) return "Open a project first.";
+        g_pb->Sync();
+        const okaypb::Result r = okay::editor::vsname::RenameGraph(*g_pb, path, typed);
+        if (!r.ok) return r.error;
+        ProjectApplyMoves(r);
+        ConsoleLog("Renamed graph to " + (r.paths.empty() ? typed : std::filesystem::path(r.paths[0]).filename().string()) +
+                   (r.referencesRewritten ? " (" + std::to_string(r.referencesRewritten) + " reference(s) updated)" : std::string()));
+        return {};
     };
     okay::editor::vsed::VsBackupMenu = [](const std::string& path) {
         const auto list = EditorBackups().List(path);

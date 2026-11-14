@@ -1768,6 +1768,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - graph checker (14.2, 14.2.2)
 - Graph component (14.1.7)
 - Graph editor (14.1)
+- Graph file names (14.1.11)
 - Graph tabs and save prompts (14.1.10)
 - Graph to OkayScript (14.8.1)
 - graphics settings (1.15)

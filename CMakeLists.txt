@@ -29,6 +29,13 @@ option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     O
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+# The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
+# OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
+set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
+set_property(CACHE OKAY_UI_DEFAULT_BACKEND PROPERTY STRINGS imgui okayui)
+if(NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "imgui" AND NOT OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    message(FATAL_ERROR "OKAY_UI_DEFAULT_BACKEND must be imgui or okayui (got '${OKAY_UI_DEFAULT_BACKEND}')")
+endif()
 option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its tests (behaviour, golden images, fuzz) and demo (small; needs OKAY_BUILD_TESTS and SDL2)" ON)
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" OFF)
@@ -38,6 +45,7 @@ option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD rea
 option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/own_http_client.md)" OFF)
 option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" OFF)
@@ -146,7 +154,7 @@ add_subdirectory(engine)
 # so both can link okay::ui. Only needed by SDL-based hosts and its own test.
 # Skip OkayUI on Emscripten/WebGL: the web player links only okay::engine, and the
 # toolkit includes a Direct3D 11 backend that can't compile to WASM.
-if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
+if((OKAY_BUILD_EDITOR OR OKAY_BUILD_PLAYER OR OKAY_BUILD_LAUNCHER OR OKAY_BUILD_TESTS) AND NOT EMSCRIPTEN)
     add_subdirectory(okayui)
 endif()
 

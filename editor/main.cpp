@@ -61,6 +61,8 @@
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
+#endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
@@ -70,7 +72,8 @@
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
-#endif
+#include "OkayPanels.hpp"                // Crash Log and Audio Mixer drawn by OkayUI (opt-in backend)
+#include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
@@ -656,7 +659,7 @@ static int RunSelfTest() {
             check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
         }
         check(std::strstr(FeatureGapNote(RenderFeature::SpotPointShadows),
-                          "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer.") != nullptr,
+                          "Spot and point light shadows are not drawn on Direct3D 12.") != nullptr,
               "spot and point shadow note");
         check(FeatureGapNote(RenderFeature::Fog)[0] == 0, "fog is drawn on every renderer");
         check(FeatureGapNote(RenderFeature::VignetteAmount)[0] == 0, "vignette amount is drawn on every renderer");
@@ -698,6 +701,7 @@ int main(int argc, char** argv) {
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -2296,6 +2300,17 @@ static void FinishFrozenTick() {
     d.enabled = was;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
+// The UI backend setting (okay_settings.txt "uibackend 0|1"; absent = never chosen). OKAY_UI_BACKEND overrides it. Today the
+// Console panel has an OkayUI port; everything else is Dear ImGui either way.
+std::string g_uiBackendSetting;
+okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
+void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
+bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+#ifdef OKAY_HAVE_OKAYUI
+okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
+okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
+okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
+#endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
 int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
@@ -2526,6 +2541,7 @@ void LoadSettings() {
     while (f >> k >> v) {
         if (k == "settingsver") ver = v;
         else if (k == "autoupdate") g_autoUpdate = (v != 0);
+        else if (k == "uibackend") g_uiBackendSetting = okayuibackend::FromSettingInt(v);
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "vsync") g_vsync = (v != 0);
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
@@ -2577,6 +2593,7 @@ void LoadSettings() {
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
     ApplyPhysicsDebug();
+    ResolveUiBackend();
     // One-time migration to the 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
@@ -2591,6 +2608,7 @@ void SaveSettings() {
     std::ostringstream f;
     f << "settingsver 3\n"
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
+      << (g_uiBackendSetting.empty() ? std::string() : std::string("uibackend ") + std::to_string(okayuibackend::ToSettingInt(g_uiBackendSetting)) + "\n")
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
@@ -6642,6 +6660,23 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
         }
 #endif
+#ifdef OKAY_HAVE_OKAYUI
+        if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
+        if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
+            const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
+            for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
+                if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
+                    g_uiBackendSetting = okayuibackend::Name(opt);
+                    ResolveUiBackend();
+                    SaveSettings();
+                }
+            ImGui::Separator();
+            ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+            ImGui::EndMenu();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
+        }
+#endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
         if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
@@ -7575,6 +7610,7 @@ static std::string OkayExeDir() {
 // Audio Mixer: the same levels a game's settings menu drives (master, each group,
 // mutes), live output meters during Play, and music ducking under voice.
 void DrawAudioMixer() {
+    if (UseOkayUIBackend() && DrawAudioMixerOkayUI(&g_showAudioMixer)) return;   // the opt-in OkayUI port (editor/OkayPanels.cpp)
     if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
     auto meter = [](const char* id, float v) {
         const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
@@ -7630,9 +7666,9 @@ void DrawAudioMixer() {
 // user can read them and copy/paste them to send to support — no file hunting.
 void DrawCrashLog() {
     namespace fs = std::filesystem;
-    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
     static std::string text;
     static bool loaded = false;
+    static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
@@ -7645,8 +7681,17 @@ void DrawCrashLog() {
         text.clear();
         if (!readAll(histPath, text) || text.empty()) readAll(lastPath, text);
         loaded = true;
+        ++revision;
     };
     if (!loaded) load();
+    if (UseOkayUIBackend()) {   // the opt-in OkayUI port (editor/OkayPanels.cpp): same reports, same four actions
+        CrashLogActions act;
+        act.refresh = load;
+        act.openFolder = [dir] { extide::RevealInFiles(dir.string()); };
+        act.clear = [&] { std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision; };
+        if (DrawCrashLogOkayUI(&g_showCrashLog, text, histPath.string(), revision, act)) return;
+    }
+    if (!ImGui::Begin("Crash Log", &g_showCrashLog)) { ImGui::End(); return; }
 
     if (ImGui::Button("Refresh")) load();
     ImGui::SameLine();
@@ -7669,7 +7714,7 @@ void DrawCrashLog() {
         bool doClear = ImGui::Button("Delete", ImVec2(110, 0));
         ImGui::PopStyleColor(2);
         if (doClear) {
-            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear();
+            std::error_code ec; fs::remove(histPath, ec); fs::remove(lastPath, ec); text.clear(); ++revision;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -14350,12 +14395,12 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
     return d;
 }
 
-// One TextEditor widget per open script, lazily created and configured.
-static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<TextEditor>> g_codeEditors;
-static TextEditor& CodeEditorFor(okay::ScriptComponent* sc) {
+// One script code widget (ScriptEditorWidget) per open script, lazily created and configured.
+static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWidget>> g_codeEditors;
+static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
-        auto te = std::make_unique<TextEditor>();
+        auto te = std::make_unique<ScriptEditorWidget>();
         te->SetLanguageDefinition(OkayScriptLangDef());
         te->SetPalette(OkayScriptPalette());
         te->SetShowWhitespaces(false);
@@ -14803,7 +14848,7 @@ void DrawScriptEditor(EditorState& ed) {
         static std::string s_error;     // last compile error (shown red in status)
         static std::vector<ScriptDiagnostic> s_diags;   // all live syntax problems (Problems panel)
         static std::vector<ScriptLint> s_warns;         // semantic warnings (unknown fn, arity)
-        static TextEditor::Keywords s_userTypes;        // classes / enums declared in the open script
+        static ScriptEditorWidget::Keywords s_userTypes;        // classes / enums declared in the open script
         static bool s_showProblems = false;             // Problems panel visibility
         static bool s_palReq = false;   // request to open the command palette
         static char s_find[128] = "";   // Find query (Ctrl+F opens the bar + highlights matches)
@@ -15684,7 +15729,7 @@ void DrawScriptEditor(EditorState& ed) {
             ? (std::min(nprobLive, 6) * (ImGui::GetTextLineHeight() + 14.0f) + 28.0f) : 0.0f;
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 16.0f + probH; if (av.y < 80) av.y = 80;
 
-        TextEditor& te = CodeEditorFor(sc);
+        ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
@@ -15700,12 +15745,12 @@ void DrawScriptEditor(EditorState& ed) {
         // undoable edit in the widget, so Ctrl+Z takes it back and the view stays put
         // (pushing it through SetText would clear the undo history and scroll to the top).
         if (!caret.replaceAll.empty()) {
-            const TextEditor::Coordinates cur = te.GetCursorPosition();
+            const ScriptEditorWidget::Coordinates cur = te.GetCursorPosition();
             te.SelectAll();
             te.InsertTextUndoable(caret.replaceAll);
             const int lines = te.GetTotalLines();
             const int line = std::min(cur.mLine, lines - 1);
-            te.SetCursorPosition(TextEditor::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
             caret.replaceAll.clear();
             std::string t = te.GetText(); if (!t.empty() && t.back() == '\n') t.pop_back();
             SetCodeBuffer(sc, t); g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
@@ -15818,31 +15863,31 @@ void DrawScriptEditor(EditorState& ed) {
         // Diagnostics -> error markers (red line + hover message); bookmarks -> the
         // widget's breakpoint markers (repurposed).
         {
-            TextEditor::ErrorMarkers em;
+            ScriptEditorWidget::ErrorMarkers em;
             for (const auto& w : s_warns) if (w.line > 0) em[w.line] = std::string("warning: ") + w.msg;
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
             te.SetUserTypes(s_userTypes);
-            te.SetBreakpoints(TextEditor::Breakpoints(bookmarks.begin(), bookmarks.end()));
+            te.SetBreakpoints(ScriptEditorWidget::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
 
         // Apply a pending jump (go-to-line box / Outline / F12 / find / nav / Marks).
         if (caret.gotoLine > 0) {
             int ln = caret.gotoLine - 1; if (ln < 0) ln = 0;
             int col = caret.gotoCol > 0 ? caret.gotoCol - 1 : 0;
-            te.SetCursorPosition(TextEditor::Coordinates(ln, col));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col));
             caret.gotoLine = 0;
             caret.gotoCol = 0;
         }
         if (caret.gotoPos >= 0) {
             const char* t = buf.data(); int ln = 0, col = 0;
             for (int i = 0; i < caret.gotoPos && t[i]; ++i) { if (t[i] == '\n') { ++ln; col = 0; } else ++col; }
-            te.SetCursorPosition(TextEditor::Coordinates(ln, col));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col));
             // Find-next selects the match it landed on (matches are single-line).
             if (caret.gotoSelLen > 0) {
-                te.SetSelection(TextEditor::Coordinates(ln, col),
-                                TextEditor::Coordinates(ln, col + caret.gotoSelLen));
-                te.SetCursorPosition(TextEditor::Coordinates(ln, col + caret.gotoSelLen));
+                te.SetSelection(ScriptEditorWidget::Coordinates(ln, col),
+                                ScriptEditorWidget::Coordinates(ln, col + caret.gotoSelLen));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(ln, col + caret.gotoSelLen));
             }
             caret.gotoPos = -1; caret.gotoSelLen = 0;
         }
@@ -16114,25 +16159,26 @@ void DrawScriptEditor(EditorState& ed) {
             const int col = te.GetCursorPosition().mColumn;
             te.InsertTextUndoable(std::string(4 - (col % 4), ' '));
         }
-        s_codeFocus = GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr;
+        s_codeFocus = te.UsingOkayUI() ? te.OkayHasKeyboard()
+                                       : (GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") != nullptr);
         if (stepOver) {
-            TextEditor::Coordinates c = te.GetCursorPosition();
-            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 1));
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 1));
         }
         if (pairOpen) {
             const char close = pairOpen == '(' ? ')' : pairOpen == '[' ? ']' : pairOpen == '{' ? '}' : pairOpen;
-            TextEditor::Coordinates c = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             te.InsertTextUndoable(std::string(1, close));
             te.SetCursorPosition(c);
         }
         if (braceEnter) {
             // The widget already broke the line and indented it like the `{` line;
             // add one level for the body and push the `}` to its own line.
-            TextEditor::Coordinates c = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates c = te.GetCursorPosition();
             const std::string ln = te.GetCurrentLineText();
             std::string ind; for (char ch : ln) { if (ch == ' ' || ch == '\t') ind += ch; else break; }
             te.InsertTextUndoable("    \n" + ind);
-            te.SetCursorPosition(TextEditor::Coordinates(c.mLine, c.mColumn + 4));
+            te.SetCursorPosition(ScriptEditorWidget::Coordinates(c.mLine, c.mColumn + 4));
         }
         ImVec2 teMin = ImGui::GetItemRectMin(), teMax = ImGui::GetItemRectMax();
         if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
@@ -16193,7 +16239,7 @@ void DrawScriptEditor(EditorState& ed) {
                 float fy = (ImGui::GetIO().MousePos.y - (mp.y + 4.0f)) / (usedH > 1 ? usedH : 1);
                 int target = (int)(fy * lines);
                 if (target < 0) target = 0; if (target >= lines) target = lines - 1;
-                te.SetCursorPosition(TextEditor::Coordinates(target, 0));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(target, 0));
             }
             ImGui::EndChild();
             ImGui::PopStyleColor();
@@ -16319,7 +16365,7 @@ void DrawScriptEditor(EditorState& ed) {
             // Ctrl+hover over a symbol defined in this file: underline + hand cursor;
             // click jumps to the definition (Rider's Ctrl+Click; F12 works too).
             if (ImGui::GetIO().KeyCtrl && ImGui::IsMouseHoveringRect(teMin, teMax)) {
-                TextEditor::Coordinates mc = te.ScreenToCoords(ImGui::GetIO().MousePos);
+                ScriptEditorWidget::Coordinates mc = te.ScreenToCoords(ImGui::GetIO().MousePos);
                 const char* t = buf.data(); int len = (int)std::strlen(t);
                 int off = 0, ln = 0;
                 for (; t[off] && ln < mc.mLine; ++off) if (t[off] == '\n') ++ln;
@@ -16486,7 +16532,7 @@ void DrawScriptEditor(EditorState& ed) {
 
         // Report caret line/col/pos/selLen for the status bar, find-anchor and nav.
         {
-            TextEditor::Coordinates cp = te.GetCursorPosition();
+            ScriptEditorWidget::Coordinates cp = te.GetCursorPosition();
             caret.line = cp.mLine + 1; caret.col = cp.mColumn + 1;
             const char* t = buf.data(); int off = 0, ln = 0;
             for (; t[off] && ln < cp.mLine; ++off) if (t[off] == '\n') ++ln;
@@ -16661,9 +16707,9 @@ void DrawScriptEditor(EditorState& ed) {
                         if (cStart < 0) cStart = 0;
                         // Select the typed prefix so the insert replaces it as ONE undo step.
                         if (cEnd > cStart) {
-                            te.SetCursorPosition(TextEditor::Coordinates(l0, cEnd));
-                            te.SetSelection(TextEditor::Coordinates(l0, cStart), TextEditor::Coordinates(l0, cEnd));
-                        } else te.SetCursorPosition(TextEditor::Coordinates(l0, cStart));
+                            te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cEnd));
+                            te.SetSelection(ScriptEditorWidget::Coordinates(l0, cStart), ScriptEditorWidget::Coordinates(l0, cEnd));
+                        } else te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart));
                         const std::string* sg = memberMode ? nullptr : ScriptSignature(word);
                         bool zeroArg = sg && sg->find("()") != std::string::npos;
                         if (memberMode && !word.empty() && (word.back() == '(' || word.back() == '<')) {
@@ -16671,11 +16717,11 @@ void DrawScriptEditor(EditorState& ed) {
                             const std::string nm = word.substr(0, word.size() - 1);
                             if (word.back() == '(') te.InsertTextUndoable(nm + "()");
                             else te.InsertTextUndoable(nm + "<>()");
-                            te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)nm.size() + 1));
+                            te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart + (int)nm.size() + 1));
                         } else {
                             te.InsertTextUndoable(sg ? word + "()" : word);
                             if (sg && !zeroArg)
-                                te.SetCursorPosition(TextEditor::Coordinates(l0, cStart + (int)word.size() + 1));
+                                te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, cStart + (int)word.size() + 1));
                         }
                         syncFromWidget();
                         g_acDismiss = true; g_acCount = 0;
@@ -16887,12 +16933,12 @@ void DrawScriptEditor(EditorState& ed) {
             // Replace whole lines [l0..l1] with `repl` (no trailing newline), as an
             // undoable select+delete+insert; returns caret to (curL, curC).
             auto replaceLines = [&](int l0, int l1, const std::string& repl, int curL, int curC) {
-                te.SetSelection(TextEditor::Coordinates(l0, 0),
-                                TextEditor::Coordinates(l1, te.LineLength(l1)));
+                te.SetSelection(ScriptEditorWidget::Coordinates(l0, 0),
+                                ScriptEditorWidget::Coordinates(l1, te.LineLength(l1)));
                 if (l0 != l1 || te.LineLength(l1) > 0) te.Delete();
-                te.SetCursorPosition(TextEditor::Coordinates(l0, 0));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(l0, 0));
                 te.InsertTextUndoable(repl);
-                te.SetCursorPosition(TextEditor::Coordinates(curL, curC));
+                te.SetCursorPosition(ScriptEditorWidget::Coordinates(curL, curC));
                 syncFromWidget();
             };
             auto linesText = [&](int l0, int l1) {
@@ -16937,9 +16983,9 @@ void DrawScriptEditor(EditorState& ed) {
             if (chordOK && cio.KeyCtrl && cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_K, false)) {
                 int total = te.GetTotalLines();
-                te.SetSelection(TextEditor::Coordinates(selL0, 0),
-                                selL1 + 1 < total ? TextEditor::Coordinates(selL1 + 1, 0)
-                                                  : TextEditor::Coordinates(selL1, te.LineLength(selL1)));
+                te.SetSelection(ScriptEditorWidget::Coordinates(selL0, 0),
+                                selL1 + 1 < total ? ScriptEditorWidget::Coordinates(selL1 + 1, 0)
+                                                  : ScriptEditorWidget::Coordinates(selL1, te.LineLength(selL1)));
                 te.Delete();
                 syncFromWidget();
             }
@@ -17002,12 +17048,12 @@ void DrawScriptEditor(EditorState& ed) {
             // Ctrl+W — expand selection: word -> whole line(s) -> whole file.
             if (chordOK && cio.KeyCtrl && !cio.KeyShift && !cio.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-                TextEditor::Coordinates a = te.SelStart(), b = te.SelEnd();
+                ScriptEditorWidget::Coordinates a = te.SelStart(), b = te.SelEnd();
                 bool none = a == b;
                 bool fullLines = !none && a.mColumn == 0 && b.mColumn >= te.LineLength(b.mLine);
                 if (none)           te.SelectWordUnderCursor();
-                else if (!fullLines) te.SetSelection(TextEditor::Coordinates(a.mLine, 0),
-                                                     TextEditor::Coordinates(b.mLine, te.LineLength(b.mLine)));
+                else if (!fullLines) te.SetSelection(ScriptEditorWidget::Coordinates(a.mLine, 0),
+                                                     ScriptEditorWidget::Coordinates(b.mLine, te.LineLength(b.mLine)));
                 else                 te.SelectAll();
             }
         }
@@ -17975,8 +18021,8 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
                 if (g_build.gpuRenderer) {
                     ImGui::Indent();
-                    ImGui::Checkbox("Prefer Direct3D 12 (Windows)", &g_build.preferD3D12);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nNewer API; for this read-back renderer it performs like D3D11.");
+                    ImGui::Checkbox("Prefer Direct3D 12 (Windows, preview)", &g_build.preferD3D12);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview: no post-processing, no spot or point shadows.\nUse the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nIt has no exposure, tonemap, bloom, grading, anti-aliasing, ambient occlusion or depth of field, and draws one sun shadow map only. A game that looks right on Direct3D 11 looks flatter here. For this read-back renderer it performs like D3D11.");
                     ImGui::Unindent();
                 }
                 ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();
@@ -48188,6 +48234,9 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+#ifdef OKAY_HAVE_OKAYUI
+            g_okayInput.Feed(e);   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
+#endif
             if (e.type == SDL_KEYDOWN && !e.key.repeat &&
                 e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
                 g_escapeEdge = true;
@@ -48583,6 +48632,19 @@ int main(int argc, char** argv) {
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
             uin.backspace = g_okayUIBack;
+            {   // The OkayUI backend: a hosted panel's region takes the mouse over ImGui's window, and a focused OkayUI field
+                // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
+                g_okayRegion.NextFrame();
+                const bool left = uin.mouseDown;
+                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool blocked = io.WantCaptureMouse && !owns;
+                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
+                if (UseOkayUIBackend()) {
+                    uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
+                    if (keys) uin = h;
+                }
+            }
             OkayUI::SetFont(OkayUI::FontDefault());
             static bool lookChosen = false;   // the Game view shows game UI exactly as the player draws it
             if (!lookChosen) { lookChosen = true; if (!std::getenv("OKAY_CLASSIC_UI")) OkayUI::UseLauncherLook(true); }
@@ -49539,6 +49601,13 @@ int main(int argc, char** argv) {
         }
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
+#ifdef OKAY_HAVE_OKAYUI
+        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+            GImGui->PlatformImeData.WantTextInput = true;
+            ImGui::SetNextFrameWantCaptureKeyboard(true);
+            SDL_StartTextInput();
+        }
+#endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);

@@ -89,6 +89,8 @@ add_library(okay_engine
     src/Components/Ragdoll.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetBuildSync.cpp
+    src/Net/NetQuestSync.cpp
     src/Net/NetDelta.cpp
     src/Net/NetChannels.cpp
     src/Net/NetSim.cpp
@@ -245,6 +247,7 @@ add_library(okay_engine
     src/Render/Md5Reader.cpp
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
+    src/Render/BlendReader.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
     src/Render/X3dReader.cpp
@@ -569,6 +572,11 @@ endif()
 if(OKAY_OWN_ASE)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
+endif()
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+if(OKAY_OWN_BLEND)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 # Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
 foreach(_fmt 3MF AMF X3D DXF LWO)

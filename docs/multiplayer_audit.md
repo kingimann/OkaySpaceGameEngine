@@ -85,8 +85,7 @@ Ranked by player-visible impact. Each has a regression test in
    ids and non-finite values dropped and out-of-range ones clamped. Hit direction and heavy,
    the traverse clip (vault, mantle low/high, ledge grab, climb up, let go) and the emote
    index travel with it. `HumanoidActions::PlayTraverse` plays a traverse clip without a probe.
-   Test: `tests/test_net_respawn_anim.cpp`. If two events start between two sync sends only the
-   newest plays.
+   Test: `tests/test_net_respawn_anim.cpp`. (Two events inside one sync interval: see 15.)
 9. **Launcher voice clips leaked their sound buffer (#718).** The buffer `SDL_LoadWAV` returns
    was never freed, and a clip converted to 16-bit dropped its only pointer to it. The clip
    now copies the samples into its own storage and frees SDL's buffer at once, so no path can
@@ -100,6 +99,123 @@ Ranked by player-visible impact. Each has a regression test in
     host sends every second now prunes stand-ins of peers it no longer lists (after two rosters
     without them, so a late, reordered one cannot remove someone who just joined). Test:
     `tests/test_net_rejoin.cpp`.
+
+12. **Relay clients sent hellos a relay could not trust (#733, step 1).** The launcher's voice
+    calls sent a version-3 hello with no welcome nonce (so a forged welcome could pair or end a
+    call) and fell back to the unauthenticated version-1 hello after only three unanswered
+    seconds, which a lossy link can cause. The game and the voice calls now build every hello
+    with one helper (`okay/Net/RelayHello.hpp`: version 4, cookie, nonce) and check every
+    welcome with it (the nonce must be echoed); the voice call falls back to version 1 only after
+    six unanswered hellos and says "update the launcher" when a relay refuses it. The relay
+    counts hellos per version and registered legacy peers (`HellosByVersion()`, `LegacyPeers()`),
+    logged once a minute while legacy hellos arrive. The relay default is unchanged (legacy hellos
+    stay on): flipping it is step 2, after players have updated and the log shows no legacy peer.
+    Tests: `tests/test_net_relay_clients.cpp` (a relay with legacy off serves a voice-style client and
+    a game host and client, with zero legacy hellos; forged and un-echoed welcomes are refused).
+    The launcher's `VoiceChat.hpp` change was compiled, not run.
+13. **Resume token: what is guaranteed.** The token is a bearer secret (64 random bits, single use,
+    bound to the account when signed in). In a sealed (encrypted) session the Welcome that carries it
+    and the Join that presents it are authenticated-encrypted, so it is never in a datagram in the
+    clear, and a captured rejoin replayed from another address resumes nothing and evicts nobody. On
+    an unencrypted session there is no key to bind it to: anyone who can read the datagrams has it, as
+    they have the session cookie and every other byte. A keyed proof cannot fix that, so the option
+    `resumeRequiresEncryption` (off by default) makes the host hand a token only to a sealed join;
+    an unencrypted client then gets none and rejoins as a new peer. An off-path sender cannot guess a
+    token, and a spent or invented one gives a new peer with none of the old state. Tests:
+    `tests/test_net_resume_token.cpp` (wire capture through a recording UDP middlebox).
+14. **Reliable messages in flight were lost when a session dropped.** A reliable or ordered message the
+    peer had not acked at the drop vanished with the session. Both ends now keep them (a client its
+    own, the host a dropped client's with its parked state) and send them again once the rejoin is a
+    resume, oldest first and ordered channels in order, bounded to 256 messages and 256 KiB each way;
+    what is cut is counted (`ResendDropped()`). A rejoin that is not a resume is a new peer and gets
+    none. They go out as new messages, so one the peer had already received whose ack was lost
+    arrives twice: reliable handlers should be idempotent. Tests: `tests/test_net_resume_resend.cpp`
+    (both directions, ordering, both bounds, no-resume and give-up cases; run against a NetSim
+    blackhole so every arrival is the re-send).
+
+15. **Two one-shot animation events inside one sync interval dropped the older.** The owner's
+    Character kept one event (`netEventSeq` / `Id` / `Param`), so two that started between two sync
+    sends played only the newest on other peers. `Character::RecordNetEvent` now keeps the last four,
+    the animation message carries the three before the newest (an older peer stops reading before
+    them; garbage or a count over three drops the group), and a proxy queues what it has not played
+    (at most four, the oldest dropped past that) and plays them in order, 0.35 s apart, each after
+    the animator is back in locomotion (or 1.5 s). A single event still plays at once, and the
+    repeated reports of the same state do not replay. A game that bumps `netEventSeq` by hand still
+    sends the newest only. Tests: `tests/test_net_respawn_anim.cpp` (both play in order; six in one
+    frame play the last four; parsing).
+16. **Deaths no replicated hit caused were not replicated.** Only the respawn was. Every death on the
+    host now goes through `NetNoteDeath`: the host sends a reliable `__death` (where the blow came
+    from, the object's id) and the copy dies the same way a death by the server's health does and
+    waits for the server's respawn. A death a replicated hit caused is not sent twice (the hit's
+    `__dmg` carries it); a client cannot send one, and bad numbers or unknown objects are ignored.
+    Tests: `tests/test_net_respawn_anim.cpp` (script kill, kill volume with direction, forged and
+    malformed messages, a hit-caused death sends none).
+
+17. **A client whose address changed mid-session on a relay hung for 10 s.** The relay knows a peer by its
+    source address, so a NAT rebinding (or a phone changing network) makes a new peer with a new slot,
+    and the host still lists the old slot, which now leads nowhere. The client only noticed after the
+    silence timeout. It now reads its own slot from every welcome and, when it changes, reports the
+    connection lost at once ("this connection's address changed on the relay"); with `autoReconnect` it
+    resumes through the new address (same peer id and score) in about two seconds instead of eleven. A host
+    whose address changes needed no fix: the relay keeps its slot (its host key proves it) and clients
+    notice nothing. Tests: `tests/test_net_relay_nat.cpp` (a NAT middlebox that swaps the socket it
+    sends from, clean and under NetSim's 20% loss, delay and duplication: host move, client move with and
+    without autoReconnect, and a direct session, where nothing can tell the client and the 10 s silence
+    timeout applies).
+
+18. **Build mode placements were not synced.** Every player built in their own copy of the world. Now
+    the server is the only one that changes what players built: a client's BuildMode sends place, remove,
+    move, link, unlink and undo as requests on a server-only channel (`__req/build`; a client cannot reach
+    `__bld`, the server's stream), and the server does each one only if it passes: the prefab is on the
+    allowlist (the scene's palettes plus `extraPrefabs`) and a safe path, the pose is finite, a real rotation
+    and inside the bounds, the player's avatar is within reach, the object cap and the per-player cap and rate
+    limit hold, nothing solid is in the way, and the player may edit it (only what it placed, unless
+    `ownerOnly` is off; the level's own objects only with `levelEditable`). What is built is sent to every
+    client on one ordered stream; a refused move or removal sends the client the truth about the object so its
+    copy snaps back. Undo is per player and goes through the same checks. A client that joins later is sent
+    the whole state in chunks and reconciles (what the snapshot does not name is removed), so a rejoin or a
+    loaded creation also works. New generic pieces in `NetworkManager`: `SetRequestHandler` (a `__req/`
+    channel that reaches the server's handler only, on all four transports, never relayed or put in the
+    inbox), `AddJoinHook` and `PeerPosition`. Code: `Net/NetBuildSync.*`, `BuildMode` (`Op`, `onChanged`,
+    `remoteRequest`, `Apply...`). It is idle (registers nothing, sends nothing) while the scene has no BuildMode, and
+    catches up the clients already connected if one appears mid-session. Test: `tests/test_net_build_sync.cpp` (request channel, replicate, late
+    join, ownership, per-player undo, caps, bounds, reach, overlap, rate limit, 28 hostile request shapes,
+    forged `__bld`, hostile server messages, level objects, session end). Not replicated: the state of doors,
+    movers and logic outputs (each peer runs its own logic), pieces a script makes or destroys.
+19. **Quest and story state were per client.** A kill or a dialogue ending counted on every client by itself, so
+    clients disagreed about quests, and a joiner started from nothing. The server's Quest Log and Story State
+    are now the truth (`Net/NetQuestSync.*`): changes go to the clients as they happen (ordered, `__qst`), a
+    joiner is sent everything, a client's Quest Log is a read-only copy (`QuestLog::remoteAuthority`: no local
+    start, progress or kill counting) and a write to its Story State is a request the server judges
+    (`StoryState::interceptWrite`). Quests are shared unless listed in `perPlayerQuests`; story variables and
+    flags are shared unless they start with a `perPlayerVars` prefix. Per-player state is kept by the server per
+    player, sent to that player only, and survives a resume. A client may only write its own per-player names, or
+    shared names under `clientWritableVars` (none by default); a client can never start a quest or add progress.
+    Limits per player and for the shared story, and a request rate. Idle (nothing registered, nothing sent) while the
+    scene has neither a QuestLog nor a StoryState: the first version sent every joiner an empty snapshot, which
+    changed the datagram sequence of games that use neither, and `net_interp` (its jitter proxy draws one random
+    delay per datagram, so one extra datagram shifted the whole pattern) and `net_resume_resend` (it counts re-sent
+    messages) caught it. A client keeps a working local log until the
+    server's first snapshot (a server that does not run this changes nothing). Test:
+    `tests/test_net_quest_sync.cpp` (shared and per-player scope, late joiners, resume, client writes refused,
+    about 30 hostile request shapes, hostile server lines, caps, rate, forged `__qst`, session end).
+20. **A late joiner saw a dead object alive.** Deaths, respawns and health went to the peers connected at the
+    time. A joiner is now told who is dead (with where the blow came from, so it falls the same way) and who is
+    hurt, including objects that destroy themselves on death (`m_dead`, kept until a respawn). While looking at
+    this: death, respawn and damage went as separate unordered reliable messages, so over a lossy link a
+    respawn could be applied before the death it follows and leave the copy dead. They now travel on one
+    ordered stream (`__life`, converted back to the old messages on arrival; the old channels are still accepted).
+    Test: `tests/test_net_life_late.cpp`.
+21. **The new messages under loss.** `tests/test_net_build_quest_lossy.cpp` runs them through `NetSim` (20% loss,
+    15% duplication, 30 ms plus or minus 25 ms): 24 build requests arrive exactly once and in order, moves end on
+    the last one and a removed piece is not resurrected by a later move, quest progress and a story counter never
+    go backwards, a per-player variable ends on its last write, flags that flip end on the last value, a client
+    that joins in the middle of all of it ends with the server's state, and a death and respawn in quick
+    succession (and a join while dead) end consistent.
+    All four new suites also ran clean under AddressSanitizer and UndefinedBehaviorSanitizer (leak check on; a
+    separate RelWithDebInfo build of the engine and the suites with `-fsanitize=address,undefined`). They were
+    repeated 8 to 25 times each in the normal build to look for flakes: one real bug (a joiner's quest snapshot
+    could lag the diffs) turned up that way and is fixed with a deterministic test.
 
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
@@ -116,21 +232,26 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
 
 1. **Legacy (v1/v2) relay hellos are still accepted by default (#733).** They carry no
    address cookie, so an off-path attacker can register spoofed peers and squat session
-   codes. Turning the default off is a rollout decision (older games and the launcher's
-   voice calls speak them); the relay logs how many it sees (`LegacyHellos()`), and
-   `--legacy-hello=off` already refuses them. Left as it is on purpose; it needs a
-   release note, not a silent change.
-2. **Build-mode placements and quest state are not synced**
-   (`docs/unfinished_engine.md`, section 11 and neighbours), and a death that was not caused
-   by a replicated hit (a kill volume, a script) is not sent to other players; only the respawn
-   is. A one-shot animation event is not queued: two inside one sync interval play only the
-   newest. Players still diverge in games that rely on these.
-3. **Reconnect limits.** Messages that were in flight (reliable, ordered) when the session dropped
-   are lost with it; a game that needs them resends from its own state after
-   `ReconnectEvent::Restored`. A rejoin that gets no resume (grace over, host restarted) is a
+   codes. Step 1 is done (every client built here sends version-4 hellos, and the relay logs
+   legacy peers and per-version counts); turning the default off is a rollout decision for
+   when older games and launchers already out there have updated (`LegacyPeers()` zero),
+   and needs a release note, not a silent change. `--legacy-hello=off` already refuses them.
+2. **What round 4 left open in build mode, quests and late joins.** Build-mode and quest sync are done
+   (18, 19, 20); what they do not cover: the state of doors, movers and logic outputs is not replicated (each
+   peer runs its own logic from the replicated pieces and links), pieces a script makes or destroys are not
+   replicated, per-player quests advance only through `nm->Quests()` on the server (the stock kill, talk and
+   reach sources feed the server's own log), a networked game is not saved as one (the server's state is the
+   thing to save; the clients are copies), and a scene object a script destroys (not a Health Stat death) is
+   not removed on a late joiner. The request channels are reliable and ordered, so a request in flight when a
+   session drops is sent again after a resume and can run twice (a place twice, within the caps and the rate
+   limit); a build or quest request is not idempotent. Snapshots and requests are not room scoped (a dedicated
+   server that runs several rooms in one scene would share build and quest state between them).
+3. **Reconnect limits.** Messages in flight when the session dropped are re-sent after a resume
+   (bounded, may arrive twice; see 14 above), not after a rejoin that is no resume. A rejoin that gets no resume (grace over, host restarted) is a
    new peer: objects made with `SpawnOwned` are not re-announced under the new id, the game
    respawns them (`Resumed()` says which case it is). Without encryption the resume token
-   travels in the clear, like the rest of an unencrypted session.
+   travels in the clear, like the rest of an unencrypted session (`resumeRequiresEncryption`
+   turns it off there; see 13 above).
 4. **Data races in `ServerBrowser::Game` and the voice session (PR #700,
    `claude/fix-thread-races`).** Already written and left to that branch so the two do
    not conflict.
@@ -138,6 +259,14 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
    transport) and **no replay or spectator stream**.
 
 ## What could not be verified
+
+- Round 4: the new suites ran on loopback, with NetSim for loss, delay, reordering and duplication, with
+  encryption off and without a relay in between (the relay and encryption suites were re-run and pass, but
+  none of the new messages went through a relay or a sealed session in a test; they are ordinary game
+  channels, so both are expected to carry them). A snapshot of a full world (250 pieces, a few thousand story
+  variables) was sized by reasoning (chunks of at most 24 KB under the 48 KB channel limit), not measured on a
+  real link. The quest and build code paths were exercised through the API and raw requests; no editor or
+  player UI was run (the build-mode hotbar, ghost and link wires on a client were not looked at).
 
 - Windows and macOS: everything here was built and run on Linux only. Winsock-specific
   behaviour (socket errors, `near`/`far` macros) is untested; the new code avoids those
@@ -152,6 +281,8 @@ timeout, the refusal codes, and the little-endian `Packet` (#701, #702, #704, #7
   The reconnect delays are tested with a hung host (the client's clock advanced faster than
   the wall clock), not with a real network outage or a changing NAT address.
 - Reconnect over a relay was tested against the in-process relay only; a real relay that
-  changes a client's slot between sessions was not seen.
+  changes a client's slot between sessions was not seen. Address changes were simulated with a
+  middlebox that swaps its sending socket (a new source port); a real NAT, a change of IP address
+  (Wi-Fi to mobile data), carrier-grade NAT behaviour and a relay behind a load balancer were not.
 - Animation replication was checked by the state the proxy's animator reaches, not by looking
   at the pose on screen.

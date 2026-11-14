@@ -2992,6 +2992,16 @@ static int LinkPreviewWorker(void*) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+            bool ownDone = false;   // own client first (opt-in); an unclear answer falls through to curl below
+            if (okay::http::NativeAvailable()) {
+                std::string ownHtml;
+                const okay::http::OwnOutcome o = okay::http::OwnFetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, ownHtml);
+                if (o == okay::http::OwnOutcome::Ok) { if (ownHtml.size() > 262144) ownHtml.resize(262144); lp = ParseLinkPreview(url, ownHtml); }
+                ownDone = o != okay::http::OwnOutcome::NotHandled;   // a clear refusal (404, too big) means no preview, as with curl -f
+            }
+            if (!ownDone) {
+#endif
             std::string cmd = "curl -L -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
                               "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -o \"" + tmp.string() + "\" \"" + url + "\"";
 #if !defined(_WIN32)
@@ -3005,6 +3015,9 @@ static int LinkPreviewWorker(void*) {
                 lp = ParseLinkPreview(url, html);
             }
             f.close(); fs::remove(tmp, ec);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+            }
+#endif
         }
         SDL_LockMutex(g_lpMutex); g_linkPrev[url] = lp; SDL_UnlockMutex(g_lpMutex);
     }

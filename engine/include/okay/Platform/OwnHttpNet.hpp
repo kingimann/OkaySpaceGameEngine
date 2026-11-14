@@ -54,6 +54,11 @@ struct NetOptions {
     int totalMs   = 15 * 60 * 1000;   ///< whole request including redirects
     int resolveMs = 8000;       ///< name resolution (a helper thread; the call gives up after this)
     bool acceptGzip = false;    ///< send Accept-Encoding: gzip, deflate and decode the answer (in memory, capped)
+    /// Keep finished connections (this thread only, at most 8, each idle at most 15 s) and reuse them for the next
+    /// request to the same scheme, host, port, proxy and CA setting. Off by default for the raw client; the NativeHttp
+    /// entry points turn it on. See FetchRequest::keepAlive for the safety rules.
+    bool keepAlive = false;
+    std::shared_ptr<CookieJar> cookieJar;   ///< null = no cookies (default). The jar sees every hop of the call.
     Limits limits;
     // Test and embedding overrides; empty means "decide from the environment".
     std::string caFile, caDir;
@@ -146,6 +151,16 @@ struct TcpStream : Stream {
     TcpStream(const TcpStream&) = delete;
     TcpStream& operator=(const TcpStream&) = delete;
     ~TcpStream() override { if (fd >= 0) ::close(fd); }
+    void Rebind(Clock::time_point d, int io, const std::function<bool()>* c) override { deadline = d; ioMs = io; cancel = c; }
+    /// An idle connection must have nothing to read: readable means the peer closed it (EOF), reset it, or sent
+    /// something nobody asked for. Any of those means "do not reuse".
+    bool StillUsable() override {
+        if (fd < 0) return false;
+        struct pollfd p; p.fd = fd; p.events = POLLIN; p.revents = 0;
+        int r;
+        do { r = ::poll(&p, 1, 0); } while (r < 0 && errno == EINTR);
+        return r == 0;
+    }
     long Read(void* b, size_t n, Err& e) override {
         for (;;) {
             ssize_t r = ::recv(fd, b, n, 0);
@@ -426,6 +441,8 @@ struct TlsApi {
 class TlsStream : public Stream {
 public:
     TlsStream(const TlsApi* a, std::unique_ptr<TcpStream> t) : api_(a), tcp_(std::move(t)) {}
+    void Rebind(Clock::time_point d, int io, const std::function<bool()>* c) override { tcp_->Rebind(d, io, c); }
+    bool StillUsable() override { return tcp_->StillUsable(); }
     ~TlsStream() override {
         if (ssl_) {
             detail::SigpipeGuard g;
@@ -556,6 +573,19 @@ inline void* TlsContext(const TlsApi* a, const NetOptions& o, std::string& why) 
 // ----------------------------------------------------------------------------
 // Connector
 // ----------------------------------------------------------------------------
+namespace detail {
+/// Idle connections kept for reuse, per thread (so no locking and no sharing of a stream between threads). A thread that
+/// ends closes its idle connections. Small on purpose: the launcher talks to a handful of hosts.
+struct IdleConn { std::string key; std::unique_ptr<Stream> stream; Clock::time_point since; };
+inline std::vector<IdleConn>& IdlePool() { thread_local std::vector<IdleConn> pool; return pool; }
+constexpr size_t kMaxIdleConnections = 8;
+constexpr int kIdleMaxMs = 15000;
+/// Number of connections waiting in this thread's pool (tests).
+inline size_t IdleCount() { return IdlePool().size(); }
+/// Close every idle connection of this thread now.
+inline void DropIdleConnections() { IdlePool().clear(); }
+} // namespace detail
+
 class SystemConnector : public Connector {
 public:
     explicit SystemConnector(NetOptions o) : o_(std::move(o)) {}
@@ -585,7 +615,45 @@ public:
         return !u.Https() && ResolveProxy(u, o_, px, why) && px.use;
     }
 
+    std::unique_ptr<Stream> TakeIdle(const Url& u, Clock::time_point deadline) override {
+        if (!o_.keepAlive) return nullptr;
+        auto& pool = detail::IdlePool();
+        const std::string key = PoolKey(u);
+        const Clock::time_point now = Clock::now();
+        for (size_t i = 0; i < pool.size(); ) {
+            const bool tooOld = std::chrono::duration_cast<std::chrono::milliseconds>(now - pool[i].since).count() > detail::kIdleMaxMs;
+            if (tooOld || (pool[i].key == key && !pool[i].stream->StillUsable())) { pool.erase(pool.begin() + long(i)); continue; }
+            if (pool[i].key == key) {
+                std::unique_ptr<Stream> s = std::move(pool[i].stream);
+                pool.erase(pool.begin() + long(i));
+                s->Rebind(deadline, o_.ioMs, &o_.cancel);
+                return s;
+            }
+            ++i;
+        }
+        return nullptr;
+    }
+
+    void GiveIdle(const Url& u, std::unique_ptr<Stream> s) override {
+        if (!o_.keepAlive || !s) return;
+        s->Rebind(Clock::time_point(), o_.ioMs, nullptr);   // nothing of this call may stay referenced
+        auto& pool = detail::IdlePool();
+        const std::string key = PoolKey(u);
+        for (size_t i = 0; i < pool.size(); ) { if (pool[i].key == key) pool.erase(pool.begin() + long(i)); else ++i; }
+        pool.push_back(detail::IdleConn{key, std::move(s), Clock::now()});
+        while (pool.size() > detail::kMaxIdleConnections) pool.erase(pool.begin());
+    }
+
 private:
+    /// What makes two connections interchangeable: scheme, host, port, the proxy in use and the CA configuration.
+    std::string PoolKey(const Url& u) const {
+        Proxy px; std::string why;
+        std::string k = u.scheme + "|" + u.host + "|" + std::to_string(u.port) + "|";
+        if (ResolveProxy(u, o_, px, why) && px.use) k += px.host + ":" + std::to_string(px.port);
+        k += "|" + o_.caFile + "|" + o_.caDir;
+        if (u.Https()) for (const char* n : {"SSL_CERT_FILE", "CURL_CA_BUNDLE", "SSL_CERT_DIR"}) { const char* v = o_.Env(n); k += "|"; if (v) k += v; }
+        return k;
+    }
     static bool Tunnel(TcpStream& tcp, const Url& u, Err& e, std::string& msg) {
         std::string hp = (u.IsV6() ? "[" + u.host + "]" : u.host) + ":" + std::to_string(u.port);
         std::string req = "CONNECT " + hp + " HTTP/1.1\r\nHost: " + hp + "\r\nUser-Agent: OkaySpace/1.0\r\n\r\n";
@@ -607,7 +675,7 @@ inline FetchResult Perform(const std::string& method, const std::string& url,
                            const std::vector<std::string>& headerLines, const std::string& body,
                            const NetOptions& o, const FetchHooks& hooks = FetchHooks()) {
     SystemConnector c(o);
-    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body; rq.acceptGzip = o.acceptGzip;
+    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body; rq.acceptGzip = o.acceptGzip; rq.keepAlive = o.keepAlive; rq.jar = o.cookieJar;
     return Fetch(c, rq, o.limits, o.totalMs, hooks);
 }
 

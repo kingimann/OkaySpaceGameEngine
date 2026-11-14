@@ -69,7 +69,7 @@ format is identical, so a client built one way talks to a server built the other
 
 ## Not done (stage 1)
 
-- No outside review. This is the gate for ever making it the default.
+- No outside review, and none is planned: the owner decided not to hire a reviewer (2026-11-14). `okay::crypto` therefore stays off by default and libsodium stays the default in every release (`CLAUDE.md` rule 18). Only AI reviews (an internal agent and a second AI) are planned; they are not independent and do not change that.
 - Timing: measured with valgrind (secret-dependent branches and addresses) and a statistical timing test, on one machine (Linux, one Intel Xeon core, GCC and Clang, x86-64). Not measured on Windows (MinGW, MSVC), macOS or WebAssembly, on other CPUs, or with other flags than the matrix in the review package; the generated machine code was inspected only through those tools.
 - Not run on Windows (MinGW), macOS or WebAssembly; the code avoids platform extensions, but only Linux (GCC and Clang) has run.
 - Speed: X25519, public-key derivation and verification are at libsodium's speed (verification about 10 percent faster); `Ed25519Sign` takes about 1.9 times as long because it recomputes the public key from the seed instead of trusting the copy stored in the secret key (`Ed25519SignTrustedPk` is the libsodium-speed variant for keys made by `Ed25519SeedKeypair`; numbers and the reasoning in the review package, section 4.2); the 16-bit fallback is still slow.

@@ -39,7 +39,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
 
-## Own cryptography: waiting for an outside review
+## Own cryptography: no hired review, libsodium stays
 
 `okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
 
@@ -47,9 +47,10 @@ The feature map currently has **123** rows that are Partial or Planned.
 |---|---|---|
 | Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto` (not done: `AccountService.hpp` `Sha256` is under the PBKDF2 password hashing and uses a copy-state shortcut, `OfficialGame.hpp` `FileSha256` and `AntiCheatChecks.hpp` `HmacSha256` sit on it; moving them is not a small change and needs a new HMAC with RFC 4231 tests), and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
 | Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
-| Choose a reviewer, a budget and a date; send the request and the bundle (nobody has been asked; cost and start date unknown) | Not started | Owner |
-| The outside review itself, its report and findings | Not started | Reviewer |
-| Fix every finding or record why it is acceptable, re-run the evidence, send the fixes back for a re-check | Waiting on the report | Team |
+| Choose a reviewer, a budget and a date; send the request and the bundle | Decided: **no hired reviewer** (owner, 2026-11-14). libsodium stays the default; the package and request stay in the repo in case that changes | Owner |
+| Extra assurance without a hired reviewer: an internal review by a fresh agent, and a review by a second AI (Grok) from `review/CRYPTO_REVIEW_REQUEST.md` on branch `claude/crypto-review-grok` (pinned to commit `0a857395`). Reported as "not independently reviewed"; every claimed bug is reproduced by a test before any change | Internal review running; Grok review waiting for the owner to run it | Team and owner |
+| The outside review itself, its report and findings | Not planned (no reviewer hired) | n/a |
+| Fix every finding from the AI reviews that a test reproduces, or record why it is acceptable, and re-run the evidence | Waiting on the reports | Team |
 | CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
 | The flip decision: make it the default for new builds, then delete libsodium one release later (the TweetNaCl port is already deleted) | Owner decision, only after a reviewer's yes | Owner |
 

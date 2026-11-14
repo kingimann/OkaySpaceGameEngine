@@ -1,5 +1,7 @@
 # Asking for an outside review of our own cryptography
 
+> **Update (2026-11-14): the owner decided not to hire a reviewer.** libsodium stays the default and `okay::crypto` stays off by default. This page and the package stay in case that changes. A second AI can be used for extra, non-independent assurance with `review/CRYPTO_REVIEW_REQUEST.md` on branch `claude/crypto-review-grok`.
+>
 > **Status: a request, not a result.** Nobody has been approached yet. Nothing here says our code is secure; the whole point is to find out. Our own crypto (`okay::crypto`) stays **off by default** (`OKAY_OWN_CRYPTO`, off) until an outside reviewer has looked at it and the owner decides (`CLAUDE.md` rule 18, `docs/own_code_roadmap.md`).
 
 This page is for the owner. It has the text to send to a reviewer or a firm, what we hand over, how to pick someone, what happens afterwards and a checklist of the owner's steps. The technical detail for the reviewer is in `docs/crypto_review_package.md` (scope, threat model, evidence, known issues, questions).

@@ -917,6 +917,10 @@ inline bool& PerPixelLighting() { static bool v = false; return v; }  // default
 // declared above the Raster class so shading can consult it.)
 inline ShadowMap& Shadows()      { static ShadowMap s; return s; }
 inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by default (modern look); opt-out
+/// When shadows are on and this frame has a shadow map, lit meshes that receive shadows take the per-pixel
+/// path even if PerPixelLighting() is off (shadows are only sampled there). Default on, so shadows show by
+/// default. Turn off to get the faster per-vertex path back (it draws no shadows).
+inline bool& ShadowsUsePerPixel() { static bool v = true; return v; }
 inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
@@ -2163,7 +2167,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                    || mr->shader == MeshRenderer::Shader::Hologram
                                    || mr->shader == MeshRenderer::Shader::Posterize
                                    || mr->shader == MeshRenderer::Shader::Velvet
-                                   || mr->rimStrength > 0.0f || mr->triplanar)
+                                   || mr->rimStrength > 0.0f || mr->triplanar
+                                   || (ShadowsUsePerPixel() && mr->receiveShadows
+                                       && (Shadows().enabled || LocalShadowsActive())))
                                   && !unlit && !useMatcap;
             const int  shaderMode = (int)mr->shader;
             const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};

@@ -149,5 +149,5 @@ player never read it), and the manifest written on every build (only anti-cheat 
   engine's icon (changing it needs a resource edit of the exe).
 - **Scripting backend / stripping of code**: there is one runtime, no choice to make.
 - **Anti-cheat with the Folder layout**: anti-cheat verifies `Data/manifest.json`, so it forces the Compact layout.
-- **Web, Android and server targets** ignore Layout, Strip, Compress and the build number (they have their own output).
+- **Web, Android and server targets** ignore Layout, Strip, Compress and the build number (they have their own output). The export report (`editor/ExportReport.hpp`) now says so when one of these is set to a non-default value, lists missing assets and checks for `emcc` (Web) and `ANDROID_NDK_ROOT` / `ANDROID_HOME` (Android). The platform picker reads "Web (software renderer, WASM)" and "Android (assets + README)"; iOS is not supported yet.
 - StreamingAssets has an engine API (`Paths::StreamingAssetsDir`, `Paths::StreamingPath`) but no script node yet.

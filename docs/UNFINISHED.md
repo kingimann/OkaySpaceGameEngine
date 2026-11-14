@@ -163,7 +163,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [18.2](feature_map/18-build-export-release.md#182-web-and-mobile-export) | Web and mobile export | Partial | the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible... |
+| [18.2](feature_map/18-build-export-release.md#182-web-and-mobile-export) | Web and mobile export | Partial | labels and export report done (compiled, not run in the editor); the editor never runs Emscripten or the NDK, no APK or Gradle project, no web artifact in release.yml, iOS not offered; the web player is the software renderer |
 
 ### 19. Docs, tests & code health
 

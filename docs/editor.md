@@ -389,8 +389,8 @@ through `AudioMixer`. Press **Esc** to quit.
 
 ### Other platforms — Web & Android
 
-The Build dialog's **Platform** selector also exports for **Web (WebGL / WASM)**
-and **Android**. Because the editor can't run Emscripten or the Android NDK
+The Build dialog's **Platform** selector also exports for **Web (software
+renderer, WASM)** and **Android (assets + README)**. iOS is not supported yet. Because the editor can't run Emscripten or the Android NDK
 itself, these targets *export a ready-to-build project* rather than a finished
 binary:
 
@@ -403,7 +403,14 @@ binary:
 - **Android** writes an `assets/` folder ready to drop into an SDL2 Android
   project's `app/src/main/assets/`, plus a README outlining the NDK build (the
   player is C++ on SDL2, which has an official Android port). Finishing an APK
-  needs Android Studio + the NDK.
+  needs Android Studio + the NDK. There is no APK and no Gradle project yet.
+
+After a Web or Android export the Build Result window, the Console and the
+export's `README.txt` show an **export report**: assets the scene points to that
+were not found (up to 20 are named, then "and N more"), Build Settings this target
+ignores (Layout, Strip, Compress, build number: only Desktop uses them), and whether
+`emcc` is on PATH (Web) or `ANDROID_NDK_ROOT` / `ANDROID_HOME` are set (Android).
+The editor only checks; it never runs Emscripten or the NDK.
 
 The player (`player/`) is a tiny SDL2-only program (no editor/ImGui). Build it
 on its own with `-DOKAY_BUILD_PLAYER=ON`; it is also built automatically with

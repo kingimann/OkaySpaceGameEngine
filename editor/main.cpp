@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "ActionExport.hpp"
+#include "ExportReport.hpp"        // plain-English export report: missing assets, ignored settings, tool checks (ImGui-free, tested)
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
@@ -3065,6 +3066,7 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
+std::vector<okay::editor::exportreport::Line> g_exportLines;   // plain-English report of the last Web / Android / Server export
 bool  g_openBuildResult = false;
 bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
 std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build (see Problems)
@@ -4569,8 +4571,13 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
 // (web) or the Android NDK itself, so it lays down everything those toolchains need
 // and a build script / README with the exact commands. `target`: 1 = Web (WASM +
 // WebGL via Emscripten), 2 = Android (SDL2 + NDK).
+// `lines` (optional) receives the export report: missing assets, Build Settings this
+// target ignores and tool checks (emcc / Android NDK). `rs` is what the Build Settings hold.
 std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
-                              const std::string& gameName, const Options& opt, int target) {
+                              const std::string& gameName, const Options& opt, int target,
+                              const okay::editor::exportreport::Settings& rs = {},
+                              std::vector<okay::editor::exportreport::Line>* lines = nullptr) {
+    namespace xr = okay::editor::exportreport;
     if (ed.isPlaying()) { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // export the edited scene, not the running copy
     std::error_code ec;
     fs::path dir = fs::path(outDir);
@@ -4589,11 +4596,12 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
          << "\nwidth=" << opt.width << "\nheight=" << opt.height << "\nstartup=game.okayscene\n"; }
 
     int copied = 0, missing = 0;
+    std::vector<xr::MissingAsset> missingList;   // named in the export report (the scene stores paths only, so the user is "the scene")
     std::set<std::string> seen;
     for (const std::string& asset : SceneSerializer::CollectAssetPaths(ed.scene())) {
         if (asset.empty() || !seen.insert(asset).second) continue;
         fs::path src(asset); std::error_code aec;
-        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; continue; }
+        if (!fs::exists(src, aec) || !fs::is_regular_file(src, aec)) { ++missing; missingList.push_back({asset, "the scene"}); continue; }
         fs::path rel = src.is_absolute() ? fs::path(src.filename()) : SafeRelative(src);
         if (rel.empty()) rel = src.filename();
         fs::path dst = data / rel;
@@ -4604,6 +4612,11 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
           if (!aec && fs::is_regular_file(ms, me)) { fs::path md = dst; md += ".okaymeta"; fs::copy_file(ms, md, fs::copy_options::overwrite_existing, me); } }
     }
     CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
+
+    std::vector<xr::Line> report = xr::MakeReport(target == 1 ? xr::Target::Web : xr::Target::Android, missingList, rs, xr::SystemEnv());
+    if (lines) *lines = report;
+    // The README says the same, so the folder is honest when it is moved away from the editor.
+    const std::string reportText = report.empty() ? std::string() : "\n\nExport report\n--------------\n" + xr::ToText(report) + "\n";
 
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
@@ -4631,9 +4644,11 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
               "  3. ./build-web.sh\n"
               "  4. Serve build-web/web/ over HTTP and open okay-player.html\n\n"
               "The engine ships this path as scripts/build-web.sh; this export bundles\n"
-              "your game's data and a matching build command.\n";
+              "your game's data and a matching build command.\n"
+              "The web build uses the software renderer (no GPU renderer) and has no networking.\n" << reportText;
         return "Exported Web (WebGL) project to " + dir.string() + " (" + std::to_string(copied) +
-               " asset(s)). Run build-web.sh with Emscripten to produce the .wasm build.";
+               " asset(s)" + (missing ? ", " + std::to_string(missing) + " missing" : std::string()) +
+               "). No .wasm was built: run build-web.sh with Emscripten. See the report below.";
     }
 
     // target == 2: ---- Android (SDL2 + NDK) ----
@@ -4649,9 +4664,11 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
           "     they build against SDL2's Android port.\n"
           "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
           "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
-          "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
+          "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n"
+          "There is no APK or Gradle project yet: this export is assets and these notes only.\n" << reportText;
     return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
-           " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
+           " asset(s)" + (missing ? ", " + std::to_string(missing) + " missing" : std::string()) +
+           "). No APK was built. See README.txt and the report below.";
 }
 // ---- Dedicated server export ---------------------------------------------------
 // A ready-to-run server folder: the game's data + the player runtime for the
@@ -17750,17 +17767,19 @@ void DrawFileDialogs(EditorState& ed) {
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
-        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server"};
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (software renderer, WASM)", "Android (assets + README)", "Dedicated Server"};
         {   // Segmented platform picker (clearer than a dropdown for a few options).
             const char* platShort[] = {"Desktop", "Web", "Android", "Server"};
             const char* platTip[] = {
                 "Build a runnable Windows .exe right here.",
-                "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
-                "Export an Android Studio project;\nfinish the build with Android Studio + NDK.",
+                "Export game data + an Emscripten build script and README; the editor does not run\n"
+                "Emscripten. The web player uses the SOFTWARE renderer (no GPU) and has no networking.",
+                "Export assets and a README for an Android project (no APK or Gradle project yet).",
                 "A headless multiplayer server for Linux or Windows: the game runs with no window\n"
                 "and players connect to it. Comes with server.cfg, start scripts, a one-command\n"
                 "deploy to a Linux VPS, a Dockerfile and a README."};
             ImGui::TextDisabled("Platform");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Desktop builds a Windows .exe. Web, Android and Server export files you finish building yourself.\nLayout, Strip, Compress and Build number only apply to Desktop.\niOS: not supported yet.");
             ImGui::SameLine();
             for (int pi = 0; pi < 4; ++pi) {
                 if (pi) ImGui::SameLine(0, 2);
@@ -18271,7 +18290,10 @@ void DrawFileDialogs(EditorState& ed) {
             sv.auth = g_build.srvAuth; sv.advertise = g_build.srvAdvertise;
             sv.maxSpeed = g_build.srvMaxSpeed; sv.rateLimit = g_build.srvRateLimit; sv.kickAfter = g_build.srvKickAfter;
             g_buildReport = builder::BuildReport{};
+            g_exportLines.clear();
             g_buildStatus = builder::BuildServer(ed, g_buildDirBuf, g_buildNameBuf, so, sv, &g_buildReport);
+            g_exportLines = okay::editor::exportreport::MakeReport(okay::editor::exportreport::Target::Server, {},
+                {g_build.layout, g_build.stripAssets, g_build.compress, g_build.buildNumber}, okay::editor::exportreport::SystemEnv());
             g_openBuildResult = true;
             ConsoleLog("Build Server: " + g_buildStatus);
             if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
@@ -18286,7 +18308,10 @@ void DrawFileDialogs(EditorState& ed) {
             wo.company = g_build.company; wo.version = g_build.version;
             wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
             g_buildReport = builder::BuildReport{};
-            g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
+            g_exportLines.clear();
+            g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform,
+                {g_build.layout, g_build.stripAssets, g_build.compress, g_build.buildNumber}, &g_exportLines);
+            for (const auto& l : g_exportLines) ConsoleLog("Export report: " + l.text, l.severity == okay::editor::exportreport::Severity::Note ? 0 : 1);
             g_openBuildResult = true;
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
             ImGui::CloseCurrentPopup();
@@ -18341,6 +18366,13 @@ void DrawFileDialogs(EditorState& ed) {
     if (ImGui::BeginPopupModal("Build Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(460.0f);
         ImGui::TextUnformatted(g_buildStatus.c_str());
+        for (const auto& l : g_exportLines) {   // the export report: errors red, warnings yellow, notes grey
+            using okay::editor::exportreport::Severity;
+            ImVec4 col = l.severity == Severity::Error ? ImVec4(1.0f, 0.4f, 0.4f, 1) : l.severity == Severity::Warning ? ImVec4(1.0f, 0.8f, 0.3f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1);
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted(l.text.c_str());
+            ImGui::PopStyleColor();
+        }
         ImGui::PopTextWrapPos();
         const builder::BuildReport& R = g_buildReport;
         const okay::buildpipe::Report& RP = R.r;

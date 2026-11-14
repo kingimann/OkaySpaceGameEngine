@@ -24,12 +24,28 @@ audio the same way by adding `--preload-file art/@art/` to the linker flags
 (or extend `scripts/build-web.sh`). Keyboard, mouse, and audio work in the
 browser through SDL2; networking (UDP) does not.
 
+The web player is the **software renderer**: `player/main.cpp` skips every GPU
+renderer under `__EMSCRIPTEN__`, so the web build has no WebGL rendering path yet.
+
+### From the editor
+
+Build Settings > Platform > **Web (software renderer, WASM)** writes `game/`,
+`build-web.sh` and a README. The editor does not run Emscripten, so no `.wasm` is
+built there. The Build Result window, the Console and the README list an export
+report: missing assets, Build Settings the web target ignores (Layout, Strip,
+Compress, build number), and whether `emcc` is on PATH. The release workflow
+publishes no web artifact.
+
 ## Mobile
 
 SDL2 officially supports Android and iOS, and the player is a standard SDL2
 `main()`, so it builds with the usual SDL mobile project setup.
 
 ### Android
+The editor's **Android (assets + README)** target writes `assets/` and a README only:
+no APK and no Gradle project yet. Its export report checks `ANDROID_NDK_ROOT` and
+`ANDROID_HOME`. By hand:
+
 1. Use the **SDL2 Android project template** (`SDL/android-project`).
 2. Add `player/main.cpp` and the engine sources (`engine/src/**`, include
    `engine/include` and `engine/third_party`) to the `jni/src` build.
@@ -38,6 +54,8 @@ SDL2 officially supports Android and iOS, and the player is a standard SDL2
 4. Build the APK with Gradle / Android Studio (NDK).
 
 ### iOS
+iOS: not supported yet in the editor (it is not offered as a platform). By hand:
+
 1. Use the **SDL2 Xcode iOS template**.
 2. Add `player/main.cpp` + the engine sources and headers to the target.
 3. Add `game.okayscene` and assets to the app bundle (Copy Bundle Resources).

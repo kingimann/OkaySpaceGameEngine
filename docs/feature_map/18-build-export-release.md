@@ -34,15 +34,16 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Parts:**
   - 18.2.1 Web build script - `scripts/build-web.sh` - `emcmake` builds the player without libsodium and Assimp (none for WebAssembly), outputs `build-web/web/okay-player.html`, `.js`, `.wasm`; an optional scene argument is preloaded as `game.okayscene`; serve over HTTP
   - 18.2.2 Emscripten player target - `player/CMakeLists.txt` - the `EMSCRIPTEN` branch uses `-sUSE_SDL=2`, memory growth and an `.html` output (see 42.6)
-  - 18.2.3 Editor export for Web and Android - `editor/main.cpp` (`builder::ExportForPlatform`, near L3890) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README
+  - 18.2.3 Editor export for Web and Android - `editor/main.cpp` (`builder::ExportForPlatform`, near L3890) - writes `game/` (Web) or `assets/` (Android) with the scene, config and referenced assets, plus `build-web.sh` or an Android README; also returns an export report (18.2.5)
+  - 18.2.5 Export report - `editor/ExportReport.hpp` - plain-English lines (error, warning, note) for Web, Android and Server exports: missing assets (at most 20 listed, then "and N more"), Build Settings the target ignores (Layout, Strip, Compress, build number), and tool checks (`emcc` on PATH; `ANDROID_NDK_ROOT` and `ANDROID_HOME`). Shown in the Build Result window, the Console and the export README. Compiled and unit-tested; the editor window was not run
   - 18.2.4 Mobile guides - `docs/web_mobile.md` - Android from SDL2's project template, iOS from the Xcode template, touch arrives as mouse events
 - **Code:** `scripts/build-web.sh`, `editor/main.cpp`, `player/CMakeLists.txt`
 - **API:** `scripts/build-web.sh [scene]`, Build Settings platform Web or Android
-- **Editor:** File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
+- **Editor:** File > Build Settings > Platform: Web (software renderer, WASM), Android (assets + README); iOS is not supported yet
 - **Docs:** `docs/web_mobile.md`
-- **Tests:** none as ctest; the `web-build` CI job (18.3.5)
+- **Tests:** `test_export_report` (the report logic); the `web-build` CI job (18.3.5)
 - **Status:** Partial - web builds and is checked in CI; Android and iOS are instructions only (the export writes `assets/` and a README, not a Gradle project)
-- **Open:** the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build excludes the relay and OkayUI's Direct3D backend. Touch gestures and on-screen controls are fed from SDL finger events on desktop and web (`docs/input.md`)
+- **Open:** the Android tooltip is fixed ("Export assets and a README for an Android project (no APK or Gradle project yet)") and the Web label now says software renderer; labels and report are done, compiled, not run in the editor. Still open: the editor never runs Emscripten or the NDK, release.yml publishes no web artifact, iOS is not offered; the web player is the software renderer; the web build excludes the relay and OkayUI's Direct3D backend. Touch gestures and on-screen controls are fed from SDL finger events on desktop and web (`docs/input.md`)
 - **Related:** 18.3, 15.7, 42.6
 - **Words:** web, WebGL, WASM, WebAssembly, Emscripten, emsdk, Android, iOS, mobile, APK, touch, okay-player.html
 - **Seen as:** the web page is blank or the game doesn't load from a file:// URL; Android export gives no APK; a feature missing on the web build (networking relay, encryption)

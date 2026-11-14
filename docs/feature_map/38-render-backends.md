@@ -134,8 +134,8 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.7.2 Renderer in the browser - `player/main.cpp` - GPU backend creation is compiled out under `__EMSCRIPTEN__`, so frames use `RenderMeshesSS`; the 2D and UI drawing go through SDL
   - 38.7.3 CI job - `.github/workflows/ci.yml` - the "WebGL build (Emscripten)" job builds the player with that script
 - **Code:** `scripts/build-web.sh`, `player/main.cpp`
-- **API:** `scripts/build-web.sh <scene>`, Build Game Platform "Web (WebGL / WASM)"
-- **Editor:** Build Game > Platform > Web (WebGL / WASM)
+- **API:** `scripts/build-web.sh <scene>`, Build Game Platform "Web (software renderer, WASM)"
+- **Editor:** Build Game > Platform > Web (software renderer, WASM)
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** -
 - **Status:** Basic - the build and the software path exist (read `build-web.sh` and the `__EMSCRIPTEN__` guards); 3D in the browser is the CPU rasterizer

@@ -1379,6 +1379,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - export (15.7, 18.6)
 - Export check (18.6.5)
 - export my data (17.2)
+- Export report (18.2.5)
 - export to code (14.8)
 - exposure (2.5)
 - expression watch (55.2)

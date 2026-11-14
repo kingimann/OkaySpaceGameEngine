@@ -3221,3 +3221,7 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+# Export report (editor/ExportReport.hpp; header only, no ImGui): missing assets, ignored settings and tool checks for Web / Android / Server exports.
+add_executable(test_export_report test_export_report.cpp)
+target_include_directories(test_export_report PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME export_report COMMAND test_export_report)

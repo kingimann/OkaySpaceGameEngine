@@ -61,18 +61,21 @@ then this file gets updated. Keep this file short and true.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first.
 19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
 
-19a. **No copyrighted code. Write everything yourself.** Do not copy, port, translate or closely follow code, shader
-    text, data tables, comments or test files from any other project or source, open source or not (for example
-    Unreal, Godot, Assimp, meshoptimizer, SDL, Dear ImGui, stb). A licence that allows copying does not change this.
-    Public-domain code needs the owner's approval first. Write from specifications, file-format documents, papers and
-    general algorithms, in your own words and structure, and work out constants yourself and check them with tests.
-    Ideas, algorithms and file formats are not copyrighted; code is. Say in the report and the docs what each new file
-    was written from (its spec or paper). If code was copied or ported by mistake, rewrite it from scratch.
-    This covers everything in the repository, not only code: fonts, images, sounds, models, test data and test
-    vectors, shader text and documents. The owner wants nothing copyrighted at all. Third-party pieces that are already
-    here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stay only until our own replacement is ready,
-    each has a removal plan, and nothing new may be added. Never add a downloaded asset, font, dataset or library, and
-    never "fetch it at test time" as a way round this rule.
+19a. **Code: write everything yourself. Assets and data: only with permission.**
+    - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other
+      project (for example Unreal, Godot, Assimp, meshoptimizer, SDL, Dear ImGui, stb), open source or not. A licence that
+      allows copying does not change this. Public-domain code needs the owner's approval first. Create our own systems:
+      write from specifications, file-format documents, papers and general algorithms, in your own words and structure,
+      work out constants yourself and check them with tests. Ideas, algorithms and file formats are not copyrighted;
+      code is. Say in the report and the docs what each new file was written from (its spec or paper). If code was
+      copied or ported by mistake, rewrite it from scratch.
+    - **Fonts, images, sounds, models and data** (we cannot recreate these): use them only with permission, meaning a
+      licence that allows our use (for example OFL, CC0, MIT, Apache). Record the source and the licence in
+      `docs/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
+      Never use an asset whose licence is unknown or that forbids our use, and never scrape or download assets without
+      recording where they came from.
+    - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
+      until our own replacement is ready; nothing new may be added.
 
 ## Machine and agents
 

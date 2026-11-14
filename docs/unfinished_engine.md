@@ -26,6 +26,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Mesh Collider 3D navmesh bake uses the bounding box | `engine/include/okay/Physics/Collider3D.hpp` (`MeshCollider3D`), `engine/src/Physics/Physics3D.cpp` | Exact per-triangle collision works for static and kinematic meshes. A dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (concave gaps filled in), and a body landing on a solid mesh raises `OnCollisionEnter3D/Stay/Exit`. Still open: the navmesh bake treats a mesh collider as its bounding box | Medium | Small |
 | ~~3D hinge joint has no angle limits~~ Resolved: `Joint3D` hinge mode has `useLimits`, `minAngle` and `maxAngle` (degrees from the start pose). The solver clamps with `Math/JointLimit.hpp` (`HingeAngleDegrees`, `ClampHingeRotation`) and drops outward spin, so a door or lever stops. Off until Use Limits is set. Inspector, property registry and the scene file (trailing fields; older joint lines still load). | `Components/Joint3D.hpp`, `Math/JointLimit.hpp`, `Physics/Physics3D.cpp` | Done. Still open on this row's neighbours: the 2D header still says "no angular/hinge yet"; joints still connect by body name | Medium | Small |
 | ~~Bodies must be un-parented; no step-rate setting in the editor~~ Resolved: Project Settings > Physics has Steps per second (default 50, the old rate) and Smooth the motion. Scripts read and set them (`physics_steps`, `set_physics_steps`, `physics_smooth`, `set_physics_smooth`, and `Time.physicsSteps` / `Time.smoothPhysics`). A body under a parent is simulated in world space: moving or turning the parent carries it, gravity stays world-down, and unparenting keeps the speed the parent was giving it. See `docs/physics.md`. Still open: a hinge on a parented body measures its angle in the parent's space | `Physics/BodyPose.hpp`, `Scene::SetPhysicsStepsPerSecond`, Project Settings | Done. A bare scene still takes one step per frame until something turns the fixed step on | Low | Medium |
+| ~~No 2D box or capsule casts, no 2D explosion force~~ Resolved: `box_cast`, `capsule_cast`, `overlap_box`, `overlap_capsule` and `add_explosion_force`, plus the matching visual-script nodes. See `docs/physics.md`. | `Physics/Physics2D.hpp`, `Components/Rigidbody2D` | Done. Example: `examples/physics2d/casts_and_blast.okayscene` | Medium | Small |
 | Destruction only on cube-grid blocks | `engine/include/okay/Components/Destructible.hpp:42, 175` (flood fill on `blockTag` grids) | Cannot break arbitrary meshes | Low | Large |
 | Vehicle has no get-in or driver seat | `Components/VehicleController.hpp` (no seat, enter or exit code) | A player cannot board a vehicle without custom script; the Seat component is for sitting only | Medium | Medium |
 
@@ -156,7 +157,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 ## Counts
 
-High: 7. Medium: 56. Low: 29. Total rows: 93.
+High: 7. Medium: 55. Low: 23. Total rows: 86.
 
 ## Top 15 to tackle first
 
@@ -173,5 +174,5 @@ High: 7. Medium: 56. Low: 29. Total rows: 93.
 11. **Cast shadows from spot and point lights on D3D12 and software** (sec 1). The Light Inspector now says those shadows are not drawn on Direct3D 12 or the software renderer. Drawing them is still open.
 12. **(Resolved) Visual script export turns Wait, Delay, or Timer into comments, and Actions steps into comments** (sec 10). Wait and Delay emit `after(seconds, "fn")`. Timer emits the same once-per-interval gate the node runs. A node with no script fails the export by name. Every Actions step is in an `actions_load` call that runs the list. Tests compare the export with the graph or the list.
 13. ~~**Joint3D hinge limits** (sec 2).~~ Done: a 3D hinge can stop at a min and max angle (`useLimits`, degrees from the start pose) using `Math/JointLimit.hpp`. See the resolved row in section 2. Tests: `hinge3d` suites `hinge3d limits: motor stops at max`, `motor stops at min`, `pose past the stop is pulled back`, `pendulum does not pass the stop`.
-14. **Sound captions and respawn replication** (sec 7, 11). Small, user-visible multiplayer and accessibility fixes.
+14. **Sound captions are done** (sec 7): an Audio Source with a caption shows it when sound captions are on. A death that no replicated hit caused is still not sent to other players (sec 11).
 15. **(Resolved) Localization tools into the Localization window** (sec 14). The window calls `LocTable`, `LocCheck`, `LocScan` and `LocPreview`: coloured cell states, a missing-key and placeholder report, a project scan for unused and undefined keys, and a pseudo-locale and mirrored preview of the selected key. See `docs/localization.md`.

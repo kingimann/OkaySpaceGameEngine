@@ -258,7 +258,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | one shared ring is drawn from the theme and the accessibility settings; there is no focus sound; the graph is built from screen rectangles each time it is asked |
-| [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources. |
+| [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on. |
 | [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | Partial | the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine. |
 | [32.4](feature_map/20-35-planned.md#324-remapping) | Remapping | Partial | the UI navigation keys are fixed in code; mouse-button and wheel rebinding coverage is not checked. |
 

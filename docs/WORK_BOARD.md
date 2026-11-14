@@ -112,8 +112,25 @@ Nothing user-visible, nothing default.
 | Editor | Add Node menu: built once (2.861.1), then only visible rows drawn and results cached (2.861.2) | #740 #746 |
 | Engine | Accessibility settings, save games without code | #657 #664 |
 | Engine | Subtitles and sound captions, hold-to-toggle, aim assist | #767 |
+| Physics | A 3D hinge can stop at a minimum and maximum angle | #763 |
+| Model import | A PLY that declares `element vertex` twice is refused, so normals stay lined up | #768 |
+| Scripting | Copy and paste text in fields, scripts and visual script | #770 |
+| Visual script | Wait and Delay export as `after(seconds, fn)` | #764 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
-| Cutscenes | Letterbox bars, camera shake, coloured screen fade, nested sequences | #776 |
+| Localization | The Localization window calls the translation grid, the checker, the scanner and the preview | #765 |
+| Physics | A dynamic mesh collider uses the convex hull; landing raises collision callbacks | #766 |
+| Physics | 2D box and capsule casts, and a 2D explosion force | #771 |
+| Rendering | The editor names lighting switches a renderer ignores | #772 |
+| Visual script | Timer and every Actions step export as real script | #773 |
+| Scenes | Every component instance on an object is saved | #774 |
+| AI | Behavior trees can run a sub-tree, and a breakpoint pauses Play | #775 |
+| Cutscenes | Letterbox bars, camera shake, a coloured screen fade, nested sequences | #776 |
+| Settings | Monitor, display mode, resolution, refresh rate, and a 10-second revert | #777 |
+| Audio | Reverb, pitch that follows speed, quieter behind walls, dull with distance | #778 |
+| Input | On-screen touch controls and gestures | #779 |
+| UI | Frames can turn and scale | #780 |
+| UI | A focus ring for keyboard and gamepad menus | #781 |
+| Editor | Window for items, loot tables and recipes | #782 |
 
 ## Claimed (in progress)
 
@@ -148,13 +165,13 @@ Nothing user-visible, nothing default.
 | 2D grid path costs, smoothing and moving obstacles | John | `john/pathfinding2d-weights` |
 | In-game UI widgets: search bar, date and time picker, sandboxed file picker, accordion, breadcrumbs, pagination, skeleton, bottom sheet | John | `john/ui-widgets-more` |
 | One shared AI perception check; minimap and turn-order docs | John | `john/perception-dedupe` |
+| OkayUI widgets toward ImGui parity, and a code editor (off by default) | Claude | draft #794 `claude/okayui-values` |
+| Own 3DS and BVH readers; own FBX and COLLADA checked on real files (off by default) | Claude | draft #795 `claude/own-model-readers` |
 
 ## Free (unclaimed, safe small tasks)
 
 | Task | Notes |
 |---|---|
-| 3DS (.3ds) reader behind the import seam | Follow the COLLADA reader's structure; off by default |
-| BVH animation reader | Animation only; off by default |
 | `.off` and other simple mesh formats | One format per task |
 
 ## Queued next (do not start without asking)

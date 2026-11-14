@@ -20,10 +20,32 @@ their defaults and keeps the sky gradient colours. Both go through Undo.
 
 ## Post-processing
 
-Applied by the GPU renderers (OpenGL in the editor and the Linux / web player,
-Direct3D 11 in the Windows player). The software renderer keeps its own output.
+Not every switch is drawn on every renderer. The Lighting window, Build
+Settings and the Light Inspector put a grey note under a switch that the
+renderer in front of you ignores, so a dead control is labelled instead of
+silent.
 
-When any effect is on, the scene renders into a float (HDR) target, so
+What the scene's Post-processing section actually draws:
+
+| | OpenGL | Direct3D 11 | Direct3D 12 | Software |
+|---|---|---|---|---|
+| Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | no |
+| Vignette amount | yes | yes | yes | yes |
+| Ambient occlusion in this section, and depth of field | yes | no | no | no |
+
+Fog is drawn on all four. The vignette amount is an overlay when the post chain
+itself does not run, so it still shows on Direct3D 12 and the software renderer.
+Sun shadows are drawn on all four. Spot and point light shadows are not drawn
+on Direct3D 12 or the software renderer; the Light Inspector says so under
+Cast Shadows. The separate Ambient Occlusion switch in Build Settings is drawn
+by OpenGL and the software renderer, not by Direct3D 11 or 12.
+
+The *Rendering (Lighting & Post FX)* section below these is the editor's own
+process-wide switches (shadow quality, the software renderer's effects). It is
+not the same list as the scene's Post-processing section, and it is not saved
+with the scene.
+
+When an effect that this renderer draws is on, the scene renders into a float (HDR) target, so
 highlights above white survive for bloom and the tonemap, and the chain runs:
 SSAO → bloom → exposure / tonemap / grading / vignette → depth of field → FXAA.
 
@@ -41,10 +63,6 @@ SSAO → bloom → exposure / tonemap / grading / vignette → depth of field �
 
 A lightning strike (see Weather) spikes the exposure for a few frames, so a
 storm blinks even with every other effect off.
-
-The *Rendering (Lighting & Post FX)* section below these is the editor's own
-process-wide switches (shadow quality, the software renderer's effects); it is
-not saved with the scene.
 
 ## Sky
 

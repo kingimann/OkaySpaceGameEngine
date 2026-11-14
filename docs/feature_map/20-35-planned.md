@@ -1274,14 +1274,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/cutscenes.md`; `docs/accessibility.md`
 - **Tests:** `accessibility`
 - **Status:** Partial - `CaptionOverlay` draws `CaptionManager` lines in the player and in editor Play (test `accessibility_remaining`). Cutscene subtitles and dialogue call `Say`. An Audio Source `caption` calls `Sound` when sound captions are on. The Settings screen turns subtitles and sound captions on or off. Still open: subtitle size, background and speaker-name rows, and SRT import.
-- **Exists today:** The cutscene subtitle card. `docs/accessibility.md` says the Sequencer's subtitle still shows its own text rather than going through `CaptionManager`, and there is no ready-made subtitle widget.
+- **Exists today:** `CaptionOverlay` draws the caption lines. Cutscene subtitles and dialogue call `Say`. An Audio Source has a caption field. The old cutscene card is skipped while the widget is in the scene. Size, background, speaker-name rows and SRT import are still open.
 - **Work packages:**
   1. M - Subtitle widget component drawing `CaptionManager::Lines()` with the player's settings. Depends on: #574 (on main), 12.2.
   2. S - Sequence subtitle action and dialogue lines go through `CaptionManager`. Depends on: package 1.
   3. S - Audio Source option "caption text" so a sound can show `[door slams]`. Depends on: package 1, 7.3.
   4. S - Settings screen section: size, background, speaker names, sound captions. Depends on: package 1, 12.8.
   5. M - SRT import for recorded voice-over in the Timeline. Depends on: package 1.
-- **Open:** speaker colours need a colour-vision-safe palette (32.3); no sound-caption marking exists yet on audio sources.
+- **Open:** speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on.
 - **Related:** 10.1, 10.2, 7.3, 31.1, 32.3
 - **Words:** subtitles, captions, closed captions, CaptionManager, speaker names, SRT, sound captions, dialogue text, subtitle size
 - **Seen as:** subtitles too small or hard to read; no captions for sounds; subtitles ignore the language setting

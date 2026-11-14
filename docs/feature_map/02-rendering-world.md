@@ -103,7 +103,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** `docs/rendering.md`
 - **Tests:** `post_sky`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field are OpenGL only; Direct3D 11 and 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player

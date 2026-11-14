@@ -53,6 +53,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [npcs_and_crafting.md](npcs_and_crafting.md): NPCs and crafting.
 - [inventory.md](inventory.md): Inventory status, moves between bags, weight limits and what is missing.
 - [navigation.md](navigation.md): navigation meshes and agents.
+- [physics.md](physics.md): hinge limits for doors and levers, moving mesh colliders, and 2D box and capsule casts.
 - [volumes.md](volumes.md): box, sphere and cylinder zones: checkpoint, kill, force, fog and sound, drawn and resized in the Scene view.
 - [behavior_trees.md](behavior_trees.md): behavior trees for NPC AI.
 - [dialogue_quests.md](dialogue_quests.md): dialogue graphs, story variables and quests.

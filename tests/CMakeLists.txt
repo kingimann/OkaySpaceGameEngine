@@ -1815,6 +1815,10 @@ add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
 target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
 target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
+# Easy anti-cheat setup (editor/AntiCheatSetup.hpp): presets, Add Anti-Cheat, the checklist, and the round trip to the build.
+add_executable(test_anticheat_setup test_anticheat_setup.cpp)
+target_link_libraries(test_anticheat_setup PRIVATE okay::engine)
+add_test(NAME anticheat_setup COMMAND test_anticheat_setup)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)

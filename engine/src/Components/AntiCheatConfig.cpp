@@ -1,4 +1,5 @@
 #include "okay/Components/AntiCheatConfig.hpp"
+#include <filesystem>
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -10,6 +11,10 @@
 #include <unordered_set>
 
 namespace okay {
+
+namespace { std::string& BaseDirRef() { static std::string d; return d; } }
+void AntiCheatConfig::SetAssetBaseDir(const std::string& dir) { BaseDirRef() = dir; }
+const std::string& AntiCheatConfig::AssetBaseDir() { return BaseDirRef(); }
 
 NetworkManager* AntiCheatConfig::FindManager() const {
     Scene* sc = gameObject ? gameObject->scene() : nullptr;
@@ -61,7 +66,15 @@ bool AntiCheatConfig::Apply() {
     bool ok = true;
     if (!file.empty()) {
         AntiCheatSettings fromFile;
-        if (fromFile.LoadFile(file, &m_error)) m_active = fromFile;
+        std::string path = file;
+        {   // not found as written: try the game's data folder (or the project's Assets), for a relative path
+            std::error_code fe;
+            if (!std::filesystem::is_regular_file(path, fe) && !AssetBaseDir().empty() && !std::filesystem::path(file).is_absolute()) {
+                const std::string alt = AssetBaseDir() + (AssetBaseDir().back() == '/' || AssetBaseDir().back() == '\\' ? "" : "/") + file;
+                if (std::filesystem::is_regular_file(alt, fe)) path = alt;
+            }
+        }
+        if (fromFile.LoadFile(path, &m_error)) m_active = fromFile;
         else {
             // Not the component's own (looser) settings: no rules, no players.
             OKAY_ERROR("anti-cheat: ", m_error, "; the server refuses every join until the rules load");

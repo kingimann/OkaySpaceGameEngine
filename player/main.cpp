@@ -1448,6 +1448,7 @@ int main(int argc, char** argv) {
     okay::DisplaySettings::Restore();   // the player's saved fullscreen, vsync and quality apply on the first frame (the watcher below)
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    AntiCheatConfig::SetAssetBaseDir(baseDir);   // a relative anti-cheat rules file (.okayac) is looked for in the data folder
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
     WeaponBook::Get().Load(baseDir + "weapons.okayweapon"); // the project's weapons (shipped by Build Game)

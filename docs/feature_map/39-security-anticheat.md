@@ -18,13 +18,14 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.1.4 Hit claims and lag compensation - `Net/NetworkManager` - six server checks before any damage; the server alone applies damage (16.6.4)
   - 39.1.5 Unowned world objects - `Net/AntiCheat` - objects nobody owns belong to the server; "Players can claim it" opts in; refusals there are logged once and don't count as violations
   - 39.1.6 Kick filing - `Net/DedicatedServer` - `KickReporter` files `ac_reports` rows, nothing is banned automatically (16.5.4)
+  - 39.1.7 Easy setup - `editor/AntiCheatSetup.hpp`, `editor/AntiCheatSetupUi.cpp` - three presets (Casual co-op, Competitive, Economy game), one-click Add Anti-Cheat (Add Component and the Network Manager), spawn list filled from the project's networked prefabs, and the Anti-cheat checklist (Inspector and Build Settings) with safe fix buttons
 - **Code:** `Net/AntiCheat`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
 - **API:** `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
-- **Editor:** Inspector: Anti-Cheat Config and Net Validator; File > Build Settings > Server page
-- **Docs:** `docs/anticheat.md` (P1, Network hardening, Gameplay validation), `docs/launcher-multiplayer.md`
-- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`
+- **Editor:** Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one click); Network Manager > Add Anti-Cheat; File > Build Settings > Anti-cheat checklist; File > Build Settings > Server page
+- **Docs:** `docs/anticheat_quickstart.md`, `docs/anticheat.md` (P1, Network hardening, Gameplay validation, Exporting), `docs/launcher-multiplayer.md`
+- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`, `anticheat_setup` (presets, checklist, export round trip)
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
-- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
+- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; the easy-setup windows (presets, checklist) have unit tests but have not been run in the real editor; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
 - **Related:** 16.6, 16.11, 39.2, 39.12
 - **Words:** anti-cheat, cheat, authority, allowlist, forged syncvar, hit claim, NetValidator, .okayac, violation, kick, speed hack, fire rate, ammo budget
 - **Seen as:** "forged syncvar", "rpc rejected", "hit rejected" in the log; players kicked for speed; clients can't spawn a prefab

@@ -32,6 +32,15 @@ public:
     virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;
     virtual Key KeyForChar(char c) = 0;
     virtual bool IsCursorShown() = 0;
+    /// System cursor shape from the core cursor font (no Xcursor). False when the server has no cursor font.
+    virtual bool SetCursor(CursorShape shape) = 0;
+    /// Monitors (RandR 1.5 when libXrandr is there, else the one X screen). Primary first. The list is cached for
+    /// half a second.
+    virtual int DisplayCount() = 0;
+    virtual bool GetDisplayInfo(int index, DisplayInfo& out) = 0;
+    /// A modal box with one OK button: an X window drawn with a core font, or a dialog program (zenity, kdialog,
+    /// xmessage) when no core font can be loaded. False when neither worked.
+    virtual bool MessageBox(const std::string& title, const std::string& text, Window* parent) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
     virtual bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) = 0;

@@ -60,6 +60,13 @@ public:
         SDL_FreeSurface(surf);
         return true;
     }
+    bool RequestAttention(bool on) override {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        return SDL_FlashWindow(m_win, on ? SDL_FLASH_UNTIL_FOCUSED : SDL_FLASH_CANCEL) == 0;
+#else
+        (void)on; return false;
+#endif
+    }
     int RefreshRateHz() const override {
         SDL_DisplayMode dm;
         return (SDL_GetWindowDisplayMode(m_win, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;

@@ -164,6 +164,9 @@ public:
     virtual bool IsFullscreen() const { return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
+    /// Ask the user to look at this window (taskbar flash / urgency hint) until it gets the focus; false turns it off.
+    /// False return = not supported here.
+    virtual bool RequestAttention(bool on) { (void)on; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
     virtual unsigned DisplayDpi() const { return 96; }   // dots per inch of the display the window is on (96 = 100% scaling)

@@ -70,6 +70,13 @@ public:
     void ShowCursor(bool s) override { if (m_x11) m_x11->ShowCursor(s); }
     void WarpMouse(Window* w, int x, int y) override { if (m_x11) m_x11->WarpMouse(w, x, y); }
     bool IsCursorShown() override { return !m_x11 || m_x11->IsCursorShown(); }
+    bool SetCursor(CursorShape s) override { return m_x11 && m_x11->SetCursor(s); }
+    int DisplayCount() override { return m_x11 ? m_x11->DisplayCount() : 0; }
+    bool GetDisplayInfo(int i, DisplayInfo& out) override { return m_x11 && m_x11->GetDisplayInfo(i, out); }
+    bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent) override {
+        if (m_x11 && m_x11->MessageBox(title, text, parent)) return true;
+        return Backend::ShowErrorBox(title, text, parent);
+    }
     uint32_t RelativeMouseState(int* dx, int* dy) override {
         if (!m_x11) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
         return m_x11->RelativeMouseState(dx, dy);

@@ -83,5 +83,21 @@ int main() {
         }
     }
 
+    RUN_SUITE("camera field of view stays finite");
+    {
+        Scene s;
+        GameObject* go = s.CreateGameObject("Cam");
+        auto* cam = go->AddComponent<Camera>();
+        const float fovs[] = {0.0f, -10.0f, 180.0f, 179.99f, 400.0f, std::nanf("")};
+        for (float fov : fovs) {
+            cam->fieldOfView = fov;
+            const Mat4 p = cam->ProjectionMatrix(16.0f / 9.0f);
+            bool finite = true;
+            for (int i = 0; i < 16; ++i) finite = finite && std::isfinite(p.m[i]);
+            CHECK(finite);
+            CHECK(p.at(1, 1) > 0.0f);     // not mirrored upside down
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

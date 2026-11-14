@@ -147,7 +147,10 @@ float Camera::VerticalFovDegrees(float aspect) const {
     }
     if (std::fabs(zoom - 1.0f) > 1e-4f && zoom > 0.01f)   // zoom narrows the view like a longer lens
         vfov = 2.0f * std::atan(std::tan(vfov * Mathf::Deg2Rad * 0.5f) / zoom) * Mathf::Rad2Deg;
-    return vfov;
+    // A typed 0, a negative, 180 or more, or NaN made the projection infinite, mirrored or
+    // NaN (a blank frame). Keep it a real, non-degenerate lens.
+    if (!std::isfinite(vfov)) vfov = 60.0f;
+    return vfov < 1.0f ? 1.0f : (vfov > 179.0f ? 179.0f : vfov);
 }
 
 Mat4 Camera::ProjectionMatrix(float aspect) const {

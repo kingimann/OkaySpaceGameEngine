@@ -54,6 +54,35 @@ Call sites moved in this change (each commit builds):
    once at load; SDL used to convert at the device.
 3. Controllers: `Input/SdlGamepad.hpp` became `Input/PlatformGamepad.hpp` (`FeedPad`, `PadSet`; no SDL types); the editor and player open pads through the backend.
 
+## Inventory: every `SDL_` call in editor/, launcher/, shared/ and player/ (measured on this branch)
+
+Counted with `grep -rhoE "\bSDL_[A-Za-z0-9_]+"` over `*.cpp`, `*.hpp` and `*.h` in each folder (identifier tokens, so types
+and constants count too; one call can be several tokens; "about N" figures are rounded estimates from the same grep, not exact). Totals: editor 521 (before the moves below), launcher 963,
+shared 56, player 117. "Seam" means the call is an `okay::platform` call; "Not behind" means the program still calls SDL.
+
+| Area (this document's sections) | editor | launcher | shared | player | State |
+|---|---|---|---|---|---|
+| Time: `SDL_GetTicks`, `SDL_GetTicks64` | **moved** (4 sites) | none | none | **moved** (1 site) | Behind the seam (`okay::platform::TicksMs()`). The editor mixed both clocks before (a save timestamp read SDL, its reader read the seam); now one clock. |
+| Clipboard: `SDL_Get/SetClipboardText` | **moved** (Play mode) | none | **moved** (`PlatformClipboard.hpp` replaces `SdlClipboard.hpp`) | **moved** | Behind the seam. The editor asks the sdl2 backend explicitly (its window is SDL's); the player asks `Default()`. Editor's own copy buttons use Dear ImGui, not this. |
+| Displays: `SDL_GetNumVideoDisplays`, `GetDisplayBounds`, `GetCurrentDisplayMode`, `GetNumDisplayModes`, `GetDisplayMode`, `GetDisplayName` | none | `GetNumVideoDisplays`, `GetDisplayUsableBounds` (not behind) | **moved** (the monitor list, `ListMonitors`) | via shared | Monitor list behind the seam (`Backend::DisplayCount / GetDisplayInfo / DisplayModes`, implemented for sdl2 now; Win32 had the first two). Not behind: the launcher's usable-bounds clamp, editor `SDL_GetDisplayDPI`, `SDL_GetWindowDisplayIndex/Mode`. |
+| Display changes: `SDL_SetWindowFullscreen`, `SetWindowDisplayMode`, `GetClosestDisplayMode`, `SetWindowBordered/Size/Position/Icon` | none | none | `SdlDisplays.cpp` `Apply` (SDL window) | via shared | Not behind: they act on an `SDL_Window*`; needs the window class in the seam first. |
+| Cursor: `SDL_ShowCursor` | **moved** (1 site) | none | none | none | Behind the seam (through the sdl2 backend). `SDL_SetRelativeMouseMode` (4 sites), `SDL_WarpMouseInWindow` (2), `SDL_GetRelativeMouseState`, `SDL_GetMouseState`, `SDL_GetGlobalMouseState` (launcher) are not behind. |
+| Text input: `SDL_StartTextInput`, `SDL_TEXTINPUT`, `SDL_TEXTEDITING` | `StartTextInput` **moved**; the event read stays on `SDL_Event` | `SDL_TEXTINPUT/EDITING` event reads | none | none | Start call behind the seam; the events themselves are read from `SDL_Event` (ImGui's SDL backend consumes them too). |
+| File drop: `SDL_DROPFILE`, `DROPBEGIN`, `DROPCOMPLETE`, `SDL_EventState` | 4 | 5 | none | none | Not behind: both programs read `SDL_Event` in their loops. The seam has `EventType::DropFile` (sdl2 and Win32 produce it; the own X11 backend has no drop target). |
+| Windows: `Create/DestroyWindow`, `Show/Hide/Raise/Restore/MinimizeWindow`, `GetWindowFlags/Size/Position/ID`, `SetWindow*`, `FlashWindow`, `SetWindowInputFocus`, `GetWindowWMInfo`, `SDL_SetWindowsMessageHook` | about 40 | about 60 | the display helper above | 0 (player window is the seam's) | Not behind (the player's is). Launcher's WM-info and message hook are Win32-only taskbar/flash code. |
+| GL context: `SDL_GL_*` | 25 | 0 | 0 | 0 | Not behind (the editor creates its own GL context; the player's is on the seam). |
+| Events: `SDL_Event`, `PollEvent`, `PumpEvents`, `PushEvent`, `SDL_QUIT`, `KEYDOWN/UP`, `MOUSE*`, `FINGER*`, `CONTROLLERDEVICE*` | main loops | main loop | 0 | 0 | Not behind (player's is). Needs Dear ImGui's platform backend replaced first. |
+| Keyboard: `SDL_GetKeyboardState`, `SDL_SCANCODE_*`, `SDL_GetScancodeFromKey` | about 60 tokens | 0 | 0 | 0 | Not behind (same numbering as `okay::platform::Key`, so a later move is mechanical). |
+| 2D drawing: `SDL_Renderer`, `SDL_Texture`, `SDL_Surface`, `SDL_Create/Update/DestroyTexture`, `SDL_Render*`, `SDL_Vertex`, `SDL_Color`, `SDL_Rect`, `SDL_FRect`, `SDL_FPoint` | about 330 | about 70 | about 25 (colour/rect/vertex value types) | about 105 (value types only; drawing is `platform::Painter`) | Player: behind (`Painter`). Editor and launcher: not behind; they draw through `SDL_Renderer` and ImGui's SDL backends. |
+| Audio: `SDL_LoadWAV`, `SDL_FreeWAV`, `SDL_AudioSpec`, `SDL_AUDIO_*`, `SDL_AUDIODRIVER`, `SDL_INIT_AUDIO` | `SDL_INIT_AUDIO` | 3 WAV loads + format macros (voice chat) | 0 | 0 | Not behind: the WAV loader is a file reader, not a device call (needs an own WAV reader). |
+| Threads, mutex, atomics: `SDL_CreateThread` (69), `SDL_LockMutex` (177), `SDL_UnlockMutex` (183), `SDL_CreateMutex` (59), `SDL_DetachThread` (54), `SDL_WaitThread` (17), `SDL_Atomic*` (about 40) | 0 | about 600 tokens | 0 | 0 | **Not in the seam at all and not in any section above.** The biggest single block of SDL left; it is plain `std::thread` / `std::mutex` / `std::atomic` territory (the engine already uses std threads), so it is the largest pure-mechanical removal, but it is 68 thread sites in `launcher/main.cpp` and wants its own change and a run on a real launcher. |
+| Process and system: `SDL_Init`, `InitSubSystem`, `Quit`, `WasInit`, `SetHint`, `GetError`, `GetBasePath`, `ShowSimpleMessageBox`, `SDL_free`, `SDL_strdup`, `SDL_VERSION*`, `SDL_MAIN_HANDLED`, `SDL_SetMainReady` | about 30 | about 15 | few | 3 | Mostly not behind. The seam has `Init`, `BasePath`, `ShowErrorBox`, `SetPerMonitorDpiAware` (the launcher/editor still call SDL for these). |
+| Touch: `SDL_GetNumTouchDevices` | 2 | 0 | 0 | 1 | Not behind (no seam call for it yet). |
+
+Moved in this branch: time, clipboard, monitor list, cursor visibility, text-input start. Tests:
+`tests/test_platform_seam.cpp`, run under Xvfb against `sdl2` and `own` (`platform_seam_sdl2`, `platform_seam_own`).
+On the own X11 backend the monitor list is empty ("this backend cannot say"), and drop events cannot be tested.
+
 ## Stage 2: the player's window, events, input and GL context moved onto the seam
 
 Stage 1 (above) put timers, audio devices and controllers behind `okay::platform` and wrote the window, event and GL API

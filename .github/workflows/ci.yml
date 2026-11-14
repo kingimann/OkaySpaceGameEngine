@@ -246,7 +246,8 @@ jobs:
   # builds: ModelImportAssimp.cpp is compiled and the reader tests that compare the
   # built-in readers with Assimp's run. Only the model test targets are built. Assimp's
   # source is cloned once into the Actions cache (the tag is read from engine/CMakeLists.txt)
-  # and its objects come from ccache. The built-in-reader switches stay at their defaults.
+  # and its objects come from ccache. The built-in readers for FBX, COLLADA, 3DS and BVH are now the default, with Assimp as
+  # the fallback; the tests that compare against Assimp pick it explicitly (SetImportBackend(..., Assimp)), so its path stays tested.
   assimp-models:
     name: Model readers with Assimp
     runs-on: ubuntu-latest

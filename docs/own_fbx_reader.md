@@ -1,6 +1,6 @@
 # Our own FBX reader (`okay::fbx`)
 
-Status: **side by side, off by default.** ufbx (`engine/third_party/ufbx`) is still the default FBX reader and is still compiled in. Nothing has been removed. This follows stage 2 of `docs/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
+Status: **the default FBX reader** (flipped on the owner's approval). ufbx (`engine/third_party/ufbx`) is still compiled in and is the fallback. Nothing has been removed; ufbx is deleted one release later if no problems. This follows stage 2 of `docs/own_code_roadmap.md`: our own backend behind the existing seam, selectable, and promoted only after it has earned it.
 
 ## What it is
 
@@ -16,11 +16,11 @@ Written from the public description of the FBX format, with no code from ufbx, t
 
 The reader files use only the standard library (no engine headers, no `<mutex>`/`<thread>`), so the hostile-input test builds them on their own under sanitizers.
 
-## Turning it on
+## Choosing the reader (and the rollback switch)
 
-- CMake: `-DOKAY_OWN_FBX=ON` makes it the default reader for that build (default `OFF`).
-- Run time: environment variable `OKAY_OWN_FBX=1` (or `0`) overrides the build default; `okay::fbx::SetOwnReaderEnabled(true)` does the same from code and is what the tests use.
-- When our reader is selected and cannot read a file, the importer falls back to ufbx for that file.
+- CMake: `-DOKAY_OWN_FBX` is `ON` by default. `-DOKAY_OWN_FBX=OFF` builds with ufbx first.
+- Run time: environment variable `OKAY_OWN_FBX=0` turns ours off again with no new build (this is the owner's rollback switch); `OKAY_OWN_FBX=1` forces ours. `okay::fbx::SetOwnReaderEnabled(on)` does the same from code and is what the tests use.
+- With the default choice, when our reader cannot read a file the importer tries ufbx for that file. A choice made on purpose (`SetOwnReaderEnabled(true)` or `OKAY_OWN_FBX=1`) does not fall back: the caller gets our reader's own error. A file that breaks a size or shape limit is refused by both readers. `okay::fbx::OwnReaderExplicit()` says which case applies. `tests/test_fbx_reader.cpp` (`FallbackTests`) covers both with a test hook (`ForceOwnReaderFailureForTest`), because our reader and ufbx refuse the same real files, so no real file exercises the fallback.
 
 ## What it handles
 

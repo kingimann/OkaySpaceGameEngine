@@ -1078,20 +1078,30 @@ bool LoadFile(const std::string& path, Scene& out, std::string* err, const Build
 }
 
 namespace {
-int g_own = -1;   // -1: not decided yet
-}
-bool OwnReaderEnabled() {
-    if (g_own >= 0) return g_own != 0;
+int g_own = -1;        // -1: not decided yet
+int g_explicit = -1;   // 1: the caller or the environment chose it on purpose
+int g_forceFail = 0;   // test hook
+void DecideOwn() {
+    if (g_own >= 0) return;
 #ifdef OKAY_OWN_FBX_DEFAULT
     bool v = true;
 #else
     bool v = false;
 #endif
-    if (const char* e = std::getenv("OKAY_OWN_FBX")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    int ex = 0;
+    if (const char* e = std::getenv("OKAY_OWN_FBX")) {
+        if (e[0] == '1') { v = true; ex = 1; } else if (e[0] == '0') { v = false; ex = 1; }
+    }
     g_own = v ? 1 : 0;
-    return v;
+    g_explicit = ex;
 }
-void SetOwnReaderEnabled(bool on) { g_own = on ? 1 : 0; }
+}
+bool OwnReaderEnabled() { DecideOwn(); return g_own != 0; }
+bool OwnReaderExplicit() { DecideOwn(); return g_explicit != 0; }
+void SetOwnReaderEnabled(bool on) { g_own = on ? 1 : 0; g_explicit = 1; }
+void ResetOwnReaderChoice() { g_own = -1; g_explicit = -1; }
+void ForceOwnReaderFailureForTest(bool on) { g_forceFail = on ? 1 : 0; }
+bool OwnReaderForcedFailure() { return g_forceFail != 0; }
 
 } // namespace fbx
 } // namespace okay

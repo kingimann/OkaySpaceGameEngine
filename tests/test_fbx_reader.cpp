@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <filesystem>
@@ -642,7 +643,45 @@ static void PbrTests() {
     if (ph2) CHECK(Near(ph2->diffuse[0], 0.9) && Near(ph2->diffuse[1], 0.8) && ph2->hasRoughness && Near(ph2->roughness, 1.0 - std::sqrt(25.0) * 0.1));
 }
 
+// The default choice (ours first, ufbx behind it) versus an explicit choice (ours only). The "our reader said no" case is
+// made with the test hook, because every real file our reader refuses is also refused by ufbx (they read the same files).
+static void FallbackTests() {
+    RUN_SUITE("fbx: default choice falls back to ufbx, an explicit choice does not");
+    const std::string path = Fx("cube_zup_cm_bin.fbx");
+    fbx::ResetOwnReaderChoice();
+    if (!std::getenv("OKAY_OWN_FBX")) {
+#ifdef OKAY_TEST_OWN_FBX_ON
+        CHECK(fbx::OwnReaderEnabled() && !fbx::OwnReaderExplicit());   // the build default is ours, and it is not "explicit"
+#else
+        CHECK(!fbx::OwnReaderEnabled());
+#endif
+    }
+    // 1. default choice, ours switched on but not explicit: build the choice by hand
+    //    (SetOwnReaderEnabled marks it explicit, so go through the default only when the build default is ours)
+#ifdef OKAY_TEST_OWN_FBX_ON
+    if (!std::getenv("OKAY_OWN_FBX")) {
+        fbx::ForceOwnReaderFailureForTest(true);
+        { Scene sc("fb"); bool ok = false; GameObject* r = ImportModelScene(sc, path, &ok); CHECK(ok && r); }   // ufbx read it
+        { bool ok = false; Mesh m = ImportModel(path, &ok); CHECK(ok && !m.vertices.empty()); }
+        fbx::ForceOwnReaderFailureForTest(false);
+    }
+#endif
+    // 2. explicit "ours": no ufbx behind it, so a refusal of our reader is the answer
+    fbx::SetOwnReaderEnabled(true);
+    CHECK(fbx::OwnReaderExplicit());
+    { Scene sc("own"); bool ok = false; GameObject* r = ImportModelScene(sc, path, &ok); CHECK(ok && r); }   // our reader reads it
+    fbx::ForceOwnReaderFailureForTest(true);
+    { Scene sc("own"); bool ok = true; GameObject* r = ImportModelScene(sc, path, &ok); CHECK(!ok && !r); }
+    { bool ok = true; Mesh m = ImportModel(path, &ok); CHECK(!ok && m.vertices.empty()); }
+    // 3. explicit "ufbx" (the same as OKAY_OWN_FBX=0): ours is never asked, the hook does not matter
+    fbx::SetOwnReaderEnabled(false);
+    { Scene sc("ufbx"); bool ok = false; GameObject* r = ImportModelScene(sc, path, &ok); CHECK(ok && r); }
+    fbx::ForceOwnReaderFailureForTest(false);
+    fbx::ResetOwnReaderChoice();
+}
+
 int main() {
+    FallbackTests();
     InflateTests();
     DirectTests();
     HermiteTests();

@@ -127,6 +127,17 @@ int main() {
         TestUnsetEnv("OKAY_OWN_BVH");
         SetImportBackend(".bvh", ImportBackend::Default);
         ImportedModel m;
+#ifdef OKAY_TEST_OWN_BVH_ON   // the build default is ours; OKAY_OWN_BVH=0 is the rollback switch
+        CHECK(EffectiveImportBackend(".bvh") == ImportBackend::Own);
+        CHECK(ImportModelData(kDir + "walk.bvh", m, ImportBackend::Default, false, &err) && m.backend == "own");
+        TestSetEnv("OKAY_OWN_BVH", "0");
+        CHECK(EffectiveImportBackend(".bvh") != ImportBackend::Own);
+        if (!AssimpAvailable()) {
+            CHECK(!ImportModelData(kDir + "walk.bvh", m, ImportBackend::Default, false, &err));
+            CHECK(err.find("OKAY_OWN_BVH=0") != std::string::npos && err.find("OKAY_OWN_BVH=1") != std::string::npos);
+        }
+        TestUnsetEnv("OKAY_OWN_BVH");
+#endif
         if (!AssimpAvailable() && EffectiveImportBackend(".bvh") == ImportBackend::Default) {
             CHECK(!ImportModelData(kDir + "walk.bvh", m, ImportBackend::Default, false, &err));
             CHECK(err.find("OKAY_OWN_BVH") != std::string::npos);

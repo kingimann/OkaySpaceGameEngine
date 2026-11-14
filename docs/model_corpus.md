@@ -182,11 +182,11 @@ Same corpus, same Assimp v5.4.3 sources, rebuilt with the OFF, SMD, MD5, MS3D, A
 - Windows was a MinGW build under wine, not Windows itself and not MSVC; macOS and the web were not run.
 - The Assimp used for the numbers was built from the same v5.4.3 sources with the FBX, COLLADA, 3DS and BVH importers (first runs) and with the glTF, OBJ, STL and PLY importers (pre-flip verification).
 - Many files in the corpus are tiny test cases or deliberately broken files, not production assets; the glTF files are sample models and a few generators' outputs, not the kind of files users export from their tools (the OBJ, PLY and STL files include a few exporter files). Real-world glTF from other tools is covered only by the repository's own rig fixtures (`tests/assets/rigs`).
-- The release note for the dropped formats, the default flips and the deletion of Assimp and ufbx have not been done; they wait for the owner (`docs/own_code_roadmap.md`).
+- **Default flip (owner decision, given in chat):** our FBX, COLLADA, 3DS and BVH readers are the default now. Assimp and ufbx stay as the fallback and are deleted one release later if no problems. OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF and LWO stay off: their real-file evidence is too thin. Rollback: `OKAY_OWN_FBX=0`, `OKAY_OWN_COLLADA=0`, `OKAY_OWN_3DS=0`, `OKAY_OWN_BVH=0`. Not proven even so: no run on real Windows, one corpus (Assimp's test directory), no files from more exporters, MinGW only under wine. The release note for the dropped formats and the deletion of Assimp and ufbx have not been done (`docs/own_code_roadmap.md`).
 
-## Flip readiness (pre-flip verification, not an approval)
+## Flip readiness (pre-flip verification; the owner then approved FBX, COLLADA, 3DS and BVH)
 
-This section is a status report for the owner. It flips nothing, deletes nothing and is not the release announcement. The roadmap's five replacement criteria (`docs/own_code_roadmap.md`, "Replacement criteria"), checked for the two rows that gate the plan (announce the dropped formats one release ahead, flip our readers to the default the release after, delete Assimp and ufbx the release after that).
+This section is the status report written before the flip. The owner has since approved the flip for FBX, COLLADA, 3DS and BVH (see the note above); the open points below were NOT closed, the owner accepted them. It deletes nothing and is not the release announcement. The roadmap's five replacement criteria (`docs/own_code_roadmap.md`, "Replacement criteria"), checked for the two rows that gate the plan (announce the dropped formats one release ahead, flip our readers to the default the release after, delete Assimp and ufbx the release after that).
 
 ### Criteria
 

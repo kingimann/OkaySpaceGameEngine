@@ -368,11 +368,22 @@ int main() {
     // ---------------- the seam: opt-in switch, merged mesh, scene import ----------------
     {
         CHECK(HasOwnReader(".dae") && HasOwnReader(".DAE"));
-        // Default for .dae is off: with no Assimp in the build nothing reads it until it is switched on.
+        // Default for .dae is ours (OKAY_OWN_COLLADA=ON); OKAY_OWN_COLLADA=0 is the rollback switch.
         TestUnsetEnv("OKAY_OWN_COLLADA");
         SetImportBackend(".dae", ImportBackend::Default);
         ImportedModel m; std::string err;
-#ifdef OKAY_HAVE_ASSIMP
+#ifdef OKAY_TEST_OWN_COLLADA_ON
+        CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);
+        CHECK(ImportModelData(kDir + "two_materials.dae", m, ImportBackend::Default, false, &err) && m.backend == "own");
+        TestSetEnv("OKAY_OWN_COLLADA", "0");   // rollback: ours off
+        CHECK(EffectiveImportBackend(".dae") != ImportBackend::Own);
+#ifndef OKAY_HAVE_ASSIMP
+        CHECK(!ImportModelData(kDir + "two_materials.dae", m, ImportBackend::Default, false, &err));
+        CHECK(err.find("OKAY_OWN_COLLADA=0") != std::string::npos);   // the message says it is switched off and how to turn it on
+        CHECK(err.find("OKAY_OWN_COLLADA=1") != std::string::npos);
+#endif
+        TestUnsetEnv("OKAY_OWN_COLLADA");
+#elif defined(OKAY_HAVE_ASSIMP)
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Assimp || EffectiveImportBackend(".dae") == ImportBackend::Own);   // Own only if built with OKAY_OWN_COLLADA
 #else
         if (EffectiveImportBackend(".dae") == ImportBackend::Default) {   // not built with -DOKAY_OWN_COLLADA=ON

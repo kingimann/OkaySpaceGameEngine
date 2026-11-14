@@ -133,6 +133,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
+        if (fbx::OwnReaderEnabled() && fbx::OwnReaderExplicit()) { if (ok) *ok = false; return m; }
     }
     // Everything else goes through the import seam (okay/Render/ModelData.hpp): our own
     // STL / PLY readers, or Assimp when the build has it. One static mesh.
@@ -503,7 +504,7 @@ int OwnSlot(const std::string& ext) {
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
 
-// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
+// Our Collada, 3DS and BVH readers are ON by default (the owner's rollback switch is =0): run-time SetImportBackend, else the environment
 // variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
 bool OwnOptedIn(int slot) {
     if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
@@ -579,7 +580,7 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+    if (s >= 3) {   // Collada, 3DS, BVH: ours by default (env =0 / CMake OFF switch it off); Assimp reads them then, when the build has it
         if (OwnOptedIn(s)) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
@@ -647,8 +648,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const char* nm = optIn ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
-            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
-                   "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
+            *err = std::string("no ") + nm + " reader enabled: our own reader is switched off here (" + var + "=0 or -D" + var + "=OFF; set " + var +
+                   "=1 or call SetImportBackend(\"" + x + "\", ImportBackend::Own) to use it); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
         else *err = "no reader for this format in this build";
     }
     return false;
@@ -1122,10 +1123,11 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
-    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+    if (fbx::OwnReaderEnabled()) {   // our reader first; with the default choice ufbx below if it could not read the file
         bool ownOk = false;
         Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
         if (ownOk) { if (ok) *ok = true; return m; }
+        if (fbx::OwnReaderExplicit()) { if (ok) *ok = false; return merged; }   // chosen on purpose: no second reader
     }
     ufbx_scene* sc = LoadFbx(path, nullptr);
     if (!sc) { if (ok) *ok = false; return merged; }
@@ -1156,8 +1158,14 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 // caller must then fail the import instead of falling back to another reader that would take the
 // same hostile file.
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
-    if (fbx::OwnReaderEnabled())
+    if (fbx::OwnReaderEnabled()) {
         if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
+        if (fbx::OwnReaderExplicit()) {   // chosen on purpose (SetOwnReaderEnabled / OKAY_OWN_FBX=1): report our reader's error
+            if (rejected) *rejected = true;
+            if (ok) *ok = false;
+            return nullptr;
+        }
+    }
     ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
@@ -1351,7 +1359,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
 
 // ============================================================================
 // FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx
-// path above and OFF by default: selected by -DOKAY_OWN_FBX=ON, the OKAY_OWN_FBX
+// path above and ON by default (-DOKAY_OWN_FBX=OFF builds it off): the OKAY_OWN_FBX
 // environment variable, or okay::fbx::SetOwnReaderEnabled(true). It produces the
 // same scene data (hierarchy, per-material meshes, skins, blend shapes, baked
 // clips) so the rest of the engine does not care which reader ran. On failure
@@ -1522,7 +1530,7 @@ bool OwnIsIdentity(const fbx::Mat& m) {
 static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
     fbx::Scene sc; std::string err;
-    if (!fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
+    if (fbx::OwnReaderForcedFailure() || !fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
     for (const fbx::SceneNode& node : sc.nodes) {
         if (node.mesh < 0) continue;
         const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
@@ -1548,6 +1556,7 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
 
 static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
     fbx::Scene sc;
+    if (fbx::OwnReaderForcedFailure()) { if (err) *err = "our FBX reader: forced failure (test hook)"; if (ok) *ok = false; return nullptr; }
     if (!fbx::LoadFile(path, sc, err)) { if (ok) *ok = false; return nullptr; }
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);

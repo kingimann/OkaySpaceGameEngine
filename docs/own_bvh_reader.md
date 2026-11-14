@@ -1,6 +1,6 @@
 # Our own BVH reader (`.bvh`)
 
-Status: **side by side, off by default.** Until now `.bvh` only imported in a build with Assimp. Assimp builds a stick-figure mesh out of the skeleton; ours reads the skeleton and the motion and makes no mesh. Nothing was removed. This is the "BVH animation reader" step of `docs/own_code_roadmap.md`.
+Status: **the default `.bvh` reader** (flipped on the owner's approval; rollback: `OKAY_OWN_BVH=0` in the environment or `-DOKAY_OWN_BVH=OFF`, which brings back Assimp's stick-figure mesh in a build with Assimp). Note the behaviour change for Assimp builds: with ours on, a `.bvh` gives a skeleton and a clip and no mesh. Until now `.bvh` only imported in a build with Assimp. Assimp builds a stick-figure mesh out of the skeleton; ours reads the skeleton and the motion and makes no mesh. Nothing was removed. This is the "BVH animation reader" step of `docs/own_code_roadmap.md`.
 
 ## What it is
 

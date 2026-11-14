@@ -222,6 +222,17 @@ int main() {
         TestUnsetEnv("OKAY_OWN_3DS");
         SetImportBackend(".3ds", ImportBackend::Default);
         ImportedModel m;
+#ifdef OKAY_TEST_OWN_3DS_ON   // the build default is ours; OKAY_OWN_3DS=0 is the rollback switch
+        CHECK(EffectiveImportBackend(".3ds") == ImportBackend::Own);
+        CHECK(ImportModelData(kDir + "cube.3ds", m, ImportBackend::Default, false, &err) && m.backend == "own");
+        TestSetEnv("OKAY_OWN_3DS", "0");
+        CHECK(EffectiveImportBackend(".3ds") != ImportBackend::Own);
+        if (!AssimpAvailable()) {
+            CHECK(!ImportModelData(kDir + "cube.3ds", m, ImportBackend::Default, false, &err));
+            CHECK(err.find("OKAY_OWN_3DS=0") != std::string::npos && err.find("OKAY_OWN_3DS=1") != std::string::npos);
+        }
+        TestUnsetEnv("OKAY_OWN_3DS");
+#endif
         if (!AssimpAvailable()) {
             if (EffectiveImportBackend(".3ds") == ImportBackend::Default) {   // not built with -DOKAY_OWN_3DS=ON
                 CHECK(!ImportModelData(kDir + "cube.3ds", m, ImportBackend::Default, false, &err));

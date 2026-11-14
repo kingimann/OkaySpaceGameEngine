@@ -207,6 +207,15 @@ bool LoadFile(const std::string& path, Scene& out, std::string* err, const Build
 /// by the OKAY_OWN_FBX environment variable ("1"/"0") and by SetOwnReaderEnabled().
 bool OwnReaderEnabled();
 void SetOwnReaderEnabled(bool on);
+/// True when the choice was made on purpose (SetOwnReaderEnabled, or OKAY_OWN_FBX=0/1 in the environment).
+/// With the build default (ours on) the importer tries ufbx when our reader rejects a file; with
+/// an explicit "ours" it does not, so the caller sees our reader's own error.
+bool OwnReaderExplicit();
+/// Back to the build default and the environment (what a fresh process sees).
+void ResetOwnReaderChoice();
+/// Test hook: while on, the importer's use of our reader fails as if the file were rejected.
+void ForceOwnReaderFailureForTest(bool on);
+bool OwnReaderForcedFailure();
 
 } // namespace fbx
 } // namespace okay

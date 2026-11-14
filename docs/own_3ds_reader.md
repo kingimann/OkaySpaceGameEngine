@@ -1,6 +1,6 @@
 # Our own 3DS reader (`.3ds`)
 
-Status: **side by side, off by default.** Assimp (when the build has it, `OKAY_USE_ASSIMP`) is still the only other reader of `.3ds`. Without Assimp and without switching ours on, a `.3ds` file does not import. Nothing was removed. This is the "write the 3DS reader" step of `docs/own_code_roadmap.md`.
+Status: **the default `.3ds` reader** (flipped on the owner's approval). Assimp (when the build has it) is the fallback for files ours rejects. Rollback: `OKAY_OWN_3DS=0` in the environment (or `-DOKAY_OWN_3DS=OFF`); with ours off and no Assimp a `.3ds` file does not import. Nothing was removed; Assimp goes one release later if no problems. This is the "write the 3DS reader" step of `docs/own_code_roadmap.md`.
 
 ## What it is
 
@@ -20,7 +20,7 @@ The reader file uses only the standard library and `okay/Render/ModelData.hpp` (
 
 Exactly like `OKAY_OWN_COLLADA`:
 
-- CMake: `-DOKAY_OWN_3DS=ON` makes it the default `.3ds` reader for that build (default `OFF`).
+- CMake: `-DOKAY_OWN_3DS=ON` makes it the default `.3ds` reader for that build (default `ON`; `OFF` builds with ours off).
 - Run time: environment variable `OKAY_OWN_3DS=1` (or `0`) overrides the build default; `okay::SetImportBackend(".3ds", ImportBackend::Own)` beats both; `SetImportBackend("*", ...)` covers every format with an own reader.
 - Off, with no Assimp in the build: `ImportModelData` fails with a message that says how to switch it on, and `ImportableExtensions()` does not list `.3ds`.
 - On, and the build has Assimp: ours is tried first, Assimp is the fallback for files ours rejects.

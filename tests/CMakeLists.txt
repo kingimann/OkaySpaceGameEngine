@@ -2859,6 +2859,9 @@ set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
 add_executable(test_collada_reader test_collada_reader.cpp)
 target_link_libraries(test_collada_reader PRIVATE okay::engine)
 target_compile_definitions(test_collada_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_COLLADA)
+    target_compile_definitions(test_collada_reader PRIVATE OKAY_TEST_OWN_COLLADA_ON)   # the build default is ours: the tests expect it
+endif()
 add_test(NAME collada_reader COMMAND test_collada_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(test_model_readers_fuzz test_model_readers_fuzz.cpp)
@@ -2887,11 +2890,17 @@ endif()
 add_executable(test_fbx_reader test_fbx_reader.cpp)
 target_link_libraries(test_fbx_reader PRIVATE okay::engine)
 target_compile_definitions(test_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_FBX)
+    target_compile_definitions(test_fbx_reader PRIVATE OKAY_TEST_OWN_FBX_ON)
+endif()
 add_test(NAME fbx_reader COMMAND test_fbx_reader)
 
 # Hostile FBX files through the importer (ufbx default path and our reader): deep node chains, animation counts, the whole-file bake budget.
 add_executable(test_fbx_import_limits test_fbx_import_limits.cpp)
 target_link_libraries(test_fbx_import_limits PRIVATE okay::engine)
+if(OKAY_OWN_FBX)
+    target_compile_definitions(test_fbx_import_limits PRIVATE OKAY_TEST_OWN_FBX_ON)
+endif()
 add_test(NAME fbx_import_limits COMMAND test_fbx_import_limits)
 
 # Hostile-input tests for okay::fbx. Standalone (no engine library) so it can run under sanitizers:
@@ -2938,10 +2947,16 @@ add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
 add_executable(test_3ds_reader test_3ds_reader.cpp)
 target_link_libraries(test_3ds_reader PRIVATE okay::engine)
 target_compile_definitions(test_3ds_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_3DS)
+    target_compile_definitions(test_3ds_reader PRIVATE OKAY_TEST_OWN_3DS_ON)   # the build default is ours: the tests expect it
+endif()
 add_test(NAME 3ds_reader COMMAND test_3ds_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_bvh_reader test_bvh_reader.cpp)
 target_link_libraries(test_bvh_reader PRIVATE okay::engine)
 target_compile_definitions(test_bvh_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_BVH)
+    target_compile_definitions(test_bvh_reader PRIVATE OKAY_TEST_OWN_BVH_ON)   # the build default is ours: the tests expect it
+endif()
 add_test(NAME bvh_reader COMMAND test_bvh_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 # Hostile input + mutation fuzz for the 3DS and BVH readers. Standalone (no engine library, only the two reader files)
 # so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_3DS_FUZZ_ITERS raises the sweep.

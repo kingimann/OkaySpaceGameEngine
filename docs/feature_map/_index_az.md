@@ -2968,6 +2968,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own Collada reader (side by side, off by default) (3.6.11)
 - own crypto (16.1)
 - Own crypto, side by side (UNREVIEWED, off by default) (16.1.6)
+- Own DXF reader (side by side, off by default) (3.6.24)
 - own FBX reader (3.6)
 - Own FBX reader (side by side, off by default) (3.6.10)
 - Own Linux backend (17.17.3)

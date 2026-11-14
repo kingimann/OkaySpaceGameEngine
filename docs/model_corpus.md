@@ -25,6 +25,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | 3MF | 1 | one box, a deflate-compressed package |
 | AMF | 11 | hand-made files: pyramids with materials, colours, volumes and constellations |
 | X3D | 4 | a keyboard (Extrusion), a sphere with text, a line set, a car model with 17 shapes |
+| DXF | 5 | 3DFACE meshes, polyface and polyline meshes in blocks, a line test |
 
 ## Running it
 
@@ -131,6 +132,10 @@ One real file (`models/3MF/box.3mf`, a 10 x 20 x 30 millimetre box in a deflate-
 #### X3D
 
 4 files. Ours reads 3; `IndexedLineSet.x3d` has only lines and fails with a message (Assimp returns a mesh with 0 triangles). On the 3 that read, Assimp's numbers differ from ours and each difference was checked against the file with an independent count: `ChevyTahoe.x3d` ours 1298 triangles (the file's index lists give 1298; Assimp drops one of the four `USE`d wheels, 1234), `ComputerKeyboard.x3d` ours 100 shapes and 2020 triangles (independent count: the same; Assimp returns 4 meshes and 100 triangles, the `USE`d keys are not instanced), `HelloX3dTrademark.x3d` a sphere tessellated 24 x 12 by ours (528 triangles) and finer by Assimp (1280). `docs/own_x3d_reader.md`.
+
+#### DXF
+
+5 files, all read by ours and by Assimp; 4 agree on everything compared, the fifth (`PinkEggFromLW.dxf`) has the same area and box and 48 fewer triangles in ours (zero-area pole triangles, dropped). Assimp turns every DXF Z-up to Y-up as `(x, y, z) -> (x, z, -y)`; ours does the same and the boxes are equal on all five. `docs/own_dxf_reader.md`.
 
 ### Sanitizers and valgrind (engine-linked tests)
 

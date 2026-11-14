@@ -10,6 +10,7 @@
 #include "okay/Render/ThreeMfReader.hpp"
 #include "okay/Render/AmfReader.hpp"
 #include "okay/Render/X3dReader.hpp"
+#include "okay/Render/DxfReader.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -253,11 +254,75 @@ static void HostileX3d() {
 }
 
 
+// ======================= DXF =======================
+static bool ReadDxf(const std::string& b, ImportedModel& m, std::string& e) { return ReadDxfBuffer(b, m, &e); }
+static std::string Gc(int code, const std::string& v) { char b[16]; std::snprintf(b, sizeof b, "%3d\n", code); return b + v + "\n"; }
+static std::string DxfDoc(const std::string& ents, const std::string& blocks = "") {
+    return Gc(0, "SECTION") + Gc(2, "BLOCKS") + blocks + Gc(0, "ENDSEC") + Gc(0, "SECTION") + Gc(2, "ENTITIES") + ents + Gc(0, "ENDSEC") + Gc(0, "EOF");
+}
+static std::string DxfFace(const char* layer, double x) {
+    return Gc(0, "3DFACE") + Gc(8, layer) + Gc(10, std::to_string(x)) + Gc(20, "0") + Gc(30, "0") + Gc(11, std::to_string(x + 1)) + Gc(21, "0") + Gc(31, "0") + Gc(12, std::to_string(x)) + Gc(22, "1") + Gc(32, "0");
+}
+static const std::string kDxf = [] {
+    std::string blk = Gc(0, "BLOCK") + Gc(2, "B") + Gc(10, "1") + Gc(20, "0") + Gc(30, "0") + DxfFace("0", 1) + Gc(0, "ENDBLK");
+    std::string poly = Gc(0, "POLYLINE") + Gc(8, "P") + Gc(70, "64") + Gc(71, "3") + Gc(72, "1");
+    const double pts[3][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    for (auto& p : pts) poly += Gc(0, "VERTEX") + Gc(8, "P") + Gc(10, std::to_string(p[0])) + Gc(20, std::to_string(p[1])) + Gc(30, std::to_string(p[2])) + Gc(70, "192");
+    poly += Gc(0, "VERTEX") + Gc(8, "P") + Gc(10, "0") + Gc(20, "0") + Gc(30, "0") + Gc(70, "128") + Gc(71, "1") + Gc(72, "2") + Gc(73, "3") + Gc(0, "SEQEND");
+    std::string mesh = Gc(0, "MESH") + Gc(8, "M") + Gc(92, "3") + Gc(10, "0") + Gc(20, "0") + Gc(30, "0") + Gc(10, "1") + Gc(20, "0") + Gc(30, "0") + Gc(10, "0") + Gc(20, "1") + Gc(30, "0") + Gc(93, "4") + Gc(90, "3") + Gc(90, "0") + Gc(90, "1") + Gc(90, "2");
+    return DxfDoc(DxfFace("A", 0) + poly + mesh + Gc(0, "INSERT") + Gc(8, "I") + Gc(2, "B") + Gc(10, "5") + Gc(20, "0") + Gc(30, "0") + Gc(41, "2") + Gc(50, "30") + Gc(0, "LINE") + Gc(8, "A"), blk);
+}();
+
+static void HostileDxf() {
+    RUN_SUITE("dxf hostile");
+    const std::string& good = kDxf;
+    { ImportedModel m; std::string e; CHECK(ReadDxf(good, m, e) && m.parts.size() == 4); }
+    for (std::size_t n = 0; n < good.size(); ++n) Try(ReadDxf, good.substr(0, n));
+    auto dxf = [&](const std::string& s) { ImportedModel m; std::string e; const bool ok = ReadDxf(s, m, e); if (ok) { CHECK(fx::Sane(m)); } else { CHECK(!e.empty() && m.parts.empty()); } return ok; };
+    // numbers and counts
+    for (const char* bad : {"1e999", "inf", "nan", "0x10", "1..2", "1e300", "", "--1", "1,5"}) {
+        dxf(DxfDoc(Gc(0, "3DFACE") + Gc(10, bad) + Gc(20, "0") + Gc(30, "0") + Gc(11, "1") + Gc(21, "0") + Gc(31, "0") + Gc(12, "0") + Gc(22, "1") + Gc(32, "0")));
+        dxf(DxfDoc(Gc(0, "INSERT") + Gc(2, "B") + Gc(41, bad) + Gc(50, bad), Gc(0, "BLOCK") + Gc(2, "B") + DxfFace("0", 0) + Gc(0, "ENDBLK")));
+        dxf(DxfDoc(Gc(0, "MESH") + Gc(92, bad) + Gc(93, bad)));
+    }
+    for (const char* cnt : {"-1", "999999999999", "4000000000", "2147483647", "20000001", "1.5"}) {
+        dxf(DxfDoc(Gc(0, "MESH") + Gc(92, cnt) + Gc(10, "0") + Gc(20, "0") + Gc(30, "0") + Gc(93, cnt) + Gc(90, "3") + Gc(90, "0") + Gc(90, "0") + Gc(90, "0")));
+        dxf(DxfDoc(Gc(0, "POLYLINE") + Gc(70, "16") + Gc(71, cnt) + Gc(72, cnt) + Gc(0, "SEQEND")));
+    }
+    // face indices out of range / negative / huge in MESH and polyface
+    dxf(DxfDoc(Gc(0, "MESH") + Gc(92, "3") + Gc(10, "0") + Gc(20, "0") + Gc(30, "0") + Gc(10, "1") + Gc(20, "0") + Gc(30, "0") + Gc(10, "0") + Gc(20, "1") + Gc(30, "0") + Gc(93, "8") + Gc(90, "3") + Gc(90, "0") + Gc(90, "1") + Gc(90, "99") + Gc(90, "3") + Gc(90, "0") + Gc(90, "1") + Gc(90, "2")));
+    dxf(DxfDoc(Gc(0, "MESH") + Gc(92, "3") + Gc(93, "5") + Gc(90, "4000000000") + Gc(90, "0") + Gc(90, "1") + Gc(90, "2") + Gc(90, "3")));
+    dxf(DxfDoc(Gc(0, "POLYLINE") + Gc(70, "64") + Gc(0, "VERTEX") + Gc(70, "128") + Gc(71, "-2147483648") + Gc(72, "2147483647") + Gc(73, "0") + Gc(0, "SEQEND")));
+    // a polyline of 200000 vertices and a polyface with a million faces would fit the caps: 50000 vertices, 50000 faces
+    { std::string s = Gc(0, "POLYLINE") + Gc(70, "64");
+      for (int i = 0; i < 50000; ++i) s += Gc(0, "VERTEX") + Gc(10, std::to_string(i % 100)) + Gc(20, std::to_string(i / 100)) + Gc(30, "0") + Gc(70, "192");
+      for (int i = 0; i < 50000; ++i) s += Gc(0, "VERTEX") + Gc(70, "128") + Gc(71, std::to_string(i % 49998 + 1)) + Gc(72, std::to_string(i % 49998 + 2)) + Gc(73, std::to_string(i % 49998 + 3));
+      s += Gc(0, "SEQEND"); const double t0 = Now(); CHECK(dxf(DxfDoc(s))); CHECK(Now() - t0 < 20.0); }
+    // an INSERT bomb: block i inserts block i-1 ten times, 20 levels (nesting limit and instance cap, no hang)
+    { std::string blocks = Gc(0, "BLOCK") + Gc(2, "b0") + DxfFace("0", 0) + Gc(0, "ENDBLK");
+      for (int i = 1; i <= 20; ++i) { blocks += Gc(0, "BLOCK") + Gc(2, "b" + std::to_string(i)); for (int k = 0; k < 10; ++k) blocks += Gc(0, "INSERT") + Gc(2, "b" + std::to_string(i - 1)) + Gc(10, std::to_string(k)); blocks += Gc(0, "ENDBLK"); }
+      const double t0 = Now(); dxf(DxfDoc(Gc(0, "INSERT") + Gc(2, "b20"), blocks)); CHECK(Now() - t0 < 30.0); }
+    { std::string blocks = Gc(0, "BLOCK") + Gc(2, "b0") + DxfFace("0", 0) + Gc(0, "ENDBLK");
+      for (int i = 1; i <= 7; ++i) { blocks += Gc(0, "BLOCK") + Gc(2, "b" + std::to_string(i)); for (int k = 0; k < 12; ++k) blocks += Gc(0, "INSERT") + Gc(2, "b" + std::to_string(i - 1)) + Gc(10, std::to_string(k)); blocks += Gc(0, "ENDBLK"); }
+      const double t0 = Now(); CHECK(!dxf(DxfDoc(Gc(0, "INSERT") + Gc(2, "b7"), blocks)) || true); CHECK(Now() - t0 < 30.0); }
+    // 100001 INSERTs, 5000 layers, a huge string, binary junk
+    { std::string s = DxfFace("A", 0); for (int i = 0; i < 100001; ++i) s += Gc(0, "INSERT") + Gc(2, "x"); CHECK(!dxf(DxfDoc(s))); }
+    { std::string s; for (int i = 0; i < 5000; ++i) s += DxfFace(("L" + std::to_string(i)).c_str(), i); CHECK(dxf(DxfDoc(s))); }
+    { std::string s = Gc(0, "3DFACE") + Gc(8, std::string(5000000, 'x')); dxf(DxfDoc(s)); }
+    { std::string junk; for (int i = 0; i < 100000; ++i) junk.push_back((char)(fx::Rnd() & 255)); CHECK(!dxf(junk)); }
+    CHECK(!dxf(std::string(2000000, '\n')));
+    CHECK(!dxf(std::string("  0\nSECTION\n  2\nENTITIES\n") + std::string(300000, ' ') + "\n0\n"));
+    RUN_SUITE("dxf fuzz");
+    const long n = Iters();
+    for (long i = 0; i < n; ++i) Try(ReadDxf, Mutate(good));
+}
+
 
 
 int main() {
     Hostile3mf();
     HostileAmf();
     HostileX3d();
+    HostileDxf();
     TEST_MAIN_RESULT();
 }

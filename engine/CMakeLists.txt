@@ -236,6 +236,7 @@ add_library(okay_engine
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
     src/Render/X3dReader.cpp
+    src/Render/DxfReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -518,8 +519,8 @@ if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
-# Our own 3MF / AMF / X3D readers (batch B), same opt-in rules as 3DS: default OFF.
-foreach(_fmt 3MF AMF X3D)
+# Our own 3MF / AMF / X3D / DXF readers (batch B), same opt-in rules as 3DS: default OFF.
+foreach(_fmt 3MF AMF X3D DXF)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

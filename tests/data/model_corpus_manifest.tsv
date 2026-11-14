@@ -1,9 +1,9 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / 3MF / AMF / X3D readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / 3MF / AMF / X3D / DXF readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.
-# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf 3mf amf x3d; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
+# Regenerate with: for r in fbx-own dae 3ds bvh obj stl ply gltf 3mf amf x3d dxf; do test_model_corpus --list $r <test dir>; done  (keep only the models/ and models-nonbsd/ rows, drop the ms= column)
 # obj / stl / ply / gltf rows also record tex (distinct texture files), nodes, uv and nrm (1 when some mesh has per-vertex UVs / normals); gltf sizes are the file's own (the importer's auto-scale is undone).
 fbx-own	models-nonbsd/FBX/2013_ASCII/COLLADA.fbx	ok	area=63.9231	meshes=2	tris=6722	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-4.000,0.000,-2.000,4.000,1.081,2.000	verts=4126
 fbx-own	models-nonbsd/FBX/2013_ASCII/Cinema4D.fbx	ok	area=10.8568	meshes=3	tris=1296	bones=0	skinned=0	clips=0	dur=0.000	mat=-1	bbox=-0.483,-0.483,-0.483,1.517,0.483,1.501	verts=723
@@ -211,3 +211,8 @@ x3d	models-nonbsd/X3D/Chevy/ChevyTahoe.x3d	ok	area=59.7134	meshes=20	tris=1298	b
 x3d	models/X3D/ComputerKeyboard.x3d	ok	area=2.0364	meshes=100	tris=2020	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=0.000,-0.000,0.000,0.450,0.105,0.980	verts=2029	tex=0	nodes=101	uv=0	nrm=1
 x3d	models/X3D/HelloX3dTrademark.x3d	ok	area=12.3877	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.000,-1.000,-1.000,1.000,1.000,1.000	verts=323	tex=1	nodes=2	uv=1	nrm=1
 x3d	models/X3D/IndexedLineSet.x3d	FAIL	X3D: the file has no triangle geometry (it has only: IndexedLineSet NavigationInfo Viewpoint WorldInfo)
+dxf	models-nonbsd/DXF/rifle.dxf	ok	area=8673.7689	meshes=1	tris=572	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.523,-44.979,-20.233,3.523,71.303,21.537	verts=747	tex=0	nodes=2	uv=0	nrm=1
+dxf	models/DXF/PinkEggFromLW.dxf	ok	area=63.5224	meshes=1	tris=528	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-2.150,-2.500,-2.100,2.150,2.600,2.100	verts=266	tex=0	nodes=2	uv=0	nrm=1
+dxf	models/DXF/issue_2229.dxf	ok	area=1641300.3960	meshes=1	tris=1520	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-600.000,0.000,-0.000,600.000,116.000,420.000	verts=946	tex=0	nodes=2	uv=0	nrm=1
+dxf	models/DXF/lineTest.dxf	ok	area=1.5000	meshes=1	tris=3	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=7	tex=0	nodes=2	uv=0	nrm=1
+dxf	models/DXF/wuson.dxf	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-0.460,-1.622,-1.515,0.460,1.622,0.001	verts=3691	tex=0	nodes=2	uv=0	nrm=1

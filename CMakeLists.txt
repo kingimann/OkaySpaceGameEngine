@@ -36,6 +36,7 @@ option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by d
 option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_DXF       "Read .dxf with our own DXF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_DXF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 

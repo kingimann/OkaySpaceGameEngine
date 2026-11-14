@@ -1248,7 +1248,10 @@ int main() {
         Scene sc("lookdown");
         sc.physicsEnabled = false;
         GameObject* light = sc.CreateGameObject("Directional Light");
-        light->AddComponent<Light>();
+        // This check counts pixels that change when an arm part is turned off. The arms are hidden from the camera, but
+        // since the software renderer draws shadows by default (#842) a hidden arm still shadows the ground, so the
+        // light must not cast shadows here: the test is about what the camera sees, not about shadows.
+        light->AddComponent<Light>()->castShadows = false;
         light->transform->localRotation = Quat::Euler({50, -30, 0});
         GameObject* ground = sc.CreateGameObject("Ground");
         ground->transform->localPosition = {0, -0.5f, 0};

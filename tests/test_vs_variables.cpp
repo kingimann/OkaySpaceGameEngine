@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -451,6 +452,93 @@ int main() {
             if (m.find("stats={coins: 7, kills: 0}") != std::string::npos && m.find("boss={hp: 55,") != std::string::npos) printedStats = true;
         }
         CHECK(printedRoute && printedStats);
+    }
+
+    // ---- A graph saved by the format before the core upgrade still loads and runs unchanged ----
+    {
+        std::ifstream f(std::string(OKAY_SOURCE_DIR) + "/tests/data/vs_core_legacy.okayvs");
+        std::stringstream ss; ss << f.rdbuf();
+        CHECK(!ss.str().empty());
+        std::string err;
+        CHECK(vs::NodeGraph::Parse(ss.str(), &err));
+        Run r(ss.str());
+        CHECK(r.loaded);
+        CHECK(r.Var("sum") == "12");
+        CHECK(r.Var("gold") == "12");
+        CHECK(r.Var("lives") == "2");                      // `var lives 3` default, then AddVar -1
+        CHECK(r.Var("title") == "Old graph");
+        CHECK(r.Var("bag") == "[5, 7]");
+        CHECK(g_errs.empty());
+    }
+
+    // ---- New list / map nodes: each one is run, not just built ----
+    {   // List Append (and appending a list to itself), List Slice, List Pop
+        Run r(Chain("decl a List<Number> object \"[1, 2, 3]\"\ndecl b List<Number> object \"[4, 5]\"\ndecl self List object \"[1, 2]\"\n"
+                    "node 2 GetVar a\nnode 3 GetVar b\nnode 4 ListAppend\ndata 4 0 2 0\ndata 4 1 3 0\n"
+                    "node 5 ListSlice\ndata 5 0 2 0\ndefault 5 1 1\ndefault 5 2 2\nnode 6 SetVar mid\ndata 6 0 5 0\n"
+                    "node 7 ListSlice\ndata 7 0 2 0\ndefault 7 1 3\nnode 8 SetVar tail\ndata 8 0 7 0\n"
+                    "node 9 ListPop\ndata 9 0 2 0\nnode 10 SetVar popped\ndata 10 0 9 0\nnode 11 SetVar did\ndata 11 0 9 1\n"
+                    "node 12 GetVar self\nnode 13 ListAppend\ndata 13 0 12 0\ndata 13 1 12 0\n"
+                    "node 14 ListSlice\ndata 14 0 2 0\ndefault 14 1 99\nnode 15 SetVar bad\ndata 15 0 14 0\n",
+                    {4, 6, 8, 9, 10, 11, 13, 15}));
+        CHECK(r.loaded);
+        CHECK(r.Var("mid") == "[2, 3]");                   // sliced after the append: [1,2,3,4,5]
+        CHECK(r.Var("tail") == "[4, 5]");                  // no Count: everything from Start
+        CHECK(r.Var("popped") == "5" && r.Var("did") == "true");
+        CHECK(r.Var("a") == "[1, 2, 3, 4]");               // the pop took the 5 off
+        CHECK(r.Var("self") == "[1, 2, 1, 2]");
+        CHECK(HasErr("ListSlice", "outside the list"));
+        CHECK(r.Var("bad") == "[]");
+    }
+    {   // List Pop on an empty list: not an error, Popped is false; a non-list is reported
+        Run r(Chain("node 2 NewList\nnode 3 ListPop\ndata 3 0 2 0\nnode 4 SetVar did\ndata 4 0 3 1\n"
+                    "node 5 Const 5\nnode 6 ListPop\ndata 6 0 5 0\nnode 7 ListAppend\ndata 7 0 5 0\ndata 7 1 2 0\n"
+                    "node 8 ListAppend\ndata 8 0 2 0\ndefault 8 1 5\n",
+                    {3, 4, 6, 7, 8}));
+        CHECK(r.loaded);
+        CHECK(r.Var("did") == "false");
+        CHECK(HasErr("ListPop", "isn't a list"));
+        CHECK(HasErr("ListAppend", "isn't a list"));
+        CHECK(HasErr("ListAppend", "Other input isn't a list"));
+    }
+    {   // negative count is reported; count past the end stops at the end; Start = length gives an empty slice
+        Run r(Chain("decl a List object \"[1, 2, 3]\"\nnode 2 GetVar a\n"
+                    "node 3 ListSlice\ndata 3 0 2 0\ndefault 3 1 1\ndefault 3 2 50\nnode 4 SetVar long\ndata 4 0 3 0\n"
+                    "node 5 ListSlice\ndata 5 0 2 0\ndefault 5 1 0\ndefault 5 2 -1\nnode 6 SetVar neg\ndata 6 0 5 0\n"
+                    "node 7 ListSlice\ndata 7 0 2 0\ndefault 7 1 3\nnode 8 SetVar atEnd\ndata 8 0 7 0\n",
+                    {4, 6, 8}));
+        CHECK(r.Var("long") == "[2, 3]");
+        CHECK(r.Var("neg") == "[]" && HasErr("ListSlice", "count"));
+        CHECK(r.Var("atEnd") == "[]");
+    }
+    {   // Map Get Or and Map Merge
+        Run r(Chain("decl m Map<Number> object \"{a: 1, b: 2}\"\ndecl o Map<Number> object \"{b: 20, c: 30}\"\n"
+                    "node 2 GetVar m\nnode 3 GetVar o\n"
+                    "node 4 MapGetOr\ndata 4 0 2 0\ndefault 4 1 \"a\"\ndefault 4 2 99\nnode 5 SetVar hit\ndata 5 0 4 0\n"
+                    "node 6 MapGetOr\ndata 6 0 2 0\ndefault 6 1 \"zzz\"\ndefault 6 2 99\nnode 7 SetVar miss\ndata 7 0 6 0\n"
+                    "node 8 MapMerge\ndata 8 0 2 0\ndata 8 1 3 0\n"
+                    "node 9 MapGetOr\ndata 9 0 2 0\ndefault 9 1 \"b\"\ndefault 9 2 0\nnode 10 SetVar b\ndata 10 0 9 0\n"
+                    "node 11 MapCount\ndata 11 0 2 0\nnode 12 SetVar n\ndata 12 0 11 0\n"
+                    "node 13 MapMerge\ndata 13 0 2 0\ndata 13 1 2 0\n"
+                    "node 14 MapMerge\ndata 14 0 2 0\ndefault 14 1 5\n"
+                    "node 15 MapGetOr\ndefault 15 1 \"a\"\ndefault 15 2 7\nnode 16 SetVar nomap\ndata 16 0 15 0\n",
+                    {5, 7, 8, 10, 12, 13, 14, 16}));
+        CHECK(r.loaded);
+        CHECK(r.Var("hit") == "1" && r.Var("miss") == "99");
+        CHECK(r.Var("b") == "20");                         // From wins
+        CHECK(r.Var("n") == "3");                          // a, b, c
+        CHECK(r.Var("nomap") == "7");                      // no map wired: the default
+        CHECK(HasErr("MapMerge", "From input isn't a map"));
+    }
+    {   // the checker types the new pins: a Vector3 can't go into Map Get Or's default on a Map<Number>
+        const std::string ok = "decl a List<Number> object \"[1]\"\nnode 1 OnStart\nentry OnStart 1\nnode 2 GetVar a\nnode 3 ListSlice\ndata 3 0 2 0\n"
+                               "node 4 ListPop\ndata 4 0 3 0\nnode 5 SetVar x\ndata 5 0 4 0\nexec 1 0 4\nexec 4 0 5\n";
+        for (const auto& i : vs::ValidateGraphText(ok)) CHECK(i.severity != 0);
+        const std::string bad = "decl m Map<Number> object\nnode 1 OnStart\nentry OnStart 1\nnode 2 GetVar m\nnode 3 MakeVec3\n"
+                                "node 4 MapGetOr\ndata 4 0 2 0\ndata 4 2 3 0\nnode 5 SetVar x\ndata 5 0 4 0\nexec 1 0 5\n";
+        bool flagged = false;
+        for (const auto& i : vs::ValidateGraphText(bad)) if (i.severity == 0 && i.node == 4) flagged = true;
+        CHECK(flagged);
     }
 
     // ---- Hostile graph text never crashes the loader ----

@@ -2961,6 +2961,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Overrides (21.4)
 - Own 3DS reader (side by side, off by default) (3.6.12)
 - Own 3MF reader (side by side, off by default) (3.6.21)
+- Own AMF reader (side by side, off by default) (3.6.22)
 - own backend (17.17)
 - Own body and head hiding (4.7.2)
 - Own BVH reader (side by side, off by default) (3.6.13)

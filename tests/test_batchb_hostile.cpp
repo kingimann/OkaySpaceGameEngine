@@ -8,6 +8,7 @@
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "okay/Render/ThreeMfReader.hpp"
+#include "okay/Render/AmfReader.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -128,11 +129,72 @@ static void Hostile3mf() {
 }
 
 
+// ======================= AMF =======================
+static bool ReadAmf(const std::string& b, ImportedModel& m, std::string& e) { return ReadAmfBuffer(b, m, &e); }
+static const char* kAmf =
+    "<amf unit=\"millimeter\"><material id=\"1\"><metadata type=\"name\">m</metadata><color><r>1</r><g>0.5</g><b>0</b></color></material>"
+    "<object id=\"0\"><color><r>0</r><g>1</g><b>0</b></color><mesh><vertices>"
+    "<vertex><coordinates><x>0</x><y>0</y><z>0</z></coordinates></vertex><vertex><coordinates><x>1</x><y>0</y><z>0</z></coordinates></vertex>"
+    "<vertex><coordinates><x>0</x><y>1</y><z>0</z></coordinates><color><r>1</r><g>0</g><b>0</b></color></vertex><vertex><coordinates><x>0</x><y>0</y><z>1</z></coordinates></vertex></vertices>"
+    "<volume materialid=\"1\"><triangle><v1>0</v1><v2>2</v2><v3>1</v3></triangle><triangle><v1>0</v1><v2>1</v2><v3>3</v3></triangle></volume>"
+    "<volume><triangle><color><r>0</r><g>0</g><b>1</b></color><v1>1</v1><v2>2</v2><v3>3</v3></triangle><triangle><v1>2</v1><v2>0</v2><v3>3</v3></triangle></volume></mesh></object>"
+    "<constellation id=\"1\"><instance objectid=\"0\"><deltax>5</deltax><rz>45</rz></instance></constellation></amf>";
+
+static void HostileAmf() {
+    RUN_SUITE("amf hostile");
+    { ImportedModel m; std::string e; CHECK(ReadAmf(kAmf, m, e) && m.parts.size() == 3); }
+    const std::string good = kAmf;
+    for (std::size_t n = 0; n < good.size(); ++n) Try(ReadAmf, good.substr(0, n));
+    auto amf = [&](const std::string& s) { ImportedModel m; std::string e; const bool ok = ReadAmf(s, m, e); if (ok) { CHECK(fx::Sane(m)); } else { CHECK(!e.empty() && m.parts.empty()); } return ok; };
+    { std::string deep; for (int i = 0; i < 20000; ++i) deep += "<a>"; CHECK(!amf(deep)); }
+    { std::string lol = "<!DOCTYPE lolz [<!ENTITY lol \"lol\"><!ENTITY lol2 \"&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;\">]><amf>&lol2;</amf>"; CHECK(!amf(lol)); }
+    CHECK(!amf("<!DOCTYPE a SYSTEM \"http://example.com/x.dtd\"><amf>&ext;</amf>"));
+    for (const char* bad : {"1e999", "inf", "nan", "0x10", "1..2", "", "1e16", "--1"}) {
+        std::string s = kAmf; s.replace(s.find("<x>0</x>"), 8, std::string("<x>") + bad + "</x>");
+        CHECK(!amf(s));
+    }
+    for (const char* bad : {"-1", "99999999999", "1.5", "", "abc"}) {
+        std::string s = kAmf; s.replace(s.find("<v1>0</v1>"), 10, std::string("<v1>") + bad + "</v1>");
+        CHECK(!amf(s));
+    }
+    // constellation values: huge rotation and offset are valid numbers; overflow shows up as a clean failure or a finite result
+    for (const char* v : {"1e15", "-1e15", "1e300", "nan", "1e-320"}) {
+        std::string s = kAmf; s.replace(s.find("<deltax>5</deltax>"), 18, std::string("<deltax>") + v + "</deltax>"); amf(s);
+        s = kAmf; s.replace(s.find("<rz>45</rz>"), 11, std::string("<rz>") + v + "</rz>"); amf(s);
+    }
+    { // 100001 instances
+      std::string s = "<amf>"; s += std::string(kAmf).substr(std::string(kAmf).find("<object"), std::string(kAmf).find("<constellation") - std::string(kAmf).find("<object"));
+      s += "<constellation id=\"1\">"; for (int i = 0; i < 100001; ++i) s += "<instance objectid=\"0\"/>"; s += "</constellation></amf>"; CHECK(!amf(s)); }
+    { // 3000 instances of one object are fine
+      std::string s = "<amf>"; s += std::string(kAmf).substr(std::string(kAmf).find("<object"), std::string(kAmf).find("<constellation") - std::string(kAmf).find("<object"));
+      s += "<constellation id=\"1\">"; for (int i = 0; i < 3000; ++i) s += "<instance objectid=\"0\"><deltax>" + std::to_string(i) + "</deltax></instance>"; s += "</constellation></amf>"; CHECK(amf(s)); }
+    { // 100000 distinct colours (material cap) and 3000 distinct triangle colours
+      std::string s = "<amf><object id=\"0\"><mesh><vertices><vertex><coordinates><x>0</x><y>0</y><z>0</z></coordinates></vertex><vertex><coordinates><x>1</x><y>0</y><z>0</z></coordinates></vertex><vertex><coordinates><x>0</x><y>1</y><z>0</z></coordinates></vertex></vertices><volume>";
+      for (int i = 0; i < 3000; ++i) s += "<triangle><color><r>" + std::to_string(i / 3000.0) + "</r><g>0</g><b>0</b></color><v1>0</v1><v2>1</v2><v3>2</v3></triangle>";
+      s += "</volume></mesh></object></amf>"; CHECK(amf(s)); }
+    // zip in AMF: a bomb and an archive with no .amf
+    { fx::ZipEntry b; b.name = "a.amf"; b.rawSet = true; b.deflate = true; b.raw = fx::DeflateRepeat('a', 1000); b.usize = 0x7FFFFFFFu; b.crc = 0;
+      ImportedModel m; std::string e; CHECK(!ReadAmf(fx::MakeZip({b}), m, e) && e.find("zip bomb") != std::string::npos); }
+    { fx::ZipEntry b; b.name = "a.amf"; b.rawSet = true; b.deflate = true; b.raw = fx::DeflateRepeat('a', 2000000); b.usize = 1000; b.crc = 0;
+      ImportedModel m; std::string e; CHECK(!ReadAmf(fx::MakeZip({b}), m, e) && !e.empty()); }
+    { fx::ZipEntry a; a.name = "a.amf"; a.data = kAmf; const std::string z = fx::MakeZip({a}); for (std::size_t n = 0; n < z.size(); ++n) Try(ReadAmf, z.substr(0, n)); }
+    RUN_SUITE("amf fuzz");
+    const long n = Iters();
+    fx::ZipEntry a; a.name = "a.amf"; a.data = kAmf; a.deflate = true;
+    const std::string zgood = fx::MakeZip({a});
+    for (long i = 0; i < n; ++i) {
+        Try(ReadAmf, Mutate(good));
+        if (i % 4 == 0) { fx::ZipEntry x; x.name = "a.amf"; x.data = Mutate(good); Try(ReadAmf, fx::MakeZip({x})); }
+        if (i % 8 == 0) Try(ReadAmf, Mutate(zgood));
+    }
+}
+
 
 
 
 
 int main() {
     Hostile3mf();
+    HostileAmf();
     TEST_MAIN_RESULT();
 }

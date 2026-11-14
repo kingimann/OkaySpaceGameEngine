@@ -23,6 +23,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
 | 3MF | 1 | one box, a deflate-compressed package |
+| AMF | 11 | hand-made files: pyramids with materials, colours, volumes and constellations |
 
 ## Running it
 
@@ -121,6 +122,10 @@ The batch-B readers were run on every file of their formats under `test/models` 
 #### 3MF
 
 One real file (`models/3MF/box.3mf`, a 10 x 20 x 30 millimetre box in a deflate-compressed package). Ours reads it and equals Assimp 5.4.3 on meshes, triangles, surface area and bounding box (Assimp's box turned the same Z-up way: `compare_model_corpus.py` does it for `.3mf` and `.amf`). Assimp keeps 8 shared vertices, ours has 24 (the 90 degree edges stay sharp). Details and what is **not** verified (no real file with colours, textures or extensions exists in the tree) in `docs/own_3mf_reader.md`.
+
+#### AMF
+
+11 files, all read by ours and by Assimp. 5 agree on everything compared. 6 differ and each was checked in the file: two have a volume colour and one triangle with its own colour (ours one part and material per colour, Assimp one mesh and material), two have an object with two volumes (Assimp returns only the first volume's triangles, half the area), two have constellations (ours places each instance with its delta and rotation; Assimp's box is ten times wider, with the rotation value used as the offset). `docs/own_amf_reader.md`.
 
 ### Sanitizers and valgrind (engine-linked tests)
 

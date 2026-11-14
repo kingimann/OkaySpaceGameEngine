@@ -1527,6 +1527,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0)
                 << " " << s.maxRewindRtt << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
+        {   // the detection engine's keys (only those that differ from the defaults), one quoted ".okayac" line each
+            std::istringstream dl(s.detect.ToText());
+            for (std::string line; std::getline(dl, line);)
+                if (!line.empty()) out << "  anticheatdetect " << Quote(line) << "\n";
+        }
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -7531,6 +7536,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);
                     if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && !w.empty()) ac->settings.weapons.push_back(w);
+                } else if (field == "anticheatdetect") {   // one detection setting, "detect.<key> <value>", after "anticheat"
+                    const std::string line = ReadQuoted(in);
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && line.rfind("detect.", 0) == 0) {
+                        const std::size_t sp = line.find(' ');
+                        std::string err;   // a line this build doesn't know is skipped, not fatal
+                        ac->settings.detect.ParseLine(line.substr(7, sp == std::string::npos ? std::string::npos : sp - 7),
+                                                      sp == std::string::npos ? std::string() : line.substr(sp + 1), &err);
+                    }
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
                     nv->rpc = ReadQuoted(in);

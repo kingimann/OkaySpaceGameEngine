@@ -118,6 +118,10 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
         else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
         else if (key == "hitsNeedMoveCheck") { if (!ParseBool(val, s.hitsNeedMoveCheck)) return fail("hitsNeedMoveCheck needs true or false"); }
+        else if (key.rfind("detect.", 0) == 0) {
+            std::string e;
+            if (!s.detect.ParseLine(key.substr(7), val, &e)) return fail(e);
+        }
         else if (key == "maxRewindRtt") { if (!ParseFloat(val, s.maxRewindRtt)) return fail("maxRewindRtt needs seconds >= 0"); }
         else if (key == "clientVar") { if (val.empty()) return fail("clientVar needs a key prefix"); s.clientVars.push_back(val); }
         else if (key == "maxSpawnsPerSecond") { if (!ParseInt(val, s.maxSpawnsPerSecond)) return fail("maxSpawnsPerSecond needs a whole number >= 0"); }
@@ -175,6 +179,7 @@ std::string AntiCheatSettings::ToText() const {
     for (const auto& w : weapons) o << "weapon " << w << "\n";
     if (hitsNeedMoveCheck != d.hitsNeedMoveCheck) o << "hitsNeedMoveCheck " << (hitsNeedMoveCheck ? "true" : "false") << "\n";
     if (maxRewindRtt != d.maxRewindRtt) o << "maxRewindRtt " << maxRewindRtt << "\n";
+    o << detect.ToText();
     return o.str();
 }
 
@@ -188,8 +193,17 @@ int AntiCheat::Violations(std::uint32_t peer) const {
     return it != m_peers.end() ? it->second.violations : 0;
 }
 
+void AntiCheat::ApplyDetectSettings() {
+    detector.settings = settings.detect;
+    if (detector.settings.maxSpeed <= 0.0f && settings.maxSyncSpeed > 0.0f) detector.settings.maxSpeed = settings.maxSyncSpeed;
+    m_detectApplied = true;
+    detector.onResponse = [this](const DetectResponse& r) { if (onDetectResponse) onDetectResponse(r); };
+}
+void AntiCheat::EnsureDetect() { if (!m_detectApplied) ApplyDetectSettings(); }
+
 void AntiCheat::Tick(float dt) {
     m_clock += dt;
+    if (DetectOn()) { EnsureDetect(); detector.Advance(m_clock); }
     for (auto& [id, p] : m_peers) {
         if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; p.spawns = 0; p.rpcCalls.clear(); }
         if ((p.violationTimer += dt) >= 60.0f) { p.violationTimer = 0.0f; p.violations = 0; }
@@ -198,6 +212,7 @@ void AntiCheat::Tick(float dt) {
 
 void AntiCheat::ForgetPeer(std::uint32_t peer) {
     m_peers.erase(peer);
+    detector.ForgetPeer(peer);
     if (onForgetPeer) onForgetPeer(peer);
     for (auto it = m_owner.begin(); it != m_owner.end();)
         it = it->second == peer ? m_owner.erase(it) : std::next(it);
@@ -209,18 +224,26 @@ void AntiCheat::ParkPeer(std::uint32_t peer, const std::string& ident) {
     if (!settings.enabled || ident.empty()) return;
     for (auto it = m_parked.begin(); it != m_parked.end();)
         it = m_clock - it->second.at > kParkSeconds ? m_parked.erase(it) : std::next(it);
-    if (auto p = m_peers.find(peer); p != m_peers.end() && p->second.violations > 0)
-        m_parked[ident] = Parked{p->second.violations, p->second.violationTimer, m_clock};
+    const float risk = DetectOn() ? detector.Risk(peer) : 0.0f;
+    if (auto p = m_peers.find(peer); (p != m_peers.end() && p->second.violations > 0) || risk > 0.0f) {
+        Parked k;
+        k.at = m_clock; k.risk = risk;
+        if (p != m_peers.end()) { k.violations = p->second.violations; k.violationTimer = p->second.violationTimer; }
+        m_parked[ident] = k;
+    }
     if (onParkPeer) onParkPeer(peer, ident);
 }
 
 void AntiCheat::RestorePeer(std::uint32_t peer, const std::string& ident) {
-    if (!settings.enabled || ident.empty()) return;
+    if (!settings.enabled) return;
+    if (DetectOn()) { EnsureDetect(); detector.NoteJoin(peer, m_clock); }
+    if (ident.empty()) return;
     if (auto it = m_parked.find(ident); it != m_parked.end()) {
         if (m_clock - it->second.at <= kParkSeconds) {
             PeerInfo& p = m_peers[peer];
             p.violations = it->second.violations;
             p.violationTimer = it->second.violationTimer;
+            if (DetectOn()) detector.SeedRisk(peer, it->second.risk, m_clock);
         }
         m_parked.erase(it);
     }
@@ -230,6 +253,7 @@ void AntiCheat::RestorePeer(std::uint32_t peer, const std::string& ident) {
 void AntiCheat::Reset() {
     m_peers.clear(); m_owner.clear(); m_track.clear(); m_parked.clear();
     m_unclaimedLogged.clear();
+    detector.Reset(); m_detectApplied = false;
     m_total = 0; m_unclaimed = 0; m_clock = 0.0;
 }
 
@@ -261,6 +285,11 @@ bool AntiCheat::Refuse(std::uint32_t peer, CheatKind k, const std::string& detai
         OKAY_WARN("anti-cheat: refused ", CheatKindName(k), " from peer ", peer, detail.empty() ? "" : (" (" + detail + ")"));
     else if (n == kLoggedPerMinute + 1)
         OKAY_WARN("anti-cheat: more refusals from peer ", peer, " this minute (counted, not logged)");
+    if (DetectOn() && k != CheatKind::HitRejected) {   // (hit claims reach the detector as shots)
+        EnsureDetect();
+        const bool forgery = k == CheatKind::ForgedTransform || k == CheatKind::ForgedDespawn || k == CheatKind::ForgedSpawnId || k == CheatKind::ForgedSyncVar;
+        detector.OnViolation(peer, CheatKindName(k), detail, m_clock, forgery ? 2.0f : 1.0f);
+    }
     if (onCheat) onCheat(CheatReport{peer, k, detail});
     return false;
 }
@@ -284,8 +313,23 @@ bool AntiCheat::SpawnAllowed(const std::string& path) const {
     return false;
 }
 
+void AntiCheat::DetectFeedMove(std::uint32_t peer, const std::string& data) {
+    const std::size_t bar = data.find('|');
+    if (bar == std::string::npos) return;
+    std::istringstream ss(data.substr(bar + 1));
+    Vec3 p; ss >> p.x >> p.y >> p.z;
+    if (!ss) { detector.OnMalformed(peer, "xform: unreadable position", m_clock); return; }
+    detector.OnMove(peer, data.substr(0, bar), p, m_clock);
+}
+
 bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data) {
     if (!settings.enabled || peer == 0) return true;   // off, or the host itself
+    if (DetectOn()) {
+        EnsureDetect();
+        if (rttOf) { const float r = rttOf(peer); if (r >= 0.0f) detector.SetPing(peer, r); }
+        if (!detector.OnMessage(peer, m_clock, channel.size() + data.size())) return false;   // rate-limited and over budget
+        if (detector.KickRequested(peer)) return false;                                      // the caller kicks
+    }
     if (channel == "__spawn") {
         // Checked as parsed by the receiver (ParseSpawnMessage), never by a
         // second reading of its own; one line only.
@@ -327,6 +371,7 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
             if (UnownedUnclaimable(id)) return NoteUnclaimed(peer, id);
             return Refuse(peer, CheatKind::ForgedTransform, id);
         }
+        if (DetectOn()) DetectFeedMove(peer, data);
         if (settings.maxSyncSpeed > 0.0f) {
             std::istringstream ss(data.substr(bar + 1));
             Vec3 p; ss >> p.x >> p.y >> p.z;

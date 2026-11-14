@@ -3,6 +3,8 @@
 // RFC 8439 AEAD with nonce 0000 || last 8 nonce bytes). UNREVIEWED (see Crypto.hpp).
 #include <okay/Crypto/Crypto.hpp>
 
+#include <cstdlib>
+
 namespace okay::crypto {
 namespace {
 
@@ -39,7 +41,9 @@ void ComputeTag(std::uint8_t tag[16], const std::uint8_t* aad, std::size_t aadLe
 void ChaCha20Poly1305Seal(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
                           const std::uint8_t* aad, std::size_t aadLen,
                           const std::uint8_t nonce[12], const std::uint8_t key[32]) {
-    if (n) ChaCha20Xor(out, in, n, key, nonce, 1);
+    // A message of more than (2^32 - 1) * 64 bytes (about 256 GiB) would wrap the block counter: that is a caller bug, and
+    // like libsodium we stop instead of reusing keystream (Seal cannot report an error). Not reachable on 32-bit size_t.
+    if (n && !ChaCha20Xor(out, in, n, key, nonce, 1)) std::abort();
     ComputeTag(out + n, aad, aadLen, out, n, nonce, key);
 }
 
@@ -55,7 +59,7 @@ bool ChaCha20Poly1305Open(std::uint8_t* out, const std::uint8_t* in, std::size_t
         if (n) MemZero(out, n);                          // never hand back plaintext for a bad tag
         return false;
     }
-    if (n) ChaCha20Xor(out, in, n, key, nonce, 1);
+    if (n && !ChaCha20Xor(out, in, n, key, nonce, 1)) { MemZero(out, n); return false; }   // counter exhausted
     return true;
 }
 

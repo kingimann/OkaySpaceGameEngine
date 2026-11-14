@@ -93,6 +93,7 @@ bool AntiCheatConfig::Apply() {
     m_nm = nm;
     nm->anticheat.installer = m_token;
     nm->anticheat.settings = m_active;
+    nm->anticheat.ApplyDetectSettings();   // (the detection engine follows the rules, keeping its per-player state)
     nm->anticheat.configError = ok ? std::string() : m_error;
 
     // The handlers hold the scene and the manager (which owns them), never this
@@ -227,6 +228,7 @@ void AntiCheatConfig::Uninstall() {
             m_prev.maxMessagesPerSecond = messages;
         }
         m_nm->anticheat.settings = m_prev.settings;
+        m_nm->anticheat.ApplyDetectSettings();
         m_nm->SetCheatHandler(m_prev.cheatHandler);
         m_nm->anticheat.validateRpc = m_prev.validateRpc;
         m_nm->anticheat.rpcRulesFor = m_prev.rpcRulesFor;

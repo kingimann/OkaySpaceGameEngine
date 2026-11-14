@@ -1525,6 +1525,16 @@ target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
 # Anti-cheat plan phase 1: always-on holes, OkayScript handlers, uninstall, RPC rate limit
+# The detection engine (behavioural detectors, risk score, evidence bundle), driven with fake time
+add_executable(test_cheat_detect test_cheat_detect.cpp)
+target_link_libraries(test_cheat_detect PRIVATE okay::engine)
+add_test(NAME cheat_detect COMMAND test_cheat_detect)
+
+# Scripted cheating and honest players against the detection engine and a real NetworkManager server (prints detection / false-positive rates)
+add_executable(test_anticheat_sim test_anticheat_sim.cpp)
+target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
+add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
+
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
@@ -1636,6 +1646,31 @@ if(WIN32)
 endif()
 add_test(NAME self_update COMMAND test_self_update)
 
+# Signed releases: versions.json must verify under a trusted ed25519 key (shared/UpdateSignature.hpp, LoadIndex), key rotation, refusal wording,
+# the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
+add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_update_signature PRIVATE cxx_std_17)
+target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME update_signature COMMAND test_update_signature)
+find_program(OKAY_BASH bash)
+find_program(OKAY_PYTHON3 python3)
+if(OKAY_PYTHON3 AND NOT WIN32)
+    # The reference account server (examples/account-server/server.py): body cap, rate limits, lock-out, token expiry / persistence, password rounds.
+    add_test(NAME account_server_hardening COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_account_server.py)
+endif()
+if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
+    add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+endif()
+add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+
+# The launcher / game side of the session-ticket flow: retries, 401, banned, clock skew, expiry, "no ticket, no join", and the whole chain through a real
+# local HTTP server standing in for the ticket service, a real ticket-requiring server NetworkManager and the client join gate. Loopback only.
+add_executable(test_ticket_client test_ticket_client.cpp)
+target_link_libraries(test_ticket_client PRIVATE okay::engine)
+target_include_directories(test_ticket_client PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME ticket_client COMMAND test_ticket_client)
+
 # Editor/launcher self-update: wait for the old process, swap, relaunch once.
 add_executable(test_app_restart test_app_restart.cpp)
 target_compile_features(test_app_restart PRIVATE cxx_std_17)
@@ -1746,6 +1781,9 @@ if(UNIX)
 
     add_test(NAME blocks_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_blocks_sql.sh)
     set_tests_properties(blocks_sql PROPERTIES SKIP_RETURN_CODE 77)
+    # scripts/sign-windows.sh (Authenticode signing of the Windows programs) with a throwaway certificate; needs osslsigncode, openssl and MinGW.
+    add_test(NAME sign_windows COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_windows.sh)
+    set_tests_properties(sign_windows PROPERTIES SKIP_RETURN_CODE 77)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)
@@ -2652,6 +2690,15 @@ else()
     add_test(NAME crypto_fuzz_net_smoke COMMAND fuzz_net_crypto_smoke 300)
 endif()
 
+# Project Wycheproof vectors (Apache-2.0, copied unmodified into tests/wycheproof/): every X25519, Ed25519, ChaCha20-Poly1305,
+# XChaCha20-Poly1305, HMAC (built on our SHA-2), HKDF and ChaCha20 counter vector. OKAY_WYCHEPROOF_DIR points the test at another
+# copy (e.g. a fresh clone's testvectors_v1/). With libsodium installed (found below) every X25519 and Ed25519 vector is also
+# compared with it.
+add_executable(test_crypto_wycheproof test_crypto_wycheproof.cpp)
+target_link_libraries(test_crypto_wycheproof PRIVATE okay::crypto)
+target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WYCHEPROOF_DEFAULT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/wycheproof")
+add_test(NAME crypto_wycheproof COMMAND test_crypto_wycheproof)
+
 # Cross-checks against other implementations (both directions, thousands of random cases).
 # 1) libsodium, in process (only when it is installed; independent of OKAY_USE_SODIUM / OKAY_OWN_CRYPTO).
 find_package(PkgConfig QUIET)
@@ -2663,10 +2710,20 @@ if(PkgConfig_FOUND AND NOT CMAKE_CROSSCOMPILING)   # (a cross build would find t
     endif()
 endif()
 if(_okay_xc_sodium)
+    target_link_libraries(test_crypto_wycheproof PRIVATE ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(test_crypto_wycheproof SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_compile_definitions(test_crypto_wycheproof PRIVATE OKAY_WY_SODIUM)
     add_executable(test_crypto_sodium_xcheck test_crypto_sodium_xcheck.cpp)
     target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
+    # The large differential test (libsodium and the TweetNaCl-derived port; structured edge-case inputs). The ctest is a smoke run;
+    # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/crypto_review_package.md).
+    add_executable(crypto_difftest crypto_difftest.cpp)
+    target_link_libraries(crypto_difftest PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
+    target_include_directories(crypto_difftest SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
+    target_include_directories(crypto_difftest PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME crypto_difftest_smoke COMMAND crypto_difftest 1500)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
 add_executable(crypto_xcheck_tool crypto_xcheck_tool.cpp)
@@ -2805,6 +2862,34 @@ add_test(NAME net_rejoin COMMAND test_net_rejoin)
 add_executable(test_bughunt_round3 test_bughunt_round3.cpp)
 target_link_libraries(test_bughunt_round3 PRIVATE okay::engine)
 add_test(NAME bughunt_round3 COMMAND test_bughunt_round3)
+
+# Our own 3DS and BVH readers (okay/Render/ModelData.hpp): fixtures from scripts/gen_3ds_fixtures.py and
+# scripts/gen_bvh_fixtures.py in tests/data/models, checked by hand-computed values and through the import seam.
+add_executable(test_3ds_reader test_3ds_reader.cpp)
+target_link_libraries(test_3ds_reader PRIVATE okay::engine)
+target_compile_definitions(test_3ds_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_reader COMMAND test_3ds_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_bvh_reader test_bvh_reader.cpp)
+target_link_libraries(test_bvh_reader PRIVATE okay::engine)
+target_compile_definitions(test_bvh_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME bvh_reader COMMAND test_bvh_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Hostile input + mutation fuzz for the 3DS and BVH readers. Standalone (no engine library, only the two reader files)
+# so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_3DS_FUZZ_ITERS raises the sweep.
+add_executable(test_3ds_bvh_hostile test_3ds_bvh_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Max3dsReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BvhReader.cpp)
+target_include_directories(test_3ds_bvh_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_3ds_bvh_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME 3ds_bvh_hostile COMMAND test_3ds_bvh_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(3ds_bvh_hostile PROPERTIES TIMEOUT 300)
+
+# Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
+# real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
+add_executable(test_model_corpus test_model_corpus.cpp)
+target_link_libraries(test_model_corpus PRIVATE okay::engine)
+target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
 
 # Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
 add_executable(test_clipboard test_clipboard.cpp)

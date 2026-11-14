@@ -4,7 +4,7 @@
 //   Authorization: Bearer <the player's Supabase access token>
 //   body: {"aud": "<game server id>", "cnf": "<optional key binding>",
 //          "hw_hash": "<optional machine hash>"}
-//   -> 200 {"ticket": "okt1....", "exp": <unix seconds>}
+//   -> 200 {"ticket": "okt1....", "exp": <unix seconds>, "iat": <unix seconds, this service's clock>}
 //   -> 403 {"error": "banned"}   the account (or that machine) has an active anti-cheat ban
 //
 // The player's login is checked with Supabase Auth, then their anti-cheat bans
@@ -78,6 +78,21 @@ async function isBanned(sub: string, hw: string | null): Promise<boolean> {
   return (await r.json()) === true;
 }
 
+// Record that this account used this machine (docs/sql/anticheat.sql ac_note_device): it feeds the admins' "linked accounts" view and
+// the ban-evasion signal. Best effort and never blocks a ticket: a project without the function, or a failure, is ignored.
+async function noteDevice(sub: string, hw: string | null): Promise<void> {
+  if (!hw) return;
+  const url = Deno.env.get("SUPABASE_URL"), key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return;
+  try {
+    await fetch(`${url}/rest/v1/rpc/ac_note_device`, {
+      method: "POST",
+      headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ p_user: sub, p_hw_hash: hw }),
+    });
+  } catch { /* the ticket matters more than the note */ }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json(405, { error: "use POST" });
   const auth = req.headers.get("authorization") ?? "";
@@ -99,11 +114,13 @@ Deno.serve(async (req: Request) => {
   try { if (await isBanned(sub, hw)) return json(403, { error: "banned" }); }
   catch { return json(503, { error: "ban check failed" }); }
 
+  await noteDevice(sub, hw);
+
   const ttl = Math.min(MAX_LIFETIME_SECONDS, Math.max(30, Number(Deno.env.get("OKAY_TICKET_TTL") ?? 600) || 600));
   const iat = Math.floor(Date.now() / 1000);
   try {
     const ticket = await signTicket({ sub, aud, iat, exp: iat + ttl, cnf: cnf as string | undefined }, await signingKey());
-    return json(200, { ticket, exp: iat + ttl });
+    return json(200, { ticket, exp: iat + ttl, iat });
   } catch {
     return json(500, { error: "could not issue a ticket" });
   }

@@ -15,6 +15,22 @@
 
 using namespace okay;
 
+// setenv / unsetenv exist on POSIX only; the Windows C runtime has _putenv_s (an empty value removes the variable).
+static void TestSetEnv(const char* n, const char* v) {
+#ifdef _WIN32
+    _putenv_s(n, v);
+#else
+    setenv(n, v, 1);
+#endif
+}
+static void TestUnsetEnv(const char* n) {
+#ifdef _WIN32
+    _putenv_s(n, "");
+#else
+    unsetenv(n);
+#endif
+}
+
 static const std::string kDir = std::string(OKAY_SOURCE_DIR) + "/tests/data/models/";
 
 static bool HasNote(const ImportedModel& m, const char* needle) {
@@ -232,11 +248,101 @@ int main() {
         CHECK(ReadColladaFile(kDir + "unsupported.dae", m, &err));
         CHECK(m.parts.size() == 2);   // the triangle, and the polygon's outer ring (<ph><p>)
         CHECK(HasNote(m, "1 x lines"));
-        CHECK(HasNote(m, "1 x tristrips"));
+        CHECK(HasNote(m, "1 x linestrips"));
         CHECK(HasNote(m, "vertex colors"));
         CHECK(HasNote(m, "polygon hole"));
         CHECK(HasNote(m, "camera/light"));
         CHECK(HasNote(m, "<skew>/<lookat>"));
+    }
+
+    // ---------------- found by real files: strips and fans, concave polygons, decimal commas, UTF-16 ----------------
+    {
+        auto doc = [](const std::string& pos, const std::string& prims, const std::string& vcount = std::string()) {
+            (void)vcount;
+            return std::string("<?xml version=\"1.0\"?><COLLADA version=\"1.4.1\"><asset><up_axis>Y_UP</up_axis></asset><library_geometries><geometry id=\"g\"><mesh>"
+                "<source id=\"p\"><float_array id=\"pa\" count=\"0\">") + pos + "</float_array><technique_common><accessor source=\"#pa\" count=\"0\" stride=\"3\"/></technique_common></source>"
+                "<vertices id=\"v\"><input semantic=\"POSITION\" source=\"#p\"/></vertices>" + prims + "</mesh></geometry></library_geometries>"
+                "<library_visual_scenes><visual_scene id=\"S\"><node id=\"N\"><instance_geometry url=\"#g\"/></node></visual_scene></library_visual_scenes>"
+                "<scene><instance_visual_scene url=\"#S\"/></scene></COLLADA>";
+        };
+        auto area = [](const Mesh& me) {
+            double a = 0;
+            for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) {
+                const Vec3 p0 = me.vertices[(std::size_t)me.triangles[t]], p1 = me.vertices[(std::size_t)me.triangles[t + 1]], p2 = me.vertices[(std::size_t)me.triangles[t + 2]];
+                a += 0.5 * Vec3::Cross(p1 - p0, p2 - p0).Magnitude();
+            }
+            return a;
+        };
+        // a strip of 4 corners (two triangles, alternate winding) and a fan of 4 corners
+        const std::string quadPts = "0 0 0  1 0 0  0 1 0  1 1 0";
+        ImportedModel m; std::string err;
+        CHECK(ReadColladaBuffer(doc(quadPts, "<tristrips count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2 3</p></tristrips>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.parts[0].mesh.TriangleCount() == 2);
+        if (!m.parts.empty()) {
+            const Mesh& me = m.parts[0].mesh;
+            CHECK_NEAR(area(me), 1.0, 1e-6);
+            // both triangles face the same way (+z): the second one is flipped by the strip rule
+            for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) {
+                const Vec3 p0 = me.vertices[(std::size_t)me.triangles[t]], p1 = me.vertices[(std::size_t)me.triangles[t + 1]], p2 = me.vertices[(std::size_t)me.triangles[t + 2]];
+                CHECK(Vec3::Cross(p1 - p0, p2 - p0).z > 0.0f);
+            }
+        }
+        CHECK(!HasNote(m, "tristrips"));
+        CHECK(ReadColladaBuffer(doc("0 0 0  1 0 0  1 1 0  0 1 0", "<trifans count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2 3</p></trifans>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.parts[0].mesh.TriangleCount() == 2 && std::fabs(area(m.parts[0].mesh) - 1.0) < 1e-6);
+        // an L shaped (concave) hexagon, area 3: a fan from corner 0 would cover the notch
+        const std::string L = "0 0 0  2 0 0  2 1 0  1 1 0  1 2 0  0 2 0";
+        CHECK(ReadColladaBuffer(doc(L, "<polygons count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2 3 4 5</p></polygons>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.parts[0].mesh.TriangleCount() == 4);
+        if (!m.parts.empty()) {
+            CHECK_NEAR(area(m.parts[0].mesh), 3.0, 1e-5);
+            for (std::size_t t = 0; t + 2 < m.parts[0].mesh.triangles.size(); t += 3) {
+                const Mesh& me = m.parts[0].mesh;
+                CHECK(Vec3::Cross(me.vertices[(std::size_t)me.triangles[t + 1]] - me.vertices[(std::size_t)me.triangles[t]], me.vertices[(std::size_t)me.triangles[t + 2]] - me.vertices[(std::size_t)me.triangles[t]]).z > 0.0f);
+            }
+        }
+        // the same shape wound the other way keeps its winding
+        const std::string Lcw = "0 0 0  0 2 0  1 2 0  1 1 0  2 1 0  2 0 0";
+        CHECK(ReadColladaBuffer(doc(Lcw, "<polygons count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2 3 4 5</p></polygons>"), "", m, &err));
+        if (!m.parts.empty()) {
+            CHECK_NEAR(area(m.parts[0].mesh), 3.0, 1e-5);
+            const Mesh& me = m.parts[0].mesh;
+            CHECK(Vec3::Cross(me.vertices[(std::size_t)me.triangles[1]] - me.vertices[(std::size_t)me.triangles[0]], me.vertices[(std::size_t)me.triangles[2]] - me.vertices[(std::size_t)me.triangles[0]]).z < 0.0f);
+        }
+        // a convex quad is still fanned from its first corner
+        CHECK(ReadColladaBuffer(doc("0 0 0  1 0 0  1 1 0  0 1 0", "<polygons count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2 3</p></polygons>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.parts[0].mesh.triangles == std::vector<int>({0, 1, 2, 0, 2, 3}));
+        // decimal commas (an exporter running in a locale with a decimal comma) are read as points, and the note says so
+        const std::string comma = "0,0 0,0 0,0  1,5 0,0 0,0  0,0 2,5 0,0";
+        CHECK(ReadColladaBuffer(doc(comma, "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && HasNote(m, "decimal comma"));
+        if (!m.parts.empty()) CHECK_NEAR(area(m.parts[0].mesh), 1.5 * 2.5 / 2, 1e-5);
+        // ... but "1,2,3" or "1.5,2" is not a number
+        CHECK(!ReadColladaBuffer(doc("1,2,3 0 0 0 0 0 0 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>"), "", m, &err));
+        CHECK(!ReadColladaBuffer(doc("1.5,2 0 0 0 0 0 0 0 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>"), "", m, &err));
+        // UTF-16 (little and big endian, with and without a byte order mark) reads like UTF-8
+        const std::string tri = doc("0 0 0  1 0 0  0 1 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>");
+        for (int variant = 0; variant < 4; ++variant) {
+            const bool little = variant % 2 == 0, bom = variant < 2;
+            std::string u16;
+            if (bom) { u16.push_back(little ? '\xFF' : '\xFE'); u16.push_back(little ? '\xFE' : '\xFF'); }
+            for (char c : tri) { if (little) { u16.push_back(c); u16.push_back('\0'); } else { u16.push_back('\0'); u16.push_back(c); } }
+            CHECK(ReadColladaBuffer(u16, "", m, &err) && m.parts.size() == 1 && m.parts[0].mesh.TriangleCount() == 1);
+        }
+    }
+
+    // The fixture file: strip, fan, bridged polygon, decimal commas (also in <unit meter="0,5">).
+    {
+        ImportedModel m; std::string err;
+        CHECK(ReadColladaFile(kDir + "strips_concave.dae", m, &err, true));
+        CHECK(m.parts.size() == 3);
+        if (m.parts.size() == 3) {
+            auto area = [](const Mesh& me) { double a = 0; for (std::size_t t = 0; t + 2 < me.triangles.size(); t += 3) { const Vec3 p0 = me.vertices[(std::size_t)me.triangles[t]], p1 = me.vertices[(std::size_t)me.triangles[t + 1]], p2 = me.vertices[(std::size_t)me.triangles[t + 2]]; a += 0.5 * Vec3::Cross(p1 - p0, p2 - p0).Magnitude(); } return a; };
+            CHECK(m.parts[0].mesh.TriangleCount() == 2 && std::fabs(area(m.parts[0].mesh) - 1.0 * 0.25) < 1e-5);
+            CHECK(m.parts[1].mesh.TriangleCount() == 3);
+            CHECK(std::fabs(area(m.parts[2].mesh) - 12.0 * 0.25) < 1e-4);   // unit 0,5: every length halves, so the area is a quarter
+        }
+        CHECK(HasNote(m, "decimal comma"));
     }
 
     // ---------------- XML details: entities, CDATA, namespaces, comments ----------------
@@ -263,7 +369,7 @@ int main() {
     {
         CHECK(HasOwnReader(".dae") && HasOwnReader(".DAE"));
         // Default for .dae is off: with no Assimp in the build nothing reads it until it is switched on.
-        unsetenv("OKAY_OWN_COLLADA");
+        TestUnsetEnv("OKAY_OWN_COLLADA");
         SetImportBackend(".dae", ImportBackend::Default);
         ImportedModel m; std::string err;
 #ifdef OKAY_HAVE_ASSIMP
@@ -277,12 +383,12 @@ int main() {
         }
 #endif
         // Environment switch.
-        setenv("OKAY_OWN_COLLADA", "1", 1);
+        TestSetEnv("OKAY_OWN_COLLADA", "1");
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);
         CHECK(ImportableExtensions().find(".dae") != std::string::npos);
         CHECK(ImportModelData(kDir + "two_materials.dae", m, ImportBackend::Default, false, &err));
         CHECK(m.backend == "own" && m.parts.size() == 2);
-        setenv("OKAY_OWN_COLLADA", "0", 1);
+        TestSetEnv("OKAY_OWN_COLLADA", "0");
         CHECK(EffectiveImportBackend(".dae") != ImportBackend::Own);
         // Run-time switch beats the environment.
         CHECK(SetImportBackend(".dae", ImportBackend::Own));
@@ -310,7 +416,7 @@ int main() {
         // A bad file reports and fails cleanly.
         CHECK(!ImportModelData(kDir + "does_not_exist.dae", m, ImportBackend::Own, false, &err) && !err.empty());
         SetImportBackend(".dae", ImportBackend::Default);
-        unsetenv("OKAY_OWN_COLLADA");
+        TestUnsetEnv("OKAY_OWN_COLLADA");
         // "*" resets every own-reader format, .dae included.
         SetImportBackend("*", ImportBackend::Own);
         CHECK(EffectiveImportBackend(".dae") == ImportBackend::Own);

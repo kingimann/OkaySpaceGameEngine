@@ -542,6 +542,18 @@ int main() {
         CHECK(w.Until([&] { return Count(v.scene) == 2; }));
     }
 
+    // ---- With the anti-cheat on, build requests still work ----
+    {
+        Rig w;
+        w.srv->nm->anticheat.settings.enabled = true;
+        Peer& a = w.Add();
+        a.bm->PlaceItem(0, {3, 0.5f, 3}, Quat::Identity);
+        CHECK(w.Until([&] { return Count(w.srv->scene) == 1 && Count(a.scene) == 1; }));
+        a.nm->SendOrdered("__req/build", PlaceLine(kSecret, 5, 0.5f, 5));      // still the allowlist's call
+        w.Pump(30);
+        CHECK(Count(w.srv->scene) == 1);
+    }
+
     // ---- With the session over, build mode is local again ----
     {
         Rig w;

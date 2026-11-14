@@ -1470,6 +1470,11 @@ target_link_libraries(test_anim_jitter PRIVATE okay::engine)
 target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME anim_jitter COMMAND test_anim_jitter)
 
+add_executable(test_controller_interpolation test_controller_interpolation.cpp)
+target_link_libraries(test_controller_interpolation PRIVATE okay::engine)
+target_compile_definitions(test_controller_interpolation PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME controller_interpolation COMMAND test_controller_interpolation)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

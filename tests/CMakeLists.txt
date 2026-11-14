@@ -1680,6 +1680,18 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The same download through our own HTTP client (docs/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
+if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
+    add_executable(test_launcher_download_own test_launcher_download_own.cpp
+        ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
+    target_compile_features(test_launcher_download_own PRIVATE cxx_std_17)
+    target_compile_definitions(test_launcher_download_own PRIVATE OKAY_OWN_HTTP=1)
+    target_include_directories(test_launcher_download_own PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_launcher_download_own PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME launcher_download_own COMMAND test_launcher_download_own)
+    set_tests_properties(launcher_download_own PROPERTIES TIMEOUT 60)
+endif()
+
 # The self-update decisions (shared/SelfUpdate.hpp, launcher/UpdaterCore.hpp): state file, start-up verdict, retry rule, self-check, rollback,
 # all-or-nothing swap, hostile versions.json. Temp folders only; no window, no network.
 add_executable(test_self_update test_self_update.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)

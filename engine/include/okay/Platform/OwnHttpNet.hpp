@@ -23,6 +23,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <climits>
+#include <functional>
 #include <csignal>
 #include <cstdlib>
 #include <dlfcn.h>
@@ -34,6 +35,10 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
+#include <condition_variable>
+#include <thread>
+#include <ctime>
+#include <memory>
 #include <type_traits>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -47,10 +52,15 @@ struct NetOptions {
     int connectMs = 8000;       ///< per address
     int ioMs      = 30000;      ///< longest silence on a read or write
     int totalMs   = 15 * 60 * 1000;   ///< whole request including redirects
+    int resolveMs = 8000;       ///< name resolution (a helper thread; the call gives up after this)
+    bool acceptGzip = false;    ///< send Accept-Encoding: gzip, deflate and decode the answer (in memory, capped)
     Limits limits;
     // Test and embedding overrides; empty means "decide from the environment".
     std::string caFile, caDir;
     std::vector<std::string> libsslNames;
+    /// Polled about every 200 ms while we wait for the network (connect, TLS, read, write). Return true to stop:
+    /// the call ends with Err::Aborted. Lets a UI cancel a download even when the server is silent.
+    std::function<bool()> cancel;
     EnvFn env;                  ///< environment lookup (default getenv)
     const char* Env(const char* n) const { const char* v = env ? env(n) : std::getenv(n); return (v && *v) ? v : nullptr; }
 };
@@ -63,14 +73,18 @@ inline int MsLeft(Clock::time_point deadline) {
 }
 
 /// Wait for `ev` on fd, bounded by the silence limit and the overall deadline.
-inline bool Wait(int fd, short ev, int ioMs, Clock::time_point deadline, Err& e) {
+inline bool Wait(int fd, short ev, int ioMs, Clock::time_point deadline, Err& e, const std::function<bool()>* cancel = nullptr) {
+    int silent = ioMs;   // silence still allowed
     for (;;) {
+        if (cancel && *cancel && (*cancel)()) { e = Err::Aborted; return false; }
         int left = MsLeft(deadline);
         if (left <= 0) { e = Err::Timeout; return false; }
+        int slice = std::min(left, silent);
+        if (cancel && *cancel) slice = std::min(slice, 200);
         struct pollfd p; p.fd = fd; p.events = ev; p.revents = 0;
-        int r = ::poll(&p, 1, std::min(left, ioMs));
+        int r = ::poll(&p, 1, slice);
         if (r > 0) return true;
-        if (r == 0) { e = Err::Timeout; return false; }
+        if (r == 0) { silent -= slice; if (silent <= 0) { e = Err::Timeout; return false; } continue; }
         if (errno != EINTR) { e = Err::Io; return false; }
     }
 }
@@ -127,6 +141,7 @@ struct TcpStream : Stream {
     int fd = -1;
     int ioMs = 30000;
     Clock::time_point deadline;
+    const std::function<bool()>* cancel = nullptr;   ///< NetOptions::cancel (outlives the stream)
     TcpStream() = default;
     TcpStream(const TcpStream&) = delete;
     TcpStream& operator=(const TcpStream&) = delete;
@@ -136,7 +151,7 @@ struct TcpStream : Stream {
             ssize_t r = ::recv(fd, b, n, 0);
             if (r >= 0) return long(r);
             if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) { if (!detail::Wait(fd, POLLIN, ioMs, deadline, e)) return -1; continue; }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { if (!detail::Wait(fd, POLLIN, ioMs, deadline, e, cancel)) return -1; continue; }
             e = Err::Io; return -1;
         }
     }
@@ -146,20 +161,69 @@ struct TcpStream : Stream {
             ssize_t r = ::send(fd, p, n, MSG_NOSIGNAL);
             if (r >= 0) { p += r; n -= size_t(r); continue; }
             if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) { if (!detail::Wait(fd, POLLOUT, ioMs, deadline, e)) return false; continue; }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { if (!detail::Wait(fd, POLLOUT, ioMs, deadline, e, cancel)) return false; continue; }
             e = Err::Io; return false;
         }
         return true;
     }
 };
 
-inline std::unique_ptr<TcpStream> TcpConnect(const std::string& host, int port, const NetOptions& o,
-                                             Clock::time_point deadline, Err& e, std::string& msg) {
+/// getaddrinfo on a helper thread so a dead resolver cannot stall the caller past `resolveMs`, the overall
+/// deadline or a cancel. A resolver that never answers leaves its helper thread behind (it frees its own result).
+/// IP literals are resolved directly (no lookup happens).
+inline bool Resolve(const std::string& host, int port, const NetOptions& o, Clock::time_point deadline,
+                    struct addrinfo*& out, Err& e, std::string& msg) {
     struct addrinfo hints; std::memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; hints.ai_flags = AI_NUMERICSERV;
+    out = nullptr;
+    const std::string svc = std::to_string(port);
+    auto fail = [&](int gai) { e = Err::Connect; msg = std::string("cannot resolve host: ") + ::gai_strerror(gai); return false; };
+    if (detail::IsIpLiteral(host)) {
+        hints.ai_flags |= AI_NUMERICHOST;
+        int gai = ::getaddrinfo(host.c_str(), svc.c_str(), &hints, &out);
+        if (gai != 0 || !out) return fail(gai);
+        return true;
+    }
+    struct State { std::mutex mu; bool done = false, abandoned = false; int gai = 0; struct addrinfo* res = nullptr; };
+    auto st = std::make_shared<State>();
+    try {
+        std::thread([st, host, svc, hints] {
+            struct addrinfo* r = nullptr;
+            int g = ::getaddrinfo(host.c_str(), svc.c_str(), &hints, &r);
+            std::lock_guard<std::mutex> lk(st->mu);
+            if (st->abandoned) { if (r) ::freeaddrinfo(r); return; }
+            st->gai = g; st->res = r; st->done = true;
+        }).detach();
+    } catch (...) {   // no thread: resolve here, unbounded, as before
+        int gai = ::getaddrinfo(host.c_str(), svc.c_str(), &hints, &out);
+        if (gai != 0 || !out) return fail(gai);
+        return true;
+    }
+    const Clock::time_point limit = std::min(deadline, Clock::now() + std::chrono::milliseconds(o.resolveMs > 0 ? o.resolveMs : 1 << 30));
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lk(st->mu);
+            if (st->done) {
+                if (st->gai != 0 || !st->res) return fail(st->gai != 0 ? st->gai : EAI_NONAME);
+                out = st->res; st->res = nullptr; return true;
+            }
+            const bool cancelled = o.cancel && o.cancel();
+            if (cancelled || Clock::now() >= limit) {
+                st->abandoned = true;
+                e = cancelled ? Err::Aborted : Err::Timeout;
+                msg = cancelled ? "cancelled by the caller" : "name resolution timed out";
+                return false;
+            }
+        }
+        struct timespec ts = {0, 20 * 1000 * 1000};
+        ::nanosleep(&ts, nullptr);
+    }
+}
+
+inline std::unique_ptr<TcpStream> TcpConnect(const std::string& host, int port, const NetOptions& o,
+                                             Clock::time_point deadline, Err& e, std::string& msg) {
     struct addrinfo* res = nullptr;
-    int gai = ::getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res);
-    if (gai != 0 || !res) { e = Err::Connect; msg = std::string("cannot resolve host: ") + ::gai_strerror(gai); return nullptr; }
+    if (!Resolve(host, port, o, deadline, res, e, msg)) return nullptr;
     std::string lastMsg = "no address";
     for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
         if (detail::MsLeft(deadline) <= 0) { e = Err::Timeout; msg = "total time limit reached"; ::freeaddrinfo(res); return nullptr; }
@@ -170,12 +234,13 @@ inline std::unique_ptr<TcpStream> TcpConnect(const std::string& host, int port, 
         bool ok = rc == 0;
         if (!ok && errno == EINPROGRESS) {
             Err we = Err::None;
-            if (detail::Wait(fd, POLLOUT, o.connectMs, deadline, we)) {
+            if (detail::Wait(fd, POLLOUT, o.connectMs, deadline, we, &o.cancel)) {
                 int soerr = 0; socklen_t sl = sizeof soerr;
                 ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl);
                 ok = soerr == 0;
                 if (!ok) lastMsg = std::string("connect failed: ") + std::strerror(soerr);
-            } else lastMsg = "connect timed out";
+            } else if (we == Err::Aborted) { ::close(fd); ::freeaddrinfo(res); e = Err::Aborted; msg = "cancelled by the caller"; return nullptr; }
+            else lastMsg = "connect timed out";
         } else if (!ok) lastMsg = std::string("connect failed: ") + std::strerror(errno);
         if (ok) {
             int one = 1; ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
@@ -184,7 +249,7 @@ inline std::unique_ptr<TcpStream> TcpConnect(const std::string& host, int port, 
 #endif
             ::freeaddrinfo(res);
             auto s = std::make_unique<TcpStream>();
-            s->fd = fd; s->ioMs = o.ioMs; s->deadline = deadline;
+            s->fd = fd; s->ioMs = o.ioMs; s->deadline = deadline; s->cancel = &o.cancel;
             return s;
         }
         ::close(fd);
@@ -399,7 +464,7 @@ public:
             if (r == 1) break;
             int er = a->SSL_get_error(ssl_, r);
             if (er == 2 || er == 3) {
-                if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e)) { msg = "TLS handshake timed out"; return false; }
+                if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e, tcp_->cancel)) { msg = "TLS handshake timed out"; return false; }
                 continue;
             }
             e = Err::Tls;
@@ -422,7 +487,7 @@ public:
             if (r > 0) return r;
             int er = a->SSL_get_error(ssl_, r);
             if (er == 6) return 0;   // close_notify: clean end of stream
-            if (er == 2 || er == 3) { if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e)) return -1; continue; }
+            if (er == 2 || er == 3) { if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e, tcp_->cancel)) return -1; continue; }
             e = (er == 5) ? Err::Io : Err::Tls;   // includes a close without close_notify (truncation)
             return -1;
         }
@@ -436,7 +501,7 @@ public:
             int r = a->SSL_write(ssl_, p, int(std::min<size_t>(n, INT_MAX)));
             if (r > 0) { p += r; n -= size_t(r); continue; }
             int er = a->SSL_get_error(ssl_, r);
-            if (er == 2 || er == 3) { if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e)) return false; continue; }
+            if (er == 2 || er == 3) { if (!detail::Wait(tcp_->fd, er == 2 ? POLLIN : POLLOUT, tcp_->ioMs, tcp_->deadline, e, tcp_->cancel)) return false; continue; }
             e = (er == 5) ? Err::Io : Err::Tls;
             return false;
         }
@@ -542,7 +607,7 @@ inline FetchResult Perform(const std::string& method, const std::string& url,
                            const std::vector<std::string>& headerLines, const std::string& body,
                            const NetOptions& o, const FetchHooks& hooks = FetchHooks()) {
     SystemConnector c(o);
-    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body;
+    FetchRequest rq; rq.method = method; rq.url = url; rq.headerLines = headerLines; rq.body = body; rq.acceptGzip = o.acceptGzip;
     return Fetch(c, rq, o.limits, o.totalMs, hooks);
 }
 

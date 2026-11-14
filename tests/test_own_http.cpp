@@ -307,6 +307,219 @@ static void TestFetch() {
 // ---- mutation fuzz -----------------------------------------------------------
 struct Rng { uint64_t s; uint64_t Next() { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s; } size_t Below(size_t n) { return n ? size_t(Next() % n) : 0; } };
 
+
+// One-reply connector that remembers the request bytes (the shared ScriptConn above routes by URL).
+struct ScriptConnForGzip : Connector {
+    std::string reply, wire; size_t chunk = 1 << 20;
+    struct S : MemStream { std::string* w; bool Write(const void* b, size_t n, Err&) override { w->append((const char*)b, n); return true; } };
+    std::unique_ptr<Stream> Open(const Url&, Clock::time_point, Err&, std::string&) override {
+        auto s = std::make_unique<S>(); s->in = reply; s->chunk = chunk; s->w = &wire; return s;
+    }
+};
+
+// ---- gzip / deflate / Content-Range / progress --------------------------------
+static const std::string kGz = std::string(
+    "\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03\x0b\xc9\x48\x55\x28\x2c\xcd\x4c\xce\x56\x48\x2a\xca\x2f\xcf\x53\x48\xcb\xaf\x50\xc8\x2a\xcd\x2d\x28\x56\xc8\x2f\x4b\x2d"
+    "\x52\x28\x01\x4a\xe7\x24\x56\x55\x2a\xa4\xe4\xa7\xeb\x29\x84\x8c\x2a\x1e\x55\x3c\xaa\x78\x54\xf1\xa8\xe2\x51\xc5\xc3\x4b\x31\x03\x23\x13\x33\x0b\x2b\x1b\x3b\x07"
+    "\x27\x17\x37\x0f\x2f\x1f\xbf\x80\xa0\x90\xb0\x88\xa8\x98\xb8\x84\xa4\x94\xb4\x8c\xac\x9c\xbc\x82\xa2\x92\xb2\x8a\xaa\x9a\xba\x86\xa6\x96\xb6\x8e\xae\x9e\xbe\x81"
+    "\xa1\x91\xb1\x89\xa9\x99\xb9\x85\xa5\x95\xb5\x8d\xad\x9d\xbd\x83\xa3\x93\xb3\x8b\xab\x9b\xbb\x87\xa7\x97\xb7\x8f\xaf\x9f\x7f\x40\x60\x50\x70\x48\x68\x58\x78\x44"
+    "\x64\x54\x74\x4c\x6c\x5c\x7c\x42\x62\x52\x72\x4a\x6a\x5a\x7a\x46\x66\x56\x76\x4e\x6e\x5e\x7e\x41\x61\x51\x71\x49\x69\x59\x79\x45\x65\x55\x75\x4d\x6d\x5d\x7d\x43"
+    "\x63\x53\x73\x4b\x6b\x5b\x7b\x47\x67\x57\x77\x4f\x6f\x5f\xff\x84\x89\x93\x26\x4f\x99\x3a\x6d\xfa\x8c\x99\xb3\x66\xcf\x99\x3b\x6f\xfe\x82\x85\x8b\x16\x2f\x59\xba"
+    "\x6c\xf9\x8a\x95\xab\x56\xaf\x59\xbb\x6e\xfd\x86\x8d\x9b\x36\x6f\xd9\xba\x6d\xfb\x8e\x9d\xbb\x76\xef\xd9\xbb\x6f\xff\x81\x83\x87\x0e\x1f\x39\x7a\xec\xf8\x89\x93"
+    "\xa7\x4e\x9f\x39\x7b\xee\xfc\x85\x8b\x97\x2e\x5f\xb9\x7a\xed\xfa\x8d\x9b\xb7\x6e\xdf\xb9\x7b\xef\xfe\x83\x87\x8f\x1e\x3f\x79\xfa\xec\xf9\x8b\x97\xaf\x5e\xbf\x79"
+    "\xfb\xee\xfd\x87\x8f\x9f\x3e\x7f\xf9\xfa\xed\xfb\x8f\x9f\xbf\x7e\xff\xf9\xfb\xef\xff\xa8\xff\x47\xb6\xff\x4b\x12\x33\x73\x00\x66\xcb\xd5\x6f\x0c\x0a\x00\x00", 359);
+static const std::string kZlib = std::string(
+    "\x78\xda\x0b\xc9\x48\x55\x28\x2c\xcd\x4c\xce\x56\x48\x2a\xca\x2f\xcf\x53\x48\xcb\xaf\x50\xc8\x2a\xcd\x2d\x28\x56\xc8\x2f\x4b\x2d\x52\x28\x01\x4a\xe7\x24\x56\x55"
+    "\x2a\xa4\xe4\xa7\xeb\x29\x84\x8c\x2a\x1e\x55\x3c\xaa\x78\x54\xf1\xa8\xe2\x51\xc5\xc3\x4b\x31\x03\x23\x13\x33\x0b\x2b\x1b\x3b\x07\x27\x17\x37\x0f\x2f\x1f\xbf\x80"
+    "\xa0\x90\xb0\x88\xa8\x98\xb8\x84\xa4\x94\xb4\x8c\xac\x9c\xbc\x82\xa2\x92\xb2\x8a\xaa\x9a\xba\x86\xa6\x96\xb6\x8e\xae\x9e\xbe\x81\xa1\x91\xb1\x89\xa9\x99\xb9\x85"
+    "\xa5\x95\xb5\x8d\xad\x9d\xbd\x83\xa3\x93\xb3\x8b\xab\x9b\xbb\x87\xa7\x97\xb7\x8f\xaf\x9f\x7f\x40\x60\x50\x70\x48\x68\x58\x78\x44\x64\x54\x74\x4c\x6c\x5c\x7c\x42"
+    "\x62\x52\x72\x4a\x6a\x5a\x7a\x46\x66\x56\x76\x4e\x6e\x5e\x7e\x41\x61\x51\x71\x49\x69\x59\x79\x45\x65\x55\x75\x4d\x6d\x5d\x7d\x43\x63\x53\x73\x4b\x6b\x5b\x7b\x47"
+    "\x67\x57\x77\x4f\x6f\x5f\xff\x84\x89\x93\x26\x4f\x99\x3a\x6d\xfa\x8c\x99\xb3\x66\xcf\x99\x3b\x6f\xfe\x82\x85\x8b\x16\x2f\x59\xba\x6c\xf9\x8a\x95\xab\x56\xaf\x59"
+    "\xbb\x6e\xfd\x86\x8d\x9b\x36\x6f\xd9\xba\x6d\xfb\x8e\x9d\xbb\x76\xef\xd9\xbb\x6f\xff\x81\x83\x87\x0e\x1f\x39\x7a\xec\xf8\x89\x93\xa7\x4e\x9f\x39\x7b\xee\xfc\x85"
+    "\x8b\x97\x2e\x5f\xb9\x7a\xed\xfa\x8d\x9b\xb7\x6e\xdf\xb9\x7b\xef\xfe\x83\x87\x8f\x1e\x3f\x79\xfa\xec\xf9\x8b\x97\xaf\x5e\xbf\x79\xfb\xee\xfd\x87\x8f\x9f\x3e\x7f"
+    "\xf9\xfa\xed\xfb\x8f\x9f\xbf\x7e\xff\xf9\xfb\xef\xff\xa8\xff\x47\xb6\xff\x4b\x12\x33\x73\x00\xf9\x8e\x06\x7f", 347);
+static const std::string kStoredZ = std::string(
+    "\x78\x01\x01\x0c\x00\xf3\xff\x73\x74\x6f\x72\x65\x64\x20\x64\x61\x74\x61\x21\x1f\x1f\x04\x6d", 23);
+static const std::string kFixedRaw = std::string(
+    "\xcb\x48\xcd\xc9\xc9\x57\xc8\x40\x90\x00", 10);
+
+static std::string GzPlain() {
+    std::string t;
+    for (int i = 0; i < 40; ++i) t += "The quick brown fox jumps over the lazy dog. ";
+    for (int k = 0; k < 3; ++k) for (int i = 0; i < 256; ++i) t += char(i);
+    return t + "tail";
+}
+
+// Minimal bit writer: a fixed-Huffman block with one literal and N maximum-length matches (a zip bomb shape).
+static std::string BombRaw(size_t matches) {
+    std::string out; uint32_t acc = 0; int n = 0;
+    auto bits = [&](uint32_t v, int c) { for (int i = 0; i < c; ++i) { acc |= ((v >> i) & 1u) << n; if (++n == 8) { out.push_back(char(acc)); acc = 0; n = 0; } } };
+    auto huff = [&](uint32_t code, int len) { for (int i = len - 1; i >= 0; --i) bits((code >> i) & 1u, 1); };   // codes go MSB first
+    bits(1, 1); bits(1, 2);                         // final block, fixed codes
+    huff(0x30 + 'a', 8);                            // literal 'a'
+    for (size_t i = 0; i < matches; ++i) { huff(0xC0 + (285 - 280), 8); huff(0, 5); }   // length 258 (code 285), distance 1
+    huff(0, 7);                                     // end of block (256)
+    if (n) out.push_back(char(acc));
+    return out;
+}
+static std::string GzipOf(const std::string& raw, const std::string& plain) {
+    std::string g = std::string("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03", 10) + raw;
+    uint32_t c = inflate_detail::Crc32(plain), sz = uint32_t(plain.size());
+    for (int i = 0; i < 4; ++i) g.push_back(char(c >> (8 * i)));
+    for (int i = 0; i < 4; ++i) g.push_back(char(sz >> (8 * i)));
+    return g;
+}
+
+static void TestInflate() {
+    std::string out, why;
+    const std::string plain = GzPlain();
+    CHECK(InflateBody(kGz, true, 1 << 20, out, why) && out == plain);
+    CHECK(InflateBody(kZlib, false, 1 << 20, out, why) && out == plain);
+    CHECK(InflateBody(kStoredZ, false, 1 << 20, out, why) && out == "stored data!");
+    {   // raw fixed block wrapped by hand
+        std::string z = std::string("\x78\x01", 2) + kFixedRaw;
+        uint32_t a = inflate_detail::Adler32("hello hello hello");
+        for (int i = 3; i >= 0; --i) z.push_back(char(a >> (8 * i)));
+        CHECK(InflateBody(z, false, 1 << 20, out, why) && out == "hello hello hello"); }
+    // output cap: exactly at the limit passes, one under fails with a "larger than the limit" reason
+    CHECK(InflateBody(kGz, true, plain.size(), out, why));
+    CHECK(!InflateBody(kGz, true, plain.size() - 1, out, why) && why.find("larger than the limit") != std::string::npos);
+    CHECK(!InflateBody(kGz, true, 0, out, why));
+    // every truncation fails, nothing crashes
+    for (size_t k = 0; k < kGz.size(); ++k) CHECK(!InflateBody(kGz.substr(0, k), true, 1 << 20, out, why));
+    for (size_t k = 0; k < kZlib.size(); ++k) CHECK(!InflateBody(kZlib.substr(0, k), false, 1 << 20, out, why));
+    // every single byte flip: either refused or, if accepted, still the right bytes (header fields like mtime)
+    for (size_t k = 0; k < kGz.size(); ++k) for (int bit = 0; bit < 8; ++bit) {
+        std::string m = kGz; m[k] = char(m[k] ^ (1 << bit));
+        if (InflateBody(m, true, 1 << 20, out, why)) CHECK(out == plain);
+    }
+    for (size_t k = 0; k < kZlib.size(); ++k) {
+        std::string m = kZlib; m[k] = char(m[k] ^ 0x10);
+        if (InflateBody(m, false, 1 << 20, out, why)) CHECK(out == plain);
+    }
+    CHECK(!InflateBody(kGz + "x", true, 1 << 20, out, why));            // trailing byte
+    CHECK(!InflateBody(kGz + kGz, true, 1 << 20, out, why));            // second member
+    CHECK(!InflateBody(kZlib + "x", false, 1 << 20, out, why));
+    { std::string m = kGz; m[3] = char(0x20); CHECK(!InflateBody(m, true, 1 << 20, out, why)); }   // reserved flag
+    { std::string m = kGz; m[2] = 7; CHECK(!InflateBody(m, true, 1 << 20, out, why)); }           // not deflate
+    CHECK(!InflateBody("", true, 100, out, why) && !InflateBody("", false, 100, out, why));
+    CHECK(!InflateBody(std::string(100, '\xff'), true, 1 << 20, out, why));
+    // a distance before the start of the output: fixed block, literal then a match at distance 2
+    {   std::string raw; uint32_t acc = 0; int n = 0;
+        auto bits = [&](uint32_t v, int c) { for (int i = 0; i < c; ++i) { acc |= ((v >> i) & 1u) << n; if (++n == 8) { raw.push_back(char(acc)); acc = 0; n = 0; } } };
+        auto huff = [&](uint32_t code, int len) { for (int i = len - 1; i >= 0; --i) bits((code >> i) & 1u, 1); };
+        bits(1, 1); bits(1, 2); huff(0x30 + 'a', 8);
+        huff(1, 7 /* length code 257 = 3 */); huff(1, 5); /* distance code 1 = distance 2 */
+        huff(0, 7); if (n) raw.push_back(char(acc));
+        CHECK(!InflateBody(GzipOf(raw, "aaaa"), true, 1 << 20, out, why) && why.find("too far") != std::string::npos); }
+    // zip bomb: ~1 MiB of output from a few KB, stops at the cap without allocating more than the cap
+    {   std::string raw = BombRaw(4000);
+        std::string plain2(1 + 4000 * 258, 'a');
+        CHECK(raw.size() < 8000);
+        CHECK(InflateBody(GzipOf(raw, plain2), true, plain2.size(), out, why) && out == plain2);
+        CHECK(!InflateBody(GzipOf(raw, plain2), true, 100000, out, why) && why.find("larger than the limit") != std::string::npos && out.size() <= 100000); }
+    // an incomplete / over-subscribed dynamic table is refused: type 2 block with HLIT=0 HDIST=0 HCLEN=0 and zero code lengths
+    {   std::string raw("\x05\x00\x00\x00\x00\x00\x00\x00", 8);
+        CHECK(!InflateBody(GzipOf(raw, ""), true, 1000, out, why)); }
+    // mutation fuzz over random bytes: never crashes, output never passes the cap
+    Rng rng{0x9e3779b97f4a7c15ull};
+    for (int i = 0; i < 3000; ++i) {
+        std::string m = (i & 1) ? kGz : kZlib;
+        for (int k = 0, c = 1 + int(rng.Below(6)); k < c; ++k) m[rng.Below(m.size())] = char(rng.Next());
+        if (rng.Below(4) == 0) m.resize(rng.Below(m.size() + 1));
+        InflateBody(m, (i & 1) != 0, 4096, out, why);
+        CHECK(out.size() <= 4096);
+    }
+}
+
+static void TestContentCoding() {
+    Limits lim; lim.allowGzip = true;
+    const std::string plain = GzPlain();
+    auto resp = [](const std::string& enc, const std::string& body, bool chunked = false) {
+        std::string h = "HTTP/1.1 200 OK\r\nContent-Encoding: " + enc + "\r\n";
+        if (chunked) {
+            std::string b; for (size_t i = 0; i < body.size(); i += 7) { std::string part = body.substr(i, 7); char hx[16]; std::snprintf(hx, sizeof hx, "%zx", part.size()); b += std::string(hx) + "\r\n" + part + "\r\n"; }
+            return h + "Transfer-Encoding: chunked\r\n\r\n" + b + "0\r\n\r\n";
+        }
+        return h + "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    };
+    Parsed p = Parse(resp("gzip", kGz), "GET", 1 << 20, lim);
+    CHECK(p.ok && p.r.body == plain && p.r.bodyBytes == plain.size());
+    p = Parse(resp("GZIP", kGz), "GET", 3, lim); CHECK(p.ok && p.r.body == plain);                 // tiny pieces
+    p = Parse(resp("x-gzip", kGz, true), "GET", 1 << 20, lim); CHECK(p.ok && p.r.body == plain);   // gzip inside chunked
+    p = Parse(resp("deflate", kZlib), "GET", 1 << 20, lim); CHECK(p.ok && p.r.body == plain);
+    p = Parse(resp("gzip", kGz)); CHECK(!p.ok && p.e == Err::Unsupported);                         // not asked for: still refused
+    p = Parse(resp("br", kGz), "GET", 1 << 20, lim); CHECK(!p.ok && p.e == Err::Unsupported);
+    p = Parse(resp("gzip, gzip", kGz), "GET", 1 << 20, lim); CHECK(!p.ok && p.e == Err::Unsupported);   // stacked codings
+    p = Parse(resp("gzip", kGz.substr(0, 50)), "GET", 1 << 20, lim); CHECK(!p.ok);                 // truncated stream
+    p = Parse(resp("gzip", "not gzip at all, really not"), "GET", 1 << 20, lim); CHECK(!p.ok && p.e == Err::BadResponse);
+    { Limits small = lim; small.maxBodyBytes = 1000;                                                // decoded size capped
+      p = Parse(resp("gzip", kGz), "GET", 1 << 20, small); CHECK(!p.ok && p.e == Err::TooLarge); }
+    { Limits small = lim; small.maxEncodedBytes = 100;                                              // encoded size capped
+      p = Parse(resp("gzip", kGz), "GET", 1 << 20, small); CHECK(!p.ok && p.e == Err::TooLarge); }
+    { std::string bomb = GzipOf(BombRaw(4000), std::string(1 + 4000 * 258, 'a'));                  // bomb over a Content-Length
+      Limits small = lim; small.maxBodyBytes = 64 * 1024;
+      p = Parse(resp("gzip", bomb), "GET", 1 << 20, small); CHECK(!p.ok && p.e == Err::TooLarge); }
+    p = Parse("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\n" + kGz, "GET", 1 << 20, lim);   // close-delimited
+    CHECK(p.ok && p.r.body == plain);
+    p = Parse("HTTP/1.1 304 Not Modified\r\nContent-Encoding: gzip\r\n\r\n", "GET", 1 << 20, lim); CHECK(p.ok && p.r.body.empty());
+    // the request side
+    { ScriptConnForGzip c; c.reply = resp("gzip", kGz);
+      FetchRequest rq; rq.url = "https://h/x"; rq.acceptGzip = true;
+      FetchResult r = Fetch(c, rq, Limits(), 5000);
+      CHECK(r.ok && r.response.body == plain && c.wire.find("Accept-Encoding: gzip, deflate") != std::string::npos);
+      ScriptConnForGzip c2; c2.reply = resp("gzip", kGz);
+      rq.acceptGzip = false; r = Fetch(c2, rq, Limits(), 5000);
+      CHECK(!r.ok && r.err == Err::Unsupported && c2.wire.find("Accept-Encoding: identity") != std::string::npos); }
+}
+
+static void TestRange() {
+    uint64_t a = 0, b = 0, t = 0;
+    CHECK(ParseContentRange("bytes 5-9/20", a, b, t) && a == 5 && b == 9 && t == 20);
+    CHECK(ParseContentRange("bytes 0-0/*", a, b, t) && t == 0);
+    CHECK(!ParseContentRange("bytes 9-5/20", a, b, t));
+    CHECK(!ParseContentRange("bytes 5-20/20", a, b, t));
+    CHECK(!ParseContentRange("bytes */20", a, b, t));
+    CHECK(!ParseContentRange("items 1-2/3", a, b, t));
+    CHECK(!ParseContentRange("bytes 1-2", a, b, t));
+    CHECK(!ParseContentRange("bytes -1-2/9", a, b, t));
+    CHECK(!ParseContentRange("bytes 1-2/9x", a, b, t));
+    CHECK(!ParseContentRange("bytes 1-99999999999999999999/9", a, b, t));
+    uint64_t st = 0; bool any = false;
+    std::vector<Header> h = {{"Range", "bytes=100-"}};
+    CHECK(RequestedRangeStart(h, st, any) && any && st == 100);
+    h = {{"range", "bytes=7-9"}}; CHECK(RequestedRangeStart(h, st, any) && st == 7);
+    h = {{"Range", "bytes=-5"}}; CHECK(!RequestedRangeStart(h, st, any) && any);
+    h = {{"Range", "bytes=1-2,5-6"}}; CHECK(!RequestedRangeStart(h, st, any) && any);
+    h = {}; CHECK(!RequestedRangeStart(h, st, any) && !any);
+    Limits lim;
+    auto fetch = [&](const std::string& reply, const std::string& range, FetchResult* out = nullptr) {
+        ScriptConnForGzip c; c.reply = reply;
+        FetchRequest rq; rq.url = "https://h/x"; if (!range.empty()) rq.headerLines = {"Range: " + range};
+        FetchResult r = Fetch(c, rq, lim, 5000); if (out) *out = r; return r; };
+    FetchResult r;
+    fetch("HTTP/1.1 206 Partial\r\nContent-Range: bytes 5-9/20\r\nContent-Length: 5\r\n\r\n56789", "bytes=5-", &r);
+    CHECK(r.ok && r.partial && r.rangeStart == 5 && r.rangeTotal == 20 && r.response.body == "56789");
+    fetch("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc", "bytes=5-", &r);                           // server ignored the range
+    CHECK(r.ok && !r.partial && r.response.body == "abc");
+    CHECK(fetch("HTTP/1.1 206 P\r\nContent-Range: bytes 6-9/20\r\nContent-Length: 4\r\n\r\n6789", "bytes=5-").err == Err::BadResponse);   // wrong start
+    CHECK(fetch("HTTP/1.1 206 P\r\nContent-Length: 4\r\n\r\n6789", "bytes=5-").err == Err::BadResponse);                                    // no Content-Range
+    CHECK(fetch("HTTP/1.1 206 P\r\nContent-Range: bytes 5-9/20\r\nContent-Length: 4\r\n\r\n5678", "bytes=5-").err == Err::BadResponse);   // length mismatch
+    CHECK(fetch("HTTP/1.1 206 P\r\nContent-Range: bytes 5-9/20\r\nContent-Length: 5\r\n\r\n56789", "").err == Err::BadResponse);          // unasked 206
+    fetch("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */20\r\nContent-Length: 0\r\n\r\n", "bytes=99-", &r);
+    CHECK(r.ok && r.response.status == 416 && !r.partial);
+    // progress and abort from the progress callback
+    {   ScriptConnForGzip c; c.reply = "HTTP/1.1 200 OK\r\nContent-Length: 40000\r\n\r\n" + std::string(40000, 'q'); c.chunk = 5000;
+        FetchRequest rq; rq.url = "https://h/x"; FetchHooks hk; uint64_t lastDone = 0, lastTotal = 0; int calls = 0;
+        hk.onProgress = [&](uint64_t d, uint64_t tot) { lastDone = d; lastTotal = tot; ++calls; return true; };
+        FetchResult fr = Fetch(c, rq, lim, 5000, hk);
+        CHECK(fr.ok && lastDone == 40000 && lastTotal == 40000 && calls >= 2 && fr.response.body.size() == 40000);
+        ScriptConnForGzip c2; c2.reply = c.reply; c2.chunk = 5000; int n2 = 0;
+        hk.onProgress = [&](uint64_t, uint64_t) { return ++n2 < 3; };
+        fr = Fetch(c2, rq, lim, 5000, hk);
+        CHECK(!fr.ok && fr.err == Err::Aborted && n2 == 3); }
+}
+
 static void Fuzz(int iters) {
     const std::vector<std::string> corpus = {
         kOk,
@@ -374,7 +587,7 @@ int main(int argc, char** argv) {
     int iters = 20000;
     if (const char* e = std::getenv("OKAY_FUZZ_ITERS")) iters = std::atoi(e);
     if (argc > 1) iters = std::atoi(argv[1]);
-    TestUrl(); TestBuild(); TestParse(); TestFetch(); Fuzz(iters);
+    TestUrl(); TestBuild(); TestParse(); TestFetch(); TestInflate(); TestContentCoding(); TestRange(); Fuzz(iters);
     std::printf("own_http: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

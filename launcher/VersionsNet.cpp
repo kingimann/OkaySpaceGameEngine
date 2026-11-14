@@ -4,6 +4,9 @@
 #include <ctime>
 
 #include "AppRestart.hpp"   // Utf8, QuoteWindowsArg, the posix_spawn headers
+#if !defined(_WIN32)
+#  include "okay/Platform/NativeHttp.hpp"   // our own HTTP client, only when built with OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1
+#endif
 
 // (No std::thread / std::mutex here: the launcher is built with the MinGW win32 thread model. A native sleep is all this file needs.)
 
@@ -102,6 +105,44 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
     fs::remove(dest, ec);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    // Our own client first (opt-in, docs/own_http_client.md). Anything that is not a clear answer (libssl missing,
+    // certificate refused, proxy trouble, a malformed reply) falls through to curl below, as before.
+    if (okay::http::NativeAvailable()) {
+        enum class Why { None, Cancelled, TooBig } why = Why::None;
+        okay::http::RequestOptions ro;
+        ro.maxBytes = maxBytes;
+        ro.maxRedirects = 5;
+        ro.connectMs = 20000;
+        ro.ioMs = 60000;
+        ro.totalMs = 6 * 60 * 60 * 1000;
+        ro.cancel = [&]() { if (cancelled && cancelled()) { why = Why::Cancelled; return true; } return false; };
+        ro.progress = [&](std::uint64_t done, std::uint64_t) {
+            if (onBytes) onBytes(done);
+            if (cancelled && cancelled()) { why = Why::Cancelled; return false; }
+            if (maxBytes > 0 && done > maxBytes) { why = Why::TooBig; return false; }
+            return true;
+        };
+        const okay::http::ExResult r = okay::http::RequestEx("GET", url, {"User-Agent: OkaySpace-Launcher"}, {}, {}, okay::restart::Utf8(dest), ro);
+        if (r.reached) {
+            if (r.status == 200 && fs::is_regular_file(dest, ec)) {
+                const std::uintmax_t sz = fs::file_size(dest, ec);
+                if (onBytes && !ec) onBytes((std::uint64_t)sz);
+                out.status = DownloadStatus::Ok;
+                return out;
+            }
+            fs::remove(dest, ec);
+            out.error = r.status >= 400 ? "The download failed (the server does not have that file)."
+                                        : "The download failed (the server answered " + std::to_string(r.status) + ").";
+            return out;
+        }
+        fs::remove(dest, ec);
+        if (why == Why::Cancelled) { out.status = DownloadStatus::Cancelled; out.error = "Cancelled."; return out; }
+        if (why == Why::TooBig || r.error.rfind("too-large", 0) == 0) { out.error = "The server sent more data than the file should have."; return out; }
+        if (r.writeFailed) { out.status = DownloadStatus::DiskFull; out.error = "The disk is full."; return out; }
+        // otherwise: no usable answer; try curl
+    }
+#endif
     std::vector<std::string> args = {"curl", "-L", "-s", "-f", "--connect-timeout", "20", "--max-redirs", "5",
                                      "--speed-limit", "1024", "--speed-time", "60", "-A", "OkaySpace-Launcher"};
     if (url.compare(0, 8, "https://") == 0) { args.push_back("--proto-redir"); args.push_back("=https"); }

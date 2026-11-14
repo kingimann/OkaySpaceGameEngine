@@ -137,6 +137,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a lighting setting does not save | [15.14](15-editor.md#1514-scene-settings-project-settings-and-help-windows) Scene settings, project settings and help windows |
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
+| a line starting `[okay] stack:` in the log | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
@@ -914,6 +915,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the 2.5D character runs on the spot against a wall | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | the 2D game looks blurry or jitters | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | the 3D view is black or very slow | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
+| the About popup lists the stack | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
 | the Animation tab loses a key | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
 | the API page diverges from the engine | [19.1](19-docs-tests-health.md#191-readme-and-docs) README and docs |
 | the bag empties when the scene changes | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |

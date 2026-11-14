@@ -10,6 +10,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
@@ -17724,6 +17725,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     SDL_SetMainReady();
     {
         std::error_code ec;

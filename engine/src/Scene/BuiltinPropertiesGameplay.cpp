@@ -49,6 +49,8 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/ItemPickup.hpp"
 
 namespace okay {
 namespace detail {
@@ -1194,7 +1196,46 @@ void RegisterRangedWeapon() {
     b.Commit();
 }
 
+// Stats and ItemPickup
+void RegisterStats() {
+    PropertyBuilder<Stats> b("Stats", "stats", "Gameplay");
+    b.AddFloat("health", &Stats::health).Range(0, kBig, 0.5)
+     .AddFloat("maxHealth", &Stats::maxHealth).Range(0, kBig, 0.5)
+     .AddFloat("mana", &Stats::mana).Range(0, kBig, 0.5)
+     .AddFloat("maxMana", &Stats::maxMana).Range(0, kBig, 0.5)
+     .AddInt("level", &Stats::level).Range(0, 100000, 1)
+     .AddInt("xp", &Stats::xp).Range(0, 1000000000, 1)
+     .AddInt("xpToNext", &Stats::xpToNext).Range(0, 1000000000, 1)
+     .AddInt("strength", &Stats::strength).Range(-100000, 100000, 1)
+     .AddInt("defense", &Stats::defense).Range(-100000, 100000, 1)
+     .AddInt("intelligence", &Stats::intelligence).Range(-100000, 100000, 1)
+     .AddInt("agility", &Stats::agility).Range(-100000, 100000, 1);
+    b.Commit();
+}
+
+void RegisterItemPickup() {
+    PropertyBuilder<ItemPickup> b("ItemPickup", "itempickup", "Gameplay");
+    // The scene file resolves the id through the item database on load, so the setter does the same: what is read back
+    // is what a save and load would give.
+    b.Custom("item", PropertyType::String,
+             [](const ItemPickup& p) { return PropertyValue::MakeString(p.item); },
+             [](ItemPickup& p, const PropertyValue& v) { p.item = ItemDatabase::Get().Resolve(v.AsString()); return true; })
+        .Tooltip("Item id from the item database")
+     .AddInt("count", &ItemPickup::count).Range(1, 1000000, 1)
+     .AddString("collectorTag", &ItemPickup::collectorTag).Tooltip("Who can pick it up (tag or name); empty = anyone with an Inventory")
+     .AddBool("pickupOnTouch", &ItemPickup::pickupOnTouch).Tooltip("Collect when the collector enters its trigger")
+     .AddFloat("autoRadius", &ItemPickup::autoRadius).Range(0, kBig, 0.05).Tooltip("Collect when the player is this close (0 = off)")
+     .AddKey("interactKey", &ItemPickup::interactKey).Tooltip("Press near it to collect (none = off)")
+     .AddFloat("interactRange", &ItemPickup::interactRange).Range(0, kBig, 0.05)
+     .AddFloat("magnetRadius", &ItemPickup::magnetRadius).Range(0, kBig, 0.05).Tooltip("Drift toward the player inside this range (0 = off)")
+     .AddFloat("magnetSpeed", &ItemPickup::magnetSpeed).Range(0, kBig, 0.05)
+     .AddBool("holdInHands", &ItemPickup::holdInHands).Tooltip("Pick it up into the hands instead of the inventory");
+    b.Commit();
+}
+
 void RegisterGameplayProperties() {
+    RegisterStats();
+    RegisterItemPickup();
     RegisterPlayerController();
     RegisterPlayerView();
     RegisterFirstPersonController();

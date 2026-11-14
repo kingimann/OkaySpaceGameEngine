@@ -31,6 +31,12 @@
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIToast.hpp"
+#include "okay/Components/UIColorPicker.hpp"
+#include "okay/Components/UIContextMenu.hpp"
 
 namespace okay {
 namespace detail {
@@ -739,7 +745,85 @@ void RegisterTouchButton() {
     b.Commit();
 }
 
+// ---- Round 2 UI: prompt, pause menu, tooltip, toast, colour picker, context menu -------------------------------
+
+void RegisterHoldPrompt() {
+    PropertyBuilder<HoldPrompt> b("HoldPrompt", "holdprompt", "UI");
+    b.AddKey("dropKey", &HoldPrompt::dropKey).Tooltip("Press again to let go (none = off)")
+     .AddKey("altDropKey", &HoldPrompt::altDropKey).Tooltip("A second let-go key")
+     .AddString("promptObject", &HoldPrompt::promptObject).Tooltip("Name of the text object that shows the line")
+     .AddBool("localized", &HoldPrompt::localized).Tooltip("Take the prompts from the string table");
+    b.Commit();
+}
+
+void RegisterPauseMenu() {
+    PropertyBuilder<PauseMenu> b("PauseMenu", "pausemenu", "UI");
+    b.AddKey("toggleKey", &PauseMenu::toggleKey).Tooltip("Key that opens and closes the menu (Escape by default)")
+     .AddBool("showResume", &PauseMenu::showResume).Tooltip("Show the Resume button")
+     .AddBool("showQuit", &PauseMenu::showQuit).Tooltip("Show the Quit button")
+     .AddColor("dimColor", &PauseMenu::dimColor).Range(0, 1, 0.01).Tooltip("Tint over the game behind the menu")
+     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card")
+     .AddString("title", &PauseMenu::title).Tooltip("Heading of the menu")
+     .AddString("mainMenuScene", &PauseMenu::mainMenuScene).Tooltip("Scene the Main Menu button loads (empty = no button)")
+     .AddBool("localized", &PauseMenu::localized).Tooltip("Take the texts from the string table");
+    b.Commit();
+}
+
+void RegisterUITooltip() {
+    PropertyBuilder<UITooltip> b("UITooltip", "uitooltip", "UI");
+    b.AddString("text", &UITooltip::text).Tooltip("The tip")
+     .AddFloat("delay", &UITooltip::delay).Range(0, 60, 0.05).Tooltip("Hover seconds before it shows")
+     .AddColor("background", &UITooltip::background).Range(0, 1, 0.01)
+     .AddColor("textColor", &UITooltip::textColor).Range(0, 1, 0.01)
+     .AddColor("borderColor", &UITooltip::borderColor).Range(0, 1, 0.01)
+     .AddBool("richText", &UITooltip::richText).Tooltip("Read the tip as rich text")
+     .AddVec2("offset", &UITooltip::offset).Range(-kBig, kBig, 0.1).Tooltip("Distance from the cursor, in pixels");
+    b.Commit();
+}
+
+void RegisterUIToast() {
+    PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
+    b.AddInt("corner", &UIToast::corner).Range(0, 3, 1).Tooltip("Screen corner the stack grows from")
+     .AddFloat("duration", &UIToast::duration).Range(0, 3600, 0.05).Tooltip("Seconds a toast stays")
+     .AddInt("maxStack", &UIToast::maxStack).Range(1, 100, 1).Tooltip("Most toasts shown at once")
+     .AddFloat("margin", &UIToast::margin).Range(0, kBig, 0.1).Tooltip("Distance from the screen edge")
+     .AddFloat("gap", &UIToast::gap).Range(0, kBig, 0.1).Tooltip("Space between toasts")
+     .AddFloat("width", &UIToast::width).Range(0, kBig, 0.1)
+     .AddFloat("height", &UIToast::height).Range(0, kBig, 0.1)
+     .AddBool("showIcon", &UIToast::showIcon);
+    b.Commit();
+}
+
+void RegisterUIColorPicker() {
+    PropertyBuilder<UIColorPicker> b("UIColorPicker", "uicolorpicker", "UI");
+    b.AddVec2("position", &UIColorPicker::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+     .AddEnum("anchor", &UIColorPicker::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddFloat("swatch", &UIColorPicker::swatch).Range(0, kBig, 0.1).Tooltip("Size of one colour square")
+     .AddFloat("gap", &UIColorPicker::gap).Range(0, kBig, 0.1).Tooltip("Space between squares")
+     .AddInt("value", &UIColorPicker::value).Range(-1, 100000, 1).Tooltip("Chosen swatch index");
+    b.Commit();
+}
+
+void RegisterUIContextMenu() {
+    PropertyBuilder<UIContextMenu> b("UIContextMenu", "uicontext", "UI");
+    b.AddBool("anywhere", &UIContextMenu::anywhere).Tooltip("Open on a right click anywhere, not only over this object")
+     .AddFloat("itemHeight", &UIContextMenu::itemHeight).Range(0, kBig, 0.1)
+     .AddFloat("width", &UIContextMenu::width).Range(0, kBig, 0.1)
+     .AddFloat("textSize", &UIContextMenu::textSize).Range(0, 100, 0.05).Tooltip("Text pixel size")
+     .AddColor("background", &UIContextMenu::background).Range(0, 1, 0.01)
+     .AddColor("hoverColor", &UIContextMenu::hoverColor).Range(0, 1, 0.01)
+     .AddColor("textColor", &UIContextMenu::textColor).Range(0, 1, 0.01)
+     .AddColor("borderColor", &UIContextMenu::borderColor).Range(0, 1, 0.01);
+    b.Commit();
+}
+
 void RegisterUIProperties() {
+    RegisterHoldPrompt();
+    RegisterPauseMenu();
+    RegisterUITooltip();
+    RegisterUIToast();
+    RegisterUIColorPicker();
+    RegisterUIContextMenu();
     RegisterUIButton();
     RegisterVirtualJoystick();
     RegisterTouchDPad();

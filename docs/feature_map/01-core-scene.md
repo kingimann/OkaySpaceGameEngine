@@ -290,14 +290,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **What:** Reuse spawned objects (bullets, sparks, pickups) instead of creating and destroying them each time.
 - **Parts:**
   - 1.13.1 Pool source - `Scene/ObjectPool` - `SetPrefabFile` or `SetTemplate` captured once; the template can be destroyed afterwards
-  - 1.13.2 Get and Release - `Scene/ObjectPool` - `Get`, `Get(position)`, `Release`, `Prewarm`, `maxSize`; an object released this frame is reused from the next frame because OnEnable/OnDisable are the reset points
+  - 1.13.2 Get and Release - `Scene/ObjectPool` - `Get`, `Get(position)`, `Release`, `Prewarm`, `Shrink`, `maxSize`; an object released this frame is reused from the next frame because OnEnable/OnDisable are the reset points; `Component::OnPoolReuse` resets what a component owns (Rigidbody2D and Rigidbody3D velocities and forces, Lifetime, Projectile3D, particles, scripts)
+  - 1.13.4 Spawner and scripts - `Components/Spawner`, `Scripting/OkayScriptVM` - Spawner `usePool` (no-code option, also in the Inspector through the property registry); script `pool_get(prefab, x, y[, z])`, `pool_release()`, `pool_prewarm`, `pool_idle`; each is a generic Fn node in the visual script; `Scene::Despawn` returns a pooled object to its pool
   - 1.13.3 Pool statistics - `Scene/ObjectPool` - `IdleCount`, `ActiveCount`, `CreatedCount`, `ReuseCount` for tuning the pre-warm size
 - **Code:** `Scene/ObjectPool`
-- **API:** `ObjectPool`, `ObjectPool::Get`, `ObjectPool::Release`, `ObjectPool::Prewarm`
-- **Editor:** none
+- **API:** `ObjectPool`, `ObjectPool::Get`, `ObjectPool::Release`, `ObjectPool::Prewarm`, `Spawner::usePool`, `Component::OnPoolReuse`
+- **Editor:** Spawner `usePool` shows in the Inspector (registered property)
 - **Docs:** `docs/scene_management.md`
-- **Tests:** `scene_load_pool`
-- **Status:** Partial - merged in #570 and tested; no component, script builtin or editor option uses it yet (grep)
+- **Tests:** `scene_load_pool`, `object_pool_wave5`, `object_pool_audit`
+- **Status:** Done - the pool, the Spawner option, the script calls and the reset hooks are on main; `scene_load_pool`, `object_pool_wave5` and `object_pool_audit` were run and pass (97, 74 and 95 checks)
 - **Open:** a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
@@ -410,15 +411,15 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.19.2 Registry, paths and change hook - `Scene/PropertyRegistry` - `GetProperty/SetProperty` by path (`Camera#1.depth`, `Transform.position.x`), `SetPropertyFromText`, a hook that fires once per real change with old and new value, `ScopedHookSuppression` for undo
   - 1.19.3 Snapshot, diff, apply, copy - `Scene/PropertyRegistry` - `SnapshotProperties`, `DiffProperties`, `ApplyPropertyDiff` (revert or redo), `CopyProperties`
   - 1.19.4 Builder for your own components - `Scene/PropertyBuilder` - `PropertyBuilder<Torch>("Torch", "torch", "Gameplay").AddFloat(...).Commit()`
-  - 1.19.5 Built-in registrations - `Scene/BuiltinProperties` - 334 properties on 26 types per docs, a few more since `space` was added to Mover and Spinner in #586 (GameObject, Transform, Camera, Light, SpriteRenderer, MeshRenderer, 2D and 3D rigidbodies and colliders, AudioSource, ParticleSystem, Mover, Spinner, Lifetime, CameraFollow, Canvas, UIPanel); `RegisterBuiltinProperties()`
+  - 1.19.5 Built-in registrations - `Scene/BuiltinProperties` - 334 properties on 26 types per docs, a few more since `space` was added to Mover and Spinner in #586 and more registered types since (the controllers, navigation, networking and most UI widgets, plus HoldPrompt, PauseMenu, Stats, ItemPickup, UITooltip, UIToast, UIColorPicker and UIContextMenu; see `docs/properties.md` for the current list). Original 26: (GameObject, Transform, Camera, Light, SpriteRenderer, MeshRenderer, 2D and 3D rigidbodies and colliders, AudioSource, ParticleSystem, Mover, Spinner, Lifetime, CameraFollow, Canvas, UIPanel); `RegisterBuiltinProperties()`
   - 1.19.6 Consumers - first one is `DOTween::Property` (1.2.11, #587: tweens any registered float, int, vector, colour or quaternion property by path, and the script `tween_prop`); planned: Inspector fields, per-property undo (22), keep-changes-from-Play (34.1), per-field prefab overrides (21.4) and visual-script nodes reading the registry instead of hand-written code per component
 - **Code:** `Scene/Properties`, `Scene/PropertyRegistry`, `Scene/PropertyBuilder`, `Scene/BuiltinProperties`
 - **API:** `PropertyRegistry::GetProperty`, `SetProperty`, `SetPropertyFromText`, `AddChangeHook`, `ScopedHookSuppression`, `SnapshotProperties`, `DiffProperties`, `PropertyBuilder<T>`, `PropertyValue`, `PropertyDesc`, `RegisterBuiltinProperties`
-- **Editor:** none (nothing in the editor, the serializer, undo or prefab code calls it; the tween engine is the only caller)
+- **Editor:** the Inspector reads the registry (`editor/InspectorModel`); the script call `tween_prop` and the tween engine use it too
 - **Docs:** `docs/properties.md`
 - **Tests:** `property_registry`
 - **Status:** Partial - the registry, builder and built-in registrations are on main (#578) with a cross-check against the scene serializer (per docs: all 325 stored properties pass); the tween engine (`DOTween::Property`) is the only consumer so far
-- **Open:** not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to Grok's work; mesh geometry, particle curves and collider point lists are deliberately not properties; possible doc inconsistency: `docs/properties.md` says the scene writer prints six significant digits but #575 writes the shortest exact float (`SceneSerializer.cpp` uses `std::to_chars`); subclass components need their own registration (matching is by exact type)
+- **Open:** not registered yet: scripts, the UI tabs, list view, slot grid and minimap, inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline components, ragdoll, tilemap, sequence and cinematic components; animation and IK components are left to Grok's work; fields the scene file does not keep stay out (`PauseMenu.hint`, `showRestart`, `restartScene`, item data of `ItemPickup`, the items of `UIContextMenu`); mesh geometry, particle curves and collider point lists are deliberately not properties; possible doc inconsistency: `docs/properties.md` says the scene writer prints six significant digits but #575 writes the shortest exact float (`SceneSerializer.cpp` uses `std::to_chars`); subclass components need their own registration (matching is by exact type)
 - **Related:** 15.2, 22, 34, 21.4, 1.5, 14
 - **Words:** reflection, property registry, PropertyRegistry, PropertyBuilder, PropertyValue, property path, change hook, serialize field, inspector fields, snapshot, diff
 - **Seen as:** each component needs hand-written Inspector and serializer code; a value edited in Play cannot be kept; undo cannot say what changed

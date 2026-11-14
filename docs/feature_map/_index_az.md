@@ -4306,6 +4306,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - spawn point (11.6)
 - spawned objects (34.2)
 - spawner (11.6, 11.6.1)
+- Spawner and scripts (1.13.4)
 - Spawners and logic links (44.4.3)
 - Spawners, turn manager, minimap (11.6)
 - Spawning and pooling (21.1.3)

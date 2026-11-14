@@ -2214,6 +2214,101 @@ static void TestAuditThreadedUse() {
     CHECK(announced.load() == kThreads * kRounds);
 }
 
+// ---- Round 2: HoldPrompt, PauseMenu, Stats, ItemPickup, UITooltip, UIToast, UIColorPicker, UIContextMenu -------
+
+static void TestRoundTwoRegistrations() {
+    RUN_SUITE("round 2: prompt, pause menu, stats, pickup, tooltip, toast, colour picker, context menu");
+    RegisterBuiltinProperties();
+    auto find = [](const char* n) { return PropertyRegistry::FindByName(n); };
+    for (const char* name : {"HoldPrompt", "PauseMenu", "UITooltip", "UIToast", "UIColorPicker", "UIContextMenu"})
+        CHECK(find(name) && find(name)->category == "UI");
+    for (const char* name : {"Stats", "ItemPickup"}) CHECK(find(name) && find(name)->category == "Gameplay");
+
+    // Set through the registry, save, load, read back: the values must survive (and a refused value changes nothing).
+    Scene a("a");
+    GameObject* go = a.CreateGameObject("Thing");
+    go->AddComponent<HoldPrompt>(); go->AddComponent<PauseMenu>(); go->AddComponent<Stats>(); go->AddComponent<ItemPickup>();
+    go->AddComponent<UITooltip>(); go->AddComponent<UIToast>(); go->AddComponent<UIColorPicker>(); go->AddComponent<UIContextMenu>();
+    auto set = [&](const char* path, const PropertyValue& v) { return PropertyRegistry::SetProperty(*go, path, v); };
+    CHECK(set("Stats.health", PropertyValue::MakeFloat(42.5f)));
+    CHECK(set("Stats.agility", PropertyValue::MakeInt(17)));
+    CHECK(set("ItemPickup.count", PropertyValue::MakeInt(5)));
+    CHECK(set("ItemPickup.collectorTag", PropertyValue::MakeString("Hero")));
+    CHECK(set("ItemPickup.magnetRadius", PropertyValue::MakeFloat(3.5f)));
+    CHECK(set("UITooltip.delay", PropertyValue::MakeFloat(1.25f)));
+    CHECK(set("UITooltip.offset", PropertyValue::MakeVec2(Vec2{3.0f, 9.0f})));
+    CHECK(set("UIToast.maxStack", PropertyValue::MakeInt(7)));
+    CHECK(set("UIToast.duration", PropertyValue::MakeFloat(2.5f)));
+    CHECK(set("UIColorPicker.swatch", PropertyValue::MakeFloat(21.0f)));
+    CHECK(set("UIContextMenu.width", PropertyValue::MakeFloat(222.0f)));
+    CHECK(set("UIContextMenu.anywhere", PropertyValue::MakeBool(true)));
+    CHECK(set("PauseMenu.title", PropertyValue::MakeString("Halt")));
+    CHECK(set("PauseMenu.showQuit", PropertyValue::MakeBool(false)));
+    CHECK(set("HoldPrompt.promptObject", PropertyValue::MakeString("Line")));
+    CHECK(go->GetComponent<UIToast>()->maxStack == 7 && go->GetComponent<Stats>()->agility == 17);
+    // Refused / clamped input
+    CHECK(!set("Stats.health", PropertyValue::MakeString("many")));
+    CHECK(go->GetComponent<Stats>()->health == 42.5f);
+    CHECK(set("UIToast.maxStack", PropertyValue::MakeInt(0)) && go->GetComponent<UIToast>()->maxStack == 1);   // clamped to the range
+    CHECK(set("UIToast.maxStack", PropertyValue::MakeInt(7)));
+
+    const std::string text = SceneSerializer::Serialize(a);
+    Scene b("b");
+    std::string err;
+    CHECK(SceneSerializer::Deserialize(b, text, &err));
+    GameObject* back = b.FindByGuid(go->Guid());
+    CHECK(back != nullptr);
+    if (back) {
+        auto get = [&](const char* path) { return PropertyRegistry::GetProperty(*back, path); };
+        CHECK(get("Stats.health").AsFloat() == 42.5f && get("Stats.agility").AsInt() == 17);
+        CHECK(get("ItemPickup.count").AsInt() == 5 && get("ItemPickup.collectorTag").AsString() == "Hero" && get("ItemPickup.magnetRadius").AsFloat() == 3.5f);
+        CHECK(get("UITooltip.delay").AsFloat() == 1.25f && get("UITooltip.offset").AsVec2().y == 9.0f);
+        CHECK(get("UIToast.maxStack").AsInt() == 7 && get("UIToast.duration").AsFloat() == 2.5f);
+        CHECK(get("UIColorPicker.swatch").AsFloat() == 21.0f);
+        CHECK(get("UIContextMenu.width").AsFloat() == 222.0f && get("UIContextMenu.anywhere").AsBool());
+        CHECK(get("PauseMenu.title").AsString() == "Halt" && !get("PauseMenu.showQuit").AsBool());
+        CHECK(get("HoldPrompt.promptObject").AsString() == "Line");
+        // Saving again gives the same text: nothing drifted in the trip.
+        CHECK(SceneSerializer::Serialize(b) == text);
+    }
+
+    // An older scene file (hand-written, the way earlier versions wrote these lines, with none of the later
+    // optional fields) loads unchanged and reads through the registry.
+    const std::string old =
+        "okayscene 3\ngameobject 0 \"Old\"\n  active 1\n  parent -1\n"
+        "  uitoast 2 3.5 5 10 4 200 50 0\n"
+        "  uicolorpicker 5 6 0 30 4 2 0\n"
+        "  uitooltip \"Old tip\" 0.75 0.1 0.1 0.1 1 1 1 1 1 1 1 1 0.5\n"
+        "end\n";
+    Scene c("c");
+    std::string oerr;
+    const bool loaded = SceneSerializer::Deserialize(c, old, &oerr);
+    const auto oldList = c.FindGameObjectsWithName("Old");
+    GameObject* oldGo = oldList.empty() ? nullptr : oldList[0];
+    if (loaded && oldGo) {
+        CHECK(PropertyRegistry::GetProperty(*oldGo, "UIToast.corner").AsInt() == 2);
+        CHECK(PropertyRegistry::GetProperty(*oldGo, "UIToast.duration").AsFloat() == 3.5f);
+        CHECK(!PropertyRegistry::GetProperty(*oldGo, "UIToast.showIcon").AsBool());
+        CHECK(PropertyRegistry::GetProperty(*oldGo, "UIColorPicker.value").AsInt() == 2);
+        CHECK(PropertyRegistry::GetProperty(*oldGo, "UITooltip.delay").AsFloat() == 0.75f);
+        CHECK(!PropertyRegistry::GetProperty(*oldGo, "UITooltip.richText").AsBool());   // an old line without the later fields keeps the default
+        CHECK(PropertyRegistry::GetProperty(*oldGo, "UITooltip.offset").AsVec2().x == 14.0f);
+    } else {
+        std::cerr << "    old-format sample did not load: " << oerr << "\n";
+        CHECK(false);
+    }
+
+    // Consumers: a tween (and so the script call tween_prop) reaches the new properties by path.
+    Scene t("t");
+    GameObject* tg = t.CreateGameObject("T");
+    auto* toast = tg->AddComponent<UIToast>();
+    toast->duration = 1.0f;
+    std::string terr;
+    auto tw = DOTween::Property(tg, "UIToast.duration", PropertyValue::MakeFloat(5.0f), 1.0f, &terr);
+    CHECK(tw && terr.empty());
+    if (tw) { tw->SetEase(Ease::Linear); t.Update(0.5f); CHECK(std::fabs(toast->duration - 3.0f) < 1e-3f); }
+}
+
 int main() {
     TestValueRoundTrip();
     TestValueBadInput();
@@ -2231,6 +2326,7 @@ int main() {
     TestControllerRegistrations();
     TestNavNetUiRegistrations();
     TestGameplayAndEnvironmentRegistrations();
+    TestRoundTwoRegistrations();
     TestAuditHooksWhileFiring();
     TestAuditWriteResult();
     TestAuditBuilderEdges();

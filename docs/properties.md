@@ -344,11 +344,14 @@ check.
 
 **Not registered yet:** scripts (`ScriptComponent` and `VisualScriptComponent` keep their
 source and a free-form `fields` table, not named properties), `NetworkManager` and the anti-cheat
-settings (record plus lists), the UI tabs, toast, tooltip, theme, context menu, list view, slot grid
-and colour picker, the minimap (markers are lists), `PauseMenu`, `HoldPrompt`, `Stats`,
-`ItemPickup`, inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline
+settings (record plus lists), the UI tabs, list view, slot grid, the minimap (markers are lists),
+inventory, crafting, dialogue, quest and survival components, terrain, voxel and spline
 components, ragdoll, the tilemap, and the sequence and cinematic components. Animation and IK components
-are left to the animation work. They can all register themselves with the builder.
+are left to the animation work. They can all register themselves with the builder. The controllers,
+navigation and networking components listed above are done. Added later: `HoldPrompt`, `PauseMenu`,
+`Stats`, `ItemPickup`, `UITooltip`, `UIToast`, `UIColorPicker` and `UIContextMenu`. A few of their fields are
+left out on purpose because the scene file does not keep them (`PauseMenu.hint`, `showRestart` and
+`restartScene`, the item data of an `ItemPickup`, and the item list of a `UIContextMenu`).
 
 ## What the tests check
 

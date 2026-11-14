@@ -50,19 +50,28 @@ static std::string F3(float a, float b, float c) { std::string s; BF(s, a); BF(s
 static std::string F1(float a) { std::string s; BF(s, a); B16(s, 0); return s; }
 static std::string Surf2(const std::string& name, const std::string& subs) { std::string b; BS0(b, name); BS0(b, ""); b += subs; return Chunk("SURF", b); }
 
-static std::string Box2(bool textured) {
+static std::string Box2(bool textured, int proj = 5, int axis = 0, float wrapW = 1.0f, float wrapH = 1.0f) {
     std::string c = Tags({"Red", "Blue"}) + Layr(0, "Box") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 1, 1, 1});
     c += Surf2("Red", Sub("COLR", F3(1, 0, 0)) + Sub("DIFF", F1(0.5f)) + Sub("LUMI", F1(0.1f)) + Sub("SPEC", F1(0.5f)) + Sub("GLOS", F1(0.2f)) + Sub("TRAN", F1(0.25f)) + Sub("SMAN", [] { std::string s; BF(s, 0); return s; }()));
     std::string blue = Sub("COLR", F3(0, 0, 1));
     if (textured) {
         std::string head; BS0(head, "\x80"); head += Sub("CHAN", "COLR");
-        std::string blok = Sub("IMAP", head) + Sub("PROJ", [] { std::string s; B16(s, 5); return s; }()) + Sub("IMAG", [] { std::string s; BVX(s, 1); return s; }()) + Sub("VMAP", [] { std::string s; BS0(s, "uv"); return s; }());
+        std::string pj; B16(pj, (unsigned)proj);
+        std::string blok = Sub("IMAP", head) + Sub("PROJ", pj) + Sub("IMAG", [] { std::string s; BVX(s, 1); return s; }());
+        if (proj == 5) blok += Sub("VMAP", [] { std::string s; BS0(s, "uv"); return s; }());
+        else {
+            std::string ax; B16(ax, (unsigned)axis); blok += Sub("AXIS", ax);
+            std::string ww; BF(ww, wrapW); B16(ww, 0); blok += Sub("WRPW", ww);
+            std::string wh; BF(wh, wrapH); B16(wh, 0); blok += Sub("WRPH", wh);
+        }
         blue += Sub("BLOK", blok);
         std::string clip; B32(clip, 1); clip += Sub("STIL", [] { std::string s; BS0(s, "Images\\blue.tga"); return s; }());
         c += Chunk("CLIP", clip);
-        std::string vm = "TXUV"; B16(vm, 2); BS0(vm, "uv");
-        for (int i = 0; i < 8; ++i) { BVX(vm, (std::uint32_t)i); BF(vm, kCube[i][0]); BF(vm, kCube[i][1]); }
-        c += Chunk("VMAP", vm);
+        if (proj == 5) {
+            std::string vm = "TXUV"; B16(vm, 2); BS0(vm, "uv");
+            for (int i = 0; i < 8; ++i) { BVX(vm, (std::uint32_t)i); BF(vm, kCube[i][0]); BF(vm, kCube[i][1]); }
+            c += Chunk("VMAP", vm);
+        }
     }
     c += Surf2("Blue", blue);
     return Form("LWO2", c);
@@ -173,12 +182,61 @@ int main() {
         CHECK(w.name == "Wall" && Near(w.diffuse.r, 1) && Near(w.diffuse.g, 128 / 255.0f) && Near(w.diffuse.a, 0.75f) && Near(w.shininess, 16));   // 256 = 100 %, transparency 64 = 25 %
         const ImportedMaterial& r = m.materials[(std::size_t)m.parts[1].material];
         CHECK(Near(r.diffuse.b, 0.5f) && Near(r.shininess, 256));
-        // a texture image in LWOB is projected: no texture, no UVs, a note
+        // a texture image in LWOB is projected: the texture is kept and UVs are generated (planar, main axis X: U from Z, V from Y), with a note
         std::string s2; BS0(s2, "Wall"); s2 += Sub("COLR", std::string{(char)255, 0, 0, 0}); s2 += Sub("CTEX", [] { std::string t; BS0(t, "Planar Image Map"); return t; }()); s2 += Sub("TIMG", [] { std::string t; BS0(t, "wall.iff"); return t; }());
-        CHECK(Read(Form("LWOB", Chunk("PNTS", pn) + Chunk("SRFS", srfs) + Chunk("POLS", pols) + Chunk("SURF", s2)), m, err) && HasNote(m, "not UV mapped") && !m.materials.empty() && m.materials[0].texture.empty());
+        CHECK(Read(Form("LWOB", Chunk("PNTS", pn) + Chunk("SRFS", srfs) + Chunk("POLS", pols) + Chunk("SURF", s2)), m, err) && HasNote(m, "UVs were generated") && !m.materials.empty() && m.materials[0].texture.find("wall.iff") != std::string::npos);
+        const ImportedPart* wp = nullptr;
+        for (const ImportedPart& p : m.parts) if (p.material >= 0) wp = &p;
+        CHECK(wp != nullptr);
+        if (wp) {
+            const Mesh& pm = wp->mesh;
+            bool uvOk = pm.uvs.size() == pm.vertices.size() && !pm.uvs.empty();
+            Vec3 lo, hi; pm.Bounds(lo, hi);
+            for (std::size_t i = 0; uvOk && i < pm.vertices.size(); ++i) {   // planar, axis X: U from Z, V from Y, each over the part's own box; stored as (u, 1 - v)
+                const Vec3& v = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                if (!Near(t.x, (v.z - lo.z) / (hi.z - lo.z), 1e-4f) || !Near(t.y, 1.0f - (v.y - lo.y) / (hi.y - lo.y), 1e-4f)) uvOk = false;
+            }
+            CHECK(uvOk);
+        }
         // a negative surface number announces detail polygons, which are skipped
         std::string pd; B16(pd, 3); B16(pd, 0); B16(pd, 1); B16(pd, 2); B16(pd, (unsigned)(-1 & 0xFFFF)); B16(pd, 1); B16(pd, 3); B16(pd, 0); B16(pd, 1); B16(pd, 2);
         CHECK(Read(Form("LWOB", Chunk("PNTS", pn) + Chunk("SRFS", srfs) + Chunk("POLS", pd)), m, err) && Tris(m) == 1 && HasNote(m, "detail"));
+    }
+
+    RUN_SUITE("lwo: projected image maps");
+    {
+        ImportedModel m; std::string err;
+        // planar, main axis Y: U from X, V from Z (both over the surface's own box); the texture is listed, a note says UVs were made
+        CHECK(Read(Box2(true, 0, 1), m, err) && HasNote(m, "UVs were generated"));
+        const ImportedPart* bp = nullptr;
+        for (const ImportedPart& p : m.parts) if (p.material >= 0 && m.materials[(std::size_t)p.material].name == "Blue") bp = &p;
+        CHECK(bp != nullptr);
+        if (bp) {
+            CHECK(m.materials[(std::size_t)bp->material].texture.find("blue.tga") != std::string::npos);
+            const Mesh& pm = bp->mesh;
+            bool ok = pm.uvs.size() == pm.vertices.size() && !pm.uvs.empty();
+            for (std::size_t i = 0; ok && i < pm.vertices.size(); ++i) {
+                // Blue is the three faces at x = 1, y = 1 and z = 1 ... in the file's z (negated on reading): the box of its vertices is the whole cube
+                const Vec3& v = pm.vertices[i]; const Vec2& t = pm.uvs[i];
+                if (!Near(t.x, v.x, 1e-4f) || !Near(t.y, -v.z, 1e-4f)) ok = false;   // stored (u, 1 - v) with v = z + 1
+            }
+            CHECK(ok);
+        }
+        // cylindrical around Z with wrap amount 2 in U: V is the height along Z, U goes round once (twice with the wrap), all finite
+        CHECK(Read(Box2(true, 1, 2, 2.0f, 1.0f), m, err) && HasNote(m, "UVs were generated"));
+        bool fin = true; float maxU = 0;
+        for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) { if (!std::isfinite(t.x) || !std::isfinite(t.y)) fin = false; maxU = std::max(maxU, t.x); }
+        CHECK(fin && maxU > 1.0f && maxU <= 2.0001f);
+        // spherical: finite UVs, U in 0..1, V in 0..1
+        CHECK(Read(Box2(true, 2, 1), m, err));
+        bool in01 = true;
+        for (const ImportedPart& p : m.parts) for (const Vec2& t : p.mesh.uvs) if (!(t.x >= -1e-4f && t.x <= 1.0001f && t.y >= -1e-4f && t.y <= 1.0001f)) in01 = false;
+        CHECK(in01);
+        // cubic projection: the texture is kept, no UVs, a note
+        CHECK(Read(Box2(true, 3), m, err) && HasNote(m, "cubic or front"));
+        bool anyUv = false, tex = false;
+        for (const ImportedPart& p : m.parts) { if (!p.mesh.uvs.empty()) anyUv = true; if (p.material >= 0 && !m.materials[(std::size_t)p.material].texture.empty()) tex = true; }
+        CHECK(!anyUv && tex);
     }
 
     RUN_SUITE("lwo: refused files");

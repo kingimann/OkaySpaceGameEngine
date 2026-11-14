@@ -343,7 +343,7 @@ struct PrimGeom {
     std::vector<float> pos, nor, uv, idx;
     int pn = 0, nn = 0, tn = 0, in = 0;
     bool indexed = false;
-    int mode = 4;                  ///< glTF primitive mode (4 triangles, 5 strip, 6 fan; the others are left out)
+    int mode = 4;                  ///< glTF primitive mode (4 triangles, 5 strip, 6 fan; 0..3 points and lines keep their vertices and make no triangles)
     std::vector<int> tri;          ///< the triangles, 3 vertex indices (0 .. pn-1) each, whatever the mode
 };
 inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
@@ -368,8 +368,10 @@ inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
         if (ic != 1) return false;
     }
     if (const JVal* M = prim.Find("mode")) g.mode = M->Int(4);
-    // Points (0) and lines (1 to 3) have no surface: the primitive is left out, as a malformed one is. 7 and up do not exist.
-    if (g.mode < 4 || g.mode > 6) return false;
+    // Points (0) and lines (1 to 3) have no surface: their vertices are kept and no triangle is made (Assimp makes a
+    // mesh with no triangles from them, and so do we). 7 and up do not exist.
+    if (g.mode < 0 || g.mode > 6) return false;
+    if (g.mode < 4) return true;
     // The index sequence, then the triangles the mode makes of it. A triangle with an index past the vertices is dropped on
     // its own (the rest of the primitive stays); a strip's degenerate triangles (repeated index) are dropped too.
     std::vector<int> seq;
@@ -389,6 +391,7 @@ inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
     if (g.mode == 4) { for (std::size_t i = 0; i + 2 < n; i += 3) emit(seq[i], seq[i + 1], seq[i + 2]); }
     else if (g.mode == 5) { for (std::size_t i = 0; i + 2 < n; ++i) { if (i % 2 == 0) emit(seq[i], seq[i + 1], seq[i + 2]); else emit(seq[i + 1], seq[i], seq[i + 2]); } }
     else { for (std::size_t i = 1; i + 1 < n; ++i) emit(seq[0], seq[i], seq[i + 1]); }
+    if (g.tri.empty() && g.pn > 0) return false;   // a triangle primitive none of whose triangles survived has no faces (Assimp refuses such a mesh): left out
     return true;
 }
 

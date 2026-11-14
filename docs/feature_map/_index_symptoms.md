@@ -710,7 +710,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | no search | [57.1](43-proposals.md#571-static-documentation-site) Static documentation site |
-| no shadows at all until Per-pixel lighting is on | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sign the game saved | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
@@ -846,6 +845,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | settings reset on restart | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
 | shadows leak through a thin wall | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | shadows look wrong, blocky or shimmer | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| shadows missing after turning `ShadowsUsePerPixel` off | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | shadows only from one sun | [38.4](38-render-backends.md#384-direct3d-12-backend) Direct3D 12 backend |
 | shadows or bloom missing on Linux | [38.2](38-render-backends.md#382-opengl-backend) OpenGL backend |
 | shops are always open | [53.1](43-proposals.md#531-time-of-day-events-and-gameplay) Time-of-day events and gameplay |

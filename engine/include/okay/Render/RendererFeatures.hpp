@@ -8,14 +8,16 @@
 //   Software   engine/include/okay/Render/SoftwareRenderer.hpp
 //              FogFactor for every fog mode (RenderMeshes). Sun cascades via
 //              ShadowDistance / ShadowCascades (RenderShadowMap). No local
-//              light shadow map. Scene post settings (post.bloom, post.ssao,
-//              post.fxaa, post.dof, post.grading, post.exposure, rs.tonemap)
-//              are not read. The host paints the vignette because
-//              PostVignetteHandled() is set false. Procedural sky colours come
+//              light shadow map. Scene post settings: post.exposure, the
+//              tonemap curve and rs.tonemap, post.grading, the vignette (with
+//              smoothness; PostVignetteHandled() is set true so the host skips
+//              its overlay), post.bloom and post.fxaa are read (PlanScenePost /
+//              ApplyScenePost). post.ssao and post.dof are not. Procedural sky colours come
 //              from EffectiveSkyColors; the disc, halo, clouds and stars are not
-//              drawn. ApplyBloom / ApplySSAO / ApplyFXAA / ApplyToneMap /
-//              ApplyColorGrade read the process-wide switches only.
-//              PerPixelLighting is read only here.
+//              drawn. ApplySSAO reads the process-wide switch only; ApplyBloom, ApplyFXAA
+//              and ApplyColorGrade also still read theirs. PerPixelLighting is
+//              read only here, and ShadowsUsePerPixel (default on) lights per
+//              pixel while a shadow map exists, so shadows show by default.
 //
 //   OpenGL     engine/src/Render/GLRenderer.cpp
 //              Mesh shader uTonemap from rs.tonemap. Post chain (PostActive):
@@ -30,7 +32,7 @@
 //              Same mesh fog modes, filmic flag, sun cascades and localShadow
 //              tiles as OpenGL. Post chain draws exposure, the tonemap curve,
 //              bloom (post.bloom or BloomEnabled), grading, vignette smoothness
-//              and post.fxaa. No depth of field. BloomEnabled does
+//              post.fxaa and post.dof (DofMath.hpp, UNVERIFIED on a GPU). BloomEnabled does
 //              nothing unless the chain is already running (it does not start
 //              the chain). SSAO (post.ssao, or SSAOEnabled while the chain runs)
 //              is an extra pass inside the chain (SsaoMath.hpp). UNVERIFIED on a
@@ -111,19 +113,19 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
     // Indexed by RenderFeature. Keep this list in that order.
     static const RenderFeatureRow kRows[] = {
         {"Linear lighting and the tonemap roll-off", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Exposure", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"The tonemap curve", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Bloom in Post-processing", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Colour grading", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
+        {"Exposure", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
+        {"The tonemap curve", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
+        {"Bloom in Post-processing", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
+        {"Colour grading", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"The vignette", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::Yes}},
         {"Vignette smoothness", false,
          "The vignette amount itself is drawn on every renderer.", nullptr,
-         {S::No, S::Yes, S::Yes, S::No}},
-        {"Anti-aliasing in Post-processing", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
+         {S::Yes, S::Yes, S::Yes, S::No}},
+        {"Anti-aliasing in Post-processing", false, nullptr, nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Ambient occlusion in Post-processing", false,
          "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},
-        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::No, S::No}},
+        {"Depth of field", false, nullptr, nullptr, {S::No, S::Yes, S::Yes, S::No}},
         {"The procedural sun disc, halo, clouds and stars", true,
          "Direct3D 12 and the software renderer show the sun's colours as a plain gradient.",
          nullptr, {S::No, S::Yes, S::Yes, S::No}},
@@ -134,7 +136,7 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
          nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Spot and point light shadows", true,
          "Area lights use the same shadow path, so they are not drawn there either. "
-         "The software renderer draws them, like sun shadows, only with Per-pixel lighting on.",
+         "The software renderer draws them, like sun shadows, by default: it lights per pixel while a shadow is on screen.",
          nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
         {"Bloom in Build Settings and Rendering", false, nullptr, nullptr,
          {S::Yes, S::Yes, S::WhenPostChainRuns, S::No}},

@@ -8,7 +8,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 ## Audits
 
-- [Engine-wide audit](unfinished_engine.md): 92 findings across 14 subsystems (9 High, 57 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO on Direct3D 11 (written, unrun on a GPU), no post-processing on Direct3D 12 (labelled preview), the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
+- [Engine-wide audit](unfinished_engine.md): 93 findings across 14 subsystems (9 High, 58 Medium, 26 Low), each with the file and line, what is missing, impact and size, and a top 15 to tackle first. The High items: accessibility settings that nothing reads, SSAO on Direct3D 11 (written, unrun on a GPU), no post-processing on Direct3D 12 (labelled preview), the editor's Play differing from a built game on keys and gamepads, a mesh collider that is only a bounding box, navigation without off-mesh links or area costs, audio that is mono and fully decoded, editor undo that uses full-scene snapshots, and a save framework with no editor UI.
 
 - [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
@@ -16,6 +16,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | What | State | What is missing |
 |---|---|---|
+| Direct3D 11 depth of field, ambient occlusion, Bloom Softness and AO Power | Compile-checked only | Never run on a GPU or compiled by `D3DCompile`; the shared maths is CPU tested (`dof_math`, `ssao_math`, `post_quality_math`). The software renderer and Direct3D 12 ignore Bloom Softness and AO Power |
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |
 | OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
@@ -36,6 +37,23 @@ The feature map currently has **123** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+| Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
+| Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
+
+## Own cryptography: no hired review, libsodium stays
+
+`okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
+
+| Step | State | Who |
+|---|---|---|
+| Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto` (not done: `AccountService.hpp` `Sha256` is under the PBKDF2 password hashing and uses a copy-state shortcut, `OfficialGame.hpp` `FileSha256` and `AntiCheatChecks.hpp` `HmacSha256` sit on it; moving them is not a small change and needs a new HMAC with RFC 4231 tests), and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
+| Choose a reviewer, a budget and a date; send the request and the bundle | Decided: **no hired reviewer** (owner, 2026-11-14). libsodium stays the default; the package and request stay in the repo in case that changes | Owner |
+| Extra assurance without a hired reviewer: an internal review by a fresh agent, and a review by a second AI (Grok) from `review/CRYPTO_REVIEW_REQUEST.md` on branch `claude/crypto-review-grok` (pinned to commit `0a857395`). Reported as "not independently reviewed"; every claimed bug is reproduced by a test before any change | Internal review running; Grok review waiting for the owner to run it | Team and owner |
+| The outside review itself, its report and findings | Not planned (no reviewer hired) | n/a |
+| Fix every finding from the AI reviews that a test reproduces, or record why it is acceptable, and re-run the evidence | Waiting on the reports | Team |
+| CI jobs the review is likely to ask for (valgrind audit, sanitizer run, libFuzzer, `OKAY_OWN_CRYPTO=ON`); runs on Windows, macOS and WebAssembly | Not started | Team |
+| The flip decision: make it the default for new builds, then delete libsodium one release later (the TweetNaCl port is already deleted) | Owner decision, only after a reviewer's yes | Owner |
 
 ## Planned: visual-script core upgrade
 

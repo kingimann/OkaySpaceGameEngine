@@ -18,13 +18,14 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.1.4 Hit claims and lag compensation - `Net/NetworkManager` - six server checks before any damage; the server alone applies damage (16.6.4)
   - 39.1.5 Unowned world objects - `Net/AntiCheat` - objects nobody owns belong to the server; "Players can claim it" opts in; refusals there are logged once and don't count as violations
   - 39.1.6 Kick filing - `Net/DedicatedServer` - `KickReporter` files `ac_reports` rows, nothing is banned automatically (16.5.4)
+  - 39.1.7 Easy setup - `editor/AntiCheatSetup.hpp`, `editor/AntiCheatSetupUi.cpp` - three presets (Casual co-op, Competitive, Economy game), one-click Add Anti-Cheat (Add Component and the Network Manager), spawn list filled from the project's networked prefabs, and the Anti-cheat checklist (Inspector and Build Settings) with safe fix buttons
 - **Code:** `Net/AntiCheat`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
 - **API:** `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
-- **Editor:** Inspector: Anti-Cheat Config and Net Validator; File > Build Settings > Server page
-- **Docs:** `docs/anticheat.md` (P1, Network hardening, Gameplay validation), `docs/launcher-multiplayer.md`
-- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`
+- **Editor:** Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one click); Network Manager > Add Anti-Cheat; File > Build Settings > Anti-cheat checklist; File > Build Settings > Server page
+- **Docs:** `docs/anticheat_quickstart.md`, `docs/anticheat.md` (P1, Network hardening, Gameplay validation, Exporting), `docs/launcher-multiplayer.md`
+- **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`, `anticheat_setup` (presets, checklist, export round trip)
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
-- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
+- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; the easy-setup windows (presets, checklist) have unit tests but have not been run in the real editor; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
 - **Related:** 16.6, 16.11, 39.2, 39.12
 - **Words:** anti-cheat, cheat, authority, allowlist, forged syncvar, hit claim, NetValidator, .okayac, violation, kick, speed hack, fire rate, ammo budget
 - **Seen as:** "forged syncvar", "rpc rejected", "hit rejected" in the log; players kicked for speed; clients can't spawn a prefab
@@ -79,7 +80,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.4.1 Manifest writer - `shared/AntiCheatIntegrity.hpp` - `WriteBuildManifest` (called by the editor's Build Game), `SignIntegrity`, `LoadSigningKey` from `OKAY_AC_SIGNING_KEY_FILE` or `OKAY_AC_SIGNING_KEY`
   - 39.4.2 Verifier - `shared/AntiCheatIntegrity.hpp` - `VerifyInstall` fails on a missing or changed file, an unlisted program file (`.exe`, `.dll`, `.asi`, hidden ones too), a linked file or folder, a bad signature, or an untrusted signer
   - 39.4.3 Start decision - `shared/AntiCheatIntegrity.hpp` - `DecideStart` and `CheckLaunch`: Off, Report or Enforce from the build (`anticheat=` in `game.okayconfig`), `OKAY_ANTICHEAT` (stricter only) and trusted keys
-  - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise a portable TweetNaCl port with libsodium's extra checks (canonical S, no small-order R or key); tested against RFC 8032 vectors
+  - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise our own `okay::crypto` (the TweetNaCl-derived port is deleted) with libsodium's extra checks (canonical S, no small-order R or key); `okay::crypto` is not yet reviewed from outside; tested against RFC 8032 vectors and a recorded transcript of the old port's answers
   - 39.4.5 File hashing and safe paths - `shared/OfficialGame.hpp` - `okayofficial::Verify` (size plus SHA-256) and path checks shared with the official-game updater
   - 39.4.6 Launcher and player hooks - `launcher/main.cpp` (L1181), `player/main.cpp` (L1405) - launcher checks the official game and library games with a `game.okayconfig`; the player checks before anything loads; a player built with trusted keys needs a valid signed manifest and takes its mode from it
   - 39.4.7 Build Settings option - `editor/main.cpp` (Output > Anti-cheat) - Off, Report, Enforce; writes `anticheat=`
@@ -89,7 +90,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Docs:** `docs/anticheat.md` (P3: client integrity, The manifest, Keys, Crypto, Limits)
 - **Tests:** `anticheat_integrity`, `official_game`
 - **Status:** Partial - the code and its tests are complete; whether the released launcher trusts any key depends on the repository variable `OKAY_AC_TRUSTED_KEYS` (the release only warns when it is empty), so by default this is telemetry; client-side checks can always be patched out (docs "Limits")
-- **Open:** set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games; the launcher always uses the portable crypto (it doesn't link the engine)
+- **Open:** set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games; a build without libsodium uses `okay::crypto`, which has not had its outside review
 - **Related:** 17.13, 17.14, 18.6, 39.7
 - **Words:** integrity, manifest.json, signed manifest, ed25519, SHA-256, tampered build, launch check, Report, Enforce, trusted keys, game.okayconfig, anticheat=
 - **Seen as:** "The game refuses to start" after editing a file; a launcher warning in report mode; a proxy `version.dll` next to the exe is flagged

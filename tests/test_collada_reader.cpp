@@ -320,6 +320,20 @@ int main() {
         // ... but "1,2,3" or "1.5,2" is not a number
         CHECK(!ReadColladaBuffer(doc("1,2,3 0 0 0 0 0 0 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>"), "", m, &err));
         CHECK(!ReadColladaBuffer(doc("1.5,2 0 0 0 0 0 0 0 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>"), "", m, &err));
+        // A file of cameras and lights only (the corpus' cameras.dae and lights.dae) reads as an empty mesh set with its nodes
+        {
+            const std::string cl = "<COLLADA xmlns=\"http://www.collada.org/2005/11/COLLADASchema\" version=\"1.4.1\"><asset><up_axis>Y_UP</up_axis></asset>"
+                "<library_cameras><camera id=\"c\"><optics><technique_common><perspective><yfov>45</yfov></perspective></technique_common></optics></camera></library_cameras>"
+                "<library_visual_scenes><visual_scene id=\"s\"><node id=\"Cam\" name=\"Cam\"><instance_camera url=\"#c\"/></node><node id=\"Lamp\" name=\"Lamp\"/></visual_scene></library_visual_scenes>"
+                "<scene><instance_visual_scene url=\"#s\"/></scene></COLLADA>";
+            ImportedModel cm;
+            CHECK(ReadColladaBuffer(cl, "", cm, &err));
+            CHECK(cm.parts.empty() && cm.nodes.size() == 3 && HasNote(cm, "no mesh"));
+            // the scene import builds the node hierarchy; the file is not an error
+            { Scene sc; sc.physicsEnabled = false; CHECK(BuildSceneFromModel(sc, cm, "cams.dae") != nullptr); }
+            // a visual scene with no node at all is still refused
+            CHECK(!ReadColladaBuffer("<COLLADA><library_visual_scenes><visual_scene id='s'/></library_visual_scenes></COLLADA>", "", cm, &err));
+        }
         // UTF-16 (little and big endian, with and without a byte order mark) reads like UTF-8
         const std::string tri = doc("0 0 0  1 0 0  0 1 0", "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles>");
         for (int variant = 0; variant < 4; ++variant) {

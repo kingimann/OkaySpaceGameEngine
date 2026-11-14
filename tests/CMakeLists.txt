@@ -681,9 +681,18 @@ add_test(NAME light_shadows COMMAND test_light_shadows)
 add_executable(test_software_local_shadows test_software_local_shadows.cpp)
 target_link_libraries(test_software_local_shadows PRIVATE okay::engine)
 add_test(NAME software_local_shadows COMMAND test_software_local_shadows)
+add_executable(test_software_default_shadows test_software_default_shadows.cpp)
+target_link_libraries(test_software_default_shadows PRIVATE okay::engine)
+add_test(NAME software_default_shadows COMMAND test_software_default_shadows)
+add_executable(test_software_scene_post test_software_scene_post.cpp)
+target_link_libraries(test_software_scene_post PRIVATE okay::engine)
+add_test(NAME software_scene_post COMMAND test_software_scene_post)
 add_executable(test_ssao_math test_ssao_math.cpp)
 target_link_libraries(test_ssao_math PRIVATE okay::engine)
 add_test(NAME ssao_math COMMAND test_ssao_math)
+add_executable(test_d3d_post_hlsl test_d3d_post_hlsl.cpp)
+target_link_libraries(test_d3d_post_hlsl PRIVATE okay::engine)
+add_test(NAME d3d_post_hlsl COMMAND test_d3d_post_hlsl)
 
 add_executable(test_modifiers test_modifiers.cpp)
 target_link_libraries(test_modifiers PRIVATE okay::engine)
@@ -1677,7 +1686,7 @@ add_executable(test_launcher_versions test_launcher_versions.cpp
     ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
 target_compile_features(test_launcher_versions PRIVATE cxx_std_17)
 target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
-target_link_libraries(test_launcher_versions PRIVATE Threads::Threads)
+target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
 # The same download through our own HTTP client (docs/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
@@ -1697,7 +1706,7 @@ endif()
 add_executable(test_self_update test_self_update.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
 target_compile_features(test_self_update PRIVATE cxx_std_17)
 target_include_directories(test_self_update PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
-target_link_libraries(test_self_update PRIVATE Threads::Threads)
+target_link_libraries(test_self_update PRIVATE Threads::Threads okay::crypto)
 if(WIN32)
     target_link_libraries(test_self_update PRIVATE shell32)
 endif()
@@ -1707,6 +1716,7 @@ add_test(NAME self_update COMMAND test_self_update)
 # the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
 add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
 target_compile_features(test_update_signature PRIVATE cxx_std_17)
+target_link_libraries(test_update_signature PRIVATE okay::crypto)   # shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
 target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
@@ -1792,16 +1802,28 @@ target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
 target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
 # The same test compiled two more ways WITHOUT the engine, so shared/AntiCheatCrypto.hpp is proven to work where the
-# engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone (Ed25519 and SHA-512 from our own library,
-# the port only as the reference the test compares with), (b) with neither libsodium nor okay::crypto (the portable port).
+# engine is not linked: (a) with -DOKAY_OWN_CRYPTO against okay::crypto alone, (b) with neither the define nor libsodium
+# (the fallback a no-libsodium launcher or player build uses: also okay::crypto, which is now the only non-libsodium path;
+# the TweetNaCl-derived port that used to be here is deleted).
 add_executable(test_anticheat_integrity_ownlib test_anticheat_integrity.cpp)
 target_link_libraries(test_anticheat_integrity_ownlib PRIVATE okay::crypto)
 target_include_directories(test_anticheat_integrity_ownlib PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_compile_definitions(test_anticheat_integrity_ownlib PRIVATE OKAY_OWN_CRYPTO)
 add_test(NAME anticheat_integrity_ownlib COMMAND test_anticheat_integrity_ownlib)
-add_executable(test_anticheat_integrity_portable test_anticheat_integrity.cpp)
-target_include_directories(test_anticheat_integrity_portable PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
-add_test(NAME anticheat_integrity_portable COMMAND test_anticheat_integrity_portable)
+add_executable(test_anticheat_integrity_fallback test_anticheat_integrity.cpp)
+target_link_libraries(test_anticheat_integrity_fallback PRIVATE okay::crypto)
+target_include_directories(test_anticheat_integrity_fallback PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_integrity_fallback COMMAND test_anticheat_integrity_fallback)
+# What the old TweetNaCl-derived Ed25519 and SHA-512 answered on a fixed set of inputs (recorded before it was deleted),
+# checked against whatever backend this build uses; and again against okay::crypto alone, and with OKAY_OWN_CRYPTO.
+add_executable(test_anticheat_golden test_anticheat_golden.cpp)
+target_link_libraries(test_anticheat_golden PRIVATE okay::crypto)
+target_include_directories(test_anticheat_golden PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_golden COMMAND test_anticheat_golden)
+add_executable(test_anticheat_golden_engine test_anticheat_golden.cpp)
+target_link_libraries(test_anticheat_golden_engine PRIVATE okay::engine)   # libsodium when the build has it
+target_include_directories(test_anticheat_golden_engine PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_golden_engine COMMAND test_anticheat_golden_engine)
 add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
@@ -1827,6 +1849,10 @@ add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
 target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
 target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
+# Easy anti-cheat setup (editor/AntiCheatSetup.hpp): presets, Add Anti-Cheat, the checklist, and the round trip to the build.
+add_executable(test_anticheat_setup test_anticheat_setup.cpp)
+target_link_libraries(test_anticheat_setup PRIVATE okay::engine)
+add_test(NAME anticheat_setup COMMAND test_anticheat_setup)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)
@@ -2815,12 +2841,11 @@ if(_okay_xc_sodium)
     target_link_libraries(test_crypto_sodium_xcheck PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(test_crypto_sodium_xcheck SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
     add_test(NAME crypto_sodium_xcheck COMMAND test_crypto_sodium_xcheck)
-    # The large differential test (libsodium and the TweetNaCl-derived port; structured edge-case inputs). The ctest is a smoke run;
+    # The large differential test (against libsodium; structured edge-case inputs). The ctest is a smoke run;
     # `OKAY_DIFF_N=1000000 build/tests/crypto_difftest` is the ten-minute run (see docs/crypto_review_package.md).
     add_executable(crypto_difftest crypto_difftest.cpp)
     target_link_libraries(crypto_difftest PRIVATE okay::crypto ${OKAY_XC_SODIUM_LIBRARIES})
     target_include_directories(crypto_difftest SYSTEM PRIVATE ${OKAY_XC_SODIUM_INCLUDE_DIRS})
-    target_include_directories(crypto_difftest PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
     add_test(NAME crypto_difftest_smoke COMMAND crypto_difftest 1500)
 endif()
 # 2) Python `cryptography` (OpenSSL) and hashlib, through a line-protocol front end to our code.
@@ -3115,6 +3140,40 @@ target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 
+# Batch C own readers (MD2 / MD3 / IRRMESH / B3D / DirectX .x): one test per reader on SYNTHETIC fixtures built in memory
+# (tests/batchc_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources only,
+# no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_BATCHC_FUZZ_ITERS raises the sweep).
+function(okay_batchc_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src} ${ARGN})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_batchc_reader_test(md2 Md2Reader.cpp)
+okay_batchc_reader_test(md3 Md3Reader.cpp)
+okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
+okay_batchc_reader_test(b3d B3dReader.cpp)
+# the .x reader unpacks MSZIP with the engine's own inflate
+okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+add_executable(test_batchc_hostile test_batchc_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrMeshReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XFileReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchc_hostile PROPERTIES TIMEOUT 600)
+
+# The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
+target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
+add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)
@@ -3155,3 +3214,10 @@ add_executable(test_own_dispatch test_own_dispatch.cpp)
 target_link_libraries(test_own_dispatch PRIVATE okay::engine)
 target_compile_definitions(test_own_dispatch PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(test_dof_math test_dof_math.cpp)
+target_link_libraries(test_dof_math PRIVATE okay::engine)
+add_test(NAME dof_math COMMAND test_dof_math)
+add_executable(test_post_quality_math test_post_quality_math.cpp)
+target_link_libraries(test_post_quality_math PRIVATE okay::engine)
+add_test(NAME post_quality_math COMMAND test_post_quality_math)

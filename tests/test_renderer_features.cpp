@@ -17,32 +17,32 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::FilmicLighting, B::Software, S::No}, {F::FilmicLighting, B::OpenGL, S::Yes},
         {F::FilmicLighting, B::Direct3D11, S::Yes}, {F::FilmicLighting, B::Direct3D12, S::No},
 
-        {F::Exposure, B::Software, S::No}, {F::Exposure, B::OpenGL, S::Yes},
+        {F::Exposure, B::Software, S::Yes}, {F::Exposure, B::OpenGL, S::Yes},
         {F::Exposure, B::Direct3D11, S::Yes}, {F::Exposure, B::Direct3D12, S::No},
 
-        {F::TonemapCurve, B::Software, S::No}, {F::TonemapCurve, B::OpenGL, S::Yes},
+        {F::TonemapCurve, B::Software, S::Yes}, {F::TonemapCurve, B::OpenGL, S::Yes},
         {F::TonemapCurve, B::Direct3D11, S::Yes}, {F::TonemapCurve, B::Direct3D12, S::No},
 
-        {F::SceneBloom, B::Software, S::No}, {F::SceneBloom, B::OpenGL, S::Yes},
+        {F::SceneBloom, B::Software, S::Yes}, {F::SceneBloom, B::OpenGL, S::Yes},
         {F::SceneBloom, B::Direct3D11, S::Yes}, {F::SceneBloom, B::Direct3D12, S::No},
 
-        {F::ColourGrading, B::Software, S::No}, {F::ColourGrading, B::OpenGL, S::Yes},
+        {F::ColourGrading, B::Software, S::Yes}, {F::ColourGrading, B::OpenGL, S::Yes},
         {F::ColourGrading, B::Direct3D11, S::Yes}, {F::ColourGrading, B::Direct3D12, S::No},
 
         {F::VignetteAmount, B::Software, S::Yes}, {F::VignetteAmount, B::OpenGL, S::Yes},
         {F::VignetteAmount, B::Direct3D11, S::Yes}, {F::VignetteAmount, B::Direct3D12, S::Yes},
 
-        {F::VignetteSmoothness, B::Software, S::No}, {F::VignetteSmoothness, B::OpenGL, S::Yes},
+        {F::VignetteSmoothness, B::Software, S::Yes}, {F::VignetteSmoothness, B::OpenGL, S::Yes},
         {F::VignetteSmoothness, B::Direct3D11, S::Yes}, {F::VignetteSmoothness, B::Direct3D12, S::No},
 
-        {F::SceneFxaa, B::Software, S::No}, {F::SceneFxaa, B::OpenGL, S::Yes},
+        {F::SceneFxaa, B::Software, S::Yes}, {F::SceneFxaa, B::OpenGL, S::Yes},
         {F::SceneFxaa, B::Direct3D11, S::Yes}, {F::SceneFxaa, B::Direct3D12, S::No},
 
         {F::SceneSsao, B::Software, S::No}, {F::SceneSsao, B::OpenGL, S::Yes},
         {F::SceneSsao, B::Direct3D11, S::Yes}, {F::SceneSsao, B::Direct3D12, S::No},
 
         {F::DepthOfField, B::Software, S::No}, {F::DepthOfField, B::OpenGL, S::Yes},
-        {F::DepthOfField, B::Direct3D11, S::No}, {F::DepthOfField, B::Direct3D12, S::No},
+        {F::DepthOfField, B::Direct3D11, S::Yes}, {F::DepthOfField, B::Direct3D12, S::No},
 
         {F::ProceduralSkyDetail, B::Software, S::No}, {F::ProceduralSkyDetail, B::OpenGL, S::Yes},
         {F::ProceduralSkyDetail, B::Direct3D11, S::Yes}, {F::ProceduralSkyDetail, B::Direct3D12, S::No},
@@ -107,14 +107,14 @@ int main() {
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::SpotPointShadows),
                       "Spot and point light shadows are not drawn on Direct3D 12. "
                       "Area lights use the same shadow path, so they are not drawn there either. "
-                      "The software renderer draws them, like sun shadows, only with Per-pixel lighting on.") == 0);
+                      "The software renderer draws them, like sun shadows, by default: it lights per pixel while a shadow is on screen.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::SceneSsao),
                       "Ambient occlusion in Post-processing is not drawn on Direct3D 12 or the software renderer. "
                       "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::DepthOfField),
-                      "Depth of field is not drawn on Direct3D 11, Direct3D 12 or the software renderer.") == 0);
+                      "Depth of field is not drawn on Direct3D 12 or the software renderer.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::BuildBloom),
                       "Bloom in Build Settings and Rendering is not drawn on Direct3D 12. "

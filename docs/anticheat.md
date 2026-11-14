@@ -1,5 +1,7 @@
 # Anti-cheat
 
+**New here?** Start with [Add anti-cheat to your game in 5 minutes](anticheat_quickstart.md): presets, a checklist and no hand-written files.
+
 OkaySpace's anti-cheat runs on the **server** and is **opt-in**. With it off,
 nothing is checked and nothing is sent differently from before.
 
@@ -37,7 +39,11 @@ nothing is checked and nothing is sent differently from before.
 
 ## Turning it on
 
-Add an **Anti-Cheat Config** component to the scene (with a Network Manager), or
+The quick way: on the Network Manager, pick a preset and press **Add Anti-Cheat** (or Add Component > *Anti-Cheat (one click, safe preset)*), then
+work through the **Anti-cheat checklist** in the Anti-Cheat Config or in Build Settings. See [anticheat_quickstart.md](anticheat_quickstart.md).
+The presets are in `editor/AntiCheatSetup.hpp`.
+
+By hand: add an **Anti-Cheat Config** component to the scene (with a Network Manager), or
 set `NetworkManager::anticheat.settings` in code. Its rules can also come from a
 `.okayac` file (one `key value` per line, `#` comments):
 
@@ -96,6 +102,21 @@ It also fails closed:
 
 On its first tick a server logs one line naming the protections that are off
 (anti-cheat, encryption, move check, message rate limit).
+
+## Exporting a game with anti-cheat
+
+Build Game and the dedicated server export carry what you chose in the editor:
+
+- The rules (inline in the Anti-Cheat Config) are saved in the scene file. That includes the spawn list,
+  the server-only and client-writable SyncVar prefixes, the spawn limits and the ticket key and audience.
+  An exported server loads the scene, so it has them.
+- A **Rules file** (`.okayac`) you set is shipped with the build, together with every prefab it names on a
+  `spawn` line. A relative path is looked for in the game's data folder (`<Name>_Data/` or `Data/`) and, in
+  the editor, in the project's `Assets/` folder. If it cannot be found, the server refuses every join.
+- Every prefab on the spawn list is shipped, even with *Strip unused assets* on.
+- Build Settings > **Anti-cheat** (Off / Report / Enforce) is saved in the build profile. A build that has it on
+  writes the signed `Data/manifest.json` and tells the player which mode to use.
+- Nothing turns on by itself: a project with no Anti-Cheat Config and Anti-cheat Off exports exactly as before.
 
 ## P2: encryption required and replay protection
 
@@ -1051,13 +1072,19 @@ localhost); ctest skips it otherwise. Never point it at a live database.
 
 - ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
   the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
-  Otherwise a portable implementation in `shared/AntiCheatCrypto.hpp` is used:
-  a port of TweetNaCl's public-domain ed25519, plus the checks libsodium 1.0.18
-  makes before verifying: S must be canonical, R must not be a small-order
-  point, and the public key must be canonical and not small-order (so the
-  identity-key forgery TweetNaCl alone accepts is refused). The launcher always
-  uses the portable code, because it doesn't link the engine. Both are tested
-  against the RFC 8032 vectors and the small-order encodings on every build.
+  Otherwise (and with `-DOKAY_OWN_CRYPTO=ON`) `shared/AntiCheatCrypto.hpp` uses
+  `okay::crypto`, our own Ed25519 (`engine/src/Crypto/`, written from RFC 8032).
+  `shared/AntiCheatCrypto.hpp` itself holds no crypto code: the TweetNaCl-derived
+  port that used to be the fallback is deleted. `okay::crypto` makes the checks
+  libsodium 1.0.18 makes before verifying: S must be canonical, R must not be a
+  small-order point, and the public key must be canonical and not small-order
+  (so the identity-key forgery plain TweetNaCl accepts is refused). The launcher
+  links `okay_crypto` directly. **`okay::crypto` has not had its outside review
+  yet** (`CLAUDE.md` rule 18, `docs/crypto_review_package.md`), so a build
+  without libsodium relies on unreviewed code for this; libsodium stays the
+  preferred path where it is built. Both paths are tested against the RFC 8032
+  vectors and the small-order encodings on every build, and
+  `tests/test_anticheat_golden.cpp` pins what the old port answered.
 - SHA-256 is the engine's bundled implementation, the same one the official-game
   updater uses.
 

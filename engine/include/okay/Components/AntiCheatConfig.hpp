@@ -67,6 +67,11 @@ public:
     /// server refuses joins).
     bool Apply();
     const std::string& LoadError() const { return m_error; }
+    /// Where a relative `file` is looked for when it is not found as written (the working folder): a built game's data
+    /// folder (the player sets it), or the project's Assets folder in the editor. Without it a rules file the build ships
+    /// would not be found in <Name>_Data/ and the server would refuse every join.
+    static void SetAssetBaseDir(const std::string& dir);
+    static const std::string& AssetBaseDir();
     /// The rules in force after Apply (the file's, or `settings`).
     const AntiCheatSettings& Active() const { return m_active; }
 

@@ -54,6 +54,8 @@ struct Surf {
     std::string name, texture, uvMap;
     float col[3] = {0.78f, 0.78f, 0.78f}, diffuse = 1.0f, lum = 0, spec = 0, gloss = -1, tran = 0, crease = 0;
     bool hasTexture = false, projNotUv = false;
+    int proj = 5, axis = 0;                    // image map projection (0 planar, 1 cylindrical, 2 spherical, 3 cubic, 4 front, 5 UV) and its main axis (0 X, 1 Y, 2 Z)
+    float wrapW = 1.0f, wrapH = 1.0f;          // wrap amounts of a cylindrical or spherical map
     float glossLwob = -1;
 };
 struct Layer {
@@ -64,6 +66,74 @@ struct Layer {
     std::map<std::string, std::map<std::uint32_t, Vec2>> vmap;
     std::map<std::string, std::map<std::uint64_t, Vec2>> vmad;   // key = point << 32 | polygon
 };
+
+// UVs for a surface whose image map is planar (0), cylindrical (1) or spherical (2) around axis X, Y or Z, one per triangle
+// corner (`ci` holds the position index of each corner, stored as (u, 1 - v)). This is Assimp's ComputeUVMappingProcess:
+// the box and centre are those of the surface's vertices, and U values near the seam are rounded to the side of the face.
+void ProjectUvs(const std::vector<Vec3>& pos, const std::vector<std::uint32_t>& ci, const Surf& sf, std::vector<Vec2>& cuv) {
+    const double kPi = 3.14159265358979323846;
+    Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    for (const Vec3& v : pos) {
+        lo.x = std::min(lo.x, v.x); lo.y = std::min(lo.y, v.y); lo.z = std::min(lo.z, v.z);
+        hi.x = std::max(hi.x, v.x); hi.y = std::max(hi.y, v.y); hi.z = std::max(hi.z, v.z);
+    }
+    const double c[3] = {0.5 * ((double)lo.x + hi.x), 0.5 * ((double)lo.y + hi.y), 0.5 * ((double)lo.z + hi.z)};
+    const double mn[3] = {lo.x, lo.y, lo.z}, mx[3] = {hi.x, hi.y, hi.z};
+    auto frac = [&](double v, int a) { const double d = mx[a] - mn[a]; return d > 1e-20 ? (v - mn[a]) / d : 0.0; };
+    // the two axes after `ax` in Assimp's formulas: X -> (Z, Y), Y -> (X, Z), Z -> (X, Y); angle taken as atan2(second, first)
+    const int ax = sf.axis;
+    const int a1 = ax == 0 ? 2 : 0, a2 = ax == 0 ? 1 : (ax == 1 ? 2 : 1);   // planar: u from a1, v from a2
+    cuv.assign(ci.size(), Vec2{0, 0});
+    std::vector<Vec2> uv(ci.size());
+    for (std::size_t k = 0; k < ci.size(); ++k) {
+        const Vec3& p = pos[ci[k]];
+        const double q[3] = {p.x, p.y, p.z};
+        double u = 0, v = 0;
+        if (sf.proj == 0) { u = frac(q[a1], a1); v = frac(q[a2], a2); }
+        else if (sf.proj == 1) {
+            // angle from the two axes other than the main one: X -> atan2(z, y), Y -> atan2(x, z), Z -> atan2(y, x)
+            const int p1 = ax == 0 ? 2 : (ax == 1 ? 0 : 1), p2 = ax == 0 ? 1 : (ax == 1 ? 2 : 0);
+            u = (std::atan2(q[p1] - c[p1], q[p2] - c[p2]) + kPi) / (2 * kPi);
+            v = frac(q[ax], ax);
+        } else {
+            const int p1 = ax == 0 ? 2 : (ax == 1 ? 0 : 1), p2 = ax == 0 ? 1 : (ax == 1 ? 2 : 0);
+            double d[3] = {q[0] - c[0], q[1] - c[1], q[2] - c[2]};
+            const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (len > 1e-20) { d[0] /= len; d[1] /= len; d[2] /= len; }
+            u = (std::atan2(d[p1], d[p2]) + kPi) / (2 * kPi);
+            v = (std::asin(std::max(-1.0, std::min(1.0, d[ax]))) + 0.5 * kPi) / kPi;
+        }
+        uv[k] = Vec2{(float)u, (float)v};
+    }
+    if (sf.proj != 0) {   // seams: a triangle with a U under 0.1 and another over 0.9 has the odd ones rounded to the other side
+        for (std::size_t t = 0; t + 2 < uv.size(); t += 3) {
+            bool zero = false, one = false, roundToZero = false, small = false, large = false;
+            for (int n = 0; n < 3; ++n) {
+                const float x = uv[t + (std::size_t)n].x;
+                if (x < 0.1f) { small = true; if (x <= 0.01f) zero = true; else roundToZero = true; }
+                if (x > 0.9f) { large = true; if (x >= 0.99f) one = true; }
+            }
+            if (!small || !large) continue;
+            for (int n = 0; n < 3; ++n) {
+                float& x = uv[t + (std::size_t)n].x;
+                if (x > 0.9f && !zero) x = 0.0f;
+                else if (x < 0.1f && !one) x = 1.0f;
+                else if (one && zero) {
+                    if (roundToZero && x >= 0.99f) x = 0.0f;
+                    else if (!roundToZero && x <= 0.01f) x = 1.0f;
+                }
+            }
+        }
+    }
+    const bool wrap = sf.proj != 0;   // wrap amounts scale a cylindrical or spherical map
+    for (std::size_t k = 0; k < ci.size(); ++k) {
+        float u = uv[k].x, v = uv[k].y;
+        if (wrap) { u *= sf.wrapW; v *= sf.wrapH; }
+        if (!std::isfinite(u)) u = 0;
+        if (!std::isfinite(v)) v = 0;
+        cuv[k] = Vec2{u, 1.0f - v};
+    }
+}
 
 struct Reader {
     std::string err, baseDir;
@@ -76,7 +146,7 @@ struct Reader {
     bool lwob = false;
     std::string firstUvMap;
     std::size_t chunks = 0, totalPts = 0, totalPolys = 0, totalTris = 0, uvCount = 0;
-    int envelopes = 0, procBlocks = 0, nonUvProj = 0, hiddenLayers = 0, pivots = 0, curves = 0, patches = 0, smgp = 0, badPolys = 0, badIdx = 0, noSurf = 0, colorMaps = 0, otherVmaps = 0, detailPolys = 0, badUvs = 0, degenerate = 0, otherTex = 0, unknownChunks = 0, lwo3 = 0;
+    int envelopes = 0, procBlocks = 0, nonUvProj = 0, projApplied = 0, hiddenLayers = 0, pivots = 0, curves = 0, patches = 0, smgp = 0, badPolys = 0, badIdx = 0, noSurf = 0, colorMaps = 0, otherVmaps = 0, detailPolys = 0, badUvs = 0, degenerate = 0, otherTex = 0, unknownChunks = 0, lwo3 = 0;
     std::set<std::string> unknown;
 
     bool Fail(const std::string& m) { if (err.empty()) err = "LWO: " + m; return false; }
@@ -116,13 +186,16 @@ struct Reader {
                 h.S0();
                 std::string chan = "COLR";
                 while (h.Left() >= 6) { const std::string hid = Id4(h.p); h.Skip(4); const unsigned hlen = h.U16(); if (h.Left() < hlen) break; if (hid == "CHAN" && hlen >= 4) chan = Id4(h.p); h.Skip(std::min<std::size_t>(h.Left(), (std::size_t)hlen + (hlen & 1u))); }
-                int proj = 5; std::uint32_t clip = 0xFFFFFFFFu; std::string vm;
+                int proj = 5, axis = 0; float wrapW = 1.0f, wrapH = 1.0f; std::uint32_t clip = 0xFFFFFFFFu; std::string vm;
                 while (sub.Left() >= 6) {
                     const std::string bid = Id4(sub.p); sub.Skip(4); const unsigned blen = sub.U16();
                     if (sub.Left() < blen) break;
                     Cur b{sub.p, sub.p + blen};
                     sub.Skip(std::min<std::size_t>(sub.Left(), (std::size_t)blen + (blen & 1u)));
                     if (bid == "PROJ") proj = (int)b.U16();
+                    else if (bid == "AXIS") axis = (int)b.U16();
+                    else if (bid == "WRPW") { const float w = b.F32(); if (std::isfinite(w)) wrapW = w; }
+                    else if (bid == "WRPH") { const float w = b.F32(); if (std::isfinite(w)) wrapH = w; }
                     else if (bid == "IMAG") clip = b.VX();
                     else if (bid == "VMAP") vm = b.S0();
                 }
@@ -130,7 +203,8 @@ struct Reader {
                 if (s.hasTexture) { ++otherTex; continue; }   // only the first colour image map
                 if (clip == 0xFFFFFFFFu) continue;
                 s.hasTexture = true; s.uvMap = vm; s.texture = std::to_string(clip);
-                if (proj != 5) { s.projNotUv = true; ++nonUvProj; }
+                s.proj = proj; s.axis = axis < 0 || axis > 2 ? 0 : axis; s.wrapW = wrapW; s.wrapH = wrapH;
+                if (proj != 5) { s.projNotUv = true; if (proj > 2) ++nonUvProj; else ++projApplied; }
             }
         }
         if (surfs.size() >= kMaxSurfaces) return Fail("too many surfaces");
@@ -259,12 +333,23 @@ struct Reader {
             else if (id == "TRAN") tranPct = (float)sub.I16();
             else if (id == "GLOS") s.glossLwob = (float)sub.I16();
             else if (id == "SMAN") s.crease = sub.F32();
-            else if (id == "CTEX") { const std::string t = sub.S0(); if (t.compare(0, 6, "Planar") != 0 && !t.empty()) {} s.projNotUv = true; }
+            else if (id == "CTEX") {
+                const std::string t = sub.S0(); s.projNotUv = true;
+                if (t.find("Planar") != std::string::npos) s.proj = 0;
+                else if (t.find("Cylindrical") != std::string::npos) s.proj = 1;
+                else if (t.find("Spherical") != std::string::npos) s.proj = 2;
+                else if (t.find("Cubic") != std::string::npos) s.proj = 3;
+                else s.proj = 4;
+            }
+            else if (id == "TFLG") { const unsigned f = sub.U16(); s.axis = (f & 1) ? 0 : (f & 2) ? 1 : (f & 4) ? 2 : 0; }
             else if (id == "TIMG") { if (!s.hasTexture) { s.texture = sub.S0(); s.hasTexture = !s.texture.empty() && s.texture != "(none)"; } }
             else if (id == "DTEX" || id == "STEX" || id == "RTEX" || id == "TTEX" || id == "BTEX") ++otherTex;
         }
         s.diffuse = diffPct / 256.0f; s.lum = lumPct / 256.0f; s.spec = specPct / 256.0f; s.tran = tranPct / 256.0f;
-        if (s.hasTexture) { ++nonUvProj; s.projNotUv = true; }   // LWOB image maps are projected (planar / cylindrical / spherical): no UVs
+        if (s.hasTexture) {   // LWOB image maps are projected (planar / cylindrical / spherical / cubic / front): UVs are generated for the first three
+            s.projNotUv = true;
+            if (s.proj > 2) ++nonUvProj; else ++projApplied;
+        }
         if (surfs.size() >= kMaxSurfaces) return Fail("too many surfaces");
         surfs.push_back(std::move(s));
         return true;
@@ -339,7 +424,7 @@ struct Reader {
                 if (lwob) { if (s.glossLwob > 0) mat.shininess = std::min(s.glossLwob, 1024.0f); }
                 else if (s.gloss >= 0 && std::isfinite(s.gloss)) mat.shininess = (float)std::min(1024.0, std::pow(2.0, 10.0 * std::min((double)s.gloss, 1.0) + 2.0));
             }
-            if (s.hasTexture && !s.projNotUv) {
+            if (s.hasTexture) {   // projected maps list their image too (Assimp does); their UVs are generated below
                 std::string f = s.texture;
                 if (!lwob) { char* endp = nullptr; const unsigned long ci = std::strtoul(f.c_str(), &endp, 10); auto c = clips.find((std::uint32_t)ci); f = c == clips.end() ? std::string() : c->second; }
                 for (char& ch : f) if (ch == '\\') ch = '/';
@@ -409,6 +494,17 @@ struct Reader {
                     }
                 }
             }
+            // Planar, cylindrical and spherical image maps: UVs from the positions of this surface's mesh, in the layer's space
+            // (the same mapping as Assimp's GenUVCoords step: from the mesh's bounding box, ignoring the map's own centre, size
+            // and rotation; a cylindrical or spherical map's wrap amounts scale U and V).
+            for (auto& kv : soups) {
+                SurfSoup& ss = kv.second;
+                if (kv.first < 0 || ss.soup.ci.empty()) continue;
+                const Surf& sf = surfs[(std::size_t)kv.first];
+                if (!sf.hasTexture || !sf.projNotUv || sf.proj > 2) continue;
+                ProjectUvs(ss.soup.pos, ss.soup.ci, sf, ss.soup.cuv);
+                ss.uv = true;
+            }
             ImportedNode nd; nd.name = L.name; nd.parent = 0;
             if (L.parent >= 0) { auto pn = nodeOfLayer.find(L.parent); if (pn != nodeOfLayer.end()) nd.parent = pn->second; }
             const int ni = (int)m.nodes.size();
@@ -457,7 +553,8 @@ struct Reader {
         if (envelopes) note(std::to_string(envelopes) + " animated (envelope) surface value(s) not read; the base values are used");
         if (procBlocks) note(std::to_string(procBlocks) + " shader, procedural or gradient texture block(s) not read");
         if (otherTex) note(std::to_string(otherTex) + " texture block(s) for channels other than colour, or second colour maps, not read");
-        if (nonUvProj) note(std::to_string(nonUvProj) + " image map(s) that are not UV mapped (planar / cylindrical / spherical / cubic projection) not applied: no texture, no UVs");
+        if (projApplied) note(std::to_string(projApplied) + " image map(s) with planar, cylindrical or spherical projection: UVs were generated from the mesh's bounding box (as Assimp does), the map's own centre, size and rotation are not applied");
+        if (nonUvProj) note(std::to_string(nonUvProj) + " image map(s) with cubic or front projection: the texture is kept but no UVs are made");
         if (otherVmaps) note(std::to_string(otherVmaps) + " vertex map(s) that are not UV (weights, colours, morphs) not read");
         if (smgp) note(std::to_string(smgp) + " smoothing group tag block(s) not read; the surface smoothing angle is used");
         if (curves) note(std::to_string(curves) + " curve, bone or metaball polygon block(s) not read");

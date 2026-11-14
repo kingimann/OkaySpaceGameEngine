@@ -117,6 +117,29 @@ std::vector<FoundRef> ExtractSceneRefs(const std::string& text) {
         if (toks.empty()) return;
         const std::string head = toks[0].quoted ? std::string() : toks[0].value;
         if (head == "gameobject" || head == "name" || head == "tag") return;   // a name is not a path
+        if (head == "anticheat") {   // anticheat <en> <speed> ... "<rules .okayac file>" "<prefab>;<prefab>;..." : the file, and each prefab on the spawn list
+            int quotedSeen = 0;
+            for (std::size_t i = 1; i < toks.size(); ++i) {
+                const Tok& t = toks[i];
+                if (!t.quoted) continue;
+                ++quotedSeen;
+                if (quotedSeen == 1) { if (!t.value.empty() && LooksLikeFilePath(t.value)) Add(out, t); continue; }
+                if (quotedSeen != 2) break;
+                for (std::size_t a = 0; a < t.value.size();) {   // (a path has no escapes in it, so offsets in the value are offsets in the text)
+                    std::size_t b = t.value.find(';', a);
+                    if (b == std::string::npos) b = t.value.size();
+                    if (b > a) {
+                        Tok piece;
+                        piece.value = t.value.substr(a, b - a);
+                        piece.begin = t.begin + a; piece.end = t.begin + b; piece.quoted = true;
+                        if (LooksLikeFilePath(piece.value)) Add(out, piece);
+                    }
+                    a = b + 1;
+                }
+                break;
+            }
+            return;
+        }
         const bool pathLine = head == "prefab" || head == "srcscene" || head == "netprefab" || head == "visualscriptpath";
         for (std::size_t i = 1; i < toks.size(); ++i) {
             const Tok& t = toks[i];

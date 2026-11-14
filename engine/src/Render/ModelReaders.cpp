@@ -169,6 +169,8 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     std::vector<std::string> mtllibs;
     int curMat = -1;
     bool badIndex = false;
+    bool sawFaceLine = false;                // an f line was present (even a degenerate one)
+    std::vector<int> pointRefs;              // vertex indices named by p / l elements
 
     const char* p = data.c_str();
     const char* end = p + data.size();
@@ -190,7 +192,7 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
             } else if (p[0] == 'v' && p + 2 < end && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
                 p += 3; Vec3 n; n.x = readF(p, badNumber); n.y = readF(p, badNumber); n.z = readF(p, badNumber); nrm.push_back(n);
             } else if (p[0] == 'f' && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
-                p += 2;
+                p += 2; sawFaceLine = true;
                 const std::size_t first = corners.size();
                 for (;;) {
                     while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
@@ -214,6 +216,18 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                 }
                 if (corners.size() - first >= 3) { faceStart.push_back((std::uint32_t)first); faceMat.push_back(curMat); }
                 else corners.resize(first);
+            } else if ((p[0] == 'p' || p[0] == 'l') && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
+                // point and line elements: no surface, but the vertices they use are kept as a point mesh
+                ++p;
+                for (;;) {
+                    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
+                    if (p >= end || *p == '\n') break;
+                    char* q = nullptr;
+                    long vi = std::strtol(p, &q, 10); if (q == p) break; p = q;
+                    while (p < end && *p == '/') { ++p; std::strtol(p, &q, 10); p = q; }   // l 1/2 3/4: texture index ignored
+                    if (vi < 0) vi = (long)pos.size() + vi + 1;
+                    if (vi >= 1 && vi <= INT32_MAX) pointRefs.push_back((int)vi - 1);
+                }
             } else if (end - p >= 7 && std::strncmp(p, "usemtl", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
                 p += 7; const char* s = p;
                 while (p < end && *p != '\n' && *p != '\r') ++p;
@@ -232,7 +246,27 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
         if (p < end) ++p;
     }
     if (badNumber) return Fail(err, "bad or non-finite number");
-    if (faceStart.empty()) return Fail(err, "no faces");
+    if (faceStart.empty()) {
+        // No faces: a point cloud or a line set. Assimp makes one mesh with no triangles from it; so do we
+        // (the vertices the p / l elements name, or every vertex when the file names none).
+        if (pos.empty() || sawFaceLine) return Fail(err, "no faces");
+        std::vector<int> use;
+        if (pointRefs.empty()) { use.resize(pos.size()); for (std::size_t i = 0; i < pos.size(); ++i) use[i] = (int)i; }
+        else {
+            std::vector<char> seen(pos.size(), 0);
+            for (int r : pointRefs) {
+                if (r < 0 || r >= (int)pos.size()) return Fail(err, "face index out of range");
+                if (!seen[(std::size_t)r]) { seen[(std::size_t)r] = 1; use.push_back(r); }
+            }
+        }
+        out.parts.resize(1);
+        ImportedPart& part = out.parts[0];
+        part.node = 0; part.material = -1;
+        const bool keepN = nrm.size() == pos.size();
+        for (int i : use) { part.mesh.vertices.push_back(pos[(std::size_t)i]); if (keepN) part.mesh.normals.push_back(nrm[(std::size_t)i]); }
+        out.notes.push_back("OBJ has no faces: read as a point set (" + std::to_string(use.size()) + " vertices, no triangles)");
+        return true;
+    }
     for (const ObjCorner& c : corners) {
         if (c.p < 0 || c.p >= (int)pos.size()) badIndex = true;
         if (c.t >= (int)uv.size() || c.n >= (int)nrm.size()) badIndex = true;
@@ -637,6 +671,13 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                 double v = 0;
                 if (!pr.list) { if (!st.Read(pr.type, v)) return Fail(err, "PLY data truncated or malformed"); vals[k] = v; continue; }
                 double cnt = 0;
+                if (!isFace && fmt == PlyFormat::Ascii) {
+                    // A list property in a non-face element (Blender wrote one into the vertex element of
+                    // issue623.ply) with nothing left on this line is an empty list, as Assimp reads it.
+                    const char* q = st.p; bool nl = false;
+                    while (q < end && IsSpace(*q)) { if (*q == '\n') nl = true; ++q; }
+                    if (nl || q >= end) continue;
+                }
                 if (!st.Read(pr.countType, cnt)) return Fail(err, "PLY data truncated or malformed");
                 if (!(cnt >= 0) || cnt > (double)kMaxFaceVerts) return Fail(err, "PLY list too long");
                 const std::size_t c = (std::size_t)cnt;
@@ -670,7 +711,16 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
         }
     }
     if (!sawVertex) return Fail(err, "PLY has no vertex element");
-    if (faceIdx.empty()) return Fail(err, "PLY has no faces");
+    if (faceIdx.empty()) {
+        // No faces: a point cloud. Assimp returns one mesh with no triangles; so do we.
+        if (mesh.vertices.empty()) return Fail(err, "PLY has no faces");
+        if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
+        if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.vertices.size()) mesh.uvs.clear();
+        out.parts.resize(1);
+        out.parts[0].mesh = std::move(mesh);
+        out.notes.push_back("PLY has no faces: read as a point set (no triangles)");
+        return true;
+    }
     for (std::uint32_t i : faceIdx) if (i >= mesh.vertices.size()) return Fail(err, "PLY face index out of range");
     {   // triangles: convex polygons fan from their first corner, concave ones are ear clipped
         std::vector<Vec3> ring; std::vector<std::array<int, 3>> tris;

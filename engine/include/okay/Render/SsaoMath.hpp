@@ -17,7 +17,7 @@
 // pasted into the Direct3D 11 shader source) are built from the very same
 // literals. test_ssao_math.cpp checks both. The HLSL expects the host shader to
 // declare uTex (t0), uNormalTex (t1), uSampClamp, uTexelDir and uP7 (x = radius,
-// y = far, z = strength) and the PSQuad struct, as D3D11Renderer.cpp does.
+// y = far, z = strength, w = AO power) and the PSQuad struct, as D3D11Renderer.cpp does.
 //
 // UNVERIFIED on a real GPU: the CPU functions are unit tested here, the HLSL and
 // the Direct3D 11 pass that uses it have only been compile-checked (MinGW).
@@ -209,5 +209,6 @@ inline Grid Blur(const Grid& in, int dx, int dy) {
     "float4 PSAoMul(PSQuad i) : SV_TARGET {\n"                /* colour in t0, blurred AO in t1 */ \
     "  float4 c = uTex.Sample(uSampClamp, i.uv);\n" \
     "  float a = uNormalTex.Sample(uSampClamp, i.uv).r;\n" \
+    "  if (uP7.w != 1.0) a = pow(max(a, 0.0), uP7.w);\n"        /* PostQualityMath.hpp: AoCurve; w = power, 1 = unchanged */ \
     "  return float4(c.rgb * lerp(1.0, a, saturate(uP7.z)), c.a);\n" \
     "}\n"

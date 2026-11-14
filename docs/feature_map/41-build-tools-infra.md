@@ -193,7 +193,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Code:** `CMakeLists.txt`, `engine/CMakeLists.txt`, `launcher/CMakeLists.txt`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
 - **API:** `OKAY_IMGUI_TAG`, `FETCHCONTENT_SOURCE_DIR_IMGUI`, `OKAY_IMGUI_SRC`, `SDL2_VERSION`
 - **Editor:** none
-- **Docs:** `docs/packaging.md`, `docs/THIRD_PARTY.md`, `docs/own_code_roadmap.md` (every third-party library is planned for removal, with criteria), `docs/crypto_review_package.md`
+- **Docs:** `docs/packaging.md`, `docs/THIRD_PARTY.md`, `docs/own_code_roadmap.md` (every third-party library is planned for removal, with criteria), `docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`
 - **Tests:** none
 - **Status:** Works - versions read from the CMake and workflow files
 - **Open:** the ImGui tag is duplicated in two files and must be changed together; configuring the editor, launcher or Assimp needs network access (offline: point `FETCHCONTENT_SOURCE_DIR_IMGUI` at a checkout)

@@ -316,8 +316,8 @@ int main() {
 
     // ---------------- The seam: backend switch ----------------
     {
-        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && !HasOwnReader(".x"));
-        CHECK(!SetImportBackend(".x", ImportBackend::Own));
+        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && !HasOwnReader(".ac"));
+        CHECK(!SetImportBackend(".ac", ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
         CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
         if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);
@@ -403,6 +403,23 @@ int main() {
         CHECK(ReadPlyBuffer(ply, pm2, &err));   // the free-text header line is ignored (it used to fail the whole file)
         if (!pm2.parts.empty()) { CHECK(pm2.parts[0].mesh.TriangleCount() == 4); CHECK_NEAR(planarArea(pm2.parts[0].mesh, up), 3.0, 1e-5); CHECK(up); }
 
+        // Point clouds (OBJ with no faces, PLY with only vertices, a PLY with a list property written into the vertex element)
+        // import as one part with the vertices and no triangles, as Assimp does; a degenerate face is still an error.
+        {
+            ImportedModel pc;
+            CHECK(ReadObjBuffer("v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nvn 0 0 1\nvn 0 0 1\n", "", pc, &err) && pc.parts.size() == 1);
+            if (!pc.parts.empty()) { CHECK(pc.parts[0].mesh.vertices.size() == 3 && pc.parts[0].mesh.triangles.empty() && pc.parts[0].mesh.normals.size() == 3); }
+            CHECK(ReadObjBuffer("v 0 0 0\nv 1 0 0\nv 0 1 0\nv 5 5 5\np 1 3\nl 3 1\n", "", pc, &err) && pc.parts.size() == 1);
+            if (!pc.parts.empty()) CHECK(pc.parts[0].mesh.vertices.size() == 2);   // only the vertices the p / l elements name
+            CHECK(!ReadObjBuffer("v 0 0 0\nv 1 0 0\np 3\n", "", pc, &err));      // an index past the vertices
+            CHECK(!ReadObjBuffer("v 0 0 0\nv 1 0 0\nf 1 2\n", "", pc, &err));    // a face with two corners is not a point set
+            CHECK(!ReadObjBuffer("# nothing\n", "", pc, &err));
+            CHECK(ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty list uchar uint vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n", pc, &err) && pc.parts.size() == 1);
+            if (!pc.parts.empty()) CHECK(pc.parts[0].mesh.vertices.size() == 3 && pc.parts[0].mesh.triangles.empty());   // issue623.ply shape
+            // a list in the vertex element with its count on the line is still read (and skipped)
+            CHECK(ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nproperty list uchar int extra\nend_header\n0 0 0 2 7 8\n1 0 0 0\n", pc, &err) && pc.parts.size() == 1 && pc.parts[0].mesh.vertices.size() == 2);
+        }
+
         // glTF primitive modes and bad indices: positions 0..4 on a line of unit steps in X with Y alternating, indices u16
         auto b64 = [](const std::string& in) {
             static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -442,14 +459,17 @@ int main() {
         CHECK(gltfTris(5, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_STRIP: 5 indices, 3 triangles
         CHECK(gltfTris(6, {0, 1, 2, 3, 4}, true, 5, &n) && n == 3);                 // TRIANGLE_FAN
         CHECK(gltfTris(5, {}, false, 5, &n) && n == 3);                             // strip without indices
-        CHECK(!gltfTris(1, {0, 1, 2, 3}, true, 5, &n) || n == 0);                   // LINES: no surface, nothing drawn
-        CHECK(!gltfTris(0, {}, false, 5, &n) || n == 0);                            // POINTS
+        CHECK(gltfTris(1, {0, 1, 2, 3}, true, 5, &n) && n == 0);                    // LINES: no surface, no triangle (the vertices are kept)
+        CHECK(gltfTris(0, {}, false, 5, &n) && n == 0);                             // POINTS
+        { Spit("mr_mode.gltf", gltfJson(0, {}, false, 5, "")); bool ok = false; Mesh m = LoadGLTF("mr_mode.gltf", &ok); std::remove("mr_mode.gltf");
+          CHECK(ok && m.vertices.size() == 5 && m.triangles.empty()); }           // a points primitive keeps its 5 vertices (Assimp: one mesh, no triangles)
         CHECK(gltfTris(4, {0, 1, 2, 0, 1, 9}, true, 5, &n) && n == 1);              // one triangle with an index past the vertices is dropped, the other stays
         CHECK(gltfTris(5, {0, 1, 1, 2, 3}, true, 5, &n) && n == 1);                 // strip: the two triangles with a repeated index are dropped, (1,2,3) stays
         // a file whose meshes cannot be read fails the import; it does not give an empty model
         CHECK(sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "")));
         { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); j.replace(j.find("\"2.0\""), 5, "\"1.0\""); CHECK(!sceneOk(j)); }   // glTF 1.0: refused with a message, not read as garbage
-        CHECK(!sceneOk(gltfJson(1, {0, 1, 2}, true, 3, "")));                                         // lines only
+        CHECK(sceneOk(gltfJson(1, {0, 1, 2}, true, 3, "")));                                          // lines only: imports as a mesh with no triangles, as Assimp does
+        CHECK(sceneOk("{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{}]}"));                   // no node, no mesh: an empty scene, not a failure
         CHECK(!sceneOk(gltfJson(4, {0, 1, 2}, true, 3, "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],")));   // compressed geometry we cannot decode
         { std::string j = gltfJson(4, {0, 1, 2}, true, 3, ""); const std::size_t u = j.find("data:application/octet-stream;base64,"); j.replace(u, j.find('"', u) - u, "nothere.bin"); CHECK(!sceneOk(j)); }   // missing .bin
         // random modes, index lists (some past the vertices) and vertex counts: never a triangle that reads outside the mesh

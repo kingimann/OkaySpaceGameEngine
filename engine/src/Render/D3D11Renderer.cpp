@@ -10,6 +10,9 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
+#include "okay/Render/DofMath.hpp"    // shared depth of field constants + HLSL (UNVERIFIED on a GPU)
+#include "okay/Render/D3DPostHLSL.hpp"   // shared post-chain HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/SsaoMath.hpp"   // shared SSAO constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/Atmosphere.hpp"   // sky palette, fog modes, post settings
 #include "okay/Scene/Transform.hpp"
@@ -342,7 +345,7 @@ const char* kHLSL =
     "  float4 uGammaThresh;\n"                // xyz gamma, w bloom threshold
     "  float4 uGainRadius;\n"                 // xyz gain, w blur / downsample radius
     "  float4 uTexelDir;\n"                   // xy source texel, zw blur direction (uv)
-    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength
+    "  float4 uP7;\n"                         // SSAO: x radius, y far, z strength, w AO power; DoF: x focus, y range, z far; bloom bright-pass: w softness
     "  float4 uTopMode;\n"                    // Colour sky: xyz top, w mode (0 colour, 1 procedural)
     "  float4 uHorHp;\n"                      // xyz horizon, w horizon position
     "  float4 uBotStars;\n"                   // xyz bottom, w stars on
@@ -421,77 +424,12 @@ const char* kHLSL =
     "  if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
     "  return float4(col, 1.0);\n"
     "}\n"
-    "float3 brightTap(float2 uv){ float3 c = uTex.Sample(uSampClamp, uv).rgb; float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
-    "  float k = max(l - uGammaThresh.w, 0.0) / max(l, 1e-4); return c * k; }\n"
-    "float4 PSDown(PSQuad i) : SV_TARGET {\n"                      // bright-pass + 2x2 box downsample
-    "  float2 o = uTexelDir.xy * uGainRadius.w;\n"
-    "  float3 s = brightTap(i.uv + float2(-o.x, -o.y)) + brightTap(i.uv + float2(o.x, -o.y)) + brightTap(i.uv + float2(-o.x, o.y)) + brightTap(i.uv + float2(o.x, o.y));\n"
-    "  return float4(s * 0.25, 1.0);\n"
-    "}\n"
-    "float4 PSBlur(PSQuad i) : SV_TARGET {\n"                      // 9-tap gaussian (linear-sampled 5-tap)
-    "  float2 d = uTexelDir.zw;\n"
-    "  float3 s = uTex.Sample(uSampClamp, i.uv).rgb * 0.227027;\n"
-    "  s += (uTex.Sample(uSampClamp, i.uv + d * 1.384615).rgb + uTex.Sample(uSampClamp, i.uv - d * 1.384615).rgb) * 0.316216;\n"
-    "  s += (uTex.Sample(uSampClamp, i.uv + d * 3.230769).rgb + uTex.Sample(uSampClamp, i.uv - d * 3.230769).rgb) * 0.070270;\n"
-    "  return float4(s, 1.0);\n"
-    "}\n"
-    "float3 hable(float3 v){ float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;\n"
-    "  return ((v*(A*v+C*B)+D*E)/(v*(A*v+B)+D*F))-E/F; }\n"
-    "float3 filmic(float3 x){ return saturate(hable(x * 2.0) / hable(float3(11.2, 11.2, 11.2))); }\n"
-    "float4 PSUber(PSQuad i) : SV_TARGET {\n"                      // exposure, bloom, tonemap, grading, vignette
-    "  float4 s = uTex.Sample(uSampClamp, i.uv);\n"
-    "  float3 c = s.rgb * uP0.x;\n"
-    "  float blLum = 0.0;\n"
-    "  if (uP0.w > 0.5) {\n"
-    "    float3 bl = (uNormalTex.Sample(uSampClamp, i.uv).rgb + uSpecTex.Sample(uSampClamp, i.uv).rgb) * (0.5 * uP1.x * uP0.x);\n"
-    "    c += bl; blLum = dot(bl, float3(0.2126, 0.7152, 0.0722));\n"
-    "  }\n"
-    "  if (uP0.y > 0.5) {\n"
-    "    if (uP0.z > 1.5) c = filmic(c); else if (uP0.z > 0.5) c = aces(c); else c = saturate(c);\n"
-    "    c = pow(max(c, 0.0), 1.0 / 2.2);\n"
-    "  } else c = saturate(c);\n"
-    "  if (uP1.y > 0.5) {\n"
-    "    c *= float3(1.0 + 0.25 * uP1.z, 1.0 + 0.2 * uP1.w, 1.0 - 0.25 * uP1.z);\n"
-    "    float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
-    "    c = l + (c - l) * uP2.x;\n"
-    "    c = (c - 0.5) * uP2.y + 0.5;\n"
-    "    c = c * (1.0 + uGainRadius.xyz) + uLiftAspect.xyz * (1.0 - c);\n"
-    "    c = pow(max(c, 0.0), 1.0 / max(1.0 + uGammaThresh.xyz * 0.75, 0.1));\n"
-    "  }\n"
-    "  float cov = saturate(s.a + blLum * 2.0);\n"
-    "  float v = 0.0;\n"
-    "  if (uP2.z > 0.0) {\n"
-    "    float2 d = (i.uv - 0.5) * float2(uLiftAspect.w, 1.0) * 2.0;\n"
-    "    float r = length(d) / sqrt(uLiftAspect.w * uLiftAspect.w + 1.0);\n"
-    "    v = 0.8 * uP2.z * smoothstep(max(1.0 - uP2.w * 1.3, 0.0), 1.05, r);\n"
-    "  }\n"
-    "  float3 pc = c * cov * (1.0 - v);\n"
-    "  float oa = 1.0 - (1.0 - v) * (1.0 - cov);\n"
-    "  return float4(oa > 1e-4 ? pc / oa : float3(0, 0, 0), oa);\n"
-    "}\n"
-    "float lumaF(float3 c){ return dot(c, float3(0.299, 0.587, 0.114)); }\n"
-    "float4 PSFxaa(PSQuad i) : SV_TARGET {\n"
-    "  float2 px = uTexelDir.xy;\n"
-    "  float4 c = uTex.Sample(uSampClamp, i.uv);\n"
-    "  float lM = lumaF(c.rgb);\n"
-    "  float lNW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0, -1.0) * px).rgb);\n"
-    "  float lNE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0, -1.0) * px).rgb);\n"
-    "  float lSW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0,  1.0) * px).rgb);\n"
-    "  float lSE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0,  1.0) * px).rgb);\n"
-    "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
-    "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
-    "  if (lMax - lMin < max(0.0312, lMax * 0.125)) return c;\n"
-    "  float2 dir = float2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));\n"
-    "  float dirReduce = max((lNW + lNE + lSW + lSE) * (0.25 * 0.125), 1.0 / 128.0);\n"
-    "  float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
-    "  dir = clamp(dir * rcpDirMin, -8.0, 8.0) * px;\n"
-    "  float4 rgbA = 0.5 * (uTex.Sample(uSampClamp, i.uv + dir * (1.0 / 3.0 - 0.5)) + uTex.Sample(uSampClamp, i.uv + dir * (2.0 / 3.0 - 0.5)));\n"
-    "  float4 rgbB = rgbA * 0.5 + 0.25 * (uTex.Sample(uSampClamp, i.uv + dir * -0.5) + uTex.Sample(uSampClamp, i.uv + dir * 0.5));\n"
-    "  float lB = lumaF(rgbB.rgb);\n"
-    "  return (lB < lMin || lB > lMax) ? rgbA : rgbB;\n"
-    "}\n"
+    // Post-chain pixel shaders (bright-pass, blur, uber, FXAA): shared text, D3DPostHLSL.hpp.
+    OKAY_POST_HLSL
     // Ambient occlusion (SsaoMath.hpp): depth, estimate and multiply pixel shaders.
-    OKAY_SSAO_HLSL;
+    OKAY_SSAO_HLSL
+    // Depth of field (DofMath.hpp): mixes the sharp and blurred frame by distance from focus.
+    OKAY_DOF_HLSL;
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
 // rules: each float3 is followed by a float to fill its 16-byte row).
@@ -631,7 +569,7 @@ struct D3D11Renderer::Impl {
     // Ambient occlusion (the Ambient Occlusion switch; see SsaoMath.hpp). Own
     // shaders and half-resolution targets, built on first use, so a failure here
     // only turns SSAO off. UNVERIFIED on a real GPU.
-    ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr;
+    ID3D11PixelShader *psAoDepth = nullptr, *psAo = nullptr, *psAoMul = nullptr, *psDof = nullptr;
     bool ssaoTried = false, ssaoReady = false;
     struct SsaoSet {
         int w = 0, h = 0; DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -991,6 +929,7 @@ bool D3D11Renderer::Impl::EnsureSsaoShaders() {
         return ok;
     };
     ssaoReady = ps("PSAoDepth", psAoDepth) && ps("PSAo", psAo) && ps("PSAoMul", psAoMul) && vsDepth && layoutDepth;
+    if (ssaoReady) ps("PSDof", psDof);   // separate: a depth of field compile failure must not cost ambient occlusion
     if (!ssaoReady) Log::Warning("[d3d11] ambient occlusion unavailable on this device");
     return ssaoReady;
 }
@@ -2004,13 +1943,19 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     // OpenGL. Opaque geometry is drawn again at half resolution as view depth / far
     // into an R32F target; the chain below estimates, blurs and applies it
     // (SsaoMath.hpp has the algorithm, shared with the OpenGL renderer's numbers).
+    // Depth of field (post.dof, DofMath.hpp) reads the same depth image, so the
+    // pre-pass also runs when only depth of field is on.
+    const bool aoWanted = useChain && (rsTop.post.ssao || SSAOEnabled());
     Impl::SsaoSet* aoSet = nullptr;
-    if (useChain && (rsTop.post.ssao || SSAOEnabled()) && p->EnsureSsaoShaders()) aoSet = p->EnsureSsaoSet();
+    if (useChain && (aoWanted || rsTop.post.dof) && p->EnsureSsaoShaders()) aoSet = p->EnsureSsaoSet();
+    const bool aoOn = aoSet && aoWanted;
+    const bool dofOn = aoSet && rsTop.post.dof && p->psDof;
     if (aoSet) {
         const int ahw = w / 2 > 0 ? w / 2 : 1, ahh = h / 2 > 0 ? h / 2 : 1;
         pc.p7[0] = rsTop.post.ssao ? rsTop.post.ssaoRadius : SSAORadius();
         pc.p7[1] = ssao::kFar;
         pc.p7[2] = rsTop.post.ssao ? rsTop.post.ssaoIntensity : SSAOStrength();
+        pc.p7[3] = rsTop.post.ssao ? rsTop.post.ssaoPower : 1.0f;   // read by PSAoMul (PostQualityMath.hpp)
         uploadPc();
         { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
         c->OMSetRenderTargets(1, &aoSet->depth.rtv, aoSet->dsv);
@@ -2065,7 +2010,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         //    then vertical), then lit frame * mix(1, ao, strength) into the AO target
         //    set. Bloom and the uber pass read that instead of the plain resolve.
         ID3D11ShaderResourceView* frameSrv = p->resolveSrv;
-        if (aoSet) {
+        if (aoOn) {
             const int ahw = aoSet->depth.w, ahh = aoSet->depth.h;
             pc.texel[0] = 1.0f / (float)ahw; pc.texel[1] = 1.0f / (float)ahh;
             pass(p->psAo, aoSet->aoA.rtv, ahw, ahh, aoSet->depth.srv, nullptr, nullptr);
@@ -2083,6 +2028,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const float bloomRadius = ps.bloom ? ps.bloomRadius : 1.0f;
         Impl::RT& bA = p->bloom[0]; Impl::RT& bB = p->bloom[1]; Impl::RT& bC = p->bloom[2]; Impl::RT& bD = p->bloom[3];
         if (bloomOn) {
+            pc.p7[3] = ps.bloom ? ps.bloomSoftness : 0.0f;   // read by PSDown's soft knee (PostQualityMath.hpp)
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = bloomThresh; pc.radius = 1.0f;
             pass(p->psDown, bA.rtv, bA.w, bA.h, frameSrv, nullptr, nullptr);
             for (int it = 0; it < 2; ++it) {
@@ -2111,11 +2057,30 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         pc.lift[0] = ps.lift.x; pc.lift[1] = ps.lift.y; pc.lift[2] = ps.lift.z; pc.aspect = (float)w / (float)h;
         pc.gamma[0] = ps.gamma.x; pc.gamma[1] = ps.gamma.y; pc.gamma[2] = ps.gamma.z;
         pc.gain[0] = ps.gain.x; pc.gain[1] = ps.gain.y; pc.gain[2] = ps.gain.z;
-        pass(p->psUber, ps.fxaa ? p->ping[0].rtv : finalRtv, w, h, frameSrv, bA.srv, bC.srv);
-        // 3) FXAA last, on the display image.
+        const bool toPing = dofOn || ps.fxaa;
+        pass(p->psUber, toPing ? p->ping[0].rtv : finalRtv, w, h, frameSrv, bA.srv, bC.srv);
+        ID3D11ShaderResourceView* cur = p->ping[0].srv;   // the display image so far (when toPing)
+        // 3) Depth of field (DofMath.hpp): a half-res blurred copy of the display image
+        //    (box downsample with no threshold, then two gaussian rounds), mixed in by
+        //    the distance from the focus plane, read from the AO depth image.
+        if (dofOn) {
+            pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = 0.0f; pc.radius = 1.0f;
+            pass(p->psDown, bA.rtv, bA.w, bA.h, cur, nullptr, nullptr);
+            for (int it = 0; it < 2; ++it) {
+                pc.dir[0] = 1.0f / (float)bA.w; pc.dir[1] = 0.0f;
+                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pc.dir[0] = 0.0f; pc.dir[1] = 1.0f / (float)bA.h;
+                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+            }
+            pc.texel[0] = 1.0f / (float)aoSet->depth.w; pc.texel[1] = 1.0f / (float)aoSet->depth.h;
+            pc.p7[0] = ps.dofFocus; pc.p7[1] = ps.dofRange; pc.p7[2] = ssao::kFar;
+            pass(p->psDof, ps.fxaa ? p->ping[1].rtv : finalRtv, w, h, cur, bA.srv, aoSet->depth.srv);
+            cur = p->ping[1].srv;
+        }
+        // 4) FXAA last, on the display image.
         if (ps.fxaa) {
             pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h;
-            pass(p->psFxaa, finalRtv, w, h, p->ping[0].srv, nullptr, nullptr);
+            pass(p->psFxaa, finalRtv, w, h, cur, nullptr, nullptr);
         }
         c->PSSetShaderResources(0, 3, nulls);
         c->OMSetRenderTargets(0, nullptr, nullptr);
@@ -2235,7 +2200,7 @@ void D3D11Renderer::Destroy() {
     if (p->sampClamp) p->sampClamp->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
-    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul}) if (s) s->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();
     for (auto& t : p->ssaoSets) t.Release();
     p->ssaoSets.clear();
     if (p->depthPlanar) p->depthPlanar->Release();

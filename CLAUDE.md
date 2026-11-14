@@ -58,8 +58,31 @@ then this file gets updated. Keep this file short and true.
     seam, then our own backend OFF by default, then the criteria, then flip the default only with the owner's
     approval, then delete the old code one release later. Do not drop a format or feature just because it is
     hard: write the replacement.
-18. **Cryptography cannot be replaced on our word.** It needs an outside review first.
+18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
+
+19a. **Code: write everything yourself. Assets and data: only with permission.**
+    - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other
+      project (for example Unreal, Godot, Assimp, meshoptimizer, SDL, Dear ImGui, stb), open source or not. A licence that
+      allows copying does not change this. Public-domain code needs the owner's approval first. Create our own systems:
+      write from specifications, file-format documents, papers and general algorithms, in your own words and structure,
+      work out constants yourself and check them with tests. Ideas, algorithms and file formats are not copyrighted;
+      code is. Say in the report and the docs what each new file was written from (its spec or paper). If code was
+      copied or ported by mistake, rewrite it from scratch.
+    - **Fonts, images, sounds, models and data** (we cannot recreate these): use them only with permission, meaning a
+      licence that allows our use (for example OFL, CC0, MIT, Apache). Record the source and the licence in
+      `docs/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
+      Never use an asset whose licence is unknown or that forbids our use, and never scrape or download assets without
+      recording where they came from.
+    - **No third-party SDKs or libraries.** Do not add or link any (for example Steamworks, Photon, PlayFab or Supabase
+      client SDKs, analytics, crash-report or ad SDKs, middleware). Talk to outside services over their plain web APIs
+      with our own code. Optional hooks that only work when someone installs an SDK stay off by default and are not
+      extended.
+    - Do not spend time on licence texts, notice files or licence audits for third-party libraries that we are replacing
+      (SDL2, Dear ImGui, Assimp, ufbx, libsodium, curl and similar). Spend that time on the replacement. Licence and
+      notice work is only for assets that stay (fonts, images and data).
+    - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
+      until our own replacement is ready; nothing new may be added.
 
 ## Machine and agents
 

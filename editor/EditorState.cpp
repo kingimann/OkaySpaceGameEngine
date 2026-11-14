@@ -1030,6 +1030,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     }
     Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
+    okay::AntiCheatConfig::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");   // Play finds a relative .okayac rules file
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());

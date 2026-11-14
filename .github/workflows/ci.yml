@@ -337,6 +337,30 @@ jobs:
           OKAY_REQUIRE_TLS_TESTS: "1"
         run: scripts/own_http_sanitized.sh 100000
 
+  # The no-libsodium path of the anti-cheat and launcher crypto: shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
+  # (our own Ed25519 and SHA-512; the TweetNaCl-derived port is deleted). These targets do not link the engine, so this is quick.
+  # okay::crypto has not had its outside review yet (CLAUDE.md rule 18); libsodium stays the preferred path where it is built.
+  anticheat-crypto-nosodium:
+    name: Anti-cheat crypto without libsodium (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-nosodium -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+
+      - name: Build
+        run: cmake --build build-nosodium -j2 --target test_crypto test_anticheat_golden test_anticheat_integrity_ownlib test_anticheat_integrity_fallback test_update_signature test_launcher_versions test_self_update
+
+      - name: Test
+        run: ctest --test-dir build-nosodium --output-on-failure -R '^(crypto|anticheat_golden|anticheat_integrity_ownlib|anticheat_integrity_fallback|update_signature|launcher_versions|self_update)$'
+
   # Cross-compile the Windows editor + player (the release build) and the
   # visual-scripting and mesh file tests, for the windows-export job to run on real Windows.
   windows-cross:
@@ -508,12 +532,14 @@ jobs:
           -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF
 
       - name: Build the restart test
-        run: cmake --build build --config Release --target test_app_restart test_self_update --parallel
+        # test_self_update links okay::crypto (the signed versions.json check); the two anti-cheat crypto tests are added here so
+        # our own Ed25519 and SHA-512 (the no-libsodium path) also run on real Windows with MSVC.
+        run: cmake --build build --config Release --target test_app_restart test_self_update test_anticheat_golden test_anticheat_integrity_fallback --parallel
 
       - name: Run the restart and self-update tests
         # app_restart also drives the verified restart with real processes: self-check, rollback to the previous launcher file, state file.
         # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
-        run: ctest --test-dir build -C Release -R "^(app_restart|self_update)$" --output-on-failure --timeout 150 -V
+        run: ctest --test-dir build -C Release -R "^(app_restart|self_update|anticheat_golden|anticheat_integrity_fallback)$" --output-on-failure --timeout 150 -V
 
   web-build:
     name: WebGL build (Emscripten)

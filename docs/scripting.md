@@ -576,7 +576,7 @@ sections, see [rendering.md](rendering.md)) at runtime:
 
 | Function | Effect |
 | --- | --- |
-| `post_set(name, value)` | one post-processing value: `"exposure"`, `"tonemap"` (0 none / 1 ACES / 2 filmic, or the name), `"bloom"`, `"bloom_threshold"`, `"bloom_intensity"`, `"bloom_radius"`, `"grading"`, `"temperature"`, `"tint"`, `"saturation"`, `"contrast"`, `"vignette"`, `"vignette_smoothness"`, `"fxaa"`, `"ssao"`, `"ssao_radius"`, `"ssao_intensity"`, `"dof"`, `"dof_focus"`, `"dof_range"` (0 / 1 for switches); false for an unknown name |
+| `post_set(name, value)` | one post-processing value: `"exposure"`, `"tonemap"` (0 none / 1 ACES / 2 filmic, or the name), `"bloom"`, `"bloom_threshold"`, `"bloom_intensity"`, `"bloom_radius"`, `"bloom_softness"`, `"grading"`, `"temperature"`, `"tint"`, `"saturation"`, `"contrast"`, `"vignette"`, `"vignette_smoothness"`, `"fxaa"`, `"ssao"`, `"ssao_radius"`, `"ssao_intensity"`, `"ssao_power"`, `"dof"`, `"dof_focus"`, `"dof_range"` (0 / 1 for switches); false for an unknown name |
 | `fog_set(on[, "#rrggbb"][, start, end][, mode[, density]])` | fog on/off, its colour, the linear start / end, and a mode (`"linear"`, `"exponential"`, `"height"`) with its density |
 | `weather_set(preset[, intensity])` | `"none"`, `"rain"`, `"snow"` or `"storm"` at an intensity 0..1; cross-fades over the scene's fade time |
 | `time_of_day([hours])` | the Day/Night Cycle's clock (0..24); with an argument sets it. -1 when the scene has none |

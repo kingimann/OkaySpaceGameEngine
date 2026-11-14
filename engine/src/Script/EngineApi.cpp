@@ -1359,8 +1359,8 @@ EngineApi Build() {
                 if (!ok) Log::Warning("[script] PostProcess.Set: unknown setting \"", S(a[0]), "\"");
                 return Value{ok};
             }, "Set one value by name: \"exposure\", \"tonemap\" (0 none, 1 ACES, 2 filmic), \"bloom\" (0/1), \"bloom_threshold\", "
-               "\"bloom_intensity\", \"bloom_radius\", \"grading\", \"temperature\", \"tint\", \"saturation\", \"contrast\", "
-               "\"vignette\", \"vignette_smoothness\", \"fxaa\", \"ssao\", \"ssao_radius\", \"ssao_intensity\", \"dof\", "
+               "\"bloom_intensity\", \"bloom_radius\", \"bloom_softness\", \"grading\", \"temperature\", \"tint\", \"saturation\", \"contrast\", "
+               "\"vignette\", \"vignette_smoothness\", \"fxaa\", \"ssao\", \"ssao_radius\", \"ssao_intensity\", \"ssao_power\", \"dof\", "
                "\"dof_focus\", \"dof_range\". False for a name it doesn't know."));
         pp.staticProps.push_back(prop("exposure", tFloat,
             [look](const Value&, CallContext& c) { return Value{look(c).post.exposure}; },

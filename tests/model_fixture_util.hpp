@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -96,4 +97,23 @@ inline std::string MakeZip(const std::vector<ZipEntry>& es) {
     return out;
 }
 
+} // namespace fx
+
+// Little-endian float and fixed-size text field writers (MD2, MD3, B3D, DirectX .x fixtures).
+namespace fx {
+inline void PF(std::string& s, float f) { std::uint32_t v; std::memcpy(&v, &f, 4); P32(s, v); }
+inline void PStr(std::string& s, const std::string& t, std::size_t len) { std::string x = t.substr(0, len); x.resize(len, '\0'); s += x; }
+inline bool Near(float a, float b, float e = 1e-4f) { return std::fabs(a - b) < e; }
+inline double Area(const okay::ImportedModel& m) {
+    double a = 0;
+    for (const okay::ImportedPart& p : m.parts)
+        for (std::size_t i = 0; i + 2 < p.mesh.triangles.size(); i += 3) {
+            const okay::Vec3 &x = p.mesh.vertices[(std::size_t)p.mesh.triangles[i]], &y = p.mesh.vertices[(std::size_t)p.mesh.triangles[i + 1]], &z = p.mesh.vertices[(std::size_t)p.mesh.triangles[i + 2]];
+            const double ux = y.x - x.x, uy = y.y - x.y, uz = y.z - x.z, vx = z.x - x.x, vy = z.y - x.y, vz = z.z - x.z;
+            const double cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+            a += 0.5 * std::sqrt(cx * cx + cy * cy + cz * cz);
+        }
+    return a;
+}
+inline std::size_t TriCount(const okay::ImportedModel& m) { std::size_t n = 0; for (const okay::ImportedPart& p : m.parts) n += p.mesh.triangles.size() / 3; return n; }
 } // namespace fx

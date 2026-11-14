@@ -3044,18 +3044,19 @@ set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 # (tests/batchc_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources only,
 # no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
 # OKAY_BATCHC_FUZZ_ITERS raises the sweep).
-foreach(_fmt md2 md3)
-    string(SUBSTRING ${_fmt} 0 1 _f0)
-    string(TOUPPER ${_f0} _F0)
-    string(SUBSTRING ${_fmt} 1 -1 _frest)
-    add_executable(test_${_fmt}_reader test_${_fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${_F0}${_frest}Reader.cpp)
-    target_include_directories(test_${_fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
-    target_compile_definitions(test_${_fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-    add_test(NAME ${_fmt}_reader COMMAND test_${_fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-endforeach()
+function(okay_batchc_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_batchc_reader_test(md2 Md2Reader.cpp)
+okay_batchc_reader_test(md3 Md3Reader.cpp)
+okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
 add_executable(test_batchc_hostile test_batchc_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrMeshReader.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

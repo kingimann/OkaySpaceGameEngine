@@ -71,4 +71,35 @@ inline std::string BuildMd3(const Md3Opts& o = {}) {
     return s + s0 + s1;
 }
 
+
+// ---- IRRMESH: three buffers ----
+// 1: a standard-type triangle (0,0,0), (2,0,0), (0,3,0): area 3, normal map material (diffuse ff8040c0, emissive 00102030,
+//    shininess 0.75, texture "assets\\a.png", normal map "n.png"). 2: a 2tcoords unit quad as 2 triangles sharing 2 corners:
+//    4 vertices, area 1, one vertex colour that is not white. 3: a tangents-type triangle (0,0,0), (1,0,0), (0,1,0), area 0.5,
+//    with indexCount 4 (one stray index). Total: 3 parts, 4 triangles, area 4.5.
+inline std::string BuildIrrMesh(const char* eol = "\n") {
+    std::string e = eol;
+    std::string s = std::string("<?xml version=\"1.0\"?>") + e + "<mesh xmlns=\"http://irrlicht.sourceforge.net/IRRMESH_09_2007\" version=\"1.0\">" + e +
+        "<!-- synthetic -->" + e + "<buffer>" + e +
+        "<material><enum name=\"Type\" value=\"normalmap_solid\" /><color name=\"Diffuse\" value=\"ff8040c0\" /><color name=\"Emissive\" value=\"00102030\" />"
+        "<float name=\"Shininess\" value=\"0.75\" /><texture name=\"Texture1\" value=\"assets\\a.png\" /><texture name=\"Texture2\" value=\"n.png\" /></material>" + e +
+        "<vertices type=\"standard\" vertexCount=\"3\">" + e +
+        "0 0 0 0 0 1 ffffffff 0 0" + e + "2 0 0 0 0 1 ffffffff 1 0" + e + "0 3 0 0 0 1 ffffffff 0 1" + e + "</vertices>" + e +
+        "<indices indexCount=\"3\">0 1 2</indices>" + e + "</buffer>" + e + "<buffer>" + e +
+        "<material><enum name=\"Type\" value=\"solid\" /><texture name=\"Texture1\" value=\"b.jpg\" /></material>" + e +
+        "<vertices type=\"2tcoords\" vertexCount=\"4\">" + e +
+        "0 0 0 0 0 1 64ffffff 0 0 0.5 0.5" + e + "1 0 0 0 0 1 ffffffff 1 0 0.5 0.5" + e + "1 1 0 0 0 1 ffffffff 1 1 0.5 0.5" + e + "0 1 0 0 0 1 ffffffff 0 1 0.5 0.5" + e +
+        "</vertices>" + e + "<indices indexCount=\"6\">" + e + "0 1 2 0 2 3" + e + "</indices>" + e + "</buffer>" + e + "<buffer>" + e +
+        "<material><enum name=\"Type\" value=\"solid\" /></material>" + e +
+        "<vertices type=\"tangents\" vertexCount=\"3\">" + e +
+        "0 0 0 0 0 1 ffffffff 0 0 1 0 0 0 1 0" + e + "1 0 0 0 0 1 ffffffff 1 0 1 0 0 0 1 0" + e + "0 1 0 0 0 1 ffffffff 0 1 1 0 0 0 1 0" + e +
+        "</vertices>" + e + "<indices indexCount=\"4\">0 1 2 0</indices>" + e + "</buffer>" + e + "</mesh>" + e;
+    return s;
+}
+inline std::string ToUtf16le(const std::string& s) {
+    std::string o = "\xFF\xFE";
+    for (unsigned char c : s) { o.push_back((char)c); o.push_back('\0'); }
+    return o;
+}
+
 } // namespace fx

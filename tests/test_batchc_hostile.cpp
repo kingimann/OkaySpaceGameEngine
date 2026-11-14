@@ -94,9 +94,51 @@ static void Md3() {
     }
 }
 
+// ======================= IRRMESH =======================
+static bool ReadIrr(const std::string& b, ImportedModel& m, std::string& e) { return ReadIrrMeshBuffer(b, "", m, &e); }
+static std::string Rep(std::string s, const std::string& from, const std::string& to) { const std::size_t p = s.find(from); if (p != std::string::npos) s.replace(p, from.size(), to); return s; }
+static void Irr() {
+    const std::string good = fx::BuildIrrMesh();
+    {   ImportedModel m; std::string e; CHECK(ReadIrr(good, m, e) && fx::Sane(m)); }
+    Sweep("irrmesh", ReadIrr, good, Iters());
+    Sweep("irrmesh (UTF-16)", ReadIrr, fx::ToUtf16le(good), Iters() / 4);
+    // counts at, past and far past the caps, with tiny text: refused without allocating
+    for (const char* c : {"0", "-1", "4000000", "4000001", "99999999999", "1e308", "nan", "1.5", "", "x"}) {
+        Try(ReadIrr, Rep(good, "vertexCount=\"3\"", std::string("vertexCount=\"") + c + "\""));
+        Try(ReadIrr, Rep(good, "indexCount=\"3\"", std::string("indexCount=\"") + c + "\""));
+    }
+    // not-a-number, infinity, overflow and hex-float tokens in positions, normals, uv and indices
+    for (const char* t : {"nan", "inf", "-inf", "1e999", "1e308", "0x10", "--1", "1.2.3", "+", "e5", "4294967296", "-1", "99999999999999999999"}) {
+        Try(ReadIrr, Rep(good, "2 0 0 0 0 1 ffffffff 1 0", std::string(t) + " 0 0 0 0 1 ffffffff 1 0"));
+        Try(ReadIrr, Rep(good, "2 0 0 0 0 1 ffffffff 1 0", std::string("2 0 0 ") + t + " 0 1 ffffffff 1 0"));
+        Try(ReadIrr, Rep(good, "2 0 0 0 0 1 ffffffff 1 0", std::string("2 0 0 0 0 1 ffffffff ") + t + " 0"));
+        Try(ReadIrr, Rep(good, "0 1 2 0 2 3", std::string("0 1 2 0 2 ") + t));
+    }
+    // colours: too long, not hex, empty
+    for (const char* c : {"fffffffff", "gg", "", "-1", "0x1"}) Try(ReadIrr, Rep(good, "ff8040c0", c));
+    // hostile structure: an entity bomb, deep nesting, 20,000 empty buffers, a 3 MB token, many attributes
+    Try(ReadIrr, "<!DOCTYPE m [<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">]><mesh><buffer/></mesh>");
+    { std::string s = "<mesh>"; for (int i = 0; i < 5000; ++i) s += "<buffer>"; Try(ReadIrr, s); }
+    { std::string s = "<mesh>"; for (int i = 0; i < 20000; ++i) s += "<buffer><vertices type=\"standard\" vertexCount=\"0\"/></buffer>"; s += "</mesh>"; Try(ReadIrr, s); }
+    { std::string s = "<mesh><buffer><vertices type=\"standard\" vertexCount=\"1\">" + std::string(3u << 20, '7') + "</vertices></buffer></mesh>"; Try(ReadIrr, s); }
+    { std::string s = "<mesh><buffer><material>"; for (int i = 0; i < 50000; ++i) s += "<texture name=\"Texture3\" value=\"x\"/>"; s += "</material></buffer></mesh>"; Try(ReadIrr, s); }
+    // a big valid mesh: 60,000 vertices and 100,000 triangles read in reasonable time
+    {
+        std::string s = "<mesh><buffer><vertices type=\"standard\" vertexCount=\"60000\">";
+        for (int i = 0; i < 60000; ++i) s += std::to_string(i % 300) + " " + std::to_string(i / 300) + " 0 0 0 1 ffffffff 0 0\n";
+        s += "</vertices><indices indexCount=\"300000\">";
+        for (int i = 0; i < 100000; ++i) s += std::to_string((i * 7) % 60000) + " " + std::to_string((i * 13 + 1) % 60000) + " " + std::to_string((i * 29 + 2) % 60000) + " ";
+        s += "</indices></buffer></mesh>";
+        const double t0 = Now(); ImportedModel m; std::string e; const bool ok = ReadIrr(s, m, e);
+        CHECK(ok ? fx::Sane(m) : !e.empty());
+        std::fprintf(stderr, "  irrmesh: 60,000 vertices read (ok=%d) in %.2f s\n", (int)ok, Now() - t0);
+    }
+}
+
 int main() {
     RUN_SUITE("batchc_hostile");
     Md2();
     Md3();
+    Irr();
     TEST_MAIN_RESULT();
 }

@@ -199,6 +199,14 @@ bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, Importe
 /// first frame as an empty child node of the root, which turns Z-up into Y-up. Further frames, tag animation, `.skin` and
 /// `.shader` files are not read (reported in `out.notes`).
 bool ReadMd3Buffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per `<buffer>` (vertices of type
+/// standard, 2tcoords or tangents; triangle indices), with the buffer's material: diffuse and emissive colour,
+/// shininess, the first texture, and the second texture as the normal map for normalmap / parallaxmap types. Texture
+/// coordinates, coordinates and winding as written (Irrlicht is left-handed; Assimp keeps them too); no root rotation.
+/// Second texture coordinates, tangents, vertex colours, lightmaps and material flags are not read (reported in
+/// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths). The Irrlicht scene
+/// format (.irr) is not read.
+bool ReadIrrMeshBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -214,6 +222,7 @@ bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err 
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMd3File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadIrrMeshFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

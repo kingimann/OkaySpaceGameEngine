@@ -7,6 +7,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
 - [own_code_roadmap.md](own_code_roadmap.md): the plan to replace and remove every third-party library, with the criteria each must meet.
 - [crypto_review_package.md](crypto_review_package.md): what an outside security reviewer needs to review our own crypto.
+- [crypto_review_request.md](crypto_review_request.md): the request to send a reviewer, what we ask and give, how to pick one, and the owner's checklist.
 - [UNFINISHED.md](UNFINISHED.md): what is not finished yet, hidden or limited today, and the to-do list.
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
@@ -69,6 +70,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Look, models and sound
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.
+- [render_status.md](render_status.md): an honest, row-by-row status of what the software, OpenGL, Direct3D 11 and Direct3D 12 renderers each draw today, with the file and function that proves it.
 - [lighting.md](lighting.md): lighting and shadows.
 - [modeling.md](modeling.md): the built-in mesh editor.
 - [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.

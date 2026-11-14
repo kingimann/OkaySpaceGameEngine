@@ -63,6 +63,12 @@ public:
                  std::uint32_t from, std::vector<ChanMsg>& out, std::uint32_t& ack);
     // Messages queued on `channel` waiting for window room.
     std::size_t Backlog(const std::string& channel) const;
+    // Every message sent and not yet acked, then every one still waiting for window
+    // room, as (channel, data) in send order per channel (a session that dropped
+    // re-sends these after a resume, see NetworkManager::ResentAfterResume).
+    // Stops after `maxMessages` / `maxBytes`; returns how many it left out.
+    std::size_t Unacked(std::vector<std::pair<std::string, std::string>>& out,
+                        std::size_t maxMessages, std::size_t maxBytes) const;
     void Clear();
 
 private:

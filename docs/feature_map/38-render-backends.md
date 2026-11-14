@@ -53,7 +53,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.3.1 Device - `Render/D3D11Renderer` - `Init()` makes an isolated device with an offscreen target; `InitShared(device)` builds on SDL's own device
   - 38.3.2 Main pass - `Render/D3D11Renderer` - HLSL compiled at start with d3dcompiler (vs_4_0, ps_4_0), up to 4x MSAA resolved before read-back, lighting, textures, fog and 9 shader modes
   - 38.3.3 Shadows - `Render/D3D11Renderer`, `Render/ShadowSetup` - sun cascades and local tiles from the shared plan, plus a planar ground shadow
-  - 38.3.4 Post chain - `Render/D3D11Renderer` - bloom, tonemap, grading, vignette and FXAA; no SSAO or depth of field
+  - 38.3.4 Post chain - `Render/D3D11Renderer` - bloom, tonemap, grading, vignette and FXAA, plus an ambient occlusion pass (`SsaoMath.hpp`, compile-checked only, UNVERIFIED on a GPU); no depth of field
   - 38.3.5 Zero-copy and pipelined read-back - `Render/D3D11Renderer` - `RenderToTexture` resolves into an SDL texture; `SetReadbackStream(id)` shows the previous frame to avoid a GPU stall
   - 38.3.6 GPU skinning and sky - `Render/D3D11Renderer` - 256-joint bone palette; procedural sky and clouds
 - **Code:** `Render/D3D11Renderer`
@@ -62,11 +62,11 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
 - **Tests:** -
 - **Status:** Works - read the header, the effect counts in `D3D11Renderer.cpp` (2k lines) and the editor and player call sites; compiled only on Windows (guarded by `_WIN32`) and never run by a ctest
-- **Open:** no SSAO or depth of field (doc says OpenGL only); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
+- **Open:** no depth of field; the new SSAO pass has never run on a GPU (only the shared maths is unit tested, `ssao_math`); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
 - **Related:** 38.1, 38.8, 38.9, 38.10, 2.3, 2.5
 - **Words:** D3D11, Direct3D 11, DirectX 11, HLSL, shared device, RenderToTexture, readback stream, zero-copy, Windows renderer
-- **Seen as:** Windows-only black view or driver crash; GPU stall in the editor view; missing SSAO on Windows
-- **Ask me like:** "Port the SSAO pass from OpenGL to Direct3D 11"
+- **Seen as:** Windows-only black view or driver crash; GPU stall in the editor view; ambient occlusion looking wrong or missing on Windows (the pass is unrun)
+- **Ask me like:** "Check the Direct3D 11 SSAO pass on a real GPU"; "Port depth of field from OpenGL to Direct3D 11"
 
 ### 38.4 Direct3D 12 backend
 - **What:** An opt-in explicit-API sibling of the Direct3D 11 backend, used only by the player when Build Game asks for it.
@@ -74,7 +74,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.4.1 Opt-in selection - `player/main.cpp` - Build Game "Prefer Direct3D 12" (config `d3d12=1`); the editor does not use it
   - 38.4.2 Device and command plumbing - `Render/D3D12Renderer` - isolated device, queue, list, descriptors and an offscreen target; GPU wait and barriers
   - 38.4.3 Shader - `Render/D3D12Renderer` - a copy of the Direct3D 11 HLSL (`kHLSL12`, ps_5_1) so shading matches
-  - 38.4.4 Features - `Render/D3D12Renderer` - sun shadow map with PCF, fog, textures; per the file comment up to 4x MSAA and a planar ground shadow; per the header no normal, gloss or AO maps
+  - 38.4.4 Features - `Render/D3D12Renderer` - sun shadow map with PCF, fog, textures; per the file comment up to 4x MSAA and a planar ground shadow; normal, gloss, AO, metallic-roughness and emissive maps (the header comment was corrected to match the code)
   - 38.4.5 Missing - `Render/D3D12Renderer` - no cascades, no spot or point shadows, no post chain, no GPU skinning, no sky pass (no matches in the source)
 - **Code:** `Render/D3D12Renderer`
 - **API:** `D3D12Renderer::Init`, `D3D12Renderer::RenderToPixels`, Build Game "Prefer Direct3D 12"
@@ -82,7 +82,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/lighting.md` (limitations)
 - **Tests:** -
 - **Status:** Partial - opt-in and incomplete; the source says it is compile and link verified through MinGW and "intended to be runtime-tested on Windows"
-- **Open:** possible doc mismatch: the header says `samples` is accepted but MSAA is not applied, while the `.cpp` header comment and code pick up to 4x MSAA; no post effects, cascades or skinning; no runtime test
+- **Open:** (the header and code now agree: up to 4x MSAA is applied); labelled "preview" in Build Settings; no post effects, cascades or skinning; no runtime test
 - **Related:** 38.1, 38.3, 2.3
 - **Words:** D3D12, Direct3D 12, DirectX 12, explicit API, command queue, opt-in backend
 - **Seen as:** characters do not animate or post effects are off when D3D12 is chosen; shadows only from one sun
@@ -93,7 +93,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Parts:**
   - 38.5.1 Rasterizer - `Render/SoftwareRenderer` - `Raster`: W-buffer depth, perspective-correct textured triangles with mip maps, flat or per-pixel lighting
   - 38.5.2 Scene draw - `Render/SoftwareRenderer` - `RenderMeshes` and `RenderMeshesSS` (supersampled), frustum culling, camera culling mask, row-parallel passes (`ParallelRows`)
-  - 38.5.3 Shadows - `Render/SoftwareRenderer` - cascaded sun shadow maps with soft filtering (`ShadowMap`, `ShadowFactor`); sun only
+  - 38.5.3 Shadows - `Render/SoftwareRenderer` - cascaded sun shadow maps with soft filtering (`ShadowMap`, `ShadowFactor`), plus spot, point and area light shadow maps (`RenderLocalShadowMaps`, `LocalShadowFactor`, `LocalShadowMath.hpp`); drawn on the per-pixel path only
   - 38.5.4 Post passes - `Render/SoftwareRenderer` - SSAO, bloom, tonemap, colour grade, vignette, FXAA with process-wide switches (see 2.5.3)
   - 38.5.5 Texture caches - `Render/SoftwareRenderer` - `RegisterTexture`, `GetCachedTexture`, mip chains; the GPU backends reuse this cache, including `proc:` textures
   - 38.5.6 Occlusion depth - `Render/SoftwareRenderer` - `SceneOcclusionDepth` lets particles and lines hide behind geometry
@@ -101,13 +101,13 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **API:** `Raster`, `RenderMeshes`, `RenderMeshesSS`, `Shadows()`, `ShadowsEnabled()`, `PerPixelLighting()`, `SceneOcclusionDepth`
 - **Editor:** the fallback for the Scene and Game views; Lighting panel > Rendering section switches
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
-- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `shaders`, `lighting`, `frustum_culling`
+- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
-- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting, SSAO and bloom are off by default; no spot or point shadows; no procedural sky, clouds or DoF
+- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting, SSAO and bloom are off by default; no procedural sky, clouds or DoF; shadows only on the per-pixel path
 - **Related:** 38.1, 38.10, 2.3, 2.5, 2.8
 - **Words:** software renderer, Raster, RenderMeshes, RenderMeshesSS, CPU rasterizer, z-buffer, W-buffer, supersampling, fallback renderer, mip map
-- **Seen as:** 1 FPS with a large model; jagged edges; no soft shadows from point lights
-- **Ask me like:** "Why is the software renderer used when I have a GPU?"; "Add spot light shadows to the software path"
+- **Seen as:** 1 FPS with a large model; jagged edges; no shadows at all until Per-pixel lighting is on
+- **Ask me like:** "Why is the software renderer used when I have a GPU?"; "Turn per-pixel lighting on by default in the software path"
 
 ### 38.6 Console renderer
 - **What:** A dependency-free renderer that draws 2D quads as characters in the terminal, so the engine runs headless.

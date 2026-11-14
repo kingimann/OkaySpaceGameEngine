@@ -39,7 +39,7 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::SceneFxaa, B::Direct3D11, S::Yes}, {F::SceneFxaa, B::Direct3D12, S::No},
 
         {F::SceneSsao, B::Software, S::No}, {F::SceneSsao, B::OpenGL, S::Yes},
-        {F::SceneSsao, B::Direct3D11, S::No}, {F::SceneSsao, B::Direct3D12, S::No},
+        {F::SceneSsao, B::Direct3D11, S::Yes}, {F::SceneSsao, B::Direct3D12, S::No},
 
         {F::DepthOfField, B::Software, S::No}, {F::DepthOfField, B::OpenGL, S::Yes},
         {F::DepthOfField, B::Direct3D11, S::No}, {F::DepthOfField, B::Direct3D12, S::No},
@@ -56,14 +56,14 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
         {F::SunShadowCascades, B::Software, S::Yes}, {F::SunShadowCascades, B::OpenGL, S::Yes},
         {F::SunShadowCascades, B::Direct3D11, S::Yes}, {F::SunShadowCascades, B::Direct3D12, S::No},
 
-        {F::SpotPointShadows, B::Software, S::No}, {F::SpotPointShadows, B::OpenGL, S::Yes},
+        {F::SpotPointShadows, B::Software, S::Yes}, {F::SpotPointShadows, B::OpenGL, S::Yes},
         {F::SpotPointShadows, B::Direct3D11, S::Yes}, {F::SpotPointShadows, B::Direct3D12, S::No},
 
         {F::BuildBloom, B::Software, S::Yes}, {F::BuildBloom, B::OpenGL, S::Yes},
         {F::BuildBloom, B::Direct3D11, S::WhenPostChainRuns}, {F::BuildBloom, B::Direct3D12, S::No},
 
         {F::BuildSsao, B::Software, S::Yes}, {F::BuildSsao, B::OpenGL, S::Yes},
-        {F::BuildSsao, B::Direct3D11, S::No}, {F::BuildSsao, B::Direct3D12, S::No},
+        {F::BuildSsao, B::Direct3D11, S::WhenPostChainRuns}, {F::BuildSsao, B::Direct3D12, S::No},
 
         {F::BuildFxaa, B::Software, S::Yes}, {F::BuildFxaa, B::OpenGL, S::No},
         {F::BuildFxaa, B::Direct3D11, S::No}, {F::BuildFxaa, B::Direct3D12, S::No},
@@ -105,11 +105,12 @@ int main() {
 
     // The Light Inspector sentence, including the area-light rider.
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::SpotPointShadows),
-                      "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer. "
-                      "Area lights use the same shadow path, so they are not drawn there either.") == 0);
+                      "Spot and point light shadows are not drawn on Direct3D 12. "
+                      "Area lights use the same shadow path, so they are not drawn there either. "
+                      "The software renderer draws them, like sun shadows, only with Per-pixel lighting on.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::SceneSsao),
-                      "Ambient occlusion in Post-processing is not drawn on Direct3D 11, Direct3D 12 or the software renderer. "
+                      "Ambient occlusion in Post-processing is not drawn on Direct3D 12 or the software renderer. "
                       "The Ambient occlusion switch under Rendering, and in Build Settings, is a separate switch.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::DepthOfField),
@@ -117,6 +118,10 @@ int main() {
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::BuildBloom),
                       "Bloom in Build Settings and Rendering is not drawn on Direct3D 12. "
+                      "Direct3D 11 draws it only while the scene post-processing chain is running.") == 0);
+
+    CHECK(std::strcmp(FeatureGapNote(RenderFeature::BuildSsao),
+                      "Ambient occlusion in Build Settings and Rendering is not drawn on Direct3D 12. "
                       "Direct3D 11 draws it only while the scene post-processing chain is running.") == 0);
 
     CHECK(std::strcmp(FeatureGapNote(RenderFeature::PerPixelLighting),

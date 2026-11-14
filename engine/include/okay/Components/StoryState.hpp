@@ -7,6 +7,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsValue.hpp"
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -34,14 +35,36 @@ public:
         return it == vars.end() ? vs::VsValue{} : it->second;
     }
     bool Has(const std::string& name) const { return vars.count(name) != 0; }
-    void Set(const std::string& name, const vs::VsValue& v) { if (!name.empty()) vars[name] = v; }
+    /// A write someone asked for (Set, Add, Erase, SetFlag), as it reaches `interceptWrite`.
+    struct Change { enum class Kind { Set, Erase, FlagOn, FlagOff } kind = Kind::Set; std::string name; vs::VsValue value; };
+    /// Networked clients: when set and it returns true, the write was taken (sent to the server as a
+    /// request) and the local value does not change; the server's answer sets it (SetRaw and the other
+    /// Raw calls, which skip this). Not saved. Used by NetworkManager::Quests().
+    std::function<bool(const Change&)> interceptWrite;
+
+    void Set(const std::string& name, const vs::VsValue& v) {
+        if (name.empty()) return;
+        if (interceptWrite && interceptWrite({Change::Kind::Set, name, v})) return;
+        vars[name] = v;
+    }
     void Add(const std::string& name, float delta) { Set(name, vs::VsValue(Get(name).AsFloat() + delta)); }
-    void Erase(const std::string& name) { vars.erase(name); }
+    void Erase(const std::string& name) {
+        if (interceptWrite && interceptWrite({Change::Kind::Erase, name, {}})) return;
+        vars.erase(name);
+    }
+    /// The same writes without the interceptor (what the network applies).
+    void SetRaw(const std::string& name, const vs::VsValue& v) { if (!name.empty()) vars[name] = v; }
+    void EraseRaw(const std::string& name) { vars.erase(name); }
+    void SetFlagRaw(const std::string& name, bool on) {
+        if (name.empty()) return;
+        if (on) flags.insert(name); else flags.erase(name);
+    }
 
     bool HasFlag(const std::string& name) const { return flags.count(name) != 0; }
     void SetFlag(const std::string& name, bool on = true) {
         if (name.empty()) return;
-        if (on) flags.insert(name); else flags.erase(name);
+        if (interceptWrite && interceptWrite({on ? Change::Kind::FlagOn : Change::Kind::FlagOff, name, {}})) return;
+        SetFlagRaw(name, on);
     }
 
     /// Variable names in order, for inspectors and tests.

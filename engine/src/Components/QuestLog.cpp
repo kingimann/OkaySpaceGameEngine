@@ -333,6 +333,7 @@ bool QuestLog::CanStart(const std::string& id, std::string* why) const {
 }
 
 bool QuestLog::StartQuest(const std::string& id) {
+    if (remoteAuthority) return false;
     if (!CanStart(id)) return false;
     const QuestDef* q = Def(id);
     QuestRecord& r = RecordFor(id);
@@ -347,6 +348,7 @@ bool QuestLog::StartQuest(const std::string& id) {
 }
 
 bool QuestLog::CompleteQuest(const std::string& id) {
+    if (remoteAuthority) return false;
     const QuestDef* q = Def(id);
     QuestRecord* r = nullptr;
     for (auto& x : records) if (x.id == id) r = &x;
@@ -362,6 +364,7 @@ bool QuestLog::CompleteQuest(const std::string& id) {
 }
 
 bool QuestLog::FailQuest(const std::string& id) {
+    if (remoteAuthority) return false;
     QuestRecord* r = nullptr;
     for (auto& x : records) if (x.id == id) r = &x;
     if (!r || r->status != QuestStatus::Active) return false;
@@ -374,12 +377,14 @@ bool QuestLog::FailQuest(const std::string& id) {
 }
 
 void QuestLog::ResetQuest(const std::string& id) {
+    if (remoteAuthority) return;
     for (std::size_t i = 0; i < records.size(); ++i)
         if (records[i].id == id) { records.erase(records.begin() + (long)i); break; }
     if (tracked == id) tracked.clear();
 }
 
 bool QuestLog::CompleteObjective(const std::string& id, int index) {
+    if (remoteAuthority) return false;
     const QuestDef* q = Def(id);
     QuestRecord* r = nullptr;
     for (auto& x : records) if (x.id == id) r = &x;
@@ -398,6 +403,7 @@ bool QuestLog::CompleteObjective(const std::string& id, int index) {
 }
 
 bool QuestLog::AddProgress(const std::string& id, int index, int amount) {
+    if (remoteAuthority) return false;
     const QuestDef* q = Def(id);
     QuestRecord* r = nullptr;
     for (auto& x : records) if (x.id == id) r = &x;
@@ -449,6 +455,7 @@ int QuestLog::CountItem(const std::string& item) const {
 }
 
 void QuestLog::GrantRewards(const QuestDef& q) {
+    if (m_muted) return;
     Scene* s = gameObject ? gameObject->scene() : nullptr;
     if (GameObject* p = Player()) {
         for (const auto& it : q.reward.items) {
@@ -464,12 +471,14 @@ void QuestLog::GrantRewards(const QuestDef& q) {
 }
 
 void QuestLog::FireEvent(const char* scriptEvent, const char* vsEntry, const std::string& id, float value) {
+    if (m_muted) return;
     const std::vector<vs::VsValue> args{vs::VsValue(id), vs::VsValue(value)};
     InventoryEvents::Fire(gameObject, scriptEvent, vsEntry, args);
     if (GameObject* p = Player(); p && p != gameObject) InventoryEvents::Fire(p, scriptEvent, vsEntry, args);
 }
 
 void QuestLog::Notify(const std::string& title, const std::string& body, int kind) {
+    if (m_muted) return;
     notifications.push_back(title + ": " + body);
     if (notifications.size() > 20) notifications.erase(notifications.begin());
     if (onNotify) onNotify(title, body, kind);
@@ -477,6 +486,37 @@ void QuestLog::Notify(const std::string& title, const std::string& body, int kin
     Scene* s = gameObject ? gameObject->scene() : nullptr;
     if (UIToast* t = s ? s->FindObjectOfType<UIToast>() : nullptr) { t->Push(title, body, kind); return; }
     if (ScriptUIBridge* ui = GetScriptUI()) ui->Toast((title + ": " + body).c_str(), kind, 4.0f);
+}
+
+// ---- networking ----
+void QuestLog::ApplyRemoteRecord(const QuestRecord& rec, bool notify) {
+    QuestRecord* mine = nullptr;
+    for (auto& x : records) if (x.id == rec.id) mine = &x;
+    const QuestStatus before = mine ? mine->status : QuestStatus::Inactive;
+    if (mine) *mine = rec; else records.push_back(rec);
+    if (!notify || before == rec.status) return;
+    const QuestDef* q = Def(rec.id);
+    const std::string title = q ? QuestTitle(*q) : rec.id;
+    if (rec.status == QuestStatus::Active) { if (tracked.empty()) tracked = rec.id; Notify(Ui("quest.started"), title, 0); }
+    else if (rec.status == QuestStatus::Completed) { if (tracked == rec.id) tracked.clear(); Notify(Ui("quest.completed"), title, 1); }
+    else if (rec.status == QuestStatus::Failed) { if (tracked == rec.id) tracked.clear(); Notify(Ui("quest.failed"), title, 2); }
+}
+
+void QuestLog::RemoveRemoteRecord(const std::string& id) {
+    for (std::size_t i = 0; i < records.size(); ++i)
+        if (records[i].id == id) { records.erase(records.begin() + (long)i); break; }
+    if (tracked == id) tracked.clear();
+}
+
+void QuestLog::RunOn(std::vector<QuestRecord>& recs, const std::function<void()>& fn) {
+    const bool wasMuted = m_muted;
+    const std::string keepTracked = tracked;
+    records.swap(recs);
+    m_muted = true;
+    fn();
+    m_muted = wasMuted;
+    records.swap(recs);
+    tracked = keepTracked;
 }
 
 // ---- objective sources ----
@@ -517,7 +557,7 @@ void QuestLog::NotifyDialogueEnd(const std::string& npc, const std::string& grap
 // ---- per frame: collect objectives, the journal key, the overlays ----
 void QuestLog::Update(float) {
     if (!questFile.empty() && !m_fileLoaded) LoadFile(nullptr);
-    for (const std::string& id : ActiveIds()) {
+    for (const std::string& id : remoteAuthority ? std::vector<std::string>{} : ActiveIds()) {
         const QuestDef* q = Def(id);
         if (!q) continue;
         for (std::size_t i = 0; i < q->objectives.size(); ++i) {

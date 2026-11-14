@@ -8,6 +8,7 @@
 //   test_own_http_net <path to gen_http_test_certs.sh>
 #define OKAY_OWN_HTTP 1   // the NativeHttp wiring test below
 #include "okay/Platform/NativeHttp.hpp"
+#include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/OwnHttpNet.hpp"
 
 #include <atomic>
@@ -510,6 +511,121 @@ static void TestDownloadFeatures() {
     s.Stop();
 }
 
+// ---- review fixes: no re-send after a timeout, short bodies fail, redirect cap, strict Range (loopback) -------
+static void TestReviewFixes() {
+    std::string content(1000, 'r');
+    Server s;
+    s.handler = [&](int c, const std::string& head, const std::string&) {
+        std::string path = PathOf(head);
+        if (path == "/stall") { while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }   // accepts, reads, never answers
+        else if (path == "/cut") { SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789"); while (!s.stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+        else if (path == "/cutclose") SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789");   // closes early
+        else if (path == "/loop") SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n");
+        else if (path == "/suffix-ok") SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 990-999/1000\r\nContent-Length: 10\r\n\r\n" + content.substr(990));
+        else if (path == "/suffix-bad") SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-9/1000\r\nContent-Length: 10\r\n\r\n" + content.substr(0, 10));
+        else if (path == "/bounded-bad") SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 10-99/1000\r\nContent-Length: 90\r\n\r\n" + content.substr(10, 90));
+        else if (path == "/multi") SendAll(c, "HTTP/1.1 206 Partial Content\r\nContent-Type: multipart/byteranges; boundary=B\r\nContent-Length: 5\r\n\r\nxxxxx");
+        else SendAll(c, Ok(""));
+    };
+    s.Start();
+    const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
+    ::unsetenv("OKAY_HTTP_CURL"); ::setenv("OKAY_OWN_HTTP", "1", 1);
+    ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
+    // A request that was written and then timed out may have reached the server: maybeSent tells callers not to re-send it.
+    okay::http::Result r = okay::http::Request("POST", base + "/stall", {}, "payload", "", "", 400);
+    CHECK(!r.reached && r.maybeSent && r.error.rfind("timeout", 0) == 0);
+    r = okay::http::Request("GET", base + "/stall", {}, "", "", "", 400);
+    CHECK(!r.reached && r.maybeSent);
+    // A body cut short (the server stalls, or closes early) is a failure, never a 200 with a partial body.
+    r = okay::http::Request("GET", base + "/cut", {}, "", "", "", 600);
+    CHECK(!r.reached && r.status == 0 && r.body.empty());
+    r = okay::http::Request("POST", base + "/cutclose", {}, "x");
+    CHECK(!r.reached && r.maybeSent && r.body.empty());
+    // A clean "not reached" (connection refused) is not marked as sent: the curl fallback may run.
+    {   int port = 0; int lf = Listen(port); ::close(lf);
+        r = okay::http::Request("POST", "http://127.0.0.1:" + std::to_string(port) + "/x", {}, "x", "", "", 2000);
+        CHECK(!r.reached && !r.maybeSent); }
+    r = okay::http::Request("GET", "http://no-such-name.invalid/x", {}, "", "", "", 3000);
+    CHECK(!r.reached && !r.maybeSent);
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    // Redirect cap: a server that redirects forever stops after cap + 1 requests with an error.
+    {   NetOptions o = Opts(); o.limits.maxRedirects = 5;
+        const size_t before = s.Count();
+        FetchResult fr = Perform("GET", base + "/loop", {}, "", o);
+        CHECK_ERR(fr, Err::TooManyRedirects);
+        CHECK(s.Count() - before == 6 && fr.redirects == 5); }
+    // Strict Range checks end to end.
+    {   NetOptions o = Opts();
+        FetchResult fr = Perform("GET", base + "/suffix-ok", {"Range: bytes=-10"}, "", o);
+        CHECK(fr.ok && fr.partial && fr.rangeStart == 990 && fr.response.body == content.substr(990));
+        fr = Perform("GET", base + "/suffix-bad", {"Range: bytes=-10"}, "", o); CHECK_ERR(fr, Err::BadResponse);
+        fr = Perform("GET", base + "/bounded-bad", {"Range: bytes=10-50"}, "", o); CHECK_ERR(fr, Err::BadResponse);
+        fr = Perform("GET", base + "/multi", {"Range: bytes=0-1,5-6"}, "", o); CHECK_ERR(fr, Err::BadResponse); }
+    s.Stop();
+}
+
+// ---- the no-re-send decision, and the real AccountService path (review fixes) ------------------------------------
+static void TestNoResendDecision() {
+    using okay::http::Result; using okay::http::ShouldFallBackToCurl;
+    Result ok; ok.reached = true; ok.status = 200;
+    Result clean; clean.reached = false; clean.maybeSent = false;
+    Result sent; sent.reached = false; sent.maybeSent = true;
+    for (const char* m : {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}) {
+        const bool idem = std::string(m) == "GET" || std::string(m) == "HEAD";
+        CHECK(!ShouldFallBackToCurl(m, ok));       // success: nothing to fall back to
+        CHECK(ShouldFallBackToCurl(m, clean));     // clean failure: curl may always run
+        CHECK(ShouldFallBackToCurl(m, sent) == idem);   // maybe sent: only GET / HEAD may be repeated
+    }
+}
+
+static int CountLines(const std::string& path) {
+    std::ifstream f(path); std::string l; int n = 0; while (std::getline(f, l)) ++n; return n;
+}
+
+static void TestAccountNoResend() {
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("okay_resend_" + okay::account::detail::RandomHex(8));
+    fs::create_directories(dir / "bin");
+    const std::string log = (dir / "curl.log").string();
+    WriteFile((dir / "bin" / "curl").string(), "#!/bin/sh\necho run >> '" + log + "'\nexit 7\n");
+    Sh("chmod +x '" + (dir / "bin" / "curl").string() + "'");
+    const char* oldPath = std::getenv("PATH"); const std::string savedPath = oldPath ? oldPath : "";
+    ::setenv("PATH", (dir / "bin").string().c_str(), 1);   // only the fake curl: a fallback is counted, not run for real
+    ::setenv("OKAY_OWN_HTTP", "1", 1); ::unsetenv("OKAY_HTTP_CURL");
+    ::unsetenv("HTTP_PROXY"); ::unsetenv("http_proxy"); ::setenv("NO_PROXY", "127.0.0.1", 1);
+
+    Server s;   // accepts, reads the whole request, then closes without answering
+    s.handler = [](int, const std::string&, const std::string&) {};
+    s.Start();
+    okay::account::AccountService svc(dir / "cfg", "http://127.0.0.1:" + std::to_string(s.port));
+    for (const char* m : {"POST", "PUT", "PATCH", "DELETE"}) {
+        const size_t before = s.Count();
+        okay::account::ApiResponse r = svc.ApiAnon("/act", m, "{\"a\":1}");
+        CHECK(!r.reached);
+        CHECK(s.Count() - before == 1);            // the server saw exactly one request
+        CHECK(!fs::exists(log));                   // and curl never ran (no re-send)
+    }
+    for (const char* m : {"GET", "HEAD"}) {        // a repeat is allowed here: curl (fake) runs once each
+        const int beforeCurl = fs::exists(log) ? CountLines(log) : 0;
+        const size_t before = s.Count();
+        okay::account::ApiResponse r = svc.ApiAnon("/act", m);
+        CHECK(!r.reached);
+        CHECK(s.Count() - before == 1);
+        CHECK(CountLines(log) == beforeCurl + 1);
+    }
+    s.Stop();
+    {   // a clean failure (connection refused): curl is tried, also for a POST
+        int port = 0; int lf = Listen(port); ::close(lf);
+        okay::account::AccountService dead(dir / "cfg2", "http://127.0.0.1:" + std::to_string(port));
+        const int beforeCurl = CountLines(log);
+        okay::account::ApiResponse r = dead.ApiAnon("/act", "POST", "{}");
+        CHECK(!r.reached && CountLines(log) == beforeCurl + 1);
+    }
+    ::setenv("PATH", savedPath.c_str(), 1);
+    ::unsetenv("OKAY_OWN_HTTP"); ::unsetenv("NO_PROXY");
+    std::error_code ec; fs::remove_all(dir, ec);
+}
+
 static void TestNoProxyList() {
     CHECK(HostBypassesProxy("localhost", "localhost,127.0.0.1"));
     CHECK(HostBypassesProxy("127.0.0.1", "localhost,127.0.0.1"));
@@ -847,6 +963,9 @@ int main(int argc, char** argv) {
     TestHostile();
     TestNativeHttp();
     TestDownloadFeatures();
+    TestReviewFixes();
+    TestNoResendDecision();
+    TestAccountNoResend();
     {   // proxy tests that do not need TLS
         NetOptions p = Opts(); std::string why;
         if (!TlsAvailable(p, why)) TestProxy("", "");

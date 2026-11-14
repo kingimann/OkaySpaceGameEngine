@@ -2,7 +2,7 @@
 
 Everything that makes a body move under player control and everything that frames it: the one Player Controller (first and third person), stances, 2D and 2.5D controllers, shooter, top-down, click-to-move and vehicle controllers, the orbit and first-person cameras and hands, virtual cameras with dolly rails, the camera component, and the blocky customizable Character.
 About 35 headers under `Components/` (most of them header-only and large: `FirstPersonController` 960 lines, `ThirdPersonController` 890, `Platformer25DController` 680) plus `editor/FpHandsWindow.*`; the editor inspectors live in `editor/main.cpp`.
-Pull request #554 (Grok's sessions) was not merged: Grok is gone and the work on `grok/jitter-fix` stayed on that branch. Head and walk jitter from the character turning is fixed in `Scene::RestorePose` (see 6.4, test `turn_interpolation`); any other source of jitter is not measured. Animation and IK pages: 5.
+Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) brought the controller panel's animation setup status, the "wire missing animation and IK" step and Play-mode cursor release, and the head and walk jitter work (the `grok/jitter-fix` branch was found on main). Animation and IK pages: 5.
 
 ## 4. Characters & cameras
 
@@ -21,7 +21,7 @@ Pull request #554 (Grok's sessions) was not merged: Grok is gone and the work on
 - **Docs:** `docs/making_a_game.md` (The Player Controller, Controller movement extras)
 - **Tests:** `player_controller`, `view_upgrade`, `player`, `player_fixes`, `view_ground`, `run_feel`, `mp_controllers`, `net_player_spawn`, `net_auth_move`, `net_predict`, `death_lock`
 - **Status:** Works - player_controller, view_upgrade and player tests cover the View modes, toggle and old-scene loading; I read PlayerController and PlayerView headers, not the full controllers
-- **Open:** #554 (Grok) was not merged and is not in flight; the controller-panel animation status in it does not exist; turning no longer makes the drawn body stutter (`turn_interpolation`), other jitter is unverified by any run; a scene saved with the Player Controller records cannot be opened by a build from before that change (per docs)
+- **Open:** #554 landed on 2026-11-10: the controller panel's animation setup status, and the head and walk jitter work, are on main (tests `test_anim_jitter`, `test_head_stability`; IK follows the state's weight); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body, not the full controller); a scene saved with the Player Controller records cannot be opened by a build from before that change (per docs)
 - **Related:** 4.2, 4.6, 4.7, 5.1, 5.6, 5.9, 16.8
 - **Words:** Player Controller, first person, third person, View, Both, toggle view, V key, FirstPersonController, ThirdPersonController, PlayerView, spring arm, FOV kick, bob
 - **Seen as:** the player floats, slides or jumps badly; V does not switch view or the camera pops; the head shows inside the first-person lens; a remote player's controller fights the network; wrong move speed after attaching a model
@@ -121,7 +121,7 @@ Pull request #554 (Grok's sessions) was not merged: Grok is gone and the work on
 - **Docs:** `docs/making_a_game.md`
 - **Tests:** `player`, `view_ground`, `run_feel`
 - **Status:** Works - player test checks the wall pull-in; view_ground checks the lens stays above ground through hitches; CameraFollow has no dedicated test I found
-- **Open:** #554 (Grok) was not merged; the turning stutter is fixed and covered by `turn_interpolation` (a bare Scene with a turning body, not the full controller); head bob and animation jitter beyond that are unverified
+- **Open:** #554 landed on 2026-11-10 with the head and walk jitter work (tests `test_anim_jitter`, `test_head_stability`); the turning-character stutter (render interpolation cancelled by `RestorePose` when game code changes `localRotation`) is fixed and covered by `turn_interpolation` (a bare Scene with a turning body, not the full controller); no other open item recorded
 - **Related:** 4.1, 4.8, 4.10
 - **Words:** third-person camera, orbit, spring arm, camera collision, shoulder offset, CameraFollow, chase camera, recenter
 - **Seen as:** the camera behind the player is jittery or clips through walls; it spins on a strafe; it pumps in and out at edges; look-down turns into a top-down view

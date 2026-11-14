@@ -9,7 +9,8 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, blend, md2, md3, irrmesh, b3d, x
+// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, blend, md2, md3, irrmesh, b3d, x,
+// ac (.ac .acc .ac3d), ogre (.mesh.xml), xgl (.xgl .zgl), irr (.irr), nff (.nff .enff)
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -60,21 +61,31 @@ static const char* ExtOf(const std::string& reader) {
     if (reader == "irrmesh") return ".irrmesh";
     if (reader == "b3d") return ".b3d";
     if (reader == "x") return ".x";
+    if (reader == "ac") return ".ac";
+    if (reader == "ogre") return ".mesh.xml";
+    if (reader == "xgl") return ".xgl";
+    if (reader == "irr") return ".irr";
+    if (reader == "nff") return ".nff";
     return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
            reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" :
            reader == "3mf" ? ".3mf" : reader == "amf" ? ".amf" : reader == "x3d" ? ".x3d" : reader == "dxf" ? ".dxf" : reader == "lwo" ? ".lwo" : reader == "blend" ? ".blend" : ".fbx";
 }
-static bool ExtMatches(const std::string& reader, std::string ext) {
+static bool ExtMatches(const std::string& reader, std::string ext, std::string name = std::string()) {
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-    return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb");
+    for (char& c : name) c = (char)std::tolower((unsigned char)c);
+    if (reader == "ogre") return name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0;
+    return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb") || (reader == "ac" && (ext == ".acc" || ext == ".ac3d")) ||
+           (reader == "xgl" && ext == ".zgl") || (reader == "nff" && ext == ".enff");
 }
 // the readers added in batch B (3MF, AMF, X3D, DXF, LWO)
 static bool IsBatchBReader(const std::string& r) { return r == "3mf" || r == "amf" || r == "x3d" || r == "dxf" || r == "lwo"; }
 // the readers added in batch C (MD2, MD3, IRRMESH, B3D, DirectX .x)
 static bool IsBatchCReader(const std::string& r) { return r == "md2" || r == "md3" || r == "irrmesh" || r == "b3d" || r == "x"; }
-static bool IsRawReader(const std::string& r) { return IsBatchCReader(r) || r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
+// the readers added in batch D (AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF)
+static bool IsBatchDReader(const std::string& r) { return r == "ac" || r == "ogre" || r == "xgl" || r == "irr" || r == "nff"; }
+static bool IsRawReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
 // readers added after the first corpus pass also record textures, nodes, UV and normal presence
-static bool IsMeasuredReader(const std::string& r) { return IsBatchCReader(r) || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
+static bool IsMeasuredReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
 
 static CorpusStats MeasureFile(const std::string& reader, const std::string& path) {
     CorpusStats s;
@@ -88,6 +99,7 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
         fbx::SetOwnReaderEnabled(false);
     } else if (IsRawReader(reader)) {
         SetImportBackend(ExtOf(reader), ImportBackend::Own);
+        if (reader == "irr") { SetImportBackend(".irrmesh", ImportBackend::Own); SetImportBackend(".x", ImportBackend::Own); }   // the meshes a scene names are read through the seam: ours
         ImportedModel im; std::string e;
         if (!ImportModelData(path, im, ImportBackend::Own, false, &e)) { s.err = e; return s; }
         s.materials = (int)im.materials.size();
@@ -292,7 +304,7 @@ int main(int argc, char** argv) {
         std::vector<std::string> files;
         for (auto& e : fs::recursive_directory_iterator(dir)) {
             if (!e.is_regular_file()) continue;
-            if (ExtMatches(reader, e.path().extension().string())) files.push_back(e.path().string());
+            if (ExtMatches(reader, e.path().extension().string(), e.path().filename().string())) files.push_back(e.path().string());
         }
         std::sort(files.begin(), files.end());
         for (const std::string& f : files) std::cout << Line(reader, fs::relative(f, dir).generic_string(), MeasureFile(reader, f)) << std::endl;

@@ -190,6 +190,17 @@ This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.
 
+## Game channels the relay carries (round 4)
+
+Build mode, the quest log and death / respawn replication ride on the ordinary game channels, so the
+relay needs no change and reads none of it (with encryption on it cannot): a client's build and quest
+requests go out on `__req/build` and `__req/quest` (reliable, ordered, host only: the host's handler
+reads them and nothing is passed on to the other clients), and the host's answers on `__bld`, `__qst`
+and `__life` (ordered). A late joiner's snapshot is sent in chunks of at most 24 KB, a few dozen
+datagrams for a full 250-piece build, well inside the relay's per-peer caps above. The relay session
+tests (`net_relay`, `net_relay_clients`, `net_relay_nat`) were re-run; the new suites were run over a
+direct connection and NetSim, not through a relay.
+
 ## Voice calls in the launcher
 
 The launcher's voice calls (DM calls and each server's **Lounge**) use the same

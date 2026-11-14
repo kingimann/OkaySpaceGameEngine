@@ -163,6 +163,51 @@ Ranked by player-visible impact. Each has a regression test in
     without autoReconnect, and a direct session, where nothing can tell the client and the 10 s silence
     timeout applies).
 
+18. **Build mode placements were not synced.** Every player built in their own copy of the world. Now
+    the server is the only one that changes what players built: a client's BuildMode sends place, remove,
+    move, link, unlink and undo as requests on a server-only channel (`__req/build`; a client cannot reach
+    `__bld`, the server's stream), and the server does each one only if it passes: the prefab is on the
+    allowlist (the scene's palettes plus `extraPrefabs`) and a safe path, the pose is finite, a real rotation
+    and inside the bounds, the player's avatar is within reach, the object cap and the per-player cap and rate
+    limit hold, nothing solid is in the way, and the player may edit it (only what it placed, unless
+    `ownerOnly` is off; the level's own objects only with `levelEditable`). What is built is sent to every
+    client on one ordered stream; a refused move or removal sends the client the truth about the object so its
+    copy snaps back. Undo is per player and goes through the same checks. A client that joins later is sent
+    the whole state in chunks and reconciles (what the snapshot does not name is removed), so a rejoin or a
+    loaded creation also works. New generic pieces in `NetworkManager`: `SetRequestHandler` (a `__req/`
+    channel that reaches the server's handler only, on all four transports, never relayed or put in the
+    inbox), `AddJoinHook` and `PeerPosition`. Code: `Net/NetBuildSync.*`, `BuildMode` (`Op`, `onChanged`,
+    `remoteRequest`, `Apply...`). Test: `tests/test_net_build_sync.cpp` (request channel, replicate, late
+    join, ownership, per-player undo, caps, bounds, reach, overlap, rate limit, 28 hostile request shapes,
+    forged `__bld`, hostile server messages, level objects, session end). Not replicated: the state of doors,
+    movers and logic outputs (each peer runs its own logic), pieces a script makes or destroys.
+19. **Quest and story state were per client.** A kill or a dialogue ending counted on every client by itself, so
+    clients disagreed about quests, and a joiner started from nothing. The server's Quest Log and Story State
+    are now the truth (`Net/NetQuestSync.*`): changes go to the clients as they happen (ordered, `__qst`), a
+    joiner is sent everything, a client's Quest Log is a read-only copy (`QuestLog::remoteAuthority`: no local
+    start, progress or kill counting) and a write to its Story State is a request the server judges
+    (`StoryState::interceptWrite`). Quests are shared unless listed in `perPlayerQuests`; story variables and
+    flags are shared unless they start with a `perPlayerVars` prefix. Per-player state is kept by the server per
+    player, sent to that player only, and survives a resume. A client may only write its own per-player names, or
+    shared names under `clientWritableVars` (none by default); a client can never start a quest or add progress.
+    Limits per player and for the shared story, and a request rate. A client keeps a working local log until the
+    server's first snapshot (a server that does not run this changes nothing). Test:
+    `tests/test_net_quest_sync.cpp` (shared and per-player scope, late joiners, resume, client writes refused,
+    33 hostile request shapes, hostile server lines, caps, rate, forged `__qst`, session end).
+20. **A late joiner saw a dead object alive.** Deaths, respawns and health went to the peers connected at the
+    time. A joiner is now told who is dead (with where the blow came from, so it falls the same way) and who is
+    hurt, including objects that destroy themselves on death (`m_dead`, kept until a respawn). While looking at
+    this: death, respawn and damage went as separate unordered reliable messages, so over a lossy link a
+    respawn could be applied before the death it follows and leave the copy dead. They now travel on one
+    ordered stream (`__life`, converted back to the old messages on arrival; the old channels are still accepted).
+    Test: `tests/test_net_life_late.cpp`.
+21. **The new messages under loss.** `tests/test_net_build_quest_lossy.cpp` runs them through `NetSim` (20% loss,
+    15% duplication, 30 ms plus or minus 25 ms): 24 build requests arrive exactly once and in order, moves end on
+    the last one and a removed piece is not resurrected by a later move, quest progress and a story counter never
+    go backwards, a per-player variable ends on its last write, flags that flip end on the last value, a client
+    that joins in the middle of all of it ends with the server's state, and a death and respawn in quick
+    succession (and a join while dead) end consistent.
+
 Also covered by new tests with no bug found: loss, reordering and duplication through `NetSim`
 (`tests/test_net_lossy.cpp`: exactly-once reliable, in-order ordered, never-backwards sequenced,
 join, convergence of a synced object and a resume on a bad link), a deterministic fuzz of every

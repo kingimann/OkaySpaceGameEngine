@@ -73,7 +73,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
 | ~~Sequence has only camera, transform, animation, audio, event tracks~~ Resolved: letterbox bars, camera shake, a coloured screen fade and nested sequences, each with keys and curves, saved in the `.okayseq` file, edited in the Timeline and drawn on top of every renderer. `examples/cutscene` plays one. See `docs/cutscenes.md`. | `Components/Sequence.hpp` (`SeqLetterboxTrack`, `SeqShakeTrack`, `SeqFadeTrack`, `SeqNestTrack`) | Done. Not done: playback is still not saved, and in multiplayer each client plays its own copy. | Medium | Medium |
-| Cinematics, dialogue and quests are per client in multiplayer and not saved | feature map 10.x | A save mid-dialogue loses it; clients can desync quests | Medium | Medium |
+| Cinematics, dialogue and quests are per client in multiplayer and not saved. Partly resolved: quest state and story variables are now server authoritative (shared or per player, late joiners get a snapshot; `docs/dialogue_quests.md` "Multiplayer"). Still per client: dialogue boxes and cinematic playback, and a networked game is not saved as one | feature map 10.x, `Net/NetQuestSync.cpp` | A save mid-dialogue loses it; each client plays its own cinematic; per-player quests advance only through the server API, not the stock kill / talk sources | Low | Medium |
 | Sound captions fed when a source names one | `AudioSource::caption` calls `CaptionManager::Sound` on play; the caption widget draws it when sound captions are on | A source with an empty caption still shows nothing | Low | Small |
 
 ## 8. Gameplay systems
@@ -83,7 +83,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 | Four separate health models | `HealthStat`, `SurvivalStats`, RPG `Stats`, `NPCController.health` (feature map 11.4, 11.9, 9.5) | Damage from one system does not reach the others; scripts must know which one to hit | Medium | Large |
 | Melee only hits NPCs; no weapon definitions tied to items; no ranged weapon component except projectiles | feature map 11.x (`Open:` on combat row) | Weapons are hand-built every time | Medium | Large |
 | ~~No loot-table, recipe-book or item editor windows~~ Resolved: **Window > Items, Loot & Recipes** (also **View > Editors & Tools**) lists, searches, adds, duplicates, deletes and edits items, loot tables and recipes. Loot entries have weight, a quantity range and a live roll preview. Recipes have inputs, outputs and crafting time. Item references are dropdowns of defined items; a missing one is a plain-English warning. Saves the existing `.okayitems`, `.okayloot` and `.okayrecipes` files, with undo while the window is focused. | `editor/ContentEditors.cpp`, `Inventory/ItemDatabase`, `Inventory/LootTable`, `Inventory/Recipe` | Done. | Medium | Medium |
-| Build mode placements are not synced between players | `docs/build_mode.md` "Not covered yet" | Multiplayer building diverges | Medium | Medium |
+| ~~Build mode placements are not synced between players~~ Resolved: place, remove, move, link, unlink and undo are server-checked requests (allowlist, object cap, rate limit, bounds, reach, ownership) and late joiners get the state (`docs/build_mode.md` "Multiplayer"). Not replicated: door and mover state (each peer runs its own logic), pieces a script makes or destroys | `Net/NetBuildSync.cpp` | Done | Low | Done |
 | Minimap is 2D top-down only; Turn Manager and Minimap have no docs | feature map 11.x | No 3D or tilted minimap and no doc pages | Low | Medium |
 
 ## 9. In-game UI
@@ -111,7 +111,7 @@ Impact: High = a user or player will hit it in normal use. Medium = a visible li
 
 | Item | Where | What is missing | Impact | Size |
 |---|---|---|---|---|
-| Late joiners do not see a body that died before they joined | `Net/NetworkManager.cpp` (`__death` and `__respawn` go to the peers connected at the time) | A player who joins while an object is dead sees it alive until its next respawn; deaths themselves (kill volume, script kill) are replicated now (`docs/multiplayer_audit.md`) | Low | Small |
+| ~~Late joiners do not see a body that died before they joined~~ Resolved: a joiner is told who is dead (and where the blow came from) and who is hurt, and death, respawn and damage travel on one ordered stream so a respawn cannot overtake its death (`docs/multiplayer_audit.md` 20) | `Net/NetworkManager.cpp` (`SendLifeSnapshot`, `SendLife`) | Done. A scene object a script destroyed (not a Health Stat death) is still not removed on a late joiner | Low | Done |
 | Client anti-cheat probes are Windows only | `shared/AntiCheatChecks.hpp:20, 48, 129, 303` (`_WIN32`; "an empty probe = not checked on this platform") | Linux and macOS clients have no debugger, module or clock probes | Medium | Medium |
 | No replay or spectator recording over the network | no replay code in `engine/include/okay/Net`; `Core/FrameRecord.hpp` is local only and has no editor or player caller | No kill-cam, demo or server replays | Low | Large |
 | `NativeHttp` is Windows only | `Platform/NativeHttp.hpp:19, 32` | Other systems shell out to a `curl` process, so a game on a machine without curl cannot call accounts or matchmaking | Medium | Medium |

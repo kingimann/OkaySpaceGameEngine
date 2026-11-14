@@ -107,7 +107,7 @@ No open PR touches this area.
 - **Docs:** `docs/build_mode.md`
 - **Tests:** `build_mode`, `io_links`, `structure_builder`, `block_builder`, `builder_mode`, `inventory_build_charge`
 - **Status:** Works - BuildMode.hpp, Buildable.hpp, LogicLinks.hpp and the other builder headers read; placement, undo, links and charging for pieces covered by `build_mode`, `structure_builder` and `inventory_build_charge`
-- **Open:** per `docs/build_mode.md` "Not covered yet": placements and links are not synced between players, building is 3D only, pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
+- **Open:** per `docs/build_mode.md` "Not covered yet": building is 3D only (multiplayer building is server checked and synced, 16.8.8; door and mover state is not), pressure plates need a collider; Build Mode and Builder Mode are different features with confusingly similar names
 - **Related:** 6.6, 11.1, 11.3, 12.8, 16.8, 2.6
 - **Words:** build mode, building, place objects, Buildable, logic link, button door, pressure plate, creation, structure builder, Rust building, foundation, wall, block builder, Minecraft, Builder Mode, F2, snap to grid
 - **Seen as:** a piece will not place (red ghost); players can delete the level floor; a link stops working after loading; a built structure floats; pieces do not snap together

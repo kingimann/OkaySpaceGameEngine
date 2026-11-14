@@ -311,9 +311,40 @@ Everything players can do is also a call: `PlaceAt` / `PlaceItem`, `Remove`,
 `okay::BuildCreation` saves and loads creations without a Build Mode, for
 example on a server.
 
+## Multiplayer
+
+With a `NetworkManager` in the scene, build mode works over the network with no setup. The **server
+decides**: a client's place, remove, move, link, unlink and undo are sent as requests, the server checks
+each one and does it (or refuses), and everything built is sent to every client in order. A client that
+joins later is sent the whole state. `okay/Net/NetBuildSync.hpp` has the code; the rules are
+`nm->Build()`:
+
+| Rule | Default | What it does |
+| --- | --- | --- |
+| allowlist | the palettes of the scene's BuildModes, plus `extraPrefabs` | a client may only place a prefab one of them lists |
+| `maxObjects` | 250 | placed objects in the world |
+| `maxPerPlayer` | 0 (off) | placed by one player at a time |
+| `maxRequestsPerSecond` | 10 | per player, a burst of twice that; the rest are dropped |
+| `boundsMin` / `boundsMax` | plus and minus 1000 | where pieces may go |
+| `maxReach` | 16 | from the player's avatar, when the server knows where it is (0 = no check) |
+| `checkBlocked` | on | a piece may not overlap something solid on the server |
+| `ownerOnly` | on | a player moves, removes and links only what it placed (the host may change anything) |
+| `levelEditable` | off | players may also edit the level's own Buildable objects (they need a build id in the scene) |
+
+On a client a BuildMode changes nothing itself: `PlaceItem` returns null and the piece appears when the
+server's answer arrives; `Redo`, `Duplicate` and loading or clearing a creation do nothing. Undo is per
+player: it undoes that player's last steps (a place, a removal, a move, a link) through the same checks
+as a request. A refusal comes back with a reason (`nm->Build().onRefused` on the client). The host's own
+BuildMode builds directly and its changes go out to the clients; a loaded creation replaces what everyone
+sees. `BuildMode::onChanged` and `remoteRequest` are the two hooks this is built on.
+
+What is not replicated: the state of doors, movers and logic outputs (each peer runs its own logic from
+the replicated links and pieces), pieces made or destroyed by a script instead of BuildMode, and
+objects a `.okaycreation` file puts into a scene before the session starts. A piece restored by undo
+comes back with its links to other pieces but not with links other pieces had to it.
+
 ## Not covered yet
 
-- **Multiplayer:** placements and links aren't synced between players yet.
 - **2D:** building is 3D only (it uses the 3D physics raycasts).
 - **Pressure plates and zones** sense colliders. An object needs a collider to
   press one.

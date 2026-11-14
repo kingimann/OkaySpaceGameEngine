@@ -207,10 +207,34 @@ objective kind=kill desc="Kill 2 wolves" target="Wolf" count=2 optional=0
 
 ## Multiplayer
 
-Dialogues are local to each client: the box, the pause and the events happen
-on the machine of the player who talks. Quests are per client in this version:
-each client's Quest Log tracks its own player's objectives and rewards. A
-shared, host-validated quest state is not part of this version.
+With a `NetworkManager` in the scene the server is the truth for quests and story variables
+(`nm->Quests()`, `okay/Net/NetQuestSync.hpp`). The dialogue box, the pause and the events still happen on
+the machine of the player who talks; what changes is where the state lives.
+
+- **Quests** are shared by default: the server's Quest Log is the one everybody sees, changes are sent as
+  they happen, and a client that joins later is sent all of it. A client's Quest Log is a read-only copy
+  (`remoteAuthority`): its starts, progress and kill / reach / dialogue / collect sources change nothing
+  there, so a death a client sees cannot be counted twice. Rewards are the server's business (the server's
+  Quest Log grants them as before).
+- **Per-player quests**: list the ids in `perPlayerQuests` and each player has its own copy, sent to that
+  player only. They advance on the server through `nm->Quests()`: `StartQuest(peer, id)`,
+  `AddProgress(peer, id, objective, n)`, `CompleteObjective`, `CompleteQuest`, `FailQuest`, `ResetQuest`
+  (peer 0 is the host, whose log is its own). Prerequisites that are shared quests are honoured. These run
+  with no toast, reward or script event; `onPlayerQuest(peer, id, status)` tells the game what happened so
+  it can give the reward. The stock objective sources feed the server's own log (shared quests); a game
+  that wants per-player kills or talks calls the per-player functions itself.
+- **Story variables and flags** are shared by default. Names that start with a prefix in `perPlayerVars`
+  are per player (a dialogue choice, a personal flag). A client's write (a dialogue Set node, a script) is
+  not applied but sent to the server as a request: a per-player name lands in that player's own copy; a
+  shared name only if it starts with a prefix in `clientWritableVars` (empty by default, so the server owns
+  the shared story); otherwise it is refused and the client's value stays. Numbers, true / false and text
+  travel (text up to 256 bytes); other types stay local on a client. Limits: `maxPlayerVars` (256) per
+  player, `maxSharedVars` (4096), `maxRequestsPerSecond` (20, burst of twice that).
+- A client that talks to a server that does not run this (an older build) keeps a working local log: the
+  log only becomes a copy after the server's first snapshot.
+
+Not done: saving a networked game (the server's state is what a save should hold; the clients are
+copies), and a client-side "start this quest" request (the server starts quests).
 
 ## Save games
 

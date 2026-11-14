@@ -411,7 +411,7 @@ void TestSmallOrder() {
     const std::string msg = "anything at all";
     CHECK(!ed25519::Verify(msg, sig, ident));
     // Every encoding of a small-order point (libsodium's blocklist), with and without the sign bit.
-    const char* small[] = {
+    const char* smallOrderKeys[] = {
         "0000000000000000000000000000000000000000000000000000000000000000",   // order 4
         "0100000000000000000000000000000000000000000000000000000000000000",   // identity
         "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",   // order 8
@@ -420,7 +420,7 @@ void TestSmallOrder() {
         "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p (non-canonical 0)
         "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p+1 (non-canonical 1)
     };
-    for (const char* h : small) {
+    for (const char* h : smallOrderKeys) {
         for (int sign = 0; sign < 2; ++sign) {
             ed25519::PublicKey k = Arr<32>(h);
             if (sign) k[31] |= 0x80;

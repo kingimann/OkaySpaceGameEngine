@@ -35,6 +35,18 @@ Found by reading `InventoryOps` and attacking it with bad input:
 
 Tests: `tests/test_inventory_moves.cpp` (hostile numbers, same-slot, stack and weight limits, unique items, slot <-> grid, old-format loading).
 
+## Ported from Grok's closed inventory PRs 10-12
+
+Grok's three PRs were closed unmerged and conflicted with main. A review found most of them already in main (builds charged in full, name case folding, the `GameInputBlocked` modal guard, the use-key claim, chest scroll, hotbar scaling, icon fallback and atlas icons). What was missing was re-applied against current code:
+
+* **Top-down fire** no longer shoots through an open bag, a focused text field, a menu or a click on a button (`TopDownController2D` now asks `GameInputBlocked`).
+* **Lean steps aside.** In the first-person, third-person and third-person-shooter controllers, a lean key is ignored when a chest, bench or pickup wants it as its use key (`InteractClaimsKey`), or on the press that opens or closes a bag whose toggle key is the same (`LeanKeyTaken`). Q/E clash by default (bag key `E`, lean right `E`).
+* **One scale for chest and grid bags.** They scale with the screen height like the hotbar (720 = authored size, or the player UI's reference height) and shrink to fit the width. A grid bag taller than the screen scrolls with the wheel (`GridInventoryUI::scroll`). An open backpack taller than the screen scrolls too (`InventoryUI::scroll`). While the backpack is open the wheel scrolls it instead of changing the hotbar slot.
+
+Left out on purpose: the `InputArbiter` class and `Interactor` component (built on the old branch's own action system, which main does not have; main's `GameInput` already answers who owns a key; a new saved component for it was not worth the file-format risk), the cached modal query (main reads the scene directly), and the player/editor drawing changes (main's drawing was reworked since).
+
+Tests: `tests/test_ui_input_guard.cpp` (lean, top-down fire), `tests/test_inventory_ops.cpp` (layout scale, fit, scroll).
+
 ## Not done
 
 * **Networked slot <-> grid moves.** `ToGrid` / `FromGrid` are local operations: they send no `inv/*` request. A client must not use them against a host-owned bag until a request for them exists in `NetInventory`.

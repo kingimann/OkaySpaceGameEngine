@@ -29,7 +29,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
 | UI nameplate | Health bar bound | Name and level are plain text, not bound to data |
 | UI Dropdown | Scrolls with wheel and keys | No touch or drag scrolling |
-| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; see [inventory.md](inventory.md) |
+| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |

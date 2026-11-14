@@ -40,4 +40,9 @@ const char* GameInputBlockReason(const Scene* scene, unsigned mask = static_cast
 /// in the hands and a HoldPrompt drops on this key. The bag toggle steps aside.
 bool InteractClaimsKey(const Scene* scene, char key);
 
+/// A lean key (Q / E by default) should be ignored this frame: a chest, bench or
+/// pickup in range wants it as its use key, or it is also a bag key and was just
+/// pressed to open or close the bag. One press, one owner.
+bool LeanKeyTaken(const Scene* scene, char key);
+
 } // namespace okay

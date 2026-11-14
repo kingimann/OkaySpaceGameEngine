@@ -9,8 +9,10 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/Clipboard.hpp"
+#include "okay/Core/DisplaySettings.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Input/Gestures.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -36,6 +38,7 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UINavigation.hpp"     // SetUIFocus
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/ModelAnimator.hpp"
@@ -3840,6 +3843,16 @@ struct OkayScriptVM::Impl {
         b["action_value"] = [actName](std::vector<Value>& a) { return Value{InputActions::Value(actName(a))}; };
         b["action_x"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).x}; };
         b["action_y"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).y}; };
+        // Touch gestures. gesture("tap"), gesture("double tap"), gesture("long press"),
+        // gesture("swipe"), gesture("swipe up"|"down"|"left"|"right"), gesture("pinch"),
+        // gesture("rotate"). True on the frame it happens.
+        b["gesture"] = [](std::vector<Value>& a) {
+            return Value{Gestures::Happened(a.empty() ? std::string() : a[0].AsString())};
+        };
+        b["swipe_direction"] = [](std::vector<Value>&) { return Value{Gestures::SwipeDirection()}; };
+        b["pinch_scale"] = [](std::vector<Value>&) { return Value{Gestures::PinchScale()}; };
+        b["twist_degrees"] = [](std::vector<Value>&) { return Value{Gestures::TwistDegrees()}; };
+        b["is_touch_screen"] = [](std::vector<Value>&) { return Value{Input::TouchScreen()}; };
         b["rumble"] = [](std::vector<Value>& a) {
             Input::Rumble(a.size() > 0 ? a[0].AsFloat() : 0.5f, a.size() > 1 ? a[1].AsFloat() : 0.5f, a.size() > 2 ? a[2].AsFloat() : 0.2f);
             return Value{};
@@ -4742,6 +4755,14 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // ui_set_focus("Play"): keyboard/gamepad focus, the ring, and scroll into view. 1 if it took focus.
+        b["ui_set_focus"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            Scene* s = sceneOf();
+            if (!s) return Value{0.0f};
+            GameObject* g = s->Find(a[0].AsString());
+            return Value{g && SetUIFocus(g) ? 1.0f : 0.0f};
+        };
         b["ui_get_text"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString())) {
                 if (auto* tr = g->GetComponent<TextRenderer>()) return Value{tr->text};
@@ -4832,6 +4853,36 @@ struct OkayScriptVM::Impl {
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
+            return Value{};
+        };
+        // Rotation (degrees, clockwise on screen) and scale (width, height) of a UI frame.
+        // One scale number sets both axes. A widget with no frame gets one when you set these.
+        auto uiFrame = [sceneOf](const std::string& name, bool create) -> UIFrame* {
+            Scene* s = sceneOf();
+            GameObject* g = s ? s->Find(name) : nullptr;
+            if (!g) return nullptr;
+            if (auto* f = g->GetComponent<UIFrame>()) return f;
+            return create ? ConvertToUIFrame(g) : nullptr;
+        };
+        b["ui_get_rotation"] = [uiFrame](std::vector<Value>& a) -> Value {
+            if (a.empty()) return Value{0.0f};
+            UIFrame* f = uiFrame(a[0].AsString(), false);
+            return Value{f ? f->rotation : 0.0f};
+        };
+        b["ui_set_rotation"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) f->rotation = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_get_scale"] = [uiFrame](std::vector<Value>& a) -> Value {
+            Vec2 s{1.0f, 1.0f};
+            if (!a.empty()) if (UIFrame* f = uiFrame(a[0].AsString(), false)) s = f->scale;
+            return Value{Vec3{s.x, s.y, 0.0f}};
+        };
+        b["ui_set_scale"] = [uiFrame](std::vector<Value>& a) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) {
+                if (a.size() >= 3) f->scale = {a[1].AsFloat(), a[2].AsFloat()};
+                else { const float u = a[1].AsFloat(); f->scale = {u, u}; }
+            }
             return Value{};
         };
         // ---- Runtime UI: roles, radio groups, floating numbers, dialogue boxes (by object name) ----
@@ -5388,6 +5439,15 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // add_explosion_force(cx, cy, force, radius [, up]) — shove this 2D body
+        // away from (cx, cy). Linear falloff; nothing past the radius. up > 0 pops it.
+        b["add_explosion_force"] = [go](std::vector<Value>& a) {
+            if (a.size() < 4) return Value{};
+            if (GameObject* g = go()) if (auto* rb = g->GetComponent<Rigidbody2D>())
+                rb->AddExplosionForce(a[2].AsFloat(), {a[0].AsFloat(), a[1].AsFloat()},
+                                      a[3].AsFloat(), a.size() > 4 ? a[4].AsFloat() : 0.0f);
+            return Value{};
+        };
         // Set a sibling UIImage's texture from script (swap icons, states).
         b["set_image"] = [go](std::vector<Value>& a) {
             if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
@@ -5563,6 +5623,78 @@ struct OkayScriptVM::Impl {
         b["game_slot_text"]    = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::SavedText(gameSlot(a))}; };
         b["game_slot_label"]   = [gameSlot](std::vector<Value>& a) { return Value{GameSaves::Label(gameSlot(a))}; };
         b["game_can_continue"] = [](std::vector<Value>&) { return Value{GameSaves::CanContinue() ? 1.0f : 0.0f}; };
+        // Display: the monitor, window mode, resolution and refresh the Settings screen edits.
+        // set_* applies at once and is saved. begin_display_confirm remembers the current
+        // choice and starts the 10-second "keep these settings?" clock; keep_display_settings
+        // accepts it and revert_display_settings puts the previous choice back.
+        b["get_monitor"] = [](std::vector<Value>&) { return Value{DisplaySettings::MonitorName()}; };
+        b["get_monitors"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayMonitor& m : DisplaySettings::Monitors()) list.AsArray()->push_back(Value{m.name});
+            return list;
+        };
+        b["set_monitor"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            if (a[0].IsNumber()) {
+                DisplaySettings::SetMonitorIndex((int)a[0].AsFloat());
+                return Value{1.0f};
+            }
+            const std::string name = a[0].AsString();
+            bool digits = !name.empty();
+            for (char c : name) if (c < '0' || c > '9') digits = false;
+            if (digits) { DisplaySettings::SetMonitorIndex(std::atoi(name.c_str())); return Value{1.0f}; }
+            const bool ok = DisplaySettings::SetMonitorName(name);
+            if (!ok) Log::Warning("[script] set_monitor: no connected monitor named \"", name, "\"");
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["get_display_mode"] = [](std::vector<Value>&) { return Value{std::string(DisplaySettings::ModeName(DisplaySettings::Mode()))}; };
+        b["set_display_mode"] = [](std::vector<Value>& a) {
+            WindowMode mode = WindowMode::Windowed;
+            const std::string text = a.empty() ? std::string() : a[0].AsString();
+            if (!DisplaySettings::ParseMode(text, mode)) {
+                Log::Warning("[script] set_display_mode: use windowed, borderless or fullscreen, not \"", text, "\"");
+                return Value{0.0f};
+            }
+            DisplaySettings::SetMode(mode);
+            return Value{1.0f};
+        };
+        b["get_display_width"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Width()}; };
+        b["get_display_height"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Height()}; };
+        b["set_display_resolution"] = [](std::vector<Value>& a) {
+            if (a.size() < 2) { Log::Warning("[script] set_display_resolution: needs a width and a height"); return Value{0.0f}; }
+            DisplaySettings::SetResolution((int)a[0].AsFloat(), (int)a[1].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_refresh_rate"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::RefreshHz()}; };
+        b["set_refresh_rate"] = [](std::vector<Value>& a) {
+            if (a.empty()) { Log::Warning("[script] set_refresh_rate: needs a rate in hertz"); return Value{0.0f}; }
+            DisplaySettings::SetRefreshHz((int)a[0].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_display_resolutions"] = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const DisplayResolution& r : DisplaySettings::Resolutions()) list.AsArray()->push_back(Value{r.Label()});
+            return list;
+        };
+        b["get_refresh_rates"] = [](std::vector<Value>& a) {
+            const int w = a.size() >= 2 ? (int)a[0].AsFloat() : DisplaySettings::Width();
+            const int h = a.size() >= 2 ? (int)a[1].AsFloat() : DisplaySettings::Height();
+            Value list = Value::MakeArray();
+            for (int hz : DisplaySettings::RefreshRatesForResolution(w, h)) list.AsArray()->push_back(Value{(float)hz});
+            return list;
+        };
+        b["begin_display_confirm"] = [](std::vector<Value>&) { DisplaySettings::BeginTrial(10.f); return Value{1.0f}; };
+        b["keep_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::KeepTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["revert_display_settings"] = [](std::vector<Value>&) {
+            const bool on = DisplaySettings::TrialActive();
+            DisplaySettings::RevertTrial();
+            return Value{on ? 1.0f : 0.0f};
+        };
+        b["get_display_confirm_seconds"] = [](std::vector<Value>&) { return Value{DisplaySettings::TrialSecondsLeft()}; };
         // Localization (docs/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
@@ -8979,6 +9111,93 @@ struct OkayScriptVM::Impl {
             rt.lastHit3D = toHit(h);
             return Value{rt.lastHit3D.object};
         };
+        // 2D shape casts fill the same ray_* details as raycast() (not ray3_*).
+        // A leading word ("hit", "point", "normal", "distance", "object") picks one
+        // detail; without it the call returns the hit object's name.
+        // box_cast([what,] cx, cy, hx, hy, dx, dy [, maxDist [, layers [, ignore_triggers [, angle_deg]]]])
+        auto toHit2 = [](const RaycastHit2D& h) {
+            Runtime::LastHit l;
+            if (!h.hit) return l;
+            l.hit = true;
+            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.px = h.point.x; l.py = h.point.y;
+            l.nx = h.normal.x; l.ny = h.normal.y;
+            l.dist = h.distance;
+            return l;
+        };
+        auto detail2 = [](const std::string& what, const RaycastHit2D& h) -> Value {
+            if (what == "hit") return Value{h.hit};
+            if (what == "point") return Value{Vec3{h.point.x, h.point.y, 0.0f}};
+            if (what == "normal") return Value{Vec3{h.normal.x, h.normal.y, 0.0f}};
+            if (what == "distance") return Value{h.distance};
+            return Value{h.gameObject ? h.gameObject->name : std::string{}};
+        };
+        auto miss2 = [](const std::string& what) -> Value {
+            if (what == "hit") return Value{false};
+            if (what == "point" || what == "normal") return Value{Vec3::Zero};
+            if (what == "distance") return Value{0.0f};
+            return Value{std::string{}};
+        };
+        b["box_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 6 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 c{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 h2{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            Vec2 d{a[b + 4].AsFloat(), a[b + 5].AsFloat()};
+            float maxDist = a.size() > b + 6 ? a[b + 6].AsFloat() : 1e9f;
+            float angle = (a.size() > b + 9 ? a[b + 9].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            RaycastHit2D h = sc->physics().BoxCast(*sc, c, h2, d, angle, maxDist, nullptr,
+                                                   maskArg(a, b + 7), trigArg(a, b + 8, false));
+            sc->physics().RecordQueryRay(c, d, maxDist, h, Mathf::Min(Mathf::Abs(h2.x), Mathf::Abs(h2.y)));
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        // capsule_cast([what,] ax, ay, bx, by, radius, dx, dy [, maxDist [, layers [, ignore_triggers]]])
+        b["capsule_cast"] = [this, maskArg, trigArg, toHit2, detail2, miss2](std::vector<Value>& a) -> Value {
+            rt.lastHit2D = Runtime::LastHit{};
+            std::size_t b = 0;
+            std::string what = "object";
+            if (!a.empty() && a[0].IsString()) { what = a[0].AsString(); b = 1; }
+            if (a.size() < b + 7 || !rt.host || !rt.host->gameObject) return miss2(what);
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return miss2(what);
+            Vec2 p0{a[b].AsFloat(), a[b + 1].AsFloat()};
+            Vec2 p1{a[b + 2].AsFloat(), a[b + 3].AsFloat()};
+            float r = a[b + 4].AsFloat();
+            Vec2 d{a[b + 5].AsFloat(), a[b + 6].AsFloat()};
+            float maxDist = a.size() > b + 7 ? a[b + 7].AsFloat() : 1e9f;
+            RaycastHit2D h = sc->physics().CapsuleCast(*sc, p0, p1, r, d, maxDist, nullptr,
+                                                       maskArg(a, b + 8), trigArg(a, b + 9, false));
+            sc->physics().RecordQueryRay((p0 + p1) * 0.5f, d, maxDist, h, r);
+            rt.lastHit2D = toHit2(h);
+            return detail2(what, h);
+        };
+        auto names2 = [](const std::vector<Collider2D*>& cols) {
+            Value out = Value::MakeArray();
+            for (Collider2D* c : cols)
+                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            return out;
+        };
+        // overlap_box(cx, cy, hx, hy [, layers [, ignore_triggers [, angle_deg]]])
+        b["overlap_box"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 4 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            float angle = (a.size() > 6 ? a[6].AsFloat() : 0.0f) * Mathf::Deg2Rad;
+            return names2(sc->physics().OverlapBox(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                   {a[2].AsFloat(), a[3].AsFloat()},
+                                                   maskArg(a, 4), trigArg(a, 5, true), nullptr, angle));
+        };
+        // overlap_capsule(ax, ay, bx, by, radius [, layers [, ignore_triggers]])
+        b["overlap_capsule"] = [this, maskArg, trigArg, names2](std::vector<Value>& a) -> Value {
+            if (a.size() < 5 || !rt.host || !rt.host->gameObject) return Value::MakeArray();
+            Scene* sc = rt.host->gameObject->scene(); if (!sc) return Value::MakeArray();
+            return names2(sc->physics().OverlapCapsule(*sc, {a[0].AsFloat(), a[1].AsFloat()},
+                                                       {a[2].AsFloat(), a[3].AsFloat()}, a[4].AsFloat(),
+                                                       maskArg(a, 5), trigArg(a, 6, true)));
+        };
         // Overlaps -> the names of every collider's object inside the shape.
         auto names3 = [](const std::vector<Collider3D*>& cols) {
             Value out = Value::MakeArray();
@@ -9184,7 +9403,20 @@ struct OkayScriptVM::Impl {
             ActionList runner;
             runner.gameObject = me; runner.transform = me->transform;
             runner.instructions = ActionList::DecodeItems(a[0].AsString());
-            if (runner.BeginRun()) runner.Update(0.0f);
+            if (runner.BeginRun()) runner.Update(rt.host ? rt.host->deltaTime : 0.0f);
+            return Value{};
+        };
+        // actions_load(text): the Actions export. Adds the list described by `text`
+        // (ActionList::ToText) to this object. The scene starts it and ticks it, so
+        // every step, wait, branch, and trigger behaves as it does on an Actions component.
+        b["actions_load"] = [this](std::vector<Value>& a) {
+            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
+            if (a.empty() || !me) return Value{};
+            const std::string text = a[0].AsString();
+            for (ActionList* have : me->GetComponents<ActionList>())
+                if (have->ToText() == text) return Value{};
+            ActionList* al = me->AddComponent<ActionList>();
+            al->FromText(text);
             return Value{};
         };
         b["check_action"] = [this](std::vector<Value>& a) {
@@ -10006,6 +10238,9 @@ struct OkayScriptVM::Impl {
         alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
         alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
         alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
+        alias("Physics2D.BoxCast", "box_cast"); alias("Physics2D.CapsuleCast", "capsule_cast");
+        alias("Physics2D.OverlapBox", "overlap_box"); alias("Physics2D.OverlapCapsule", "overlap_capsule");
+        alias("Rigidbody2D.AddExplosionForce", "add_explosion_force");
         alias("SceneManager.LoadScene", "load_scene_name");
         alias("Application.Quit", "quit");
         alias("GameObject.Find", "exists");
@@ -10410,6 +10645,13 @@ struct OkayScriptVM::Impl {
                 if (p == "pitch") return Value{au->pitch};
                 if (p == "pan") return Value{au->pan};
                 if (p == "lowPass") return Value{au->lowPass};
+                if (p == "doppler") return Value{au->doppler};
+                if (p == "dopplerScale") return Value{au->dopplerScale};
+                if (p == "occlude") return Value{au->occlude};
+                if (p == "occlusionVolume") return Value{au->occlusionVolume};
+                if (p == "occlusionLowPass") return Value{au->occlusionLowPass};
+                if (p == "distanceLowPass") return Value{au->distanceLowPass};
+                if (p == "distanceLowPassHz") return Value{au->distanceLowPassHz};
                 if (p == "isPlaying") return Value{au->IsPlaying()};
             }
             if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
@@ -10453,6 +10695,13 @@ struct OkayScriptVM::Impl {
                 if (p == "pitch") au->pitch = v.AsFloat();
                 if (p == "pan") au->pan = v.AsFloat();
                 if (p == "lowPass") au->lowPass = v.AsFloat();
+                if (p == "doppler") au->doppler = v.AsBool();
+                if (p == "dopplerScale") au->dopplerScale = v.AsFloat();
+                if (p == "occlude") au->occlude = v.AsBool();
+                if (p == "occlusionVolume") au->occlusionVolume = v.AsFloat();
+                if (p == "occlusionLowPass") au->occlusionLowPass = v.AsFloat();
+                if (p == "distanceLowPass") au->distanceLowPass = v.AsBool();
+                if (p == "distanceLowPassHz") au->distanceLowPassHz = v.AsFloat();
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
@@ -10501,6 +10750,23 @@ struct OkayScriptVM::Impl {
                 Vec3 f = arg(0).IsVec3() ? arg(0).AsVec3() : Vec3{arg(0).AsFloat(), arg(1).AsFloat(), 0.0f};
                 const bool impulse = rest.size() >= 2 && arg(0).IsVec3() && arg(1).AsFloat() != 0.0f;   // ForceMode2D.Impulse
                 if (m == "AddForce") { if (impulse) rb->AddImpulse({f.x, f.y}); else rb->AddForce({f.x, f.y}); }
+                if (m == "AddExplosionForce") {
+                    float up = 0.0f;
+                    Vec2 c; float force = 0.0f, radius = 0.0f;
+                    if (arg(0).IsVec3()) {
+                        Vec3 v = arg(0).AsVec3();
+                        c = {v.x, v.y};
+                        force = rest.size() > 1 ? arg(1).AsFloat() : 0.0f;
+                        radius = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        up = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                    } else {
+                        c = {arg(0).AsFloat(), rest.size() > 1 ? arg(1).AsFloat() : 0.0f};
+                        force = rest.size() > 2 ? arg(2).AsFloat() : 0.0f;
+                        radius = rest.size() > 3 ? arg(3).AsFloat() : 0.0f;
+                        up = rest.size() > 4 ? arg(4).AsFloat() : 0.0f;
+                    }
+                    rb->AddExplosionForce(force, c, radius, up);
+                }
                 if (m == "MovePosition" && g->transform) g->transform->localPosition = {f.x, f.y, g->transform->localPosition.z};
                 return Value{};
             }

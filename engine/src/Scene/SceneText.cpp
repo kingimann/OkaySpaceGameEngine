@@ -80,7 +80,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "animsmactions", "animsmany", "animsmanyint", "animsmanypos", "animsmev", "animsmfall", "animsmfb",
     "animsmikc", "animsmint", "animsmlayer", "animsmlayerx", "animsmlk", "animsmlname", "animsmmatch",
     "animsmmir", "animsmmute", "animsmnoint", "animsmparams", "animsmpdef", "animsmpos", "animsmstance",
-    "animsmsync", "animsmx", "animsmxfade", "animx", "anticheat", "anticheathit", "anticheatsafety",
+    "animsmsync", "animsmx", "animsmxfade", "animx", "anticheat", "anticheatdetect", "anticheathit", "anticheatsafety",
     "anticheatweapon", "aomap", "audio", "autosave", "blendshapes", "blockbuilder", "boxcollider2d",
     "boxcollider3d", "btrunner", "buildable", "buildermode", "buildmode", "buildpiece", "camera",
     "camerafollow", "canvas", "capsulecollider2d", "capsulecollider3d", "cc3dstance", "chainik", "chainx2",

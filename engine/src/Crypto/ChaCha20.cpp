@@ -41,8 +41,13 @@ constexpr std::uint32_t kSigma[4] = {0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b
 
 } // namespace
 
-void ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
+bool ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
                  const std::uint8_t key[32], const std::uint8_t nonce[12], std::uint32_t counter) {
+    // RFC 8439 has a 32-bit block counter. Wrapping it would reuse keystream (found by the Wycheproof/sodium_compat counter
+    // vectors), so a request that needs more blocks than are left refuses and touches nothing.
+    // blocks needed = ceil(n / 64) must be <= 2^32 - counter (compared in 64 bits; also safe for 32-bit size_t).
+    const std::uint64_t blocks = (static_cast<std::uint64_t>(n) >> 6) + ((n & 63) ? 1u : 0u);
+    if (blocks > (std::uint64_t(1) << 32) - counter) return false;
     std::uint32_t st[16];
     for (int i = 0; i < 4; ++i) st[i] = kSigma[i];
     for (int i = 0; i < 8; ++i) st[4 + i] = Load32(key + 4 * i);
@@ -58,11 +63,12 @@ void ChaCha20Xor(std::uint8_t* out, const std::uint8_t* in, std::size_t n,
         const std::size_t take = n < 64 ? n : 64;
         for (std::size_t i = 0; i < take; ++i) out[i] = static_cast<std::uint8_t>(in[i] ^ block[i]);
         out += take; in += take; n -= take;
-        st[12] += 1;   // 32-bit counter (RFC 8439): wraps like the spec's
+        st[12] += 1;   // cannot wrap into reuse: refused above (the last block's increment may wrap, and is never used)
         MemZero(block, sizeof block);
         MemZero(x, sizeof x);
     }
     MemZero(st, sizeof st);
+    return true;
 }
 
 void HChaCha20(std::uint8_t out[32], const std::uint8_t key[32], const std::uint8_t in[16]) {

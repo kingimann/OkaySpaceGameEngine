@@ -159,17 +159,17 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **What:** Moving between the two ways of scripting: the graph editor shows a live OkayScript version of the graph, an Actions list can be turned into OkayScript, and simple OkayScript can be turned back into Actions.
 - **Parts:**
   - 14.8.1 Graph to OkayScript - `editor/VisualScriptEditor.hpp` (`CompileToOkayScript`) - live preview beside the canvas, Copy to clipboard
-  - 14.8.2 Actions to OkayScript - `editor/main.cpp` (~18839-18974) - readable script from an Actions list, unmapped ops become TODO comments
+  - 14.8.2 Actions to OkayScript - `editor/ActionExport.hpp` (`ActionListToCode`) - the list's own text passed to `actions_load`, so every step and trigger runs on an Actions component
   - 14.8.3 OkayScript to Actions - `editor/main.cpp` (~18975-19134) - best-effort import of simple calls
   - 14.8.4 Script recipes - `editor/main.cpp` (~19135-19491) - one-click starter handlers ("Jump on Space")
-- **Code:** `editor/VisualScriptEditor.hpp`, `editor/main.cpp`
+- **Code:** `editor/VisualScriptEditor.hpp`, `editor/ActionExport.hpp`, `editor/main.cpp`
 - **API:** menu items in the graph editor (OkayScript preview, Copy); Inspector Actions card conversion buttons
 - **Editor:** Visual Script window preview panel; Inspector Actions card
 - **Docs:** `docs/visual_scripting.md`
-- **Tests:** `vs_editor_model` (model), no tests of the generators found
-- **Status:** Basic - best-effort generators with no dedicated tests
-- **Open:** two separate generators with different inputs (graph versus Actions list) in two files; neither is tested for equivalence with the runtime
+- **Tests:** `vs_editor_model` (`export_wait_delay_matches_runtime`, `export_timer_matches_runtime`, `export_actions_matches_runtime`)
+- **Status:** Works for Wait, Delay, Timer, and every Actions step. A graph node with no script fails the export by name instead of becoming a comment
+- **Open:** some graph nodes (object references, functions, lists, scene and global variables, springs) are still listed as not translated; Cooldown is still a comment
 - **Related:** 14.1, 14.6, 13.1
 - **Words:** convert graph to script, OkayScript preview, export to code, import script, recipes
-- **Seen as:** the generated script behaves differently from the graph; a TODO comment appears in generated code; import loses a step
+- **Seen as:** the generated script behaves differently from the graph; View as OkayScript names a node it cannot export; import loses a step
 - **Ask me like:** "work on 14.8.1, make the preview round-trip back into the graph"

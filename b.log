@@ -1,0 +1,1219 @@
+[1/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Random.cpp.o
+[2/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Util.cpp.o
+[3/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/ChaCha20.cpp.o
+[4/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Poly1305.cpp.o
+[5/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Aead.cpp.o
+[6/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Sha256.cpp.o
+[7/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Blake2b.cpp.o
+[8/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Sha512.cpp.o
+[9/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/X25519.cpp.o
+[10/339] Building CXX object engine/CMakeFiles/okay_crypto.dir/src/Crypto/Ed25519.cpp.o
+[11/339] Linking CXX static library engine/libokay_crypto.a
+[12/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/BuildInfo.cpp.o
+[13/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Application.cpp.o
+[14/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/CommandLine.cpp.o
+[15/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Paths.cpp.o
+[16/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Cvar.cpp.o
+[17/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DebugOverlay.cpp.o
+[18/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Console.cpp.o
+[19/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/SaveFile.cpp.o
+[20/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/SaveGame.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Physics/TriMesh.hpp:4,
+                 from /home/user/wt-jb3/engine/include/okay/Physics/Collider3D.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/VisualScriptComponent.hpp:7,
+                 from /home/user/wt-jb3/engine/src/Core/SaveGame.cpp:12:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[21/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/SaveFramework.cpp.o
+[22/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/SaveFrameworkSync.cpp.o
+[23/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/GameSaves.cpp.o
+[24/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Clipboard.cpp.o
+[25/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/SaveFrameworkScene.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Physics/TriMesh.hpp:4,
+                 from /home/user/wt-jb3/engine/include/okay/Physics/Collider3D.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/VisualScriptComponent.hpp:7,
+                 from /home/user/wt-jb3/engine/src/Core/SaveFrameworkScene.cpp:9:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[26/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Scheduler.cpp.o
+[27/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/TimerDebug.cpp.o
+[28/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Prefs.cpp.o
+[29/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DataAsset.cpp.o
+[30/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Tween.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/src/Core/Tween.cpp:7:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CraftingStation.hpp:8,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Crafting.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NativeUIActions.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UIButton.hpp:6,
+                 from /home/user/wt-jb3/engine/src/Core/Tween.cpp:9:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+[31/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Undo.cpp.o
+[32/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Backup.cpp.o
+[33/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Recovery.cpp.o
+[34/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/ImportSettings.cpp.o
+[35/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/AssetManager.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Modeling/MeshAsset.hpp:4,
+                 from /home/user/wt-jb3/engine/src/Core/AssetManager.cpp:5:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[36/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/AssetDatabaseDeps.cpp.o
+[37/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/AssetDatabaseSearch.cpp.o
+[38/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/AssetDatabase.cpp.o
+[39/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/ThumbnailCache.cpp.o
+[40/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/Input.cpp.o
+[41/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/Localization.cpp.o
+[42/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/InputActions.cpp.o
+[43/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/GestureRecognizer.cpp.o
+[44/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/Gestures.cpp.o
+[45/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/TouchControls.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CraftingStation.hpp:8,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Crafting.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NativeUIActions.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UIButton.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UIElement.hpp:5,
+                 from /home/user/wt-jb3/engine/src/Input/TouchControls.cpp:2:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+[46/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Input/GameInput.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:7,
+                 from /home/user/wt-jb3/engine/src/Input/GameInput.cpp:4:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ItemPickup.hpp:10,
+                 from /home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:8:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ProceduralObjectHolding.hpp:27,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ItemPickup.hpp:12:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:225:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  225 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                  ^~
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:225:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  225 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                                                ^~~~~~
+[47/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DisplaySettings.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:11,
+                 from /home/user/wt-jb3/engine/src/Core/DisplaySettings.cpp:4:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:229:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  229 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:229:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  229 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleSmooth(const float*, const float*, const float*, const float*, const float*, const float*, const okay::Color&, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:274:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  274 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:274:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  274 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleTex(const float*, const float*, const float*, const float*, const float*, const float*, const okay::MipChain&, const okay::Color&, const float*, const float*, const float*, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:414:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  414 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:414:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  414 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TrianglePhong(const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const okay::MipChain*, const okay::Color&, const okay::Color&, const okay::Vec3&, float, float, float, float, float, const float*, float, float, float, const okay::MipChain*, const okay::Vec3&, float, float, const okay::MipChain*, float, int, float, float, float, float, float, bool, float, float, int, int, int, const float*, const float*, const okay::MipChain*, float, bool)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:496:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  496 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:496:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  496 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::detail::RenderCascadeDepth(const okay::Scene&, okay::ShadowCascade&, bool)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:960:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  960 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:960:37: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  960 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |                                     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:961:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  961 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:961:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  961 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::ApplyBloom(Raster&)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1360:21: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1360 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1360:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1360 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                                               ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In lambda function:
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1757:25: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1757 |                         if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+      |                         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1757:59: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1757 |                         if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+      |                                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'const uint32_t* okay::RenderMeshesSS(Raster&, std::vector<unsigned int>&, const Scene&, const Mat4&, const Vec3&, int, int, int, const GameObject*)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:2002:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 2002 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+      |     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:2002:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 2002 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+      |                       ^~
+[48/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Core/DisplayModes.cpp.o
+[49/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/ConsoleRenderer.cpp.o
+[50/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D11Renderer.cpp.o
+[51/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/D3D12Renderer.cpp.o
+[52/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Component.cpp.o
+[53/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/GameObject.cpp.o
+[54/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Transform.cpp.o
+[55/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Render/GLRenderer.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Render/GLRenderer.hpp:24,
+                 from /home/user/wt-jb3/engine/src/Render/GLRenderer.cpp:1:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/src/Render/GLRenderer.cpp:6:
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::Triangle(float, float, float, float, float, float, float, float, float, uint32_t, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:229:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  229 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:229:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  229 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleSmooth(const float*, const float*, const float*, const float*, const float*, const float*, const okay::Color&, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:274:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  274 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:274:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  274 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TriangleTex(const float*, const float*, const float*, const float*, const float*, const float*, const okay::MipChain&, const okay::Color&, const float*, const float*, const float*, const float*, float, float, float, const float*, float, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:414:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  414 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:414:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  414 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In member function 'void okay::Raster::TrianglePhong(const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const float*, const okay::MipChain*, const okay::Color&, const okay::Color&, const okay::Vec3&, float, float, float, float, float, const float*, float, float, float, const okay::MipChain*, const okay::Vec3&, float, float, const okay::MipChain*, float, int, float, float, float, float, float, bool, float, float, int, int, int, const float*, const float*, const okay::MipChain*, float, bool)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:496:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  496 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:496:43: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  496 |         if (minY < clipY0) minY = clipY0; if (maxY > clipY1) maxY = clipY1;   // thread band
+      |                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::detail::RenderCascadeDepth(const okay::Scene&, okay::ShadowCascade&, bool)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:960:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  960 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:960:37: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  960 |             if (minx < 0) minx = 0; if (miny < 0) miny = 0;
+      |                                     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:961:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  961 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:961:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  961 |             if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'void okay::ApplyBloom(Raster&)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1360:21: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1360 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1360:47: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1360 |                     if (c0 > 0) acc[0] += c0; if (c1 > 0) acc[1] += c1; if (c2 > 0) acc[2] += c2;
+      |                                               ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In lambda function:
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1757:25: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1757 |                         if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+      |                         ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:1757:59: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1757 |                         if (rough0 < 0.0f) rough0 = 0.0f; if (rough0 > 1.0f) rough0 = 1.0f;
+      |                                                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp: In function 'const uint32_t* okay::RenderMeshesSS(Raster&, std::vector<unsigned int>&, const Scene&, const Mat4&, const Vec3&, int, int, int, const GameObject*)':
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:2002:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 2002 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+      |     ^~
+/home/user/wt-jb3/engine/include/okay/Render/SoftwareRenderer.hpp:2002:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 2002 |     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
+      |                       ^~
+[56/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneManager.cpp.o
+[57/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/ObjectPool.cpp.o
+[58/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/Scene.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Scene/EnsureCamera.hpp:14,
+                 from /home/user/wt-jb3/engine/src/Scene/Scene.cpp:5:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[59/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/ComponentSerializer.cpp.o
+[60/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneLocalization.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CraftingStation.hpp:8,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Crafting.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NativeUIActions.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UIButton.hpp:6,
+                 from /home/user/wt-jb3/engine/src/Scene/SceneLocalization.cpp:6:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ItemPickup.hpp:10,
+                 from /home/user/wt-jb3/engine/include/okay/Components/HoldPrompt.hpp:9,
+                 from /home/user/wt-jb3/engine/src/Scene/SceneLocalization.cpp:11:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ProceduralObjectHolding.hpp:27,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ItemPickup.hpp:12:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+[61/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Camera.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Scene/EnsureCamera.hpp:14,
+                 from /home/user/wt-jb3/engine/src/Components/Camera.cpp:4:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[62/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/LookAtIK.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/Character.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/IKBones.hpp:16,
+                 from /home/user/wt-jb3/engine/include/okay/Components/FullBodyIK.hpp:38,
+                 from /home/user/wt-jb3/engine/include/okay/Components/LookAtIK.hpp:30,
+                 from /home/user/wt-jb3/engine/src/Components/LookAtIK.cpp:1:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:29,
+                 from /home/user/wt-jb3/engine/include/okay/Components/FullBodyIK.hpp:39:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+[63/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/SpriteRenderer.cpp.o
+[64/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/UdpSocket.cpp.o
+[65/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/AntiCheat.cpp.o
+[66/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/CheatDetect.cpp.o
+[67/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/SessionTicket.cpp.o
+[68/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/ClockCheck.cpp.o
+[69/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/AntiCheatConfig.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Physics/TriMesh.hpp:4,
+                 from /home/user/wt-jb3/engine/include/okay/Physics/Collider3D.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/VisualScriptComponent.hpp:7,
+                 from /home/user/wt-jb3/engine/src/Components/AntiCheatConfig.cpp:3:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+[70/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/Ragdoll.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/Character.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Ragdoll.hpp:20,
+                 from /home/user/wt-jb3/engine/src/Components/Ragdoll.cpp:1:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/src/Components/Ragdoll.cpp:3:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+[71/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Components/NetworkObject.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/Character.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkSync.hpp:21,
+                 from /home/user/wt-jb3/engine/src/Components/NetworkObject.cpp:3:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkSync.hpp:24:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+[72/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetworkManager.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/Character.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkAvatarMotion.hpp:20,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkPlayerSpawner.hpp:22,
+                 from /home/user/wt-jb3/engine/src/Net/NetworkManager.cpp:6:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkSync.hpp:24,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkAvatarMotion.hpp:21:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/NetworkPlayerSpawner.hpp:24:
+/home/user/wt-jb3/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Simulate(const okay::PlayerInput&, float)':
+/home/user/wt-jb3/engine/include/okay/Components/FirstPersonController.hpp:483:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  483 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/NetworkPlayerSpawner.hpp:25:
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Simulate(const okay::PlayerInput&, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonController.hpp:475:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  475 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/NetworkPlayerSpawner.hpp:26:
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonShooterController.hpp:210:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  210 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+[73/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetDelta.cpp.o
+[74/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetChannels.cpp.o
+[75/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetSim.cpp.o
+[76/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/RelayServer.cpp.o
+[77/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/DedicatedServer.cpp.o
+[78/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/ServerQuery.cpp.o
+[79/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/ServerBrowser.cpp.o
+[80/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/MatchResults.cpp.o
+[81/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/Matchmaker.cpp.o
+[82/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetBackend.cpp.o
+[83/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/NetTransport.cpp.o
+[84/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Net/PhotonTransport.cpp.o
+[85/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.o
+FAILED: engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.o 
+/usr/bin/c++ -DOKAY_DEFAULT_ACCOUNT_KEY=\"sb_publishable_VYrh0rGNcTNTJRe1CovsoA_sP9ia4yn\" -DOKAY_DEFAULT_ACCOUNT_URL=\"https://tgthoueacrlanpojxoen.supabase.co\" -DOKAY_HAVE_SODIUM -DOKAY_NET_CRYPTO -DOKAY_PLATFORM_HAVE_OWN -DOKAY_PLATFORM_HAVE_SDL2 -DOKAY_PLATFORM_X11_HEADERS -I/home/user/wt-jb3/engine/include -I/home/user/wt-jb3/engine/third_party/stb -I/home/user/wt-jb3/engine/third_party/ufbx -isystem /usr/include/SDL2 -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -MD -MT engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.o -MF engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.o.d -o engine/CMakeFiles/okay_engine.dir/src/Scene/SceneSerializer.cpp.o -c /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp
+In file included from /home/user/wt-jb3/engine/include/okay/Modeling/MeshAsset.hpp:4,
+                 from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:13:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NetworkSync.hpp:24,
+                 from /home/user/wt-jb3/engine/include/okay/Net/NetOwnership.hpp:17,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CharacterController2D.hpp:11,
+                 from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:27:
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+In file included from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:29:
+/home/user/wt-jb3/engine/include/okay/Components/FirstPersonController.hpp: In member function 'virtual void okay::FirstPersonController::Simulate(const okay::PlayerInput&, float)':
+/home/user/wt-jb3/engine/include/okay/Components/FirstPersonController.hpp:483:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  483 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:30:
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonController.hpp: In member function 'virtual void okay::ThirdPersonController::Simulate(const okay::PlayerInput&, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonController.hpp:475:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  475 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CraftingStation.hpp:8,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Crafting.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/NativeUIActions.hpp:7,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UIButton.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/Components/UITheme.hpp:19,
+                 from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:33:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+In file included from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp: In lambda function:
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:225:34: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  225 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                  ^~
+/home/user/wt-jb3/engine/include/okay/Components/InventoryUI.hpp:225:64: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  225 |                                  if (ra != rb) return ra < rb; return a.item < b.item; });
+      |                                                                ^~~~~~
+In file included from /home/user/wt-jb3/engine/src/Scene/SceneSerializer.cpp:73:
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonShooterController.hpp: In member function 'virtual void okay::ThirdPersonShooterController::Update(float)':
+/home/user/wt-jb3/engine/include/okay/Components/ThirdPersonShooterController.hpp:210:14: warning: variable 'airborne' set but not used [-Wunused-but-set-variable]
+  210 |         bool airborne = rb ? !grounded : false;
+      |              ^~~~~~~~
+c++: fatal error: Killed signal terminated program cc1plus
+compilation terminated.
+[86/339] Building CXX object engine/CMakeFiles/okay_engine.dir/src/VisualScript/NodeGraph.cpp.o
+In file included from /home/user/wt-jb3/engine/include/okay/Components/MeshRenderer.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/SkinnedMesh.hpp:24,
+                 from /home/user/wt-jb3/engine/include/okay/Components/BlendShapes.hpp:15,
+                 from /home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:20,
+                 from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:40,
+                 from /home/user/wt-jb3/engine/include/okay/VisualScript/NodesExtra.hpp:16,
+                 from /home/user/wt-jb3/engine/include/okay/VisualScript/Nodes.hpp:976,
+                 from /home/user/wt-jb3/engine/src/VisualScript/NodeGraph.cpp:8:
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::TorusKnot(int, int, float, float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:480:27: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  480 |         if (p < 1) p = 1; if (q < 1) q = 1; if (rings < 8) rings = 8; if (sides < 3) sides = 3;
+      |                           ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In static member function 'static okay::Mesh okay::Mesh::Hemisphere(float, int, int)':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:573:35: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  573 |         if (rings < 1) rings = 1; if (sectors < 3) sectors = 3;
+      |                                   ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp: In member function 'void okay::Mesh::Bounds(okay::Vec3&, okay::Vec3&) const':
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1342:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1342 |             if (v.x < outMin.x) outMin.x = v.x; if (v.x > outMax.x) outMax.x = v.x;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1343:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1343 |             if (v.y < outMin.y) outMin.y = v.y; if (v.y > outMax.y) outMax.y = v.y;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:13: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |             ^~
+/home/user/wt-jb3/engine/include/okay/Render/Mesh.hpp:1344:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1344 |             if (v.z < outMin.z) outMin.z = v.z; if (v.z > outMax.z) outMax.z = v.z;
+      |                                                 ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp: In member function 'virtual bool okay::ModelAnimator::BlendClips(float, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/ModelAnimator.hpp:1154:33: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1154 |         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
+      |                                 ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:42:
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp: In member function 'void okay::FootIK::WireFromCharacter()':
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:176:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  176 |         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);
+      |                                          ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |         ^~
+/home/user/wt-jb3/engine/include/okay/Components/FootIK.hpp:177:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  177 |         if (!rightHip) rightHip = T(12); if (!rightKnee) rightKnee = T(13); if (!rightFoot) rightFoot = T(14);
+      |                                          ^~
+In file included from /home/user/wt-jb3/engine/include/okay/Components/AnimStateMachine.hpp:47:
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp: In member function 'void okay::ChainIK::ApplyCCDPole(const okay::Vec3&, const okay::Vec3&, const okay::Vec3&)':
+/home/user/wt-jb3/engine/include/okay/Components/ChainIK.hpp:227:53: warning: unused parameter 'tgt' [-Wunused-parameter]
+  227 |     void ApplyCCDPole(const Vec3& root, const Vec3& tgt, const Vec3& poleAt) {
+      |                                         ~~~~~~~~~~~~^~~
+In file included from /home/user/wt-jb3/engine/include/okay/Inventory/InventoryOps.hpp:3,
+                 from /home/user/wt-jb3/engine/include/okay/Components/CraftingStation.hpp:8,
+                 from /home/user/wt-jb3/engine/include/okay/Components/Crafting.hpp:6,
+                 from /home/user/wt-jb3/engine/include/okay/VisualScript/NodesInventory.hpp:9,
+                 from /home/user/wt-jb3/engine/src/VisualScript/NodeGraph.cpp:11:
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp: In member function 'int okay::GridInventory::AddItem(const std::string&, int, int, int, float)':
+/home/user/wt-jb3/engine/include/okay/Components/GridInventory.hpp:109:52: warning: missing initializer for member 'okay::GridItem::data' [-Wmissing-field-initializers]
+  109 |             GridItem it{name, w, h, 0, 0, n, weight};
+      |                                                    ^
+In file included from /home/user/wt-jb3/engine/src/VisualScript/NodeGraph.cpp:20:
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp: In member function 'virtual okay::vs::VsValue okay::vs::LibraryNode::Eval(int, okay::vs::NodeGraph&, okay::vs::VsContext&)':
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:730:7: warning: unused variable 'n1' [-Wunused-variable]
+  730 | float n1 = In(1, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:732:7: warning: unused variable 'n3' [-Wunused-variable]
+  732 | float n3 = In(3, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:738:7: warning: unused variable 'n0' [-Wunused-variable]
+  738 | float n0 = In(0, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:740:7: warning: unused variable 'n2' [-Wunused-variable]
+  740 | float n2 = In(2, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:771:7: warning: unused variable 'n5' [-Wunused-variable]
+  771 | float n5 = In(5, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:803:7: warning: unused variable 'n5' [-Wunused-variable]
+  803 | float n5 = In(5, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:804:7: warning: unused variable 'n6' [-Wunused-variable]
+  804 | float n6 = In(6, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:833:7: warning: unused variable 'n0' [-Wunused-variable]
+  833 | float n0 = In(0, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:844:7: warning: unused variable 'n1' [-Wunused-variable]
+  844 | float n1 = In(1, g, ctx).AsFloat();
+      |       ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1179:6: warning: unused variable 'b2' [-Wunused-variable]
+ 1179 | bool b2 = In(2, g, ctx).AsBool();
+      |      ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1187:6: warning: unused variable 'b2' [-Wunused-variable]
+ 1187 | bool b2 = In(2, g, ctx).AsBool();
+      |      ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1195:6: warning: unused variable 'b2' [-Wunused-variable]
+ 1195 | bool b2 = In(2, g, ctx).AsBool();
+      |      ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp: In function 'int okay::vs::LibraryOp(const std::string&)':
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1694:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1694 |     if (type=="LbSmoothStep") return 0; if (type=="LbSmootherStep") return 1; if (type=="LbEaseIn") return 2; if (type=="LbEaseOut") return 3; if (type=="LbEaseInOut") return 4; if (type=="LbPowerEase") return 5; if (type=="LbBiasCurve") return 6; if (type=="LbGainCurve") return 7; if (type=="LbLogistic") return 8; if (type=="LbSampleCurve") return 9; if (type=="LbSampleBezier") return 10; if (type=="LbHermite") return 11; if (type=="LbTriangleWave") return 12; if (type=="LbSawWave") return 13; if (type=="LbSquareWave") return 14; if (type=="LbSineWave") return 15; if (type=="LbSampleNoise") return 16; if (type=="LbDeadZone") return 17; if (type=="LbSoftClamp") return 18; if (type=="LbRepeatRange") return 19; if (type=="LbFoldRange") return 20; if (type=="LbSafeReciprocal") return 21; if (type=="LbSquare") return 22; if (type=="LbCube") return 23; if (type=="LbNaturalLog") return 24; if (type=="LbRaiseE") return 25; if (type=="LbHypotenuse") return 26; if (type=="LbAngleFromPair") return 27; if (type=="LbDirectionFromAngle") return 28; if (type=="LbUpFromAngle") return 29; if (type=="LbMedianThree") return 30; if (type=="LbWeightedMean") return 31; if (type=="LbInverseSquare") return 32; if (type=="LbLinearFalloff") return 33; if (type=="LbSmoothFalloff") return 34; if (type=="LbPortionAlong") return 35; if (type=="LbRemapClamped") return 36; if (type=="LbAbsDiff") return 37; if (type=="LbPositiveRemainder") return 38; if (type=="LbNearestMultiple") return 39; if (type=="LbFloorTo") return 40; if (type=="LbCeilTo") return 41; if (type=="LbTruncZero") return 42; if (type=="LbKeepPositive") return 43; if (type=="LbKeepAtMost") return 44; if (type=="LbKeepAtLeast") return 45; if (type=="LbSpread") return 46; if (type=="LbPercentOf") return 47; if (type=="LbValueFromPercent") return 48; if (type=="LbDampToward") return 49; if (type=="LbApproach") return 50; if (type=="LbLimitRate") return 51; if (type=="LbChangeBetween") return 52; if (type=="LbSpringStep") return 53; if (type=="LbSmoothSmaller") return 54; if (type=="LbSmoothLarger") return 55; if (type=="LbExponentialDecay") return 56; if (type=="LbOneMinus") return 57; if (type=="LbSaturateNumber") return 58; if (type=="LbRoundPlaces") return 59; if (type=="LbLerpUnclamped") return 60; if (type=="LbInverseLerpUnclamped") return 61; if (type=="LbMapSigned") return 62; if (type=="LbMapBipolar") return 63; if (type=="LbStepAt") return 64; if (type=="LbIsOutside") return 65; if (type=="LbIsStrictBetween") return 66; if (type=="LbHasSameSign") return 67; if (type=="LbHasOppositeSign") return 68; if (type=="LbIsAlmostZero") return 69; if (type=="LbIsMultiple") return 70; if (type=="LbIsPositive") return 71; if (type=="LbIsNegative") return 72; if (type=="LbIsWhole") return 73; if (type=="LbSignOf") return 74; if (type=="LbFractionOf") return 75; if (type=="LbClamp11") return 76; if (type=="LbLerpClamp") return 77; if (type=="LbSmoothDampStep") return 78; if (type=="LbCircleEaseIn") return 79; if (type=="LbCircleEaseOut") return 80; if (type=="LbBounceOut") return 81; if (type=="LbExpEaseIn") return 82; if (type=="LbExpEaseOut") return 83; if (type=="LbShortestAngle") return 84; if (type=="LbApproachAngle") return 85; if (type=="LbBlendAngles") return 86; if (type=="LbWrapAngle") return 87; if (type=="LbSnapAngle") return 88; if (type=="LbFlatLength") return 89; if (type=="LbLimitFlat") return 90; if (type=="LbAheadLimited") return 91; if (type=="LbDotFlat") return 92; if (type=="LbCrossFlat") return 93; if (type=="LbIsBehindFlat") return 94; if (type=="LbIsLeftFlat") return 95; if (type=="LbIsRightFlat") return 96; if (type=="LbMidpoint") return 97; if (type=="LbMidAhead") return 98; if (type=="LbDistanceFlat") return 99; if (type=="LbIsWithinFlat") return 100; if (type=="LbClosestOnSegment") return 101; if (type=="LbDistanceToSegment") return 102; if (type=="LbIsInsideCircle") return 103; if (type=="LbIsInsideSphere") return 104; if (type=="LbVerticalGap") return 105; if (type=="LbIsAbove") return 106; if (type=="LbIsBelow") return 107; if (type=="LbOffsetAhead") return 108; if (type=="LbOffsetAcross") return 109; if (type=="LbGridCell") return 110; if (type=="LbCellCenter") return 111; if (type=="LbReflectFlat") return 112; if (type=="LbReflectAhead") return 113; if (type=="LbProjectFlat") return 114; if (type=="LbPortionFacing") return 115; if (type=="LbCountLetters") return 116; if (type=="LbCountWords") return 117; if (type=="LbHasText") return 118; if (type=="LbIsBlank") return 119; if (type=="LbCutText") return 120; if (type=="LbFindText") return 121; if (type=="LbJoinWith") return 122; if (type=="LbRepeatText") return 123; if (type=="LbLowerText") return 124; if (type=="LbUpperText") return 125; if (type=="LbReverseText") return 126; if (type=="LbRemoveSpaces") return 127; if (type=="LbBeforeSeparator") return 128; if (type=="LbAfterSeparator") return 129; if (type=="LbReplaceText") return 130; if (type=="LbIsNumberText") return 131; if (type=="LbNumberFromText") return 132; if (type=="LbTextFromNumber") return 133; if (type=="LbEqualLoose") return 134; if (type=="LbContainsLoose") return 135; if (type=="LbFirstWord") return 136; if (type=="LbLastWord") return 137; if (type=="LbEnsurePrefix") return 138; if (type=="LbEnsureSuffix") return 139; if (type=="LbClampText") return 140; if (type=="LbCountMatches") return 141; if (type=="LbPadLeft") return 142; if (type=="LbPadRight") return 143; if (type=="LbSelectLarger") return 144; if (type=="LbSelectSmaller") return 145; if (type=="LbClampRange") return 146; if (type=="LbMapRange") return 147; if (type=="LbIsNearly") return 148; if (type=="LbIsFar") return 149; if (type=="LbChooseNumber") return 150; if (type=="LbChooseText") return 151; if (type=="LbAllNumbers") return 152; if (type=="LbAnyNumber") return 153; if (type=="LbNoneNumber") return 154; if (type=="LbXorThree") return 155; if (type=="LbNorThree") return 156; if (type=="LbNandThree") return 157; if (type=="LbImplies") return 158; if (type=="LbResourcePortion") return 159; if (type=="LbIsResourceLow") return 160; if (type=="LbIsResourceFull") return 161; if (type=="LbTrySpend") return 162; if (type=="LbCouldSpend") return 163; if (type=="LbRegenStep") return 164; if (type=="LbStackMultiply") return 165; if (type=="LbDiminishing") return 166; if (type=="LbOverflow") return 167; if (type=="LbQuestPortion") return 168; if (type=="LbIsQuestDone") return 169; if (type=="LbStepsLeft") return 170; if (type=="LbScoreGap") return 171; if (type=="LbPickWorst") return 172; if (type=="LbClosestScore") return 173; if (type=="LbScoresAbove") return 174; if (type=="LbNormalizeScore") return 175; if (type=="LbHysteresis") return 176; if (type=="LbRememberPeak") return 177; if (type=="LbRememberValley") return 178; if (type=="LbRunningMean") return 179; if (type=="LbCountTrueFrames") return 180; if (type=="LbSampleHold") return 181; if (type=="LbPreviousNumber") return 182; if (type=="LbSpike") return 183; if (type=="LbPassAfter") return 184; if (type=="LbEveryCalls") return 185; if (type=="LbAccumulate") return 186; if (type=="LbSquaredDistance") return 187; if (type=="LbLerpInverse") return 188; if (type=="LbWrapPair") return 189; if (type=="LbSnapPair") return 190; if (type=="LbIsBetweenPair") return 191; if (type=="LbScaleAround") return 192; if (type=="LbPingTime") return 193; if (type=="LbLoopTime") return 194; if (type=="LbElapsedPortion") return 195; if (type=="LbTimeLeft") return 196; if (type=="LbIsTimeUp") return 197; if (type=="LbFramesToSeconds") return 198; if (type=="LbSecondsToFrames") return 199; if (type=="LbCooldownLeft") return 200; if (type=="LbIsCooldownReady") return 201; if (type=="LbPulseAt") return 202; if (type=="LbBeatNumber") return 203; if (type=="LbPhase") return 204; if (type=="LbMixThree") return 205; if (type=="LbHoldRange") return 206; if (type=="LbGreaterGap") return 207; if (type=="LbLetterAt") return 208; if (type=="LbHasPrefix") return 209; if (type=="LbHasSuffix") return 210; if (type=="LbReplaceAll") return 211; if (type=="LbTrimEnds") return 212; if (type=="LbIsSameText") return 213; if (type=="LbLongerText") return 214; if (type=="LbIsBlinking") return 215; if (type=="LbResponseCurve") return 216; if (type=="LbWeighPick") return 217; if (type=="LbQuestStage") return 218; if (type=="LbFillBlanks") return 219; if (type=="LbRunAndCheck") return 220; if (type=="LbTrySeveral") return 221; if (type=="LbRepeatUntilSuccess") return 222; if (type=="LbRunInState") return 223;
+      |     ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1694:41: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1694 |     if (type=="LbSmoothStep") return 0; if (type=="LbSmootherStep") return 1; if (type=="LbEaseIn") return 2; if (type=="LbEaseOut") return 3; if (type=="LbEaseInOut") return 4; if (type=="LbPowerEase") return 5; if (type=="LbBiasCurve") return 6; if (type=="LbGainCurve") return 7; if (type=="LbLogistic") return 8; if (type=="LbSampleCurve") return 9; if (type=="LbSampleBezier") return 10; if (type=="LbHermite") return 11; if (type=="LbTriangleWave") return 12; if (type=="LbSawWave") return 13; if (type=="LbSquareWave") return 14; if (type=="LbSineWave") return 15; if (type=="LbSampleNoise") return 16; if (type=="LbDeadZone") return 17; if (type=="LbSoftClamp") return 18; if (type=="LbRepeatRange") return 19; if (type=="LbFoldRange") return 20; if (type=="LbSafeReciprocal") return 21; if (type=="LbSquare") return 22; if (type=="LbCube") return 23; if (type=="LbNaturalLog") return 24; if (type=="LbRaiseE") return 25; if (type=="LbHypotenuse") return 26; if (type=="LbAngleFromPair") return 27; if (type=="LbDirectionFromAngle") return 28; if (type=="LbUpFromAngle") return 29; if (type=="LbMedianThree") return 30; if (type=="LbWeightedMean") return 31; if (type=="LbInverseSquare") return 32; if (type=="LbLinearFalloff") return 33; if (type=="LbSmoothFalloff") return 34; if (type=="LbPortionAlong") return 35; if (type=="LbRemapClamped") return 36; if (type=="LbAbsDiff") return 37; if (type=="LbPositiveRemainder") return 38; if (type=="LbNearestMultiple") return 39; if (type=="LbFloorTo") return 40; if (type=="LbCeilTo") return 41; if (type=="LbTruncZero") return 42; if (type=="LbKeepPositive") return 43; if (type=="LbKeepAtMost") return 44; if (type=="LbKeepAtLeast") return 45; if (type=="LbSpread") return 46; if (type=="LbPercentOf") return 47; if (type=="LbValueFromPercent") return 48; if (type=="LbDampToward") return 49; if (type=="LbApproach") return 50; if (type=="LbLimitRate") return 51; if (type=="LbChangeBetween") return 52; if (type=="LbSpringStep") return 53; if (type=="LbSmoothSmaller") return 54; if (type=="LbSmoothLarger") return 55; if (type=="LbExponentialDecay") return 56; if (type=="LbOneMinus") return 57; if (type=="LbSaturateNumber") return 58; if (type=="LbRoundPlaces") return 59; if (type=="LbLerpUnclamped") return 60; if (type=="LbInverseLerpUnclamped") return 61; if (type=="LbMapSigned") return 62; if (type=="LbMapBipolar") return 63; if (type=="LbStepAt") return 64; if (type=="LbIsOutside") return 65; if (type=="LbIsStrictBetween") return 66; if (type=="LbHasSameSign") return 67; if (type=="LbHasOppositeSign") return 68; if (type=="LbIsAlmostZero") return 69; if (type=="LbIsMultiple") return 70; if (type=="LbIsPositive") return 71; if (type=="LbIsNegative") return 72; if (type=="LbIsWhole") return 73; if (type=="LbSignOf") return 74; if (type=="LbFractionOf") return 75; if (type=="LbClamp11") return 76; if (type=="LbLerpClamp") return 77; if (type=="LbSmoothDampStep") return 78; if (type=="LbCircleEaseIn") return 79; if (type=="LbCircleEaseOut") return 80; if (type=="LbBounceOut") return 81; if (type=="LbExpEaseIn") return 82; if (type=="LbExpEaseOut") return 83; if (type=="LbShortestAngle") return 84; if (type=="LbApproachAngle") return 85; if (type=="LbBlendAngles") return 86; if (type=="LbWrapAngle") return 87; if (type=="LbSnapAngle") return 88; if (type=="LbFlatLength") return 89; if (type=="LbLimitFlat") return 90; if (type=="LbAheadLimited") return 91; if (type=="LbDotFlat") return 92; if (type=="LbCrossFlat") return 93; if (type=="LbIsBehindFlat") return 94; if (type=="LbIsLeftFlat") return 95; if (type=="LbIsRightFlat") return 96; if (type=="LbMidpoint") return 97; if (type=="LbMidAhead") return 98; if (type=="LbDistanceFlat") return 99; if (type=="LbIsWithinFlat") return 100; if (type=="LbClosestOnSegment") return 101; if (type=="LbDistanceToSegment") return 102; if (type=="LbIsInsideCircle") return 103; if (type=="LbIsInsideSphere") return 104; if (type=="LbVerticalGap") return 105; if (type=="LbIsAbove") return 106; if (type=="LbIsBelow") return 107; if (type=="LbOffsetAhead") return 108; if (type=="LbOffsetAcross") return 109; if (type=="LbGridCell") return 110; if (type=="LbCellCenter") return 111; if (type=="LbReflectFlat") return 112; if (type=="LbReflectAhead") return 113; if (type=="LbProjectFlat") return 114; if (type=="LbPortionFacing") return 115; if (type=="LbCountLetters") return 116; if (type=="LbCountWords") return 117; if (type=="LbHasText") return 118; if (type=="LbIsBlank") return 119; if (type=="LbCutText") return 120; if (type=="LbFindText") return 121; if (type=="LbJoinWith") return 122; if (type=="LbRepeatText") return 123; if (type=="LbLowerText") return 124; if (type=="LbUpperText") return 125; if (type=="LbReverseText") return 126; if (type=="LbRemoveSpaces") return 127; if (type=="LbBeforeSeparator") return 128; if (type=="LbAfterSeparator") return 129; if (type=="LbReplaceText") return 130; if (type=="LbIsNumberText") return 131; if (type=="LbNumberFromText") return 132; if (type=="LbTextFromNumber") return 133; if (type=="LbEqualLoose") return 134; if (type=="LbContainsLoose") return 135; if (type=="LbFirstWord") return 136; if (type=="LbLastWord") return 137; if (type=="LbEnsurePrefix") return 138; if (type=="LbEnsureSuffix") return 139; if (type=="LbClampText") return 140; if (type=="LbCountMatches") return 141; if (type=="LbPadLeft") return 142; if (type=="LbPadRight") return 143; if (type=="LbSelectLarger") return 144; if (type=="LbSelectSmaller") return 145; if (type=="LbClampRange") return 146; if (type=="LbMapRange") return 147; if (type=="LbIsNearly") return 148; if (type=="LbIsFar") return 149; if (type=="LbChooseNumber") return 150; if (type=="LbChooseText") return 151; if (type=="LbAllNumbers") return 152; if (type=="LbAnyNumber") return 153; if (type=="LbNoneNumber") return 154; if (type=="LbXorThree") return 155; if (type=="LbNorThree") return 156; if (type=="LbNandThree") return 157; if (type=="LbImplies") return 158; if (type=="LbResourcePortion") return 159; if (type=="LbIsResourceLow") return 160; if (type=="LbIsResourceFull") return 161; if (type=="LbTrySpend") return 162; if (type=="LbCouldSpend") return 163; if (type=="LbRegenStep") return 164; if (type=="LbStackMultiply") return 165; if (type=="LbDiminishing") return 166; if (type=="LbOverflow") return 167; if (type=="LbQuestPortion") return 168; if (type=="LbIsQuestDone") return 169; if (type=="LbStepsLeft") return 170; if (type=="LbScoreGap") return 171; if (type=="LbPickWorst") return 172; if (type=="LbClosestScore") return 173; if (type=="LbScoresAbove") return 174; if (type=="LbNormalizeScore") return 175; if (type=="LbHysteresis") return 176; if (type=="LbRememberPeak") return 177; if (type=="LbRememberValley") return 178; if (type=="LbRunningMean") return 179; if (type=="LbCountTrueFrames") return 180; if (type=="LbSampleHold") return 181; if (type=="LbPreviousNumber") return 182; if (type=="LbSpike") return 183; if (type=="LbPassAfter") return 184; if (type=="LbEveryCalls") return 185; if (type=="LbAccumulate") return 186; if (type=="LbSquaredDistance") return 187; if (type=="LbLerpInverse") return 188; if (type=="LbWrapPair") return 189; if (type=="LbSnapPair") return 190; if (type=="LbIsBetweenPair") return 191; if (type=="LbScaleAround") return 192; if (type=="LbPingTime") return 193; if (type=="LbLoopTime") return 194; if (type=="LbElapsedPortion") return 195; if (type=="LbTimeLeft") return 196; if (type=="LbIsTimeUp") return 197; if (type=="LbFramesToSeconds") return 198; if (type=="LbSecondsToFrames") return 199; if (type=="LbCooldownLeft") return 200; if (type=="LbIsCooldownReady") return 201; if (type=="LbPulseAt") return 202; if (type=="LbBeatNumber") return 203; if (type=="LbPhase") return 204; if (type=="LbMixThree") return 205; if (type=="LbHoldRange") return 206; if (type=="LbGreaterGap") return 207; if (type=="LbLetterAt") return 208; if (type=="LbHasPrefix") return 209; if (type=="LbHasSuffix") return 210; if (type=="LbReplaceAll") return 211; if (type=="LbTrimEnds") return 212; if (type=="LbIsSameText") return 213; if (type=="LbLongerText") return 214; if (type=="LbIsBlinking") return 215; if (type=="LbResponseCurve") return 216; if (type=="LbWeighPick") return 217; if (type=="LbQuestStage") return 218; if (type=="LbFillBlanks") return 219; if (type=="LbRunAndCheck") return 220; if (type=="LbTrySeveral") return 221; if (type=="LbRepeatUntilSuccess") return 222; if (type=="LbRunInState") return 223;
+      |                                         ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1694:4057: note: '-Wmisleading-indentation' is disabled from this point onwards, since column-tracking was disabled due to the size of the code/headers
+ 1694 |     if (type=="LbSmoothStep") return 0; if (type=="LbSmootherStep") return 1; if (type=="LbEaseIn") return 2; if (type=="LbEaseOut") return 3; if (type=="LbEaseInOut") return 4; if (type=="LbPowerEase") return 5; if (type=="LbBiasCurve") return 6; if (type=="LbGainCurve") return 7; if (type=="LbLogistic") return 8; if (type=="LbSampleCurve") return 9; if (type=="LbSampleBezier") return 10; if (type=="LbHermite") return 11; if (type=="LbTriangleWave") return 12; if (type=="LbSawWave") return 13; if (type=="LbSquareWave") return 14; if (type=="LbSineWave") return 15; if (type=="LbSampleNoise") return 16; if (type=="LbDeadZone") return 17; if (type=="LbSoftClamp") return 18; if (type=="LbRepeatRange") return 19; if (type=="LbFoldRange") return 20; if (type=="LbSafeReciprocal") return 21; if (type=="LbSquare") return 22; if (type=="LbCube") return 23; if (type=="LbNaturalLog") return 24; if (type=="LbRaiseE") return 25; if (type=="LbHypotenuse") return 26; if (type=="LbAngleFromPair") return 27; if (type=="LbDirectionFromAngle") return 28; if (type=="LbUpFromAngle") return 29; if (type=="LbMedianThree") return 30; if (type=="LbWeightedMean") return 31; if (type=="LbInverseSquare") return 32; if (type=="LbLinearFalloff") return 33; if (type=="LbSmoothFalloff") return 34; if (type=="LbPortionAlong") return 35; if (type=="LbRemapClamped") return 36; if (type=="LbAbsDiff") return 37; if (type=="LbPositiveRemainder") return 38; if (type=="LbNearestMultiple") return 39; if (type=="LbFloorTo") return 40; if (type=="LbCeilTo") return 41; if (type=="LbTruncZero") return 42; if (type=="LbKeepPositive") return 43; if (type=="LbKeepAtMost") return 44; if (type=="LbKeepAtLeast") return 45; if (type=="LbSpread") return 46; if (type=="LbPercentOf") return 47; if (type=="LbValueFromPercent") return 48; if (type=="LbDampToward") return 49; if (type=="LbApproach") return 50; if (type=="LbLimitRate") return 51; if (type=="LbChangeBetween") return 52; if (type=="LbSpringStep") return 53; if (type=="LbSmoothSmaller") return 54; if (type=="LbSmoothLarger") return 55; if (type=="LbExponentialDecay") return 56; if (type=="LbOneMinus") return 57; if (type=="LbSaturateNumber") return 58; if (type=="LbRoundPlaces") return 59; if (type=="LbLerpUnclamped") return 60; if (type=="LbInverseLerpUnclamped") return 61; if (type=="LbMapSigned") return 62; if (type=="LbMapBipolar") return 63; if (type=="LbStepAt") return 64; if (type=="LbIsOutside") return 65; if (type=="LbIsStrictBetween") return 66; if (type=="LbHasSameSign") return 67; if (type=="LbHasOppositeSign") return 68; if (type=="LbIsAlmostZero") return 69; if (type=="LbIsMultiple") return 70; if (type=="LbIsPositive") return 71; if (type=="LbIsNegative") return 72; if (type=="LbIsWhole") return 73; if (type=="LbSignOf") return 74; if (type=="LbFractionOf") return 75; if (type=="LbClamp11") return 76; if (type=="LbLerpClamp") return 77; if (type=="LbSmoothDampStep") return 78; if (type=="LbCircleEaseIn") return 79; if (type=="LbCircleEaseOut") return 80; if (type=="LbBounceOut") return 81; if (type=="LbExpEaseIn") return 82; if (type=="LbExpEaseOut") return 83; if (type=="LbShortestAngle") return 84; if (type=="LbApproachAngle") return 85; if (type=="LbBlendAngles") return 86; if (type=="LbWrapAngle") return 87; if (type=="LbSnapAngle") return 88; if (type=="LbFlatLength") return 89; if (type=="LbLimitFlat") return 90; if (type=="LbAheadLimited") return 91; if (type=="LbDotFlat") return 92; if (type=="LbCrossFlat") return 93; if (type=="LbIsBehindFlat") return 94; if (type=="LbIsLeftFlat") return 95; if (type=="LbIsRightFlat") return 96; if (type=="LbMidpoint") return 97; if (type=="LbMidAhead") return 98; if (type=="LbDistanceFlat") return 99; if (type=="LbIsWithinFlat") return 100; if (type=="LbClosestOnSegment") return 101; if (type=="LbDistanceToSegment") return 102; if (type=="LbIsInsideCircle") return 103; if (type=="LbIsInsideSphere") return 104; if (type=="LbVerticalGap") return 105; if (type=="LbIsAbove") return 106; if (type=="LbIsBelow") return 107; if (type=="LbOffsetAhead") return 108; if (type=="LbOffsetAcross") return 109; if (type=="LbGridCell") return 110; if (type=="LbCellCenter") return 111; if (type=="LbReflectFlat") return 112; if (type=="LbReflectAhead") return 113; if (type=="LbProjectFlat") return 114; if (type=="LbPortionFacing") return 115; if (type=="LbCountLetters") return 116; if (type=="LbCountWords") return 117; if (type=="LbHasText") return 118; if (type=="LbIsBlank") return 119; if (type=="LbCutText") return 120; if (type=="LbFindText") return 121; if (type=="LbJoinWith") return 122; if (type=="LbRepeatText") return 123; if (type=="LbLowerText") return 124; if (type=="LbUpperText") return 125; if (type=="LbReverseText") return 126; if (type=="LbRemoveSpaces") return 127; if (type=="LbBeforeSeparator") return 128; if (type=="LbAfterSeparator") return 129; if (type=="LbReplaceText") return 130; if (type=="LbIsNumberText") return 131; if (type=="LbNumberFromText") return 132; if (type=="LbTextFromNumber") return 133; if (type=="LbEqualLoose") return 134; if (type=="LbContainsLoose") return 135; if (type=="LbFirstWord") return 136; if (type=="LbLastWord") return 137; if (type=="LbEnsurePrefix") return 138; if (type=="LbEnsureSuffix") return 139; if (type=="LbClampText") return 140; if (type=="LbCountMatches") return 141; if (type=="LbPadLeft") return 142; if (type=="LbPadRight") return 143; if (type=="LbSelectLarger") return 144; if (type=="LbSelectSmaller") return 145; if (type=="LbClampRange") return 146; if (type=="LbMapRange") return 147; if (type=="LbIsNearly") return 148; if (type=="LbIsFar") return 149; if (type=="LbChooseNumber") return 150; if (type=="LbChooseText") return 151; if (type=="LbAllNumbers") return 152; if (type=="LbAnyNumber") return 153; if (type=="LbNoneNumber") return 154; if (type=="LbXorThree") return 155; if (type=="LbNorThree") return 156; if (type=="LbNandThree") return 157; if (type=="LbImplies") return 158; if (type=="LbResourcePortion") return 159; if (type=="LbIsResourceLow") return 160; if (type=="LbIsResourceFull") return 161; if (type=="LbTrySpend") return 162; if (type=="LbCouldSpend") return 163; if (type=="LbRegenStep") return 164; if (type=="LbStackMultiply") return 165; if (type=="LbDiminishing") return 166; if (type=="LbOverflow") return 167; if (type=="LbQuestPortion") return 168; if (type=="LbIsQuestDone") return 169; if (type=="LbStepsLeft") return 170; if (type=="LbScoreGap") return 171; if (type=="LbPickWorst") return 172; if (type=="LbClosestScore") return 173; if (type=="LbScoresAbove") return 174; if (type=="LbNormalizeScore") return 175; if (type=="LbHysteresis") return 176; if (type=="LbRememberPeak") return 177; if (type=="LbRememberValley") return 178; if (type=="LbRunningMean") return 179; if (type=="LbCountTrueFrames") return 180; if (type=="LbSampleHold") return 181; if (type=="LbPreviousNumber") return 182; if (type=="LbSpike") return 183; if (type=="LbPassAfter") return 184; if (type=="LbEveryCalls") return 185; if (type=="LbAccumulate") return 186; if (type=="LbSquaredDistance") return 187; if (type=="LbLerpInverse") return 188; if (type=="LbWrapPair") return 189; if (type=="LbSnapPair") return 190; if (type=="LbIsBetweenPair") return 191; if (type=="LbScaleAround") return 192; if (type=="LbPingTime") return 193; if (type=="LbLoopTime") return 194; if (type=="LbElapsedPortion") return 195; if (type=="LbTimeLeft") return 196; if (type=="LbIsTimeUp") return 197; if (type=="LbFramesToSeconds") return 198; if (type=="LbSecondsToFrames") return 199; if (type=="LbCooldownLeft") return 200; if (type=="LbIsCooldownReady") return 201; if (type=="LbPulseAt") return 202; if (type=="LbBeatNumber") return 203; if (type=="LbPhase") return 204; if (type=="LbMixThree") return 205; if (type=="LbHoldRange") return 206; if (type=="LbGreaterGap") return 207; if (type=="LbLetterAt") return 208; if (type=="LbHasPrefix") return 209; if (type=="LbHasSuffix") return 210; if (type=="LbReplaceAll") return 211; if (type=="LbTrimEnds") return 212; if (type=="LbIsSameText") return 213; if (type=="LbLongerText") return 214; if (type=="LbIsBlinking") return 215; if (type=="LbResponseCurve") return 216; if (type=="LbWeighPick") return 217; if (type=="LbQuestStage") return 218; if (type=="LbFillBlanks") return 219; if (type=="LbRunAndCheck") return 220; if (type=="LbTrySeveral") return 221; if (type=="LbRepeatUntilSuccess") return 222; if (type=="LbRunInState") return 223;
+      |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesLibrary.hpp:1694:4057: note: adding '-flarge-source-files' will allow for more column-tracking support, at the expense of compilation time and memory
+In file included from /home/user/wt-jb3/engine/src/VisualScript/NodeGraph.cpp:21:
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesGameplayLib.hpp: In function 'int okay::vs::GameplayLibOp(const std::string&)':
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesGameplayLib.hpp:1894:5: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+ 1894 |     if (type == "GlGetHealth") return 0; if (type == "GlGetHealthPortion") return 1; if (type == "GlGetMaxHealth") return 2; if (type == "GlSetHealth") return 3; if (type == "GlSetMaximumHealth") return 4; if (type == "GlIsHealthLow") return 5; if (type == "GlIsHealthFull") return 6; if (type == "GlHealToFull") return 7; if (type == "GlKill") return 8; if (type == "GlSetInvincible") return 9; if (type == "GlIsInvincible") return 10; if (type == "GlDamageOverTime") return 11; if (type == "GlHealOverTime") return 12; if (type == "GlSetArmor") return 13; if (type == "GlGetArmor") return 14; if (type == "GlSetRegeneration") return 15; if (type == "GlDamageAfterArmor") return 16; if (type == "GlGetSpeed") return 17; if (type == "GlIsMoving") return 18; if (type == "GlSetVelocity") return 19; if (type == "GlPushWithImpulse") return 20; if (type == "GlStopMoving") return 21; if (type == "GlMoveForward") return 22; if (type == "GlMoveSideways") return 23; if (type == "GlTurnBy") return 24; if (type == "GlFaceDirection") return 25; if (type == "GlKeepInsideBox") return 26; if (type == "GlWrapAroundBox") return 27; if (type == "GlSnapToGrid") return 28; if (type == "GlCountItem") return 29; if (type == "GlIsInventoryFull") return 30; if (type == "GlGetFreeSlots") return 31; if (type == "GlGetUsedSlots") return 32; if (type == "GlCanFitItem") return 33; if (type == "GlHasBothItems") return 34; if (type == "GlRemoveAllOfItem") return 35; if (type == "GlEmptyInventory") return 36; if (type == "GlGetCarriedWeight") return 37; if (type == "GlSetInventorySize") return 38; if (type == "GlMoveItem") return 39; if (type == "GlIsFacingObject") return 40; if (type == "GlGetAngleToObject") return 41; if (type == "GlIsObjectBehind") return 42; if (type == "GlIsObjectHigher") return 43; if (type == "GlGetDirectionToObject") return 44; if (type == "GlCountObjectsWithTag") return 45; if (type == "GlIsAnyTaggedInRange") return 46; if (type == "GlGetAlertLevel") return 47; if (type == "GlPickRandomTagged") return 48; if (type == "GlSetCameraZoom") return 49; if (type == "GlGetCameraZoom") return 50; if (type == "GlSetFieldOfView") return 51; if (type == "GlGetFieldOfView") return 52; if (type == "GlShakeCamera") return 53; if (type == "GlTiltCamera") return 54; if (type == "GlShowNumberInText") return 55; if (type == "GlFormatNumber") return 56; if (type == "GlFormatClock") return 57; if (type == "GlFormatPercent") return 58; if (type == "GlSetTextColor") return 59; if (type == "GlGetText") return 60; if (type == "GlAddLineToText") return 61; if (type == "GlSetTextSize") return 62; if (type == "GlSetVolume") return 63; if (type == "GlGetVolume") return 64; if (type == "GlSetPitch") return 65; if (type == "GlIsSoundPlaying") return 66; if (type == "GlPauseSound") return 67; if (type == "GlSetSoundLooping") return 68; if (type == "GlGetMass") return 69; if (type == "GlSetMass") return 70; if (type == "GlSetGravityStrength") return 71; if (type == "GlSetBounciness") return 72; if (type == "GlSetAirDrag") return 73; if (type == "GlLockRotation") return 74; if (type == "GlSpinAtSpeed") return 75; if (type == "GlGetSpinSpeed") return 76; if (type == "GlPulseSize") return 77; if (type == "GlSwayTurn") return 78; if (type == "GlFadeSpriteTo") return 79; if (type == "GlGetSpriteOpacity") return 80; if (type == "GlIsQuestActive") return 81; if (type == "GlIsQuestCompleted") return 82; if (type == "GlCompleteQuest") return 83; if (type == "GlFailQuest") return 84; if (type == "GlResetQuest") return 85; if (type == "GlAddQuestProgress") return 86; if (type == "GlGetQuestProgress") return 87; if (type == "GlIsObjectiveDone") return 88; if (type == "GlCountActiveQuests") return 89; if (type == "GlSavePosition") return 90; if (type == "GlLoadPosition") return 91; if (type == "GlHasSavedPosition") return 92; if (type == "GlForgetSavedPosition") return 93; if (type == "GlDestroyAllWithTag") return 94; if (type == "GlHideAllWithTag") return 95; if (type == "GlShowAllWithTag") return 96; if (type == "GlSetTagOnObject") return 97; if (type == "GlSlowMotion") return 98; if (type == "GlResetGameSpeed") return 99; if (type == "GlGetSessionTime") return 100; if (type == "GlIsEveryOtherInterval") return 101; if (type == "GlGetHorizontalInput") return 102; if (type == "GlGetVerticalInput") return 103; if (type == "GlIsSprinting") return 104; if (type == "GlIsCrouching") return 105; if (type == "GlIsAnyKeyHeld") return 106; if (type == "GlMoveToPosition") return 107; if (type == "GlLookAtPosition") return 108; if (type == "GlGetDistanceToPosition") return 109; if (type == "GlIsNearPosition") return 110; if (type == "GlHop") return 111; if (type == "GlMoveBackAndForth") return 112; if (type == "GlShakePosition") return 113; if (type == "GlKeepAboveHeight") return 114; if (type == "GlLimitHeight") return 115; if (type == "GlResetRotation") return 116; if (type == "GlSetSizeEvenly") return 117; if (type == "GlFlipSide") return 118; if (type == "GlCopyPositionFrom") return 119; if (type == "GlStayAtDistanceFrom") return 120; if (type == "GlFaceObject") return 121; if (type == "GlTurnTowardObject") return 122; if (type == "GlJump") return 123; if (type == "GlIsFalling") return 124; if (type == "GlIsRising") return 125; if (type == "GlGetVerticalSpeed") return 126; if (type == "GlGetFlatSpeed") return 127; if (type == "GlLimitSpeed") return 128; if (type == "GlSetFlatSpeed") return 129; if (type == "GlHealPortion") return 130; if (type == "GlDamagePortion") return 131; if (type == "GlSetHealthPortion") return 132; if (type == "GlReviveWithHealth") return 133; if (type == "GlCriticalDamage") return 134; if (type == "GlDamageFalloff") return 135; if (type == "GlIsInventoryEmpty") return 136; if (type == "GlStacksNeeded") return 137; if (type == "GlAddItemIfRoom") return 138; if (type == "GlTakeOneItem") return 139; if (type == "GlLevelFromExperience") return 140; if (type == "GlExperienceForLevel") return 141; if (type == "GlExperienceToNextLevel") return 142; if (type == "GlGrowByLevel") return 143; if (type == "GlPriceWithDiscount") return 144; if (type == "GlCooldownPortion") return 145; if (type == "GlRollChance") return 146; if (type == "GlTypewriterText") return 147; if (type == "GlShowHealthInText") return 148; if (type == "GlShowSessionTimeInText") return 149; if (type == "GlClearText") return 150; if (type == "GlFadeVolumeTo") return 151; if (type == "GlRandomizePitch") return 152; if (type == "GlMuteSound") return 153; if (type == "GlCameraFollowObject") return 154; if (type == "GlCameraLookAtObject") return 155; if (type == "GlZoomSmoothlyTo") return 156; if (type == "GlCountTaggedInRange") return 157; if (type == "GlIsJumpHeld") return 158; if (type == "GlSaveHealth") return 159; if (type == "GlLoadHealth") return 160; if (type == "GlHasTimePassed") return 161; if (type == "GlGetGameSpeed") return 162; if (type == "GlRenameObject") return 163; if (type == "GlSetInvincibleTime") return 164; if (type == "GlSetLives") return 165; if (type == "GlSetRespawnTime") return 166; if (type == "GlSetResistance") return 167; if (type == "GlSetSmallestHit") return 168; if (type == "GlSetOverhealLimit") return 169; if (type == "GlSetRemoveOnDeath") return 170; if (type == "GlGetMissingHealth") return 171; if (type == "GlIsHealthAbove") return 172; if (type == "GlGetResistance") return 173; if (type == "GlSetCarryLimit") return 174; if (type == "GlSetStackLimit") return 175; if (type == "GlGetCarryLimit") return 176; if (type == "GlIsOverweight") return 177; if (type == "GlGetSlowdownFromWeight") return 178; if (type == "GlCountAllItems") return 179; if (type == "GlSetBodyType") return 180; if (type == "GlSetFallSpeedLimit") return 181; if (type == "GlSetSurfaceFriction") return 182; if (type == "GlFreezeAxis") return 183; if (type == "GlWakeBody") return 184; if (type == "GlPushAwayFrom") return 185; if (type == "GlIsBodyMovable") return 186; if (type == "GlPlaySoundNow") return 187; if (type == "GlSetSound3D") return 188; if (type == "GlGetPitch") return 189; if (type == "GlIsSoundLooping") return 190; if (type == "GlSetFlatCameraSize") return 191; if (type == "GlGetFlatCameraSize") return 192; if (type == "GlResetCamera") return 193; if (type == "GlIsCameraZoomedIn") return 194; if (type == "GlCountCompletedQuests") return 195; if (type == "GlIsAnyQuestActive") return 196; if (type == "GlFailActiveQuests") return 197; if (type == "GlFinishObjectives") return 198; if (type == "GlGetObjectiveCount") return 199; if (type == "GlSetTextOpacity") return 200; if (type == "GlFadeTextTo") return 201; if (type == "GlShowTwoNumbersInText") return 202; if (type == "GlRiseAtSpeed") return 203; if (type == "GlMoveInCircle") return 204; if (type == "GlChangeSizeOverTime") return 205; if (type == "GlMultiplySize") return 206; if (type == "GlFaceAwayFrom") return 207; if (type == "GlGetFacingAngle") return 208; if (type == "GlSetFacingAngle") return 209; if (type == "GlSetHeight") return 210; if (type == "GlIsAboveHeight") return 211; if (type == "GlIsBelowHeight") return 212; if (type == "GlIsFireHeld") return 213; if (type == "GlIsAimHeld") return 214; if (type == "GlIsInteractHeld") return 215; if (type == "GlGetMoveStrength") return 216; if (type == "GlGetLives") return 217; if (type == "GlIsRespawnOn") return 218; if (type == "GlGetOverhealLimit") return 219; if (type == "GlGetHitProtectionTime") return 220; if (type == "GlGetGravityStrength") return 221; if (type == "GlGetBounciness") return 222; if (type == "GlGetAirDrag") return 223; if (type == "GlGetSurfaceFriction") return 224; if (type == "GlIsRotationLocked") return 225; if (type == "GlIsSoundPositional") return 226; if (type == "GlGetCameraTilt") return 227; if (type == "GlGetTextOpacity") return 228; if (type == "GlGetTextSize") return 229; if (type == "GlGetStackLimit") return 230; if (type == "GlGetInventorySize") return 231; if (type == "GlIsDialogueRunning") return 232; if (type == "GlGetDialogueLine") return 233; if (type == "GlGetDialogueSpeaker") return 234; if (type == "GlIsDialogueWaitingForChoice") return 235; if (type == "GlGetDialogueOptionCount") return 236; if (type == "GlGetDialogueOptionText") return 237; if (type == "GlAdvanceDialogue") return 238; if (type == "GlChooseDialogueOption") return 239; if (type == "GlStopDialogue") return 240;
+      |     ^~
+/home/user/wt-jb3/engine/include/okay/VisualScript/NodesGameplayLib.hpp:1894:42: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+ 1894 |     if (type == "GlGetHealth") return 0; if (type == "GlGetHealthPortion") return 1; if (type == "GlGetMaxHealth") return 2; if (type == "GlSetHealth") return 3; if (type == "GlSetMaximumHealth") return 4; if (type == "GlIsHealthLow") return 5; if (type == "GlIsHealthFull") return 6; if (type == "GlHealToFull") return 7; if (type == "GlKill") return 8; if (type == "GlSetInvincible") return 9; if (type == "GlIsInvincible") return 10; if (type == "GlDamageOverTime") return 11; if (type == "GlHealOverTime") return 12; if (type == "GlSetArmor") return 13; if (type == "GlGetArmor") return 14; if (type == "GlSetRegeneration") return 15; if (type == "GlDamageAfterArmor") return 16; if (type == "GlGetSpeed") return 17; if (type == "GlIsMoving") return 18; if (type == "GlSetVelocity") return 19; if (type == "GlPushWithImpulse") return 20; if (type == "GlStopMoving") return 21; if (type == "GlMoveForward") return 22; if (type == "GlMoveSideways") return 23; if (type == "GlTurnBy") return 24; if (type == "GlFaceDirection") return 25; if (type == "GlKeepInsideBox") return 26; if (type == "GlWrapAroundBox") return 27; if (type == "GlSnapToGrid") return 28; if (type == "GlCountItem") return 29; if (type == "GlIsInventoryFull") return 30; if (type == "GlGetFreeSlots") return 31; if (type == "GlGetUsedSlots") return 32; if (type == "GlCanFitItem") return 33; if (type == "GlHasBothItems") return 34; if (type == "GlRemoveAllOfItem") return 35; if (type == "GlEmptyInventory") return 36; if (type == "GlGetCarriedWeight") return 37; if (type == "GlSetInventorySize") return 38; if (type == "GlMoveItem") return 39; if (type == "GlIsFacingObject") return 40; if (type == "GlGetAngleToObject") return 41; if (type == "GlIsObjectBehind") return 42; if (type == "GlIsObjectHigher") return 43; if (type == "GlGetDirectionToObject") return 44; if (type == "GlCountObjectsWithTag") return 45; if (type == "GlIsAnyTaggedInRange") return 46; if (type == "GlGetAlertLevel") return 47; if (type == "GlPickRandomTagged") return 48; if (type == "GlSetCameraZoom") return 49; if (type == "GlGetCameraZoom") return 50; if (type == "GlSetFieldOfView") return 51; if (type == "GlGetFieldOfView") return 52; if (type == "GlShakeCamera") return 53; if (type == "GlTiltCamera") return 54; if (type == "GlShowNumberInText") return 55; if (type == "GlFormatNumber") return 56; if (type == "GlFormatClock") return 57; if (type == "GlFormatPercent") return 58; if (type == "GlSetTextColor") return 59; if (type == "GlGetText") return 60; if (type == "GlAddLineToText") return 61; if (type == "GlSetTextSize") return 62; if (type == "GlSetVolume") return 63; if (type == "GlGetVolume") return 64; if (type == "GlSetPitch") return 65; if (type == "GlIsSoundPlaying") return 66; if (type == "GlPauseSound") return 67; if (type == "GlSetSoundLooping") return 68; if (type == "GlGetMass") return 69; if (type == "GlSetMass") return 70; if (type == "GlSetGravityStrength") return 71; if (type == "GlSetBounciness") return 72; if (type == "GlSetAirDrag") return 73; if (type == "GlLockRotation") return 74; if (type == "GlSpinAtSpeed") return 75; if (type == "GlGetSpinSpeed") return 76; if (type == "GlPulseSize") return 77; if (type == "GlSwayTurn") return 78; if (type == "GlFadeSpriteTo") return 79; if (type == "GlGetSpriteOpacity") return 80; if (type == "GlIsQuestActive") return 81; if (type == "GlIsQuestCompleted") return 82; if (type == "GlCompleteQuest") return 83; if (type == "GlFailQuest") return 84; if (type == "GlResetQuest") return 85; if (type == "GlAddQuestProgress") return 86; if (type == "GlGetQuestProgress") return 87; if (type == "GlIsObjectiveDone") return 88; if (type == "GlCountActiveQuests") return 89; if (type == "GlSavePosition") return 90; if (type == "GlLoadPosition") return 91; if (type == "GlHasSavedPosition") return 92; if (type == "GlForgetSavedPosition") return 93; if (type == "GlDestroyAllWithTag") return 94; if (type == "GlHideAllWithTag") return 95; if (type == "GlShowAllWithTag") return 96; if (type == "GlSetTagOnObject") return 97; if (type == "GlSlowMotion") return 98; if (type == "GlResetGameSpeed") return 99; if (type == "GlGetSessionTime") return 100; if (type == "GlIsEveryOtherInterval") return 101; if (type == "GlGetHorizontalInput") return 102; if (type == "GlGetVerticalInput") return 103; if (type == "GlIsSprinting") return 104; if (type == "GlIsCrouching") return 105; if (type == "GlIsAnyKeyHeld") return 106; if (type == "GlMoveToPosition") return 107; if (type == "GlLookAtPosition") return 108; if (type == "GlGetDistanceToPosition") return 109; if (type == "GlIsNearPosition") return 110; if (type == "GlHop") return 111; if (type == "GlMoveBackAndForth") return 112; if (type == "GlShakePosition") return 113; if (type == "GlKeepAboveHeight") return 114; if (type == "GlLimitHeight") return 115; if (type == "GlResetRotation") return 116; if (type == "GlSetSizeEvenly") return 117; if (type == "GlFlipSide") return 118; if (type == "GlCopyPositionFrom") return 119; if (type == "GlStayAtDistanceFrom") return 120; if (type == "GlFaceObject") return 121; if (type == "GlTurnTowardObject") return 122; if (type == "GlJump") return 123; if (type == "GlIsFalling") return 124; if (type == "GlIsRising") return 125; if (type == "GlGetVerticalSpeed") return 126; if (type == "GlGetFlatSpeed") return 127; if (type == "GlLimitSpeed") return 128; if (type == "GlSetFlatSpeed") return 129; if (type == "GlHealPortion") return 130; if (type == "GlDamagePortion") return 131; if (type == "GlSetHealthPortion") return 132; if (type == "GlReviveWithHealth") return 133; if (type == "GlCriticalDamage") return 134; if (type == "GlDamageFalloff") return 135; if (type == "GlIsInventoryEmpty") return 136; if (type == "GlStacksNeeded") return 137; if (type == "GlAddItemIfRoom") return 138; if (type == "GlTakeOneItem") return 139; if (type == "GlLevelFromExperience") return 140; if (type == "GlExperienceForLevel") return 141; if (type == "GlExperienceToNextLevel") return 142; if (type == "GlGrowByLevel") return 143; if (type == "GlPriceWithDiscount") return 144; if (type == "GlCooldownPortion") return 145; if (type == "GlRollChance") return 146; if (type == "GlTypewriterText") return 147; if (type == "GlShowHealthInText") return 148; if (type == "GlShowSessionTimeInText") return 149; if (type == "GlClearText") return 150; if (type == "GlFadeVolumeTo") return 151; if (type == "GlRandomizePitch") return 152; if (type == "GlMuteSound") return 153; if (type == "GlCameraFollowObject") return 154; if (type == "GlCameraLookAtObject") return 155; if (type == "GlZoomSmoothlyTo") return 156; if (type == "GlCountTaggedInRange") return 157; if (type == "GlIsJumpHeld") return 158; if (type == "GlSaveHealth") return 159; if (type == "GlLoadHealth") return 160; if (type == "GlHasTimePassed") return 161; if (type == "GlGetGameSpeed") return 162; if (type == "GlRenameObject") return 163; if (type == "GlSetInvincibleTime") return 164; if (type == "GlSetLives") return 165; if (type == "GlSetRespawnTime") return 166; if (type == "GlSetResistance") return 167; if (type == "GlSetSmallestHit") return 168; if (type == "GlSetOverhealLimit") return 169; if (type == "GlSetRemoveOnDeath") return 170; if (type == "GlGetMissingHealth") return 171; if (type == "GlIsHealthAbove") return 172; if (type == "GlGetResistance") return 173; if (type == "GlSetCarryLimit") return 174; if (type == "GlSetStackLimit") return 175; if (type == "GlGetCarryLimit") return 176; if (type == "GlIsOverweight") return 177; if (type == "GlGetSlowdownFromWeight") return 178; if (type == "GlCountAllItems") return 179; if (type == "GlSetBodyType") return 180; if (type == "GlSetFallSpeedLimit") return 181; if (type == "GlSetSurfaceFriction") return 182; if (type == "GlFreezeAxis") return 183; if (type == "GlWakeBody") return 184; if (type == "GlPushAwayFrom") return 185; if (type == "GlIsBodyMovable") return 186; if (type == "GlPlaySoundNow") return 187; if (type == "GlSetSound3D") return 188; if (type == "GlGetPitch") return 189; if (type == "GlIsSoundLooping") return 190; if (type == "GlSetFlatCameraSize") return 191; if (type == "GlGetFlatCameraSize") return 192; if (type == "GlResetCamera") return 193; if (type == "GlIsCameraZoomedIn") return 194; if (type == "GlCountCompletedQuests") return 195; if (type == "GlIsAnyQuestActive") return 196; if (type == "GlFailActiveQuests") return 197; if (type == "GlFinishObjectives") return 198; if (type == "GlGetObjectiveCount") return 199; if (type == "GlSetTextOpacity") return 200; if (type == "GlFadeTextTo") return 201; if (type == "GlShowTwoNumbersInText") return 202; if (type == "GlRiseAtSpeed") return 203; if (type == "GlMoveInCircle") return 204; if (type == "GlChangeSizeOverTime") return 205; if (type == "GlMultiplySize") return 206; if (type == "GlFaceAwayFrom") return 207; if (type == "GlGetFacingAngle") return 208; if (type == "GlSetFacingAngle") return 209; if (type == "GlSetHeight") return 210; if (type == "GlIsAboveHeight") return 211; if (type == "GlIsBelowHeight") return 212; if (type == "GlIsFireHeld") return 213; if (type == "GlIsAimHeld") return 214; if (type == "GlIsInteractHeld") return 215; if (type == "GlGetMoveStrength") return 216; if (type == "GlGetLives") return 217; if (type == "GlIsRespawnOn") return 218; if (type == "GlGetOverhealLimit") return 219; if (type == "GlGetHitProtectionTime") return 220; if (type == "GlGetGravityStrength") return 221; if (type == "GlGetBounciness") return 222; if (type == "GlGetAirDrag") return 223; if (type == "GlGetSurfaceFriction") return 224; if (type == "GlIsRotationLocked") return 225; if (type == "GlIsSoundPositional") return 226; if (type == "GlGetCameraTilt") return 227; if (type == "GlGetTextOpacity") return 228; if (type == "GlGetTextSize") return 229; if (type == "GlGetStackLimit") return 230; if (type == "GlGetInventorySize") return 231; if (type == "GlIsDialogueRunning") return 232; if (type == "GlGetDialogueLine") return 233; if (type == "GlGetDialogueSpeaker") return 234; if (type == "GlIsDialogueWaitingForChoice") return 235; if (type == "GlGetDialogueOptionCount") return 236; if (type == "GlGetDialogueOptionText") return 237; if (type == "GlAdvanceDialogue") return 238; if (type == "GlChooseDialogueOption") return 239; if (type == "GlStopDialogue") return 240;
+      |                                          ^~
+ninja: build stopped: subcommand failed.

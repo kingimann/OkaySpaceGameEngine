@@ -11,12 +11,14 @@ namespace okay { class Component; class GameObject; struct Mat4; struct Vec3; }
 
 namespace oked {
 
-// What the Scene view shows. Bits 0..4 are the Volume kinds (Checkpoint, Kill, Force, Atmosphere, Ambience),
-// bit 5 the zones of Logic Sources (plates and trigger zones). Saved in the editor settings.
+// What the Scene view shows. Bits 0..4 are the first Volume kinds (Checkpoint, Kill, Force, Atmosphere,
+// Ambience), bit 5 the zones of Logic Sources (plates and trigger zones), bit 6 Reverb volumes.
+// Saved in the editor settings. Reverb does not use bit 5, so an older "show everything" mask still
+// shows the logic zones.
 extern bool     g_showVolumes;
 extern bool     g_showVolumeLabels;
 extern unsigned g_volumeKinds;
-constexpr unsigned kVolumeKindsAll = 0x3Fu;
+constexpr unsigned kVolumeKindsAll = 0x7Fu;
 
 // The ground-drag tool is armed: a left drag in the 3D Scene view draws a volume instead of orbiting.
 bool VolumeDrawActive();

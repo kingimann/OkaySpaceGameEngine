@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Math/Vec3.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/AudioStream.hpp"
 #include "okay/Core/Subtitles.hpp"
@@ -64,6 +65,23 @@ public:
     /// kLowPassOff or above leaves the sound untouched.
     float lowPass = kLowPassOff;
     static constexpr float kLowPassOff = 22000.0f;
+    /// Pitch follows speed: on, the pitch rises when this sound or the listener
+    /// is moving closer and falls when they move apart. Off (the default) leaves
+    /// `pitch` as the only pitch. `dopplerScale` 1 matches real speed, 0 is no
+    /// shift, higher exaggerates it. Only 3D sources use it.
+    bool  doppler = false;
+    float dopplerScale = 1.0f;
+    /// A solid wall between this and the listener makes the sound quieter
+    /// (`occlusionVolume`, 1 = no quieter) and muffled (`occlusionLowPass` Hz).
+    /// Off (the default) ignores the walls. Triggers do not count. 3D only.
+    bool  occlude = false;
+    float occlusionVolume = 0.25f;
+    float occlusionLowPass = 800.0f;
+    /// Far sounds get muffled, along a curve that stays bright up close and
+    /// reaches `distanceLowPassHz` at maxDistance. Off (the default) keeps the
+    /// tone the same at every distance. 3D only.
+    bool  distanceLowPass = false;
+    float distanceLowPassHz = 2000.0f;
 
     bool  IsPlaying() const { return m_playing; }
     /// Seconds left in the clip at the current pitch (0 when stopped).
@@ -178,6 +196,9 @@ private:
     float m_fade = 1.0f, m_fadeTarget = 1.0f, m_fadeRate = 0.0f;   // fade level, its target, change per second
     bool  m_fadeStop = false;   // stop once a fade reaches silence
     float m_lowPassState = 0.0f, m_lowPassStateR = 0.0f;   // one-pole filter memory, left and right
+    Vec3  m_spatialPos{};          // last mixed world position, for doppler
+    bool  m_hasSpatialPos = false;
+    float m_occlusion = 0.0f;      // 0 clear .. 1 fully behind a wall, smoothed
     std::shared_ptr<AudioStream> m_stream;   // the streamed sound, when `clip` is empty
     void RewindStream() { if (IsStreaming()) { m_stream->loop = loop; m_stream->Seek(0); } }
     std::vector<Shot> m_shots;

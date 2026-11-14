@@ -3669,6 +3669,141 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "OnTap";
+        d.title = "On Tap";
+        d.description = "Runs once when a finger taps the screen.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Tap into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on tap";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Tap finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnDoubleTap";
+        d.title = "On Double Tap";
+        d.description = "Runs once when a finger taps twice, close together.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Double Tap into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on double tap";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Double Tap finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnLongPress";
+        d.title = "On Long Press";
+        d.description = "Runs once when a finger is held still for half a second.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Long Press into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on long press";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Long Press finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnSwipe";
+        d.title = "On Swipe";
+        d.description = "Runs once when a finger flicks across the screen. Leave the box empty for any direction, or type up, down, left or right.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Swipe into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on swipe";
+        d.setting = "up, down, left, right, or blank for any. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Swipe finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnPinch";
+        d.title = "On Pinch";
+        d.description = "Runs while two fingers move apart or together.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Pinch into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on pinch";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Pinch finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OnRotate";
+        d.title = "On Two Finger Rotate";
+        d.description = "Runs while two fingers twist. The angle is in degrees, positive counter-clockwise.";
+        d.requirements = "No component is required. It runs in Play mode when its event happens on this object.";
+        d.component = "";
+        d.example = "Drop On Two Finger Rotate into the graph and wire it the way its pins describe.";
+        d.related = "";
+        d.keywords = "on two finger rotate";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, true, "", "Flow", "After On Two Finger Rotate finishes, the flow continues from here to the next step.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GestureSwipeDirection";
+        d.title = "Get Swipe Direction";
+        d.description = "The direction of this frame's swipe: up, down, left or right. Empty when there was no swipe.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Swipe Direction's Direction output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get swipe direction";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Direction", "Text", "What Get Swipe Direction produces on Direction. It is a Text. Wire it into an input that expects a Text.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GesturePinchScale";
+        d.title = "Get Pinch Scale";
+        d.description = "How far apart two fingers are compared with where the pinch began. 1 means unchanged.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Pinch Scale's Scale output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get pinch scale";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Scale", "Number", "The scale. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GestureTwist";
+        d.title = "Get Twist Angle";
+        d.description = "How far two fingers have twisted, in degrees. Positive is counter-clockwise.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Get Twist Angle's Degrees output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get twist angle";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Degrees", "Number", "What Get Twist Angle produces on Degrees. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "GetMoveAxis";
         d.title = "Get Move Direction";
         d.description = "The movement stick as a vector: X is left/right, Y is up/down, from the same keys as Axis X and Axis Y.";
@@ -15699,17 +15834,17 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "SwingWeapon";
         d.title = "Swing Weapon";
-        d.description = "Starts a swing on this object's Melee Attacker. A weapon with a hit window lands during the window, not on this node. Swung is true when that component is there.";
-        d.requirements = "Needs a Melee Attacker on this object. Runs in Play mode.";
-        d.component = "MeleeAttacker";
-        d.example = "Put Swing Weapon after On Key, and use the Swung output if you need to know the component was there.";
-        d.related = "FireWeapon";
-        d.keywords = "swing weapon melee";
+        d.description = "Starts a swing on this object's Melee Attacker. Swung is true when that component is there. A weapon with a hit window lands during the window, not on this node.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Swing Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "swing weapon";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Swing Weapon runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Swing Weapon finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({false, false, "Swung", "Bool", "True when this object has a Melee Attacker. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Swung", "Bool", "What Swing Weapon produces on Swung. It is a Bool. Wire it into an input that expects a Bool.", ""});
         add(std::move(d));
     }
     {
@@ -15717,16 +15852,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "FireWeapon";
         d.title = "Fire Weapon";
         d.description = "Fires this object's gun once, if the fire rate, the reload and the rounds allow it. Fired is true when a shot left the gun.";
-        d.requirements = "Needs a Ranged Weapon on this object. Runs in Play mode.";
-        d.component = "RangedWeapon";
-        d.example = "Put Fire Weapon after On Key. Wire Fired into a branch if you need to know the shot left the gun.";
-        d.related = "ReloadWeapon";
-        d.keywords = "fire weapon gun";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Fire Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "fire weapon";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fire Weapon runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Fire Weapon finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({false, false, "Fired", "Bool", "True when a shot left the gun. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Fired", "Bool", "What Fire Weapon produces on Fired. It is a Bool. Wire it into an input that expects a Bool.", ""});
         add(std::move(d));
     }
     {
@@ -15734,31 +15869,31 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "ReloadWeapon";
         d.title = "Reload Weapon";
         d.description = "Starts reloading this object's gun from its spare rounds. Started is true when the object has a gun.";
-        d.requirements = "Needs a Ranged Weapon on this object. Runs in Play mode.";
-        d.component = "RangedWeapon";
-        d.example = "Put Reload Weapon after On Key. Started tells you the object has a gun.";
-        d.related = "FireWeapon";
-        d.keywords = "reload weapon gun";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Reload Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "reload weapon";
         d.setting = "";
         d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reload Weapon runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Reload Weapon finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({false, false, "Started", "Bool", "True when this object has a gun. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Started", "Bool", "What Reload Weapon produces on Started. It is a Bool. Wire it into an input that expects a Bool.", ""});
         add(std::move(d));
     }
     {
         VsNodeDoc d;
         d.type = "WeaponAmmo";
         d.title = "Get Ammo";
-        d.description = "How many rounds are left in this object's gun. Rounds is 0 when there is no gun.";
-        d.requirements = "Needs a Ranged Weapon on this object to read a real count. It runs in Play mode.";
-        d.component = "RangedWeapon";
-        d.example = "Wire Get Ammo's Rounds output into a comparison or a text field. It has no flow of its own.";
-        d.related = "FireWeapon";
-        d.keywords = "ammo rounds gun";
+        d.description = "How many rounds are left in this object's gun.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Ammo's Rounds output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get ammo";
         d.setting = "";
         d.settingDefault = "";
-        d.pins.push_back({false, false, "Rounds", "Number", "Rounds left in the gun. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Rounds", "Number", "What Get Ammo produces on Rounds. It is a Number. Wire it into an input that expects a Number.", ""});
         add(std::move(d));
     }
     {
@@ -15766,16 +15901,16 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.type = "SetWeapon";
         d.title = "Set Weapon";
         d.description = "Points the Melee Attacker, the gun and the top-down shooter on this object at this weapon id. Set is true when this object exists.";
-        d.requirements = "Needs a Melee Attacker, a Ranged Weapon or a top-down shooter on this object for the id to be stored. It runs in Play mode.";
-        d.component = "MeleeAttacker|RangedWeapon";
-        d.example = "Put Set Weapon after On Start and type the weapon id into the node.";
-        d.related = "SwingWeapon";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
         d.keywords = "set weapon";
         d.setting = "weapon. The value typed into the node.";
-        d.settingDefault = "sword";
+        d.settingDefault = "";
         d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Weapon runs when a wire reaches this pin.", ""});
         d.pins.push_back({false, true, "", "Flow", "After Set Weapon finishes, the flow continues from here to the next step.", ""});
-        d.pins.push_back({false, false, "Set", "Bool", "True when this object exists. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Set", "Bool", "What Set Weapon produces on Set. It is a Bool. Wire it into an input that expects a Bool.", ""});
         add(std::move(d));
     }
     {
@@ -16468,6 +16603,112 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.pins.push_back({true, false, "Half Size", "Vector3", "Half the box's width, height and depth. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
         d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
         d.pins.push_back({false, false, "Objects", "List", "The objects that were found, as a list. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "BoxCast2D";
+        d.title = "Box Cast";
+        d.description = "Sweeps a flat box through the side view and reports the first thing it touches, where, and how far. Z is ignored. Angle is degrees. The layer list is a dropdown; blank means every layer.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Box Cast's Hit output into another node's input. It has no flow of its own.";
+        d.related = "Capsule Cast, Overlap Rectangle";
+        d.keywords = "box cast, sweep, boxcast, 2d, physics";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Center", "Vector3", "The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is this object's position.", "this object's position"});
+        d.pins.push_back({true, false, "Flat Half", "Vector3", "Half the flat box's width and height. Z is ignored. It is a Vector3. Unwired, this is (0.5, 0.5, 0).", "(0.5, 0.5, 0)"});
+        d.pins.push_back({true, false, "Heading", "Vector3", "Which way the cast points. Unwired, it points along this object's right. It is a Vector3. Unwired, this is this object's right.", "this object's right"});
+        d.pins.push_back({true, false, "Box Angle", "Number", "How far the flat box is turned, in degrees. 0 lines it up with the axes. It is a Number. Unwired, this is 0 degrees.", "0 degrees"});
+        d.pins.push_back({true, false, "Reach", "Number", "How far the shape may travel. 0 means no practical limit. It is a Number. Unwired, this is 100.", "100"});
+        d.pins.push_back({false, false, "Hit", "Bool", "True when something was hit. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Point", "Vector3", "Where the hit happened. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Normal", "Vector3", "The direction the surface faces at the hit. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Distance", "Number", "How far away the hit is. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Object", "Object", "The object that was found, or nothing. It is an Object. Wire it into an input that expects an Object.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "CapsuleCast2D";
+        d.title = "Capsule Cast";
+        d.description = "Sweeps a capsule (a line with round ends) through the side view. Unwired, it stands on this object and points to the right. Skips triggers.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Capsule Cast's Hit output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "capsule cast, sweep, capsule, 2d, physics";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Segment Start", "Vector3", "One end of the capsule's inner line. Unwired, it is half a unit below this object. It is a Vector3. Unwired, this is half a unit below this object.", "half a unit below this object"});
+        d.pins.push_back({true, false, "Segment End", "Vector3", "The other end of the capsule's inner line. Unwired, it is half a unit above this object. It is a Vector3. Unwired, this is half a unit above this object.", "half a unit above this object"});
+        d.pins.push_back({true, false, "Capsule Radius", "Number", "The round ends of the capsule, in world units. It is a Number. Unwired, this is 0.5.", "0.5"});
+        d.pins.push_back({true, false, "Heading", "Vector3", "Which way the cast points. Unwired, it points along this object's right. It is a Vector3. Unwired, this is this object's right.", "this object's right"});
+        d.pins.push_back({true, false, "Reach", "Number", "How far the shape may travel. 0 means no practical limit. It is a Number. Unwired, this is 100.", "100"});
+        d.pins.push_back({false, false, "Hit", "Bool", "True when something was hit. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        d.pins.push_back({false, false, "Point", "Vector3", "Where the hit happened. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Normal", "Vector3", "The direction the surface faces at the hit. It is a Vector3. Wire it into an input that expects a Vector3.", ""});
+        d.pins.push_back({false, false, "Distance", "Number", "How far away the hit is. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Object", "Object", "The object that was found, or nothing. It is an Object. Wire it into an input that expects an Object.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OverlapBox2D";
+        d.title = "Overlap Rectangle";
+        d.description = "The objects inside a flat rectangle. Angle turns it, in degrees. 0 lines the box up with the axes. This object is left out.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Overlap Rectangle's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "overlap rectangle, rectangle, overlap, 2d";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Center", "Vector3", "The middle of the volume. Unwired, it is this object's position. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Flat Half", "Vector3", "Half the flat box's width and height. Z is ignored. It is a Vector3. Unwired, this is (0.5, 0.5, 0).", "(0.5, 0.5, 0)"});
+        d.pins.push_back({true, false, "Box Angle", "Number", "How far the flat box is turned, in degrees. 0 lines it up with the axes. It is a Number. Unwired, this is 0 degrees.", "0 degrees"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Objects", "List", "The objects that were found, as a list. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "OverlapCapsule2D";
+        d.title = "Overlap Capsule";
+        d.description = "The objects inside a flat capsule. Segment Start and Segment End are the inner line; Radius is the round ends.";
+        d.requirements = "No component is required. It reads the player or the clock while the game is playing.";
+        d.component = "";
+        d.example = "Wire Overlap Capsule's Count output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "overlap capsule, capsule, overlap, 2d";
+        d.setting = "layers (blank = all). The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Segment Start", "Vector3", "One end of the capsule's inner line. Unwired, it is half a unit below this object. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Segment End", "Vector3", "The other end of the capsule's inner line. Unwired, it is half a unit above this object. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Capsule Radius", "Number", "The round ends of the capsule, in world units. It is a Number. Unwired, this is 0.5.", "0.5"});
+        d.pins.push_back({false, false, "Count", "Number", "How many. It is a Number. Wire it into an input that expects a Number.", ""});
+        d.pins.push_back({false, false, "Objects", "List", "The objects that were found, as a list. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "AddExplosionForce";
+        d.title = "Add Explosion Force";
+        d.description = "Shoves this object's 2D body away from Blast Point. The push fades to nothing at Blast Radius. Upward Bias pops it up as well as out.";
+        d.requirements = "Needs a Rigidbody2D on this object. Kinematic and static bodies are not shoved. Runs in Play mode.";
+        d.component = "Rigidbody2D";
+        d.example = "Put Add Explosion Force after an event such as On Start or On Update, and wire a value into Blast Point.";
+        d.related = "Add Force, Add Impulse";
+        d.keywords = "add explosion force, blast, explosion, knockback, 2d";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Add Explosion Force runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Add Explosion Force finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Blast Point", "Vector3", "Where the blast starts. Unwired, that is the world origin. It is a Vector3. Unwired, this is (0, 0, 0).", "(0, 0, 0)"});
+        d.pins.push_back({true, false, "Blast Force", "Number", "How hard the blast pushes. It fades to nothing at the edge of the blast radius. It is a Number. Unwired, this is 10.", "10"});
+        d.pins.push_back({true, false, "Blast Radius", "Number", "How far the shove reaches. A body past this distance does not move. It is a Number. Unwired, this is 5.", "5"});
+        d.pins.push_back({true, false, "Upward Bias", "Number", "Extra upward push, so debris pops up. 0 pushes only outward. It is a Number. Unwired, this is 0.", "0"});
         add(std::move(d));
     }
     {

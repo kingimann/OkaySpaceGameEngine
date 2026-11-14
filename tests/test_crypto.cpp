@@ -302,6 +302,19 @@ int main() {
         CHECK(z);
     }
 
+    // ---- ChaCha20 counter: a message that would wrap the 32-bit block counter is refused, nothing written -------------
+    {
+        Bytes key(32, 7), nonce(12, 9), in(200, 1), out(200, 0xAA);
+        CHECK(ChaCha20Xor(out.data(), in.data(), 64, key.data(), nonce.data(), 0xffffffffu));      // exactly the last block
+        CHECK(!ChaCha20Xor(out.data(), in.data(), 65, key.data(), nonce.data(), 0xffffffffu));
+        CHECK(!ChaCha20Xor(out.data(), in.data(), 129, key.data(), nonce.data(), 0xfffffffeu));
+        CHECK(ChaCha20Xor(out.data(), in.data(), 128, key.data(), nonce.data(), 0xfffffffeu));
+        Bytes untouched(200, 0xAA);
+        CHECK(!ChaCha20Xor(untouched.data(), in.data(), 200, key.data(), nonce.data(), 0xfffffffdu));
+        CHECK(untouched == Bytes(200, 0xAA));
+        CHECK(ChaCha20Xor(out.data(), in.data(), 0, key.data(), nonce.data(), 0xffffffffu));          // empty: always fine
+    }
+
     // ---- Ed25519 (RFC 8032 7.1) ----------------------------------------------------------------------------------
     for (const char* n : {"1", "2", "3", "1024", "sha"}) {
         const std::string p = std::string("ed_") + n;
@@ -313,6 +326,17 @@ int main() {
         CHECK(Bytes(sk.begin() + 32, sk.end()) == pk);
         Ed25519Sign(gotSig.data(), msg.data(), msg.size(), sk.data());
         CHECK(gotSig == sig);
+        {   // the stored-key variant gives the same bytes for a sk made by SeedKeypair; Ed25519Sign never trusts the tail
+            Bytes fast(64);
+            Ed25519SignTrustedPk(fast.data(), msg.data(), msg.size(), sk.data());
+            CHECK(fast == sig);
+            Bytes tampered = sk, viaSign(64), viaFast(64);
+            tampered[40] ^= 1;
+            Ed25519Sign(viaSign.data(), msg.data(), msg.size(), tampered.data());
+            CHECK(viaSign == sig);                                   // default: the public key is recomputed, the tail is ignored
+            Ed25519SignTrustedPk(viaFast.data(), msg.data(), msg.size(), tampered.data());
+            CHECK(viaFast != sig);                                   // documented precondition: the stored key is used as is
+        }
         CHECK(Ed25519Verify(sig.data(), msg.data(), msg.size(), pk.data()));
         // Every flipped bit of the signature, the message and the public key fails.
         // (Verify costs milliseconds, so the longer vectors are sampled; vectors 1 and 2 flip every bit.)
@@ -386,6 +410,33 @@ int main() {
         std::size_t nz = 0; for (auto x : big) if (x) ++nz;
         CHECK(nz > 4500);
         RandomBytes(nullptr, 0);
+    }
+
+    RUN_SUITE("crypto Ed25519IsWeakKey");
+    {   // the key checks Ed25519Verify makes, exposed for vetting key lists (shared/AntiCheatCrypto.hpp)
+        const char* weak[] = {
+            "0000000000000000000000000000000000000000000000000000000000000000",   // order 4
+            "0100000000000000000000000000000000000000000000000000000000000000",   // identity
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",   // order 8
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",   // order 8
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p-1 (order 2)
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p (non-canonical 0)
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p+1 (non-canonical 1)
+        };
+        for (const char* h : weak)
+            for (int sign = 0; sign < 2; ++sign) {   // with the sign bit too (0100..80 and ecff..ff are not even decodable)
+                Bytes k = Hex(h);
+                if (sign) k[31] |= 0x80;
+                CHECK(Ed25519IsWeakKey(k.data()));
+                Bytes sig(64, 0); sig[0] = 1;
+                CHECK(!Ed25519Verify(sig.data(), nullptr, 0, k.data()));
+            }
+        for (int i = 0; i < 20; ++i) {
+            const Bytes seed = RndBytes(32);
+            std::uint8_t pk[32];
+            Ed25519PublicFromSeed(pk, seed.data());
+            CHECK(!Ed25519IsWeakKey(pk));
+        }
     }
 
     TEST_MAIN_RESULT();

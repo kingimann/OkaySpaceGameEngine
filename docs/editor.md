@@ -428,7 +428,9 @@ MyGame/
     build_live.cfg          Build Settings as you left the dialog (with or without a profile)
     build_profiles.cfg      the named build profiles
     scene_build.txt         Scenes In Build, in order (Scene Manager)
-  items.okayitems           the Item Database          strings.okayloc   the string table (Localization window)
+  items.okayitems           item definitions            strings.okayloc   the string table (Localization window)
+  Assets/**/*.okayloot      loot tables                 Assets/**/*.okayrecipes   crafting recipes
+                            (Window > Items, Loot & Recipes edits all three)
   weapons.okayweapon        the weapon list             (View > Editors & Tools > Weapons)
 ```
 

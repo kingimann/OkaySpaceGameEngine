@@ -16,6 +16,9 @@
 #                            REFUSES to update a file that has no checksum there, so the publish FAILS if any
 #                            checksum cannot be written or does not read back from the bucket (checked before
 #                            VERSION.txt goes out, so nobody is offered a version they cannot install)
+#   versions.json.sig        ed25519 signature of versions.json (scripts/sign_index.py), made with the seed in $OKAY_UPDATE_SIGNING_SEED
+#                            when that is set; launchers built with OKAY_UPDATE_TRUSTED_KEYS refuse an unsigned or wrongly signed index
+#                            (docs/updater.md "Signed releases"). The seed comes from the environment only: never written to a file or logged
 #   VERSION.txt              uploaded LAST, so nobody sees a version before its files and its checksums
 # Older version folders beyond the newest $KEEP are deleted, except the LTS line.
 #
@@ -36,6 +39,9 @@
 #   SUPABASE_URL project URL (default: the one baked into CMakeLists.txt)
 #   ARCHIVE_REPO GitHub repo holding every release, written into versions.json
 #                (default $GITHUB_REPOSITORY, else kingimann/OkaySpaceGameEngine)
+#   OKAY_UPDATE_SIGNING_SEED  64 hex digits, the private signing key. Unset = the index is published unsigned (a warning); only
+#                            launchers built without OKAY_UPDATE_TRUSTED_KEYS accept that
+#   REQUIRE_SIGNED=1         stop instead of publishing an unsigned index (set it once the launchers trust a key)
 #   DRY_RUN=1    check everything, upload nothing
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -50,6 +56,15 @@ MAX_MB="${MAX_MB:-100}"   # per-file limit; the Supabase project and bucket limi
 MAX_BYTES=$((MAX_MB * 1024 * 1024))
 
 die() { echo "publish-supabase: $*" >&2; exit 1; }
+
+# The signing seed is read from the environment by scripts/sign_index.py only. Never trace commands while it can be in scope.
+# (-v tests that it is set without expanding the value, so even this check leaves nothing in a trace.)
+case "$-" in *x*) if [ -v OKAY_UPDATE_SIGNING_SEED ]; then die "refusing to run with 'set -x' while OKAY_UPDATE_SIGNING_SEED is set (the trace would print it)"; fi;; esac
+if [ -n "${OKAY_UPDATE_SIGNING_SEED:-}" ]; then
+    [[ "$OKAY_UPDATE_SIGNING_SEED" =~ ^[0-9a-fA-F]{64}$ ]] || die "OKAY_UPDATE_SIGNING_SEED is not 64 hex digits"
+elif [ "${REQUIRE_SIGNED:-0}" = 1 ]; then
+    die "REQUIRE_SIGNED=1 but OKAY_UPDATE_SIGNING_SEED is not set"
+fi
 
 VER="$(head -n1 "$DIST_DIR/VERSION.txt" 2>/dev/null | tr -d '\r ' || true)"   # (|| true: let the check below say why)
 [[ "$VER" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "no version in $DIST_DIR/VERSION.txt (run scripts/build-windows-dist.sh first)"
@@ -161,6 +176,27 @@ if [ "$CHANNEL" = latest ]; then
         sort -t. -k1,1n -k2,2n -k3,3n | head -n -"$KEEP")
 fi
 
+# Sign versions.json and publish the signature next to it; read both back and verify the PUBLISHED pair before VERSION.txt goes out.
+# Called right after versions.json is uploaded (a launcher that fetches in between sees a mismatch and refuses: it retries on the next check).
+sign_and_upload_index() {   # sign_and_upload_index <local versions.json>
+    local sig="$RESP.idx.sig" pub back="$RESP.idx.sigback" body="$RESP.idx.pubbody"
+    if [ -z "${OKAY_UPDATE_SIGNING_SEED:-}" ]; then
+        echo "  WARNING: versions.json is published UNSIGNED (OKAY_UPDATE_SIGNING_SEED is not set): launchers built with OKAY_UPDATE_TRUSTED_KEYS will refuse it"
+        return 0
+    fi
+    python3 scripts/sign_index.py sign --file "$1" --out "$sig" || die "could not sign versions.json"
+    pub="$(python3 scripts/sign_index.py pubkey)" || die "could not derive the public key"
+    upload "$sig" versions.json.sig "text/plain" 30
+    curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$PUBLIC/versions.json.sig?nocache=$(date +%s)" -o "$back" ||
+        die "versions.json.sig cannot be read back from the bucket"
+    curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$PUBLIC/versions.json?nocache=$(date +%s)" -o "$body" ||
+        die "versions.json cannot be read back from the bucket"
+    python3 scripts/sign_index.py verify --file "$body" --sig "$back" --pub "$pub" >/dev/null ||
+        die "the published versions.json does not verify against the published signature"
+    rm -f "$sig" "$back" "$body"
+    echo "  signed versions.json (public key ${pub:0:16}...)"
+}
+
 # ---- versions.json: every released version with sizes and SHA-256 ---------------
 # REQUIRED: the launcher's updater refuses a version whose files have no checksum here. It goes up BEFORE VERSION.txt and is read
 # back from the bucket and compared with the files that were uploaded; any failure stops the publish (VERSION.txt is not written,
@@ -181,6 +217,7 @@ update_index() {
     for n in "${NAMES[@]}"; do args+=(--file "$n=${SRC[$n]}"); fargs+=(--file "$n=${SRC[$n]}"); done
     python3 scripts/versions_index.py "${args[@]}" || die "versions.json could not be built with a checksum for every file"
     upload "$new" versions.json "application/json" 30
+    sign_and_upload_index "$new"
     curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$PUBLIC/versions.json?nocache=$(date +%s)" -o "$back" ||
         die "versions.json cannot be read back from the bucket"
     python3 scripts/versions_index.py check --index "$back" --version "$VER" "${fargs[@]}" ||

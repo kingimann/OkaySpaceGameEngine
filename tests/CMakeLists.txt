@@ -3069,3 +3069,8 @@ if(UNIX AND NOT APPLE)
     add_test(NAME own_http_net COMMAND test_own_http_net ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_http_test_certs.sh ${CMAKE_SOURCE_DIR})
     set_tests_properties(own_http_net PROPERTIES TIMEOUT 240 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=0")
 endif()
+
+add_executable(test_editor_play_input test_editor_play_input.cpp)
+target_link_libraries(test_editor_play_input PRIVATE okay::engine)
+target_compile_definitions(test_editor_play_input PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_play_input COMMAND test_editor_play_input)

@@ -1775,7 +1775,6 @@ std::vector<SchedMsg>              g_scheduled;
 std::string                        g_myStatus;
 bool                               g_myStatusKnown = false;
 long                               g_statusUntil = 0;
-bool                               g_minimizeToTray = false;  // opt-in Steam-style tray (off by default: a normal minimize always restores from the taskbar)
 
 // Shared accent so UI code can match the theme.
 // Mutable so the Appearance setting can recolor the UI live (DarkTheme() reads
@@ -4440,7 +4439,6 @@ void LoadPrefs() {
                 } catch (...) {}
             }
         }
-        else if (k == "min_to_tray") g_minimizeToTray = (v != "0");
         else if (k == "nav_collapsed") g_navCollapsed = (v != "0");
         else if (k == "nick" && !v.empty()) { auto bar = v.find('|'); if (bar != std::string::npos && bar + 1 < v.size()) g_friendNicks[v.substr(0, bar)] = v.substr(bar + 1); }
         else if (k == "recent" && !v.empty()) g_recent.push_back(v);
@@ -4563,7 +4561,6 @@ void SavePrefs() {
     for (const auto& kv : g_chatColor) if (kv.second > 0) f << "chatcolor=" << kv.first << "|" << kv.second << "\n";
     for (const auto& kv : g_starred)
         f << "star=" << kv.first << "|" << kv.second.uid << "|" << kv.second.when << "|" << kv.second.preview << "\n";
-    f << "min_to_tray=" << (g_minimizeToTray ? 1 : 0) << "\n";
     f << "nav_collapsed=" << (g_navCollapsed ? 1 : 0) << "\n";
     for (const auto& kv : g_friendNicks) if (!kv.second.empty()) f << "nick=" << kv.first << "|" << kv.second << "\n";
     for (const auto& p : g_recent)       f << "recent=" << p << "\n";
@@ -20123,15 +20120,7 @@ int main(int argc, char** argv) {
                     }
                 }
             } else {
-                NewsRelease hl{"Highlights", {
-                    "Script Editor: errors and warnings as you type, examples in autocomplete",
-                    "Game view: preview phone and tablet screen sizes",
-                    "Build Settings: choose the scenes in your build",
-                    "Camera: zoom, shake, dutch angle and lens shift",
-                    "Updates download straight from the OkaySpace update server",
-                }};
-                releaseCard(hl, false);
-                ImGui::TextDisabled("Notes for each release show up here once the launcher has checked for updates.");
+                ImGui::TextWrapped("Release notes are not loaded yet. They appear here once the launcher has checked for updates (you may be offline).");
             }
             ImGui::Dummy(ImVec2(0, 10));
             if (ImGui::Button("View all releases on GitHub"))

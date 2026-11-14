@@ -51,7 +51,6 @@ something twice. Update it in the same change that finishes or claims a task.
 | #698 | Updater hardening (no install without checksum, all-or-nothing swap, rollback) | CI running | Security sensitive; CI plus a careful read; Windows run is the gap. |
 | #683 | Build pipeline: `<Name>_Data` layout, stripping, report, dry run | CI green on the last run | Merge after #685 so CI is faster. |
 | #686 | Visual script typed variables, colours, structs, list and map nodes | CI was cancelled, needs a rerun | CI green. Add Var on a vector now adds per component. |
-| #726 | Navigation obstacle carving; tests stop writing into the source tree | CI was cancelled, needs a rerun | CI green. |
 | #727 | Model import and skinning fixes; model readers under the sanitizers | CI was cancelled, needs a rerun | CI green; the new Assimp job has never run. |
 | #728 | Engine hangs, overflows and unsafe casts | CI was cancelled, needs a rerun | CI green. |
 | #731 | FBX import hardening | CI was cancelled, needs a rerun | CI green. Small conflicts with #727 expected. |
@@ -105,7 +104,8 @@ Nothing user-visible, nothing default.
 | Own replacements (all off) | okay::crypto | #656 |
 | Own replacements (all off) | okay::platform seam, own Linux and Win32 backends; player runs on the seam | #654 #681 |
 | Own replacements (all off) | OkayUI headless harness, draw list, cursor and item queries | #659 #678 |
-| Editor | Prefab override UI, prefab mode | #666 #676 |
+| Editor | Prefab override UI, prefab mode (`editor/PrefabEdit.*`, test `prefab_editor`) | #666 #676 |
+| Navigation | Obstacle carving (`NavMeshCarve`, test `navmesh_carving`; landed in the batch #757, which took in #726) and navigation areas and links (#661) | #757 #661 |
 | Editor | Foliage, terrain layers, decals, cables, ortho views, measuring | #677 |
 | Editor | Volumes and zones, generalised I/O links, navigation areas and links, mesh collider | #675 #672 #661 #663 |
 | Editor | Project panel on the asset database, undo stack, UX pass | #673 #662 #682 |
@@ -141,7 +141,6 @@ Nothing user-visible, nothing default.
 | Visual script: typed variables, arrays and maps (5a, 5b) | Claude | `claude/vs-variables-collections` |
 | Editor Play keys and pads, Direct3D 11 SSAO, Direct3D 12 label | Claude | `claude/engine-top-items` |
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
-| Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Physics step rate and parented rigidbodies | John | `john/rigidbody-step-parenting` |
 | Joint3D hinge angle limits (doors and levers stop at min/max; reuse `Math/JointLimit.hpp`) | John | `john/joint3d-hinge-limits` |
 | Localization tools in the Localization window | John | `john/localization-window` |
@@ -179,3 +178,15 @@ Nothing user-visible, nothing default.
 Visual script 5c to 5e (custom events, graph-to-graph calls, custom function nodes), then the
 text-script nodes; the rest of the own replacements (Assimp's other formats, editor and launcher
 off SDL2 and Dear ImGui, libsodium after an outside review).
+
+## Old `grok/*` branches (21 on origin, none deleted)
+
+Grok is no longer on the project. Nothing here was deleted: deleting branches is the owner's call.
+
+| Group | Branches | State |
+|---|---|---|
+| 18 landed on main under combined PRs (#503, #505, #506, #536, #537, #554, #563), safe to delete | `grok/dolphin-dive`, `grok/emote-clips`, `grok/hit-reactions`, `grok/roll-slide`, `grok/sitting`, `grok/swim-clips`, `grok/vault-ledge`, `grok/layer-additive`, `grok/state-mirror`, `grok/ik-weight-curves`, `grok/plain-hands`, `grok/run-feel`, `grok/hold-customize`, `grok/net-anim-actions-finish`, `grok/strafe-blend-finish`, `grok/anim-ik-script-tools`, `grok/controller-setup`, `grok/jitter-fix` | Landed. (`grok/jitter-fix` was found to be on main: 1,341 of 1,377 distinctive lines, via #554.) |
+| 3 inventory branches, closed unmerged | `grok/inv-bugs` (#484), `grok/inv-input` (#486), `grok/inv-layout` (#489) | Superseded by #564, #818 and #825. Leftovers not on main: `InventoryModal.hpp`, `Input/InputArbiter`, `InventoryPresent` / `InventoryQuery`. |
+
+**Open decision for the owner:** are the leftovers from the three inventory branches wanted (write them
+fresh on top of #564, #818 and #825), or dropped? Until the owner answers, keep those three branches.

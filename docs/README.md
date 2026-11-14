@@ -69,6 +69,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Look, models and sound
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.
+- [render_status.md](render_status.md): an honest, row-by-row status of what the software, OpenGL, Direct3D 11 and Direct3D 12 renderers each draw today, with the file and function that proves it.
 - [lighting.md](lighting.md): lighting and shadows.
 - [modeling.md](modeling.md): the built-in mesh editor.
 - [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.

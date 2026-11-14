@@ -659,7 +659,7 @@ static int RunSelfTest() {
             check(std::strstr(note, "Direct3D 11") == nullptr, "that shared gap does not include Direct3D 11");
         }
         check(std::strstr(FeatureGapNote(RenderFeature::SpotPointShadows),
-                          "Spot and point light shadows are not drawn on Direct3D 12 or the software renderer.") != nullptr,
+                          "Spot and point light shadows are not drawn on Direct3D 12.") != nullptr,
               "spot and point shadow note");
         check(FeatureGapNote(RenderFeature::Fog)[0] == 0, "fog is drawn on every renderer");
         check(FeatureGapNote(RenderFeature::VignetteAmount)[0] == 0, "vignette amount is drawn on every renderer");
@@ -18021,8 +18021,8 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Render 3D on the GPU in the shipped game.\nFalls back to the software renderer if no GPU is available.");
                 if (g_build.gpuRenderer) {
                     ImGui::Indent();
-                    ImGui::Checkbox("Prefer Direct3D 12 (Windows)", &g_build.preferD3D12);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nNewer API; for this read-back renderer it performs like D3D11.");
+                    ImGui::Checkbox("Prefer Direct3D 12 (Windows, preview)", &g_build.preferD3D12);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preview: no post-processing, no spot or point shadows.\nUse the Direct3D 12 backend when available (Windows), else fall back to D3D11 / OpenGL / software.\nIt has no exposure, tonemap, bloom, grading, anti-aliasing, ambient occlusion or depth of field, and draws one sun shadow map only. A game that looks right on Direct3D 11 looks flatter here. For this read-back renderer it performs like D3D11.");
                     ImGui::Unindent();
                 }
                 ImGui::Checkbox("Per-pixel lighting", &g_build.perPixelLighting); ImGui::SameLine();

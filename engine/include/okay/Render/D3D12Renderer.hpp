@@ -12,9 +12,13 @@
 // reference Direct3D.
 //
 // Scope (v1): directional + point/spot scene lights, ambient, vertex colours, a
-// base colour texture, emissive and per-material alpha (blended). Normal / gloss /
-// AO maps, PBR reflections and MSAA are not applied on this path yet — it's an
-// OPT-IN alternative to the (default) D3D11 backend.
+// base colour texture, emissive and per-material alpha (blended), normal / gloss /
+// AO / metallic-roughness / emissive maps, sky-gradient reflections, up-to-4x MSAA
+// (resolved before read-back) and one directional shadow map. PREVIEW backend: no
+// post-processing (exposure, tonemap, bloom, grading, FXAA, SSAO, depth of field),
+// no sun cascades, no spot / point light shadows, no procedural sky detail, CPU
+// skinning only. It's an OPT-IN alternative to the (default) D3D11 backend.
+// RendererFeatures.hpp lists what it ignores.
 // ---------------------------------------------------------------------------
 #if defined(_WIN32)
 

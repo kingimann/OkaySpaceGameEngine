@@ -651,20 +651,23 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code.
 - **Parts:**
   - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - not a shader editor today
-  - 26.1.2 Shader graph - `-` - not built
-- **Code:** `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
-- **API:** none yet
+  - 26.1.2 Material graph data and checker (foundation) - `Render/MaterialGraph` - nodes, typed pins (float, vec2, vec3, vec4, texture, sampler), links, 29 node kinds, a checker (types, cycles, missing inputs, one Output), IR
+  - 26.1.3 Graph file - `Render/MaterialGraph` - `okaymatgraph 1` text in a `.okaymat` file, hostile-input safe
+  - 26.1.4 CPU evaluator - `Render/MaterialGraph` - `EvaluateProgram`, the reference for the shader text
+  - 26.1.5 GLSL and HLSL text - `Render/MaterialGraphCodegen` - one function from the same IR, plus our own text checker (no real shader compiler)
+- **Code:** `Render/MaterialGraph`, `Render/MaterialGraphCodegen`, `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
+- **API:** `MaterialGraph::Compile`, `Check`, `ToText`, `FromText`, `EvaluateProgram`, `EmitFragment`, `CheckShaderText`
 - **Editor:** none yet
-- **Docs:** `docs/visual_scripting.md` (logic graphs)
-- **Tests:** none
-- **Status:** Planned - no shader graph data model exists.
-- **Exists today:** Only the logic graph editor, which could supply the canvas. All shading is hard-coded in each renderer.
+- **Docs:** `docs/foundations/material_graph.md` (design and honest status), `docs/visual_scripting.md` (logic graphs)
+- **Tests:** `material_graph`, `material_graph_codegen`
+- **Status:** Partial - the data, checker, file, CPU evaluator and GLSL/HLSL text exist and are unit tested on the CPU; no editor window, no renderer uses it, nothing has run on a GPU.
+- **Exists today:** `MaterialGraph` (graph file `okaymatgraph 1`), the checker, `EvaluateProgram` and `EmitFragment` (GLSL 120 style and HLSL snippets). The generated text is checked only by our own text checker and by a CPU interpreter run against the evaluator on random graphs; it has never been given to a real shader compiler. The logic graph editor could supply the canvas. All shading is still hard-coded in each renderer.
 - **Work packages:**
-  1. M - Shader graph file format `.okayshader` (nodes, pins, outputs albedo, emissive, alpha, normal). Depends on: nothing.
-  2. L - CPU evaluator in the software renderer as the reference. Depends on: package 1.
-  3. L - Generate GLSL and HLSL snippets inserted into the standard shaders (GL, D3D11). Depends on: package 2.
-  4. M - Editor window reusing the node canvas, with a live preview. Depends on: package 1, 26.2 package 2.
-  5. M - A material can point at a shader graph asset. Depends on: package 1, 26.2.
+  1. DONE (phase 1, `docs/foundations/material_graph.md`) - graph data, checker and file format (`okaymatgraph 1` in a `.okaymat`, not `.okayshader`). Depends on: nothing.
+  2. M - Software renderer calls `EvaluateProgram` per pixel for a graph material (the reference look). Depends on: package 1.
+  3. L - Splice the generated GLSL and HLSL into the GL and D3D11 mesh shaders, bind parameters and textures, keep today's path when no graph is set. Needs a Windows GPU machine to look at frames. Depends on: package 2.
+  4. M - Editor window reusing the node canvas, with a live preview and checker messages on nodes. Depends on: package 2, 26.2 package 2.
+  5. M - `Material` gets an optional graph path (empty = today's behaviour). Depends on: package 2, 26.2.
 - **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today.
 - **Related:** 2.1, 2.2, 14.1, 26.3
 - **Words:** shader graph, visual shader, node shader, material graph, shader nodes, procedural material

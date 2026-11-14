@@ -3158,3 +3158,7 @@ add_test(NAME post_quality_math COMMAND test_post_quality_math)
 add_executable(test_material_graph test_material_graph.cpp)
 target_link_libraries(test_material_graph PRIVATE okay::engine)
 add_test(NAME material_graph COMMAND test_material_graph)
+
+add_executable(test_material_graph_codegen test_material_graph_codegen.cpp)
+target_link_libraries(test_material_graph_codegen PRIVATE okay::engine)
+add_test(NAME material_graph_codegen COMMAND test_material_graph_codegen)

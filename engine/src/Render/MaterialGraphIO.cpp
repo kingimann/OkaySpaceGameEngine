@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 
@@ -13,7 +14,10 @@ namespace {
 
 std::string Num(float f) {
     char b[48];
-    std::snprintf(b, sizeof b, "%.9g", (double)f);
+    for (int prec = 1; prec <= 9; ++prec) {       // shortest text that reads back exactly
+        std::snprintf(b, sizeof b, "%.*g", prec, (double)f);
+        if (std::strtof(b, nullptr) == f) break;
+    }
     return b;
 }
 

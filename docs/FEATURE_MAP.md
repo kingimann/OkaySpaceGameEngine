@@ -629,7 +629,7 @@ Details for every sub-area and numbered part: [docs/feature_map/20-35-planned.md
 
 | ID | Sub-area | Status | What | Open |
 |---|---|---|---|---|
-| [26.1](feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code. | four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. |
+| [26.1](feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Partial | Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code. | four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. |
 | [26.2](feature_map/20-35-planned.md#262-material-editor) | Material editor | Partial | A window to design a material (colours, textures, shininess) with a live preview and reuse it on many objects. | preview is not what the renderer draws; materials are copied into the renderer (`ApplyTo`), not referenced, so editing the file... |
 | [26.3](feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Planned | Use your own shader code or graph on a material, on every renderer. | D3D12 is "v1" and opt-in; shader hot reload would need 34.3. |
 | [26.4](feature_map/20-35-planned.md#264-pbr) | PBR | Partial | A physically based lighting model (base colour, metallic, roughness, normal, ambient occlusion) so materials look right under any light. | four renderers to keep equal; D3D12 lacks maps; the software renderer is the reference. |

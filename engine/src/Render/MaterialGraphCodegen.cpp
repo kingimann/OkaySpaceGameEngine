@@ -25,9 +25,13 @@ const char* TypeName(PinType t, ShaderLang l) {
     return "float";
 }
 
+/// Shortest text that reads back as exactly the same float, always with a '.' or exponent.
 std::string Lit(float f) {
     char b[48];
-    std::snprintf(b, sizeof b, "%.9g", (double)f);
+    for (int prec = 1; prec <= 9; ++prec) {
+        std::snprintf(b, sizeof b, "%.*g", prec, (double)f);
+        if (std::strtof(b, nullptr) == f) break;
+    }
     std::string s = b;
     if (s.find_first_of(".en") == std::string::npos) s += ".0";
     return s;
@@ -274,6 +278,12 @@ std::vector<std::string> CheckShaderText(const std::string& text, ShaderLang lan
             int depth = 0;
             for (char ch : ln) { if (ch == '(') ++depth; else if (ch == ')') { if (--depth < 0) break; } }
             if (depth != 0) problem(line, "unbalanced parentheses in a preprocessor line");
+            for (size_t q = 0; q < ln.size();) {      // names of the other language inside macro bodies
+                if (IsIdStart(ln[q])) {
+                    size_t b = q; while (q < ln.size() && IsIdChar(ln[q])) ++q;
+                    if (forbidden.count(ln.substr(b, q - b))) problem(line, "'" + ln.substr(b, q - b) + "' belongs to the other shader language");
+                } else ++q;
+            }
             std::istringstream ls(ln.substr(1)); std::string dir, name;
             ls >> dir;
             if (dir == "define") {

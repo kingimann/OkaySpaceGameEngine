@@ -140,3 +140,4 @@ _Last updated: 2026-11-13 17:55 UTC_
 ## Later
 
 - Split the largest source files (editor, launcher, OkayScript VM).
+- Material graph (Unreal-style node material editor), `docs/foundations/material_graph.md`. Phase 1 (data, checker, file, CPU evaluator, GLSL/HLSL text) is in the engine and CPU tested. Next: software renderer path, optional graph on `Material`, GL/D3D11 splice (needs a Windows GPU), editor window.

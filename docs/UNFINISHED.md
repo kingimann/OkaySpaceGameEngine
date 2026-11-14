@@ -17,6 +17,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | What | State | What is missing |
 |---|---|---|
 | Direct3D 11 depth of field, ambient occlusion, Bloom Softness and AO Power | Compile-checked only | Never run on a GPU or compiled by `D3DCompile`; the shared maths is CPU tested (`dof_math`, `ssao_math`, `post_quality_math`). The software renderer and Direct3D 12 ignore Bloom Softness and AO Power |
+| Material graph (`Render/MaterialGraph*`, `docs/foundations/material_graph.md`) | Engine code only, not wired | No editor window, no renderer calls it, `Material` has no graph path. The generated GLSL (120 style) and HLSL text is checked only by our own text checker and a CPU interpreter, never by a real shader compiler or on a GPU. HLSL register slots and the constant buffer layout are guesses to reconcile with `D3D11Renderer.cpp`. Noise can differ slightly between CPU and GPU |
 | Texture Filter, Wrap and Mipmaps import controls | Hidden (`kShowTextureSamplerSettings`) | Work in the software and OpenGL renderers; the Direct3D 11 renderer has per-texture filter and wrap code that has not been run, Mipmaps do nothing there, Direct3D 12 reads none |
 | Import settings sRGB, Compress | Removed from the UI | The renderers do no colour-space handling and no compressed GPU path exists. Audio loading and mix-down are applied (see `docs/audio.md`); quality is not offered because audio is not re-encoded |
 | OBJ/MTL textures with an absolute path | Limited (#753) | An absolute or `../`-escaping `map_Kd` path is dropped on import for safety, so the material has no texture; copy the texture next to the model. A project-root allow-list could bring absolute paths back safely |
@@ -221,7 +222,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [26.1](feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. |
+| [26.1](feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Partial | data, checker, file, CPU evaluator and GLSL/HLSL text exist (CPU tested only); no editor window, no renderer uses it, never run on a GPU; four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. |
 | [26.2](feature_map/20-35-planned.md#262-material-editor) | Material editor | Partial | preview is not what the renderer draws; materials are copied into the renderer (`ApplyTo`), not referenced, so editing the file... |
 | [26.3](feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Planned | D3D12 is "v1" and opt-in; shader hot reload would need 34.3. |
 | [26.4](feature_map/20-35-planned.md#264-pbr) | PBR | Partial | four renderers to keep equal; D3D12 lacks maps; the software renderer is the reference. |

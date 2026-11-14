@@ -1,6 +1,6 @@
 # Material graph: foundation design
 
-Status: phase 1 (engine data and text generation) is written and unit tested on the CPU. Nothing in this page has run on a GPU. Everything GPU-side is UNVERIFIED.
+Status: phase 1 (engine data, checker, file, CPU evaluator and text generation) is written and unit tested on the CPU (tests `material_graph` and `material_graph_codegen`). Nothing in this page has run on a GPU. Everything GPU-side is UNVERIFIED.
 
 ## Goal
 
@@ -79,5 +79,6 @@ Nothing changes for current materials. `Material` (`.okaymat` version 1, first l
 ## Not done and not verified
 
 - No editor window. No renderer wiring. The software renderer does not call the evaluator yet.
+- The GLSL is written in the `#version 120` style the GL renderer uses (`texture2D`, no `in`/`out`); the HLSL in the Shader Model 4 style of the D3D11 renderer. Neither is wrapped with a `#version` line or a full shader.
 - The GLSL and HLSL text has been checked only by our own small text checker (balanced brackets, declared names, language-correct type and function names) and by a CPU interpreter that runs the generated lines. It has never been given to a real GLSL or HLSL compiler.
 - Constant buffer layout, register slots and texture binding numbers in the HLSL are options with guessed defaults. They must be reconciled with `D3D11Renderer.cpp` in phase 4.

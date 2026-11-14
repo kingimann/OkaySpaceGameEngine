@@ -125,6 +125,7 @@ Nothing user-visible, nothing default.
 | Editor Play keys and pads, Direct3D 11 SSAO, Direct3D 12 label | Claude | `claude/engine-top-items` |
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
+| Physics step rate and parented rigidbodies | John | `john/rigidbody-step-parenting` |
 | Joint3D hinge angle limits (doors and levers stop at min/max; reuse `Math/JointLimit.hpp`) | John | `john/joint3d-hinge-limits` |
 | Localization tools in the Localization window | John | `john/localization-window` |
 | Mesh Collider 3D: convex hull so a mesh can be a dynamic body, and collision callbacks when a body lands on it | John | `john/mesh-collider-convex` |

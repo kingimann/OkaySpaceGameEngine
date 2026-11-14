@@ -1,4 +1,5 @@
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Components/Joint2D.hpp"
@@ -350,11 +351,17 @@ void Physics2D::Step(Scene& scene, float dt) {
         }
         if (rb->bodyType != Rigidbody2D::BodyType::Static) {
             if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
-            else t->localPosition += Vec3{rb->velocity * dt};
+            else MoveBodyWorld(t, Vec3{rb->velocity * dt});
             if (!rb->freezeRotation && rb->angularVelocity != 0.0f) {
-                Vec3 e = t->localRotation.ToEuler();
-                e.z += rb->angularVelocity * dt;
-                t->localRotation = Quat::Euler(e);
+                if (!t->Parent()) {
+                    Vec3 e = t->localRotation.ToEuler();
+                    e.z += rb->angularVelocity * dt;
+                    t->localRotation = Quat::Euler(e);
+                } else {
+                    Vec3 e = t->Rotation().ToEuler();
+                    e.z += rb->angularVelocity * dt;
+                    t->SetRotation(Quat::Euler(e));
+                }
             }
         }
     }
@@ -436,8 +443,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                 if (imSum > 0.0f) {
                     // Positional correction.
                     Vec2 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition -= Vec3{correction * ima};
-                    b->transform->localPosition += Vec3{correction * imb};
+                    MoveBodyWorld(a->transform, -Vec3{correction * ima});
+                    MoveBodyWorld(b->transform, Vec3{correction * imb});
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point, and inverse inertia. When rotation is locked these are 0,
@@ -563,8 +570,8 @@ void Physics2D::Step(Scene& scene, float dt) {
         if (m == Joint2D::Mode::Pin) {
             Vec2 target = pb + j->pinOffset;
             Vec2 err = target - pa;
-            ta->localPosition += Vec3{err * (imA / imSum)};
-            if (tb && rbB && imB > 0.0f) tb->localPosition -= Vec3{err * (imB / imSum)};
+            MoveBodyWorld(ta, Vec3{err * (imA / imSum)});
+            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, -Vec3{err * (imB / imSum)});
             ra->velocity = rbB ? rbB->velocity : Vec2::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && err.Magnitude() > j->breakForce) j->broken = true;
         } else if (m == Joint2D::Mode::Hinge) {
@@ -610,7 +617,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             }
             // Positional correction: pull A's anchor point back onto the pivot.
             Vec2 Cpos = anchorWorld - pb;
-            ta->localPosition -= Vec3{Cpos};
+            MoveBodyWorld(ta, -Vec3{Cpos});
             if (j->breakable && Cpos.Magnitude() > j->breakForce) j->broken = true;
         } else {
             Vec2 d = pb - pa; float len = d.Magnitude();
@@ -629,8 +636,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                 ra->velocity -= imp * imA;
                 if (rbB && imB > 0.0f) rbB->velocity += imp * imB;
                 Vec2 corr = n * C;                       // restore the rest length
-                ta->localPosition += Vec3{corr * (imA / imSum)};
-                if (tb && rbB && imB > 0.0f) tb->localPosition -= Vec3{corr * (imB / imSum)};
+                MoveBodyWorld(ta, Vec3{corr * (imA / imSum)});
+                if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, -Vec3{corr * (imB / imSum)});
             }
             if (j->breakable && Mathf::Abs(C) > j->breakForce) j->broken = true;
         }
@@ -1247,7 +1254,7 @@ void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
     float len = motion.Magnitude();
     Collider2D* self = rb->gameObject->GetComponent<Collider2D>();
     if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
-        t->localPosition += Vec3{motion};
+        MoveBodyWorld(t, Vec3{motion});
         return;
     }
     // The body as the circle that fits inside its bounds: a slow body (moving
@@ -1255,14 +1262,14 @@ void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {
     Vec2 mn, mx; self->WorldAABB(mn, mx);
     float r = 0.5f * Mathf::Min(mx.x - mn.x, mx.y - mn.y);
     if (r < 0.01f) r = 0.01f;
-    if (len <= r * 0.5f) { t->localPosition += Vec3{motion}; return; }
+    if (len <= r * 0.5f) { MoveBodyWorld(t, Vec3{motion}); return; }
     Vec2 dir = motion / len;
     RaycastHit2D h = SweepCircle(scene, self->WorldCenter(), r, dir, len, rb->gameObject,
                                  m_layerMask[self->layer & 31], false, true);
     float travel = len;
     // Stop just inside the surface so this step's narrow phase sees the contact.
     if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
-    t->localPosition += Vec3{dir * travel};
+    MoveBodyWorld(t, Vec3{dir * travel});
 }
 
 const TriggerContact2D* Physics2D::CurrentTrigger() { return g_currentTrigger; }

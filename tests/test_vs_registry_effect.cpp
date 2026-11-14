@@ -72,6 +72,9 @@ static const char* kKnownUnproven[] = {
 // proven above. This list is a ratchet: a new silent binding fails the test, and a proven one must leave.
 static const char* kKnownSilentBindings[] = {
     "Rigidbody.AddTorque/1", "Input.DefineAction/3", "Input.DefineDirection/3", "Audio.SaveSettings/0",
+    // Drawing between steps does not move the saved pose. With one step per frame the
+    // drawn pose and the physics pose are the same, so the snapshot does not change.
+    "Time.smoothPhysics=",
 };
 
 static std::vector<std::string> g_errs;

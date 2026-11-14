@@ -1455,3 +1455,7 @@ node 1529 Fn.weapon_fire
 node 1530 Fn.weapon_reload
 node 1531 Fn.weapon_set
 node 1532 Fn.weapon_swing
+node 1533 Fn.physics_smooth
+node 1534 Fn.physics_steps
+node 1535 Fn.set_physics_smooth
+node 1536 Fn.set_physics_steps

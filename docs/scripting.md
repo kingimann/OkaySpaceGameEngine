@@ -495,6 +495,8 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `layer_mask("Default", "Enemy", 3)` | a layers value for the queries |
 | `overlap(x, y)` | true if a collider contains the point |
 | `set_gravity(x, y)` | set the scene's 2D gravity (0,0 for top-down) |
+| `physics_steps()` / `set_physics_steps(n)` | physics steps per second (50 usual, 0 once per frame) |
+| `physics_smooth()` / `set_physics_smooth(on)` | draw bodies between physics steps |
 | `set_text(string)` | set this object's TextRenderer text |
 | `set_color(r, g, b[, a])` | tint this object's Sprite/Text |
 | `set_texture(path)` | set this object's SpriteRenderer image |

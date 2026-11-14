@@ -402,6 +402,10 @@ Frame timing.
 |---|---|---|---|---|---|
 | `Time.deltaTime` | `Time.deltaTime` | value | - | deltaTime (Number) | Seconds since the last frame (inside FixedUpdate: the fixed step). |
 | `Time.fixedDeltaTime` | `Time.fixedDeltaTime` | value | - | fixedDeltaTime (Number) | The FixedUpdate step in seconds. |
+| `Time.physicsSteps` | `Time.physicsSteps` | value | - | physicsSteps (Number) | How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame. |
+| `Time.physicsSteps = physicsSteps` | `Time.physicsSteps=` | step | physicsSteps (Number) | - | How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame. |
+| `Time.smoothPhysics` | `Time.smoothPhysics` | value | - | smoothPhysics (Bool) | Draw bodies between physics steps so motion stays smooth at any frame rate. |
+| `Time.smoothPhysics = smoothPhysics` | `Time.smoothPhysics=` | step | smoothPhysics (Bool) | - | Draw bodies between physics steps so motion stays smooth at any frame rate. |
 | `Time.time` | `Time.time` | value | - | time (Number) | Seconds since the game started. |
 | `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.timeScale` | `Time.timeScale` | value | - | timeScale (Number) | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |

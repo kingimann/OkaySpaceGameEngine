@@ -3132,12 +3132,13 @@ void LoadProjectSettingsFrom(const std::string& dir) {
     okay::ProjectLists::Reset();
     g_settingsProjectDir = dir;
     std::string text;
-    if (okayproj::ReadText(ProjectSettingsFile(dir), text)) { ParseProjectSettings(g_project, text); return; }
-    if (!dir.empty() && okayproj::ReadText(okayproj::SettingsFileName(), text)) {
+    if (okayproj::ReadText(ProjectSettingsFile(dir), text)) ParseProjectSettings(g_project, text);
+    else if (!dir.empty() && okayproj::ReadText(okayproj::SettingsFileName(), text)) {
         ParseProjectSettings(g_project, text);
         std::error_code ec;
         if (std::filesystem::is_directory(dir, ec)) SaveProjectSettingsTo(dir);
     }
+    okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
 }
 // Give a layer a name (empty = back to the default), save the project file, or say why not in `err`. Shared by the
 // right-click rename in the layer lists and the Tags and Layers section of Project Settings.
@@ -4238,6 +4239,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "volume=" << opt.masterVolume << "\n";
         cf << "show_fps=" << (opt.showFps ? 1 : 0) << "\n";
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
+        cf << "physics_hz=" << g_project.physicsHz << "\n";
+        cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
         cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
@@ -12585,6 +12588,8 @@ void DrawScriptDocs() {
         fapi("add_impulse(...) / add_impulse3(...)", "instant velocity change");
         fapi("jump(v)", "set upward velocity (2D or 3D body)");
         fapi("set_gravity(x,y) / set_gravity3(x,y,z)", "change world gravity");
+        fapi("physics_steps() / set_physics_steps(n)", "read or set physics steps per second");
+        fapi("physics_smooth() / set_physics_smooth(on)", "draw bodies between physics steps");
     }
 
     if (sec("Input")) {
@@ -19098,7 +19103,15 @@ static void DrawTagsAndLayersSettings(EditorState& ed) {
 // quick "apply to current scene" for physics/rendering.
 void DrawProjectSettings(EditorState& ed) {
     if (!g_showProjectSettings) return;
-    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_PROJECT")) {
+        // A floating window becomes its own viewport and is missing from a
+        // renderer screenshot. Dock it into the Inspector, which is on screen.
+        if (ImGuiWindow* insp = ImGui::FindWindowByName("Inspector"))
+            if (insp->DockId) ImGui::SetNextWindowDockID(insp->DockId, ImGuiCond_Always);
+        ImGui::SetNextWindowFocus();
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    }
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
         ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -19111,9 +19124,34 @@ void DrawProjectSettings(EditorState& ed) {
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::DragFloat2("Gravity 2D##ps", g_project.gravity2D, 0.05f);
             ImGui::DragFloat3("Gravity 3D##ps", g_project.gravity3D, 0.05f);
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::DragFloat("Steps per second##ps", &g_project.physicsHz, 1.0f, 1.0f, 240.0f, "%.0f")) {
+                if (g_project.physicsHz < 1.0f) g_project.physicsHz = 1.0f;
+                if (g_project.physicsHz > 500.0f) g_project.physicsHz = 500.0f;
+                okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
+                if (ed.isPlaying()) {
+                    ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
+                    ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
+                }
+                SaveProjectSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How many times a second physics runs. 50 is the usual rate.\n"
+                                  "A drop lands in the same place at a low frame rate and a high one.\n"
+                                  "Saved with the project.");
+            if (ImGui::Checkbox("Smooth the motion##ps", &g_project.smoothPhysics)) {
+                okay::Scene::SetProjectPhysicsRate(g_project.physicsHz, g_project.smoothPhysics);
+                if (ed.isPlaying()) ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
+                SaveProjectSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
+                                  "so motion stays smooth when the frame rate and the step rate differ.");
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
+                ed.scene().SetPhysicsStepsPerSecond(g_project.physicsHz);
+                ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
                 ed.dirty = true; ConsoleLog("Applied project physics to the scene");
             }
         }
@@ -31964,6 +32002,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            if (go->transform && go->transform->Parent())
+                ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
+            else
+                ImGui::TextDisabled("Parent this object and the body is carried with it. Physics steps: %.0f per second.", g_project.physicsHz);
             if (ImGui::SmallButton("Remove##rb3")) toRemove = rb;
         }
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
@@ -48866,6 +48908,10 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_LIGHTING")) {
                 g_showSceneSettings = true;
                 if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Lighting");
+            }
+            if (std::getenv("OKAY_UI_PROJECT")) {
+                g_showProjectSettings = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Project Settings");
             }
             // OKAY_UI_BUILD=1 opens Build Settings (pair with OKAY_UI_BUILDSEC). OKAY_UI_SPOTLIGHT=1
             // adds a spot light and selects it, so a screenshot can show the Cast Shadows note.

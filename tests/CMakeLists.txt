@@ -2041,6 +2041,12 @@ add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
 add_test(NAME fixed_step COMMAND test_fixed_step)
 
+# Step rate is a setting; parented bodies follow and detach. Loads a real scene.
+add_executable(test_rigidbody_step_parent test_rigidbody_step_parent.cpp)
+target_link_libraries(test_rigidbody_step_parent PRIVATE okay::engine)
+target_compile_definitions(test_rigidbody_step_parent PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME rigidbody_step_parent COMMAND test_rigidbody_step_parent)
+
 # Post-processing, sky, fog and weather: settings round trip, presets, the weather rig, sky / fog / tonemap maths
 add_executable(test_post_sky test_post_sky.cpp)
 target_link_libraries(test_post_sky PRIVATE okay::engine)

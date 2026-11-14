@@ -56,7 +56,9 @@ struct RaycastHit2D {
 /// layer n, default all) and `queryTriggers` (do triggers count as hits?).
 /// Rays and overlaps include triggers by default; shape casts skip them.
 ///
-/// Assumes physics bodies are top-level (un-parented) Transforms.
+/// A body may sit under a parent. The step moves it in world space, so a moving or
+/// turning parent carries it and gravity stays world-down. Un-parenting keeps the
+/// speed that parent was giving it (see docs/physics.md).
 class Physics2D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;

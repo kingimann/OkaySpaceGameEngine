@@ -1,0 +1,28 @@
+okayscene 3
+name "Step and parent"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 20 1 20 0 0 0 0
+end
+gameobject 1 "Crate"
+  active 1
+  parent -1
+  transform 0 4 0 0 0 0 1 1 1 1
+  boxcollider3d 1 1 1 0 0 0 0
+  rigidbody3d 0 1 1 0 0 0 0 0
+end
+gameobject 2 "Platform"
+  active 1
+  parent -1
+  transform 0 2 0 0 0 0 1 1 1 1
+end
+gameobject 3 "Rider"
+  active 1
+  parent 2
+  transform 2 0 0 0 0 0 1 1 1 1
+  rigidbody3d 1 0 1 0 0 0 0 0
+end

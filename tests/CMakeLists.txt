@@ -822,18 +822,18 @@ target_link_libraries(test_inspector_model PRIVATE okay::engine)
 add_test(NAME inspector_model COMMAND test_inspector_model)
 
 # Editor-only Hide and selection sets (editor/EditorVisibility, ImGui-free): hide with children, picking, Play, save/load, isolate + lock + hide, sets, dead GUIDs, undo.
-add_executable(test_editor_visibility test_editor_visibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_editor_visibility test_editor_visibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_editor_visibility PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_visibility PRIVATE okay::engine)
 add_test(NAME editor_visibility COMMAND test_editor_visibility)
 
 # Editor snapping (editor/SurfaceSnap, ImGui-free): rotation / scale / move step maths, modifier rules, settings persistence, surface-snap raycast (hit, miss, ignore self / children / hidden, normal alignment, offset), undo.
-add_executable(test_surface_snap test_surface_snap.cpp ${PROJECT_SOURCE_DIR}/editor/SurfaceSnap.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_surface_snap test_surface_snap.cpp ${PROJECT_SOURCE_DIR}/editor/SurfaceSnap.cpp ${PROJECT_SOURCE_DIR}/editor/EditorVisibility.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_surface_snap PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_surface_snap PRIVATE okay::engine)
 add_test(NAME surface_snap COMMAND test_surface_snap)
 # Editor Align / Distribute / Mirror and the multi-select gizmo helpers (editor/SelectionTools, ImGui-free): align min / centre / max / active, equal gaps and equal spacing, mirror positions / rotations / scales / winding (world-space triangles), a mirrored mirror is the original, children and prefab instances, one undo step, gizmo drags on every selected object.
-add_executable(test_selection_tools test_selection_tools.cpp ${PROJECT_SOURCE_DIR}/editor/SelectionTools.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+add_executable(test_selection_tools test_selection_tools.cpp ${PROJECT_SOURCE_DIR}/editor/SelectionTools.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_selection_tools PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_selection_tools PRIVATE okay::engine)
 add_test(NAME selection_tools COMMAND test_selection_tools)

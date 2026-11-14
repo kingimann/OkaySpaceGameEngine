@@ -154,7 +154,7 @@ static void TestAlign() {
         const Axis ax = (Axis)axis;
         Bounds all; all.Encapsulate(B(a)); all.Encapsulate(B(b)); all.Encapsulate(B(c));
         const Vec3 posA = a->transform->Position();
-        const int d0 = ed.UndoDepth();
+        ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
         Result r = Align(ed, ax, Edge::Min, AlignTo::Selection);
         CHECK(r.ok && r.changed >= 1 && ed.UndoDepth() == d0 + 1);
         for (GameObject* g : {a, b, c}) CHECK_NEAR(C(B(g).Min(), axis), C(all.Min(), axis), 1e-4);
@@ -196,7 +196,7 @@ static void TestAlign() {
     GameObject* a = Cube(ed.scene(), "A", {0, 1, 0}, {2, 2, 2});
     GameObject* b = Cube(ed.scene(), "B", {5, 1, 0}, {2, 2, 2});
     SelectAll(ed, {a, b});
-    const int d0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
     Result r = Align(ed, Axis::Y, Edge::Center, AlignTo::Selection);
     CHECK(r.ok && r.changed == 0 && ed.UndoDepth() == d0);
     // Refused: one object.
@@ -243,7 +243,7 @@ static void TestDistribute() {
             g[i] = Cube(s, "G" + std::to_string(i), pos, size);
         }
         SelectAll(ed, {g[3], g[0], g[4], g[2], g[1]});
-        const int d0 = ed.UndoDepth();
+        ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
         Result r = Distribute(ed, (Axis)axis, Spread::Centres);
         CHECK(r.ok && ed.UndoDepth() == d0 + 1);
         CHECK_NEAR(C(B(g[0]).center, axis), 0.0f, 1e-4);                   // the ends stay
@@ -278,7 +278,7 @@ static void TestDistribute() {
     GameObject* a = Cube(ed.scene(), "A", {0, 0, 0}, {1, 1, 1});
     GameObject* b = Cube(ed.scene(), "B", {4, 0, 0}, {1, 1, 1});
     SelectAll(ed, {a, b});
-    const int d0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
     Result r = Distribute(ed, Axis::X, Spread::Gaps);
     CHECK(!r.ok && ed.UndoDepth() == d0 && r.message.find("3 or more") != std::string::npos);
     // Three already evenly placed: nothing changes.
@@ -426,7 +426,7 @@ static void TestMirrorDuplicateAndUndo() {
     (void)kid;
     ed.Select(a);
     const std::size_t n0 = s.Objects().size();
-    const int d0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
     Result r = Mirror(ed, Axis::X, MirrorAbout::WorldOrigin, true);
     CHECK(r.ok && r.made.size() == 1 && ed.UndoDepth() == d0 + 1 && s.Objects().size() == n0 + 2);
     CHECK(ed.selected() == r.made[0] && ed.MultiSelection().size() == 1);
@@ -444,7 +444,7 @@ static void TestMirrorDuplicateAndUndo() {
     e2.Select(b);
     const Mesh mesh0 = b->GetComponent<MeshRenderer>()->mesh;
     const Quat q0 = b->transform->Rotation();
-    const int dd = e2.UndoDepth();
+    e2.CaptureUnannouncedEdits(); const int dd = e2.UndoDepth();
     CHECK(Mirror(e2, Axis::Y, MirrorAbout::WorldOrigin, false).ok);
     CHECK(e2.UndoDepth() == dd + 1);
     CHECK(e2.Undo());
@@ -459,7 +459,7 @@ static void TestMirrorDuplicateAndUndo() {
     GameObject* y = Cube(e3.scene(), "Y", {3, 4, 0}, {1, 1, 1});
     GameObject* z = Cube(e3.scene(), "Z", {10, 1, 0}, {1, 1, 1});
     SelectAll(e3, {x, y, z});
-    const int d3 = e3.UndoDepth();
+    e3.CaptureUnannouncedEdits(); const int d3 = e3.UndoDepth();
     CHECK(Align(e3, Axis::Y, Edge::Center, AlignTo::Selection).ok);
     CHECK(Distribute(e3, Axis::X, Spread::Centres).ok);
     CHECK(e3.UndoDepth() == d3 + 2);
@@ -620,7 +620,7 @@ static void TestGizmoMultiSelect() {
     CHECK(Near(PivotPoint(tg, a, GizmoPivot::Center), {4.0f / 3.0f, 0, 4.0f / 3.0f}));
     CHECK(Near(PivotPoint({a}, a, GizmoPivot::Center), {0, 0, 0}));        // one object: its own pivot
     // A drag, as the gizmo does it: one undo step at the grab, then many frames.
-    const int d0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
     ed.PushUndo();
     f = Followers(sel, a);
     for (int i = 0; i < 10; ++i) { a->transform->Translate({0.5f, 0, 0}); MoveFollowers(f, {0.5f, 0, 0}); }

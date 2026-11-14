@@ -269,7 +269,7 @@ static void TestUndo() {
     GameObject* a = Make(s, "A"); Make(s, "B");
     ed.Select(a);
     // Hide: one undo step, redo brings it back.
-    const int d0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d0 = ed.UndoDepth();
     vis::HideSelection(ed);
     CHECK(ed.UndoDepth() == d0 + 1 && Find(s, "A")->editorHidden);
     CHECK(ed.Undo() && !Find(s, "A")->editorHidden);
@@ -277,13 +277,13 @@ static void TestUndo() {
     CHECK(ed.Undo());
     // Unhide all.
     Find(s, "A")->editorHidden = true; Find(s, "B")->editorHidden = true;
-    const int d1 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int d1 = ed.UndoDepth();
     CHECK(vis::UnhideAll(ed) == 2 && ed.UndoDepth() == d1 + 1);
     CHECK(ed.Undo() && Find(s, "A")->editorHidden && Find(s, "B")->editorHidden);
     CHECK(ed.Redo() && !Find(s, "A")->editorHidden);
     // Sets: create, rename, add, remove, hide, lock, delete: each one step, each undone and redone.
     ed.Select(Find(s, "A"));
-    const int base = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int base = ed.UndoDepth();
     CHECK(vis::CreateSet(ed, "S") == 0);
     CHECK(vis::RenameSet(ed, 0, "T"));
     ed.Select(Find(s, "B"));

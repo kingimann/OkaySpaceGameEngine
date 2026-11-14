@@ -22,7 +22,7 @@ static GameObject* Box(Scene& s, const std::string& name, Vec3 pos, Vec3 size, b
     if (collider) { auto* bc = g->AddComponent<BoxCollider3D>(); bc->size = mesh ? Vec3::One : size; }
     return g;
 }
-static SurfaceHit Down(Scene& s, float x, float z, const SurfaceQuery& q = {}) {
+static okay::editor::snap::SurfaceHit Down(Scene& s, float x, float z, const SurfaceQuery& q = {}) {
     s.Start(); s.Update(0.0f);
     return RaycastSurface(s, {x, 20, z}, {0, -1, 0}, q);
 }
@@ -121,7 +121,7 @@ static void TestPersistence() {
 static void TestRaycast() {
     Scene s("surf");
     GameObject* floor = Box(s, "Floor", {0, 0, 0}, {20, 1, 20});     // top face at y = 0.5
-    SurfaceHit h = Down(s, 0, 0);
+    okay::editor::snap::SurfaceHit h = Down(s, 0, 0);
     CHECK(h.hit && h.object == floor && h.source == HitSource::Collider);
     CHECK_NEAR(h.point.y, 0.5f, 1e-3); CHECK_NEAR(h.normal.y, 1.0f, 1e-3); CHECK_NEAR(h.distance, 19.5f, 1e-2);
     // Miss: beside the floor.
@@ -180,7 +180,7 @@ static void TestMeshes() {
     {
         Scene s("meshes");
         GameObject* m = Box(s, "Crate", {0, 1, 0}, {2, 2, 2}, /*collider*/ false, /*mesh*/ true);
-        SurfaceHit h = Down(s, 0.3f, 0.2f);
+        okay::editor::snap::SurfaceHit h = Down(s, 0.3f, 0.2f);
         CHECK(h.hit && h.object == m && h.source == HitSource::Triangles);
         CHECK_NEAR(h.point.y, 2.0f, 1e-3); CHECK_NEAR(h.normal.y, 1.0f, 1e-3);
         CHECK(!RaycastSurface(s, {1.5f, 20, 0}, {0, -1, 0}, {}).hit);   // outside the cube
@@ -200,12 +200,12 @@ static void TestMeshes() {
         p->AddComponent<MeshRenderer>()->mesh = Mesh::Pyramid();
         p->AddComponent<MeshCollider3D>();
         p->transform->SetPosition({0, 0, 0});
-        SurfaceHit h = Down(s, 0.0f, 0.0f);
+        okay::editor::snap::SurfaceHit h = Down(s, 0.0f, 0.0f);
         CHECK(h.hit && h.object == p && h.source == HitSource::Triangles);
         Vec3 lo, hi; Mesh::Pyramid().Bounds(lo, hi);
         CHECK(h.point.y < hi.y + 1e-3f);                                // not the box top unless the apex is there
         // Near a corner of the base the true surface is far below the box's top face.
-        SurfaceHit edge = Down(s, 0.45f * (hi.x - lo.x), 0.45f * (hi.z - lo.z));
+        okay::editor::snap::SurfaceHit edge = Down(s, 0.45f * (hi.x - lo.x), 0.45f * (hi.z - lo.z));
         if (edge.hit) CHECK(edge.point.y < hi.y - 0.2f * (hi.y - lo.y));
     }
     // Sphere collider: exact, not its box.
@@ -213,7 +213,7 @@ static void TestMeshes() {
         Scene s("sph");
         GameObject* g = s.CreateGameObject("Ball");
         g->AddComponent<SphereCollider3D>()->radius = 1.0f;
-        SurfaceHit h = Down(s, 0, 0);
+        okay::editor::snap::SurfaceHit h = Down(s, 0, 0);
         CHECK(h.hit && h.source == HitSource::Collider); CHECK_NEAR(h.point.y, 1.0f, 1e-3);
         h = Down(s, 0.9f, 0.0f);
         CHECK(h.hit); CHECK(h.point.y < 0.5f); CHECK(h.normal.x > 0.5f);   // sloped at the rim
@@ -225,7 +225,7 @@ static void TestPose() {
     GameObject* floor = Box(s, "Floor", {0, 0, 0}, {20, 1, 20});
     GameObject* crate = Box(s, "Crate", {3, 9, 3}, {2, 2, 2}, false, true);  // 2 units tall, pivot at its centre
     SurfaceQuery q; q.ignore = {crate};
-    SurfaceHit h = Down(s, 1, 1, q);
+    okay::editor::snap::SurfaceHit h = Down(s, 1, 1, q);
     CHECK(h.hit && h.object == floor);
     SnapSettings cfg;
     // Rest on the surface (default): the pivot is lifted by half the height.
@@ -250,7 +250,7 @@ static void TestPose() {
     GameObject* ramp = Box(s, "Ramp", {5, 3, 0}, {4, 0.2f, 4}, true);
     ramp->transform->SetRotation(Quat::AngleAxis(30.0f, Vec3::Forward));   // tilt about Z
     q.ignore = {crate};
-    SurfaceHit rh = Down(s, 5, 0, q);
+    okay::editor::snap::SurfaceHit rh = Down(s, 5, 0, q);
     CHECK(rh.hit && rh.object == ramp);
     const Vec3 want = ramp->transform->Up();
     CHECK(Vec3::Dot(rh.normal, want) > 0.999f);
@@ -284,10 +284,10 @@ static void TestUndo() {
     (void)floor;
     ed.scene().Start(); ed.scene().Update(0.0f);
     SurfaceQuery q; q.ignore = {c};
-    SurfaceHit h = RaycastSurface(ed.scene(), {2, 20, 2}, {0, -1, 0}, q);
+    okay::editor::snap::SurfaceHit h = RaycastSurface(ed.scene(), {2, 20, 2}, {0, -1, 0}, q);
     CHECK(h.hit);
     const Vec3 before = c->transform->Position();
-    const int depth0 = ed.UndoDepth();
+    ed.CaptureUnannouncedEdits(); const int depth0 = ed.UndoDepth();
     ed.PushUndo();                                                       // the gizmo grab pushes this once for the whole drag
     SnapSettings cfg;
     for (int i = 0; i < 5; ++i) ApplySurfacePose(c, ComputeSurfacePose(c, h, cfg));   // many frames of the same drag

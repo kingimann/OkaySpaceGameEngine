@@ -92,6 +92,10 @@ inline void BakeFaceLighting(Mesh& mesh, const Mat4& model, const Color& base,
         }
 
         auto sat = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+        // The renderer clamps the light to 1 BEFORE multiplying by the surface colour
+        // (SceneLights::ShadeNormalized). Doing the same keeps a baked face from being
+        // brighter than the live-lit one when the lights add up to more than 1.
+        acc.x = sat(acc.x); acc.y = sat(acc.y); acc.z = sat(acc.z);
         mesh.triColors[t] = Color{sat(base.r * acc.x), sat(base.g * acc.y),
                                   sat(base.b * acc.z), base.a};
     }

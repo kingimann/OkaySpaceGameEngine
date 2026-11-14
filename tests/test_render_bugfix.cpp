@@ -141,5 +141,26 @@ int main() {
         CHECK(back.SortKey() < mid.SortKey());    // the layer always wins
     }
 
+    RUN_SUITE("baked light matches what the renderer would shade");
+    {
+        SceneLights::Clear();
+        SceneLights::SetAmbient(0.0f);
+        SceneLights::Hemisphere() = false;
+        LightSample sun;
+        sun.type = 0; sun.dir = {0, -1, 0}; sun.color = {3.0f, 3.0f, 3.0f};   // overbright
+        SceneLights::Add(sun);
+        Mesh face;
+        face.vertices = {{0, 0, 0}, {0, 0, 1}, {1, 0, 0}};   // normal +Y
+        face.triangles = {0, 1, 2};
+        const Color base(0.8f, 0.5f, 0.2f, 1.0f);
+        BakeFaceLighting(face, Mat4::Identity(), base,
+                         [](const Vec3&, const Vec3&, float) { return false; }, 0);
+        const Vec3 live = SceneLights::ShadeNormalized({1.0f / 3, 0, 1.0f / 3}, {0, 1, 0});
+        CHECK_NEAR(face.triColors[0].r, base.r * live.x, 2e-3f);
+        CHECK_NEAR(face.triColors[0].g, base.g * live.y, 2e-3f);
+        CHECK_NEAR(face.triColors[0].b, base.b * live.z, 2e-3f);
+        SceneLights::Clear();
+    }
+
     TEST_MAIN_RESULT();
 }

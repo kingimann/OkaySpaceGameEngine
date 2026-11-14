@@ -2897,3 +2897,8 @@ target_link_libraries(test_clipboard PRIVATE okay::engine)
 target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clipboard COMMAND test_clipboard)
+
+add_executable(test_editor_play_input test_editor_play_input.cpp)
+target_link_libraries(test_editor_play_input PRIVATE okay::engine)
+target_compile_definitions(test_editor_play_input PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME editor_play_input COMMAND test_editor_play_input)

@@ -1289,7 +1289,12 @@ struct Reader {
         for (int k : x.n[(std::size_t)vs].kids)
             if (x.n[(std::size_t)k].name == "node" && !BuildNode(k, 0, root, 1)) return false;
         if (!err.empty()) return false;
-        if (out->parts.empty()) return Fail("COLLADA: the scene has no mesh");
+        if (out->parts.empty()) {
+            // Cameras, lights and empty nodes only: an empty mesh set, not an error (Assimp reads such a file too). A scene
+            // with no node at all is still refused.
+            if (nodes.size() <= 1) return Fail("COLLADA: the scene has no mesh");
+            out->notes.push_back("COLLADA: the scene has no mesh (cameras, lights or empty nodes only); only its node hierarchy was read");
+        }
 
         if (!flatten) {
             ResolveBoneNames();

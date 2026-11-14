@@ -498,7 +498,7 @@ The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette,
 |---|---|---|---|---|---|
 | `PostProcess.exposure` | `PostProcess.exposure` | value | - | exposure (Number) | Scene brightness multiplier (1 = as lit). |
 | `PostProcess.exposure = exposure` | `PostProcess.exposure=` | step | exposure (Number) | - | Scene brightness multiplier (1 = as lit). |
-| `PostProcess.Set(name, value)` | `PostProcess.Set/2` | step | name (Text), value (Number) | Result (Bool) | Set one value by name: "exposure", "tonemap" (0 none, 1 ACES, 2 filmic), "bloom" (0/1), "bloom_threshold", "bloom_intensity", "bloom_radius", "grading", "temperature", "tint", "saturation", "contrast", "vignette", "vignette_smoothness", "fxaa", "ssao", "ssao_radius", "ssao_intensity", "dof", "dof_focus", "dof_range". False for a name it doesn't know. |
+| `PostProcess.Set(name, value)` | `PostProcess.Set/2` | step | name (Text), value (Number) | Result (Bool) | Set one value by name: "exposure", "tonemap" (0 none, 1 ACES, 2 filmic), "bloom" (0/1), "bloom_threshold", "bloom_intensity", "bloom_radius", "bloom_softness", "grading", "temperature", "tint", "saturation", "contrast", "vignette", "vignette_smoothness", "fxaa", "ssao", "ssao_radius", "ssao_intensity", "ssao_power", "dof", "dof_focus", "dof_range". False for a name it doesn't know. |
 
 ## Fog
 

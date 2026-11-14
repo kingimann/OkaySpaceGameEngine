@@ -1,5 +1,7 @@
 # Anti-cheat
 
+**New here?** Start with [Add anti-cheat to your game in 5 minutes](anticheat_quickstart.md): presets, a checklist and no hand-written files.
+
 OkaySpace's anti-cheat runs on the **server** and is **opt-in**. With it off,
 nothing is checked and nothing is sent differently from before.
 
@@ -37,7 +39,11 @@ nothing is checked and nothing is sent differently from before.
 
 ## Turning it on
 
-Add an **Anti-Cheat Config** component to the scene (with a Network Manager), or
+The quick way: on the Network Manager, pick a preset and press **Add Anti-Cheat** (or Add Component > *Anti-Cheat (one click, safe preset)*), then
+work through the **Anti-cheat checklist** in the Anti-Cheat Config or in Build Settings. See [anticheat_quickstart.md](anticheat_quickstart.md).
+The presets are in `editor/AntiCheatSetup.hpp`.
+
+By hand: add an **Anti-Cheat Config** component to the scene (with a Network Manager), or
 set `NetworkManager::anticheat.settings` in code. Its rules can also come from a
 `.okayac` file (one `key value` per line, `#` comments):
 
@@ -96,6 +102,21 @@ It also fails closed:
 
 On its first tick a server logs one line naming the protections that are off
 (anti-cheat, encryption, move check, message rate limit).
+
+## Exporting a game with anti-cheat
+
+Build Game and the dedicated server export carry what you chose in the editor:
+
+- The rules (inline in the Anti-Cheat Config) are saved in the scene file. That includes the spawn list,
+  the server-only and client-writable SyncVar prefixes, the spawn limits and the ticket key and audience.
+  An exported server loads the scene, so it has them.
+- A **Rules file** (`.okayac`) you set is shipped with the build, together with every prefab it names on a
+  `spawn` line. A relative path is looked for in the game's data folder (`<Name>_Data/` or `Data/`) and, in
+  the editor, in the project's `Assets/` folder. If it cannot be found, the server refuses every join.
+- Every prefab on the spawn list is shipped, even with *Strip unused assets* on.
+- Build Settings > **Anti-cheat** (Off / Report / Enforce) is saved in the build profile. A build that has it on
+  writes the signed `Data/manifest.json` and tells the player which mode to use.
+- Nothing turns on by itself: a project with no Anti-Cheat Config and Anti-cheat Off exports exactly as before.
 
 ## P2: encryption required and replay protection
 

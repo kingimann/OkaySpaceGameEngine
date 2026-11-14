@@ -872,6 +872,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "okay/Graphics/Image.hpp"
 #include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
 #include "NetSimPanel.hpp"         // net simulator + per-object traffic
+#include "AntiCheatSetupUi.hpp"    // easy anti-cheat: presets, Add Anti-Cheat, checklist (logic: AntiCheatSetup.hpp)
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
 #include "MainShared.hpp"          // main.cpp functions the split-out panels call
@@ -11846,6 +11847,8 @@ static void DrawLookSections(EditorState& ed) {
             tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
             if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Softness##bloom", &post.bloomSoftness, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            tip("Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.");
         }
         if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
         if (post.grading) {
@@ -11873,6 +11876,8 @@ static void DrawLookSections(EditorState& ed) {
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
             if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
+            tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
         }
         if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
         DrawRendererNote(okay::RenderFeature::DepthOfField);
@@ -18113,6 +18118,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::SetNextItemWidth(160);
                 ImGui::Combo("Anti-cheat", &g_build.antiCheat, "Off\0Report\0Enforce\0");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okayac::kBuildSettingsTooltip);
+                oked::DrawAntiCheatChecklist(ed, g_build.antiCheat, "build");   // what is on and what is missing for this scene
                 ImGui::Spacing(); SectionHeader("After the build");
                 ImGui::Checkbox("Open the output folder", &g_build.openFolderAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
@@ -30839,9 +30845,12 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Server-side checks on what clients send (needs a Network Manager). "
                                 "Refusals run On Cheat Detected in visual scripts.");
             ImGui::PopTextWrapPos();
+            oked::DrawAntiCheatPresetPicker(ed, ac);
+            oked::DrawAntiCheatChecklist(ed, g_build.antiCheat, "insp");
             AntiCheatSettings& s = ac->settings;
             if (ImGui::Checkbox("Enabled##ac", &s.enabled)) ed.dirty = true;
             oked::FieldTip("Enabled##ac");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The master switch. Off: nothing is checked and every player may do anything. A new Anti-Cheat Config starts on.");
             char fp[256]; std::snprintf(fp, sizeof(fp), "%s", ac->file.c_str());
             if (ImGui::InputText("Rules file##ac", fp, sizeof(fp))) { ac->file = fp; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayac file. When it loads it replaces the settings below.");
@@ -37682,6 +37691,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* nm = dynamic_cast<NetworkManager*>(curComp)) {
         if (CompHeader("Network Manager", nm, &toRemove)) {
+            oked::DrawNetworkManagerAntiCheat(ed, nm);   // one-click anti-cheat while the scene has none
             const char* modes[] = {"None (start via script/Services)", "Host on Play", "Join on Play"};
             int m = (int)nm->autoStart;
             if (ImGui::Combo("Auto Start##nm", &m, modes, 3)) { nm->autoStart = (NetworkManager::AutoStart)m; ed.dirty = true; }
@@ -40400,6 +40410,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
+            oked::AddAntiCheatMenuItem(ed, go);   // one click: a config with a safe preset next to the Network Manager
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             // grok/ui-theme

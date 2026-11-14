@@ -61,6 +61,26 @@ then this file gets updated. Keep this file short and true.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first.
 19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
 
+19a. **Code: write everything yourself. Assets and data: only with permission.**
+    - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other
+      project (for example Unreal, Godot, Assimp, meshoptimizer, SDL, Dear ImGui, stb), open source or not. A licence that
+      allows copying does not change this. Public-domain code needs the owner's approval first. Create our own systems:
+      write from specifications, file-format documents, papers and general algorithms, in your own words and structure,
+      work out constants yourself and check them with tests. Ideas, algorithms and file formats are not copyrighted;
+      code is. Say in the report and the docs what each new file was written from (its spec or paper). If code was
+      copied or ported by mistake, rewrite it from scratch.
+    - **Fonts, images, sounds, models and data** (we cannot recreate these): use them only with permission, meaning a
+      licence that allows our use (for example OFL, CC0, MIT, Apache). Record the source and the licence in
+      `docs/THIRD_PARTY.md`, keep the licence file next to the asset, and ship the required notices with releases.
+      Never use an asset whose licence is unknown or that forbids our use, and never scrape or download assets without
+      recording where they came from.
+    - **No third-party SDKs or libraries.** Do not add or link any (for example Steamworks, Photon, PlayFab or Supabase
+      client SDKs, analytics, crash-report or ad SDKs, middleware). Talk to outside services over their plain web APIs
+      with our own code. Optional hooks that only work when someone installs an SDK stay off by default and are not
+      extended.
+    - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
+      until our own replacement is ready; nothing new may be added.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

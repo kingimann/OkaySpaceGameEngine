@@ -1815,6 +1815,10 @@ add_executable(test_anticheat_wiring test_anticheat_wiring.cpp)
 target_link_libraries(test_anticheat_wiring PRIVATE okay::engine)
 target_include_directories(test_anticheat_wiring PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_wiring COMMAND test_anticheat_wiring)
+# Easy anti-cheat setup (editor/AntiCheatSetup.hpp): presets, Add Anti-Cheat, the checklist, and the round trip to the build.
+add_executable(test_anticheat_setup test_anticheat_setup.cpp)
+target_link_libraries(test_anticheat_setup PRIVATE okay::engine)
+add_test(NAME anticheat_setup COMMAND test_anticheat_setup)
 # User reports (docs/sql/reports.sql): requests, honest outcomes, the moderator list...
 add_executable(test_user_reports test_user_reports.cpp)
 target_link_libraries(test_user_reports PRIVATE okay::engine)
@@ -3140,6 +3144,40 @@ target_compile_definitions(test_batchb_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchb_hostile COMMAND test_batchb_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchb_hostile PROPERTIES TIMEOUT 600)
 
+# Batch C own readers (MD2 / MD3 / IRRMESH / B3D / DirectX .x): one test per reader on SYNTHETIC fixtures built in memory
+# (tests/batchc_fixtures.hpp), and one standalone hostile-input + mutation-fuzz test for all of them (reader sources only,
+# no engine library, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
+# OKAY_BATCHC_FUZZ_ITERS raises the sweep).
+function(okay_batchc_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src} ${ARGN})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_batchc_reader_test(md2 Md2Reader.cpp)
+okay_batchc_reader_test(md3 Md3Reader.cpp)
+okay_batchc_reader_test(irrmesh IrrMeshReader.cpp)
+okay_batchc_reader_test(b3d B3dReader.cpp)
+# the .x reader unpacks MSZIP with the engine's own inflate
+okay_batchc_reader_test(x XFileReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+add_executable(test_batchc_hostile test_batchc_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md2Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Md3Reader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrMeshReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/B3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XFileReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchc_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchc_hostile PROPERTIES TIMEOUT 600)
+
+# The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
+target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
+add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)
@@ -3180,3 +3218,10 @@ add_executable(test_own_dispatch test_own_dispatch.cpp)
 target_link_libraries(test_own_dispatch PRIVATE okay::engine)
 target_compile_definitions(test_own_dispatch PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(test_dof_math test_dof_math.cpp)
+target_link_libraries(test_dof_math PRIVATE okay::engine)
+add_test(NAME dof_math COMMAND test_dof_math)
+add_executable(test_post_quality_math test_post_quality_math.cpp)
+target_link_libraries(test_post_quality_math PRIVATE okay::engine)
+add_test(NAME post_quality_math COMMAND test_post_quality_math)

@@ -7,7 +7,8 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -196,6 +197,42 @@ bool ReadAseBuffer(const std::string& text, const std::string& baseDir, Imported
 /// vertices and returns one root node, no skins, no clips. Everything not read (modifiers, constraints, shape keys,
 /// vertex colours, cameras, lights, curves, ...) is named in `out.notes`. `baseDir` ends with a slash or is empty.
 bool ReadBlendBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+/// MD2 (Quake II model, binary): the first frame of the vertex animation as one static part (vertices welded on
+/// position and texture coordinate, smooth normals generated, winding reversed to counter clockwise, texture coordinates as written), the
+/// first skin name as the texture. The root node turns Z-up into Y-up. Further frames (vertex animation, which the engine
+/// has no clip type for), the stored normals and the OpenGL command list are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes the skin path).
+bool ReadMd2Buffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MD3 (Quake III Arena model, binary): the first frame of the vertex animation, one static part per surface (vertices
+/// welded, the stored normals decoded, winding reversed to counter clockwise, texture coordinates as written), the first shader name of each
+/// surface as its texture (as written: Quake paths are relative to the game folder), and each tag (attachment point) of the
+/// first frame as an empty child node of the root, which turns Z-up into Y-up. Further frames, tag animation, `.skin` and
+/// `.shader` files are not read (reported in `out.notes`).
+bool ReadMd3Buffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// Irrlicht mesh (.irrmesh, XML; UTF-8 or UTF-16 with a byte order mark): one part per `<buffer>` (vertices of type
+/// standard, 2tcoords or tangents; triangle indices), with the buffer's material: diffuse and emissive colour,
+/// shininess, the first texture, and the second texture as the normal map for normalmap / parallaxmap types. Texture
+/// coordinates, coordinates and winding as written (Irrlicht is left-handed; Assimp keeps them too); no root rotation.
+/// Second texture coordinates, tangents, vertex colours, lightmaps and material flags are not read (reported in
+/// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths). The Irrlicht scene
+/// format (.irr) is not read.
+bool ReadIrrMeshBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// B3D (Blitz3D model, binary): the node tree (position, scale, rotation), one part per TRIS chunk (vertices welded per
+/// vertex number, normals, first texture coordinate set, the brush as material: diffuse colour and alpha, shininess,
+/// first texture), skin weights (the four strongest per vertex; every node with a BONE chunk is a joint) and one clip
+/// ("animation") from the KEYS chunks at the ANIM chunk's frame rate. Blitz3D is left-handed: Z is mirrored and the winding
+/// reversed. Vertex colours, further texture coordinate sets, texture and brush flags and effects are not read (reported in
+/// `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadB3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// DirectX .x (text, binary, and MSZIP-compressed "tzip" / "bzip"; 32 and 64 bit floats): the frame tree as nodes, each
+/// mesh split into one part per material (vertices welded per position and normal, polygons fan-triangulated, normals as
+/// stored or smooth ones, the first texture coordinate set as written), materials (diffuse colour and alpha, emissive,
+/// power as shininess, texture and normal map file), skin weights (the four strongest per vertex, the offset matrix as
+/// the inverse bind) and each AnimationSet as one clip (rotation, scale, position and matrix keys at the file's
+/// AnimTicksPerSecond, 25 without one). DirectX is left-handed and writes matrices for row vectors: Z is mirrored and the
+/// winding reversed. Vertex colours, further texture coordinate sets, specular colour and shared (referenced) meshes
+/// are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadXBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -210,12 +247,17 @@ bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool ReadMd2File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMd3File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadIrrMeshFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadB3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadXFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase .blend have one
+    Own,       ///< our reader; the formats listed at the top of this file have one (HasOwnReader tells)
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 

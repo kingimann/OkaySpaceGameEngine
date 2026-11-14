@@ -44,5 +44,44 @@ int main() {
         }
     }
 
+    RUN_SUITE("static batching never merges different looks");
+    {
+        using Edit = void (*)(MeshRenderer&);
+        struct Case { const char* what; Edit edit; };
+        const Case cases[] = {
+            {"same look (control, must merge)", [](MeshRenderer&) {}},
+            {"toon bands", [](MeshRenderer& m) { m.shader = MeshRenderer::Shader::Toon; m.toonBands = 5; }},
+            {"rim strength", [](MeshRenderer& m) { m.rimStrength = 0.8f; }},
+            {"rim power", [](MeshRenderer& m) { m.rimPower = 7.0f; }},
+            {"rim colour", [](MeshRenderer& m) { m.rimColor = Color(1, 0, 0, 1); }},
+            {"gradient top", [](MeshRenderer& m) { m.gradientTop = Color(1, 0, 0, 1); }},
+            {"gradient bottom", [](MeshRenderer& m) { m.gradientBottom = Color(0, 1, 0, 1); }},
+            {"casts shadows", [](MeshRenderer& m) { m.castShadows = false; }},
+            {"receives shadows", [](MeshRenderer& m) { m.receiveShadows = false; }},
+            {"normal strength", [](MeshRenderer& m) { m.normalStrength = 2.0f; }},
+            {"ao strength", [](MeshRenderer& m) { m.aoStrength = 0.2f; }},
+            {"matcap", [](MeshRenderer& m) { m.matcap = "shiny.png"; }},
+        };
+        for (const Case& c : cases) {
+            Scene s;
+            GameObject* a = s.CreateGameObject("A");
+            GameObject* b = s.CreateGameObject("B");
+            a->isStatic = b->isStatic = true;
+            a->transform->localPosition = {-1.5f, 0, 0};
+            b->transform->localPosition = {1.5f, 0, 0};
+            auto* ma = a->AddComponent<MeshRenderer>();
+            auto* mb = b->AddComponent<MeshRenderer>();
+            ma->mesh = Mesh::Cube(); mb->mesh = Mesh::Cube();
+            c.edit(*mb);
+            const Vec3 eye{0, 0, 8};
+            const Mat4 vp = CamVP(eye);
+            const visibility::Frame& f = visibility::Build(s, vp, eye, 256, 256, 60, nullptr);
+            const bool control = c.what[0] == 's';
+            const std::size_t want = control ? 1u : 2u;
+            if (f.items.size() != want) std::cout << "  batching case: " << c.what << " gave " << f.items.size() << " draws\n";
+            CHECK(f.items.size() == want);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

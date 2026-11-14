@@ -58,6 +58,19 @@ std::uint64_t MaterialKey(const MeshRenderer& mr) {
     h = Mix(h, std::hash<std::string>{}(mr.aoMap));
     h = Mix(h, std::hash<std::string>{}(mr.metallicRoughnessMap));
     h = Mix(h, std::hash<std::string>{}(mr.emissiveMap));
+    // Everything else a renderer reads per object. Left out, two meshes with different
+    // toon bands, rim light, gradient colours, matcap or shadow flags were merged and the
+    // second one drew with the first one's look.
+    h = Mix(h, (std::uint64_t)mr.toonBands);
+    h = MixF(h, mr.rimStrength); h = MixF(h, mr.rimPower);
+    h = MixF(h, mr.rimColor.r); h = MixF(h, mr.rimColor.g); h = MixF(h, mr.rimColor.b);
+    h = MixF(h, mr.gradientTop.r); h = MixF(h, mr.gradientTop.g); h = MixF(h, mr.gradientTop.b); h = MixF(h, mr.gradientTop.a);
+    h = MixF(h, mr.gradientBottom.r); h = MixF(h, mr.gradientBottom.g); h = MixF(h, mr.gradientBottom.b); h = MixF(h, mr.gradientBottom.a);
+    h = Mix(h, mr.castShadows ? 1 : 0);
+    h = Mix(h, mr.receiveShadows ? 1 : 0);
+    h = MixF(h, mr.normalStrength);
+    h = MixF(h, mr.aoStrength);
+    h = Mix(h, std::hash<std::string>{}(mr.matcap));
     return h;
 }
 

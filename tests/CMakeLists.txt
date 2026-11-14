@@ -3069,6 +3069,11 @@ target_compile_definitions(test_batchc_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchc_hostile COMMAND test_batchc_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchc_hostile PROPERTIES TIMEOUT 600)
 
+# The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
+target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
+add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

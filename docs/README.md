@@ -84,6 +84,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [own_x3d_reader.md](own_x3d_reader.md): our own X3D reader.
 - [own_amf_reader.md](own_amf_reader.md): our own AMF reader.
 - [own_3mf_reader.md](own_3mf_reader.md): our own 3MF reader (it also describes the XML and zip readers that AMF and X3D share).
+- [own_md2_reader.md](own_md2_reader.md), [own_md3_reader.md](own_md3_reader.md), [own_irrmesh_reader.md](own_irrmesh_reader.md), [own_b3d_reader.md](own_b3d_reader.md), [own_x_reader.md](own_x_reader.md): our own MD2, MD3, Irrlicht mesh, B3D and DirectX `.x` readers (batch C).
+- [own_readers_remaining.md](own_readers_remaining.md): every model format Assimp reads that we have no own reader for yet: what it is, how hard, whether real files exist, and the order to write them in.
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.
 - [terrain_water.md](terrain_water.md): terrain and water.

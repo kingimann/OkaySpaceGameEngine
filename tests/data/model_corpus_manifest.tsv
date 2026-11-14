@@ -54,7 +54,7 @@ dae	models/Collada/Cinema4D.dae	ok	area=465245.4191	meshes=3	tris=1296	bones=0	s
 dae	models/Collada/ConcavePolygon.dae	ok	area=0.2455	meshes=1	tris=64	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.146,1.658,1.605,-1.146,3.142,3.091	verts=64
 dae	models/Collada/anims_with_full_rotations_between_keys.DAE	ok	area=384.0000	meshes=64	tris=768	bones=0	skinned=0	clips=1	dur=11.967	mat=0	bbox=-0.316,-0.000,-119.685,0.686,1.000,0.500	verts=1536
 dae	models/Collada/box_nested_animation.dae	ok	area=24.0000	meshes=1	tris=12	bones=1	skinned=1	clips=1	dur=1.667	mat=1	bbox=0.000,-1.000,-0.000,2.000,1.000,2.000	verts=36
-dae	models/Collada/cameras.dae	FAIL	COLLADA: the scene has no mesh
+dae	models/Collada/cameras.dae	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 dae	models/Collada/cube_UTF16LE.dae	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/cube_UTF8BOM.dae	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/cube_emptyTags.dae	ok	area=60000.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-50.000,-50.000,-50.000,50.000,50.000,50.000	verts=24
@@ -67,7 +67,7 @@ dae	models/Collada/duck_triangulate.dae	ok	area=7.0235	meshes=1	tris=4212	bones=
 dae	models/Collada/earthCylindrical.DAE	ok	area=1.6503	meshes=2	tris=1920	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.423,-0.347,-0.357,0.332,0.347,0.496	verts=5760
 dae	models/Collada/kwxport_test_vcolors.dae	ok	area=6.0000	meshes=3	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=3	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24
 dae	models/Collada/library_animation_clips.dae	ok	area=81.8617	meshes=1	tris=52	bones=5	skinned=1	clips=2	dur=0.833	mat=1	bbox=-1.000,-1.000,-2.929,1.000,7.000,1.000	verts=72
-dae	models/Collada/lights.dae	FAIL	COLLADA: the scene has no mesh
+dae	models/Collada/lights.dae	ok	area=0.0000	meshes=0	tris=0	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,0.000,0.000,0.000,0.000,0.000	verts=0
 dae	models/Collada/regr01.dae	ok	area=0.0005	meshes=6	tris=172	bones=0	skinned=0	clips=0	dur=0.000	mat=6	bbox=-0.005,-0.000,-0.000,0.008,0.016,0.004	verts=516
 dae	models/Collada/sphere.dae	ok	area=0.0012	meshes=1	tris=760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.010,-0.010,-0.010,0.010,0.010,0.010	verts=401
 dae	models/Collada/sphere_triangulate.dae	ok	area=0.0012	meshes=1	tris=760	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.010,-0.010,-0.010,0.010,0.010,0.010	verts=401

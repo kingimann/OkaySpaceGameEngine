@@ -705,8 +705,9 @@ void ApplyImportedMaterial(const ImportedModel& m, int mi, MeshRenderer* mr) {
 } // namespace
 
 GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const std::string& path) {
-    // A skeleton-only model (BVH motion capture) has nodes and clips but no mesh.
-    if (model.parts.empty() && (model.nodes.empty() || model.clips.empty())) return nullptr;
+    // A model with nodes but no mesh (a BVH skeleton, a COLLADA file of cameras and lights only) imports as its node
+    // hierarchy; a model with neither nodes nor parts is nothing to build.
+    if (model.parts.empty() && model.nodes.empty()) return nullptr;
     GameObject* root = scene.CreateGameObject(BaseName(path));
 
     if (model.nodes.empty()) {

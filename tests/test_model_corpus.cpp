@@ -1,4 +1,4 @@
-// Real-file validation of our own FBX, COLLADA, 3DS and BVH readers.
+// Real-file validation of our own FBX, COLLADA, 3DS, BVH and Blender readers.
 //
 // The files are NOT in this repository: they come from a directory named by the environment variable
 // OKAY_MODEL_CORPUS (for example the test/models tree of an Assimp source checkout; see docs/model_corpus.md).
@@ -9,7 +9,7 @@
 //   test_model_corpus                       manifest check (what ctest runs)
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
-// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase
+// readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, blend
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -56,17 +56,17 @@ static const char* ExtOf(const std::string& reader) {
     if (reader == "ms3d") return ".ms3d";
     if (reader == "ase") return ".ase";
     return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
-           reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" : ".fbx";
+           reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" : reader == "blend" ? ".blend" : ".fbx";
 }
 static bool ExtMatches(const std::string& reader, std::string ext) {
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb");
 }
-static bool IsRawReader(const std::string& r) { return r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase"; }
+static bool IsRawReader(const std::string& r) { return r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || r == "blend"; }
 
 static CorpusStats MeasureFile(const std::string& reader, const std::string& path) {
     CorpusStats s;
-    std::shared_ptr<ImportedModel> rawModel;   // dae / 3ds / bvh: the reader's own result, before the importer rescales it
+    std::shared_ptr<ImportedModel> rawModel;   // dae / 3ds / bvh / blend: the reader's own result, before the importer rescales it
     const auto t0 = std::chrono::steady_clock::now();
     if (reader == "fbx-own") {
         fbx::Scene fs_; std::string e;
@@ -156,7 +156,7 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
             }
         }
         s.bones = (int)bones.size();
-        if (reader == "obj" || reader == "stl" || reader == "ply" || reader == "off" || reader == "smd" || reader == "md5" || reader == "md5anim" || reader == "ms3d" || reader == "ase") {
+        if (reader == "obj" || reader == "stl" || reader == "ply" || reader == "off" || reader == "smd" || reader == "md5" || reader == "md5anim" || reader == "ms3d" || reader == "ase" || reader == "blend") {
             s.measured = true; s.nodes = (int)im.nodes.size();
             std::set<std::string> tex;
             for (const ImportedMaterial& m : im.materials)

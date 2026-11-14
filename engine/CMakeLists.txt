@@ -238,6 +238,7 @@ add_library(okay_engine
     src/Render/Md5Reader.cpp
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
+    src/Render/BlendReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -557,6 +558,11 @@ endif()
 if(OKAY_OWN_ASE)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
+endif()
+# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+if(OKAY_OWN_BLEND)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 
 # Friendly alias so subprojects can link okay::engine.

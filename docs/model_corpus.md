@@ -27,6 +27,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | MD5 | 5 | `.md5mesh` 4 (`SimpleCube`, `Bob`, `BoarMan`, one empty file) and `.md5anim` 1 (`Bob`, 140 frames at 24 per second, 33 joints) |
 | MS3D | 4 | `Wuson` (3,732 triangles), `jeep1` (7 groups, 2,032 triangles), `twospheres` and `twospheres_withmats`; none has joints |
 | ASE | 17 | `models/ASE` (14: static scenes, camera and object animation, a 26-object motion capture rig, UV transform tests, UTF-8 and UTF-16), `models-nonbsd/ASE` (2 rifles) and one empty file |
+| Blender | 28 | `models/BLEND` (26) and `models-nonbsd/BLEND` (2): Blender 2.41 to 2.93, 32 and 64 bit, little and big endian, plain and gzip |
 
 ## Running it
 
@@ -57,7 +58,6 @@ Bugs the real files found, all fixed with a regression test (fixtures `takes_bin
 Known differences from ufbx that remain (none changes a count the tests compare, all are recorded in `docs/own_fbx_reader.md`): ufbx keeps a few more exactly duplicated vertices (up to 0.1 %); a take whose curves animate only custom properties gets a constant clip from ufbx and none from us (two files); ufbx keeps keys beyond a take's end in its clip, ours cuts at the span; a take with only held poses is as long as its span for us and zero or span for ufbx depending on the file; quads of non-planar faces can be split along the other diagonal (surface area differs by up to 0.05 % on a duck model); bezier segments with user tangent weights differ from ufbx by up to 0.009 in a quaternion component.
 
 Not verified on real files: left-handed source axes, `InheritType` other than the default, FBX 6.x, NURBS and other non-mesh geometry, PBR material property sets (the two PBR files in the corpus read and match on geometry and counts, but their material values were not compared), dual-quaternion skinning.
-
 
 **Materials, compared with ufbx (pre-flip verification).** `fbx_reader` now compares, for every fixture and every real file, what both paths put on each mesh object: colour, emission, metalness, glossiness (shininess, specular, reflectivity), the texture file and the normal-map file. All 42 real files and all 12 fixtures agree, with the documented exceptions below. Three things came out of it:
 
@@ -91,6 +91,10 @@ See `docs/own_3ds_reader.md`: 15 of 16 read (the 16th is empty). Mesh count, tri
 ### BVH (own reader vs Assimp)
 
 See `docs/own_bvh_reader.md`: 3 of 3 read; first and last position and rotation keys equal to four decimals.
+
+### Blender (own reader vs Assimp)
+
+See `docs/own_blend_reader.md`: 28 of 28 read (Assimp reads 27; it fails `BlenderDefault_262.blend`).
 
 ### glTF / GLB, OBJ + MTL, STL, PLY (own readers vs Assimp)
 

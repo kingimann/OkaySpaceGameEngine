@@ -89,7 +89,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".blend"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -425,6 +425,12 @@ constexpr bool kOwnAseDefault = true;
 constexpr bool kOwnAseDefault = false;
 #endif
 
+#ifdef OKAY_OWN_BLEND_DEFAULT
+constexpr bool kOwnBlendDefault = true;
+#else
+constexpr bool kOwnBlendDefault = false;
+#endif
+
 // Opt-in readers (slot 3 and up): the environment variable that switches one, its name in messages and its CMake default.
 // A new format adds one line here, one case in OwnSlot and one in the read dispatch of ImportModelData.
 struct OptInFormat { const char* var; const char* name; bool cmakeDefault; };
@@ -437,6 +443,14 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MD5",     "MD5",     kOwnMd5Default},       // 8
     {"OKAY_OWN_MS3D",    "MS3D",    kOwnMs3dDefault},       // 9
     {"OKAY_OWN_ASE",     "ASE",     kOwnAseDefault},       // 10
+    // 11-15 belong to readers batch B (3MF, AMF, X3D, DXF, LWO). Until that lands they are unused placeholders
+    // (empty name and variable, never returned by OwnSlot), so the table stays indexed by slot - 3.
+    {"", "", false},                                       // 11
+    {"", "", false},                                       // 12
+    {"", "", false},                                       // 13
+    {"", "", false},                                       // 14
+    {"", "", false},                                       // 15
+    {"OKAY_OWN_BLEND",   "Blender", kOwnBlendDefault},     // 16
 };
 constexpr int kOwnSlots = 24;   // room for the opt-in readers still to come
 
@@ -454,6 +468,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".md5mesh" || e == ".md5anim") return 8;
     if (e == ".ms3d") return 9;
     if (e == ".ase") return 10;
+    if (e == ".blend") return 16;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -574,8 +589,9 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 7 ? ReadSmdFile(path, out, &e1)
                   : s == 8 ? ReadMd5File(path, out, &e1)
                   : s == 9 ? ReadMs3dFile(path, out, &e1)
-                  : ReadAseFile(path, out, &e1);
-        if (good && flatten && s >= 6) FlattenImportedModel(out);
+                  : s == 10 ? ReadAseFile(path, out, &e1)
+                  : ReadBlendFile(path, out, &e1, flatten);   // 16 (the Blender reader flattens by itself)
+        if (good && flatten && s >= 6 && s != 16) FlattenImportedModel(out);
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;
@@ -594,7 +610,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const std::string x = ExtensionOf(path);
         const int xs = OwnSlot(x);
         const bool optIn = xs >= 3 && xs - 3 < (int)(sizeof(kOptIn) / sizeof(kOptIn[0]));
-        const char* nm = optIn ? kOptIn[xs - 3].name : nullptr;
+        const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
             *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +

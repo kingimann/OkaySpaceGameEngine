@@ -2585,6 +2585,20 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
+
+    # The editor / launcher / player pieces moved behind the seam (clipboard, monitor list, timer, cursor, text
+    # input, file drop; shared/PlatformClipboard.hpp, shared/PlatformDisplays.hpp), on each backend under Xvfb.
+    add_executable(test_platform_seam test_platform_seam.cpp)
+    target_link_libraries(test_platform_seam PRIVATE okay::engine okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_seam PRIVATE SDL2::SDL2)   # the SDL-only monitor list this replaced, as the reference
+    endif()
+    target_include_directories(test_platform_seam PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_seam_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_seam> ${_okay_pb})
+        set_tests_properties(platform_seam_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
 endif()
 
 # The pure logic of the own Windows / macOS backends (UTF-16, key tables, DPI math, click counting, raw mouse,

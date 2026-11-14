@@ -93,6 +93,13 @@ bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Wi
     return false;
 }
 
+std::vector<DisplayModeInfo> Backend::DisplayModes(int index) {
+    std::vector<DisplayModeInfo> out;
+    DisplayInfo d;
+    if (GetDisplayInfo(index, d) && d.width > 0 && d.height > 0) out.push_back({d.width, d.height, d.refreshHz});
+    return out;
+}
+
 std::string Backend::BasePath() {
 #if defined(_WIN32)
     wchar_t buf[MAX_PATH * 4];

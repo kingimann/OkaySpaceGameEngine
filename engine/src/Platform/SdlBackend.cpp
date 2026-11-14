@@ -240,6 +240,42 @@ public:
         SDL_WarpMouseInWindow(w ? (SDL_Window*)w->NativeHandle() : nullptr, x, y);
     }
 
+    int DisplayCount() override {
+        const int n = SDL_GetNumVideoDisplays();
+        return n > 0 ? n : 0;
+    }
+    bool GetDisplayInfo(int index, DisplayInfo& out) override {
+        SDL_Rect b;
+        if (index < 0 || SDL_GetDisplayBounds(index, &b) != 0) return false;
+        out = DisplayInfo();
+        out.x = b.x; out.y = b.y; out.width = b.w; out.height = b.h;
+        out.workX = b.x; out.workY = b.y; out.workWidth = b.w; out.workHeight = b.h;
+        SDL_Rect u;
+        if (SDL_GetDisplayUsableBounds(index, &u) == 0) {
+            out.workX = u.x; out.workY = u.y; out.workWidth = u.w; out.workHeight = u.h;
+        }
+        float ddpi = 0, hdpi = 0, vdpi = 0;
+        if (SDL_GetDisplayDPI(index, &ddpi, &hdpi, &vdpi) == 0 && hdpi > 0) out.dpi = (unsigned)(hdpi + 0.5f);
+        SDL_DisplayMode cur;
+        if (SDL_GetCurrentDisplayMode(index, &cur) == 0 && cur.refresh_rate > 0) out.refreshHz = cur.refresh_rate;
+        out.primary = index == 0;
+        if (const char* n = SDL_GetDisplayName(index)) out.name = n;
+        return true;
+    }
+    std::vector<DisplayModeInfo> DisplayModes(int index) override {
+        std::vector<DisplayModeInfo> out;
+        SDL_DisplayMode cur;
+        if (SDL_GetCurrentDisplayMode(index, &cur) == 0 && cur.w > 0 && cur.h > 0)
+            out.push_back({cur.w, cur.h, cur.refresh_rate > 0 ? cur.refresh_rate : 0});
+        const int n = SDL_GetNumDisplayModes(index);
+        for (int k = 0; k < n; ++k) {
+            SDL_DisplayMode dm;
+            if (SDL_GetDisplayMode(index, k, &dm) != 0 || dm.w <= 0 || dm.h <= 0) continue;
+            out.push_back({dm.w, dm.h, dm.refresh_rate > 0 ? dm.refresh_rate : 0});
+        }
+        return out;
+    }
+
     bool SetClipboardText(const std::string& t) override { return SDL_SetClipboardText(t.c_str()) == 0; }
     std::string GetClipboardText() override {
         char* s = SDL_GetClipboardText();

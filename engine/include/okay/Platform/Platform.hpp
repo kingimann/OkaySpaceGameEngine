@@ -241,6 +241,11 @@ struct DisplayInfo {
     std::string name;
 };
 
+/// One video mode a monitor offers (desktop pixels, refresh in Hz, 0 = unknown).
+struct DisplayModeInfo {
+    int width = 0, height = 0, refreshHz = 0;
+};
+
 struct InitFlags {
     bool video = true, audio = true, gamepad = true;
 };
@@ -302,6 +307,9 @@ public:
     virtual bool SetPerMonitorDpiAware() { return false; }
     virtual int DisplayCount() { return 0; }                                  // 0 = this backend cannot say
     virtual bool GetDisplayInfo(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
+    /// The modes monitor `index` lists (the current one first, then the others; duplicates possible,
+    /// the caller filters). The base version returns only the current mode from GetDisplayInfo.
+    virtual std::vector<DisplayModeInfo> DisplayModes(int index);
     /// A modal error box (title, text), parented to `parent` when given. False = no
     /// message box available (the text is written to the log instead).
     virtual bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent = nullptr);

@@ -1,0 +1,8 @@
+okaybt 1
+name Mark
+key hit bool false
+key after bool false
+root 0
+node 0 Sequence parent=-1 x=200 y=0 name=Mark
+node 1 SetBlackboard parent=0 x=40 y=120 name=Hit bp=1 key=hit value=true
+node 2 SetBlackboard parent=0 x=360 y=120 key=after value=true

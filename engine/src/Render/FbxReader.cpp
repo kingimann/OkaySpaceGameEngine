@@ -1,5 +1,6 @@
 // okay::fbx layer 1: inflate + binary / ASCII FBX element tree. See FbxReader.hpp.
 // Written from the public description of the format; no third-party code.
+#include "NumParse.hpp"
 #include "okay/Render/FbxReader.hpp"
 
 #include <algorithm>
@@ -190,12 +191,12 @@ struct Reader {
                 out.s.assign((const char*)p + pos, len); pos += len;
                 return true;
             }
-            case 'f': case 'd': case 'l': case 'i': case 'b': {
+            case 'f': case 'd': case 'l': case 'i': case 'b': case 'c': {
                 std::uint32_t cnt, enc, clen;
                 if (!need(12)) return Fail("short array header");
                 std::memcpy(&cnt, p + pos, 4); std::memcpy(&enc, p + pos + 4, 4); std::memcpy(&clen, p + pos + 8, 4);
                 pos += 12;
-                const std::size_t esz = (t == 'd' || t == 'l') ? 8 : (t == 'b' ? 1 : 4);
+                const std::size_t esz = (t == 'd' || t == 'l') ? 8 : ((t == 'b' || t == 'c') ? 1 : 4);
                 const std::size_t raw = (std::size_t)cnt * esz;               // size_t is 64-bit here; cnt < 2^32 so no overflow
                 if (sizeof(std::size_t) < 8 && (std::size_t)cnt > (~(std::size_t)0) / esz) return Fail("array too large");
                 if (raw > lim->maxArrayBytes || arrayBytes + raw > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
@@ -219,6 +220,7 @@ struct Reader {
                         case 'f': { float x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
                         case 'l': { std::int64_t x; std::memcpy(&x, src + (std::size_t)k * 8, 8); v = (double)x; break; }
                         case 'i': { std::int32_t x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
+                        case 'c': v = src[k]; break;   // byte array (written by newer SDKs, e.g. thumbnails)
                         default:  v = src[k] != 0; break;
                     }
                     out.arr[k] = v;
@@ -321,7 +323,7 @@ struct Text {
         if (pos == b) return Fail("unexpected character in ASCII FBX");
         std::string tok(s + b, pos - b);
         char* end = nullptr;
-        const double d = std::strtod(tok.c_str(), &end);
+        const double d = detail::StrToD(tok.c_str(), &end);
         if (end && *end == '\0' && !tok.empty() && (std::isdigit((unsigned char)tok[0]) || tok[0] == '-' || tok[0] == '+' || tok[0] == '.')) {
             if (tok.find_first_of(".eE") == std::string::npos) {
                 out.type = 'L'; out.i = std::strtoll(tok.c_str(), nullptr, 10);
@@ -363,7 +365,7 @@ struct Text {
             if (pos == b) return Fail("bad value in array block");
             const std::string tok(s + b, pos - b);
             char* end = nullptr;
-            const double d = std::strtod(tok.c_str(), &end);
+            const double d = detail::StrToD(tok.c_str(), &end);
             if (!end || *end) return Fail("bad number in array block");
             out.arr.push_back(d);
             if (out.arr.size() > lim->maxArrayBytes / 8) return Fail("arrays exceed the size limit");

@@ -39,14 +39,14 @@ No open PR touches this area.
   - 11.2.2 Loot tables - `Inventory/LootTable` - weighted entries with min, max and chance, several rolls, cached per path
   - 11.2.3 Item pickups - `Components/ItemPickup` - walk into, auto radius or interact key, magnet, takes what fits, drops spawn a pickup so nothing is lost, "hold in hands" items
   - 11.2.4 Loot source - `Components/LootSource` - rolls a table at start, on first chest open or on death; refill timer; repeatable seed
-  - 11.2.5 Item Database window - `editor/main.cpp` - View > Editors & Tools > Item Database edits `items.okayitems`
-- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/main.cpp` (Item Database window)
-- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
-- **Editor:** View > Editors & Tools > Item Database; Add Component > RPG / Turn-Based > Item Pickup, Loot Source
-- **Docs:** `docs/asset_database.md` (lists the extensions only); no item or loot doc
-- **Tests:** `item_database`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
-- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops and loot rolls covered by `item_database` and `inventory_gameplay`
-- **Open:** no doc for `.okayitems` or `.okayloot` formats; no editor for loot tables (text files only); unknown item names become "loose" definitions that are never saved
+  - 11.2.5 Items, Loot & Recipes window - `editor/ContentEditors.cpp` - Window menu and View > Editors & Tools; items, loot tables (weights, quantity, roll preview) and the same window's recipe tab
+- **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/ContentEditors.cpp`
+- **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `LootTable::Shares`, `LootTable::Issues`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
+- **Editor:** Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
+- **Docs:** `docs/asset_database.md` (lists the extensions only); `docs/editor.md`
+- **Tests:** `item_database`, `item_loot_recipes`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
+- **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops, loot rolls, file round trip and roll distribution covered by `item_database`, `item_loot_recipes` and `inventory_gameplay`
+- **Open:** no separate doc page that spells the `.okayitems` or `.okayloot` text format out line by line; unknown item names become "loose" definitions that are never saved until Define it is used
 - **Related:** 11.1, 11.3, 20, 9.5, 5.9
 - **Words:** item database, .okayitems, item definition, rarity, stack size, loot table, .okayloot, drop, pickup, ItemPickup, LootSource, loot chest, durability, item uid, legacy item names
 - **Seen as:** an item shows as plain text with no icon; a renamed item disappears from old saves; enemies drop nothing; a pickup cannot be picked up; loot rolls the same every time or differs between runs
@@ -61,11 +61,11 @@ No open PR touches this area.
   - 11.3.4 Crafting station - `Components/CraftingStation` - bench with its own panel, station tag, shift-click to craft many, nearest-in-range only
 - **Code:** `Inventory/Recipe`, `Components/Crafting`, `Components/CraftingMenu`, `Components/CraftingStation`, `editor/main.cpp` (crafting inspectors)
 - **API:** `Recipe`, `Ingredient`, `RecipeBook`, `CraftQueue`, `Crafting::Craft`, `CraftingStation`, script `craft`, visual-script Craft, `on_craft`, `on_craft_failed`
-- **Editor:** Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station; recipe editor in the inspector; optional `.okayrecipes` picker
-- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only)
-- **Tests:** `inventory_persist_craft`, `npc_crafting`, `vs_inventory`
-- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks and craft counts covered by `inventory_persist_craft`
-- **Open:** no recipe book editor window (text file only); `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
+- **Editor:** Window > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
+- **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor.md`
+- **Tests:** `inventory_persist_craft`, `item_loot_recipes`, `npc_crafting`, `vs_inventory`
+- **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks, craft counts and the recipe file round trip covered by `inventory_persist_craft` and `item_loot_recipes`
+- **Open:** `docs/npcs_and_crafting.md` predates the shared recipe book and craft queue and does not describe them
 - **Related:** 11.1, 11.2, 11.5, 9.5
 - **Words:** crafting, recipe, .okayrecipes, workbench, crafting station, craft time, byproduct, craft queue, ingredients, CraftingMenu, unlock recipe
 - **Seen as:** crafting takes items but gives nothing; the same button appears twice after loading; a bench opens for the wrong player; craft time never finishes
@@ -220,22 +220,23 @@ No open PR touches this area.
 - **Ask me like:** "drag ingredients onto a cauldron"; "snap puzzle pieces to a grid"
 
 ### 11.12 Volumes and zones
-- **What:** One region shape (box, sphere or cylinder, no collider needed) with five zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera) and ambience (a sound that fades in around the camera). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
+- **What:** One region shape (box, sphere or cylinder, no collider needed) with six zone kinds: checkpoint and kill (a respawn point per body), force (wind, updraft, current), atmosphere (fog and vignette that fade in around the camera), ambience (a sound that fades in around the camera) and reverb (a room, hall, cave or outdoor echo on 3D sounds, blended at the edges). Drawn as a coloured translucent shape in the Scene view, drawn and resized by dragging.
 - **Parts:**
   - 11.12.1 Shape - `Components/Volume` - `VolumeGeometry`: box, sphere (ellipsoid) and cylinder from one `size` and `offset`; `Contains`, `DepthAt`, `DragFace` (move one face, the opposite stays), `FromGroundDrag`
   - 11.12.2 Checkpoint and Kill - `Components/Volume` - a body inside a Checkpoint takes the floor middle as its respawn point; a body entering a Kill takes `killDamage` and goes back to its checkpoint (or where it was first seen), or is destroyed; optional On Logic Signal `eventName`
   - 11.12.3 Force - `Components/Volume` - pushes dynamic Rigidbody 3D bodies each physics step: one direction (turning with the object or fixed to the world) or radial, in m/s squared
   - 11.12.4 Atmosphere and Ambience - `Components/Volume` - while the camera is inside, the scene fog and vignette blend to the volume's (several volumes blend, the scene's own values come back on exit); an Audio Source on the object fades in and out
+  - 11.12.7 Reverb - `Components/Volume`, `Audio/SpatialFx` - while the listener is inside, 3D sources are sent to the Schroeder reverb at the zone's preset (room, hall, cave, outdoor) and strength; `blend` fades that from the edge; overlapping zones mix; 2D sources are not sent
   - 11.12.5 Scene view tooling - `editor/VolumeTools.*` - translucent shape and label per volume in a colour per kind, six face handles on the selection, GameObject > Volume (draw by dragging on the ground, or create at the view), Scene Overlays > Volumes (show or hide by kind), Inspector, Add Component rows; Logic Source plates and trigger zones get the same shape, handles and switch
   - 11.12.6 Save and checks - `Scene/SceneSerializer`, `Testing/SceneValidator` - `volume` scene and prefab record (several per object), property registry entries, validator codes `volume.zero_size`, `volume.force_zero`, `volume.no_audio`
 - **Code:** `Components/Volume`, `editor/VolumeTools.*`, `Scene/SceneSerializer`, `Scene/BuiltinPropertiesGameplay`, `Testing/SceneValidator`
 - **API:** `Volume`, `Volume::Kind`, `VolumeGeometry`, `Volume::RespawnPoint`, `Volume::SetRespawnPoint`, `Volume::Occupants`, `Volume::ViewerWeight`
 - **Editor:** GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
 - **Docs:** `docs/volumes.md`
-- **Tests:** `volumes`, `save_coverage`, `property_registry`
-- **Status:** Works - all five kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, scene and prefab round trip, validator); the Scene view tools were driven in the real editor
-- **Open:** no reverb (the mixer has only a low-pass), no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it
+- **Tests:** `volumes`, `spatial_audio`, `save_coverage`, `property_registry`
+- **Status:** Works - all six kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, reverb weight and tail, scene and prefab round trip, validator) and `spatial_audio` (presets, edge blend, the demo scene); the Scene view tools were driven in the real editor
+- **Open:** no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not 2D, and a character controller that sets its own velocity each frame overrides it); Atmosphere overrides weather fog while the camera is inside; a Kill needs the body to have been seen outside the volume to know where to send it; reverb follows the listener only (a sound does not carry the room it is standing in once you have left)
 - **Related:** 6.2, 11.4, 11.6, 11.5, 2.4, 7.1, 15.3, 44.4
-- **Words:** volume, zone, trigger volume, checkpoint, respawn, kill zone, kill plane, out of bounds, wind zone, force field, updraft, current, fog volume, ambient sound zone, region, box, sphere, cylinder, draw volume
+- **Words:** volume, zone, trigger volume, checkpoint, respawn, kill zone, kill plane, out of bounds, wind zone, force field, updraft, current, fog volume, ambient sound zone, reverb zone, room echo, region, box, sphere, cylinder, draw volume
 - **Seen as:** cannot see where my zones are; the player falls into lava and stays dead; no checkpoint between rooms; need a wind tunnel or a fan; fog should change in a cave; a room needs its own background sound
 - **Ask me like:** "add a kill zone under the bridge that sends the player to the last checkpoint"; "a wind tunnel that blows crates along"; "fog that thickens when I enter the swamp"

@@ -875,13 +875,215 @@ std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& cent
     return out;
 }
 
+namespace {
+// A box or capsule used as a query (overlap or cast), not a scene collider.
+struct Query2 {
+    enum Kind { Box, Capsule } kind = Box;
+    OBB2 box{};
+    Vec2 a{}, b{};
+    float r = 0.0f;
+    Vec2 Center() const { return kind == Box ? box.c : (a + b) * 0.5f; }
+    // Half-size of the shape's bounds, for inflating a slab test.
+    Vec2 Extent() const {
+        if (kind == Box) {
+            float ex = box.h.x * Mathf::Abs(box.ax.x) + box.h.y * Mathf::Abs(box.ay.x);
+            float ey = box.h.x * Mathf::Abs(box.ax.y) + box.h.y * Mathf::Abs(box.ay.y);
+            return {ex, ey};
+        }
+        Vec2 mid = (a + b) * 0.5f;
+        float minx = Mathf::Min(a.x, b.x) - r, maxx = Mathf::Max(a.x, b.x) + r;
+        float miny = Mathf::Min(a.y, b.y) - r, maxy = Mathf::Max(a.y, b.y) + r;
+        return {Mathf::Max(mid.x - minx, maxx - mid.x), Mathf::Max(mid.y - miny, maxy - mid.y)};
+    }
+    float Thinnest() const {
+        if (kind == Box) return 2.0f * Mathf::Min(box.h.x, box.h.y);
+        return 2.0f * r;
+    }
+    Query2 Moved(const Vec2& off) const {
+        Query2 q = *this;
+        if (q.kind == Box) q.box.c = q.box.c + off;
+        else { q.a = q.a + off; q.b = q.b + off; }
+        return q;
+    }
+};
+
+OBB2 MakeQueryBox(const Vec2& c, const Vec2& half, float angle) {
+    OBB2 o;
+    o.c = c;
+    o.h = {Mathf::Abs(half.x), Mathf::Abs(half.y)};
+    float ca = Mathf::Cos(angle), sa = Mathf::Sin(angle);
+    o.ax = {ca, sa};
+    o.ay = {-sa, ca};
+    return o;
+}
+
+Vec2 ClosestOnOBB2(const OBB2& o, const Vec2& p) {
+    Vec2 d = p - o.c;
+    Vec2 l{Vec2::Dot(d, o.ax), Vec2::Dot(d, o.ay)};
+    Vec2 cl{Mathf::Clamp(l.x, -o.h.x, o.h.x), Mathf::Clamp(l.y, -o.h.y, o.h.y)};
+    return o.c + o.ax * cl.x + o.ay * cl.y;
+}
+
+// Does `col` touch the query? `n` points from the struck surface back toward the
+// query; `point` lies on the struck surface.
+bool QueryTouch(Collider2D* col, const Query2& q, Vec2& n, Vec2& point) {
+    using S = Collider2D::Shape;
+    if (q.kind == Query2::Box) {
+        if (col->shape() == S::Box) {
+            Contact c = TestOBBOBB(MakeOBB(static_cast<BoxCollider2D*>(col)), q.box);
+            if (!c.hit) return false;
+            n = c.normal;          // collider -> query
+            point = c.point;
+            return true;
+        }
+        Vec2 sc; float sr;
+        if (col->shape() == S::Capsule) {
+            auto* cap = static_cast<CapsuleCollider2D*>(col);
+            Vec2 s0, s1; cap->Segment(s0, s1);
+            sc = ClosestOnSegment(q.box.c, s0, s1);
+            for (int it = 0; it < 3; ++it) sc = ClosestOnSegment(ClosestOnOBB2(q.box, sc), s0, s1);
+            sr = cap->WorldRadius();
+        } else if (col->shape() == S::Circle) {
+            auto* cc = static_cast<CircleCollider2D*>(col);
+            sc = cc->WorldCenter(); sr = cc->WorldRadius();
+        } else {
+            AsCircle(col, q.box.c, sc, sr);
+        }
+        Contact c = TestOBBCircle(q.box, sc, sr);
+        if (!c.hit) return false;
+        n = c.normal * -1.0f;      // box -> circle, flipped so it points back at the box
+        point = sc + n * sr;
+        return true;
+    }
+    // Capsule query: reduce the collider to the circle nearest the capsule.
+    Vec2 onQ = ClosestOnSegment(col->WorldCenter(), q.a, q.b);
+    if (col->shape() == S::Box) {
+        auto* box = static_cast<BoxCollider2D*>(col);
+        OBB2 ob = MakeOBB(box);
+        onQ = ClosestOnSegment(ob.c, q.a, q.b);
+        for (int it = 0; it < 3; ++it) onQ = ClosestOnSegment(ClosestOnOBB2(ob, onQ), q.a, q.b);
+        Contact c = TestOBBCircle(ob, onQ, q.r);
+        if (!c.hit) return false;
+        n = c.normal;              // box -> capsule sample
+        point = c.point;
+        return true;
+    }
+    Vec2 sc; float sr;
+    if (col->shape() == S::Circle) {
+        auto* cc = static_cast<CircleCollider2D*>(col);
+        sc = cc->WorldCenter(); sr = cc->WorldRadius();
+        onQ = ClosestOnSegment(sc, q.a, q.b);
+    } else if (col->shape() == S::Capsule) {
+        auto* cap = static_cast<CapsuleCollider2D*>(col);
+        Vec2 s0, s1; cap->Segment(s0, s1);
+        Vec2 onCol; ClosestSegSeg(q.a, q.b, s0, s1, onQ, onCol);
+        sc = onCol; sr = cap->WorldRadius();
+    } else {
+        AsCircle(col, onQ, sc, sr);
+        onQ = ClosestOnSegment(sc, q.a, q.b);
+        AsCircle(col, onQ, sc, sr);
+    }
+    Contact c = TestCircleCircle(sc, sr, onQ, q.r);
+    if (!c.hit) return false;
+    n = c.normal;                  // collider sample -> query sample
+    point = c.point;
+    return true;
+}
+
+std::vector<Collider2D*> OverlapOf(Scene& scene, const Query2& q, std::uint32_t mask,
+                                   bool queryTriggers, GameObject* ignore) {
+    std::vector<Collider2D*> out;
+    for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(c, ignore, mask, queryTriggers)) continue;
+        Vec2 n, p;
+        if (QueryTouch(c, q, n, p)) out.push_back(c);
+    }
+    return out;
+}
+
+// Sweep `q` along unit `dir` up to maxDist. Same march as the circle cast: only
+// the stretch near a collider is sampled, then the first touch is bisected.
+RaycastHit2D SweepQuery(Scene& scene, const Query2& q, const Vec2& dir, float maxDist,
+                        GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+    RaycastHit2D best;
+    struct Cand { Collider2D* c; float t0, t1; };
+    std::vector<Cand> cands;
+    const Vec2 o = q.Center(), ext = q.Extent();
+    float lo = 1e30f, hi = -1e30f;
+    for (Collider2D* col : scene.FindObjectsOfType<Collider2D>()) {
+        if (!Passes(col, ignore, mask, queryTriggers)) continue;
+        Vec2 mn, mx; col->WorldAABB(mn, mx);
+        if (!(std::isfinite(mn.x + mn.y + mx.x + mx.y))) continue;
+        mn = mn - ext; mx = mx + ext;
+        float t0 = -1e30f, t1 = 1e30f; bool miss = false;
+        for (int a = 0; a < 2 && !miss; ++a) {
+            float od = a == 0 ? dir.x : dir.y, oo = a == 0 ? o.x : o.y;
+            float l = a == 0 ? mn.x : mn.y, h = a == 0 ? mx.x : mx.y;
+            if (Mathf::Abs(od) < 1e-8f) { if (oo < l || oo > h) miss = true; continue; }
+            float s0 = (l - oo) / od, s1 = (h - oo) / od;
+            if (s0 > s1) std::swap(s0, s1);
+            t0 = Mathf::Max(t0, s0); t1 = Mathf::Min(t1, s1);
+            if (t0 > t1) miss = true;
+        }
+        if (miss || t1 < 0.0f || t0 > maxDist) continue;
+        t0 = Mathf::Max(t0, 0.0f); t1 = Mathf::Min(t1, maxDist);
+        cands.push_back({col, t0, t1});
+        lo = Mathf::Min(lo, t0); hi = Mathf::Max(hi, t1);
+    }
+    if (cands.empty()) return best;
+    if (dir.SqrMagnitude() < 1e-12f) hi = lo;
+    float step = Mathf::Max(q.Thinnest() * 0.5f, 0.02f);
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !std::isfinite(step)) return best;
+    if ((hi - lo) / step > 20000.0f) step = (hi - lo) / 20000.0f;
+    float prev = lo;
+    int samples = 0;
+    for (float t = lo; ; t += step) {
+        bool last = t >= hi || ++samples > 20002;
+        if (last) t = hi;
+        Query2 s = q.Moved(dir * t);
+        float bestT = 1e30f; Collider2D* bestC = nullptr;
+        for (const Cand& cd : cands) {
+            if (t < cd.t0 - step || t > cd.t1 + step) continue;
+            Vec2 n, p;
+            if (!QueryTouch(cd.c, s, n, p)) continue;
+            float a = prev, b = t;
+            if (b > a) for (int it = 0; it < 12; ++it) {
+                float m = (a + b) * 0.5f;
+                if (QueryTouch(cd.c, q.Moved(dir * m), n, p)) b = m; else a = m;
+            }
+            if (b < bestT) { bestT = b; bestC = cd.c; }
+        }
+        if (bestC) {
+            Vec2 n, p;
+            QueryTouch(bestC, q.Moved(dir * bestT), n, p);
+            best.hit = true; best.collider = bestC; best.gameObject = bestC->gameObject;
+            best.distance = bestT; best.point = p; best.normal = n;
+            return best;
+        }
+        if (last) break;
+        prev = t;
+    }
+    return best;
+}
+
+Query2 BoxQuery(const Vec2& c, const Vec2& half, float angle) {
+    Query2 q; q.kind = Query2::Box; q.box = MakeQueryBox(c, half, angle); return q;
+}
+Query2 CapsuleQuery(const Vec2& a, const Vec2& b, float r) {
+    Query2 q; q.kind = Query2::Capsule; q.a = a; q.b = b; q.r = Mathf::Max(r, 0.0f); return q;
+}
+} // namespace
+
 std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center, const Vec2& half,
-                                               std::uint32_t layerMask, bool queryTriggers) {
+                                               std::uint32_t layerMask, bool queryTriggers,
+                                               GameObject* ignore, float angle) {
+    if (Mathf::Abs(angle) > 1e-5f)
+        return OverlapOf(scene, BoxQuery(center, half, angle), layerMask, queryTriggers, ignore);
     std::vector<Collider2D*> out;
     Vec2 qmn{center.x - half.x, center.y - half.y};
     Vec2 qmx{center.x + half.x, center.y + half.y};
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
-        if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
+        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
         bool hit = false;
         if (c->shape() == Collider2D::Shape::Box) {
             Vec2 mn, mx; c->WorldAABB(mn, mx);
@@ -1009,6 +1211,34 @@ RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2&
     Vec2 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
     return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers, false);
+}
+
+std::vector<Collider2D*> Physics2D::OverlapCapsule(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                                   std::uint32_t layerMask, bool queryTriggers,
+                                                   GameObject* ignore) {
+    return OverlapOf(scene, CapsuleQuery(a, b, radius), layerMask, queryTriggers, ignore);
+}
+
+RaycastHit2D Physics2D::BoxCast(Scene& scene, const Vec2& center, const Vec2& halfExtents,
+                                const Vec2& direction, float angle, float maxDistance,
+                                GameObject* ignore, std::uint32_t layerMask, bool queryTriggers) {
+    Vec2 dir = direction.Normalized();
+    Vec2 h{Mathf::Abs(halfExtents.x), Mathf::Abs(halfExtents.y)};
+    if (h.x <= 1e-6f && h.y <= 1e-6f)
+        return Raycast(scene, center, dir, maxDistance, ignore, layerMask, queryTriggers);
+    if (!std::isfinite(maxDistance) || maxDistance < 0.0f) return RaycastHit2D{};
+    return SweepQuery(scene, BoxQuery(center, h, angle), dir, maxDistance, ignore, layerMask, queryTriggers);
+}
+
+RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
+                                    const Vec2& direction, float maxDistance, GameObject* ignore,
+                                    std::uint32_t layerMask, bool queryTriggers) {
+    Vec2 dir = direction.Normalized();
+    float r = Mathf::Max(radius, 0.0f);
+    if (r <= 1e-6f && (a - b).SqrMagnitude() <= 1e-12f)
+        return Raycast(scene, a, dir, maxDistance, ignore, layerMask, queryTriggers);
+    if (!std::isfinite(maxDistance) || maxDistance < 0.0f) return RaycastHit2D{};
+    return SweepQuery(scene, CapsuleQuery(a, b, r), dir, maxDistance, ignore, layerMask, queryTriggers);
 }
 
 void Physics2D::SweepBody(Scene& scene, Rigidbody2D* rb, float dt) {

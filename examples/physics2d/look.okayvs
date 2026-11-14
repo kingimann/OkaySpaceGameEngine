@@ -1,0 +1,10 @@
+# Box cast to the right. Hit and distance land in variables the readout can show.
+node 1 OnStart
+entry OnStart 1
+node 2 BoxCast2D
+node 3 SetVar saw
+data 3 0 2 0
+node 4 SetVar dist
+data 4 0 2 3
+exec 1 0 3
+exec 3 0 4

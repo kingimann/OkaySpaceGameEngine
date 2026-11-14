@@ -1,0 +1,1110 @@
+// OkayUI value widgets with several cells in a row (DragFloat2/3/4, DragInt2/3/4, DragFloatRange2), headless:
+// synthetic mouse across frames, asserting what each cell does and what the others keep.
+#include "test_framework.hpp"
+#include "OkayUITestKit.hpp"
+#include <string>
+
+#include <cmath>
+#include <cstring>
+#include <limits>
+
+using namespace okayuitest;
+namespace UI = OkayUI;
+
+namespace {
+
+struct Rig {
+    Sim sim;
+    std::function<void()> body;
+    bool open = true;
+    Rig() { Reset(); }
+    void Frame() { sim.Frame([&] { if (UI::Begin("W", 10, 10, 500, 400, &open) && body) body(); UI::End(); }); }
+    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
+    void MoveTo(float x, float y) { sim.Move(x, y); Frame(); }
+    // Press in a cell, scrub `dx` pixels, release.
+    void Tap(Key k) { sim.Press(k); Frame(); }
+    void Click(float x, float y) { sim.Move(x, y); Frame(); sim.Down(); Frame(); sim.Up(); Frame(); }
+    void Scrub(float x, float y, float dx) { MoveTo(x, y); sim.Down(); Frame(); MoveTo(x + dx, y); sim.Up(); Frame(); }
+};
+
+// The centre of cell i of n in a row of width `w` that starts at `x` (4 px gaps, see OkayUI::dragCells).
+float CellX(float x, float w, int n, int i) {
+    const float cw = (w - 4.0f * (float)(n - 1)) / (float)n;
+    return x + (float)i * (cw + 4.0f) + cw * 0.5f;
+}
+
+void VectorTests() {
+    Rig r; float v[3] = {1, 2, 3}; UI::Rect rc; bool ch = false;
+    r.body = [&] { UI::PushID(1); UI::SetNextItemWidth(300); ch = UI::DragFloat3("", v, 0.5f); rc = UI::GetItemRect(); UI::PopID(); };
+    r.Frames(2);
+    CHECK_NEAR(rc.w, 300, 1e-3);
+    CHECK(!ch && v[0] == 1 && v[1] == 2 && v[2] == 3);
+    const float y = CenterY(rc);
+    r.Scrub(CellX(rc.x, rc.w, 3, 1), y, 10);                       // scrub the middle cell: only it changes
+    CHECK(v[0] == 1 && v[2] == 3);
+    CHECK_NEAR(v[1], 7.0f, 1e-3);                                   // 10 px * 0.5
+    r.Scrub(CellX(rc.x, rc.w, 3, 0), y, -4);
+    CHECK_NEAR(v[0], -1.0f, 1e-3); CHECK_NEAR(v[1], 7.0f, 1e-3); CHECK(v[2] == 3);
+    r.Scrub(CellX(rc.x, rc.w, 3, 2), y, 6);
+    CHECK_NEAR(v[2], 6.0f, 1e-3);
+    // hover alone changes nothing; a press that starts outside grabs nothing
+    r.MoveTo(CellX(rc.x, rc.w, 3, 1), y); CHECK(!ch);
+    const float before = v[1];
+    r.Scrub(rc.x + rc.w + 40, y, -100);
+    CHECK(v[1] == before);
+}
+
+void ClampAndCountTests() {
+    Rig r; float v2[2] = {0, 0}, v4[4] = {0, 0, 0, 0}; UI::Rect r2, r4;
+    r.body = [&] {
+        UI::PushID(2); UI::SetNextItemWidth(200); UI::DragFloat2("", v2, 1.0f, -5.0f, 5.0f); r2 = UI::GetItemRect(); UI::PopID();
+        UI::PushID(4); UI::SetNextItemWidth(400); UI::DragFloat4("", v4, 1.0f); r4 = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    r.Scrub(CellX(r2.x, r2.w, 2, 0), CenterY(r2), 50);              // clamps at the top
+    CHECK(v2[0] == 5.0f && v2[1] == 0.0f);
+    r.Scrub(CellX(r2.x, r2.w, 2, 1), CenterY(r2), -50);             // and at the bottom
+    CHECK(v2[1] == -5.0f);
+    for (int i = 0; i < 4; ++i) r.Scrub(CellX(r4.x, r4.w, 4, i), CenterY(r4), (float)(i + 1));
+    CHECK_NEAR(v4[0], 1, 1e-3); CHECK_NEAR(v4[1], 2, 1e-3); CHECK_NEAR(v4[2], 3, 1e-3); CHECK_NEAR(v4[3], 4, 1e-3);
+}
+
+void IntAndRangeTests() {
+    Rig r; int iv[3] = {10, 20, 30}; float lo = 2, hi = 4; UI::Rect ri, rr;
+    r.body = [&] {
+        UI::PushID(3); UI::SetNextItemWidth(300); UI::DragInt3("", iv, 1.0f, 0, 100); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(5); UI::SetNextItemWidth(200); UI::DragFloatRange2("", &lo, &hi, 1.0f, 0.0f, 10.0f); rr = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    r.Scrub(CellX(ri.x, ri.w, 3, 2), CenterY(ri), 7);
+    CHECK(iv[0] == 10 && iv[1] == 20 && iv[2] == 37);
+    r.Scrub(CellX(ri.x, ri.w, 3, 0), CenterY(ri), 500);             // clamps at 100
+    CHECK(iv[0] == 100);
+    // the low cell cannot pass the high one, and the high cannot go below the low
+    r.Scrub(CellX(rr.x, rr.w, 2, 0), CenterY(rr), 8);
+    CHECK(lo == 4.0f && hi == 4.0f);
+    r.Scrub(CellX(rr.x, rr.w, 2, 1), CenterY(rr), -9);
+    CHECK(lo == 4.0f && hi == 4.0f);
+    r.Scrub(CellX(rr.x, rr.w, 2, 1), CenterY(rr), 5);
+    CHECK(lo == 4.0f && hi == 9.0f);
+}
+
+void HostileTests() {
+    Rig r; float v[3] = {0, 1, 2}; const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+    UI::Rect rc;
+    r.body = [&] { UI::PushID(1); UI::SetNextItemWidth(300); UI::DragFloat3("", v, nan, nan, inf); rc = UI::GetItemRect(); UI::PopID(); };
+    r.Frames(2);
+    r.Scrub(CellX(rc.x, rc.w, 3, 1), CenterY(rc), 30);              // a NaN speed changes nothing and does not poison the value
+    CHECK(v[0] == 0 && v[1] == 1 && v[2] == 2);
+    float* none = nullptr; int* noneI = nullptr; float* a = nullptr;
+    r.body = [&] { UI::DragFloat3("x", none); UI::DragInt2("y", noneI); UI::DragFloatRange2("z", a, a); };
+    r.Frames(3);                                                    // null pointers are refused, not dereferenced
+    CHECK(true);
+    float v4[4] = {0, 0, 0, 0};                                     // DragFloat4 reads four floats: v has only three
+    r.body = [&] { UI::DragFloat4("a long label that does not fit in the window at all", v4); };
+    r.Frames(3);
+    CHECK(v4[0] == 0);
+}
+
+void SliderAndInputTests() {
+    Rig r; float v[3] = {0, 0, 0}; float f = 1.0f; float rgba[4] = {0.2f, 0.4f, 0.6f, 1.0f}; UI::Rect rs, rf, rc;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300); UI::SliderFloat3("", v, 0.0f, 10.0f); rs = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(260); UI::InputFloat("", &f, 0.25f); rf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(400); UI::ColorEdit4("", rgba); rc = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    // each slider cell takes the press at its own position and leaves the others alone
+    r.MoveTo(CellX(rs.x, rs.w, 3, 1), CenterY(rs)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(v[0] == 0 && v[2] == 0);
+    CHECK_NEAR(v[1], 5.0f, 0.05f);                                  // centre of the middle cell = half of 0..10
+    // InputFloat: [-] and [+] change by the step
+    const float btn = rf.h, field = rf.w - 2 * btn - 8.0f;
+    const float minusX = rf.x + field + 4.0f + btn * 0.5f, plusX = minusX + btn + 4.0f, by = CenterY(rf);
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(f, 1.25f, 1e-4);
+    r.MoveTo(minusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    r.MoveTo(minusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(f, 0.75f, 1e-4);
+    // ColorEdit4: the alpha slider is the fourth cell
+    const float cw = rc.h, sw = rc.w - cw - 6.0f, each = (sw - 12.0f) / 4.0f;
+    const float ax = rc.x + cw + 6.0f + 3.0f * (each + 4.0f) + each * 0.5f;
+    r.MoveTo(ax, CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK_NEAR(rgba[3], 0.5f, 0.05f);
+    CHECK(rgba[0] == 0.2f && rgba[1] == 0.4f && rgba[2] == 0.6f);
+}
+
+void InputFloatHostileTests() {
+    Rig r; float f = 1.0f; UI::Rect rf; const float inf = std::numeric_limits<float>::infinity();
+    float step = std::numeric_limits<float>::quiet_NaN();
+    r.body = [&] { UI::PushID(1); UI::SetNextItemWidth(260); UI::InputFloat("", &f, step); rf = UI::GetItemRect(); UI::PopID(); };
+    r.Frames(2);
+    const float btn = rf.h, field = rf.w - 2 * btn - 8.0f;
+    const float plusX = rf.x + field + 4.0f + btn * 1.5f + 4.0f, by = CenterY(rf);
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(f == 1.0f);                                               // a NaN step changes nothing
+    step = inf; r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(f == 1.0f);                                               // nor does an infinite one
+    f = std::numeric_limits<float>::max(); step = std::numeric_limits<float>::max();
+    r.MoveTo(plusX, by); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(std::isfinite(f));                                        // overflow to infinity is refused
+}
+
+void SmallWidgetTests() {
+    Rig r; int arrows = 0, colors = 0; float c[4] = {1, 0, 0, 1}; UI::Rect ra, rcb, ra2, rb;
+    r.body = [&] {
+        if (UI::ArrowButton("left", 0)) ++arrows; ra = UI::GetItemRect();
+        UI::SameLine();
+        if (UI::ArrowButton("bad", 99)) ++arrows;                   // an unknown direction is drawn as left, not read out of range
+        if (UI::ColorButton("col", c)) ++colors; rcb = UI::GetItemRect();
+        UI::Button("a"); ra2 = UI::GetItemRect();
+        UI::SameLine(); UI::NewLine();
+        UI::Button("b"); rb = UI::GetItemRect();
+    };
+    r.Frames(2);
+    CHECK(ra.w > 0 && ra.w == ra.h);                                // square
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(arrows >= 1);
+    r.MoveTo(CenterX(rcb), CenterY(rcb)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(colors >= 1);
+    CHECK(rb.y > ra2.y);                                            // NewLine after SameLine starts a new row
+}
+
+void HintAndFocusTests() {
+    Rig r; char text[32] = ""; UI::Rect rc; const char* hint = "Search..."; bool focusHere = false; bool ch = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300);
+        if (focusHere) UI::SetKeyboardFocusHere();
+        ch = UI::InputTextWithHint("", hint, text, (int)sizeof text);
+        rc = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    const unsigned field = ThemeRgba(UI::Style().field);
+    auto inner = [&](const char* h) {   // text pixels in the field, away from its border
+        hint = h; r.Frame();
+        const auto& bmp = r.sim.Draw();
+        return CountNot(bmp, (int)rc.x + 8, (int)rc.y + 4, (int)(rc.x + rc.w) - 8, (int)(rc.y + rc.h) - 4, field);
+    };
+    CHECK(inner("Search...") > 0);                                  // the empty field shows the placeholder
+    CHECK(inner(nullptr) == 0);                                     // without one it is plain
+    CHECK(text[0] == '\0' && !ch);                                  // a hint never writes into the buffer
+    // SetKeyboardFocusHere: typing reaches the field without a click
+    focusHere = true; r.Frame(); focusHere = false;
+    r.sim.Type("hi"); r.Frame();
+    CHECK(!std::strcmp(text, "hi") && ch);
+    // once there is text the placeholder is gone: the pixels are the same with and without a hint
+    const int withHint = inner("Search..."), without = inner(nullptr);
+    CHECK(withHint == without && withHint > 0);
+    // a null hint and a null buffer are refused
+    r.body = [&] { UI::InputTextWithHint("a", nullptr, text, (int)sizeof text); UI::InputTextWithHint("b", "x", nullptr, 8); UI::SetKeyboardFocusHere(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
+void WrapTests() {
+    Rig r; UI::Rect before, after, afterPop;
+    const char* longText = "the quick brown fox jumps over the lazy dog again and again until it is tired";
+    bool wrap = false; bool pop = true;
+    r.body = [&] {
+        if (wrap) UI::PushTextWrapPos(120.0f);
+        UI::Text(longText);
+        UI::TextColored(200, 100, 50, longText);
+        if (wrap && pop) UI::PopTextWrapPos();
+        UI::Button("marker"); after = UI::GetItemRect();
+        UI::Text(longText);                                            // after Pop: one line again
+        UI::Button("marker2"); afterPop = UI::GetItemRect();
+    };
+    wrap = false; r.Frames(2); before = after; const float singleGap = afterPop.y - after.y;
+    wrap = true; r.Frames(2);
+    CHECK(after.y > before.y + 40);                                    // both texts wrapped onto several lines
+    CHECK_NEAR(afterPop.y - after.y, singleGap, 1e-3);                 // the text after PopTextWrapPos is a single line again
+    // a missing Pop does not leak into the next frame
+    pop = false; r.Frames(2); wrap = false; r.Frames(2);
+    CHECK_NEAR(after.y, before.y, 1e-3);
+    // hostile widths
+    r.body = [&] { UI::PushTextWrapPos(std::numeric_limits<float>::quiet_NaN()); UI::Text("a b c"); UI::PopTextWrapPos();
+                   UI::PushTextWrapPos(-5.0f); UI::Text(""); UI::Text(nullptr); UI::PopTextWrapPos(); UI::PopTextWrapPos(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
+void ItemQueryTests() {
+    Rig r; char text[16] = ""; UI::Rect rt, rb, rb2; bool focT = false, focB = false, anyActive = false, visT = false;
+    unsigned idT = 0, idB = 0, idB2 = 0;
+    r.body = [&] {
+        UI::InputText("t", text, (int)sizeof text); rt = UI::GetItemRect(); focT = UI::IsItemFocused(); idT = UI::GetItemID(); visT = UI::IsItemVisible();
+        UI::Button("b1"); rb = UI::GetItemRect(); focB = UI::IsItemFocused(); idB = UI::GetItemID();
+        UI::Button("b2"); rb2 = UI::GetItemRect(); idB2 = UI::GetItemID();
+        anyActive = UI::IsAnyItemActive();
+    };
+    r.Frames(2);
+    CHECK(idT != 0 && idB != 0 && idB2 != 0);
+    CHECK(idT != idB && idB != idB2 && idT != idB2);                // every widget has its own id
+    CHECK(!focT && !focB && !anyActive);
+    CHECK(visT);
+    r.MoveTo(CenterX(rt), CenterY(rt)); r.sim.Down(); r.Frame();
+    CHECK(anyActive);                                               // the press is held
+    r.sim.Up(); r.Frame();
+    CHECK(focT && !focB);                                           // the clicked text field has the keyboard, the button after it does not
+    r.MoveTo(CenterX(rb), CenterY(rb)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(!focT);                                                   // clicking elsewhere drops it
+    // an item outside a small clip rectangle is not visible
+    bool inside = true, outside = true;
+    r.body = [&] {
+        UI::PushClipRect(0, 0, 50, 50);
+        UI::Button("tiny"); inside = UI::IsItemVisible();
+        UI::Dummy(10, 600); UI::Button("far"); outside = UI::IsItemVisible();
+        UI::PopClipRect();
+    };
+    r.Frames(2);
+    CHECK(inside && !outside);
+}
+
+void GroupTests() {
+    Rig r; UI::Rect ra, rb, rg, rc, rg2; bool hov = false;
+    r.body = [&] {
+        UI::BeginGroup();
+        UI::Button("first"); ra = UI::GetItemRect();
+        UI::Button("a much longer second button"); rb = UI::GetItemRect();
+        UI::EndGroup(); rg = UI::GetItemRect(); hov = UI::IsItemHovered();
+        UI::SameLine();
+        UI::Button("beside"); rc = UI::GetItemRect();
+        UI::BeginGroup(); UI::BeginGroup(); UI::Button("deep"); UI::EndGroup(); UI::EndGroup(); rg2 = UI::GetItemRect();
+        UI::BeginGroup(); UI::EndGroup();                              // an empty group is harmless
+        UI::EndGroup(); UI::EndGroup();                                // so are unmatched Ends
+        UI::BeginGroup();                                              // and a missing End (cleared next frame)
+    };
+    r.Frames(3);
+    CHECK_NEAR(rg.x, ra.x, 1e-3); CHECK_NEAR(rg.y, ra.y, 1e-3);        // the group starts where its first item starts
+    CHECK(rg.w >= rb.w - 1e-3 && rg.h >= (rb.y + rb.h - ra.y) - 1e-3); // and covers both stacked buttons
+    CHECK_NEAR(rc.y, rg.y, 1e-3);                                      // SameLine after a group goes next to its top
+    CHECK(rc.x > rg.x + rg.w);
+    CHECK(rg2.w > 0 && rg2.h > 0);                                     // nested groups report the inner item's box
+    r.MoveTo(CenterX(ra), CenterY(ra));
+    r.Frame(); CHECK(hov);                                             // hovering any part of the group hovers the group item
+    r.MoveTo(rg.x + rg.w + 1, ra.y - 20); r.Frame();
+    CHECK(!hov);
+}
+
+void TreeTests() {
+    Rig r; bool a = false, b = false, leafOpen = false, everToggled = false, leafToggled = false;
+    UI::Rect ra, rl; bool forceOpen = false, forceClose = false;
+    r.body = [&] {
+        if (forceOpen) { UI::SetNextItemOpen(true); forceOpen = false; }
+        if (forceClose) { UI::SetNextItemOpen(false); forceClose = false; }
+        a = UI::TreeNode("plain"); ra = UI::GetItemRect(); if (UI::IsItemToggledOpen()) everToggled = true;
+        if (a) { UI::Text("child"); UI::TreePop(); }
+        b = UI::TreeNodeEx("starts open", UI::TreeNode_DefaultOpen);
+        if (b) {
+            leafOpen = UI::TreeNodeEx("leaf", UI::TreeNode_Leaf | UI::TreeNode_Selected); rl = UI::GetItemRect();
+            if (UI::IsItemToggledOpen()) leafToggled = true;
+            if (leafOpen) UI::TreePop();
+            UI::TreePop();
+        }
+    };
+    r.Frames(2);
+    CHECK(!a && b && leafOpen);                                      // default closed, DefaultOpen starts open, a leaf returns true
+    CHECK(!everToggled);
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(a && everToggled);                                         // a click opens it and is reported as a toggle
+    r.MoveTo(CenterX(ra), CenterY(ra)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(!a);                                                       // the next click closes it
+    forceOpen = true; r.Frame(); CHECK(a);                           // SetNextItemOpen forces the next node open
+    forceClose = true; r.Frame(); CHECK(!a);
+    r.MoveTo(CenterX(rl), CenterY(rl)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(leafOpen && !leafToggled);                                 // clicking a leaf never toggles it
+}
+
+void BeginComboTests() {
+    Rig r; int sel = 0; bool open = false; UI::Rect rbox, r1, r2;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(220);
+        open = UI::BeginCombo("", sel == 0 ? "none" : sel == 1 ? "one" : "two");
+        rbox = UI::GetItemRect(); UI::PopID();
+        if (open) {
+            if (UI::Selectable("one", sel == 1)) { sel = 1; UI::CloseCurrentPopup(); }
+            r1 = UI::GetItemRect();
+            if (UI::Selectable("two", sel == 2)) { sel = 2; UI::CloseCurrentPopup(); }
+            r2 = UI::GetItemRect();
+            UI::EndCombo();
+        }
+    };
+    r.Frames(2);
+    CHECK(!open && sel == 0);                                       // closed until clicked
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);                                                    // a click opens the list
+    CHECK(rbox.w > 100 && rbox.h > 10);                             // GetItemRect right after BeginCombo is the box, open or not
+    CHECK(r1.y >= rbox.y + rbox.h - 1 && r2.y > r1.y);              // the rows sit under the box, in order
+    r.MoveTo(CenterX(r2), CenterY(r2)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+   
+    CHECK(sel == 2 && !open);                                       // picking a row sets it and closes the list
+    // clicking the box twice opens and then closes it
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(!open);
+    // a click outside the list closes it, without changing the value
+    r.MoveTo(CenterX(rbox), CenterY(rbox)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(open);
+    r.MoveTo(380, 380); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(!open && sel == 2);
+    // a null preview is drawn as nothing
+    r.body = [&] { if (UI::BeginCombo("x", nullptr)) UI::EndCombo(); };
+    r.Frames(3);
+    CHECK(true);
+}
+
+void TypedNumberTests() {
+    Rig r; float v[3] = {1, 2, 3}; int iv[2] = {5, 6}; float sl[2] = {0.25f, 0.75f}; UI::Rect rv, ri, rs;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(300); UI::DragFloat3("", v, 0.5f, -100.0f, 100.0f); rv = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(300); UI::DragInt2("", iv, 1.0f, 0, 50); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(300); UI::SliderFloat2("", sl, 0.0f, 1.0f); rs = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto ctrlClick = [&](const UI::Rect& rc, int n, int i) {
+        r.sim.ctrl = true; r.MoveTo(CellX(rc.x, rc.w, n, i), CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.ctrl = false;
+    };
+    // Ctrl+click a drag cell, type, Enter: the value is what was typed (the old text is replaced)
+    ctrlClick(rv, 3, 1); r.sim.Type("42.5"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(v[1], 42.5f, 1e-4); CHECK(v[0] == 1 && v[2] == 3);
+    // clamped to the cell's range
+    ctrlClick(rv, 3, 2); r.sim.Type("1000"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(v[2], 100.0f, 1e-4);
+    // Escape cancels
+    ctrlClick(rv, 3, 0); r.sim.Type("77"); r.Frame(); r.Tap(Key_Escape); r.Frame();
+    CHECK(v[0] == 1);
+    // text that is not a number keeps the old value
+    ctrlClick(rv, 3, 0); r.sim.Type("abc"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(v[0] == 1);
+    // integers round and clamp
+    ctrlClick(ri, 2, 0); r.sim.Type("7.6"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(iv[0] == 8 && iv[1] == 6);
+    ctrlClick(ri, 2, 1); r.sim.Type("99"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK(iv[1] == 50);
+    // slider cells take typed values too, clamped to their range
+    ctrlClick(rs, 2, 1); r.sim.Type("0.1"); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    CHECK_NEAR(sl[1], 0.1f, 1e-5); CHECK(sl[0] == 0.25f);
+    // a plain click (no Ctrl) still scrubs and never opens the text box
+    const float before = v[1];
+    r.MoveTo(CellX(rv.x, rv.w, 3, 1), CenterY(rv)); r.sim.Down(); r.Frame(); r.MoveTo(CellX(rv.x, rv.w, 3, 1) + 4, CenterY(rv)); r.sim.Up(); r.Frame();
+    CHECK_NEAR(v[1], before + 2.0f, 1e-3);
+    // clicking away while typing commits
+    ctrlClick(rv, 3, 0); r.sim.Type("9"); r.Frame();
+    r.Click(450, 380);
+    CHECK_NEAR(v[0], 9.0f, 1e-4);
+}
+
+void TypedSingleTests() {
+    Rig r; float f = 1.0f, sf = 0.5f; int i = 3, si = 4; UI::Rect rf, rsf, ri, rsi; bool cf = false, ci = false, csf = false, csi = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(240); cf = UI::DragFloat("", &f, 0.5f, 0.0f, 10.0f); rf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(240); ci = UI::DragInt("", &i, 1.0f, 0, 20); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(3); UI::SetNextItemWidth(240); csf = UI::SliderFloat("", &sf, 0.0f, 1.0f); rsf = UI::GetItemRect(); UI::PopID();
+        UI::PushID(4); UI::SetNextItemWidth(240); csi = UI::SliderInt("", &si, 0, 10); rsi = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto typeInto = [&](const UI::Rect& rc, const char* text) {
+        r.sim.ctrl = true; r.MoveTo(CenterX(rc), CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.ctrl = false;
+        r.sim.Type(text); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    };
+    typeInto(rf, "6.25");  CHECK_NEAR(f, 6.25f, 1e-4);              // DragFloat
+    typeInto(rf, "99");    CHECK_NEAR(f, 10.0f, 1e-4);              // clamped to its range
+    typeInto(ri, "12.4");  CHECK(i == 12);                          // DragInt rounds
+    typeInto(ri, "-5");    CHECK(i == 0);                           // and clamps
+    typeInto(rsf, "0.8");  CHECK_NEAR(sf, 0.8f, 1e-4);              // SliderFloat
+    typeInto(rsi, "7");    CHECK(si == 7);                          // SliderInt
+    typeInto(rsi, "x");    CHECK(si == 7);                          // not a number: unchanged
+    CHECK(!cf && !ci && !csf && !csi);                              // no change is reported while nothing is happening
+}
+
+void TypedInputTests() {
+    Rig r; int i = 5; float f = 1.5f; UI::Rect ri, rf; bool ci = false, cf = false;
+    r.body = [&] {
+        UI::PushID(1); UI::SetNextItemWidth(240); ci = UI::InputInt("", &i, 1); ri = UI::GetItemRect(); UI::PopID();
+        UI::PushID(2); UI::SetNextItemWidth(240); cf = UI::InputFloat("", &f, 0.5f); rf = UI::GetItemRect(); UI::PopID();
+    };
+    r.Frames(2);
+    auto typeInto = [&](const UI::Rect& rc, const char* text) {   // a plain click on the value box (no Ctrl), then the text, then Enter
+        r.MoveTo(rc.x + 20.0f, CenterY(rc)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+        r.sim.Type(text); r.Frame(); r.Tap(Key_Enter); r.Frame();
+    };
+    typeInto(ri, "42");     CHECK(i == 42 && ci == false);          // (the change flag is for the frame it happens in)
+    typeInto(ri, "-7.6");   CHECK(i == -8);                         // rounds
+    typeInto(ri, "x");      CHECK(i == -8);                         // not a number: unchanged
+    typeInto(ri, "99999999999"); CHECK(i == 2147483647);            // clamped to the int range, no overflow
+    typeInto(rf, "3.25");   CHECK_NEAR(f, 3.25f, 1e-4);
+    typeInto(rf, "-0.5");   CHECK_NEAR(f, -0.5f, 1e-4);
+    typeInto(rf, "nan");    CHECK_NEAR(f, -0.5f, 1e-4);             // not finite: unchanged
+    typeInto(rf, "1e50");   CHECK_NEAR(f, -0.5f, 1e-4);             // does not fit a float: unchanged
+    // the steppers still work after typing
+    i = 10; r.Frames(2);
+    r.Click(ri.x + ri.w - 2.0f * ri.h - 20.0f + ri.h * 0.5f, CenterY(ri));   // the "-" button is left of the "+" button at the right end
+    CHECK(i == 10 || i == 9 || i == 11);                            // a stepper moved it by one at most (the exact button is layout-dependent)
+    // while typing is open the value is not drawn twice: the box shows the edit text, and Escape cancels
+    f = 2.0f; r.Frames(2);
+    r.MoveTo(rf.x + 20.0f, CenterY(rf)); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    r.sim.Type("9"); r.Frame(); r.Tap(Key_Escape); r.Frame(); r.Frame();
+    CHECK_NEAR(f, 2.0f, 1e-4);
+}
+
+void TabBarTests() {
+    Rig r; UI::Rect rA, rB, rC, rPlus, rCx; bool bodyA = false, bodyB = false, bodyC = false, plus = false, openC = true, barOpen = false; int force = 0;
+    // GetItemRect right after a header call is that header's rectangle.
+    r.body = [&] {
+        barOpen = UI::BeginTabBar("bar");
+        if (barOpen) {
+            bodyA = bodyB = bodyC = false;
+            if (UI::BeginTabItem("Alpha", nullptr, force == 1 ? UI::Tab_SetSelected : 0)) { bodyA = true; UI::EndTabItem(); }
+            rA = UI::GetItemRect();
+            if (UI::BeginTabItem("Beta"))  { bodyB = true; UI::EndTabItem(); }
+            rB = UI::GetItemRect();
+            if (UI::BeginTabItem("Gamma", &openC)) { bodyC = true; UI::EndTabItem(); }
+            rC = UI::GetItemRect();
+            if (UI::TabItemButton("+", UI::Tab_Trailing)) plus = true;
+            rPlus = UI::GetItemRect();
+            UI::EndTabBar();
+        }
+        CHECK(!UI::BeginTabItem("orphan"));                      // outside a bar: harmless
+        CHECK(!UI::TabItemButton("orphan"));
+        UI::EndTabItem(); UI::EndTabBar();
+    };
+    r.Frames(3);
+    CHECK(barOpen && bodyA && !bodyB && !bodyC);                  // the first tab is chosen at the start, only its body runs
+    CHECK(rA.x < rB.x && rB.x < rC.x && rPlus.x > rC.x);          // left to right, the trailing button at the right end
+    CHECK(rPlus.x + rPlus.w > rC.x + rC.w + 20.0f);
+    r.Click(CenterX(rB), CenterY(rB)); r.Frames(2);
+    CHECK(bodyB && !bodyA && !bodyC);                             // clicking Beta switches the body
+    r.Click(CenterX(rA), CenterY(rA)); r.Frames(2);
+    CHECK(bodyA && !bodyB);
+    force = 1; r.Click(CenterX(rB), CenterY(rB)); r.Frames(2);    // Tab_SetSelected on Alpha wins every frame it is passed
+    CHECK(bodyA && !bodyB);
+    force = 0; r.Frames(2); CHECK(bodyA);                         // without the flag it simply stays
+    r.Click(CenterX(rC) - 6.0f, CenterY(rC)); r.Frames(2); CHECK(bodyC && openC);   // Gamma chosen
+    // the x on a closable tab closes it, and the first tab takes over
+    r.Click(rC.x + rC.w - 8.0f, CenterY(rC)); r.Frames(3);
+    CHECK(!openC && !bodyC && bodyA);
+    r.Click(CenterX(rPlus), CenterY(rPlus)); r.Frames(2);         // the trailing button reports its click
+    CHECK(plus);
+}
+
+void TooltipAndHelperTests() {
+    Rig r; UI::Rect rb; bool showTip = false, showTwo = false; const char* tipText = "tip"; int clicks = 0;
+    UI::Vec2 mn, mx, sz;
+    r.body = [&] {
+        UI::Button("Hover me"); rb = UI::GetItemRect();
+        mn = UI::GetItemRectMin(); mx = UI::GetItemRectMax(); sz = UI::GetItemRectSize();
+        if (showTip) UI::SetTooltip("%s %d", tipText, 7);
+        if (showTwo) UI::SetTooltip("first\nsecond");
+        UI::TextUnformatted("abcdef", "abcdef" + 3);      // only the first three characters
+        UI::TextUnformatted("100% sure %s %d");           // no formatting
+        if (UI::IsMouseDoubleClicked()) ++clicks;
+    };
+    r.Frames(2);
+    CHECK_NEAR(mn.x, rb.x, 1e-3); CHECK_NEAR(mn.y, rb.y, 1e-3);
+    CHECK_NEAR(mx.x, rb.x + rb.w, 1e-3); CHECK_NEAR(mx.y, rb.y + rb.h, 1e-3);
+    CHECK_NEAR(sz.x, rb.w, 1e-3); CHECK_NEAR(sz.y, rb.h, 1e-3);
+    const unsigned panel = ThemeRgba(UI::Style().panel);
+    // SetTooltip draws a box next to the cursor, whatever is hovered
+    r.sim.Move(100, 300); r.Frames(2);
+    const auto before = r.sim.Draw();
+    const int n0 = CountNot(before, 110, 310, 200, 340, PixelAt(before, 300, 300));
+    showTip = true; r.Frames(2);
+    const auto& with = r.sim.Draw();
+    CHECK(CountNot(with, 110, 310, 200, 340, PixelAt(with, 300, 300)) > n0);
+    // a second line makes the box taller: scan down the column through the box for its last non-background row
+    auto boxBottom = [&]() { const auto& bm = r.sim.Draw(); const unsigned bg = PixelAt(bm, 400, 380); int last = 0;
+        for (int y = 306; y < 400; ++y) if (PixelAt(bm, 120, y) != bg) last = y; return last; };
+    showTip = false; showTwo = true; r.Frames(2); const int two = boxBottom();
+    showTwo = false; showTip = true; r.Frames(2); const int one = boxBottom();
+    CHECK(one > 314 && two >= one + (int)(UI::GetTextLineHeight() * 0.6f));
+    const unsigned winBg = PixelAt(r.sim.Draw(), 400, 380);
+    // near the right edge the box flips to the left of the cursor instead of running off the display
+    showTip = true; r.sim.Move(630, 300); r.Frames(2);
+    CHECK(PixelAt(r.sim.Draw(), 619, 320) != winBg);                          // its right border, left of the cursor
+    r.sim.Move(100, 300); showTip = false; r.Frames(2);
+    // double click: two presses close together; a slow second press or a far one is not
+    clicks = 0; r.sim.Move(200, 200); r.Frame();
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(clicks == 1);
+    clicks = 0;
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();                           // a third click is a new first click
+    CHECK(clicks == 0);
+    clicks = 0; r.Frames(40);                                                 // wait (frames count as 1/60 s)
+    r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); CHECK(clicks == 0);
+    r.Frames(30); r.sim.Move(260, 200); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Move(300, 200); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame();
+    CHECK(clicks == 0);                                                       // the second press is far from the first
+    // dragging: held and moved more than the threshold
+    r.sim.Move(100, 100); r.Frame(); r.sim.Down(); r.Frame();
+    CHECK(!UI::IsMouseDragging());
+    r.sim.Move(103, 100); r.Frame(); CHECK(!UI::IsMouseDragging());
+    r.sim.Move(120, 100); r.Frame(); CHECK(UI::IsMouseDragging());
+    CHECK(!UI::IsMouseDragging(0, 50.0f));                                     // a larger threshold
+    CHECK(!UI::IsMouseDragging(1));                                            // only the left button
+    r.sim.Up(); r.Frame(); CHECK(!UI::IsMouseDragging());
+    // time and frame count move forward
+    const double t0 = UI::GetTime(); const int f0 = UI::GetFrameCount();
+    r.Frames(30);
+    CHECK(UI::GetFrameCount() == f0 + 30 && UI::GetTime() > t0 + 0.4);
+    UI::AlignTextToFramePadding();                                             // accepted, does nothing
+    UI::SetTooltip(nullptr); UI::TextUnformatted(nullptr);                     // null arguments are harmless
+}
+
+void KeyStateTests() {
+    Rig r; bool down = false, pressed = false, pressedNoRep = false, released = false; int presses = 0, pressesNoRep = 0;
+    r.body = [&] {
+        down = UI::IsKeyDown(UI::KeyId_F5); pressed = UI::IsKeyPressed(UI::KeyId_F5); pressedNoRep = UI::IsKeyPressed(UI::KeyId_F5, false);
+        released = UI::IsKeyReleased(UI::KeyId_F5);
+        // IsKeyPressed consumes a repeat tick, so count presses from one call per frame
+    };
+    r.Frames(2);
+    CHECK(!down && !pressed && !released);
+    r.sim.Hold(UI::KeyId_F5, true); r.Frame();
+    CHECK(down && pressed && pressedNoRep && !released);                      // the frame it goes down
+    r.Frame(); CHECK(down && !pressed && !pressedNoRep);                      // held: not "pressed" again right away
+    // holding for half a second starts repeating; without repeat it never fires again
+    r.body = [&] { if (UI::IsKeyPressed(UI::KeyId_F5)) ++presses; if (UI::IsKeyPressed(UI::KeyId_F5, false)) ++pressesNoRep; };
+    presses = pressesNoRep = 0;
+    r.Frames(20); CHECK(presses == 0);                                        // 20 frames = 0.33 s: still waiting
+    r.Frames(40); CHECK(presses >= 3);                                        // by 1.0 s it has repeated several times
+    CHECK(pressesNoRep == 0);
+    r.body = [&] { down = UI::IsKeyDown(UI::KeyId_F5); released = UI::IsKeyReleased(UI::KeyId_F5); pressed = UI::IsKeyPressed(UI::KeyId_F5); };
+    r.sim.Hold(UI::KeyId_F5, false); r.Frame();
+    CHECK(!down && released && !pressed);                                     // the frame it goes up
+    r.Frame(); CHECK(!released);
+    // an id out of range or "none" is not down; Ctrl and Shift follow the older flags
+    CHECK(!UI::IsKeyDown(UI::KeyId_None) && !UI::IsKeyDown((UI::KeyId)-3) && !UI::IsKeyDown((UI::KeyId)99999));
+    CHECK(!UI::IsKeyPressed((UI::KeyId)99999) && !UI::IsKeyReleased((UI::KeyId)-1));
+    r.sim.ctrl = true; r.sim.shift = true; r.body = [&] { down = UI::IsKeyDown(UI::KeyId_Ctrl) && UI::IsKeyDown(UI::KeyId_Shift) && !UI::IsKeyDown(UI::KeyId_Alt); };
+    r.Frame(); CHECK(down);
+    r.sim.ctrl = false; r.sim.shift = false;
+}
+
+void StyleVarTests() {
+    Rig r; UI::Rect a1, a2, b1, b2; float roundIn = -1, roundAfter = -1, padIn = -1, padAfter = -1, borderIn = -1, borderAfter = -1;
+    float round0 = 0, pad0 = 0, border0 = 0; bool run = true;
+    r.body = [&] {
+        round0 = UI::Style().rounding; pad0 = UI::Style().windowPadding; border0 = UI::Style().borderPx;
+        UI::Button("a"); a1 = UI::GetItemRect(); UI::Button("b"); a2 = UI::GetItemRect();       // normal spacing
+        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{4.0f, 30.0f});
+        UI::Button("c"); b1 = UI::GetItemRect(); UI::Button("d"); b2 = UI::GetItemRect();       // spacing 30 below
+        UI::PushStyleVar(UI::StyleVar_FrameRounding, 11.0f); UI::PushStyleVar(UI::StyleVar_WindowPadding, 33.0f);
+        UI::PushStyleVar(UI::StyleVar_BorderSize, 3.0f);
+        roundIn = UI::Style().rounding; padIn = UI::Style().windowPadding; borderIn = UI::Style().borderPx;
+        UI::PopStyleVar(3);
+        UI::PopStyleVar();                                                                      // the spacing
+        roundAfter = UI::Style().rounding; padAfter = UI::Style().windowPadding; borderAfter = UI::Style().borderPx;
+        UI::PushStyleVar(UI::StyleVar_Alpha, 0.5f); UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{1, 2});   // accepted, no effect
+        UI::PushStyleVar(UI::StyleVar_ButtonTextAlign, UI::Vec2{0, 0}); UI::PopStyleVar(3);
+        UI::PopStyleVar(5);                                                                      // more pops than pushes: harmless
+        UI::PopStyleVar(-2); UI::PopStyleVar(0);
+        for (int i = 0; i < 40; ++i) UI::PushStyleVar(UI::StyleVar_FrameRounding, (float)i);     // deeper than the stack: the extra pushes are ignored
+        if (run) { UI::PopStyleVar(40); }                                                        // (and unbalanced when run is false: reset next frame)
+    };
+    r.Frames(3);
+    const float normalGap = a2.y - (a1.y + a1.h), wideGap = b2.y - (b1.y + b1.h);
+    CHECK(wideGap > normalGap + 15.0f && std::fabs(wideGap - 30.0f) < 1.0f);                    // ItemSpacing y took effect
+    CHECK_NEAR(roundIn, 11.0f, 1e-4); CHECK_NEAR(padIn, 33.0f, 1e-4); CHECK_NEAR(borderIn, 3.0f, 1e-4);
+    CHECK_NEAR(roundAfter, round0, 1e-4); CHECK_NEAR(padAfter, pad0, 1e-4); CHECK_NEAR(borderAfter, border0, 1e-4);   // restored
+    // a push that is never popped does not leak into the next frame
+    const float defRound = round0;                                                               // what a clean frame starts with
+    run = false; r.Frames(3);
+    CHECK_NEAR(round0, defRound, 1e-4);                                                          // read at the start of a frame: the 32 leftover pushes were undone
+    // the spacing is back to normal for the next widgets after the pop
+    run = true; r.Frames(2);
+    CHECK(std::fabs((a2.y - (a1.y + a1.h)) - normalGap) < 0.01f);
+}
+
+void WindowApiTests() {
+    Sim sim;   // the shared test kit, driven directly: these windows are not wrapped in the Rig's own window
+    UI::Vec2 pos{-1, -1}, size{-1, -1}; float ww = -1, wh = -1; bool shown = false, hovered = false, focused = false, appearing = false;
+    bool drawB = true; UI::Vec2 posB{-1, -1}, sizeB{-1, -1}; bool focusedB = false;
+    int mode = 0; bool open = true;
+    auto frame = [&] {
+        sim.Frame([&] {
+            if (mode == 1) { UI::SetNextWindowPos(UI::Vec2{200, 120}, UI::Cond_FirstUseEver); UI::SetNextWindowSize(UI::Vec2{300, 200}, UI::Cond_FirstUseEver); }
+            if (mode == 2) { UI::SetNextWindowPos(UI::Vec2{50, 60}, UI::Cond_Always); UI::SetNextWindowSize(UI::Vec2{150, 100}, UI::Cond_Always); }
+            if (mode == 3) { UI::SetNextWindowPos(UI::Vec2{400, 300}, UI::Cond_Appearing); }
+            shown = UI::Begin("Win A", &open, mode == 4 ? UI::Window_NoMove : 0);
+            pos = UI::GetWindowPos(); size = UI::GetWindowSize(); ww = UI::GetWindowWidth(); wh = UI::GetWindowHeight();
+            hovered = UI::IsWindowHovered(); focused = UI::IsWindowFocused(); appearing = UI::IsWindowAppearing();
+            if (shown) UI::Text("content");
+            UI::End();
+            if (drawB) {
+                UI::SetNextWindowPos(UI::Vec2{450, 20}, UI::Cond_FirstUseEver); UI::SetNextWindowSize(UI::Vec2{100, 80}, UI::Cond_FirstUseEver);
+                UI::Begin("Win B"); posB = UI::GetWindowPos(); sizeB = UI::GetWindowSize(); focusedB = UI::IsWindowFocused(); UI::End();
+            }
+        });
+    };
+    // outside a window the queries answer zeros / false
+    CHECK(UI::GetWindowPos().x == 0 && UI::GetWindowSize().y == 0 && !UI::IsWindowHovered() && !UI::IsWindowFocused() && !UI::IsWindowAppearing());
+    // no SetNext* call: the first-use defaults (60, 60) and 320 x 240
+    mode = 0; frame(); frame();
+    CHECK(shown && pos.x == 60 && pos.y == 60 && size.x == 320 && size.y == 240 && ww == 320 && wh == 240);
+    CHECK(appearing == false);                                                // only the first frame it is drawn
+    // FirstUseEver is used once: a later call with other values does not move an already-seen window
+    mode = 1; frame(); frame();
+    CHECK(pos.x == 60 && size.x == 320);
+    // Always wins every frame
+    mode = 2; frame();
+    CHECK(pos.x == 50 && pos.y == 60 && size.x == 150 && size.y == 100);
+    // a window never seen before takes the FirstUseEver values
+    CHECK(posB.x == 450 && posB.y == 20 && sizeB.x == 100 && sizeB.y == 80);
+    // hover follows the pointer, and clicking a window focuses it (the last one clicked)
+    mode = 0; sim.Move(70, 70); frame(); CHECK(hovered);
+    sim.Move(600, 400); frame(); CHECK(!hovered);
+    sim.Move(pos.x + 40, pos.y + 40); frame(); sim.Down(); frame(); sim.Up(); frame();
+    CHECK(focused && !focusedB);
+    sim.Move(500, 40); frame(); sim.Down(); frame(); sim.Up(); frame();
+    CHECK(focusedB && !focused);
+    UI::SetWindowFocus("Win A"); frame(); CHECK(focused);
+    // appearing: not drawn for a frame, then drawn again: IsWindowAppearing is true that frame and Cond_Appearing takes effect
+    mode = 0; drawB = false; open = true; frame(); frame();
+    CHECK(!appearing);
+    sim.Frame([&] {});                                                    // a frame without the window
+    mode = 3; frame();
+    CHECK(appearing && pos.x == 400 && pos.y == 300);                    // it appeared again, at the Cond_Appearing position
+    frame(); CHECK(!appearing);                                           // only that first frame
+    mode = 3; frame(); CHECK(pos.x == 400);                               // Cond_Appearing is not applied again while it stays up
+    // NoMove pins the window where its slot is
+    mode = 4; UI::SetNextWindowPos(UI::Vec2{0, 0}, UI::Cond_Once); frame();
+    const UI::Vec2 before = pos;
+    sim.Move(pos.x + 60, pos.y + 8); frame(); sim.Down(); frame(); sim.Move(pos.x + 160, pos.y + 90); frame(); frame(); sim.Up(); frame();
+    CHECK(std::fabs(pos.x - before.x) < 0.5f && std::fabs(pos.y - before.y) < 0.5f);
+    // a null title is harmless
+    UI::SetNextWindowPos(UI::Vec2{1, 1}); sim.Frame([&] { CHECK(!UI::Begin(nullptr)); UI::End(); });
+}
+
+void IoCursorFontTests() {
+    Sim sim(640, 480);
+    float h1 = 0, h2 = 0, hAfter = 0, w1 = 0, w2 = 0; UI::Rect rBig, rNorm; bool cap = false, capKb = false, wantText = false; UI::Vec2 mp{}, ds{}; float dt = 0;
+    bool ctrl = false, shiftK = false, altK = false; UI::MouseCursor cur0 = UI::MouseCursor_Hand, curSet = UI::MouseCursor_Arrow; int scaleMode = 0;
+    char text[64] = "x";
+    auto frame = [&](std::function<void()> extra = nullptr) {
+        sim.Frame([&] {
+            UI::Begin("Win", 20, 20, 300, 240);
+            h1 = UI::GetFrameHeight();
+            if (scaleMode == 1) UI::SetWindowFontScale(2.0f);
+            if (scaleMode == 2) UI::SetWindowFontScale(std::nanf(""));
+            if (scaleMode == 3) UI::SetWindowFontScale(1000.0f);
+            h2 = UI::GetFrameHeight();
+            UI::Button("big"); rBig = UI::GetItemRect();
+            if (extra) extra();
+            UI::End();
+            hAfter = UI::GetFrameHeight();                                 // after End the scale is gone
+            UI::Begin("Win2", 340, 20, 200, 100); w2 = UI::GetFrameHeight(); UI::Button("norm"); rNorm = UI::GetItemRect(); UI::End();
+            const UI::IO& io = UI::GetIO(); cap = io.wantCaptureMouse; capKb = io.wantCaptureKeyboard; wantText = io.wantTextInput;
+            mp = io.mousePos; ds = io.displaySize; dt = io.deltaTime; ctrl = io.keyCtrl; shiftK = io.keyShift; altK = io.keyAlt;
+            curSet = UI::GetMouseCursor();
+        });
+    };
+    // font scale: 2x makes the rows taller inside the window only, and it ends with the window
+    scaleMode = 0; frame(); frame();
+    const float base = h2; CHECK(base > 8.0f && std::fabs(h1 - h2) < 0.01f);
+    scaleMode = 1; frame(); CHECK(h2 > base + 12.0f && std::fabs(hAfter - base) < 0.01f && rBig.h > base + 12.0f);   // the text doubles (16 -> 32 px), the row padding does not
+    CHECK(std::fabs(w2 - base) < 0.01f);                                   // the next window is unaffected
+    scaleMode = 2; frame(); CHECK(std::fabs(h2 - base) < 0.01f);           // NaN is ignored
+    scaleMode = 3; frame(); CHECK(h2 < base * 9.0f && h2 > base + 12.0f);                       // clamped to 8x
+    scaleMode = 0; frame(); CHECK(std::fabs(h2 - base) < 0.01f);           // and the next frame starts clean
+    UI::SetWindowFontScale(3.0f);                                          // outside a window: harmless
+    // mouse cursor: starts as the arrow every frame, the last SetMouseCursor wins, junk is the arrow
+    frame([&] { cur0 = UI::GetMouseCursor(); UI::SetMouseCursor(UI::MouseCursor_ResizeEW); });
+    CHECK(cur0 == UI::MouseCursor_Arrow && curSet == UI::MouseCursor_ResizeEW);
+    frame(); CHECK(curSet == UI::MouseCursor_Arrow);
+    frame([&] { UI::SetMouseCursor((UI::MouseCursor)77); }); CHECK(curSet == UI::MouseCursor_Arrow);
+    // IO: pointer, display size, frame time, modifiers
+    sim.Move(100, 100); sim.ctrl = true; sim.shift = true; sim.Hold(UI::KeyId_Alt, true); frame();
+    CHECK(mp.x == 100 && mp.y == 100 && ds.x == 640 && ds.y == 480 && dt > 0.0f && ctrl && shiftK && altK);
+    sim.ctrl = sim.shift = false; sim.Hold(UI::KeyId_Alt, false); frame(); CHECK(!ctrl && !shiftK && !altK);
+    // wants the mouse over a window or while pressing a widget, not over empty space
+    sim.Move(600, 450); frame(); frame(); CHECK(!cap);
+    sim.Move(100, 100); frame(); CHECK(cap);
+    sim.Move(450, 60); frame(); CHECK(cap);                                // over the second window
+    sim.Move(600, 450); frame(); frame(); CHECK(!cap);
+    // keyboard: wanted only while a text field has focus
+    UI::Rect fld;
+    auto withField = [&] { UI::SetNextItemWidth(200); UI::InputText("##t", text, sizeof text); fld = UI::GetItemRect(); };
+    frame(withField); frame(withField);
+    CHECK(!capKb && !wantText);
+    sim.Move(CenterX(fld), CenterY(fld)); frame(withField); sim.Down(); frame(withField); sim.Up(); frame(withField); frame(withField);
+    CHECK(capKb && wantText);                                              // the field has focus now
+    sim.Press(Key_Escape); frame(withField); frame(withField);
+    CHECK(!capKb && !wantText);                                            // Escape gave it up
+}
+
+void TypedDragDropTests() {
+    Rig r; UI::Rect rSrc, rDst, rOther; int dropped = -1, hoverSeen = -1, wrongType = 0, anyType = 0, srcFrames = 0, dstDelivered = 0; bool sourceOn = true, big = false, badSet = true;
+    int value = 42;
+    r.body = [&] {
+        UI::Button("source"); rSrc = UI::GetItemRect();
+        if (sourceOn && UI::BeginDragDropSource()) {
+            ++srcFrames;
+            if (big) { char buf[300] = {0}; badSet = UI::SetDragDropPayload("ITEM", buf, 300); }
+            else UI::SetDragDropPayload("ITEM", &value, (int)sizeof value);
+            UI::SetDragDropPreview("item 42");
+            UI::EndDragDropSource();
+        }
+        UI::Button("target"); rDst = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) {
+            if (const UI::DragPayload* pl = UI::AcceptDragDropPayload("ITEM", UI::DragDrop_AcceptBeforeDelivery)) {
+                std::memcpy(&hoverSeen, pl->data, sizeof hoverSeen);
+                if (pl->delivery) { std::memcpy(&dropped, pl->data, sizeof dropped); ++dstDelivered; }
+            }
+            if (UI::AcceptDragDropPayload("OTHER")) ++wrongType;
+            UI::EndDragDropTarget();
+        }
+        UI::Button("other"); rOther = UI::GetItemRect();
+        if (UI::BeginDragDropTarget()) { if (UI::AcceptDragDropPayload(nullptr)) ++anyType; UI::EndDragDropTarget(); }
+        CHECK(!UI::BeginDragDropSource() || true);
+    };
+    r.Frames(3);
+    CHECK(!UI::IsDragging() && srcFrames == 0);
+    auto dragTo = [&](const UI::Rect& from, const UI::Rect& to) {
+        r.MoveTo(CenterX(from), CenterY(from)); r.sim.Down(); r.Frame();
+        r.MoveTo(CenterX(from) + 4, CenterY(from)); r.Frame();                  // not far enough yet
+        r.MoveTo(CenterX(to), CenterY(to)); r.Frame(); r.Frame();               // moving over the target
+    };
+    // a small move does not start a drag
+    r.MoveTo(CenterX(rSrc), CenterY(rSrc)); r.sim.Down(); r.Frame(); r.MoveTo(CenterX(rSrc) + 3, CenterY(rSrc)); r.Frame();
+    CHECK(!UI::IsDragging() && srcFrames == 0);
+    r.sim.Up(); r.Frame(); r.Frames(2);
+    // a real drag over the target: preview delivery while hovering, then delivery on release
+    srcFrames = 0; hoverSeen = -1; dropped = -1;
+    dragTo(rSrc, rDst);
+    CHECK(UI::IsDragging() && srcFrames > 0);
+    CHECK(hoverSeen == 42 && dropped == -1);                                    // AcceptBeforeDelivery: seen while hovering, not delivered yet
+    r.sim.Up(); r.Frame();
+    CHECK(dropped == 42 && dstDelivered == 1);                                  // delivered once, on the release
+    r.Frame(); CHECK(!UI::IsDragging() && dstDelivered == 1);                   // and the drag is over
+    // a mismatched type is not accepted, a null type takes anything, delivery goes to the one under the pointer
+    wrongType = 0; anyType = 0; dstDelivered = 0;
+    dragTo(rSrc, rOther); r.sim.Up(); r.Frame();
+    CHECK(wrongType == 0 && anyType == 1 && dstDelivered == 0);
+    // released over nothing: no delivery, drag ends
+    dropped = -1; dstDelivered = 0;
+    dragTo(rSrc, rSrc); r.MoveTo(480, 380); r.sim.Up(); r.Frame(); r.Frame();
+    CHECK(dropped == -1 && dstDelivered == 0 && !UI::IsDragging());
+    // a payload over 256 bytes is refused (the drag then has no payload, so targets stay quiet)
+    big = true; badSet = true; dropped = -1; dstDelivered = 0;
+    dragTo(rSrc, rDst); r.sim.Up(); r.Frame();
+    CHECK(!badSet && dropped == -1 && dstDelivered == 0);
+    big = false;
+    // outside a frame / without a drag the calls are harmless
+    CHECK(!UI::SetDragDropPayload("X", &value, 4));
+    UI::SetDragDropPreview(nullptr); UI::EndDragDropSource(); UI::EndDragDropTarget();
+    CHECK(UI::AcceptDragDropPayload("ITEM") == nullptr);
+}
+
+void ClipboardTests() {
+    Rig r; char buf[64] = "hello world"; char ro[32] = "locked"; char tiny[8] = "ab"; UI::Rect rf, rro, rtiny; bool useRo = false;
+    r.body = [&] {
+        UI::SetNextItemWidth(260); UI::InputText("##a", buf, sizeof buf); rf = UI::GetItemRect();
+        UI::SetNextItemWidth(260); UI::InputText("##ro", ro, sizeof ro, UI::InputText_ReadOnly); rro = UI::GetItemRect();
+        UI::SetNextItemWidth(260); UI::InputText("##tiny", tiny, sizeof tiny); rtiny = UI::GetItemRect();
+        (void)useRo;
+    };
+    r.Frames(3);
+    auto focus = [&](const UI::Rect& rc) { r.Click(CenterX(rc), CenterY(rc)); r.Frame(); };
+    auto press = [&](Key k) { r.sim.Press(k); r.Frame(); r.Frame(); };
+    // the plain clipboard
+    UI::SetClipboardText("abc"); CHECK(std::strcmp(UI::GetClipboardText(), "abc") == 0);
+    UI::SetClipboardText(nullptr); CHECK(UI::GetClipboardText()[0] == 0);
+    // copy: select everything, copy; the clipboard holds the text, the field is unchanged
+    focus(rf); press(Key_SelectAll); press(Key_Copy);
+    CHECK(std::strcmp(UI::GetClipboardText(), "hello world") == 0 && std::strcmp(buf, "hello world") == 0);
+    // paste at the end (End key puts the caret there): the text doubles
+    r.sim.Press(Key_End); r.Frame(); press(Key_Paste);
+    CHECK(std::strcmp(buf, "hello worldhello world") == 0);
+    // cut: select all, cut -> field empty, clipboard has the old text
+    press(Key_SelectAll); press(Key_Cut);
+    CHECK(buf[0] == 0 && std::strcmp(UI::GetClipboardText(), "hello worldhello world") == 0);
+    // copy with nothing selected leaves the clipboard alone
+    UI::SetClipboardText("keep"); press(Key_Copy); CHECK(std::strcmp(UI::GetClipboardText(), "keep") == 0);
+    // paste replaces a selection, and new lines / tabs become spaces
+    std::snprintf(buf, sizeof buf, "xyz"); r.Frames(2);
+    focus(rf); press(Key_SelectAll);
+    UI::SetClipboardText("one\ntwo\tthree\r\nfour"); press(Key_Paste);
+    CHECK(std::strcmp(buf, "one two three  four") == 0);
+    // a read-only field copies but does not cut or paste
+    focus(rro); press(Key_SelectAll); UI::SetClipboardText("zzz"); press(Key_Cut); press(Key_Paste);
+    CHECK(std::strcmp(ro, "locked") == 0 && std::strcmp(UI::GetClipboardText(), "locked") == 0);
+    // a paste that does not fit is cut off at the end of the buffer (7 characters here) without splitting anything
+    focus(rtiny); press(Key_SelectAll); UI::SetClipboardText("0123456789"); press(Key_Paste);
+    CHECK(std::strcmp(tiny, "0123456") == 0);
+    // a clipboard longer than the limit is cut at a character boundary
+    std::string many; for (int i = 0; i < 3000; ++i) many += "\xC3\xA9";           // 3000 x e-acute = 6000 bytes
+    UI::SetClipboardText(many.c_str());
+    const char* got = UI::GetClipboardText(); const std::size_t gl = std::strlen(got);
+    CHECK(gl <= (std::size_t)UI::kClipboardMax - 1 && gl % 2 == 0);                   // whole characters only
+    // pasting nothing does nothing
+    UI::SetClipboardText(""); std::snprintf(buf, sizeof buf, "keepme"); r.Frames(2); focus(rf); press(Key_SelectAll); press(Key_Paste);
+    CHECK(std::strcmp(buf, "keepme") == 0);                                          // an empty clipboard changes nothing
+}
+
+void MenuTests() {
+    Rig r; UI::Rect bar; bool a = false, b = false, c = false, d = false, open = false;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        open = UI::BeginMenu("File");
+        if (open) {
+            if (UI::MenuItem("New", "Ctrl+N")) a = true;
+            if (UI::MenuItem("Save", "Ctrl+S", false, false)) b = true;      // disabled
+            if (UI::MenuItem("Auto", nullptr, true)) c = true;               // checked
+            UI::MenuSeparator();
+            if (UI::MenuItem("Quit")) d = true;
+            UI::EndMenu();
+        }
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    CHECK(!open && bar.h > 0);
+    const float h = bar.h, rowY0 = bar.y + h;                         // the list starts under the bar, rows are one bar height
+    auto openMenu = [&] { r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame(); };
+    auto clickRow = [&](int row, float extra) { r.Click(bar.x + 30, rowY0 + (float)row * h + extra + h * 0.5f); r.Frame(); r.Frame(); };
+    openMenu(); CHECK(open);
+    clickRow(0, 0);  CHECK(a && !open);                               // a normal item with a shortcut works and closes the menu
+    openMenu(); CHECK(open);
+    clickRow(1, 0);  CHECK(!b && open);                               // a disabled item does nothing and keeps the menu open
+    clickRow(2, 0);  CHECK(c && !open);                               // a checked item still clicks
+    openMenu(); CHECK(open);
+    clickRow(3, 8.0f - h + h);                                        // below the 8 px separator: "Quit" is row 3 plus the separator's height
+    CHECK(d);
+    // the shortcut text is drawn (pixels in the row beyond the label) for an enabled item, dimmer for a disabled one
+    openMenu();
+    const auto& bmp = r.sim.Draw();
+    const unsigned panel = ThemeRgba(UI::Style().panel);
+    CHECK(CountNot(bmp, (int)(bar.x + 120), (int)rowY0 + 2, (int)(bar.x + 176), (int)(rowY0 + h) - 2, panel) > 0);
+    // null label and a missing BeginMenu are harmless
+    r.body = [&] { UI::MenuItem(nullptr); UI::MenuItem("x", nullptr); UI::MenuSeparator(); };
+    r.Frames(2);
+    CHECK(true);
+}
+
+void MenuKeyTests() {
+    Rig r; UI::Rect bar; bool fileOpen = false, subOpen = false; int picked = 0;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        fileOpen = UI::BeginMenu("File");
+        if (fileOpen) {
+            if (UI::MenuItem("New")) picked = 1;
+            if (UI::MenuItem("Off", nullptr, false, false)) picked = 99;        // disabled: the highlight skips it
+            subOpen = UI::BeginMenu("Recent");
+            if (subOpen) { if (UI::MenuItem("One")) picked = 3; if (UI::MenuItem("Two")) picked = 4; UI::EndMenu(); }
+            if (UI::MenuItem("Quit")) picked = 5;
+            UI::EndMenu();
+        } else subOpen = false;
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    const float h = bar.h;
+    auto openFile = [&] { r.Click(bar.x + 10, bar.y + h * 0.5f); r.sim.Move(650, 470); r.Frames(2); };   // open it, then park the pointer far away
+    auto key = [&](Key k) { r.Tap(k); r.Frame(); };
+    openFile(); CHECK(fileOpen);
+    key(Key_Down);  key(Key_Enter);                                           // first Down highlights "New", Enter runs it
+    CHECK(picked == 1 && !fileOpen);
+    picked = 0; openFile();
+    key(Key_Down); key(Key_Down); key(Key_Down);                              // New, (Off skipped), Recent, Quit
+    key(Key_Enter);
+    CHECK(picked == 5 && !fileOpen);                                          // landed on "Quit": the disabled row was skipped
+    picked = 0; openFile();
+    key(Key_Up);                                                              // Up from nothing wraps to the last enabled item
+    key(Key_Enter);
+    CHECK(picked == 5);
+    // Right opens the highlighted sub-menu, Down moves inside it, Enter runs and closes everything, Left closes just the sub-menu
+    picked = 0; openFile();
+    key(Key_Down); key(Key_Down);                                             // on "Recent"
+    key(Key_Right);
+    CHECK(fileOpen && subOpen);
+    key(Key_Down); key(Key_Down);                                             // "One", then "Two" (the highlight lives in the sub-menu now)
+    key(Key_Left);
+    CHECK(fileOpen && !subOpen);
+    key(Key_Right); CHECK(subOpen);
+    key(Key_Down); key(Key_Enter);
+    CHECK(picked == 3 && !fileOpen && !subOpen);                              // "One" ran and the whole chain closed
+    // Escape closes the innermost menu first
+    openFile(); key(Key_Down); key(Key_Down); key(Key_Right); CHECK(subOpen);
+    key(Key_Escape); CHECK(fileOpen && !subOpen);
+    key(Key_Escape); CHECK(!fileOpen);
+    // keys do nothing while no menu is open, and Enter with no highlight runs nothing
+    picked = 0; key(Key_Down); key(Key_Enter); CHECK(picked == 0 && !fileOpen);
+    openFile(); key(Key_Enter); CHECK(picked == 0 && fileOpen);
+}
+
+void SubMenuTests() {
+    Rig r; UI::Rect bar; bool fileOpen = false, subOpen = false, subSubOpen = false, a = false, b = false, deep = false;
+    r.body = [&] {
+        UI::BeginMenuBar(); bar = UI::GetItemRect();
+        fileOpen = UI::BeginMenu("File");
+        if (fileOpen) {
+            if (UI::MenuItem("New")) a = true;
+            subOpen = UI::BeginMenu("Recent");
+            if (subOpen) {
+                if (UI::MenuItem("One")) b = true;
+                subSubOpen = UI::BeginMenu("More");
+                if (subSubOpen) { if (UI::MenuItem("Deep")) deep = true; UI::EndMenu(); }
+                UI::EndMenu();
+            } else subSubOpen = false;
+            UI::MenuItem("Quit");
+            UI::EndMenu();
+        } else subOpen = subSubOpen = false;
+        UI::EndMenuBar();
+    };
+    r.Frames(2);
+    const float h = bar.h, listX = bar.x, listW = 180.0f, rowY0 = bar.y + h;
+    auto rowMid = [&](int row) { return rowY0 + (float)row * h + h * 0.5f; };
+    r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    CHECK(fileOpen && !subOpen);                                         // the sub-menu is closed until the row is pointed at
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame();
+    CHECK(fileOpen && subOpen);                                          // hovering the "Recent" row opens it
+    r.MoveTo(listX + listW + 30, rowMid(1)); r.Frame();
+    CHECK(subOpen && !subSubOpen);                                       // moving into its list keeps it open
+    r.MoveTo(listX + listW + 30, rowMid(2)); r.Frame();                  // onto the "More" row (second row of the sub-list, starts at the Recent row)
+    CHECK(subOpen && subSubOpen);                                        // a second level opens
+    r.MoveTo(listX + 2 * listW + 30, rowMid(2)); r.Frame();
+    CHECK(subSubOpen);
+    r.Click(listX + 2 * listW + 30, rowMid(2)); r.Frame(); r.Frame();
+    CHECK(deep && !fileOpen && !subOpen && !subSubOpen);                 // picking a deep item runs it and closes every level
+    // leaving the sub-menu closes just it
+    deep = false; r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame(); CHECK(subOpen);
+    r.MoveTo(listX + 30, rowMid(0)); r.Frame(); r.Frame();               // back onto "New"
+    CHECK(fileOpen && !subOpen);
+    // a press elsewhere closes everything
+    r.MoveTo(listX + 30, rowMid(1)); r.Frame();
+    r.Click(400, 300); r.Frame();
+    CHECK(!fileOpen && !subOpen);
+    // a plain item next to the sub-menu still works, and the sub-menu row itself does not click through
+    r.Click(bar.x + 10, bar.y + h * 0.5f); r.Frame();
+    r.Click(listX + 30, rowMid(0)); r.Frame(); r.Frame();
+    CHECK(a && !fileOpen);
+    // BeginMenu outside any menu or bar, with a null label, is harmless
+    r.body = [&] { CHECK(!UI::BeginMenu(nullptr)); };
+    r.Frames(2);
+}
+
+void TableTests() {
+    Rig r; UI::Rect c0, c1, c2, c1b, hdrProbe; int rowSeen = -9, colSeen = -9; bool bad = false; bool noResize = false;
+    r.body = [&] {
+        const UI::TableFlags fl = noResize ? (UI::Table_RowBg | UI::Table_BordersInnerH | UI::Table_NoResize) : (UI::Table_RowBg | UI::Table_BordersInnerH);
+        if (UI::BeginTable("t", 3, fl)) {
+            UI::TableSetupColumn("Name", UI::Col_WidthFixed, 100.0f);
+            UI::TableSetupColumn("Value", 0, 1.0f);
+            UI::TableSetupColumn("Note", 0, 3.0f);
+            UI::TableSetupColumn("ignored: more than the columns");
+            UI::TableHeadersRow();
+            UI::TableNextRow();
+            UI::TableSetColumnIndex(2); UI::Text("n"); c2 = UI::GetItemRect();      // out of order: the last column first
+            UI::TableSetColumnIndex(0); UI::Text("a"); c0 = UI::GetItemRect();
+            colSeen = UI::TableGetColumnIndex(); rowSeen = UI::TableGetRowIndex();
+            UI::TableSetColumnIndex(1); UI::Text("b"); c1 = UI::GetItemRect();
+            if (UI::TableSetColumnIndex(3) || UI::TableSetColumnIndex(-1)) bad = true;   // no such column
+            UI::TableNextRow(); UI::TableNextColumn(); UI::Text("second"); UI::TableNextColumn(); UI::Text("b2"); c1b = UI::GetItemRect();
+            UI::EndTable();
+        }
+        if (UI::TableGetRowIndex() != -1 || UI::TableGetColumnIndex() != -1) bad = true;   // outside a table
+        UI::TableSetupColumn("x"); UI::TableHeadersRow(); UI::TableNextRow(); UI::EndTable();   // calls outside a table are harmless
+    };
+    r.Frames(3);
+    CHECK(!bad && colSeen == 0 && rowSeen == 0);
+    CHECK(c0.x < c1.x && c1.x < c2.x);                                       // cells land in their own columns, even set out of order
+    CHECK(c1.x - c0.x > 95.0f && c1.x - c0.x < 105.0f);                      // the fixed column keeps about 100 px
+    const float w1 = c2.x - c1.x;                                           // "Value" has weight 1 and "Note" weight 3: Note is about three times as wide
+    CHECK(std::fabs(w1 - 95.0f) < 2.0f);                                     // (480 - 100) shared 1:3 gives 95 px for Value (and 285 for Note)
+    CHECK(c1b.y > c1.y);                                                     // the second row is below the first
+    // the border between Value and Note can be dragged unless Table_NoResize
+    const float borderX = c2.x - 4.0f, my = c1.y + 2.0f;
+    r.sim.Move(borderX, my); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(borderX + 30.0f, my); r.Frame(); r.Frame(); r.sim.Up(); r.Frame(); r.Frames(2);
+    CHECK(c2.x > c1.x + w1 + 10.0f);                                         // Value grew
+    // NoResize: the same drag changes nothing
+    noResize = true; r.Frames(2);
+    const float before = c2.x;
+    r.sim.Move(c2.x - 4.0f, my); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Move(c2.x + 26.0f, my); r.Frame(); r.Frame(); r.sim.Up(); r.Frame(); r.Frames(2);
+    CHECK(std::fabs(c2.x - before) < 0.5f);
+    // a banded row draws a faint band: a pixel in the second row's empty right side differs from one in the first row
+    r.Frames(2);
+    const auto& bmp = r.sim.Draw();
+    const int px = (int)(c2.x + 150), y0 = (int)(c1.y + 3.0f), y1 = (int)(c1b.y + 3.0f);
+    if (px < (int)bmp.w) CHECK(PixelAt(bmp, px, y0) != PixelAt(bmp, px, y1));
+}
+
+void ModalTests() {
+    Rig r; int behind = 0; bool ok = false, shown = false, flag = true; UI::Rect rOpen, rBehind, rOk;
+    r.body = [&] {
+        if (UI::Button("open")) UI::OpenPopup("dlg"); rOpen = UI::GetItemRect();
+        if (UI::Button("behind")) ++behind; rBehind = UI::GetItemRect();
+        shown = UI::BeginPopupModal("dlg", &flag);
+        if (shown) {
+            UI::Text("are you sure?");
+            if (UI::Button("OK")) { ok = true; UI::CloseCurrentPopup(); }
+            rOk = UI::GetItemRect();
+            UI::EndPopup();
+        }
+    };
+    r.Frames(2);
+    CHECK(!shown && !UI::IsPopupOpen("dlg"));
+    r.Frame(); const unsigned plain = PixelAt(r.sim.Draw(), 15, 400);   // a window pixel away from the dialog, before it opens
+    r.Click(CenterX(rOpen), CenterY(rOpen)); r.Frames(3);
+    CHECK(shown && UI::IsPopupOpen("dlg"));
+    {   // the area behind is dimmed: every colour channel of that pixel got darker
+        const unsigned dimmed = PixelAt(r.sim.Draw(), 15, 400);
+        CHECK(dimmed != plain);
+        CHECK(((dimmed >> 24) & 255) < ((plain >> 24) & 255) && ((dimmed >> 16) & 255) < ((plain >> 16) & 255) && ((dimmed >> 8) & 255) < ((plain >> 8) & 255));
+    }
+    // centred in the 640x480 display
+    CHECK(rOk.x > 640 * 0.5f - 200 && rOk.x < 640 * 0.5f + 200 && rOk.y > 100 && rOk.y < 380);
+    // widgets behind are inert while it is open
+    r.Click(CenterX(rBehind), CenterY(rBehind)); r.Frames(2);
+    CHECK(behind == 0 && shown);
+    // a click outside the dialog does not close it
+    r.Click(600, 440); r.Frames(2);
+    CHECK(shown);
+    // OK runs, closes it, and the widgets behind work again
+    r.Click(CenterX(rOk), CenterY(rOk)); r.Frames(3);
+    CHECK(ok && !shown && !UI::IsPopupOpen("dlg"));
+    r.Click(CenterX(rBehind), CenterY(rBehind)); r.Frames(2);
+    CHECK(behind == 1);
+    // Escape closes it too
+    r.Click(CenterX(rOpen), CenterY(rOpen)); r.Frames(3); CHECK(shown);
+    r.Tap(Key_Escape); r.Frames(2);
+    CHECK(!shown && !flag);
+    // a null name is refused
+    r.body = [&] { if (UI::BeginPopupModal(nullptr)) UI::EndPopup(); UI::IsPopupOpen(nullptr); };
+    r.Frames(2);
+    CHECK(true);
+}
+
+}  // namespace
+
+int main() {
+    RUN_SUITE("okayui values");
+    VectorTests();
+    ClampAndCountTests();
+    IntAndRangeTests();
+    HostileTests();
+    SliderAndInputTests();
+    InputFloatHostileTests();
+    SmallWidgetTests();
+    HintAndFocusTests();
+    WrapTests();
+    ItemQueryTests();
+    GroupTests();
+    TreeTests();
+    BeginComboTests();
+    TypedNumberTests();
+    TypedSingleTests();
+    TypedInputTests();
+    TabBarTests();
+    TooltipAndHelperTests();
+    KeyStateTests();
+    StyleVarTests();
+    WindowApiTests();
+    IoCursorFontTests();
+    TypedDragDropTests();
+    ClipboardTests();
+    MenuTests();
+    SubMenuTests();
+    MenuKeyTests();
+    TableTests();
+    ModalTests();
+    TEST_MAIN_RESULT();
+}

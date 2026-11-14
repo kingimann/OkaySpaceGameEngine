@@ -1,11 +1,15 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Render/Mesh.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -27,6 +31,45 @@ const Mesh* SourceMesh(const MeshCollider3D* c) {
     if (!c->gameObject) return nullptr;
     auto* mr = c->gameObject->GetComponent<MeshRenderer>();
     return mr ? &mr->DisplayMesh() : nullptr;
+}
+
+Vec3 HullNormal(const Mesh& src) {
+    Vec3 n{0, 0, 0};
+    const int nv = (int)src.vertices.size();
+    for (std::size_t t = 0; t + 2 < src.triangles.size(); t += 3) {
+        int i0 = src.triangles[t], i1 = src.triangles[t + 1], i2 = src.triangles[t + 2];
+        if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= nv || i1 >= nv || i2 >= nv) continue;
+        n = n + Vec3::Cross(src.vertices[i1] - src.vertices[i0], src.vertices[i2] - src.vertices[i0]);
+    }
+    if (n.SqrMagnitude() < 1e-12f) return {0, 1, 0};
+    return n.Normalized();
+}
+
+// The convex hull of the vertices. A flat (or collinear) cloud has no volume, so
+// it is thickened slightly along its normal: a dynamic body still has a shape.
+Mesh BuildConvexHull(const Mesh& src) {
+    Mesh h = Mesh::ConvexHull(src.vertices);
+    if (h.vertices.size() >= 4 && h.triangles.size() >= 4) return h;
+    if (src.vertices.size() < 3) return h;
+    Vec3 n = HullNormal(src);
+    Vec3 mn = src.vertices[0], mx = src.vertices[0];
+    for (const Vec3& v : src.vertices) {
+        mn = {std::min(mn.x, v.x), std::min(mn.y, v.y), std::min(mn.z, v.z)};
+        mx = {std::max(mx.x, v.x), std::max(mx.y, v.y), std::max(mx.z, v.z)};
+    }
+    float ext = (mx - mn).Magnitude();
+    float eps = std::max(ext * 0.02f, 1e-3f);
+    Vec3 t = std::fabs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+    Vec3 side = Vec3::Cross(n, t);
+    if (side.SqrMagnitude() < 1e-12f) side = {1, 0, 0};
+    else side = side.Normalized();
+    std::vector<Vec3> pts = src.vertices;
+    pts.reserve(src.vertices.size() * 3);
+    for (const Vec3& v : src.vertices) {
+        pts.push_back(v + n * eps);
+        pts.push_back(v + side * eps);
+    }
+    return Mesh::ConvexHull(pts);
 }
 } // namespace
 
@@ -70,10 +113,64 @@ void MeshCollider3D::WorldAABB(Vec3& mn, Vec3& mx) const {
     BoxCollider3D::WorldAABB(mn, mx);
 }
 
-bool MeshCollider3D::IsDynamicConflict() const {
+bool MeshCollider3D::IsDynamicBody() const {
     if (!gameObject) return false;
     auto* rb = gameObject->GetComponent<Rigidbody3D>();
     return rb && rb->enabled && rb->bodyType == Rigidbody3D::BodyType::Dynamic;
+}
+
+void MeshCollider3D::EnsureHull() const {
+    if (!IsDynamicBody()) {
+        if (m_hullReady || !m_hull.vertices.empty()) {
+            m_hull = Mesh{};
+            m_hullTris.Clear();
+            m_hullReady = false;
+        }
+        return;
+    }
+    Refresh();
+    if (m_hullReady && m_hullHash == m_hash) return;
+    const Mesh* src = SourceMesh(this);
+    m_hull = src ? BuildConvexHull(*src) : Mesh{};
+    m_hullTris.Build(m_hull);
+    m_hullHash = m_hash;
+    m_hullReady = true;
+}
+
+bool MeshCollider3D::UsesConvexHull() const {
+    if (!IsDynamicBody()) return false;
+    EnsureHull();
+    return m_hull.vertices.size() >= 4 && m_hull.triangles.size() >= 4;
+}
+
+const Mesh& MeshCollider3D::Hull() const {
+    EnsureHull();
+    return m_hull;
+}
+
+const TriMesh& MeshCollider3D::HullTris() const {
+    EnsureHull();
+    return m_hullTris;
+}
+
+Vec3 MeshCollider3D::SupportWorld(const Vec3& dir) const {
+    EnsureHull();
+    if (m_hull.vertices.empty()) return WorldCenter();
+    Mat4 m = WorldMatrix();
+    Vec3 best = m.MultiplyPoint(m_hull.vertices[0]);
+    float bd = Vec3::Dot(best, dir);
+    for (std::size_t i = 1; i < m_hull.vertices.size(); ++i) {
+        Vec3 w = m.MultiplyPoint(m_hull.vertices[i]);
+        float d = Vec3::Dot(w, dir);
+        if (d > bd) { bd = d; best = w; }
+    }
+    return best;
+}
+
+bool MeshCollider3D::IsDynamicConflict() const {
+    // A dynamic body with a hull is supported. Conflict is only the leftover case:
+    // real triangles, but no convex shape could be built from them.
+    return IsDynamicBody() && HasTriangles() && !UsesConvexHull();
 }
 
 std::string MeshCollider3D::StatusMessage() const {
@@ -82,8 +179,8 @@ std::string MeshCollider3D::StatusMessage() const {
     if (!HasTriangles())
         return "The mesh has no usable triangles: acting as the Size bounding box.";
     if (IsDynamicConflict())
-        return "Static only: this object also has a dynamic Rigidbody3D, so this collider is ignored by physics contact. "
-               "Use a Box, Sphere or Capsule collider on moving objects (or make the body Kinematic / Static). "
+        return "No convex hull: this object has a dynamic Rigidbody3D and the mesh could not be wrapped in a convex shape, "
+               "so this collider is ignored by physics contact. Use a Box, Sphere or Capsule collider, or make the body Kinematic / Static. "
                "Raycasts and overlaps still hit the triangles.";
     return std::string();
 }

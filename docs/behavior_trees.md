@@ -63,6 +63,7 @@ the next tick.
 | Play Sound | Plays the NPC's Audio Source (a **File** when given); **Wait** runs until it ends. |
 | Start Dialogue | Starts a conversation on the NPC's Dialogue Runner ([dialogue and quests](dialogue_quests.md)), playing **Graph** when given; **Wait** (on by default) runs until the conversation ends. A conversation the player already started is waited on rather than restarted. Failure without a Dialogue Runner or when the graph cannot start; when the task is aborted (a Guard above it turns false) the conversation it started ends. The tree loops like any other, so put a Condition or Cooldown in front of it when the NPC should talk once. |
 | Custom | A task written in a script: **Function** is called with `"enter"` on the first tick, `"tick"` after, `"abort"` when stopped, and returns `"running"`, `"success"` or `"failure"`. |
+| Run Sub-Tree | Runs another `.okaybt`. The sub-tree has its own blackboard. **Tree** is picked from the project's trees (or dragged from the Project panel). **Keys** optionally copy values in before each tick and back out after (`into sub-tree`, `back here`, or `both ways`). Success, failure and running come back unchanged. A tree that would run itself, or a tree already running above this node, fails at once instead of looping. |
 | **Services** run alongside a node while it runs (attach them with right-click > Attach service). |
 | Perception | Looks for **Target Object** with the same sight cone, wall check and hearing as an NPC Controller ([NPCs](npcs_and_crafting.md)): **Sight Range**, **Field Of View**, a physics ray from **Eye Height** when **Line Of Sight** is on, and a **Hearing Range**, every **Interval**. The numbers on the node are this tree's own. Hearing ignores the cone and walls. The can-see key is true when the target is seen or heard. Writes the target (object), can-see (bool), last-seen position (vector) and seconds-since-seen (number) into the keys it names. |
 | Health Watcher | Copies the NPC's health (NPC Controller, Health Stat or Survival Stats) into **Health Key**, **Fraction Key** and **Low Key** (below **Low Threshold**). |
@@ -109,6 +110,47 @@ How the body moves depends on what else is on the object:
 
 The runner ticks before the controllers (execution order -20), so an order
 given this tick moves the body this frame.
+
+## Sub-trees
+
+A **Run Sub-Tree** node runs a second `.okaybt` as a task. The sub-tree starts
+from its own keys, so it cannot see the caller's blackboard unless a key is
+mapped. A mapping is one row per pair: a key on this tree, a direction, and a
+key on the sub-tree. "Into sub-tree" copies before each tick, "back here"
+copies after each tick, and "both ways" does both. Unmapped keys stay where
+they are.
+
+The node reports the sub-tree's result. A sub-tree that is still going keeps
+the node running, and the next tick continues it rather than starting it over.
+Aborting the node (a Guard above it, or Stop) aborts the sub-tree too.
+
+If the file named here is this tree, or it is already on the path of trees
+that led here (A runs B, B runs A), the node fails and the log says it is
+already running. The Issues tab reports the same loop when it can see it from
+the files.
+
+`examples/behavior_trees/subtree_demo.okayscene` is a scene of this. Open that
+folder as the project (so the `.okaybt` files sit next to the scene). The red
+cube's tree runs `greet.okaybt`, which turns the cube toward the player and
+writes `greeted`. The other cubes show a sub-tree that succeeds, one that
+fails over to the next branch, one that keeps running, and one that refuses
+to run itself.
+
+## Breakpoints
+
+Right-click a node and choose **Breakpoint**, or tick **Breakpoint** on the
+node, or press **F9**. A red dot sits beside the card. The dot is saved in the
+`.okaybt` file.
+
+When Play reaches that node it pauses, the same way the Pause button does. The
+node is drawn as the active one, with an amber outline and the word "paused",
+and the status line names it. Resume (the Pause button) runs the node; the
+breakpoint does not fire again until the node is entered the next time. The
+toolbar's step runs one frame while paused, which lets the node tick once and
+then holds again.
+
+`examples/behavior_trees/breakpoint_demo.okayscene` pauses on the first
+Set Blackboard of `mark.okaybt`. The key stays false until you resume.
 
 ## Scripts
 

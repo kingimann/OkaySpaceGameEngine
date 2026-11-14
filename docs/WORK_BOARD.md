@@ -113,6 +113,7 @@ Nothing user-visible, nothing default.
 | Engine | Accessibility settings, save games without code | #657 #664 |
 | Engine | Subtitles and sound captions, hold-to-toggle, aim assist | #767 |
 | Launcher | Kick/ban, blocks and privacy, password reset page, updater checks, account export and delete, reports | #668 #667 #647 #650 #651 #652 |
+| Cutscenes | Letterbox bars, camera shake, coloured screen fade, nested sequences | #776 |
 
 ## Claimed (in progress)
 
@@ -125,8 +126,21 @@ Nothing user-visible, nothing default.
 | Own 2D painter for the platform seam | Claude | `claude/own-2d-painter` |
 | Navigation obstacle carving, test source-tree hygiene | Claude | `claude/nav-obstacles` |
 | Joint3D hinge angle limits (doors and levers stop at min/max; reuse `Math/JointLimit.hpp`) | John | `john/joint3d-hinge-limits` |
+| Localization tools in the Localization window | John | `john/localization-window` |
+| Mesh Collider 3D: convex hull so a mesh can be a dynamic body, and collision callbacks when a body lands on it | John | `john/mesh-collider-convex` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
 | Game clipboard: copy and paste text in fields, scripts and visual script | John | `john/game-clipboard` |
+| 2D box and capsule casts, and 2D explosion force | John | `john/physics2d-casts-explosion` (#771, draft) |
+| Renderer feature notes: which lighting, post, fog, sky and spot/point shadow switches do nothing on each backend | John | `john/renderer-feature-notes` (#772) |
+| Visual script export: Timer, Actions steps, and a hard error for a node with no script | John | `john/vs-export-timer-actions` |
+| Every component instance round-trips through save and load | John | `john/save-duplicate-components` |
+| Behavior tree: Run Sub-Tree node (own blackboard, key mapping, recursion guard) and node breakpoints that pause Play | John | `john/bt-subtree` |
+| Settings screen: monitor, display mode, resolution, refresh, 10-second revert | John | `john/display-settings` |
+| Spatial audio: reverb zones, doppler, occlusion and distance low-pass | John | `john/spatial-audio-effects` |
+| On-screen touch controls and gestures (virtual stick, D-pad, touch button, pinch, swipe, long-press) | John | #779 `john/touch-controls` |
+| UI frame rotation and scale | John | `john/ui-frame-transform` |
+| UI focus ring for keyboard and gamepad | John | `john/ui-focus-visuals` |
+| Item, loot-table and recipe editors | John | `john/item-loot-recipe-editors` |
 | One shared AI perception check; minimap and turn-order docs | John | `john/perception-dedupe` |
 
 ## Free (unclaimed, safe small tasks)

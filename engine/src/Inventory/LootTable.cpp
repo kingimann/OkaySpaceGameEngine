@@ -59,6 +59,13 @@ std::string LootTable::Serialize() const {
     return o.str();
 }
 
+bool LootTable::Save(const std::string& path) const {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f << Serialize();
+    return (bool)f;
+}
+
 bool LootTable::Load(const std::string& path, std::string* err) {
     std::ifstream f(path, std::ios::binary);
     if (!f && !DataAsset::BaseDir().empty()) f.open(DataAsset::BaseDir() + path, std::ios::binary);
@@ -67,14 +74,23 @@ bool LootTable::Load(const std::string& path, std::string* err) {
     return LoadText(ss.str(), err);
 }
 
-const LootTable& LootTable::Cached(const std::string& path) {
+namespace {
+std::map<std::string, LootTable>& LootCache() {
     static std::map<std::string, LootTable> cache;
+    return cache;
+}
+}
+
+const LootTable& LootTable::Cached(const std::string& path) {
+    auto& cache = LootCache();
     auto it = cache.find(path);
     if (it != cache.end()) return it->second;
     LootTable& t = cache[path];
     t.Load(path);
     return t;
 }
+
+void LootTable::Forget(const std::string& path) { LootCache().erase(path); }
 
 std::vector<Inventory::Stack> LootTable::Roll(Random& rng) const {
     std::vector<Inventory::Stack> out;
@@ -91,6 +107,52 @@ std::vector<Inventory::Stack> LootTable::Roll(Random& rng) const {
         if (n <= 0) continue;
         auto it = std::find_if(out.begin(), out.end(), [&](const Inventory::Stack& s) { return s.item == e->item; });
         if (it != out.end()) it->count += n; else out.push_back({e->item, n});
+    }
+    return out;
+}
+
+std::vector<LootTable::Share> LootTable::Shares() const {
+    std::vector<Share> out;
+    float total = 0.0f;
+    for (const auto& e : entries) if (e.weight > 0.0f) total += e.weight;
+    out.reserve(entries.size());
+    for (int i = 0; i < (int)entries.size(); ++i) {
+        Share s;
+        s.item = entries[i].item;
+        s.index = i;
+        const float w = entries[i].weight > 0.0f ? entries[i].weight : 0.0f;
+        s.weightShare = total > 0.0f ? w / total : 0.0f;
+        float chance = entries[i].chance;
+        if (chance < 0.0f) chance = 0.0f;
+        if (chance > 1.0f) chance = 1.0f;
+        s.dropShare = s.weightShare * chance;
+        out.push_back(s);
+    }
+    return out;
+}
+
+std::vector<std::string> LootTable::Issues(const ItemDatabase& items) const {
+    std::vector<std::string> out;
+    if (entries.empty())
+        out.push_back("This loot table has no entries, so a roll drops nothing.");
+    if (rollsMax <= 0)
+        out.push_back("This loot table rolls 0 times, so it drops nothing.");
+    for (int i = 0; i < (int)entries.size(); ++i) {
+        const Entry& e = entries[i];
+        const std::string where = "Entry " + std::to_string(i + 1);
+        const std::string named = e.item.empty() ? where : where + " (\"" + e.item + "\")";
+        if (e.item.empty())
+            out.push_back(where + " has no item chosen.");
+        else if (!items.IsDefined(e.item))
+            out.push_back(named + " isn't in the Item Database, so there is nothing to drop.");
+        if (!(e.weight > 0.0f))
+            out.push_back(named + " has no weight, so it never gets picked.");
+        if (e.chance <= 0.0f)
+            out.push_back(named + " has a 0% chance, so it never drops.");
+        if (e.max <= 0)
+            out.push_back(named + " drops a count of 0, so it never adds an item.");
+        else if (e.min > e.max)
+            out.push_back(named + " asks for between " + std::to_string(e.min) + " and " + std::to_string(e.max) + ". The higher number is used when it rolls.");
     }
     return out;
 }

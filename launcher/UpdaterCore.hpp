@@ -31,6 +31,7 @@ inline const char* kRepublishHint =
 
 /// Why the index cannot be used for updating `version` ("" = it can). Called before any download.
 inline std::string IndexProblem(const okayversions::Index& index, const okayversions::Entry* entry, const std::string& version) {
+    if (index.signatureRefused) return index.error;   // already says "Update refused: ..." and what to do
     if (!index.ok)
         return "The checksum list (versions.json) could not be loaded" +
                (index.error.empty() ? std::string(".") : " (" + index.error + ").") +

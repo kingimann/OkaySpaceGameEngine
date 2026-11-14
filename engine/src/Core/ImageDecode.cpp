@@ -899,7 +899,10 @@ bool DecodePsd(const std::uint8_t* data, std::size_t size, int& W, int& H, std::
             if (px[3] != 0 && px[3] != 255) {
                 const float a = px[3] / 255.0f, ra = 1.0f / a, inv = 255.0f * (1.0f - ra);
                 for (int k = 0; k < 3; ++k) {
-                    const float v = px[k] * ra + inv;
+                    // Round the product to a float before adding: a compiler that fuses the multiply and add (FMA) gets a
+                    // slightly different value, which flips a truncated byte. The pixels must not depend on the CPU.
+                    volatile float prod = px[k] * ra;
+                    const float v = prod + inv;
                     px[k] = static_cast<std::uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
                 }
             }

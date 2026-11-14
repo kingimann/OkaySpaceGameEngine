@@ -42,7 +42,7 @@ public:
     Image Render(const std::string& absolutePath, std::string* error) override;
 };
 
-/// wav ogg mp3: the whole clip drawn as a min/max waveform (decoded through AudioClip::Load). A file over 64 MB is
+/// wav ogg mp3 flac: the whole clip drawn as a min/max waveform (decoded through AudioClip::Load). A file over 64 MB is
 /// not decoded just for a picture; it keeps the placeholder.
 class WaveformThumbnailGenerator final : public ThumbnailGenerator {
 public:

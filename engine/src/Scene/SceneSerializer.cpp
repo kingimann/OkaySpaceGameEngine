@@ -67,6 +67,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
@@ -84,6 +85,9 @@
 #include "okay/Components/NavMeshModifier.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
+#include "okay/Components/GridPathAgent2D.hpp"
+#include "okay/Components/GridCostLayer.hpp"
+#include "okay/Components/GridObstacle2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -195,6 +199,7 @@
 #include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
+#include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Components/UIRating.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITabs.hpp"
@@ -1527,6 +1532,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0)
                 << " " << s.maxRewindRtt << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
+        {   // the detection engine's keys (only those that differ from the defaults), one quoted ".okayac" line each
+            std::istringstream dl(s.detect.ToText());
+            for (std::string line; std::getline(dl, line);)
+                if (!line.empty()) out << "  anticheatdetect " << Quote(line) << "\n";
+        }
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -2395,7 +2405,21 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* c : go->GetComponents<MeleeAttacker>()) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
-            << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0) << "\n";
+            << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0)
+            << " " << c->swingTime << " " << c->hitStart << " " << c->hitEnd << " " << c->knockback
+            << " " << c->comboSteps << " " << c->comboWindow << " " << c->comboBonus
+            << " " << (c->useHitbox ? 1 : 0) << " " << c->hitboxWidth << " " << c->hitboxHeight
+            << " " << c->hitboxDepth << " " << Quote(c->weapon) << " " << Quote(c->weaponFile) << "\n";
+    }
+    if (auto* g = go->GetComponent<RangedWeapon>()) {
+        out << "  gun";
+        KvOut k{out};
+        k("dmg", g->damage)("rate", g->fireRate)("range", g->range)("mag", g->magazine)("ammo", g->reserve)
+         ("reload", g->reloadTime)("kb", g->knockback)("spread", g->spread).b("hitscan", g->hitscan)
+         .b("auto", g->autoReload).key("fireKey", g->fireKey)("fireBtn", g->fireButton).key("reloadKey", g->reloadKey)
+         ("muz", g->muzzleHeight)("speed", g->projectileSpeed).str("weapon", g->weapon).str("file", g->weaponFile)
+         .str("proj", g->projectile);
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Spawner>()) {   // every instance: one manager object spawns enemies and pickups
         out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
@@ -2601,6 +2625,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
     for (auto* rd : go->GetComponents<Ragdoll>()) {
@@ -2758,7 +2783,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
         out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed   // appended (guarded)
-            << " " << (inv->keepOnSceneLoad ? 1 : 0);
+            << " " << (inv->keepOnSceneLoad ? 1 : 0)
+            << " " << (inv->enforceWeight ? 1 : 0);   // appended (guarded on read)
         out << "\n";
     }
     for (auto* pk : go->GetComponents<ItemPickup>()) {
@@ -3432,6 +3458,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << (int)st->anchor << " " << (int)st->shape << " " << st->cornerRadius << " "
             << (st->interactable ? 1 : 0) << "\n";
     }
+    WriteMoreUI(out, go);
     for (auto* rt : go->GetComponents<UIRating>()) {
         out << "  uirating " << rt->position.x << " " << rt->position.y << " "
             << rt->size.x << " " << rt->size.y << " "
@@ -6289,6 +6316,32 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int key = 'f', um = 1;
                     in >> c->damage >> c->range >> c->arc >> c->cooldown >> key >> um;
                     c->attackKey = (char)key; c->useMouse = (um != 0);
+                    if (LooksNumeric(in)) {
+                        int combo = c->comboSteps, hb = c->useHitbox ? 1 : 0;
+                        float swing = c->swingTime, hs = c->hitStart, he = c->hitEnd, kb = c->knockback;
+                        float cw = c->comboWindow, cb = c->comboBonus;
+                        float bw = c->hitboxWidth, bh = c->hitboxHeight, bd = c->hitboxDepth;
+                        if (in >> swing >> hs >> he >> kb >> combo >> cw >> cb >> hb >> bw >> bh >> bd) {
+                            c->swingTime = swing; c->hitStart = hs; c->hitEnd = he; c->knockback = kb;
+                            c->comboSteps = combo; c->comboWindow = cw; c->comboBonus = cb;
+                            c->useHitbox = hb != 0; c->hitboxWidth = bw; c->hitboxHeight = bh; c->hitboxDepth = bd;
+                        }
+                    }
+                    in >> std::ws;
+                    if (in.peek() == '"') {
+                        c->weapon = ReadQuoted(in);
+                        in >> std::ws;
+                        if (in.peek() == '"') c->weaponFile = ReadQuoted(in);
+                    }
+                } else if (field == "gun") {
+                    auto* g = go->AddComponent<RangedWeapon>();
+                    KvIn k(in);
+                    k.f("dmg", g->damage); k.f("rate", g->fireRate); k.f("range", g->range);
+                    k.i("mag", g->magazine); k.i("ammo", g->reserve); k.f("reload", g->reloadTime);
+                    k.f("kb", g->knockback); k.f("spread", g->spread); k.b("hitscan", g->hitscan);
+                    k.b("auto", g->autoReload); k.key("fireKey", g->fireKey); k.i("fireBtn", g->fireButton);
+                    k.key("reloadKey", g->reloadKey); k.f("muz", g->muzzleHeight); k.f("speed", g->projectileSpeed);
+                    k.str("weapon", g->weapon); k.str("file", g->weaponFile); k.str("proj", g->projectile);
                 } else if (field == "spawner") {
                     auto* c = go->AddComponent<Spawner>();
                     c->templateName = ReadQuoted(in);
@@ -6628,7 +6681,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("camDist", ts->cameraDistance); k.f("camPitch", ts->cameraPitch); k.f("camYaw", ts->cameraYaw);
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
-                    k.f("shake", ts->fireShake); k.str("proj", ts->projectile);
+                    k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
                 } else if (field == "ragdoll") {
                     auto* rd = go->AddComponent<Ragdoll>();
                     KvIn k(in);
@@ -6850,6 +6903,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             inv->slowWhenOverWeight = (slow != 0);
                             in >> std::ws;   // optional keep-on-scene-load
                             if (std::isdigit(in.peek())) { int keep = 0; in >> keep; inv->keepOnSceneLoad = (keep != 0); }
+                            in >> std::ws;   // optional enforced weight limit
+                            if (std::isdigit(in.peek())) { int ew = 0; in >> ew; inv->enforceWeight = (ew != 0); }
                         }
                     }
                 } else if (field == "lootsource") {
@@ -7531,6 +7586,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);
                     if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && !w.empty()) ac->settings.weapons.push_back(w);
+                } else if (field == "anticheatdetect") {   // one detection setting, "detect.<key> <value>", after "anticheat"
+                    const std::string line = ReadQuoted(in);
+                    if (auto* ac = LastOf(go->GetComponents<AntiCheatConfig>()); ac && line.rfind("detect.", 0) == 0) {
+                        const std::size_t sp = line.find(' ');
+                        std::string err;   // a line this build doesn't know is skipped, not fatal
+                        ac->settings.detect.ParseLine(line.substr(7, sp == std::string::npos ? std::string::npos : sp - 7),
+                                                      sp == std::string::npos ? std::string() : line.substr(sp + 1), &err);
+                    }
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
                     nv->rpc = ReadQuoted(in);
@@ -8367,6 +8430,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ReadAnchor(in, st->anchor);
                     in >> sh >> st->cornerRadius >> it;
                     st->shape = (UIShape)sh; st->interactable = (it != 0);
+                } else if (TryReadMoreUI(field, in, go)) {
                 } else if (field == "uirating") {
                     auto* rt = go->AddComponent<UIRating>();
                     Color on, off; int ah = 0, ro = 0;
@@ -9547,6 +9611,73 @@ void RegisterBuiltinComponentSerializers() {
         k.f("angle", d->maxAngle); k.f("lift", d->lift);
     };
     ComponentSerializerRegistry::Register(std::move(dec));
+
+    ComponentSerializerRegistry::Entry gridAgent;
+    gridAgent.name = "gridpath2d";
+    gridAgent.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridPathAgent2D* a : go.GetComponents<GridPathAgent2D>()) {
+            if (!a) continue;
+            out << "  gridpath2d";
+            KvOut k{out};
+            k.str("map", a->mapName)("speed", a->speed)("stop", a->stopDistance)
+             .b("diag", a->allowDiagonal).b("smooth", a->smoothPath).b("costs", a->useCosts)
+             ("repath", a->repathInterval);
+            out << "\n";
+        }
+    };
+    gridAgent.read = [](GameObject& go, std::istream& in) {
+        auto* a = go.AddComponent<GridPathAgent2D>();
+        KvIn k(in);
+        k.str("map", a->mapName); k.f("speed", a->speed); k.f("stop", a->stopDistance);
+        k.b("diag", a->allowDiagonal); k.b("smooth", a->smoothPath); k.b("costs", a->useCosts);
+        k.f("repath", a->repathInterval);
+    };
+    ComponentSerializerRegistry::Register(std::move(gridAgent));
+
+    ComponentSerializerRegistry::Entry gridCost;
+    gridCost.name = "gridcost2d";
+    gridCost.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridCostLayer* c : go.GetComponents<GridCostLayer>()) {
+            if (!c) continue;
+            out << "  gridcost2d";
+            KvOut k{out};
+            k("road", c->roadTile)("roadc", c->roadCost)("mud", c->mudTile)("mudc", c->mudCost)
+             .str("extra", c->ExtraTiles()).str("cells", c->CellText());
+            out << "\n";
+        }
+    };
+    gridCost.read = [](GameObject& go, std::istream& in) {
+        auto* c = go.AddComponent<GridCostLayer>();
+        KvIn k(in);
+        k.i("road", c->roadTile); k.f("roadc", c->roadCost);
+        k.i("mud", c->mudTile); k.f("mudc", c->mudCost);
+        std::string extra, cells;
+        k.str("extra", extra); k.str("cells", cells);
+        c->SetExtraTiles(extra);
+        c->SetCellText(cells);
+    };
+    ComponentSerializerRegistry::Register(std::move(gridCost));
+
+    ComponentSerializerRegistry::Entry gridBlock;
+    gridBlock.name = "gridblock2d";
+    gridBlock.write = [](const GameObject& go, std::ostream& out) {
+        for (const GridObstacle2D* o : go.GetComponents<GridObstacle2D>()) {
+            if (!o) continue;
+            out << "  gridblock2d";
+            KvOut k{out};
+            k.str("map", o->mapName)("wide", o->cellsWide)("tall", o->cellsTall).b("block", o->blocks);
+            out << "\n";
+        }
+    };
+    gridBlock.read = [](GameObject& go, std::istream& in) {
+        auto* o = go.AddComponent<GridObstacle2D>();
+        KvIn k(in);
+        k.str("map", o->mapName); k.i("wide", o->cellsWide); k.i("tall", o->cellsTall);
+        k.b("block", o->blocks);
+        if (o->cellsWide < 1) o->cellsWide = 1;
+        if (o->cellsTall < 1) o->cellsTall = 1;
+    };
+    ComponentSerializerRegistry::Register(std::move(gridBlock));
 
     ComponentSerializerRegistry::Entry stick;
     stick.name = "virtualjoystick";

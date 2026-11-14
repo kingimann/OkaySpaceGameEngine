@@ -97,6 +97,11 @@ struct Material {
     bool hasRoughness = false; double roughness = 0.5;
     bool hasMetalness = false; double metalness = 0.0;
     int diffuseTexture = -1, normalTexture = -1;   ///< index into Scene::textures
+    int aoTexture = -1;                            ///< ambient occlusion map (PBR property sets only)
+    /// Which property set the values came from: "" / "lambert" / "phong" for the classic FBX material, or the PBR
+    /// set a modelling tool wrote ("3dsmax-physical", "3dsmax-pbr-metal-rough", "3dsmax-pbr-spec-gloss",
+    /// "gltf", "openpbr"). The set is recognised the way ufbx does it (the tool's class id in the material).
+    std::string shaderSet;
 };
 
 /// One corner of one triangle, in the mesh's geometry space (axes/unit converted).

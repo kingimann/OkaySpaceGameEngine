@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/README.md
+    about: Guides for every part of the engine. Start here.
+  - name: What is not finished
+    url: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/UNFINISHED.md
+    about: Known gaps. Check here before filing.

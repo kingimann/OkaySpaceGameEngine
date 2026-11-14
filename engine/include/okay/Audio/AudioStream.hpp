@@ -10,7 +10,7 @@ namespace okay {
 namespace audio_detail { class PcmDecoder; }
 
 /// A long sound played straight from its file instead of being decoded into
-/// memory: WAV, OGG Vorbis or MP3 (the format is recognised from the file's
+/// memory: WAV, OGG Vorbis, MP3 or FLAC (the format is recognised from the file's
 /// first bytes). Only a ring of decoded frames, one read window and the
 /// decoder's own state are ever held, a fixed couple of hundred kilobytes
 /// whatever the length (an MP3 also keeps one 8-byte offset per 32 frames to
@@ -31,7 +31,8 @@ public:
     static constexpr std::size_t kChunkFrames = 2048;   ///< frames decoded per step
 
     /// Opens `path` for streaming. Null (with `*error` set) when it cannot be
-    /// read or is not WAV, OGG or MP3. Files over 2 GB are refused.
+    /// read or is not WAV, OGG, MP3 or FLAC. Files over 2 GB are refused.
+    /// A file whose import sidecar says "mix down to one channel" is averaged here.
     static std::shared_ptr<AudioStream> OpenFile(const std::string& path, std::string* error = nullptr);
     /// Streams from a block of memory (a file already loaded, an asset pack entry).
     static std::shared_ptr<AudioStream> OpenMemory(std::shared_ptr<const std::vector<unsigned char>> bytes,

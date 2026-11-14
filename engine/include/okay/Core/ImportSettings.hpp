@@ -26,7 +26,7 @@ enum class AssetType {
     VisualScript,   ///< okayvs
     Sequence,       ///< okayseq
     Script,         ///< cs lua
-    Data,           ///< okaydata okayitems okayloot okayrecipes okayloc okaynav json txt bin
+    Data,           ///< okaydata okayitems okayloot okayweapon okayrecipes okayloc okaynav json txt bin
     Font,           ///< ttf otf
     Other           ///< any extension not listed above
 };
@@ -72,7 +72,7 @@ struct AudioImportSettings {
     enum class LoadMode { Decode, Stream };
     LoadMode loadMode = LoadMode::Decode;  ///< decode fully on load, or stream from disk while playing
     bool     forceMono = false;
-    float    quality = 0.7f;               ///< 0..1, for formats that are re-encoded
+    float    quality = 0.7f;               ///< kept so older files still round-trip; audio is not re-encoded, so this is not applied
 };
 
 /// All import settings of one asset. Only the block that matches `kind` is stored; types

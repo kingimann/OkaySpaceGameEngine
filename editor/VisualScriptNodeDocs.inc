@@ -2288,6 +2288,58 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "GridMoveTo";
+        d.title = "Walk the Grid";
+        d.description = "Sends this object's Grid Path Agent walking to the cell that contains world point X, Y.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target), and a tilemap in the scene. Runs in Play mode.";
+        d.component = "GridPathAgent2D";
+        d.example = "Put Walk the Grid after On Start, and type the world point into X and Y.";
+        d.related = "Stop Grid Walk, Grid Arrived";
+        d.keywords = "grid path, tilemap, walk";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Walk the Grid runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Walk the Grid finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "X", "Number", "World X of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Y", "Number", "World Y of the point to walk to. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GridStop";
+        d.title = "Stop Grid Walk";
+        d.description = "Stops this object's Grid Path Agent where it is and drops the path.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target). Runs in Play mode.";
+        d.component = "GridPathAgent2D";
+        d.example = "Put Stop Grid Walk on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "Walk the Grid";
+        d.keywords = "grid stop, path";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Stop Grid Walk runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Stop Grid Walk finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "GridArrived";
+        d.title = "Grid Arrived";
+        d.description = "True once the Grid Path Agent reached its last cell.";
+        d.requirements = "Needs a Grid Path Agent on this object (or on Target). False when there is none.";
+        d.component = "GridPathAgent2D";
+        d.example = "Wire Grid Arrived's Arrived output into a Branch, to do something when the walk finishes.";
+        d.related = "Walk the Grid";
+        d.keywords = "grid arrived, path done";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Target", "Object", "The object to act on. Leave it empty to use this object (the one the graph is on). It is an Object. Unwired, this is this object.", "this object"});
+        d.pins.push_back({false, false, "Arrived", "Bool", "True once the last cell was reached. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "BtSet";
         d.title = "Set Blackboard";
         d.description = "Writes a value into the Behavior Tree Runner's blackboard (the key is the setting).";
@@ -15832,6 +15884,89 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "SwingWeapon";
+        d.title = "Swing Weapon";
+        d.description = "Starts a swing on this object's Melee Attacker. Swung is true when that component is there. A weapon with a hit window lands during the window, not on this node.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Swing Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "swing weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Swing Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Swing Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Swung", "Bool", "What Swing Weapon produces on Swung. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "FireWeapon";
+        d.title = "Fire Weapon";
+        d.description = "Fires this object's gun once, if the fire rate, the reload and the rounds allow it. Fired is true when a shot left the gun.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Fire Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "fire weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fire Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Fire Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Fired", "Bool", "What Fire Weapon produces on Fired. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ReloadWeapon";
+        d.title = "Reload Weapon";
+        d.description = "Starts reloading this object's gun from its spare rounds. Started is true when the object has a gun.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Reload Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "reload weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reload Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Reload Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Started", "Bool", "What Reload Weapon produces on Started. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "WeaponAmmo";
+        d.title = "Get Ammo";
+        d.description = "How many rounds are left in this object's gun.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Ammo's Rounds output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get ammo";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Rounds", "Number", "What Get Ammo produces on Rounds. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "SetWeapon";
+        d.title = "Set Weapon";
+        d.description = "Points the Melee Attacker, the gun and the top-down shooter on this object at this weapon id. Set is true when this object exists.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "set weapon";
+        d.setting = "weapon. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Set", "Bool", "What Set Weapon produces on Set. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "SetObjectVar";
         d.title = "Set Object Var";
         d.description = "Stores Value in a variable on another object, named in Target.";
@@ -17328,6 +17463,97 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         d.pins.push_back({true, false, "Map", "Map", "The Map input of Map Copy. It is a Map. Unwired, this is an empty map.", "an empty map"});
         d.pins.push_back({true, false, "Deep", "Bool", "The Deep input of Map Copy. It is a Bool. Unwired, this is false.", "false"});
         d.pins.push_back({false, false, "Copy", "Map", "What Map Copy produces on Copy. It is a Map. Wire it into an input that expects a Map.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ListAppend";
+        d.title = "List Append";
+        d.description = "Adds every item of Other to the end of List. Appending a list to itself doubles it.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put List Append after an event such as On Start or On Update, and wire a value into List.";
+        d.related = "";
+        d.keywords = "list append";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. List Append runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After List Append finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({true, false, "Other", "List", "The Other input of List Append. It is a List. Unwired, this is an empty list.", "an empty list"});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ListSlice";
+        d.title = "List Slice";
+        d.description = "A new list with Count items starting at Start (nothing wired into Count means everything from Start). Start past the end of the list is reported.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire List Slice's Slice output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "list slice";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({true, false, "Start", "Number", "Where the effect begins, in world units from the camera. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({true, false, "Count", "Number", "How many. It is a Number. Unwired, this is 0.", "0"});
+        d.pins.push_back({false, false, "Slice", "List", "What List Slice produces on Slice. It is a List. Wire it into an input that expects a List.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ListPop";
+        d.title = "List Pop";
+        d.description = "Removes the last item of a list and gives it back. On an empty list Popped is false and nothing changes.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put List Pop after an event such as On Start or On Update, and wire a value into List.";
+        d.related = "";
+        d.keywords = "list pop";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. List Pop runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After List Pop finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "List", "List", "The list to read or change. It is a List. Unwired, this is an empty list.", "an empty list"});
+        d.pins.push_back({false, false, "Item", "Any", "The current list entry. It is an Any. Wire it into an input that expects an Any.", ""});
+        d.pins.push_back({false, false, "Popped", "Bool", "What List Pop produces on Popped. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "MapGetOr";
+        d.title = "Map Get Or";
+        d.description = "The value stored under Key, or Default when the map has no such key.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Map Get Or's Value output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "map get or";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, false, "Map", "Map", "The Map input of Map Get Or. It is a Map. Unwired, this is an empty map.", "an empty map"});
+        d.pins.push_back({true, false, "Key", "Text", "The Key input of Map Get Or. It is a Text. Unwired, this is empty text.", "empty text"});
+        d.pins.push_back({true, false, "Default", "Any", "Used when nothing has been saved under this key yet. It is an Any. Unwired, this is nothing.", "nothing"});
+        d.pins.push_back({false, false, "Value", "Any", "The value that was read. It is an Any. Wire it into an input that expects an Any.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "MapMerge";
+        d.title = "Map Merge";
+        d.description = "Copies every entry of From into Into. A key in both takes the value from From.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Put Map Merge after an event such as On Start or On Update, and wire a value into Into.";
+        d.related = "";
+        d.keywords = "map merge";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Map Merge runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Map Merge finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({true, false, "Into", "Map", "The Into input of Map Merge. It is a Map. Unwired, this is an empty map.", "an empty map"});
+        d.pins.push_back({true, false, "From", "Map", "The angle you are coming from, in degrees. It is a Map. Unwired, this is an empty map.", "an empty map"});
         add(std::move(d));
     }
     {

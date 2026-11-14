@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -142,24 +142,88 @@ bool PlyFileDeclaresDuplicateVertex(const std::string& path);
 /// cameras, lights ...) is reported in `out.notes`. `baseDir` ends with a slash or is empty.
 bool ReadColladaBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
+/// 3D Studio (.3ds), chunk format. Meshes (points, faces, UVs, smoothing groups -> smooth normals,
+/// per-face material groups -> one part per material), materials (diffuse, specular and bump
+/// textures, colours, shininess, self illumination), the keyframe node hierarchy with position /
+/// rotation / scale tracks (30 frames per second), and the master scale. The root node carries the
+/// master scale and the Z-up to Y-up rotation. UV v is flipped. `flatten` bakes that into the vertices
+/// and returns one root node, no clips. What was not read (lights, cameras, opacity / reflection maps,
+/// texture tiling, material transparency ...) is in `out.notes`. `baseDir` ends with a slash or is empty.
+bool Read3dsBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+/// BVH motion capture (.bvh): the joint hierarchy as nodes (position = OFFSET, no meshes) and the
+/// motion as one clip with a position and rotation key per frame and joint. Rotation channels are
+/// composed in the file's channel order. Units are kept (BVH has none); the Y-up right-handed
+/// convention of the common exporters is assumed.
+bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// OFF (Object File Format, text): one mesh part from `OFF` / `NOFF` / `STOFF` (and `C` variants) files: vertices,
+/// optional per-vertex normals and texture coordinates, polygons of any size (convex ones fanned, concave ones ear
+/// clipped). Smooth normals are generated when the file has none. Colors, `4OFF` and `nOFF` are not read (reported in
+/// `out.notes`, or an error for the last two). Units, axes and texture coordinates are kept as written.
+bool ReadOffBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// SMD (Valve Studiomdl Data, text): the bone list as nodes under a root that turns Z-up into Y-up, triangles as one
+/// skinned part per material (up to four bone weights per vertex, vertices welded, v flipped), the bind pose from the
+/// first frame and, when the file has several frames, one clip ("animation", 30 frames per second assumed). Euler
+/// angles follow Valve's convention. Vertex animation (flex) sections are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes the material names, which are the texture files).
+bool ReadSmdBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MD5 (id Tech 4 / Doom 3): `meshText` is an md5mesh, `animText` an md5anim (either may be empty, not both). The joints
+/// become nodes under a root that turns Z-up into Y-up; each mesh is one skinned part (vertices computed at the bind
+/// pose from the weights, four strongest joints per vertex, smooth normals generated, winding reversed to counter
+/// clockwise, texture coordinates kept as written); the animation is one clip at the file's frameRate. With only an animation, the nodes come from
+/// its hierarchy and base frame. Shader names that are not image files set no texture. `baseDir` ends with a slash or is empty.
+bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// MS3D (MilkShape 3D, binary, versions 3 and 4): one skinned part per group (vertices welded on position, normal
+/// and texture coordinate; normals and UVs come per triangle corner), materials (diffuse and emissive colour,
+/// shininess, texture; the transparency goes into the diffuse alpha), the joint hierarchy as nodes, up to four joint
+/// weights per vertex (the version 4 extra-weight block when present), and one clip ("animation") from the joints' rotation
+/// and translation keys. Y-up like the engine; units, winding and texture coordinates are kept as written.
+/// Comments, ambient / specular colours and smoothing groups are not read (reported in `out.notes`).
+/// `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
+bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// ASE (3ds Max ASCII Scene Export, text; UTF-8 or UTF-16 with a byte order mark): one part per object and material
+/// (sub-materials by face material id; vertices welded; normals from MESH_NORMALS or built from the smoothing groups),
+/// diffuse colour and bitmap, the node hierarchy from NODE_PARENT / NODE_TM and the position / rotation / scale sample
+/// tracks as one clip (TCB and Bezier keys read as plain keys). The root node turns Z-up into Y-up; v is flipped.
+/// Cameras, lights and shapes are plain empty nodes; vertex colours, extra mapping channels, other material maps and
+/// texture transforms are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
+bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// Blender (.blend), Blender 2.4x to 4.x, 32 / 64 bit, little / big endian, plain or gzip (zstd is not supported;
+/// Blender 5.0's large-header container is not supported). Driven by the file's own SDNA struct description.
+/// Reads objects with transforms and parenting, meshes (old MVert / MFace / MPoly storage and the 3.x / 4.x attribute
+/// storage), UVs, materials (colours, image textures, Principled BSDF inputs), armatures with vertex group skin
+/// weights, and F-Curve animation of object and pose-bone location / rotation / scale. The root node carries the
+/// Z-up to Y-up rotation. UV v is flipped. `flatten` bakes every object's world matrix and that rotation into the
+/// vertices and returns one root node, no skins, no clips. Everything not read (modifiers, constraints, shape keys,
+/// vertex colours, cameras, lights, curves, ...) is named in `out.notes`. `baseDir` ends with a slash or is empty.
+bool ReadBlendBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// `path` is an .md5mesh (the .md5anim with the same name next to it is read too when it exists) or an .md5anim alone.
+bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase .blend have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
-/// Collada (.dae) is the odd one out: its reader is off by default (docs/model_import.md);
-/// it runs when SetImportBackend(".dae", Own), the environment variable OKAY_OWN_COLLADA=1
-/// or the CMake option OKAY_OWN_COLLADA says so (run-time choice beats the variable, which
-/// beats CMake; OKAY_OWN_COLLADA=0 forces it off).
+/// Collada (.dae), 3DS (.3ds), BVH (.bvh) and Blender (.blend) are the odd ones out: their readers are off by default
+/// (docs/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
+/// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 / OKAY_OWN_BLEND=1 or the matching CMake option says so
+/// (run-time choice beats the variable, which beats CMake; =0 forces it off).
 bool HasOwnReader(const std::string& ext);
 /// Choose the backend for one extension (".stl"), or for every format with
 /// an own reader when `ext` is "*". Returns false for an extension without an own

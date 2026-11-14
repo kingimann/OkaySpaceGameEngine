@@ -22,7 +22,7 @@ you *have* forwarded, etc.):
 ```
 okayspace-relay                       # listens on UDP 45100
 okayspace-relay 50000                 # custom port
-okayspace-relay --legacy-hello=off    # refuse version-1/2 hellos (see below)
+okayspace-relay --legacy-hello=on     # accept version-1/2 hellos again (off by default, see below)
 ```
 
 It prints the bound port and then forwards quietly. One relay handles many
@@ -140,10 +140,12 @@ The relay is on the internet, so it doesn't trust its peers:
   relay instead where you can.
 
 **Legacy hellos.** Version-1 and -2 hellos carry no cookie. The relay still
-accepts them while `--legacy-hello` is on (the default for now), and logs how
-many arrived each minute ("N legacy (version 1/2) hellos in the last minute").
-Once that stays at zero, run with `--legacy-hello=off`: they're refused with
-`RelayRefused{version}`. The launcher's voice calls speak version 3 (they fall
+refuses them by default (`--legacy-hello=off`) with `RelayRefused{version}`,
+because anyone can forge the source address of a cookie-less hello. Games too
+old to send a cookie can be let in again with `--legacy-hello=on`; the relay then
+logs how many arrived each minute ("N legacy (version 1/2) hellos in the last
+minute"). (The `RelayServer` class itself still defaults to on, for embedding
+and tests; only the standalone program changed.) The launcher's voice calls speak version 3 (they fall
 back to version 1 only against a relay older than that), so turning legacy
 hellos off doesn't cut them off. A version-3 game talks to a version-2 relay
 unchanged: the older relay ignores the cookie and padding.
@@ -153,6 +155,13 @@ voice calls, where every member announces the host role) still work. They get th
 forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
+
+**A peer's address changes.** The relay knows a peer by its source address. If a host's
+NAT rebinds, its next hello comes from a new address with the host key, and the relay moves
+the host there and keeps its slot: clients notice nothing. If a client's address changes it
+is a new peer with a new slot; the client sees the new slot in the next welcome and reports
+the connection lost ("this connection's address changed on the relay"), and with
+`autoReconnect` rejoins and resumes its state through the new address within a couple of seconds.
 
 **Hub sessions.** Version 3 keeps that hand-over for sessions that want it with
 the `RelayHub` role (the launcher's voice calls): every member says hub, the
@@ -169,6 +178,17 @@ the game, so this is squatting, not a takeover. Use random session codes
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.
+
+## Game channels the relay carries (round 4)
+
+Build mode, the quest log and death / respawn replication ride on the ordinary game channels, so the
+relay needs no change and reads none of it (with encryption on it cannot): a client's build and quest
+requests go out on `__req/build` and `__req/quest` (reliable, ordered, host only: the host's handler
+reads them and nothing is passed on to the other clients), and the host's answers on `__bld`, `__qst`
+and `__life` (ordered). A late joiner's snapshot is sent in chunks of at most 24 KB, a few dozen
+datagrams for a full 250-piece build, well inside the relay's per-peer caps above. The relay session
+tests (`net_relay`, `net_relay_clients`, `net_relay_nat`) were re-run; the new suites were run over a
+direct connection and NetSim, not through a relay.
 
 ## Voice calls in the launcher
 

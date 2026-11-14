@@ -75,6 +75,11 @@ TtfFont* UIDefaultFont();
 /// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 /// use (the scene's UI font during RenderSceneUI, else the 8x8 bitmap font).
 float UITextW(const std::string& text, float px);
+/// Same measurement for an explicit font (nullptr = the scene UI font). Uses the
+/// TrueType face baked at the on-screen pixel size when one is in use.
+float UIMeasureText(TtfFont* font, const std::string& text, float px);
+/// An anti-aliased X (search clear, close). `size` is the box in logical pixels.
+void DrawUICross(Painter& ren, float x, float y, float size, RGBA col);
 /// Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy), each
 /// font pixel `px` screen pixels wide. With a TTF font (`ttf`, or the scene's UI font
 /// during RenderSceneUI) the glyph atlas is used instead, in the same sizing space.

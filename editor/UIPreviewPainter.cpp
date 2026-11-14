@@ -30,6 +30,10 @@ void UIPreviewPainter::FillRect(const okay::ui2d::Rect* r) {
     if (r) FillPx((float)r->x, (float)r->y, (float)r->w, (float)r->h);
 }
 
+void UIPreviewPainter::FillRectF(const okay::ui2d::FRect* r) {
+    if (r) FillPx(r->x, r->y, r->w, r->h);
+}
+
 // SDL outlines the rect's border pixels (inside the rect), one pixel wide.
 void UIPreviewPainter::DrawRect(const okay::ui2d::Rect* r) {
     if (!r || r->w <= 0 || r->h <= 0) return;

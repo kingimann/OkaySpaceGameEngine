@@ -107,6 +107,8 @@ export const STEPS: Step[] = [
   // (their snapshot holds your words, so they go with the account)
   { id: "reports.filed", kind: "delete", table: "reports", filter: eq("reporter") },
   { id: "reports.about_me", kind: "delete", table: "reports", filter: eq("target_user") },
+  // machine hashes this account used (docs/sql/anticheat.sql): about the person, so they go; the machine BANS stay (ac_bans above)
+  { id: "ac_devices", kind: "delete", table: "ac_devices", filter: eq("user_id") },
   { id: "ac_appeals", kind: "delete", table: "ac_appeals", filter: eq("user_id") },
   { id: "ac_report_servers", kind: "delete", table: "ac_report_servers", filter: eq("user_id") },
   { id: "profiles", kind: "delete", table: "profiles", filter: eq("id") },

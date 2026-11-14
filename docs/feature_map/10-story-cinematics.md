@@ -61,7 +61,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Docs:** `docs/dialogue_quests.md`
 - **Tests:** `quests`, `dialogue`
 - **Status:** Works - QuestLog.hpp and StoryState.hpp read in full and the function layout of QuestLog.cpp; objectives, prerequisites, rewards and state covered by the 323-line `quests` test
-- **Open:** per docs, quests are per client in multiplayer (no host-validated shared state); per docs a Kill objective counts deaths through the victim's Health Stat (see 11.4)
+- **Open:** in multiplayer the server's quest log and story are the truth and clients hold copies (16.8.9; per-player quests advance only through the server API); a networked game is not saved as one; per docs a Kill objective counts deaths through the victim's Health Stat (see 11.4)
 - **Related:** 10.2, 10.4, 11.1, 11.4, 1.7, 35
 - **Words:** quest, quest log, objective, reward, prerequisite, journal, story state, story variable, flag, Quest Trigger, .okayquest, mission, collect quest, kill quest, reach zone
 - **Seen as:** a quest never completes after collecting the items; the reward is not given; a quest cannot be restarted; the story variable resets after loading; the tracker shows the wrong quest

@@ -132,7 +132,7 @@ int main() {
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 7\n", m, &err));   // index range
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 -1\n", m, &err));  // negative index
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1\n", m, &err));      // truncated face
-        CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n", m, &err));                                                        // no faces
+        CHECK(ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n", m, &err) && m.parts.size() == 1 && m.parts[0].mesh.triangles.empty());   // no faces = point cloud
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nend_header\n0 0\n", m, &err));                                                                                         // no z
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 nan\n0 1 0\n3 0 1 2\n", m, &err));    // NaN vertex
         CHECK(!ReadPlyBuffer("ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list int int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n2000000000 0 1\n", m, &err)); // list longer than allowed
@@ -210,7 +210,7 @@ int main() {
         std::vector<std::string> seeds;
         for (const char* f : {"cube.obj", "cube.mtl", "plain.obj", "cube_ascii.stl", "cube_binary.stl", "two_solids.stl",
                               "cube_ascii.ply", "cube_le.ply", "cube_be.ply", "tetra_plain.ply",
-                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae"})
+                              "two_materials.dae", "zup_cm.dae", "skinned_strip.dae", "unsupported.dae", "component_anim.dae", "strips_concave.dae"})
             seeds.push_back(Slurp(kDir + f));
         int ran = 0, accepted = 0;
         for (const std::string& s : seeds) {

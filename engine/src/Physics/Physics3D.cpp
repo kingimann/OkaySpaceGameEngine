@@ -1,4 +1,5 @@
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
@@ -486,7 +487,7 @@ void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
     if (!(prevFoot >= hit.point.y - 0.35f)) return;
     const float lift = hit.point.y - curFoot;
     if (!(lift > 0.0f && lift <= 2.5f)) return;
-    rb->transform->localPosition.y += lift;
+    MoveBodyWorld(rb->transform, Vec3{0.0f, lift, 0.0f});
     if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
     if (rb->sleeping) rb->WakeUp();
 }
@@ -544,17 +545,10 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
         if (rb->bodyType != Rigidbody3D::BodyType::Static) {
             if (rb->continuousCollision) SweepBody(scene, rb, dt);   // stops at walls it would skip
-            else t->localPosition = t->localPosition + rb->velocity * dt;
+            else MoveBodyWorld(t, rb->velocity * dt);
             // Integrate orientation: q += 0.5 * (ω as quat) * q * dt, renormalized.
-            if (!rb->freezeRotation && rb->angularVelocity.SqrMagnitude() > 1e-12f) {
-                const Vec3& w = rb->angularVelocity;
-                Quat q = t->localRotation;
-                Quat wq{w.x, w.y, w.z, 0.0f};
-                Quat dq = wq * q;
-                float h = 0.5f * dt;
-                t->localRotation = Quat{q.x + dq.x * h, q.y + dq.y * h,
-                                        q.z + dq.z * h, q.w + dq.w * h}.Normalized();
-            }
+            if (!rb->freezeRotation && rb->angularVelocity.SqrMagnitude() > 1e-12f)
+                SpinBodyWorld(t, rb->angularVelocity, dt);
         }
     }
 
@@ -635,8 +629,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float imSum = ima + imb;
                 if (imSum > 0.0f) {
                     Vec3 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition = a->transform->localPosition - correction * ima;
-                    b->transform->localPosition = b->transform->localPosition + correction * imb;
+                    MoveBodyWorld(a->transform, correction * -ima);
+                    MoveBodyWorld(b->transform, correction * imb);
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point and inverse inertia. When rotation is locked these are 0, so
@@ -812,7 +806,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                     rb->WakeUp();
                 }
                 if (pos.y < targetY) {                      // sank into the ground -> lift out
-                    t->localPosition.y += (targetY - pos.y);
+                    MoveBodyWorld(t, Vec3{0.0f, targetY - pos.y, 0.0f});
 
                     // Slope-aware response: resolve velocity against the terrain
                     // surface normal instead of just zeroing Y. This lets bodies
@@ -888,7 +882,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                             Vec3 local{cur.x - vp.x, yy - vp.y, cur.z - vp.z};
                             if (!vox->WithinBounds(local, radius)) continue;
                             if (vox->SampleDensity(local) > vox->iso) {   // solid the body skipped over
-                                t->localPosition.y += (yy + radius) - footCurY;  // sit the foot on it
+                                MoveBodyWorld(t, Vec3{0.0f, (yy + radius) - footCurY, 0.0f});  // sit the foot on it
                                 if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
                                 rb->groundedOnTerrain = true;
                                 break;
@@ -908,9 +902,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                         float pen = radius + d;          // > 0 -> the sphere is in solid
                         if (pen <= 0.0f) break;
                         Vec3 n = vox->SurfaceNormal(local);
-                        t->localPosition.x += n.x * pen; // push the whole body out
-                        t->localPosition.y += n.y * pen;
-                        t->localPosition.z += n.z * pen;
+                        MoveBodyWorld(t, n * pen); // push the whole body out
                         Vec3& v = rb->velocity;
                         float vn = v.x * n.x + v.y * n.y + v.z * n.z;
                         if (vn < 0.0f) {                 // remove velocity into the surface
@@ -1013,7 +1005,7 @@ void Physics3D::Step(Scene& scene, float dt) {
                             savedRel = rb->velocity;             // mesh is immovable; capture before the impulse
                         }
                         const Vec3 n = k.normal;
-                        t->localPosition = t->localPosition + n * k.penetration;
+                        MoveBodyWorld(t, n * k.penetration);
                         // Impulses against the immovable surface; n points surface -> body.
                         const float im = rb->InvMass();
                         Vec3 rA = k.point - center;
@@ -1109,8 +1101,8 @@ void Physics3D::Step(Scene& scene, float dt) {
         if (m == Joint3D::Mode::Pin) {
             Vec3 target = pb + j->pinOffset;
             Vec3 err = target - pa;
-            ta->localPosition = ta->localPosition + err * (imA / imSum);
-            if (tb && rbB && imB > 0.0f) tb->localPosition = tb->localPosition - err * (imB / imSum);
+            MoveBodyWorld(ta, err * (imA / imSum));
+            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, err * (-imB / imSum));
             ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) j->broken = true;
         } else if (m == Joint3D::Mode::Hinge) {
@@ -1163,7 +1155,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             }
             // 4) Positional correction: pull A's anchor point back onto the pivot.
             Vec3 Cpos = anchorWorld - pb;
-            ta->localPosition = ta->localPosition - Cpos;
+            MoveBodyWorld(ta, -Cpos);
             if (j->breakable && std::sqrt(Vec3::Dot(Cpos, Cpos)) > j->breakForce) j->broken = true;
         } else {
             Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
@@ -1182,8 +1174,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                 ra->velocity = ra->velocity - imp * imA;
                 if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + imp * imB;
                 Vec3 corr = n * C;                       // restore the rest length
-                ta->localPosition = ta->localPosition + corr * (imA / imSum);
-                if (tb && rbB && imB > 0.0f) tb->localPosition = tb->localPosition - corr * (imB / imSum);
+                MoveBodyWorld(ta, corr * (imA / imSum));
+                if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, corr * (-imB / imSum));
             }
             if (j->breakable && std::fabs(C) > j->breakForce) j->broken = true;
         }
@@ -1793,7 +1785,7 @@ void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
     float len = motion.Magnitude();
     Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
     if (!self || !Alive(self) || self->isTrigger || len < 1e-6f) {
-        t->localPosition = t->localPosition + motion;
+        MoveBodyWorld(t, motion);
         return;
     }
     // The body as the sphere that fits inside its bounds: a slow body (moving
@@ -1801,7 +1793,7 @@ void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
     Vec3 mn, mx; self->WorldAABB(mn, mx);
     float r = 0.5f * Mathf::Min(mx.x - mn.x, Mathf::Min(mx.y - mn.y, mx.z - mn.z));
     if (r < 0.01f) r = 0.01f;
-    if (len <= r * 0.5f) { t->localPosition = t->localPosition + motion; return; }
+    if (len <= r * 0.5f) { MoveBodyWorld(t, motion); return; }
     Vec3 dir = motion * (1.0f / len);
     RaycastHit3D h = Sweep(scene, SphereShape(self->WorldCenter(), r), dir, len, rb->gameObject,
                            m_layerMask[self->layer & 31], /*queryTriggers*/ false,
@@ -1810,7 +1802,7 @@ void Physics3D::SweepBody(Scene& scene, Rigidbody3D* rb, float dt) {
     // Stop just inside the surface so this step's narrow phase sees the contact
     // and bounces / stops the body as usual.
     if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
-    t->localPosition = t->localPosition + dir * travel;
+    MoveBodyWorld(t, dir * travel);
 }
 
 const TriggerContact3D* Physics3D::CurrentTrigger() { return g_currentTrigger; }

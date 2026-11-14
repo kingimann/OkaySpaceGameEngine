@@ -105,17 +105,17 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Ask me like:** "export my game to the browser"; "set up an Android project for the player"
 
 ### 37.6 Native HTTP and the game-to-launcher link
-- **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections, falling back to curl elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
+- **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl is the fallback and the default elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
-  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows so callers use the curl path; thread safe
+  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/own_http_client.md`) so callers use the curl path; thread safe
   - 37.6.2 Game and launcher link - `Platform/GameIpc` - small files in the per-user config folder keyed by process id: presence, invite request, join link, `played-with.tsv`
 - **Code:** `Platform/NativeHttp`, `Platform/GameIpc`
 - **API:** `okay::http::Request`, `okay::http::NativeAvailable`, `GameIpc::WritePresence`, `GameIpc::TakeJoin`, `GameIpc::RequestInvite`, `GameIpc::RecordPlayedWith`
 - **Editor:** none
-- **Docs:** `docs/launcher-multiplayer.md`, `docs/accounts.md`
-- **Tests:** `launcher_join`, `match_results`
+- **Docs:** `docs/launcher-multiplayer.md`, `docs/accounts.md`, `docs/own_http_client.md`
+- **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`
 - **Status:** Works - both headers read; the player calls GameIpc (presence, join, invite) and the launcher and AccountService use NativeHttp (call sites read); `launcher_join` covers the link
-- **Open:** NativeHttp is Windows only (other systems use the curl process); file-based IPC polls with a 30 s presence age rather than a socket; no tests for NativeHttp itself
+- **Open:** NativeHttp is Windows only by default (other systems use the curl process; the Linux own client is opt-in and macOS has none); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path has no tests (the own client has)
 - **Related:** 17.1, 17.3, 17.2, 16.4, 18.1
 - **Words:** NativeHttp, WinHTTP, HTTPS client, curl, GameIpc, launcher link, presence, join link, invite friends, played with, ipc folder
 - **Seen as:** launcher is slow to fill in at start; invites do not reach the running game; friends do not see what I am playing; account calls fail behind a proxy

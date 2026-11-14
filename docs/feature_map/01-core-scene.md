@@ -132,7 +132,7 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
 - **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
 - **Seen as:** a scene file will not open or opens half-empty; a component's settings are lost after save and load; two scenes will not merge cleanly
-- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Why did loading drop my second collider?"
+- **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates
 - **What:** Reusable objects saved as `.okayprefab` files and the starter worlds, players and UI screens the editor creates from templates.

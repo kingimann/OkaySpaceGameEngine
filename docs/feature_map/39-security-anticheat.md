@@ -5,7 +5,7 @@ paths or tampered files. It pulls together the anti-cheat in the network layer (
 headers, session tickets and their Edge function, trusted-key checks at build time, relay and account hardening, script path
 safety and data obfuscation. It is big enough to stand alone (about 3,000 lines in `shared/`, 1,000 in `Net/AntiCheat`,
 `SessionTicket`, `ClockCheck`, 770 lines of `docs/anticheat.md`, 443 of SQL). The anti-cheat plan (phases 1 to 5) and all 14
-hardening items are merged. An opt-in client hardening layer (39.12) was added afterwards on its own branch.
+hardening items are merged. The opt-in detection engine (39.12) and an opt-in client hardening layer (39.13) were added afterwards.
 
 ## 39. Security & anti-cheat
 
@@ -24,8 +24,8 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Docs:** `docs/anticheat.md` (P1, Network hardening, Gameplay validation), `docs/launcher-multiplayer.md`
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
-- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off
-- **Related:** 16.6, 16.11, 39.2
+- **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
+- **Related:** 16.6, 16.11, 39.2, 39.12
 - **Words:** anti-cheat, cheat, authority, allowlist, forged syncvar, hit claim, NetValidator, .okayac, violation, kick, speed hack, fire rate, ammo budget
 - **Seen as:** "forged syncvar", "rpc rejected", "hit rejected" in the log; players kicked for speed; clients can't spawn a prefab
 - **Ask me like:** "which messages does the anti-cheat refuse?", "allow clients to spawn only crates"
@@ -46,7 +46,7 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Docs:** `docs/anticheat.md` (P2, Network hardening), `docs/dedicated-server.md`
 - **Tests:** `net_crypto`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_token_policy`, `net_auth`, `net_hardening`
 - **Status:** Works - phases 2 and 3 have dedicated tests; throwaway keys are made at test time
-- **Open:** possible gap: the Ubuntu CI job installs no libsodium-dev, so these tests may only run their "built without libsodium" branch there (the MinGW release build and the Linux server job do have libsodium; unverified for the runner image); without a pinned key a sealed join stops listeners but not a man in the middle (documented)
+- **Open:** the main Ubuntu job still installs no libsodium-dev (unchanged: it is an existing job); the new `anticheat-crypto` CI job installs it, fails if configure does not enable it, runs these tests and fails if any prints its "built without libsodium" branch (written here, not yet run on a GitHub runner); without a pinned key a sealed join stops listeners but not a man in the middle (documented)
 - **Related:** 16.1, 39.3, 18.3
 - **Words:** encryption, libsodium, sealed, replay, sequence number, key exchange, pinned host key, man in the middle, session cookie, requireEncryption, join gating
 - **Seen as:** "encryption required"; a join refused with "no encryption" or a pinned-key mismatch; an old client can't join a server with replay protection
@@ -57,17 +57,17 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Parts:**
   - 39.3.1 Ticket format and verify - `Net/SessionTicket` - `okt1.<payload>.<signature>` (ed25519), `sub`, `aud`, `iat`, `exp` (at most 1 h, 60 s skew), optional `cnf` key binding; `SessionTicket::Sign` is for tests and tools only
   - 39.3.2 Server side policy - `Net/AntiCheat` - `ticketKey`, `ticketAudience` (required with a key), `ticketAnyAudience`; one connection per account (a second join replaces the first)
-  - 39.3.3 Edge function - `supabase/functions/session-ticket/index.ts` - checks login (`/auth/v1/user`), calls `ac_is_banned` with its own service key, answers 403 banned, 503 if the ban check fails, else a ticket with `OKAY_TICKET_TTL` (600 s default, 3600 max)
+  - 39.3.3 Edge function - `supabase/functions/session-ticket/index.ts` - checks login (`/auth/v1/user`), calls `ac_is_banned` with its own service key, answers 403 banned, 503 if the ban check fails, else a ticket with `OKAY_TICKET_TTL` (600 s default, 3600 max) and the service clock (`iat`); records the machine hash with `ac_note_device` (best effort)
   - 39.3.4 Signing code - `supabase/functions/session-ticket/ticket.ts` - Web Crypto only; must match `SessionTicket::Verify` byte for byte
   - 39.3.5 Key maker and self-test - `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts` - the owner runs `make_key.ts`; the seed is the private key and never goes in git, a build or chat
-  - 39.3.6 Client request - `shared/AntiCheatBackend.hpp` - builds the POST and parses the answer (`ParseTicket`); `NetworkManager::TicketBinding()` makes the key binding
-- **Code:** `Net/SessionTicket`, `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `shared/AntiCheatBackend.hpp`
-- **API:** `SessionTicket::Verify`, `NetworkManager::SetAuthToken`, `TicketBinding`, `.okayac` keys `ticketKey`, `ticketAudience`, `ticketAnyAudience`, env `OKAY_TICKET_SEED`, `OKAY_TICKET_PUBLIC_KEY`, `OKAY_TICKET_TTL`
+  - 39.3.6 Client request - `shared/AntiCheatBackend.hpp`, `shared/TicketClient.hpp`, `shared/TicketJoin.hpp` - the checked POST (`SessionTicket`) and `ParseTicket`; `Client::Acquire` (retries, 401 renew, banned is final, clock skew from `iat`, expiry, cache of unbound tickets); `Decide` (`mode off/optional/required`, `okay_tickets.cfg`); `NetworkManager::SetJoinGate` runs it before every `StartClient` / `JoinViaRelay`; the player installs it and the launcher checks before it starts a game to join
+- **Code:** `Net/SessionTicket`, `supabase/functions/session-ticket/index.ts`, `supabase/functions/session-ticket/ticket.ts`, `supabase/functions/session-ticket/make_key.ts`, `supabase/functions/session-ticket/ticket_test.ts`, `shared/AntiCheatBackend.hpp`, `shared/TicketClient.hpp`, `shared/TicketJoin.hpp`
+- **API:** `SessionTicket::Verify`, `NetworkManager::SetAuthToken`, `TicketBinding`, `SetJoinGate`, `LastJoinRefusal`, `okayac::ticket::Client`, `Decide`, `okay_tickets.cfg`, `.okayac` keys `ticketKey`, `ticketAudience`, `ticketAnyAudience`, env `OKAY_TICKET_SEED`, `OKAY_TICKET_PUBLIC_KEY`, `OKAY_TICKET_TTL`
 - **Editor:** none
 - **Docs:** `docs/anticheat.md` (P2: session tickets, The ticket service)
-- **Tests:** `net_anticheat_p2` (verifies tickets the TypeScript signer made, per docs), `anticheat_backend`
-- **Status:** Partial - server verification is tested; the function is not deployed (per docs), and no launcher or game code calls the ticket request before joining
-- **Open:** deploy the function and create the key pair (the owner's step, ROADMAP "Waiting on Iman"); wire the launcher or game to fetch a ticket before `StartClient` and refresh `ac_my_bans` on a `banned` answer; `ticket_test.ts` is run by hand, not in CI
+- **Tests:** `net_anticheat_p2` (verifies tickets the TypeScript signer made, per docs), `anticheat_backend`, `ticket_client` (scripted service plus a real local HTTP service, a real ticket-requiring server and the join gate), CI job `ticket-and-script-tests` (`ticket_test.ts` on Node 22)
+- **Status:** Partial - the whole flow is wired and tested against a fake local service (player and launcher call the ticket request before joining; banned answers refresh `ac_my_bans`); the function is not deployed, so it has never run against the real service
+- **Open:** deploy the function and create the key pair (the owner's step, ROADMAP "Waiting on Iman"), then put an `okay_tickets.cfg` with `mode required` next to each game that joins ticket servers; the join waits for the ticket request (up to about 12 s, no repaint meanwhile); a server does not announce that it needs tickets, so the client goes by its own config (without the file a game joins without a ticket and the server refuses it); the launcher's early ban check runs only when the config is beside the launcher or the scene; the Windows native HTTP path has no per-request timeout of its own
 - **Related:** 39.6, 39.7, 17.2, 41.6
 - **Words:** session ticket, okt1, ed25519, ticket service, Edge function, Supabase, ticketKey, ticketAudience, cnf, key binding, ban at ticket issue, OKAY_TICKET_SEED
 - **Seen as:** "server misconfigured: ticketKey without ticketAudience"; a banned player can still join a server that doesn't require tickets; a ticket rejected as expired
@@ -109,7 +109,7 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Docs:** `docs/anticheat.md` (The runtime checks, Limits)
 - **Tests:** `anticheat_checks`, `net_anticheat_ph3`
 - **Status:** Partial - logic tested on every platform; the Windows probes themselves can't run in CI; local checks are bypassable, the server-verified version is the strong one
-- **Open:** no kernel driver, memory scanning or obfuscation (by design; the opt-in extras are in 39.12); older clients never answer the heartbeat, so turn `maxClockDrift` on only when every player has the update
+- **Open:** no kernel driver, memory scanning or obfuscation (by design; the opt-in extras are in 39.13); older clients never answer the heartbeat, so turn `maxClockDrift` on only when every player has the update
 - **Related:** 16.6.6, 39.4, 39.6
 - **Words:** debugger, loaded module, DLL injection, speedhack, clock drift, heartbeat, RuntimeGuard, allowlist, ClockHeartbeat, challenge response
 - **Seen as:** the game closes in Enforce mode with "debugger detected"; an overlay is reported as an unknown module; "clock drift +50%" for a player
@@ -119,7 +119,7 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **What:** The human side of anti-cheat: players report cheaters, games report what their checks found, admins ban an account or a machine, players see and appeal their bans. Everything is enforced by Supabase row-level security and logged to `admin_log`.
 - **Parts:**
   - 39.6.1 Backend calls - `shared/AntiCheatBackend.hpp` - every call is built as a `Request` and its answer parsed by a plain function, so both are unit tested without a server
-  - 39.6.2 SQL schema - `docs/sql/anticheat.sql` - `ac_reports`, `ac_report_servers`, `ac_bans`, `ac_appeals`; `ac_is_banned` (ticket service and admins only), `ac_my_bans`, `ac_file_appeal` (one waiting, 3 per ban), `ac_purge_old()` (90-day retention, `pg_cron` job if available)
+  - 39.6.2 SQL schema - `docs/sql/anticheat.sql` - `ac_reports`, `ac_report_servers`, `ac_bans`, `ac_appeals`; `ac_is_banned` (ticket service and admins only), `ac_my_bans`, `ac_file_appeal` (one waiting, 3 per ban), `ac_purge_old()` (90-day retention, `pg_cron` job if available); abuse limits (`ac_rate_hit`: reports 20/h and 60/day, duplicates, dismissed-report pause, appeals 1/h and 5/day, lookups 120/h); ban evasion (`ac_devices`, `ac_note_device`, `ac_linked_accounts`, `ac_ban_with_devices`); an append-only `ac_audit` of every ban, appeal and review change including SQL-editor ones, trimmed by `ac_purge_audit()` after a year
   - 39.6.3 Hardware hash - `shared/AntiCheatHardware.hpp` - HMAC-SHA256 of machine id, volume serial and CPU brand with a salt (`OKAY_AC_HW_SALT`); no machine id means no hash, so such a player is banned by account only
   - 39.6.4 Launcher admin pages - `launcher/main.cpp` (L12335-12860) - Admin > Anti-cheat: Reports, Bans (Ban, Unban with a reason), Appeals (Accept, Reject with a note)
   - 39.6.5 Player side - `launcher/main.cpp` (L12724-12860) - ban banner on every page, Appeal box, Report cheating in a chat's menu; a game with anti-cheat on files one `client_check` report per run
@@ -128,9 +128,9 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **API:** `okayac::backend::Request`, `okayac::HardwareHash`, SQL `ac_is_banned`, `ac_my_bans`, `ac_file_appeal`, `ac_purge_old`, env `OKAY_SQL_TEST_PGHOST`, demo hooks `OKAY_UI_DEMO_ACVIEW`, `OKAY_UI_DEMO_ACBAN`
 - **Editor:** none (launcher: Admin > Anti-cheat, ban banner, Report cheating...)
 - **Docs:** `docs/anticheat.md` (The backend, In the launcher, Hardware hash, Retention, Setting it up)
-- **Tests:** `anticheat_backend`, `anticheat_sql`
-- **Status:** Works - request and parse code is tested; the SQL is tested on local Postgres when one is available
-- **Open:** possible gap: `anticheat_sql` is skipped (exit 77) in CI because no job sets `OKAY_SQL_TEST_PGHOST`, so the row-level-security rules are never checked there; the launcher admin and appeal UI has no automated test; a "server_check" report kind is a one-word SQL change waiting on the owner (ROADMAP)
+- **Tests:** `anticheat_backend`, `anticheat_sql` (77 checks incl. audit, rate limits, spam guards, evasion; CI job `sql-tests` runs it against a Postgres service container)
+- **Status:** Works - request and parse code is tested; the SQL is tested on a local Postgres (run here against Postgres 16) and, once the new `sql-tests` job has run on GitHub, in CI
+- **Open:** the `sql-tests` CI job is new and has not run on a GitHub runner yet; the SQL has not been run on a real Supabase project (the stand-in is `tests/sql/supabase_stub.sql`); device links work only for players who send the hash and a new machine is a new identity, so evasion resistance is partial by nature; limits live in the database, so a game server calling PostgREST directly shares them; the launcher admin and appeal UI still has no automated test and the admin pages do not yet call `ac_linked_accounts` / `ac_ban_with_devices` (SQL only); a "server_check" report kind is a one-word SQL change waiting on the owner (ROADMAP)
 - **Related:** 17.9, 39.3, 16.5.4, 41.6
 - **Words:** report, ban, unban, appeal, ac_reports, ac_bans, hardware hash, hw_hash, machine ban, admin_log, ban banner, Report cheating, retention
 - **Seen as:** a ban banner on the launcher with an Appeal button; a new account on the same PC still banned; reports never appear for admins
@@ -163,7 +163,7 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
   - 39.8.2 Host secret - `Net/RelayProtocol` - a version-2 host gets a secret key; only a hello carrying it can host the code; version-1 keeps the old rule (voice calls)
   - 39.8.3 Address cookie - `Net/RelayServer` - a version-3 new peer first gets an HMAC cookie of its address and the minute and gets a slot only when it echoes it, so a spoofed source can't fill quotas
   - 39.8.4 Caps and rate limits - `Net/RelayServer` - 4,096 peers, 2,048 sessions, 32 peers per session, 64 peers and 16 sessions per address, 1,000 packets and 1 MB per second per peer, hellos 10 per second per address, random slots
-  - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; leave on until the log's legacy count is zero
+  - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; now the default, `=on` re-allows them
   - 39.8.6 Welcome nonce - `Net/RelayProtocol` - a version-4 game puts a random nonce in its hellos and ignores any welcome that doesn't echo it, so a forged welcome can't pair, redirect or end a session; an older relay needs `allowUnverifiedRelay`
 - **Code:** `Net/RelayServer`, `Net/RelayProtocol`, `relay/main.cpp`
 - **API:** `RelayServer::SetLegacyHello`, `kMaxPeers`, `kPacketsPerSecond`, `RelayRefused`, flag `--legacy-hello`
@@ -171,7 +171,7 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Docs:** `docs/relay.md` (What the relay enforces), `docs/anticheat.md` (relay hosted games)
 - **Tests:** `relay_security`, `net_relay_hardening`, `net_anticheat_ph2`, `net_relay`
 - **Status:** Works - flood, isolation, cookie and slot cases are in `relay_security`; limits read in the header
-- **Open:** whether the live relay runs the cookie version can't be told from the repo (ROADMAP item 7); launcher voice calls now send v3 hellos with a fallback to v1 (read in `VoiceChat.hpp`), so `--legacy-hello=off` is possible once the log's legacy count is zero
+- **Open:** whether the live relay runs the cookie version can't be told from the repo (ROADMAP item 7); launcher voice calls now send v3 hellos with a fallback to v1 (read in `VoiceChat.hpp`), so `--legacy-hello=off` is now the default
 - **Related:** 16.14, 16.7
 - **Words:** relay, hardening, cookie, hello, slot, flood, rate limit, session isolation, legacy hello, spoofed source
 - **Seen as:** "relay refused"; a flood fills the relay; a stranger can't take over a code
@@ -219,34 +219,59 @@ hardening items are merged. An opt-in client hardening layer (39.12) was added a
 - **Parts:**
   - 39.11.1 Row-level security first - `docs/accounts.md`, `docs/sql/social.sql` - the Supabase key in builds is public, so every table is protected by RLS and SECURITY DEFINER functions; reactions are gated by `can_see_reaction_target`
   - 39.11.2 Never give a server the service key - `docs/anticheat.md` - servers hold only the ticket service's public key; `ac_is_banned` is callable by the ticket service and admins only
-  - 39.11.3 Local account passwords - `Platform/Account/AccountService` - local backend stores a salted hash (50,000 chained SHA-256 rounds) and compares in constant time; remote auth sends secrets to curl through files, not argv
+  - 39.11.3 Local account passwords - `Platform/Account/AccountService` - local backend stores PBKDF2-HMAC-SHA256 (600,000 rounds, `$pbkdf2-sha256$<rounds>$<hash>`, 16-byte salt from the OS CSPRNG, record file owner-only) and compares in constant time; accounts made by older versions (a chain of 50,000 SHA-256 rounds) still sign in and are re-hashed on that sign-in, as are records made with fewer rounds; remote auth sends secrets to curl through files, not argv
   - 39.11.4 Official game downloads - `shared/OfficialGame.hpp` - manifest is untrusted input, every path checked before joining to the install folder, size and SHA-256 verified, journaled swap
   - 39.11.5 Safe project delete - `shared/ProjectDelete.hpp` - never a drive root, home, launcher or projects folder
-  - 39.11.6 Reference account server - `examples/account-server/server.py` - PBKDF2-HMAC-SHA256 with 200,000 rounds; says "not production-ready"
-  - 39.11.7 Updater trust - `launcher/main.cpp` (L136-326) - downloads over HTTPS with a version string and URL-character check only
-- **Code:** `Platform/Account/AccountService`, `shared/OfficialGame.hpp`, `shared/ProjectDelete.hpp`, `examples/account-server/server.py`, `docs/sql/social.sql`, `docs/sql/admin.sql`
+  - 39.11.6 Reference account server - `examples/account-server/server.py` - PBKDF2-HMAC-SHA256 with 600,000 rounds (older records upgraded at login), body cap (413 before reading), read timeout, per-IP rate limits and a username lock-out (429 with Retry-After), tokens that expire and are stored only as hashes (optional owner-only persistence), loopback by default; still says "not production-ready"
+  - 39.11.7 Updater trust - `launcher/VersionsManager.cpp`, `shared/UpdateSignature.hpp`, `scripts/sign_index.py` - an ed25519 signature of `versions.json` (`versions.json.sig`) verified against `OKAY_UPDATE_TRUSTED_KEYS` built into the launcher and editor, two keys for rotation, a clear refuse-to-update error; off until the owner creates a key (a build without keys still accepts an unsigned feed); downloads still need the checksums the index lists
+- **Code:** `Platform/Account/AccountService`, `shared/OfficialGame.hpp`, `shared/ProjectDelete.hpp`, `examples/account-server/server.py`, `shared/UpdateSignature.hpp`, `scripts/sign_index.py`, `docs/sql/social.sql`, `docs/sql/admin.sql`
 - **API:** `okayofficial::Verify`, `AccountService::VerifyToken`, `SecureEquals`
 - **Editor:** none
 - **Docs:** `docs/accounts.md` (Security: the key is public), `docs/supabase-backend.md`
-- **Tests:** `account`, `official_game`, `project_delete`
-- **Status:** Partial - several solid pieces, but the update path is not signed (17.11) and some weak spots remain
-- **Open:** possible weaknesses: the local password hash is a hand-made chain of SHA-256 rather than a standard KDF, and its salt comes from a Mersenne Twister seeded with two `random_device` words; `server.py` has no request size cap, no rate limit and keeps tokens only in memory; the updater has no signature check; the default Supabase URL and key sit in `CMakeLists.txt`
+- **Tests:** `account` (PBKDF2 vectors, legacy upgrade), `official_game`, `project_delete`, `update_signature`, `sign_index_script`, `account_server_hardening`
+- **Status:** Partial - the local password hash, the reference server and the signed-update code are fixed and tested; the update path is protected only once the owner creates a signing key and ships a launcher that trusts it (17.11); some weak spots remain
+- **Open:** no signing key exists yet, so today's feed is unsigned and every shipped launcher accepts it (signing protects only builds that carry the key); a signed feed can still be replayed (no timestamp or expiry); the executables are not code-signed; the local account backend is a development fallback and 600,000 rounds costs about half a second per sign-in; `server.py` is still a reference server (JSON file, no TLS); the default Supabase URL and key sit in `CMakeLists.txt` (public by design, RLS protects the tables)
 - **Related:** 17.2, 17.11, 17.14, 42.4
 - **Words:** RLS, row level security, service_role, password hash, PBKDF2, SHA-256, constant time, updater signing, SECURITY DEFINER, secrets, curl
 - **Seen as:** a token or key in a log; a download from a hostile server being trusted; weak local passwords
 - **Ask me like:** "list the weak spots in the account code", "sign the updater with the anti-cheat key"
 
-### 39.12 Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in)
+### 39.12 Detection engine: behavioural detectors, risk score, evidence export
+- **What:** An opt-in server-side layer that watches what clients claim over time (positions, aim, shots, counters, packets), keeps a decaying risk score per player and escalates through log, flag, rate-limit, shadow-restrict, kick and ban request. It uses only what the server saw and its own physics, so it cannot be patched out of a client; it cannot see anything the server never receives. Off unless `detect.enabled`.
+- **Parts:**
+  - 39.12.1 Movement detectors - `Net/CheatDetect` - speed over 0.5 / 2 / 6 s windows plus a lag-tolerant travel budget, teleport, fly and hover (gravity violation), wall climb, no-clip (server linecast against static colliders), ghost movement (moving with no input), jump rate
+  - 39.12.2 Combat detectors - `Net/CheatDetect`, `Net/NetworkManager` - fire rate per weapon definition, accuracy and headshot ratio over a sliding window, aim snap then hit, shots through walls, damage above the weapon maximum, hits outside lag-compensated reach
+  - 39.12.3 Economy and state detectors - `Net/CheatDetect` - counters claimed above what server-known grants explain (client SyncVar writes of watched keys are checked automatically), duplicated unique items and acquisition bursts, ability use before its cooldown
+  - 39.12.4 Network detectors - `Net/CheatDetect`, `Net/NetworkManager` - message-rate bursts, replayed packets (the secure channel's window feeds it), malformed input, repeated corrections and a tick going backwards, a game clock off the server's
+  - 39.12.5 Suspicion model - `Net/CheatDetect` - evidence records (kind, value, threshold, tick, state snapshots), per-kind weights, decay by half-life, confirmations for soft detectors, a response ladder with release and latched kick / ban request, risk kept for 5 minutes across a rejoin
+  - 39.12.6 False-positive protection - `Net/CheatDetect` - grace after teleport, respawn, lag spike, host migration and join; ping-scaled tolerance; stale-input tolerance; `NoteSpeedBoost`, `NoteExternalForce`, `NoteFlightAllowed`
+  - 39.12.7 Evidence bundle - `Net/CheatDetect` - `EvidenceBundle` JSON (size capped, tokens redacted, no account or address unless opted in) and a parser for hostile input; `AntiCheatKick` carries `risk`, `banRequested` and `evidence`
+  - 39.12.8 Cheat simulation harness - `tests/test_anticheat_sim.cpp` - scripted cheating and honest players against the engine (seeded, fake time) and against a real server; prints detection and false-positive rates
+  - 39.12.9 Evidence on kick reports - `Net/DedicatedServer`, `shared/AntiCheatBackend.hpp`, `docs/sql/anticheat.sql` - `KickReporter` attaches the kick's bundle (re-written without account / address unless `includeIdentifiers`, 16 KiB cap, must be a JSON object) to the `server_kick` report for a kick or a ban request; `ac_reports.evidence jsonb` (size check, kept only from `ac_report_servers` accounts, frozen on review, admins read only)
+  - 39.12.10 Admin views: linked accounts, ban with devices, evidence - `shared/AntiCheatAdminTools.hpp`, `launcher/main.cpp` - Admin > Anti-cheat: "Linked accounts" (`ac_linked_accounts`), the Ban dialog's "every machine this account used" (`ac_ban_with_devices`, shows how many bans it made), "Evidence" on a server-kick report; requests and row parsing are plain functions
+  - 39.12.11 Editor inspector - `Net/DetectInspector.hpp`, `editor/main.cpp` - Anti-Cheat Config > Detection engine: master switch, Observe mode (kickAt, banAt, shadowAt, rateLimitAt to 0; restores on untick), about 30 grouped numbers with tooltips from the docs, and a text box of every `detect.*` line (Apply text checks all of it)
+- **Code:** `Net/CheatDetect`, `Net/AntiCheat`, `Net/NetworkManager`, `Net/DedicatedServer`, `Net/DetectInspector`, `Scene/SceneSerializer`, `shared/AntiCheatBackend.hpp`, `shared/AntiCheatAdminTools.hpp`, `docs/sql/anticheat.sql`, `launcher/main.cpp`, `editor/main.cpp`
+- **API:** `DetectSettings`, `CheatDetector`, `AntiCheatSettings::detect`, `AntiCheat::detector`, `onDetectResponse`, `EvidenceBundle`, `BundleOptions`, `NetworkManager::AntiCheatKick`, `KickReporter::includeIdentifiers`, `okayac::backend::FileServerKick` (evidence), `LinkedAccounts`, `BanWithDevices`, `okay::detectui`, `.okayac` keys `detect.*` (`detect.enabled`, `detect.maxSpeed`, `detect.weapon`, `detect.ability`, `detect.economy`, `detect.kickAt`, `detect.weight.<detector>` ...)
+- **Editor:** Anti-Cheat Config > Detection engine (switch, Observe mode, grouped numbers with tooltips, a text box of the `detect.*` lines); a rules file replaces the inline settings when it loads. Launcher: Admin > Anti-cheat (linked accounts, ban with devices, evidence)
+- **Docs:** `docs/anticheat.md` (Detection engine)
+- **Tests:** `cheat_detect`, `anticheat_sim`, `anticheat_wiring`, `anticheat_sql` (needs a local Postgres)
+- **Status:** Works - every detector has a unit test and a simulated cheat; in the harness all 880 cheating runs are flagged and none of 410 honest runs (high ping, loss, lag spikes, respawns, skilled shooters, traders) are; not run against real networks or a shipped game
+- **Open:** thresholds are tuned on a network model and loopback, not on real players (use observe mode first); the headshot flag, economy grants, item acquisition and cooldown uses must be reported by game code (`OnShot`, `OnGrant`, `OnItemAcquire`, `OnAbility`); the editor inspector covers about 30 of the numbers and a text box for the rest (no per-weapon / per-weight widgets); a bundle is only attached to kick reports from `--report-kicks` (not to player reports); the launcher's linked-accounts and ban-with-devices screens were compile-checked, not run against a live backend; a cheat that stays inside the tolerances, or only reads data (wall-hack, radar), is invisible
+- **Related:** 39.1, 39.5, 39.6, 16.6
+- **Words:** observe mode, linked accounts, ban with devices, evidence column, detection engine, risk score, evidence bundle, suspicion, behavioural anti-cheat, speed hack, fly hack, no-clip, aimbot, rapid fire, teleport hack, wall hack, duplication, false positive, shadow restrict, ban request, detect.enabled
+- **Seen as:** a player kicked with a risk score and evidence in the kick report; "speed window", "teleport", "through wall" evidence in the log; honest players with bad ping flagged when the thresholds are too tight
+- **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"
+### 39.13 Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in)
 - **What:** User-mode, opt-in extras on top of 39.4 and 39.5, all client side and all producing weighted signals (weight 1 to 6, never a ban or a forced exit). A value type that hides health or ammo from naive memory editors, a signed hash of the player's own code sections checked at run time, inline-hook and import-table checks on a short list of system functions, a signed module blocklist/allowlist file that changes without a rebuild, extra debugger and hypervisor hints, a QPC / tick / server-time clock cross-check, a server-challenged heartbeat attestation, and pure-logic input analysis (turbo, macros, impossible mouse moves, camera not explained by input) a server can call.
 - **Parts:**
-  - 39.12.1 Protected values - `shared/AntiCheatProtected.hpp` - `okay::Protected<T>`: keyed XOR, a new key on every write, a keyed canary, a plain decoy copy that detects an edited address; thread safe; tamper handler
-  - 39.12.2 Code baseline and scanner - `shared/AntiCheatPe.hpp` - PE parsing from byte buffers, relocation-aware section hash, `CodeBaseline` JSON (`okayspace-code/1`, ed25519 signed like the manifest), `CodeScanner` hashing 64 KiB per 100 ms
-  - 39.12.3 Build tool - `tools/okay_ac_tool.cpp` - `baseline`, `sign-rules`, `verify`; built with `-DOKAY_BUILD_TOOLS=ON`
-  - 39.12.4 Hook, import, rules, hints, clocks - `shared/AntiCheatHardening.hpp` - `CheckApiEntries` (decode the entry bytes, judge where a jump lands), `CheckImports` (IAT), `ModuleRules` (`okayspace-modules/1`, name and signer rules, higher version wins), `CheckHints`, `ClockCrossCheck`, the `Hardening` scheduler, Windows probes (`winprobe`, `SetupHardening`)
-  - 39.12.5 Guard hook-up - `shared/AntiCheatChecks.hpp`, `player/main.cpp` - `Finding::weight`, `GuardProbes::hardening` / `moduleOk`, `RuntimeGuard::Score()`; signals are logged and filed in the one `client_check` report; enforce mode never exits for them
-  - 39.12.6 Heartbeat attestation - `shared/AntiCheatAttest.hpp` - nonce challenge, HMAC tag under a key derived from the session key, a hash of eight integrity facts, replay and expiry rules, wire format (messages `0xA1` / `0xA2`)
-  - 39.12.7 Input analysis - `shared/AntiCheatInput.hpp` - `AnalyzeIntervals`, `AnalyzeMouse`, `AnalyzeInputVsCamera`, `InputAnalyzer`; standard library only
-  - 39.12.8 Windows self-test - `tests/win/ac_selftest.cpp`, `scripts/ac_wine_selftest.sh` - cross-compiled with MinGW, run under wine at the preferred and at a relocated base
+  - 39.13.1 Protected values - `shared/AntiCheatProtected.hpp` - `okay::Protected<T>`: keyed XOR, a new key on every write, a keyed canary, a plain decoy copy that detects an edited address; thread safe; tamper handler
+  - 39.13.2 Code baseline and scanner - `shared/AntiCheatPe.hpp` - PE parsing from byte buffers, relocation-aware section hash, `CodeBaseline` JSON (`okayspace-code/1`, ed25519 signed like the manifest), `CodeScanner` hashing 64 KiB per 100 ms
+  - 39.13.3 Build tool - `tools/okay_ac_tool.cpp` - `baseline`, `sign-rules`, `verify`; built with `-DOKAY_BUILD_TOOLS=ON`
+  - 39.13.4 Hook, import, rules, hints, clocks - `shared/AntiCheatHardening.hpp` - `CheckApiEntries` (decode the entry bytes, judge where a jump lands), `CheckImports` (IAT), `ModuleRules` (`okayspace-modules/1`, name and signer rules, higher version wins), `CheckHints`, `ClockCrossCheck`, the `Hardening` scheduler, Windows probes (`winprobe`, `SetupHardening`)
+  - 39.13.5 Guard hook-up - `shared/AntiCheatChecks.hpp`, `player/main.cpp` - `Finding::weight`, `GuardProbes::hardening` / `moduleOk`, `RuntimeGuard::Score()`; signals are logged and filed in the one `client_check` report; enforce mode never exits for them
+  - 39.13.6 Heartbeat attestation - `shared/AntiCheatAttest.hpp` - nonce challenge, HMAC tag under a key derived from the session key, a hash of eight integrity facts, replay and expiry rules, wire format (messages `0xA1` / `0xA2`)
+  - 39.13.7 Input analysis - `shared/AntiCheatInput.hpp` - `AnalyzeIntervals`, `AnalyzeMouse`, `AnalyzeInputVsCamera`, `InputAnalyzer`; standard library only
+  - 39.13.8 Windows self-test - `tests/win/ac_selftest.cpp`, `scripts/ac_wine_selftest.sh` - cross-compiled with MinGW, run under wine at the preferred and at a relocated base
 - **Code:** `shared/AntiCheatProtected.hpp`, `shared/AntiCheatPe.hpp`, `shared/AntiCheatHardening.hpp`, `shared/AntiCheatAttest.hpp`, `shared/AntiCheatInput.hpp`, `shared/AntiCheatChecks.hpp`, `tools/okay_ac_tool.cpp`, `player/main.cpp`
 - **API:** `okay::Protected<T>`, `okay::SetProtectedTamperHandler`, `okayac::pe::CodeBaseline`, `okayac::pe::CodeScanner`, `okayac::ModuleRules`, `okayac::Hardening`, `okayac::SetupHardening`, `okayac::attest::Verifier` / `Client`, `okayac::input::InputAnalyzer`, env `OKAY_AC_HARDENING`, files `Data/codebaseline.json`, `.anticheat/modules.json`
 - **Editor:** none (no Build Settings switch yet; the tool runs by hand after Build Game)

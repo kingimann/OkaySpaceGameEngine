@@ -1,10 +1,12 @@
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/Graphics/TtfRaster.hpp"
+#include "okay/UI/UIFontPolicy.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -207,6 +209,20 @@ float TtfFont::Measure(const char* text, float pixelHeight) const {
     }
     if (lineW > maxW) maxW = lineW;
     return maxW;
+}
+
+TtfFont* TtfFont::ForPixelHeight(float pixelHeight) const {
+    if (!m_valid || m_bytes.empty()) return const_cast<TtfFont*>(this);
+    const int h = UIGlyphBakePixels(pixelHeight);
+    if (std::fabs(m_bakeHeight - (float)h) < 0.51f) return const_cast<TtfFont*>(this);
+    auto& slot = m_sized[h];
+    if (!slot) {
+        auto baked = std::make_unique<TtfFont>();
+        if (!baked->LoadFromMemory(m_bytes.data(), m_bytes.size(), (float)h, m_name))
+            return const_cast<TtfFont*>(this);
+        slot = std::move(baked);
+    }
+    return slot.get();
 }
 
 // ---- Process-wide cache ------------------------------------------------------

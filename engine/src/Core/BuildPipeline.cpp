@@ -212,7 +212,7 @@ FileKind KindOf(const std::string& relPath) {
     static const std::set<std::string> mdl = {"obj", "fbx", "gltf", "glb", "dae", "okaymesh", "mtl", "okaymat"};
     static const std::set<std::string> fnt = {"ttf", "otf", "fnt", "ttc"};
     static const std::set<std::string> scr = {"okayvs", "okayscript", "lua", "cs", "okaybt"};
-    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayloc", "okayprefab", "okayanim", "okayclips", "okaydialogue",
+    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclips", "okaydialogue",
                                               "okayquests", "okayseq", "okaysequence", "json", "txt", "csv", "xml", "okaynav", "okayanimator"};
     if (e == "exe") return FileKind::Executable;
     if (e == "dll" || e == "so" || e == "dylib" || p.find("libSDL2") != std::string::npos) return FileKind::Library;
@@ -307,7 +307,7 @@ Scan ScanKindFor(const std::string& ext) {
     if (ext == "okayscene" || ext == "okayprefab") return Scan::Scene;
     if (ext == "okaymat") return Scan::Material;
     static const std::set<std::string> text = {"okayanim", "okayclips", "okaydialogue", "okayquests", "okaybt", "okayseq", "okaysequence",
-                                               "okayitems", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
+                                               "okayitems", "okayweapon", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
                                                "json", "okayloc"};
     return text.count(ext) ? Scan::Text : Scan::None;
 }

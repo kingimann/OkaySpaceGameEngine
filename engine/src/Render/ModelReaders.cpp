@@ -1,8 +1,12 @@
 // Our own model readers: OBJ (+MTL), STL (ascii + binary), PLY (ascii + binary).
 // Every reader works on an in-memory buffer, bounds-checks every read, and fails
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
+#include "FileOpen.hpp"
+#include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
+#include "PolygonTriangulate.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -21,7 +25,7 @@ constexpr std::size_t kMaxMtlBytes  = 16u * 1024u * 1024u;
 bool Fail(std::string* err, const char* msg) { if (err) *err = msg; return false; }
 
 bool ReadAllBytes(const std::string& path, std::size_t cap, std::string& out, std::string* err) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) return Fail(err, "cannot open file");
     out.clear();
     char buf[65536];
@@ -60,7 +64,7 @@ std::string Trim(const std::string& s) {
 std::string ResolveTexturePath(std::string tp, const std::string& baseDir) {
     for (char& c : tp) if (c == '\\') c = '/';
     const bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    if (abs) return tp;
+    if (abs) return {};   // an absolute path would point the engine at any file on the machine (#753): drop it
     // Stay inside the model's own directory tree: an untrusted model must not be able to point the
     // engine at any file on the machine ("map_Kd ../../../../etc/passwd" used to be kept verbatim).
     // The ".."s are resolved here; one that climbs out of the model's directory drops the texture.
@@ -92,7 +96,7 @@ std::string MtlTextureName(const std::string& rest) {
     auto word = [&]() { std::size_t a = i; while (i < rest.size() && !IsSpace(rest[i])) ++i; return rest.substr(a, i - a); };
     auto isNumber = [](const std::string& w) {
         if (w.empty()) return false;
-        char* e = nullptr; std::strtod(w.c_str(), &e); return e && *e == '\0';
+        char* e = nullptr; detail::StrToD(w.c_str(), &e); return e && *e == '\0';
     };
     for (;;) {
         skipWs();
@@ -130,16 +134,16 @@ void ParseMtl(const std::string& text, const std::string& baseDir, std::vector<I
         if (!cur) continue;
         auto num3 = [&](float& a, float& b, float& c) {
             const char* s = rest.c_str(); char* q = nullptr;
-            a = std::strtof(s, &q); if (q == s) return false; s = q;
-            b = std::strtof(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
-            s = q; c = std::strtof(s, &q); if (q == s) return false;
+            a = detail::StrToF(s, &q); if (q == s) return false; s = q;
+            b = detail::StrToF(s, &q); if (q == s) { b = a; c = a; return Finite(a); }   // "Kd 0.5" = grey
+            s = q; c = detail::StrToF(s, &q); if (q == s) return false;
             return Finite(a) && Finite(b) && Finite(c);
         };
         if (key == "kd")      { float r, g, b; if (num3(r, g, b)) { cur->hasDiffuse = true; cur->diffuse = Color(r, g, b, 1.0f); } }
         else if (key == "ke") { float r, g, b; if (num3(r, g, b)) { cur->hasEmissive = true; cur->emissive = Color(r, g, b, 1.0f); } }
-        else if (key == "ns") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
-        else if (key == "pm") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
-        else if (key == "pr") { char* q = nullptr; float v = std::strtof(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
+        else if (key == "ns") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->shininess = v; }
+        else if (key == "pm") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->metallic = v; }
+        else if (key == "pr") { char* q = nullptr; float v = detail::StrToF(rest.c_str(), &q); if (q != rest.c_str() && Finite(v)) cur->roughness = v; }
         else if (key == "map_kd") { std::string t = MtlTextureName(rest); if (!t.empty()) cur->texture = ResolveTexturePath(t, baseDir); }
         else if (key == "map_bump" || key == "bump" || key == "norm") {
             std::string t = MtlTextureName(rest);
@@ -165,13 +169,15 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     std::vector<std::string> mtllibs;
     int curMat = -1;
     bool badIndex = false;
+    bool sawFaceLine = false;                // an f line was present (even a degenerate one)
+    std::vector<int> pointRefs;              // vertex indices named by p / l elements
 
     const char* p = data.c_str();
     const char* end = p + data.size();
     auto readF = [&](const char*& c, bool& bad) -> float {
         while (c < end && (*c == ' ' || *c == '\t' || *c == '\r')) ++c;
         if (c >= end || *c == '\n') return 0.0f;
-        char* q = nullptr; float v = std::strtof(c, &q);
+        char* q = nullptr; float v = detail::StrToF(c, &q);
         if (q == c) { bad = true; ++c; return 0.0f; }   // junk: always advance
         c = q; if (!Finite(v)) bad = true; return v;
     };
@@ -186,7 +192,7 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
             } else if (p[0] == 'v' && p + 2 < end && p[1] == 'n' && (p[2] == ' ' || p[2] == '\t')) {
                 p += 3; Vec3 n; n.x = readF(p, badNumber); n.y = readF(p, badNumber); n.z = readF(p, badNumber); nrm.push_back(n);
             } else if (p[0] == 'f' && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
-                p += 2;
+                p += 2; sawFaceLine = true;
                 const std::size_t first = corners.size();
                 for (;;) {
                     while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
@@ -210,6 +216,18 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                 }
                 if (corners.size() - first >= 3) { faceStart.push_back((std::uint32_t)first); faceMat.push_back(curMat); }
                 else corners.resize(first);
+            } else if ((p[0] == 'p' || p[0] == 'l') && p + 1 < end && (p[1] == ' ' || p[1] == '\t')) {
+                // point and line elements: no surface, but the vertices they use are kept as a point mesh
+                ++p;
+                for (;;) {
+                    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r')) ++p;
+                    if (p >= end || *p == '\n') break;
+                    char* q = nullptr;
+                    long vi = std::strtol(p, &q, 10); if (q == p) break; p = q;
+                    while (p < end && *p == '/') { ++p; std::strtol(p, &q, 10); p = q; }   // l 1/2 3/4: texture index ignored
+                    if (vi < 0) vi = (long)pos.size() + vi + 1;
+                    if (vi >= 1 && vi <= INT32_MAX) pointRefs.push_back((int)vi - 1);
+                }
             } else if (end - p >= 7 && std::strncmp(p, "usemtl", 6) == 0 && (p[6] == ' ' || p[6] == '\t')) {
                 p += 7; const char* s = p;
                 while (p < end && *p != '\n' && *p != '\r') ++p;
@@ -228,7 +246,27 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
         if (p < end) ++p;
     }
     if (badNumber) return Fail(err, "bad or non-finite number");
-    if (faceStart.empty()) return Fail(err, "no faces");
+    if (faceStart.empty()) {
+        // No faces: a point cloud or a line set. Assimp makes one mesh with no triangles from it; so do we
+        // (the vertices the p / l elements name, or every vertex when the file names none).
+        if (pos.empty() || sawFaceLine) return Fail(err, "no faces");
+        std::vector<int> use;
+        if (pointRefs.empty()) { use.resize(pos.size()); for (std::size_t i = 0; i < pos.size(); ++i) use[i] = (int)i; }
+        else {
+            std::vector<char> seen(pos.size(), 0);
+            for (int r : pointRefs) {
+                if (r < 0 || r >= (int)pos.size()) return Fail(err, "face index out of range");
+                if (!seen[(std::size_t)r]) { seen[(std::size_t)r] = 1; use.push_back(r); }
+            }
+        }
+        out.parts.resize(1);
+        ImportedPart& part = out.parts[0];
+        part.node = 0; part.material = -1;
+        const bool keepN = nrm.size() == pos.size();
+        for (int i : use) { part.mesh.vertices.push_back(pos[(std::size_t)i]); if (keepN) part.mesh.normals.push_back(nrm[(std::size_t)i]); }
+        out.notes.push_back("OBJ has no faces: read as a point set (" + std::to_string(use.size()) + " vertices, no triangles)");
+        return true;
+    }
     for (const ObjCorner& c : corners) {
         if (c.p < 0 || c.p >= (int)pos.size()) badIndex = true;
         if (c.t >= (int)uv.size() || c.n >= (int)nrm.size()) badIndex = true;
@@ -284,6 +322,8 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
         }
         std::unordered_map<CKey, int, CKeyHash> remap;
         std::vector<int> idx;
+        std::vector<Vec3> ring;
+        std::vector<std::array<int, 3>> tris;
         for (std::size_t fi = 0; fi < faceStart.size(); ++fi) {
             if (faceMat[fi] != order[pi]) continue;
             const std::size_t b = faceStart[fi], e = fi + 1 < faceStart.size() ? faceStart[fi + 1] : corners.size();
@@ -301,8 +341,12 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                 }
                 idx.push_back(it->second);
             }
-            for (std::size_t i = 2; i < idx.size(); ++i)
-                part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[i - 1], idx[i]});
+            if (idx.size() == 3) { part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[0], idx[1], idx[2]}); continue; }
+            // quads and larger: convex polygons fan from the first corner; concave ones are ear clipped (a fan covers the notch)
+            ring.resize(idx.size());
+            for (std::size_t i = 0; i < idx.size(); ++i) ring[i] = part.mesh.vertices[(std::size_t)idx[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) part.mesh.triangles.insert(part.mesh.triangles.end(), {idx[(std::size_t)t[0]], idx[(std::size_t)t[1]], idx[(std::size_t)t[2]]});
         }
     }
     return true;
@@ -399,7 +443,7 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
     auto num = [&](float& v) -> bool {
         while (p < end && IsSpace(*p)) ++p;
         if (p >= end) return false;
-        char* q = nullptr; v = std::strtof(p, &q);
+        char* q = nullptr; v = detail::StrToF(p, &q);
         if (q == p || !Finite(v)) return false;
         p = q; return true;
     };
@@ -481,7 +525,7 @@ struct PlyStream {
         if (fmt == PlyFormat::Ascii) {
             while (p < end && IsSpace(*p)) ++p;
             if (p >= end) return false;
-            char* q = nullptr; v = std::strtod(p, &q);
+            char* q = nullptr; v = detail::StrToD(p, &q);
             if (q == p) return false;
             p = q; return true;
         }
@@ -574,14 +618,15 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                 if (pr.type == PlyType::None) return Fail(err, "unknown PLY property type");
             } else return Fail(err, "bad PLY property line");
             elems.back().props.push_back(std::move(pr));
-        } else return Fail(err, "unknown PLY header line");
+        }   // any other header line is ignored, as an unknown keyword (some exporters write free text without "comment")
     }
     if (!haveFormat) return Fail(err, "PLY has no format line");
     if (!haveEnd) return Fail(err, "PLY header never ends");
 
     PlyStream st{p, end, fmt};
     Mesh mesh;
-    std::vector<std::uint32_t> faceIdx;   // triangulated, validated at the end
+    std::vector<std::uint32_t> faceIdx;   // every polygon's corners back to back, validated at the end
+    std::vector<std::uint32_t> faceLen;   // corners of each polygon
     bool sawVertex = false, hasN = false, hasUV = false;
     constexpr std::size_t kMaxFaceVerts = 65535;
 
@@ -626,6 +671,13 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                 double v = 0;
                 if (!pr.list) { if (!st.Read(pr.type, v)) return Fail(err, "PLY data truncated or malformed"); vals[k] = v; continue; }
                 double cnt = 0;
+                if (!isFace && fmt == PlyFormat::Ascii) {
+                    // A list property in a non-face element (Blender wrote one into the vertex element of
+                    // issue623.ply) with nothing left on this line is an empty list, as Assimp reads it.
+                    const char* q = st.p; bool nl = false;
+                    while (q < end && IsSpace(*q)) { if (*q == '\n') nl = true; ++q; }
+                    if (nl || q >= end) continue;
+                }
                 if (!st.Read(pr.countType, cnt)) return Fail(err, "PLY data truncated or malformed");
                 if (!(cnt >= 0) || cnt > (double)kMaxFaceVerts) return Fail(err, "PLY list too long");
                 const std::size_t c = (std::size_t)cnt;
@@ -653,14 +705,35 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
                     mesh.uvs.push_back(t);
                 }
             } else if (isFace && poly.size() >= 3) {
-                for (std::size_t i = 2; i < poly.size(); ++i) { faceIdx.push_back(poly[0]); faceIdx.push_back(poly[i - 1]); faceIdx.push_back(poly[i]); }
+                faceLen.push_back((std::uint32_t)poly.size());
+                faceIdx.insert(faceIdx.end(), poly.begin(), poly.end());
             }
         }
     }
     if (!sawVertex) return Fail(err, "PLY has no vertex element");
-    if (faceIdx.empty()) return Fail(err, "PLY has no faces");
+    if (faceIdx.empty()) {
+        // No faces: a point cloud. Assimp returns one mesh with no triangles; so do we.
+        if (mesh.vertices.empty()) return Fail(err, "PLY has no faces");
+        if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
+        if (!mesh.uvs.empty() && mesh.uvs.size() != mesh.vertices.size()) mesh.uvs.clear();
+        out.parts.resize(1);
+        out.parts[0].mesh = std::move(mesh);
+        out.notes.push_back("PLY has no faces: read as a point set (no triangles)");
+        return true;
+    }
     for (std::uint32_t i : faceIdx) if (i >= mesh.vertices.size()) return Fail(err, "PLY face index out of range");
-    mesh.triangles.assign(faceIdx.begin(), faceIdx.end());
+    {   // triangles: convex polygons fan from their first corner, concave ones are ear clipped
+        std::vector<Vec3> ring; std::vector<std::array<int, 3>> tris;
+        std::size_t at = 0;
+        for (std::uint32_t len : faceLen) {
+            const std::uint32_t* f = faceIdx.data() + at; at += len;
+            if (len == 3) { mesh.triangles.insert(mesh.triangles.end(), {(int)f[0], (int)f[1], (int)f[2]}); continue; }
+            ring.resize(len);
+            for (std::uint32_t i = 0; i < len; ++i) ring[i] = mesh.vertices[f[i]];
+            detail::TriangulatePolygon(ring, tris);
+            for (const auto& t : tris) mesh.triangles.insert(mesh.triangles.end(), {(int)f[t[0]], (int)f[t[1]], (int)f[t[2]]});
+        }
+    }
     if (!hasN) mesh.ComputeSmoothNormals();   // what Assimp's GenSmoothNormals does for the same file
     // Normals cover every position (authored, or the smooth fill above). UVs are
     // all or nothing: a short list would be read as belonging to the wrong vertices.
@@ -686,7 +759,7 @@ bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err) 
 }
 
 bool PlyFileDeclaresDuplicateVertex(const std::string& path) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = detail::OpenRead(path);
     if (!fp) return false;
     std::string pending;
     pending.reserve(8192);

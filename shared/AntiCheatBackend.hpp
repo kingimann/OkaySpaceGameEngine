@@ -114,8 +114,18 @@ inline std::string InList(const std::vector<std::string>& ids) {
 
 namespace detail {
 inline bool Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
-                   const std::string& details, const std::string& hwHash, Request& out, std::string* err);
+                   const std::string& details, const std::string& hwHash, Request& out, std::string* err,
+                   const std::string& evidence = std::string());
 } // namespace detail
+
+// The largest evidence bundle a report carries (ac_reports_evidence_check: 16 KiB).
+constexpr std::size_t kMaxEvidenceBytes = 16 * 1024;
+// True when `json` can ride in a report's evidence column: a JSON object within the cap.
+inline bool ValidEvidence(const std::string& json) {
+    if (json.empty() || json.size() > kMaxEvidenceBytes) return false;
+    og::json::Value v;
+    return og::json::Reader(json).Parse(v) && v.kind == og::json::Value::Object;
+}
 
 // ---- Player calls --------------------------------------------------------------
 // Report another player. The server fills in the reporter (auth.uid()) and the status.
@@ -125,13 +135,18 @@ inline bool FileReport(const std::string& reportedUid, const std::string& game, 
 }
 // A game server's anti-cheat kick of a player (kind 'server_kick'): only an
 // account in ac_report_servers may file it.
+// `evidence` (optional) is the detection engine's bundle (EvidenceBundle::ToJson): attached to the
+// report row for admins when it is a JSON object within kMaxEvidenceBytes, left out when it is not
+// (the report is still filed). Only a report server's insert keeps it (the guard trigger).
 inline bool FileServerKick(const std::string& reportedUid, const std::string& game, const std::string& reason,
-                           const std::string& details, Request& out, std::string* err = nullptr) {
-    return detail::Report("server_kick", reportedUid, game, reason, details, std::string(), out, err);
+                           const std::string& details, Request& out, std::string* err = nullptr,
+                           const std::string& evidence = std::string()) {
+    return detail::Report("server_kick", reportedUid, game, reason, details, std::string(), out, err, evidence);
 }
 
 inline bool detail::Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
-                           const std::string& details, const std::string& hwHash, Request& out, std::string* err) {
+                           const std::string& details, const std::string& hwHash, Request& out, std::string* err,
+                           const std::string& evidence) {
     const std::string why = Text(reason, 500);
     if (!IsUuid(reportedUid)) return detail::Fail(err, "Pick the player to report.");
     if (why.empty()) return detail::Fail(err, "Say what happened.");
@@ -142,7 +157,8 @@ inline bool detail::Report(const char* kind, const std::string& reportedUid, con
     out.header = "Prefer: return=minimal";
     out.body = "{\"reported\":" + JStr(reportedUid) + ",\"kind\":\"" + kind + "\",\"game\":" + JStrOrNull(Text(game, 120)) +
                ",\"reason\":" + JStr(why) + ",\"details\":" + JStrOrNull(Text(details, 4000, true)) +
-               ",\"hw_hash\":" + JStrOrNull(hwHash) + "}";
+               ",\"hw_hash\":" + JStrOrNull(hwHash) +
+               (ValidEvidence(evidence) ? ",\"evidence\":" + evidence : std::string()) + "}";
     return true;
 }
 
@@ -320,6 +336,31 @@ inline Request SessionTicket(const std::string& serverId, const std::string& hwH
     return r;
 }
 
+// What the ticket service accepts as a server id ("aud") and as a key binding ("cnf"): supabase/functions/session-ticket/index.ts, ticket.ts.
+inline bool IsTicketAudience(const std::string& s) {
+    if (s.empty() || s.size() > 64) return false;
+    for (char c : s) if (!(std::isalnum((unsigned char)c) || c == '.' || c == '_' || c == ':' || c == '-')) return false;
+    return true;
+}
+inline bool IsKeyBinding(const std::string& s) {
+    if (s.size() != 43) return false;
+    for (char c : s) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) return false;
+    return true;
+}
+// The checked form: a ticket for `serverId`, bound to one connection when `cnf` is given (NetworkManager::TicketBinding()). A malformed
+// server id or binding is refused here, never sent (and never silently turned into an unbound ticket).
+inline bool SessionTicket(const std::string& serverId, const std::string& hwHash, const std::string& cnf, Request& out, std::string* err = nullptr) {
+    if (!IsTicketAudience(serverId)) return detail::Fail(err, "That isn't a valid game server id for a session ticket.");
+    if (!cnf.empty() && !IsKeyBinding(cnf)) return detail::Fail(err, "Bad key binding.");
+    if (!hwHash.empty() && !IsHwHash(hwHash)) return detail::Fail(err, "Bad hardware hash.");
+    out = Request{};
+    out.method = "POST";
+    out.path = "/functions/v1/session-ticket";
+    out.body = "{\"aud\":" + JStr(serverId) + (cnf.empty() ? std::string() : ",\"cnf\":" + JStr(cnf)) +
+               (hwHash.empty() ? std::string() : ",\"hw_hash\":" + JStr(hwHash)) + "}";
+    return true;
+}
+
 // ---- Rows ----------------------------------------------------------------------
 struct Report {
     long id = 0;
@@ -454,7 +495,7 @@ inline bool ParseUsernames(const std::string& body, std::map<std::string, std::s
 
 // The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
 // caller refreshes ac_my_bans so the ban banner shows), or neither (an error).
-struct TicketReply { std::string ticket; long exp = 0; bool banned = false; };
+struct TicketReply { std::string ticket; long exp = 0, iat = 0; bool banned = false; };   // iat: the service's clock when it signed (0 = an older service)
 inline bool IsBannedReply(long status, const std::string& body) {
     detail::Value root;
     return status == 403 && body.size() < 65536 && og::json::Reader(body).Parse(root) &&
@@ -467,6 +508,7 @@ inline bool ParseTicket(long status, const std::string& body, TicketReply& out) 
     if (status != 200 || body.size() >= 65536 || !og::json::Reader(body).Parse(root) || root.kind != detail::Value::Object) return false;
     out.ticket = detail::S(root, "ticket");
     out.exp = detail::N(root, "exp");
+    out.iat = detail::N(root, "iat");
     if (out.ticket.rfind("okt1.", 0) != 0) { out.ticket.clear(); return false; }
     return true;
 }

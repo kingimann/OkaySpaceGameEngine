@@ -185,7 +185,6 @@ private:
     void Abort(int idx);
     bool Test(const BtNode& n) const;
     bool ResolveTarget(const std::string& spec, Vec3& pos, GameObject** obj = nullptr) const;
-    bool LineOfSight(const Vec3& from, GameObject* target, float eyeHeight) const;
     float HealthFraction() const;
     Character* Body() const;
     Scene* SceneOf() const;

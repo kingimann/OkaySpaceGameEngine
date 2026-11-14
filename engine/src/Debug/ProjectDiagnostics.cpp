@@ -592,7 +592,7 @@ void AppendAssetIndex(const ProjectDiagOptions& options, std::vector<Diagnostic>
         return n;
     }();
     static const char* kText[] = {"okayscene", "okayprefab", "okaymat", "okayanim", "okayclip", "okaydialog", "okayquest", "okaybt",
-                                  "okayvs", "okayseq", "okayloot", "okayitems", "okayrecipes", "okaydata", "okaynav", "gltf"};
+                                  "okayvs", "okayseq", "okayloot", "okayitems", "okayweapon", "okayrecipes", "okaydata", "okaynav", "gltf"};
     static const char* kSkip[] = {"build", "build-tests", "build-editor", ".git"};
     auto exists = [&](const std::string& raw, const std::string& referrerDir) {
         std::string n = raw;

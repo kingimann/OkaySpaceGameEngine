@@ -13,7 +13,7 @@
 
 namespace okay {
 
-/// Background music: a playlist of audio files (WAV, OGG, MP3) on the Music
+/// Background music: a playlist of audio files (WAV, OGG, MP3, FLAC) on the Music
 /// group, crossfading from one track to the next. It plays through two child
 /// AudioSources it creates ("Music A" / "Music B") so the outgoing track can
 /// fade out while the next fades in.
@@ -28,7 +28,8 @@ public:
     /// Play each track from its file in small pieces (AudioStream) instead of
     /// decoding it whole: a fixed small amount of memory however long the track,
     /// at the cost of reading the file while it plays. Off decodes every track
-    /// into memory when it starts.
+    /// into memory when it starts, unless that file's import setting says to
+    /// read it while it plays.
     bool  stream = true;
 
     void Start() override {
@@ -58,7 +59,7 @@ public:
         EnsureVoices();
         std::shared_ptr<AudioStream> st;
         std::shared_ptr<const AudioClip> clip;
-        if (stream) st = OpenAudioStream(tracks[(std::size_t)index]);
+        if (stream || AudioImportWantsStream(tracks[(std::size_t)index])) st = OpenAudioStream(tracks[(std::size_t)index]);
         if (!st) clip = LoadAudioFile(tracks[(std::size_t)index]);   // not streaming, or the stream could not open: decode it whole
         if (!st && !clip) return false;
         AudioSource* out = Current();

@@ -186,6 +186,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a piece will not place (red ghost) | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a platform cannot be jumped up through | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a player is kicked for "speed hack | [16.6](16-networking.md#166-anti-cheat-server-side) Anti-cheat (server side) |
+| a player kicked with a risk score and evidence in the kick report | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | a player moves faster than allowed | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
 | a player says "it crashed" and I have nothing | [48.1](43-proposals.md#481-crash-reports) Crash reports |
 | a plugin does not load or shows "(error) | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
@@ -320,6 +321,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | after dying I restart the whole level | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | aim cursor offset from the crosshair | [4.4](04-characters-cameras.md#44-shooter-and-top-down) Shooter and top-down |
 | alignment tools are greyed out | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
+| ambient occlusion looking wrong or missing on Windows (the pass is unrun) | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | an Actions list does nothing | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an admin page is empty for a normal user | [37.9](37-platform-windowing.md#379-online-service-clients-shared-with-area-17) Online service clients (shared with area 17) |
 | an agent gives up on a path | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
@@ -449,7 +451,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | clock drift +50%" for a player | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | cloud saves do not sync | [37.7](37-platform-windowing.md#377-steam-backend) Steam backend |
 | CMake configure fails with "isn't an ed25519 public key | [39.7](39-security-anticheat.md#397-trusted-keys-and-signing-keys-at-build-time) Trusted keys and signing keys at build time |
-| code(w6)`, `hook(w5)`, `iat(w4)`, `module-blocked`, `clock-cross` lines in `anticheat.log | [39.12](39-security-anticheat.md#3912-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
+| code(w6)`, `hook(w5)`, `iat(w4)`, `module-blocked`, `clock-cross` lines in `anticheat.log | [39.13](39-security-anticheat.md#3913-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
 | collider does not match after Extrude | [3.10](03-modeling-import.md#310-add-library-and-procedural-props) Add library and procedural props |
 | collider does not wrap the model | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | colours not saved | [4.9](04-characters-cameras.md#49-blocky-character-and-customization) Blocky Character and customization |
@@ -572,6 +574,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | hitch when walking into a new area | [27.4](20-35-planned.md#274-streaming) Streaming |
 | hits through walls | [11.7](11-gameplay-systems.md#117-combat-actions-melee-dodge-dive) Combat actions: melee, dodge, dive |
 | holding two keys drops one | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
+| honest players with bad ping flagged when the thresholds are too tight | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | HTML game opens in the browser | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | huge map uses too much memory | [27.4](20-35-planned.md#274-streaming) Streaming |
 | huge terrain is heavy | [29.1](20-35-planned.md#291-terrain-sculpting) Terrain sculpting |
@@ -661,7 +664,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | metal looks like plastic | [26.4](20-35-planned.md#264-pbr) PBR |
 | MinGW configure can't find windres | [41.2](41-build-tools-infra.md#412-cmake-modules-windows-resources-and-toolchain) CMake modules, Windows resources and toolchain |
 | minimap shows nothing or the wrong area | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
-| missing SSAO on Windows | [38.3](38-render-backends.md#383-direct3d-11-backend) Direct3D 11 backend |
 | missing translation shows the key | [31.1](20-35-planned.md#311-translation-tables) Translation tables |
 | model dark, inside out or without textures | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | model faces the wrong way after rigging | [30.2](20-35-planned.md#302-rig-generation) Rig generation |
@@ -709,9 +711,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no preview pictures for models or scenes in the Project panel | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | no route is found when one exists | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | no search | [57.1](43-proposals.md#571-static-documentation-site) Static documentation site |
+| no shadows at all until Per-pixel lighting is on | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sign the game saved | [35.2](20-35-planned.md#352-checkpoints) Checkpoints |
 | no smile when talking | [30.4](20-35-planned.md#304-morph-targets) Morph targets |
-| no soft shadows from point lights | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | no sound at all | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | no sound in a call | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | no warning before building | [33.2](20-35-planned.md#332-scene-validation) Scene validation |
@@ -865,6 +867,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | sound plays from the start every time it should resume | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | sound stops when the window loses focus | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | spawned bullets stutter (pooling) | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |
+| speed window", "teleport", "through wall" evidence in the log | [39.12](39-security-anticheat.md#3912-detection-engine-behavioural-detectors-risk-score-evidence-export) Detection engine: behavioural detectors, risk score, evidence export |
 | sprite pivot is always the centre | [43.2](43-proposals.md#432-sprite-atlas-and-slicing) Sprite atlas and slicing |
 | sprites draw in the wrong order | [2.12](02-rendering-world.md#212-sprites-and-sprite-animation) Sprites and sprite animation |
 | squares instead of letters in a language | [31.2](20-35-planned.md#312-font-fallback) Font fallback |
@@ -949,7 +952,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
 | the clip plays too fast or does not loop | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
-| the code baseline is signed, but this build has no trusted keys: it is telemetry, not proof | [39.12](39-security-anticheat.md#3912-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
+| the code baseline is signed, but this build has no trusted keys: it is telemetry, not proof | [39.13](39-security-anticheat.md#3913-client-hardening-protected-values-code-and-import-integrity-attestation-input-analysis-opt-in) Client hardening: protected values, code and import integrity, attestation, input analysis (opt-in) |
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | the Console lists Visual Script errors when Play starts | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |

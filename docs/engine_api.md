@@ -282,6 +282,88 @@ A clickable button. The object needs a UI Button. on_click fires when it is pres
 | `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
 | `GetComponent<UIButton>().Focus()` | `UIButton.Focus/0` | step | Target (Object) | - | Move keyboard and gamepad focus here, show the focus ring, and scroll it into view. |
 
+## UISearchBar
+
+A search field over a list. on_change fires when the text or the chosen row changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISearchBar>().SetQuery(text)` | `UISearchBar.SetQuery/1` | step | text (Text), Target (Object) | - | Show only the items that contain this text. Fires OnValueChanged when it changes. |
+| `GetComponent<UISearchBar>().Clear()` | `UISearchBar.Clear/0` | step | Target (Object) | - | Empty the search and clear the chosen row. |
+| `GetComponent<UISearchBar>().MatchCount()` | `UISearchBar.MatchCount/0` | value | Target (Object) | Result (Number) | How many items match the search. |
+
+## UIDateTimePicker
+
+A date and time. Invalid days are pulled back to a real calendar day. on_change fires when it changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDateTimePicker>().SetDate(year, month, day)` | `UIDateTimePicker.SetDate/3` | step | year (Number), month (Number), day (Number), Target (Object) | - | Set the date. 31 February becomes the last day of February. |
+| `GetComponent<UIDateTimePicker>().SetTime(hour, minute)` | `UIDateTimePicker.SetTime/2` | step | hour (Number), minute (Number), Target (Object) | - | Set the clock. Hours stay in 0 to 23 and minutes in 0 to 59. |
+| `GetComponent<UIDateTimePicker>().Text()` | `UIDateTimePicker.Text/0` | value | Target (Object) | Result (Text) | The date and time as text, such as 2026-02-28 14:05. |
+
+## UIFilePicker
+
+A file list that can only open inside one folder. on_submit fires when a file is chosen.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIFilePicker>().SetRoot(folder)` | `UIFilePicker.SetRoot/1` | step | folder (Text), Target (Object) | - | The only folder this picker may open. |
+| `GetComponent<UIFilePicker>().Open(name)` | `UIFilePicker.Open/1` | step | name (Text), Target (Object) | - | Enter a folder or choose a file in the folder on screen. Paths that leave the folder do nothing. |
+| `GetComponent<UIFilePicker>().Selected()` | `UIFilePicker.Selected/0` | value | Target (Object) | Result (Text) | The chosen file, relative to the folder. Empty when none is chosen. |
+
+## UIAccordion
+
+Stacked headings that open and close. on_change fires when one opens or closes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIAccordion>().Toggle(index)` | `UIAccordion.Toggle/1` | step | index (Number), Target (Object) | - | Open or close one section. The first section is 0. |
+| `GetComponent<UIAccordion>().SetExpanded(index, open)` | `UIAccordion.SetExpanded/2` | step | index (Number), open (Bool), Target (Object) | - | Open or close one section. |
+| `GetComponent<UIAccordion>().IsExpanded(index)` | `UIAccordion.IsExpanded/1` | value | index (Number), Target (Object) | Result (Bool) | True when that section is open. |
+
+## UIBreadcrumbs
+
+A path such as Home / Library / Books. Choosing a crumb drops the ones after it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIBreadcrumbs>().SetPath(path)` | `UIBreadcrumbs.SetPath/1` | step | path (Text), Target (Object) | - | Replace the path. Folders are separated by /. |
+| `GetComponent<UIBreadcrumbs>().Select(index)` | `UIBreadcrumbs.Select/1` | step | index (Number), Target (Object) | - | Keep this crumb and drop the ones after it. The first crumb is 0. |
+| `GetComponent<UIBreadcrumbs>().Path()` | `UIBreadcrumbs.Path/0` | value | Target (Object) | Result (Text) | The path, folders separated by /. |
+
+## UIPagination
+
+Page buttons. The page stays inside 1 to the page count. on_change fires when the page changes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIPagination>().SetPage(page)` | `UIPagination.SetPage/1` | step | page (Number), Target (Object) | - | Show this page. Numbers outside 1 to the page count are pulled back in. |
+| `GetComponent<UIPagination>().Next()` | `UIPagination.Next/0` | step | Target (Object) | - | Go to the next page. The last page stays put. |
+| `GetComponent<UIPagination>().Previous()` | `UIPagination.Previous/0` | step | Target (Object) | - | Go to the previous page. The first page stays put. |
+| `GetComponent<UIPagination>().SetTotal(items, perPage)` | `UIPagination.SetTotal/2` | step | items (Number), perPage (Number), Target (Object) | - | Set how many items there are and how many fit on a page, then fix the page count. |
+| `GetComponent<UIPagination>().Page()` | `UIPagination.Page/0` | value | Target (Object) | Result (Number) | The page on screen, starting at 1. |
+
+## UISkeleton
+
+Grey bars shown while something is still loading.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISkeleton>().SetLoading(on)` | `UISkeleton.SetLoading/1` | step | on (Bool), Target (Object) | - | True shows the loading bars. False clears them. |
+| `GetComponent<UISkeleton>().IsLoading()` | `UISkeleton.IsLoading/0` | value | Target (Object) | Result (Bool) | True while the loading bars are showing. |
+
+## UIBottomSheet
+
+A panel that slides up from the bottom. on_change fires when it opens or closes.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIBottomSheet>().Open()` | `UIBottomSheet.Open/0` | step | Target (Object) | - | Slide the sheet open. |
+| `GetComponent<UIBottomSheet>().Close()` | `UIBottomSheet.Close/0` | step | Target (Object) | - | Slide the sheet closed. |
+| `GetComponent<UIBottomSheet>().Toggle()` | `UIBottomSheet.Toggle/0` | step | Target (Object) | - | Open it if it is closed, or close it if it is open. |
+| `GetComponent<UIBottomSheet>().IsOpen()` | `UIBottomSheet.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the sheet is open. |
+
 ## Input
 
 Keyboard, mouse and gamepad.
@@ -320,6 +402,10 @@ Frame timing.
 |---|---|---|---|---|---|
 | `Time.deltaTime` | `Time.deltaTime` | value | - | deltaTime (Number) | Seconds since the last frame (inside FixedUpdate: the fixed step). |
 | `Time.fixedDeltaTime` | `Time.fixedDeltaTime` | value | - | fixedDeltaTime (Number) | The FixedUpdate step in seconds. |
+| `Time.physicsSteps` | `Time.physicsSteps` | value | - | physicsSteps (Number) | How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame. |
+| `Time.physicsSteps = physicsSteps` | `Time.physicsSteps=` | step | physicsSteps (Number) | - | How many times a second physics runs. 50 is the usual rate. 0 runs physics once per frame. |
+| `Time.smoothPhysics` | `Time.smoothPhysics` | value | - | smoothPhysics (Bool) | Draw bodies between physics steps so motion stays smooth at any frame rate. |
+| `Time.smoothPhysics = smoothPhysics` | `Time.smoothPhysics=` | step | smoothPhysics (Bool) | - | Draw bodies between physics steps so motion stays smooth at any frame rate. |
 | `Time.time` | `Time.time` | value | - | time (Number) | Seconds since the game started. |
 | `Time.frameCount` | `Time.frameCount` | value | - | frameCount (Number) | Frames since the game started. |
 | `Time.timeScale` | `Time.timeScale` | value | - | timeScale (Number) | How fast time passes: 1 normal, 0.5 slow motion, 0 paused. |
@@ -455,6 +541,44 @@ Walks the object along the scene's navigation mesh (the grid when none is baked)
 | `GetComponent<NavMeshAgent>().HasPath()` | `NavMeshAgent.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking to a destination. |
 | `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
 | `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
+
+## GridPathAgent2D
+
+Walks the object over a 2D tilemap. Empty tiles are open until Pay for mud and roads is on. The object needs a Grid Path Agent.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridPathAgent2D>().speed` | `GridPathAgent2D.speed` | value | Target (Object) | speed (Number) | How fast it walks, in world units per second. |
+| `GetComponent<GridPathAgent2D>().speed = speed` | `GridPathAgent2D.speed=` | step | speed (Number), Target (Object) | - | How fast it walks, in world units per second. |
+| `GetComponent<GridPathAgent2D>().allowDiagonal` | `GridPathAgent2D.allowDiagonal` | value | Target (Object) | allowDiagonal (Bool) | Also step diagonally. A diagonal step never squeezes between two walls. |
+| `GetComponent<GridPathAgent2D>().allowDiagonal = allowDiagonal` | `GridPathAgent2D.allowDiagonal=` | step | allowDiagonal (Bool), Target (Object) | - | Also step diagonally. A diagonal step never squeezes between two walls. |
+| `GetComponent<GridPathAgent2D>().smoothPath` | `GridPathAgent2D.smoothPath` | value | Target (Object) | smoothPath (Bool) | Straighten the route wherever the line of sight is clear. |
+| `GetComponent<GridPathAgent2D>().smoothPath = smoothPath` | `GridPathAgent2D.smoothPath=` | step | smoothPath (Bool), Target (Object) | - | Straighten the route wherever the line of sight is clear. |
+| `GetComponent<GridPathAgent2D>().useCosts` | `GridPathAgent2D.useCosts` | value | Target (Object) | useCosts (Bool) | Pay the tilemap's movement costs. Off keeps every open cell the same price. |
+| `GetComponent<GridPathAgent2D>().useCosts = useCosts` | `GridPathAgent2D.useCosts=` | step | useCosts (Bool), Target (Object) | - | Pay the tilemap's movement costs. Off keeps every open cell the same price. |
+| `GetComponent<GridPathAgent2D>().SetDestination(x, y)` | `GridPathAgent2D.SetDestination/2` | step | x (Number), y (Number), Target (Object) | - | Plan a path to the cell that contains this world point, and start walking. |
+| `GetComponent<GridPathAgent2D>().SetCell(x, y)` | `GridPathAgent2D.SetCell/2` | step | x (Number), y (Number), Target (Object) | - | Plan a path to this cell, and start walking. |
+| `GetComponent<GridPathAgent2D>().Stop()` | `GridPathAgent2D.Stop/0` | step | Target (Object) | - | Stop where it is and drop the path. |
+| `GetComponent<GridPathAgent2D>().Arrived()` | `GridPathAgent2D.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last cell was reached. |
+| `GetComponent<GridPathAgent2D>().HasPath()` | `GridPathAgent2D.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking a path. |
+
+## GridCostLayer
+
+Prices for a 2D tilemap: a road is cheap, mud is slow, and 0 blocks the tile. A Grid Path Agent pays them when Pay for mud and roads is on.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridCostLayer>().SetTileCost(tile, cost)` | `GridCostLayer.SetTileCost/2` | step | tile (Number), cost (Number), Target (Object) | - | Set the price of one tile number. 0 or less makes that tile a wall. Agents on that tile plan again. |
+| `GetComponent<GridCostLayer>().SetCellCost(x, y, cost)` | `GridCostLayer.SetCellCost/3` | step | x (Number), y (Number), cost (Number), Target (Object) | - | Set the price of one cell, on top of its tile. 0 or less blocks it. |
+
+## GridObstacle2D
+
+Blocks cells on a 2D tilemap. An agent whose path runs through them plans a new route at once.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridObstacle2D>().Place(x, y)` | `GridObstacle2D.Place/2` | step | x (Number), y (Number), Target (Object) | - | Block cells starting at this cell. Agents whose path used one of them plan again. |
+| `GetComponent<GridObstacle2D>().Clear()` | `GridObstacle2D.Clear/0` | step | Target (Object) | - | Stop blocking cells. |
 
 ## Dialogue
 

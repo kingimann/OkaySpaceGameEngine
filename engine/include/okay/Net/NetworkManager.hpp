@@ -25,7 +25,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
-namespace net { class Packet; }
+namespace net { class Packet; class BuildSync; class QuestSync; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -99,6 +99,17 @@ public:
     /// The account token / name every NetworkManager presents unless it was given
     /// its own (the player sets these from the signed-in OkaySpace account).
     static void SetDefaultIdentity(const std::string& token, const std::string& name);
+
+    // ---- Join gate (session tickets) -------------------------------------
+    /// What a client must do before it joins: called at the start of StartClient / JoinViaRelay (so also for a launcher join, a
+    /// reconnect and a script's net_join), before any socket is opened or key made. The gate may fetch a session ticket
+    /// (TicketBinding(), then SetAuthToken(ticket)); returning false refuses the join: nothing is sent and the call returns false
+    /// with the reason in LastJoinRefusal(). No gate (the default) = every join goes ahead as before. See shared/TicketJoin.hpp.
+    using JoinGate = std::function<bool(NetworkManager& nm, const std::string& host, std::uint16_t port,
+                                        bool relayed, const std::string& relayCode, std::string& why)>;
+    static void SetJoinGate(JoinGate gate);
+    /// Why the gate refused the most recent join ("" = it did not).
+    static std::string LastJoinRefusal();
 
     // ---- Server authority (basic anti-cheat) ----------------------------
     /// Server: the fastest a client's avatar may move (world units per second;
@@ -279,6 +290,13 @@ public:
     /// the same client can resume it (matched by a secret token the Welcome
     /// gave it). At most kMaxParked are kept. 0 = keep nothing.
     float resumeGraceSeconds = 30.0f;
+    /// Host: hand a resume token only to a client whose join was sealed, i.e. whose Welcome
+    /// (the one message that carries the token) travels encrypted. The token is a bearer secret:
+    /// on an unencrypted session anyone who can read the datagrams (same network, a router on the
+    /// path) sees it and can take the player's place, and no keyed proof can fix that because
+    /// there is no key. With this on, such a client gets no token and a rejoin is a new peer.
+    /// Off by default (LAN and tests without encryption keep resuming). See docs/multiplayer_audit.md.
+    bool resumeRequiresEncryption = false;
     /// What a reconnecting client reports to its handler.
     enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };
     /// Client: called on each step; `attempt` is the try number (1-based; 0 for Lost).
@@ -304,6 +322,17 @@ public:
     struct ResumedPeer { std::uint32_t id = 0; Vec3 position{}; bool hasPosition = false; int score = 0; bool ready = false; };
     void SetPeerResumedHandler(std::function<void(const ResumedPeer&)> f) { m_peerResumed = std::move(f); }
     static constexpr std::size_t kMaxParked = 64;
+    /// Reliable messages (SendReliable* and SendOrdered*) that were still unacked when a
+    /// session dropped are kept, up to kMaxResendMessages / kMaxResendBytes (payload bytes)
+    /// per drop, oldest first, and sent again once the rejoin is RESUMED: a client keeps
+    /// its own, the host keeps a dropped client's with its parked state. A rejoin that is
+    /// not a resume (grace over, host restarted) is a new peer and drops them. They go out as
+    /// new messages, so one the peer had already got whose ack was lost arrives twice:
+    /// handlers of reliable messages should be idempotent. Counts since this manager was made.
+    std::size_t ResentAfterResume() const { return m_resentTotal; }   ///< messages re-sent
+    std::size_t ResendDropped() const { return m_resendDropped; }     ///< a client's own, left out by the bounds or lost with a non-resumed rejoin; the host's, left out by the bounds
+    static constexpr std::size_t kMaxResendMessages = 256;
+    static constexpr std::size_t kMaxResendBytes = 256u * 1024u;
 
     /// Client: seconds to wait for the host to accept the join before giving up
     /// (JoinRejected() with the reason "the host did not answer"). A relay
@@ -654,12 +683,52 @@ public:
     /// movement check lets the owner's next position jump, and lag-compensation history
     /// before the jump is dropped. Health Stat calls this itself on a respawn or Revive().
     void NoteRespawn(GameObject* go);
+    /// Server: `go` (a networked object with a Health Stat) just died. Every other peer is told
+    /// ("__death": where the blow came from and the object's id, reliable) so its copy dies too and
+    /// waits for the server's respawn. Health Stat calls this itself on every death; one that a
+    /// replicated hit caused is skipped (the hit's "__dmg" carries it), so each death is sent once.
+    void NoteDeath(GameObject* go, bool hasFrom, const Vec3& from);
+    /// Server: deaths sent by NoteDeath since it started (not the ones a hit carried).
+    int DeathsSent() const { return m_deathsSent; }
+
+    /// Build mode over the network: client placements, removals, moves, links and undo are requests the
+    /// server checks; what players built reaches late joiners. Rules and counters live here. On by default
+    /// and idle while the scene has no BuildMode. See okay/Net/NetBuildSync.hpp and docs/build_mode.md.
+    net::BuildSync& Build() { return *m_buildSync; }
+    /// Quest log and story variables over the network (server authoritative). See okay/Net/NetQuestSync.hpp.
+    net::QuestSync& Quests() { return *m_questSync; }
+
+    // ---- Request channels and join hooks (for replicated game systems) -------------
+    /// Server: a client's message on `channel` (it must start with "__req/") goes to `handler`
+    /// (sender id, payload) and nowhere else: it is not relayed to other clients, not put in the
+    /// inbox, and a channel nobody registered is dropped. It still goes through the same checks as
+    /// any client message first (cookie, per-client rate and size limits, the anti-cheat's rate
+    /// limits and kick rules). The handler decides what the request means and must treat the
+    /// payload as hostile. Used by build mode and the quest log. Not cleared by Stop().
+    using RequestHandler = std::function<void(std::uint32_t from, const std::string& data)>;
+    void SetRequestHandler(const std::string& channel, RequestHandler handler);
+    void ClearRequestHandler(const std::string& channel);
+    /// Server: called when a client joins (or rejoins) with its id, once the Welcome is sent, so a
+    /// replicated system can send it the state it missed. Returns an id for RemoveJoinHook.
+    int  AddJoinHook(std::function<void(std::uint32_t peer)> hook);
+    void RemoveJoinHook(int id);
+    /// Server: where the client's avatar last reported being (false if it has not reported one yet).
+    bool PeerPosition(std::uint32_t id, Vec3& out) const;
+    /// Server: deaths and damaged health a client that joined late was told about since this manager started.
+    int LateJoinLifeSent() const { return m_lateLifeSent; }
     /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
     /// verified account ("" if anonymous) and its last refusals, oldest first.
     struct AntiCheatKick {
         std::uint32_t peer = 0;
         std::string name, userId;
         std::vector<CheatReport> recent;
+        /// Detection engine (detect.enabled): the peer's risk score, whether the
+        /// kick was a BAN REQUEST (risk past banAt), and its evidence bundle as
+        /// JSON (no account / address; call anticheat.detector.Bundle from the
+        /// handler to add them). Empty / 0 when the engine is off.
+        float risk = 0.0f;
+        bool banRequested = false;
+        std::string evidence;
     };
     /// Server: called for every anti-cheat kick, before the player is dropped.
     /// The dedicated server's --report-kicks files these for admin review.
@@ -888,6 +957,26 @@ private:
     void HandleHitClaim(Client& c, const std::string& data);
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
+    bool m_applyingHit = false;   // server: inside ApplyHit (its __dmg carries the death)
+    int m_lateLifeSent = 0;
+    std::unordered_map<std::string, RequestHandler> m_requestHandlers;
+    std::vector<std::pair<int, std::function<void(std::uint32_t)>>> m_joinHooks;
+    int m_nextJoinHook = 1;
+    // After the tables they unregister from (destroyed first).
+    std::unique_ptr<net::BuildSync> m_buildSync;
+    std::unique_ptr<net::QuestSync> m_questSync;
+    /// A client's message on a "__req/" channel: true if it was one (handled or dropped).
+    bool HandleClientRequest(Client& from, const std::string& channel, const std::string& data);
+    /// Server: object life events (death, respawn, health) go out on one ordered channel so a
+    /// respawn can never be applied before the death it follows, whatever the network does.
+    void SendLife(char kind, const std::string& body, std::int64_t only = -1);
+    struct DeadInfo { bool hasFrom = false; Vec3 from{}; };
+    std::unordered_map<std::string, DeadInfo> m_dead;   // synced objects the server knows are dead (cleared by a respawn)
+    static constexpr std::size_t kMaxDeadTracked = 4096;
+    void SendLifeSnapshot(std::uint32_t peer);
+    int m_deathsSent = 0;
+    float m_hitDist = 0.0f, m_hitOff = 0.0f, m_hitAllowed = 0.0f;   // the last CheckHitView's numbers (for the detector)
+    void FeedShot(std::uint32_t shooter, const HitClaim& claim, bool hit, const std::string& why);
     int m_hitsApplied = 0, m_hitsRefused = 0;
     std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;
@@ -912,6 +1001,7 @@ private:
     std::uint64_t m_relayNonce = 0;   // random per attempt; a welcome must echo it (version 4)
     float m_relayWait = 0.0f;         // seconds spent without a welcome
     int   m_relayBadWelcomes = 0;     // welcomes dropped for a missing or wrong nonce
+    std::uint32_t m_relaySlot = 0;    // client: the slot the relay gave us (it changes when our address does)
     static constexpr int kMaxRelayFramesPerCall = 64;   // relay datagrams consumed per ReceiveFrom
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
     std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
@@ -956,8 +1046,16 @@ private:
     void BeginReconnect();
     void FailReconnectTry();
     void ReannounceOwnSpawns();
+    // Reliable messages in flight when a session dropped, re-sent after a resume.
+    struct Unacked { bool ordered = false; std::string channel, data; };
+    std::size_t CollectUnacked(const std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& relOut,
+                               const net::OrderedEnd& ordered, std::vector<Unacked>& out) const;
+    void ResendUnacked(std::uint32_t target, std::vector<Unacked>& q);   // sends and empties `q`
+    std::vector<Unacked> m_resendQ;                   // client: kept across the drop, sent on Restored
+    std::size_t m_resentTotal = 0, m_resendDropped = 0;
     // Host: dropped clients' state, kept for resumeGraceSeconds.
     struct Parked {
+        std::vector<Unacked> resend;   // what it had not acked
         std::uint64_t token = 0; std::uint32_t id = 0; std::string userId;
         Vec3 pos{}; bool hasState = false; char glyph = '@'; int score = 0; bool ready = false; float age = 0.0f;
     };

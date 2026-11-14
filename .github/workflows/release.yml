@@ -43,6 +43,8 @@ jobs:
       # The launcher's trusted anti-cheat keys: public keys, so a repository
       # variable (Settings > Secrets and variables > Actions > Variables).
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
+      # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
+      OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
     steps:
       - uses: actions/checkout@v6
 
@@ -82,7 +84,7 @@ jobs:
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache; then
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -148,6 +150,17 @@ jobs:
           scripts/build-windows-dist.sh
           ccache -s || true
 
+      # Sign our own programs (not the third-party SDL2.dll) BEFORE anything records their checksum: the zip, the installer,
+      # the GitHub assets and versions.json must all carry the same signed bytes. Without the two secrets this is skipped
+      # with a warning (the release stays unsigned, as before); with them, any failure fails the release instead of
+      # shipping unsigned. See docs/packaging.md "Code signing".
+      - name: Sign the Windows programs
+        env:
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          scripts/sign-windows.sh build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe
+
       - name: Package zip
         id: pkg
         run: |
@@ -171,6 +184,12 @@ jobs:
                    -DOUTFILE="$PWD/OkaySpace-Setup.exe" \
                    scripts/okayspace-installer.nsi
           ls -la OkaySpace-Setup.exe
+
+      - name: Sign the Windows installer
+        env:
+          WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: scripts/sign-windows.sh OkaySpace-Setup.exe
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v6

@@ -87,5 +87,5 @@ prefab overrides reach each field.
 ## Not done
 
 These were considered and left out because the engine has nothing underneath them to drive: a **post-process** zone beyond fog and vignette (no other
-post settings are per scene), a **navigation area** volume (the navmesh has no area costs), **convex region**
+post settings are per scene), a **navigation area** volume (area costs live on a Nav Mesh Modifier, not on a volume), **convex region**
 volumes, a **swim** zone (Water covers it) and a plain **damage** zone (Damage On Touch and the Survival Zone cover it).

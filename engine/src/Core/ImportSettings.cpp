@@ -35,6 +35,7 @@ const ExtRow kExtensions[] = {
     {"okayseq", AssetType::Sequence},
     {"cs", AssetType::Script}, {"lua", AssetType::Script},
     {"okaydata", AssetType::Data}, {"okayitems", AssetType::Data}, {"okayloot", AssetType::Data},
+    {"okayweapon", AssetType::Data},
     {"okayrecipes", AssetType::Data}, {"okayloc", AssetType::Data}, {"okaynav", AssetType::Data},
     {"json", AssetType::Data}, {"txt", AssetType::Data}, {"bin", AssetType::Data},
     {"ttf", AssetType::Font}, {"otf", AssetType::Font},

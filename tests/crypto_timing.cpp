@@ -209,6 +209,10 @@ int main(int argc, char** argv) {
         [](int cls) { FillClass(g_c, 32, cls, 0xff); Bytes pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), g_c.data());
                       FillClass(g_b, 64, 0, 0x42); g_out.assign(64, 0); },
         [] { Ed25519Sign(g_out.data(), g_b.data(), 64, g_a.data()); });
+    add("Ed25519SignTrustedPk 64 B (fixed key A vs random key)", 1, false,
+        [](int cls) { FillClass(g_c, 32, cls, 0); Bytes pk(32); g_a.assign(64, 0); Ed25519SeedKeypair(pk.data(), g_a.data(), g_c.data());
+                      FillClass(g_b, 64, 0, 0x42); g_out.assign(64, 0); },
+        [] { Ed25519SignTrustedPk(g_out.data(), g_b.data(), 64, g_a.data()); });
     add("XChaCha20-Poly1305 seal 256 B (fixed key+data vs random)", 4, false,
         [](int cls) { FillClass(g_a, 32, cls, 0); FillClass(g_b, 256, cls, 0); FillClass(g_c, 24, 0, 7); g_out.assign(272, 0); },
         [] { XChaCha20Poly1305Seal(g_out.data(), g_b.data(), 256, nullptr, 0, g_c.data(), g_a.data()); });

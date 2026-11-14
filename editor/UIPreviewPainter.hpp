@@ -25,6 +25,7 @@ public:
 
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override;
     void FillRect(const okay::ui2d::Rect* r) override;
+    void FillRectF(const okay::ui2d::FRect* r) override;
     void DrawRect(const okay::ui2d::Rect* r) override;
     void DrawLine(int x0, int y0, int x1, int y1) override;
     void DrawPoint(int x, int y) override;

@@ -334,6 +334,13 @@ public:
     // Clipboard (UTF-8 text).
     virtual bool SetClipboardText(const std::string& text) = 0;
     virtual std::string GetClipboardText() = 0;
+    /// Clipboard by MIME type ("text/plain", "text/uri-list", "image/png", ...). The default knows only "text/plain"
+    /// (through the text functions). The own X11 backend offers any type it was given while it owns the clipboard.
+    /// Set replaces the whole clipboard by this one format. Get reads what the current owner offers (no INCR
+    /// transfers: a very large selection reads as not available).
+    virtual bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data);
+    virtual bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out);
+    virtual std::vector<std::string> ClipboardFormats();
 
     // Audio. deviceName null = the system default. Null return: see LastError().
     virtual std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture,

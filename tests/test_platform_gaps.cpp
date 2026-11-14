@@ -5,6 +5,7 @@
 #include "Platform/EventQueue.hpp"
 #include "Platform/Exchange.hpp"
 #include "Platform/ScaleMath.hpp"
+#include "Platform/PadMappingData.hpp"
 
 using namespace okay::platform;
 
@@ -246,6 +247,49 @@ void TestScale() {
     CHECK(!scale::FitToWorkArea(none, x, y, w, h) && x == 5);
 }
 
+
+
+void TestPadData() {
+    RUN_SUITE("pad mapping data (evdev table)");
+    pad::MappingDb db;
+    const std::string text = pad::BuiltinMappingText();
+    size_t lines = 0; for (char c : text) if (c == '\n') lines++;
+    CHECK(lines == sizeof(pad::data::kEntries) / sizeof(pad::data::kEntries[0]));
+    CHECK(db.AddText(text) == lines);                      // every built-in line parses
+    CHECK(db.Size() == lines);
+    // Any bus / version of a known pad matches; an unknown pad does not.
+    const pad::Mapping* x = pad::FindForEvdev(db, 3, 0x045e, 0x028e, 0x0114);
+    CHECK(x && x->name == "Xbox 360 Controller" && x->button[(int)GamepadButton::A].index == 0);
+    CHECK(pad::FindForEvdev(db, 5, 0x045e, 0x028e, 0x9999) == x);
+    CHECK(pad::FindForEvdev(db, 3, 0x054c, 0x0ce6, 0x0100) != nullptr);
+    CHECK(pad::FindForEvdev(db, 3, 0x1234, 0x5678, 0x0100) == nullptr);
+    CHECK(pad::FindForEvdev(db, 3, 0x045e, 0x028e, 0x0114, "Windows") == nullptr);   // entries are Linux-only
+    // An exact entry beats the wildcard one.
+    db.AddText(pad::GuidToString(pad::MakeLinuxGuid(3, 0x045e, 0x028e, 0x0114)) + ",Exact,a:b5,platform:Linux\n");
+    CHECK(pad::FindForEvdev(db, 3, 0x045e, 0x028e, 0x0114)->name == "Exact");
+    CHECK(pad::FindForEvdev(db, 3, 0x045e, 0x028e, 0x0200)->name == "Xbox 360 Controller");
+
+    // Raw numbering: keys ascending from BTN_MISC, axes ascending without the hat codes, hats as masks.
+    std::vector<uint16_t> keys = {0x120, 0x121, 0x130};
+    bool btn[pad::kEvdevBtnSlots] = {}; btn[0x121 - 0x100] = true;
+    int abs[64] = {}; bool present[64] = {}; int lo[64] = {}, hi[64] = {};
+    for (int a : {0, 1, 5}) { present[a] = true; lo[a] = 0; hi[a] = 255; }
+    present[0x10] = present[0x11] = true; lo[0x10] = lo[0x11] = -1; hi[0x10] = hi[0x11] = 1;
+    abs[0] = 0; abs[1] = 255; abs[5] = 128; abs[0x10] = 1; abs[0x11] = -1;
+    pad::EvdevView v; v.keys = &keys; v.btn = btn; v.abs = abs; v.absPresent = present; v.absMin = lo; v.absMax = hi;
+    pad::RawState r = pad::BuildEvdevRaw(v);
+    CHECK(r.buttons.size() == 3 && r.buttons[0] == 0 && r.buttons[1] == 1 && r.buttons[2] == 0);
+    CHECK(r.axes.size() == 3);                              // the hat pair is not an axis
+    CHECK(r.axes[0] == -32768 && r.axes[1] == 32767 && std::abs(r.axes[2] - 128) <= 1);
+    CHECK(r.hats.size() == 4 && r.hats[0] == (1 | 2) && r.hats[1] == 0);
+    abs[0x10] = -1; abs[0x11] = 1;
+    CHECK(pad::BuildEvdevRaw(v).hats[0] == (8 | 4));
+    // A device with a zero-width range gives 0, not a division by zero; no pointers gives an empty state.
+    hi[0] = lo[0];
+    CHECK(pad::BuildEvdevRaw(v).axes[0] == 0);
+    CHECK(pad::BuildEvdevRaw(pad::EvdevView{}).axes.empty());
+}
+
 } // namespace
 
 int main() {
@@ -255,5 +299,6 @@ int main() {
     TestQueue();
     TestExchange();
     TestScale();
+    TestPadData();
     TEST_MAIN_RESULT();
 }

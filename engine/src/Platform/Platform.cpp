@@ -78,6 +78,23 @@ Backend* Default() {
 }
 
 // ---- Backend defaults (shared by both backends) ----------------------------------
+bool Backend::ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) {
+    if (mime != "text/plain") return false;
+    return SetClipboardText(std::string(data.begin(), data.end()));
+}
+bool Backend::ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) {
+    if (mime != "text/plain") return false;
+    const std::string t = GetClipboardText();
+    if (t.empty()) return false;
+    out.assign(t.begin(), t.end());
+    return true;
+}
+std::vector<std::string> Backend::ClipboardFormats() {
+    std::vector<std::string> v;
+    if (!GetClipboardText().empty()) v.push_back("text/plain");
+    return v;
+}
+
 Key Backend::KeyForChar(char c) {
     // US layout: the HID numbering puts a..z at 4.., 1..9 at 30.., 0 at 39.
     if (c >= 'a' && c <= 'z') return (Key)(4 + (c - 'a'));

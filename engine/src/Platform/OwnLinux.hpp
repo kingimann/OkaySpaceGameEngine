@@ -34,6 +34,9 @@ public:
     virtual bool IsCursorShown() = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
+    virtual bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) = 0;
+    virtual bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) = 0;
+    virtual std::vector<std::string> ClipboardFormats() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.
     virtual bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) = 0;
 };
@@ -59,7 +62,15 @@ struct EvdevCaps {
     EvdevAbsRange abs[64];               // indexed by ABS_* code
     bool hasTriggerButtons = false;      // BTN_TL2 / BTN_TR2 stand in for the triggers
     bool canRumble = false;
+    std::vector<uint16_t> keys;          // key codes >= BTN_MISC the device has, ascending (for the raw button numbering)
+    uint16_t bus = 0, vendor = 0, product = 0, version = 0;   // EVIOCGID; picks the entry in the mapping table
 };
+/// Add mapping lines (SDL-style database text, see PadMapping.hpp) to the table the evdev pads use; later
+/// lines win. Returns how many lines were taken. Pads opened afterwards see them. The table starts with our
+/// own built-in entries (PadMappingData.hpp) plus the file named by $OKAY_PAD_MAPPINGS, if set.
+size_t EvdevAddMappings(const std::string& text);
+/// True when `g` (a pad from this backend) is read through a mapping table entry, false for the fixed layout.
+bool EvdevPadUsesMapping(const Gamepad* g);
 /// Test hook: a gamepad that reads struct input_event records from `fd` (a pipe).
 /// Takes ownership of the fd.
 std::unique_ptr<Gamepad> OpenEvdevFromFd(int fd, const EvdevCaps& caps, const char* name);

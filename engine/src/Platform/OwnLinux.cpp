@@ -2,6 +2,7 @@
 // controllers, all loaded at run time (see OwnLinux.hpp). No SDL.
 #include "Internal.hpp"
 #include "OwnLinux.hpp"
+#include "EventQueue.hpp"
 #include <cstdlib>
 #include <ctime>
 #include <deque>
@@ -29,7 +30,7 @@ public:
         }
         return true;
     }
-    void Shutdown() override { m_x11.reset(); m_pending.clear(); }
+    void Shutdown() override { m_x11.reset(); m_pending.Clear(); }
     std::string LastError() const override { return m_err; }
 
     uint64_t TicksMs() override { return (MonoNs() - m_epochNs) / 1000000ull; }
@@ -50,8 +51,8 @@ public:
     bool PollEvent(Event& out) override {
         if (m_x11 && m_x11->PollEvent(out)) return true;
         if (m_flags.gamepad) {
-            if (m_pending.empty()) own::EvdevPollHotplug(m_pendingVec), Drain();
-            if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
+            if (m_pending.Empty()) own::EvdevPollHotplug(m_pendingVec), Drain();
+            if (m_pending.Poll(out)) return true;
         }
         return false;
     }
@@ -78,6 +79,9 @@ public:
 
     bool SetClipboardText(const std::string& t) override { return m_x11 && m_x11->SetClipboardText(t); }
     std::string GetClipboardText() override { return m_x11 ? m_x11->GetClipboardText() : std::string(); }
+    bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& d) override { return m_x11 && m_x11->ClipboardPut(mime, d); }
+    bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) override { return m_x11 && m_x11->ClipboardFetch(mime, out); }
+    std::vector<std::string> ClipboardFormats() override { return m_x11 ? m_x11->ClipboardFormats() : std::vector<std::string>(); }
 
     std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* name, AudioSpec* got) override {
         std::string err;
@@ -95,12 +99,12 @@ public:
     own::X11System* X11() { return m_x11.get(); }
 
 private:
-    void Drain() { for (auto& e : m_pendingVec) m_pending.push_back(std::move(e)); m_pendingVec.clear(); }
+    void Drain() { for (auto& e : m_pendingVec) m_pending.Push(e); m_pendingVec.clear(); }
     uint64_t m_epochNs;
     InitFlags m_flags;
     std::unique_ptr<own::X11System> m_x11;
     std::string m_err;
-    std::deque<Event> m_pending;
+    EventQueue m_pending;
     std::vector<Event> m_pendingVec;
 };
 

@@ -245,6 +245,38 @@ int main(int argc, char** argv) {
     CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return e.wheelY > 0; }) != nullptr);
     ev = Inject(*b, "click 5");
     CHECK(Find(ev, EventType::MouseWheel, [](const Event& e) { return e.wheelY < 0; }) != nullptr);
+    if (kind == BackendKind::Own) {
+        // Events that arrive together are merged by the queue (EventQueue.hpp): a burst of 12 moves comes out as
+        // one or two events whose dx / dy add up and whose position is the last one; 5 wheel notches add up.
+        char cmd[1024];
+        std::snprintf(cmd, sizeof cmd, "mousemove %d %d", px + 20, py + 20);
+        Inject(*b, cmd);
+        std::string burst;
+        for (int i = 1; i <= 12; ++i) { char one[64]; std::snprintf(one, sizeof one, "mousemove %d %d ", px + 20 + i * 3, py + 20 + i * 2); burst += one; }
+        ev = Inject(*b, burst);
+        int sdx = 0, sdy = 0, nmv = 0, lastx = -1, lasty = -1;
+        for (auto& e : ev) if (e.type == EventType::MouseMove) { sdx += e.dx; sdy += e.dy; nmv++; lastx = e.x; lasty = e.y; }
+        std::cout << "  12 injected moves arrived as " << nmv << " event(s), dx=" << sdx << " dy=" << sdy << "\n";
+        CHECK(nmv >= 1 && nmv <= 4);
+        CHECK(sdx == 36 && sdy == 24);
+        CHECK(lastx == 20 + 36 && lasty == 20 + 24);
+        ev = Inject(*b, "click --repeat 5 --delay 1 4");
+        float wy = 0; int nw = 0;
+        for (auto& e : ev) if (e.type == EventType::MouseWheel) { wy += e.wheelY; nw++; }
+        std::cout << "  5 wheel notches arrived as " << nw << " event(s), sum " << wy << "\n";
+        CHECK(nw >= 1 && nw <= 3);
+        CHECK(wy > 4.9f && wy < 5.1f);
+        // A click between two moves is never reordered or merged away.
+        std::snprintf(cmd, sizeof cmd, "mousemove %d %d click 1 mousemove %d %d", px + 30, py + 30, px + 40, py + 40);
+        ev = Inject(*b, cmd);
+        int iDown = -1, iMoveBefore = -1, iMoveAfter = -1;
+        for (int i = 0; i < (int)ev.size(); ++i) {
+            if (ev[i].type == EventType::MouseButtonDown) iDown = i;
+            else if (ev[i].type == EventType::MouseMove && iDown < 0) iMoveBefore = i;
+            else if (ev[i].type == EventType::MouseMove && iDown >= 0) iMoveAfter = i;
+        }
+        CHECK(iMoveBefore >= 0 && iDown > iMoveBefore && iMoveAfter > iDown);
+    }
     Inject(*b, "mousedown 1", 100);
     {
         int mx, my;
@@ -404,6 +436,38 @@ int main(int argc, char** argv) {
         stop2 = true;
         server2.join();
         CHECK(got2 == "from the other client");
+        // Other formats by MIME type (Exchange.hpp provider behind the selection): b offers a uri list, the other client reads it.
+        CHECK(!b->SetClipboardText("bad \xFF utf8"));                         // not UTF-8: refused, clipboard unchanged
+        const std::string uris = "file:///tmp/a%20b.txt\r\nfile:///tmp/c.png\r\n";
+        CHECK(b->ClipboardPut("text/uri-list", std::vector<uint8_t>(uris.begin(), uris.end())));
+        {
+            std::atomic<bool> st{false};
+            std::thread srv([&] { Event e; while (!st) { while (b->PollEvent(e)) {} SleepMs(2); } });
+            std::vector<uint8_t> d;
+            const bool okGet = other->ClipboardFetch("text/uri-list", d);
+            const auto fmts = other->ClipboardFormats();
+            std::vector<uint8_t> none;
+            const bool noText = other->ClipboardFetch("text/plain", none);
+            st = true; srv.join();
+            CHECK(okGet && std::string(d.begin(), d.end()) == uris);
+            bool listed = false; for (auto& f : fmts) if (f == "text/uri-list") listed = true;
+            CHECK(listed);
+            CHECK(!noText);                                                  // we only offered the uri list
+        }
+        // And binary data with NUL bytes the other way round (b reads what the other client owns).
+        {
+            std::vector<uint8_t> blob(3000); for (size_t i = 0; i < blob.size(); i++) blob[i] = (uint8_t)(i * 7);
+            CHECK(other->ClipboardPut("image/png", blob));
+            std::atomic<bool> st{false};
+            std::thread srv([&] { Event e; while (!st) { while (other->PollEvent(e)) {} SleepMs(2); } });
+            std::vector<uint8_t> d;
+            const bool okGet = b->ClipboardFetch("image/png", d);
+            const auto fmts = b->ClipboardFormats();
+            st = true; srv.join();
+            CHECK(okGet && d == blob);
+            bool listed = false; for (auto& f : fmts) if (f == "image/png") listed = true;
+            CHECK(listed);
+        }
         w2.reset();
         other->Shutdown();
     }

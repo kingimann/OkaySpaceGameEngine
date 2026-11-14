@@ -11,6 +11,8 @@
 #include "Win32Audio.hpp"
 #include "Win32Logic.hpp"
 #include "PlatformText.hpp"
+#include "EventQueue.hpp"
+#include "Exchange.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -248,7 +250,7 @@ public:
         return true;
     }
     void Shutdown() override {
-        m_pending.clear();
+        m_pending.Clear();
         m_pads = win32::PadTracker();
         EndTimerPeriod();
         m_inited = false;
@@ -293,15 +295,12 @@ public:
     bool PollEvent(Event& out) override {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.push_back(e); continue; }
+            if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.Push(e); continue; }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         PumpPads();
-        if (m_pending.empty()) return false;
-        out = std::move(m_pending.front());
-        m_pending.pop_front();
-        return true;
+        return m_pending.Poll(out);
     }
     void* GLProcAddress(const char* n) override {
         void* p = (void*)wglGetProcAddress(n);
@@ -512,11 +511,11 @@ public:
         e.windowId = win->Id();
         switch (m) {
         case WM_CLOSE:
-            e.type = EventType::WindowClose; b->m_pending.push_back(e);
-            if (b->m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; b->m_pending.push_back(q); }
+            e.type = EventType::WindowClose; b->m_pending.Push(e);
+            if (b->m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; b->m_pending.Push(q); }
             return 0;   // the app destroys the window
         case WM_SIZE:
-            if (wp != SIZE_MINIMIZED) { e.type = EventType::WindowResized; e.width = LOWORD(lp); e.height = HIWORD(lp); b->m_pending.push_back(e); }
+            if (wp != SIZE_MINIMIZED) { e.type = EventType::WindowResized; e.width = LOWORD(lp); e.height = HIWORD(lp); b->m_pending.Push(e); }
             if (b->m_relative && h == b->m_focus) b->ClipToWindow(h);
             return 0;
         case WM_MOVE:
@@ -549,22 +548,22 @@ public:
         case WM_SETFOCUS:
             b->m_focus = h;
             b->ApplyRelative();
-            e.type = EventType::WindowFocusGained; b->m_pending.push_back(e);
+            e.type = EventType::WindowFocusGained; b->m_pending.Push(e);
             return 0;
         case WM_KILLFOCUS:
             if (b->m_focus == h) { b->m_focus = nullptr; b->ApplyRelative(); }
             win->m_chars.Reset();
             b->m_buttonsDown = 0;
-            e.type = EventType::WindowFocusLost; b->m_pending.push_back(e);
+            e.type = EventType::WindowFocusLost; b->m_pending.Push(e);
             return 0;
         case WM_CAPTURECHANGED: b->m_buttonsDown = 0; break;
-        case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.push_back(e); return 0; }
+        case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.Push(e); return 0; }
         case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
             e.type = (m == WM_KEYDOWN || m == WM_SYSKEYDOWN) ? EventType::KeyDown : EventType::KeyUp;
             e.key = win32::KeyFromScan((int)((lp >> 16) & 0xFF), (lp & (1 << 24)) != 0);
             e.repeat = e.type == EventType::KeyDown && (lp & (1 << 30)) != 0;
             e.mods = CurrentMods();
-            b->m_pending.push_back(e);
+            b->m_pending.Push(e);
             if (m == WM_SYSKEYDOWN || m == WM_SYSKEYUP) break;   // let Alt+F4 / Alt+Space through
             return 0;
         }
@@ -574,14 +573,14 @@ public:
         case WM_CHAR: {
             if (!b->m_text) return 0;
             std::string t;
-            if (win->m_chars.Feed((char16_t)wp, t) && !t.empty()) { e.type = EventType::TextInput; e.text = t; b->m_pending.push_back(e); }
+            if (win->m_chars.Feed((char16_t)wp, t) && !t.empty()) { e.type = EventType::TextInput; e.text = t; b->m_pending.Push(e); }
             return 0;
         }
         case WM_UNICHAR: {   // a code point sent by a tool that does not know about surrogates
             if (wp == UNICODE_NOCHAR) return TRUE;   // "do you handle WM_UNICHAR?"
             if (b->m_text && wp >= 0x20 && wp != 0x7F) {
                 std::string t; text::AppendUtf8(t, (uint32_t)wp);
-                e.type = EventType::TextInput; e.text = t; b->m_pending.push_back(e);
+                e.type = EventType::TextInput; e.text = t; b->m_pending.Push(e);
             }
             return 0;
         }
@@ -592,7 +591,7 @@ public:
             e.dx = px - b->m_lastX; e.dy = py - b->m_lastY;
             b->m_lastX = px; b->m_lastY = py;
             b->m_relAccX += e.dx; b->m_relAccY += e.dy;
-            b->m_pending.push_back(e);
+            b->m_pending.Push(e);
             return 0;
         }
         case WM_INPUT: {   // raw mouse deltas, registered only while relative mode is on
@@ -605,7 +604,7 @@ public:
                 if (dx || dy) {
                     e.type = EventType::MouseMove; e.x = b->m_lastX; e.y = b->m_lastY; e.dx = dx; e.dy = dy;
                     b->m_relAccX += dx; b->m_relAccY += dy;
-                    b->m_pending.push_back(e);
+                    b->m_pending.Push(e);
                 }
             }
             break;   // DefWindowProc must see WM_INPUT for the system's cleanup
@@ -625,7 +624,7 @@ public:
             const uint32_t bit = MouseMask(e.button);
             if (down) { if (!b->m_buttonsDown) SetCapture(h); b->m_buttonsDown |= bit; }
             else { b->m_buttonsDown &= ~bit; if (!b->m_buttonsDown) ReleaseCapture(); }
-            b->m_pending.push_back(e);
+            b->m_pending.Push(e);
             return (m == WM_XBUTTONDOWN || m == WM_XBUTTONUP) ? TRUE : 0;
         }
         case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: {
@@ -635,19 +634,21 @@ public:
             POINT p = {(short)LOWORD(lp), (short)HIWORD(lp)};   // wheel messages carry SCREEN coordinates
             ScreenToClient(h, &p);
             e.x = p.x; e.y = p.y;
-            b->m_pending.push_back(e);
+            b->m_pending.Push(e);
             return 0;
         }
         case WM_DROPFILES: {
             HDROP drop = (HDROP)wp;
             const UINT n = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
+            std::vector<std::string> paths;
             for (UINT i = 0; i < n; ++i) {
                 const UINT need = DragQueryFileW(drop, i, nullptr, 0);   // length without the terminator: no MAX_PATH truncation
                 std::wstring path((size_t)need + 1, L'\0');
                 const UINT len = DragQueryFileW(drop, i, &path[0], need + 1);
-                Event d; d.type = EventType::DropFile; d.windowId = e.windowId; d.timestampMs = e.timestampMs; d.text = Utf8(path.c_str(), (int)len);
-                b->m_pending.push_back(d);
+                paths.push_back(Utf8(path.c_str(), (int)len));
             }
+            // One drop is DropBegin, DropFile x N, DropComplete (Exchange.hpp), as the sdl2 backend delivers it.
+            for (const Event& d : MakeDropEvents(paths, e.windowId, e.timestampMs)) b->m_pending.Push(d);
             DragFinish(drop);
             return 0;
         }
@@ -699,7 +700,7 @@ public:
     }
 
     std::map<HWND, WinWindow*> m_wins;
-    std::deque<Event> m_pending;
+    EventQueue m_pending;   // bounded, merges mouse moves, wheel and resize (EventQueue.hpp)
     CursorShape m_shape = CursorShape::Arrow;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false, m_classRegistered = false, m_periodActive = false;
     bool m_rawRegistered = false, m_padsOn = true;
@@ -756,7 +757,7 @@ private:
             e.type = c.added ? EventType::GamepadAdded : EventType::GamepadRemoved;
             e.deviceId = c.added ? c.deviceIndex : c.instance;   // Added: index for OpenGamepad; Removed: Gamepad::InstanceId()
             e.timestampMs = (uint32_t)TicksMs();
-            m_pending.push_back(e);
+            m_pending.Push(e);
             if (!c.added) { m_cache[c.slot].valid = false; m_rumbleUntil[c.slot] = 0; }
         }
     }

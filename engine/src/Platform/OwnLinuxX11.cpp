@@ -13,6 +13,8 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
 } // namespace okay::platform::own
 #else
 
+#include "EventQueue.hpp"
+#include "Exchange.hpp"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -68,6 +70,7 @@ namespace {
     F(int, XWarpPointer, (Display*, ::Window, ::Window, int, int, unsigned, unsigned, int, int)) \
     F(int, XQueryKeymap, (Display*, char[32])) \
     F(int, XFree, (void*)) \
+    F(char*, XGetAtomName, (Display*, Atom)) \
     F(XSizeHints*, XAllocSizeHints, (void)) \
     F(void, XSetWMNormalHints, (Display*, ::Window, XSizeHints*)) \
     F(KeySym, XLookupKeysym, (XKeyEvent*, int)) \
@@ -281,6 +284,7 @@ public:
         m_aClipboard = m_x.XInternAtom(m_dpy, "CLIPBOARD", False);
         m_aTargets = m_x.XInternAtom(m_dpy, "TARGETS", False);
         m_aProp = m_x.XInternAtom(m_dpy, "OKAY_SELECTION", False);
+        m_aIncr = m_x.XInternAtom(m_dpy, "INCR", False);
         m_aTextPlain = m_x.XInternAtom(m_dpy, "text/plain;charset=utf-8", False);
         if (m_x.XSupportsLocale()) {
             m_x.XSetLocaleModifiers("");
@@ -364,15 +368,18 @@ public:
     void Unregister(::Window w) { m_wins.erase(w); if (m_focus == w) m_focus = 0; }
 
     // ---- events ---------------------------------------------------------------------
+    static constexpr int kDrainPerPoll = 2048;
     bool PollEvent(Event& out) override {
-        for (;;) {
-            if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
-            if (!m_x.XPending(m_dpy)) return false;
+        // Everything the server has sent goes into the queue first (at most kDrainPerPoll events, so a flood
+        // cannot starve the app), then one event comes out. Moves, wheel notches and resizes that arrive
+        // together are merged by the queue.
+        for (int n = 0; n < kDrainPerPoll && m_x.XPending(m_dpy); ++n) {
             XEvent ev;
             m_x.XNextEvent(m_dpy, &ev);
             if (m_x.XFilterEvent(&ev, None)) continue;   // eaten by the input method
             Handle(ev);
         }
+        return m_pending.Poll(out);
     }
 
     void Handle(XEvent& ev) {
@@ -384,8 +391,8 @@ public:
         switch (ev.type) {
         case ClientMessage:
             if (win && ev.xclient.message_type == m_aProtocols && (Atom)ev.xclient.data.l[0] == m_aDelete) {
-                e.type = EventType::WindowClose; m_pending.push_back(e);
-                if (m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; m_pending.push_back(q); }
+                e.type = EventType::WindowClose; m_pending.Push(e);
+                if (m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; m_pending.Push(q); }
             }
             break;
         case ConfigureNotify:
@@ -393,7 +400,7 @@ public:
                 if (ev.xconfigure.width != win->m_w || ev.xconfigure.height != win->m_h) {
                     win->m_w = ev.xconfigure.width; win->m_h = ev.xconfigure.height;
                     e.type = EventType::WindowResized; e.width = win->m_w; e.height = win->m_h;
-                    m_pending.push_back(e);
+                    m_pending.Push(e);
                 }
             }
             break;
@@ -401,18 +408,18 @@ public:
             if (win && ev.xfocus.mode != NotifyGrab && ev.xfocus.mode != NotifyUngrab) {
                 win->m_focused = true; m_focus = win->m_win;
                 if (win->m_ic) m_x.XSetICFocus(win->m_ic);
-                e.type = EventType::WindowFocusGained; m_pending.push_back(e);
+                e.type = EventType::WindowFocusGained; m_pending.Push(e);
             }
             break;
         case FocusOut:
             if (win && ev.xfocus.mode != NotifyGrab && ev.xfocus.mode != NotifyUngrab) {
                 win->m_focused = false; if (m_focus == win->m_win) m_focus = 0;
                 if (win->m_ic) m_x.XUnsetICFocus(win->m_ic);
-                e.type = EventType::WindowFocusLost; m_pending.push_back(e);
+                e.type = EventType::WindowFocusLost; m_pending.Push(e);
             }
             break;
         case Expose:
-            if (win && ev.xexpose.count == 0) { e.type = EventType::WindowExposed; m_pending.push_back(e); }
+            if (win && ev.xexpose.count == 0) { e.type = EventType::WindowExposed; m_pending.Push(e); }
             break;
         case KeyPress: case KeyRelease: if (win) HandleKey(ev, win, e); break;
         case ButtonPress: case ButtonRelease: if (win) HandleButton(ev, e); break;
@@ -430,7 +437,7 @@ public:
                 }
                 m_lastX = e.x; m_lastY = e.y;
                 m_relAccX += e.dx; m_relAccY += e.dy;
-                m_pending.push_back(e);
+                m_pending.Push(e);
             }
             break;
         case MappingNotify:   // the keyboard layout changed: Xlib's cached keymap must follow
@@ -455,15 +462,15 @@ public:
                 m_x.XPeekEvent(m_dpy, &nx);
                 if (nx.type == KeyPress && nx.xkey.keycode == ev.xkey.keycode && nx.xkey.time == ev.xkey.time) {
                     XEvent drop; m_x.XNextEvent(m_dpy, &drop);
-                    e.type = EventType::KeyDown; e.repeat = true; m_pending.push_back(e);
+                    e.type = EventType::KeyDown; e.repeat = true; m_pending.Push(e);
                     EmitText(drop, win, e);
                     return;
                 }
             }
-            e.type = EventType::KeyUp; m_pending.push_back(e);
+            e.type = EventType::KeyUp; m_pending.Push(e);
             return;
         }
-        e.type = EventType::KeyDown; m_pending.push_back(e);
+        e.type = EventType::KeyDown; m_pending.Push(e);
         EmitText(ev, win, e);
     }
 
@@ -487,7 +494,7 @@ public:
         if (text.empty() || (unsigned char)text[0] < 0x20 || (unsigned char)text[0] == 0x7f) return;
         Event t = base;
         t.type = EventType::TextInput; t.text = text; t.repeat = false; t.key = Key::Unknown;
-        m_pending.push_back(t);
+        m_pending.Push(t);
     }
 
     void HandleButton(XEvent& ev, Event& e) {
@@ -499,7 +506,7 @@ public:
             e.type = EventType::MouseWheel;
             if (b == 4) e.wheelY = 1.0f; else if (b == 5) e.wheelY = -1.0f;
             else if (b == 6) e.wheelX = -1.0f; else e.wheelX = 1.0f;
-            m_pending.push_back(e);
+            m_pending.Push(e);
             return;
         }
         int btn = 0;
@@ -514,7 +521,7 @@ public:
             m_clicks = again ? m_clicks + 1 : 1; m_lastBtn = btn; m_lastBtnTime = ev.xbutton.time;
         }
         e.clicks = m_clicks;
-        m_pending.push_back(e);
+        m_pending.Push(e);
     }
 
     // ---- misc input ------------------------------------------------------------------
@@ -612,44 +619,95 @@ public:
     }
 
     // ---- clipboard ---------------------------------------------------------------------
-    // We own the CLIPBOARD selection after SetClipboardText and answer requests while
-    // events are pumped (PollEvent / GetClipboardText). Reading someone else's selection
-    // sends a conversion request and waits up to a second for the answer.
+    // What we offer lives in a ClipboardProvider (Exchange.hpp), one format at a time. We own the CLIPBOARD
+    // selection after a Set and answer requests while events are pumped (PollEvent / the Get calls). Reading
+    // someone else's selection sends a conversion request and waits up to a second for the answer.
+    // Text is also offered as UTF8_STRING, STRING and text/plain;charset=utf-8; any other type goes out under
+    // its MIME name as the target atom. Not done: INCR (selections too large for one property), MULTIPLE.
     bool SetClipboardText(const std::string& t) override {
+        if (!IsValidUtf8(t)) return false;
+        return ClipboardPut(kMimeText, std::vector<uint8_t>(t.begin(), t.end()));
+    }
+    bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) override {
         ::Window w = AnyWindow();
-        if (!w) return false;
-        m_clip = t;
+        if (!w || mime.empty() || mime.size() > 200) return false;
+        if (mime == kMimeText && !IsValidUtf8(std::string(data.begin(), data.end()))) return false;
+        if (!m_clipData.Set(mime, data)) return false;
         m_x.XSetSelectionOwner(m_dpy, m_aClipboard, w, CurrentTime);
         m_ownsClip = m_x.XGetSelectionOwner(m_dpy, m_aClipboard) == w;
         m_x.XFlush(m_dpy);
         return m_ownsClip;
     }
     std::string GetClipboardText() override {
-        ::Window w = AnyWindow();
-        if (!w) return "";
-        // Another client may have taken the selection since: ask the server who owns it now.
-        const ::Window owner = m_x.XGetSelectionOwner(m_dpy, m_aClipboard);
+        std::vector<uint8_t> d;
+        if (!ClipboardFetch(kMimeText, d)) return "";
+        return std::string(d.begin(), d.end());
+    }
+    // True while a window of ours owns the clipboard (after processing whatever the server sent).
+    bool OwnClipboardNow(::Window& owner) {
+        owner = m_x.XGetSelectionOwner(m_dpy, m_aClipboard);
         while (m_x.XPending(m_dpy)) { XEvent ev; m_x.XNextEvent(m_dpy, &ev); Handle(ev); }   // e.g. SelectionClear
-        if (m_ownsClip && m_wins.count(owner)) return m_clip;
+        if (m_ownsClip && m_wins.count(owner)) return true;
         m_ownsClip = false;
-        if (owner == None) return "";
+        return false;
+    }
+    // Ask the owner to convert the selection to `target`; the answer is the property bytes. False when refused,
+    // empty, too late (1 s) or INCR.
+    bool RequestSelection(Atom target, ::Window w, std::vector<uint8_t>& out, Atom* typeOut = nullptr) {
         m_selNotify = false;
         m_x.XDeleteProperty(m_dpy, w, m_aProp);
-        m_x.XConvertSelection(m_dpy, m_aClipboard, m_aUtf8, m_aProp, w, CurrentTime);
+        m_x.XConvertSelection(m_dpy, m_aClipboard, target, m_aProp, w, CurrentTime);
         m_x.XFlush(m_dpy);
         const uint64_t t0 = NowMs();
         while (!m_selNotify && NowMs() - t0 < 1000) {
             while (m_x.XPending(m_dpy)) { XEvent ev; m_x.XNextEvent(m_dpy, &ev); Handle(ev); }
             if (!m_selNotify) { struct timespec ts = {0, 2000000}; nanosleep(&ts, nullptr); }
         }
-        if (!m_selNotify || m_selProp == None) return "";
+        if (!m_selNotify || m_selProp == None) return false;
         Atom type; int fmt; unsigned long n, rest; unsigned char* data = nullptr;
-        std::string out;
-        if (m_x.XGetWindowProperty(m_dpy, w, m_aProp, 0, 1 << 20, True, AnyPropertyType, &type, &fmt, &n, &rest, &data) == Success && data) {
-            if (fmt == 8) out.assign((char*)data, n);
+        bool ok = false;
+        if (m_x.XGetWindowProperty(m_dpy, w, m_aProp, 0, 1 << 22, True, AnyPropertyType, &type, &fmt, &n, &rest, &data) == Success && data) {
+            if (typeOut) *typeOut = type;
+            if (type != m_aIncr && (fmt == 8 || fmt == 32)) {
+                const size_t bytes = fmt == 8 ? (size_t)n : (size_t)n * sizeof(long);   // format 32 arrives as C longs
+                out.assign(data, data + bytes);
+                ok = true;
+            }
             m_x.XFree(data);
         }
-        return out;
+        return ok;
+    }
+    bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) override {
+        ::Window w = AnyWindow();
+        if (!w || mime.empty()) return false;
+        ::Window owner;
+        if (OwnClipboardNow(owner)) return m_clipData.Get(mime, out);
+        if (owner == None) return false;
+        const Atom target = mime == kMimeText ? m_aUtf8 : m_x.XInternAtom(m_dpy, mime.c_str(), False);
+        return RequestSelection(target, w, out);
+    }
+    std::vector<std::string> ClipboardFormats() override {
+        ::Window w = AnyWindow();
+        if (!w) return {};
+        ::Window owner;
+        if (OwnClipboardNow(owner)) return m_clipData.Formats();
+        std::vector<std::string> out;
+        if (owner == None) return out;
+        std::vector<uint8_t> raw;
+        if (!RequestSelection(m_aTargets, w, raw)) return out;
+        const Atom* atoms = reinterpret_cast<const Atom*>(raw.data());
+        for (size_t i = 0; i < raw.size() / sizeof(Atom) && i < 256; i++) {
+            if (atoms[i] == m_aUtf8 || atoms[i] == XA_STRING || atoms[i] == m_aTextPlain) { out.push_back(kMimeText); continue; }
+            char* nm = m_x.XGetAtomName(m_dpy, atoms[i]);
+            if (!nm) continue;
+            const std::string name(nm);
+            m_x.XFree(nm);
+            if (name.find('/') != std::string::npos && name.size() <= 200) out.push_back(name);
+        }
+        // de-duplicate, keep order
+        std::vector<std::string> uniq;
+        for (auto& f : out) { bool dup = false; for (auto& u : uniq) if (u == f) dup = true; if (!dup) uniq.push_back(f); }
+        return uniq;
     }
     void HandleSelectionRequest(XSelectionRequestEvent& rq) {
         XEvent r; std::memset(&r, 0, sizeof(r));
@@ -662,14 +720,24 @@ public:
         r.xselection.property = None;
         const Atom prop = rq.property ? rq.property : rq.target;
         if (m_ownsClip && rq.selection == m_aClipboard) {
+            const std::vector<std::string> fmts = m_clipData.Formats();
+            const bool haveText = m_clipData.Has(kMimeText);
             if (rq.target == m_aTargets) {
-                Atom t[4] = {m_aTargets, m_aUtf8, XA_STRING, m_aTextPlain};
-                m_x.XChangeProperty(m_dpy, rq.requestor, prop, XA_ATOM, 32, PropModeReplace, (unsigned char*)t, 4);
+                std::vector<Atom> t = {m_aTargets};
+                if (haveText) { t.push_back(m_aUtf8); t.push_back(XA_STRING); t.push_back(m_aTextPlain); }
+                for (auto& f : fmts) if (f != kMimeText) t.push_back(m_x.XInternAtom(m_dpy, f.c_str(), False));
+                m_x.XChangeProperty(m_dpy, rq.requestor, prop, XA_ATOM, 32, PropModeReplace, (unsigned char*)t.data(), (int)t.size());
                 r.xselection.property = prop;
-            } else if (rq.target == m_aUtf8 || rq.target == XA_STRING || rq.target == m_aTextPlain) {
-                m_x.XChangeProperty(m_dpy, rq.requestor, prop, rq.target, 8, PropModeReplace,
-                                    (const unsigned char*)m_clip.data(), (int)m_clip.size());
-                r.xselection.property = prop;
+            } else {
+                std::string mime;
+                if (haveText && (rq.target == m_aUtf8 || rq.target == XA_STRING || rq.target == m_aTextPlain)) mime = kMimeText;
+                else for (auto& f : fmts) if (m_x.XInternAtom(m_dpy, f.c_str(), False) == rq.target) mime = f;
+                std::vector<uint8_t> data;
+                // Bigger than one request can carry is refused (no INCR). 256 KiB is under the usual server limit.
+                if (!mime.empty() && m_clipData.Get(mime, data) && data.size() <= 262144) {
+                    m_x.XChangeProperty(m_dpy, rq.requestor, prop, rq.target, 8, PropModeReplace, data.data(), (int)data.size());
+                    r.xselection.property = prop;
+                }
             }
         }
         m_x.XSendEvent(m_dpy, rq.requestor, False, NoEventMask, &r);
@@ -711,16 +779,16 @@ public:
     XIM m_im = nullptr;
     Atom m_aMaxH = 0, m_aMaxV = 0, m_aNetIcon = 0;
     Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetName = 0, m_aUtf8 = 0,
-         m_aClipboard = 0, m_aTargets = 0, m_aProp = 0, m_aTextPlain = 0;
+         m_aClipboard = 0, m_aTargets = 0, m_aIncr = 0, m_aProp = 0, m_aTextPlain = 0;
     std::unordered_map<::Window, X11Win*> m_wins;
-    std::deque<Event> m_pending;
+    EventQueue m_pending;   // bounded, merges mouse moves, wheel and resize (EventQueue.hpp)
     ::Window m_focus = 0;
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;   // motion since RelativeMouseState was last read
     int m_lastBtn = 0, m_clicks = 0; unsigned long m_lastBtnTime = 0;
-    std::string m_clip;
+    MemoryClipboardProvider m_clipData;
     bool m_ownsClip = false, m_selNotify = false;
     Atom m_selProp = 0;
 };

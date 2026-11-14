@@ -103,6 +103,30 @@ std::size_t OrderedEnd::Backlog(const std::string& channel) const {
     return it == m_out.end() ? 0 : it->second.backlog.size();
 }
 
+std::size_t OrderedEnd::Unacked(std::vector<std::pair<std::string, std::string>>& out,
+                                std::size_t maxMessages, std::size_t maxBytes) const {
+    std::size_t left = 0, bytes = 0, taken = 0;
+    // A channel is cut at the first message that does not fit, so what is kept is always a
+    // prefix of the channel's order; the others (every later message of it) are counted as left out.
+    for (const auto& [channel, st] : m_out) {
+        bool full = false;
+        auto add = [&](const std::string& data) {
+            if (full || taken >= maxMessages || bytes + data.size() > maxBytes) { full = true; ++left; return; }
+            out.emplace_back(channel, data);
+            bytes += data.size();
+            ++taken;
+        };
+        for (const auto& [seq, slot] : st.pending) {
+            Packet p(slot.bytes.data(), slot.bytes.size());   // [type][u32 seq][channel][data][cookie]
+            p.ReadU8(); p.ReadU32(); p.ReadString();
+            std::string data = p.ReadString();
+            if (p.Ok()) add(data);
+        }
+        for (const auto& q : st.backlog) add(q.data);
+    }
+    return left;
+}
+
 void OrderedEnd::Ack(const std::string& channel, std::uint32_t ack) {
     auto it = m_out.find(channel);
     if (it == m_out.end()) return;

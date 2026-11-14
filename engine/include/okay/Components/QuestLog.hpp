@@ -102,6 +102,10 @@ public:
     std::string playerName;          ///< whose inventory Collect counts (empty = the player)
 
     std::vector<QuestRecord> records;   ///< runtime state; saved with the scene
+    /// Networked clients: this log is a copy of the server's. Starting, completing, failing or resetting a
+    /// quest, progress and the objective sources (kills, reach, dialogue, collecting) change nothing here;
+    /// the server's records arrive through ApplyRemoteRecord. Set by NetworkManager::Quests(). Not saved.
+    bool remoteAuthority = false;
     bool journalOpen = false;
 
     /// Told about every notification (title, body, kind 0 info / 1 success / 2 warning).
@@ -154,6 +158,15 @@ public:
 
     void ToggleJournal() { journalOpen = !journalOpen; }
 
+    // ---- Networking (NetworkManager::Quests()) ----
+    /// Put the server's record in (replacing the one with this id); with `notify`, tell the player what
+    /// changed (started, completed, failed) as a local change would.
+    void ApplyRemoteRecord(const QuestRecord& r, bool notify);
+    void RemoveRemoteRecord(const std::string& id);
+    /// Server: run `fn` against `recs` instead of `records`, with no toasts, rewards or script events,
+    /// so a quest one player has can advance without touching the host's. Restores everything after.
+    void RunOn(std::vector<QuestRecord>& recs, const std::function<void()>& fn);
+
 private:
     QuestRecord& RecordFor(const std::string& id);
     void CheckCompletion(const std::string& id);
@@ -170,6 +183,7 @@ private:
     bool m_fileLoaded = false;
     std::string m_loadedPath;
     int m_journalTab = 0;
+    bool m_muted = false;
 };
 
 /// A zone that completes "reach" objectives named after it (or one objective it

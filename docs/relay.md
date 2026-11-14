@@ -156,6 +156,13 @@ forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
 
+**A peer's address changes.** The relay knows a peer by its source address. If a host's
+NAT rebinds, its next hello comes from a new address with the host key, and the relay moves
+the host there and keeps its slot: clients notice nothing. If a client's address changes it
+is a new peer with a new slot; the client sees the new slot in the next welcome and reports
+the connection lost ("this connection's address changed on the relay"), and with
+`autoReconnect` rejoins and resumes its state through the new address within a couple of seconds.
+
 **Hub sessions.** Version 3 keeps that hand-over for sessions that want it with
 the `RelayHub` role (the launcher's voice calls): every member says hub, the
 first one in hosts, and the session never gets a host key, so when the hub
@@ -171,6 +178,17 @@ the game, so this is squatting, not a takeover. Use random session codes
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.
+
+## Game channels the relay carries (round 4)
+
+Build mode, the quest log and death / respawn replication ride on the ordinary game channels, so the
+relay needs no change and reads none of it (with encryption on it cannot): a client's build and quest
+requests go out on `__req/build` and `__req/quest` (reliable, ordered, host only: the host's handler
+reads them and nothing is passed on to the other clients), and the host's answers on `__bld`, `__qst`
+and `__life` (ordered). A late joiner's snapshot is sent in chunks of at most 24 KB, a few dozen
+datagrams for a full 250-piece build, well inside the relay's per-peer caps above. The relay session
+tests (`net_relay`, `net_relay_clients`, `net_relay_nat`) were re-run; the new suites were run over a
+direct connection and NetSim, not through a relay.
 
 ## Voice calls in the launcher
 

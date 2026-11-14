@@ -36,10 +36,10 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 ## Planned: visual-script core upgrade
 
-Not started. Today graphs can call functions, have variable scopes, and use Broadcast / On Event and the list builtins; these steps build on that. One at a time, each shipped only when finished, tested and usable in the editor:
+Steps 1 and 2 turned out to be mostly shipped already (see "Declared variables, lists, maps and structs" in `docs/visual_scripting.md`); the audit and the remaining gaps are below. Steps 3 to 5 are not started. One at a time, each shipped only when finished, tested and usable in the editor:
 
-1. A better variable system for all types: vectors, colors, structs, objects, arrays and maps, with local, graph, object and global scopes and defaults editable in the Inspector.
-2. A full set of array and map nodes: add, remove, insert, find, sort, for each, length, with typed element pins.
+1. DONE (earlier work, audited again here): a better variable system. Declared variables (`decl name Type scope default`) with Number, Bool, Text, Vector3, Color, Object, `List<T>`, `Map<T>` and struct types; object, scene and global scopes with defaults editable in the Inspector; typed Set / Add Var; old `var` lines still load (`tests/data/vs_core_legacy.okayvs` is a graph in the old format, run by `vs_variables`). Not done: a declared "local" scope (function locals via Set Local stay untyped), and a separate "graph" scope distinct from "object" (today `object` is the graph's own variables); typed lists of structs.
+2. DONE for lists and maps: add, remove (by index and by value), insert, set, find, sort, reverse, clear, copy, for each, length, keys, values, count, plus List Append, List Slice, List Pop, Map Get Or and Map Merge (added now), with element types carried through the graph checker. Not done: lists and maps have no OkayScript export (Generate script lists them as not translated); no sort-by-key or sort-with-comparer; List Pop takes only the last item.
 3. Custom events with typed parameters, and delegates (bind, unbind, call).
 4. Graphs talking to each other: call a function, fire an event or read a variable on another object's graph, with the graph checker flagging broken links.
 5. Custom function nodes: user-defined nodes with typed pins, reusable across graphs and listed in the palette.

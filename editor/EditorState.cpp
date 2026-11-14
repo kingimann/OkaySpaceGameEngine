@@ -1100,7 +1100,9 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
 void EditorState::Play() {
     if (m_playing || !m_levels.empty()) return;   // a prefab is open: there is no game to run (PlayBlockedReason says why)
     SyncHistory();   // close the open undo step: what Play changes is thrown away and never recorded
-    m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
+    // SyncHistory() above left m_known equal to the scene's text right now (it serializes the scene to find out what
+    // changed), so the snapshot is that text: serializing a second time cost as much again on a big scene.
+    m_snapshot = m_known;                              // remember edit state
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
     m_dirtyAtPlay = dirty;
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
@@ -1180,6 +1182,11 @@ bool EditorState::PlayFrame(double realSeconds, bool smooth, float refreshHz) {
     if (!m_playing) return false;   // editing never steps Time
     GameLoop::Options o = m_loop.options();
     if (o.smoothDelta != smooth || o.refreshHz != refreshHz) { o.smoothDelta = smooth; o.refreshHz = refreshHz; m_loop.SetOptions(o); }
+    // The first frame of a session measures the click frame: Play()'s own work (snapshot, audio loading, validation)
+    // plus the editor's UI. Stepping the game by that (up to maxDelta) made the first frame a big jump (five physics
+    // steps at once) and put one huge frame into the FPS readout, which then took half a second to recover. A
+    // frame longer than 1/30 s here is a hitch of the editor's, not game time: step one 60 Hz frame instead.
+    if (m_loop.FrameCount() == 0 && realSeconds > 1.0 / 30.0) realSeconds = 1.0 / 60.0;
     return m_loop.BeginFrame(realSeconds);
 }
 

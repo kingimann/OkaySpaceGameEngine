@@ -60,6 +60,8 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
+    ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window
     NetSimPanel.cpp                                                    # net simulator + traffic panel
@@ -106,8 +108,11 @@ if(WIN32)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
-    target_link_libraries(okay-editor PRIVATE okay_ui)
+    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
+endif()
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+    target_compile_definitions(okay-editor PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
 set_target_properties(okay-editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

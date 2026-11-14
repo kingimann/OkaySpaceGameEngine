@@ -187,6 +187,15 @@ bool ReadMs3dBuffer(const std::string& bytes, const std::string& baseDir, Import
 /// Cameras, lights and shapes are plain empty nodes; vertex colours, extra mapping channels, other material maps and
 /// texture transforms are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
 bool ReadAseBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// Blender (.blend), Blender 2.4x to 4.x, 32 / 64 bit, little / big endian, plain or gzip (zstd is not supported;
+/// Blender 5.0's large-header container is not supported). Driven by the file's own SDNA struct description.
+/// Reads objects with transforms and parenting, meshes (old MVert / MFace / MPoly storage and the 3.x / 4.x attribute
+/// storage), UVs, materials (colours, image textures, Principled BSDF inputs), armatures with vertex group skin
+/// weights, and F-Curve animation of object and pose-bone location / rotation / scale. The root node carries the
+/// Z-up to Y-up rotation. UV v is flipped. `flatten` bakes every object's world matrix and that rotation into the
+/// vertices and returns one root node, no skins, no clips. Everything not read (modifiers, constraints, shape keys,
+/// vertex colours, cameras, lights, curves, ...) is named in `out.notes`. `baseDir` ends with a slash or is empty.
+bool ReadBlendBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -200,19 +209,20 @@ bool ReadSmdFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMs3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadAseFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh .off .smd .md5mesh .md5anim .ms3d .ase .blend have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
-/// Collada (.dae), 3DS (.3ds) and BVH (.bvh) are the odd ones out: their readers are off by default
+/// Collada (.dae), 3DS (.3ds), BVH (.bvh) and Blender (.blend) are the odd ones out: their readers are off by default
 /// (docs/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
-/// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 or the matching CMake option says so
+/// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 / OKAY_OWN_BLEND=1 or the matching CMake option says so
 /// (run-time choice beats the variable, which beats CMake; =0 forces it off).
 bool HasOwnReader(const std::string& ext);
 /// Choose the backend for one extension (".stl"), or for every format with

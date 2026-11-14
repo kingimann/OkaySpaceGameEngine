@@ -287,6 +287,121 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: false
 
+  # The Linux client: launcher, editor and player (plus the relay) built natively on Ubuntu 22.04 (glibc 2.35, so it runs on
+  # that and newer), laid out like the Windows zip (launcher at the top, the rest in Tools/) and attached as a tarball. The three
+  # programs are also attached under their own names (OkaySpace-linux-x64, OkayEngine-linux-x64, OkaySpacePlayer-linux-x64):
+  # those are what the Linux launcher's in-app updater downloads, exactly as the Windows launcher downloads the .exe files.
+  # Their SHA-256 go into versions.json (scripts/publish-supabase.sh with PLATFORM=linux), added to the entry the Windows job
+  # created, so the updater accepts them. This job needs windows-exe because that job creates the entry. If this job fails the
+  # release still goes out for Windows (the finalize job only demands Linux checksums when this job published them), and a
+  # Linux launcher is told that the release has no Linux build. See docs/packaging.md "Linux" and docs/releasing.md.
+  linux-client:
+    name: Build the Linux client (launcher, editor, player)
+    needs: windows-exe
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    outputs:
+      # "true" only when the Linux files' checksums were written to versions.json by this run.
+      published: ${{ steps.pub.outputs.published }}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+      # Same variables as the Windows build (public keys / defaults baked into the programs; see build-linux-dist.sh).
+      SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
+      OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+      VER: ${{ needs.windows-exe.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        timeout-minutes: 20
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ pkg-config libsdl2-dev libsodium-dev ccache binutils; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-linux-client-${{ github.sha }}
+          restore-keys: ccache-linux-client-
+
+      # Release flags (CMAKE_BUILD_TYPE=Release) and libsodium: the script stops when libsodium is missing rather than ship an
+      # unencrypted build. Output: build-linux-dist/, the tarball and its .sha256 in the workspace root.
+      - name: Build Linux distribution
+        run: |
+          ccache -z || true
+          scripts/build-linux-dist.sh
+          ccache -s || true
+
+      - name: Check the build
+        id: pkg
+        run: |
+          BUILT=$(cat build-linux-dist/VERSION.txt)
+          if [ "$BUILT" != "$VER" ]; then
+            echo "::error title=Version mismatch::the Linux build is v$BUILT but the Windows build is v$VER"
+            exit 1
+          fi
+          # Every shared library must resolve on this (clean 22.04) runner: a "not found" here would be a broken download elsewhere.
+          for f in build-linux-dist/OkaySpace build-linux-dist/Tools/OkayEngine build-linux-dist/Tools/OkaySpacePlayer; do
+            if ldd "$f" | grep -q 'not found'; then ldd "$f"; echo "::error::$f has an unresolved library"; exit 1; fi
+          done
+          # The editor's headless self-test (returns before any window is opened) and the player's help text.
+          ./build-linux-dist/Tools/OkayEngine --selftest
+          ./build-linux-dist/Tools/OkaySpacePlayer --help | head -n 3
+          # The release files under the names the updater and the GitHub assets use (shared/ReleaseAssets.hpp).
+          mkdir -p linux-assets
+          cp build-linux-dist/OkaySpace linux-assets/OkaySpace-linux-x64
+          cp build-linux-dist/Tools/OkayEngine linux-assets/OkayEngine-linux-x64
+          cp build-linux-dist/Tools/OkaySpacePlayer linux-assets/OkaySpacePlayer-linux-x64
+          echo "tar=OkaySpace-linux-x64-v${VER}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: OkaySpace-linux-x64-v${{ needs.windows-exe.outputs.ver }}
+          path: ${{ steps.pkg.outputs.tar }}
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            ${{ steps.pkg.outputs.tar }}
+            ${{ steps.pkg.outputs.tar }}.sha256
+            linux-assets/OkaySpace-linux-x64
+            linux-assets/OkayEngine-linux-x64
+            linux-assets/OkaySpacePlayer-linux-x64
+            build-linux-symbols/OkayEngine-linux-x64.debug
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', needs.windows-exe.outputs.ver) }}
+          target_commitish: ${{ github.sha }}
+          make_latest: false
+
+      # Adds the three Linux files' sizes and SHA-256 to versions.json (and uploads them to the releases bucket). Never touches
+      # VERSION.txt or the Windows entries. Needs the same secret as the Windows publish; without it this is skipped and the
+      # finalize job (which then fails for lack of the secret anyway) has nothing to check.
+      - name: Publish the Linux checksums to Supabase
+        id: pub
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CHANNEL: ${{ inputs.channel || 'latest' }}
+          PLATFORM: linux
+          DIST_DIR: build-linux-dist
+        if: env.SUPABASE_PUBLISH == 'true'
+        run: |
+          scripts/publish-supabase.sh
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
   # Make the release visible to launchers ("latest") only once its checksums are published. The in-app updater refuses
   # any file that has no SHA-256 in versions.json, so announcing a version first just shows users an error. Without the
   # SUPABASE_SERVICE_KEY secret nothing publishes the checksums, so this job fails loudly instead of letting the release
@@ -294,8 +409,8 @@ jobs:
   # `gh release edit v<version> --latest`.
   finalize:
     name: Make the release visible (latest)
-    needs: [windows-exe, linux-server]
-    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' }}
+    needs: [windows-exe, linux-server, linux-client]
+    if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' && needs.linux-client.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -305,6 +420,9 @@ jobs:
       VER: ${{ needs.windows-exe.outputs.ver }}
       HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
       CHANNEL: ${{ inputs.channel || 'latest' }}
+      # "true" only when the Linux job ran to the end and wrote the Linux checksums. A failed or skipped Linux job leaves this
+      # empty: the release then needs the Windows checksums only (a Linux launcher is told the release has no Linux build).
+      LINUX_PUBLISHED: ${{ needs.linux-client.outputs.published }}
     steps:
       - name: Check the checksums are published, then mark the release latest
         run: |
@@ -321,9 +439,11 @@ jobs:
           import sys, json
           d = json.load(sys.stdin)
           v = [x for x in d.get('versions', []) if x.get('version') == '$VER']
-          ok = bool(v) and all((v[0].get('files', {}).get(n) or {}).get('sha256') for n in ('OkaySpace.exe', 'OkayEngine.exe', 'OkaySpacePlayer.exe'))
+          names = ['OkaySpace.exe', 'OkayEngine.exe', 'OkaySpacePlayer.exe']
+          if '$LINUX_PUBLISHED' == 'true': names += ['OkaySpace-linux-x64', 'OkayEngine-linux-x64', 'OkaySpacePlayer-linux-x64']
+          ok = bool(v) and all((v[0].get('files', {}).get(n) or {}).get('sha256') for n in names)
           sys.exit(0 if ok else 1)"; then ok=1; break; fi
-            echo "versions.json has no checksums for v$VER yet (attempt $i)"; sleep 10
+            echo "versions.json has no checksums for v$VER yet (attempt $i; Linux files required: ${LINUX_PUBLISHED:-false})"; sleep 10
           done
           if [ "${ok:-0}" != "1" ]; then
             echo "::error title=Checksums missing::versions.json on the release server has no checksums for v$VER, so the release stays hidden. Run scripts/publish-supabase.sh, then: gh release edit v$VER --latest"

@@ -28,7 +28,8 @@ The bucket layout:
 | `versions.json` | every released version with file sizes and SHA-256 (required by the updater; uploaded before `VERSION.txt`) |
 | `VERSION.txt` | newest version, uploaded last (cached 30 s) |
 | `NOTES.txt` | "what's new" lines for the launcher (default: recent commit subjects; set `NOTES_FILE` to choose) |
-| `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's files |
+| `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's Windows files |
+| `v<ver>/OkaySpace-linux-x64`, `OkayEngine-linux-x64`, `OkaySpacePlayer-linux-x64` | that version's Linux files (added by `PLATFORM=linux`, see below) |
 
 `versions.json` is required: it lists the size and SHA-256 of `OkayEngine.exe`, `OkaySpacePlayer.exe` and `OkaySpace.exe`, and the launcher
 refuses to update any file without one. The script checks that it can compute all of them before it uploads anything (also under
@@ -46,6 +47,35 @@ Storage and download traffic count against the Supabase plan's quotas.
 
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
+
+## Linux files
+
+Each release also has a Linux client. In the workflow it is the `linux-client` job (Ubuntu 22.04, after `windows-exe`): it runs
+`scripts/build-linux-dist.sh`, checks the build (version equals the Windows build's, every shared library resolves, the editor's
+`--selftest`), attaches to the GitHub release the tarball `OkaySpace-linux-x64-v<ver>.tar.gz` + `.sha256`, the three updater files
+`OkaySpace-linux-x64`, `OkayEngine-linux-x64`, `OkaySpacePlayer-linux-x64` and the editor's debug info, then runs
+`PLATFORM=linux scripts/publish-supabase.sh` (only when `SUPABASE_SERVICE_KEY` is set). The layout and names are in
+[packaging.md](packaging.md#linux-x86-64).
+
+`PLATFORM=linux scripts/publish-supabase.sh` (`DIST_DIR` defaults to `build-linux-dist`) **adds** to a version the Windows publish has already
+created: it uploads the three files to `v<ver>/`, merges their size and SHA-256 into that version's entry in `versions.json` (the Windows
+entries, channel, date and `latest` / `lts` stay as they are), re-signs the index when a seed is set, and reads it back and checks it. It
+never writes `VERSION.txt`, `LTS.txt` or the notes and never prunes, and it refuses when `versions.json` has no entry with Windows checksums
+for the version (publish Windows first) or when a file is not an ELF program. Re-running it is safe. Run it with the same environment as the
+Windows publish (same key, and the same `OKAY_UPDATE_SIGNING_SEED` if you sign: an index re-signed here must carry the same signature policy).
+
+**Order and what "latest" waits for.** The `finalize` job promotes the release to GitHub's "latest" only after the checksum list is
+published. It always requires the three Windows checksums. It requires the three Linux checksums too **only when the Linux job published
+them** (its `published` output). If the Linux job failed or was skipped, the release still goes out for Windows, and a Linux launcher that
+sees it says "v<ver> has no Linux build" and installs nothing; run the Linux job again (or `PLATFORM=linux` by hand with the Linux build) and the
+release gains its Linux files. If the Linux job published but the checksums are not readable back from the bucket, the release stays
+hidden, exactly as for Windows. `scripts/release-local.sh` does not build the Linux client yet (it still builds the Windows files and the
+Linux server only); to add Linux to a local release run `scripts/build-linux-dist.sh` on a Linux machine, upload its assets with
+`gh release upload`, then `PLATFORM=linux scripts/publish-supabase.sh`.
+
+**Not exercised without a real release:** the workflow job itself, the Supabase and GitHub uploads, and a real Linux build in CI have not
+been run by the author; the local test `publish_linux` runs the publish script against a local stand-in for the storage API with fake
+programs.
 
 ## Publishing the official game
 

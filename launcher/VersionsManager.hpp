@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ProjectVersion.hpp"
+#include "ReleaseAssets.hpp"   // the release file names per platform
 #include "UpdateSignature.hpp"
 
 namespace okayversions {
@@ -45,7 +46,7 @@ constexpr int kDefaultKeepPrevious = 1;
 
 /// The three files that make a complete copy of a release's Tools folder.
 enum class Asset { Editor, Player, Sdl };
-const char* IndexName(Asset a);          ///< the name in versions.json and on the server ("OkayEngine.exe")
+const char* IndexName(Asset a);          ///< the name in versions.json and on the server ("OkayEngine.exe" on Windows, "OkayEngine-linux-x64" on Linux: shared/ReleaseAssets.hpp)
 std::string DiskName(Asset a);           ///< the name inside Versions/<v>/Tools (the editor uses okayver::EditorExeName())
 /// Windows needs SDL2.dll beside every exe; other platforms use the system library.
 constexpr bool kRequireSdl =

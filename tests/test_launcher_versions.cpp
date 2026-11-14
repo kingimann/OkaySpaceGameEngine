@@ -24,6 +24,23 @@
 #  include <unistd.h>
 #endif
 
+
+// Release file names are per platform (shared/ReleaseAssets.hpp). The checks below are written with the host's names, so they run
+// unchanged on Windows (the .exe names) and on Linux (the -linux-x64 names); the *_DISK names are what an installed file is called.
+#if defined(_WIN32)
+#  define T_ED_IDX "OkayEngine.exe"
+#  define T_PL_IDX "OkaySpacePlayer.exe"
+#  define T_LA_IDX "OkaySpace.exe"
+#  define T_PL_DISK "OkaySpacePlayer.exe"
+#  define T_LA_DISK "OkaySpace.exe"
+#else
+#  define T_ED_IDX "OkayEngine-linux-x64"
+#  define T_PL_IDX "OkaySpacePlayer-linux-x64"
+#  define T_LA_IDX "OkaySpace-linux-x64"
+#  define T_PL_DISK "OkaySpacePlayer"
+#  define T_LA_DISK "OkaySpace"
+#endif
+
 namespace fs = std::filesystem;
 using namespace okayversions;
 
@@ -90,7 +107,7 @@ bool NoPartFiles(const fs::path& root) {
 // ---- a fake release ------------------------------------------------------------------------------------------------------
 
 std::string Body(const std::string& ver, const std::string& file) { return "MZ fake " + file + " v" + ver + std::string(700 + ver.size() * 3 + file.size(), 'x'); }
-std::string EditorOf(const std::string& ver) { return Body(ver, "OkayEngine.exe"); }
+std::string EditorOf(const std::string& ver) { return Body(ver, T_ED_IDX); }
 
 std::string FileJson(const std::string& ver, const char* file) {
     const std::string b = Body(ver, file);
@@ -98,8 +115,8 @@ std::string FileJson(const std::string& ver, const char* file) {
 }
 std::string EntryJson(const std::string& ver, const char* channel, bool inBucket, bool withSdl = false) {
     std::string s = "{\"version\": \"" + ver + "\", \"channel\": \"" + channel + "\", \"date\": \"2026-11-10\", \"inBucket\": " +
-                    (inBucket ? "true" : "false") + ", \"files\": {" + FileJson(ver, "OkayEngine.exe") + ", " + FileJson(ver, "OkaySpacePlayer.exe") + ", " +
-                    FileJson(ver, "OkaySpace.exe");
+                    (inBucket ? "true" : "false") + ", \"files\": {" + FileJson(ver, T_ED_IDX) + ", " + FileJson(ver, T_PL_IDX) + ", " +
+                    FileJson(ver, T_LA_IDX);
     if (withSdl) s += ", " + FileJson(ver, "SDL2.dll");
     return s + "}}";
 }
@@ -122,7 +139,7 @@ struct Server {
     bool diskFullOnNth = false;
     int nth = 0, failNth = -1;
     void AddRelease(const std::string& ver, bool bucket, bool archive, bool withSdl = false) {
-        for (const char* f : {"OkayEngine.exe", "OkaySpacePlayer.exe", "SDL2.dll"}) {
+        for (const char* f : {T_ED_IDX "", T_PL_IDX, "SDL2.dll"}) {
             if (std::string(f) == "SDL2.dll" && !withSdl) continue;
             if (bucket) files[kBucket + std::string("v") + ver + "/" + f] = Body(ver, f);
             if (archive) files["https://github.example/o/r/releases/download/v" + ver + "/" + f] = Body(ver, f);
@@ -166,9 +183,9 @@ IO MakeIO(Server& s) {
 fs::path MakeLauncher(const fs::path& root, const std::string& ver, bool withSdl = true) {
     fs::path dir = root / "Okay Space L\xC3\xA4uncher \xE6\x97\xA5\xE6\x9C\xAC";   // spaces and unicode
     Put(dir / "Tools" / okayver::EditorExeName(), EditorOf(ver));
-    Put(dir / "Tools" / "OkaySpacePlayer.exe", Body(ver, "OkaySpacePlayer.exe"));
+    Put(dir / "Tools" / T_PL_DISK, Body(ver, T_PL_IDX));
     if (withSdl) Put(dir / "Tools" / "SDL2.dll", Body("sdl", "SDL2.dll"));
-    Put(dir / "OkaySpace.exe", Body(ver, "OkaySpace.exe"));
+    Put(dir / T_LA_DISK, Body(ver, T_LA_IDX));
     return dir;
 }
 
@@ -179,8 +196,8 @@ InstallPlan PlanFor(const Index& idx, const std::string& ver, const fs::path& la
 
 bool Complete(const fs::path& launcher, const std::string& ver) {
     const fs::path tools = okayver::VersionsDir(launcher) / ver / "Tools";
-    return okayver::IsInstalled(launcher, ver) && fs::is_regular_file(tools / "OkaySpacePlayer.exe") && fs::is_regular_file(tools / "SDL2.dll") &&
-           Get(tools / okayver::EditorExeName()) == EditorOf(ver) && Get(tools / "OkaySpacePlayer.exe") == Body(ver, "OkaySpacePlayer.exe");
+    return okayver::IsInstalled(launcher, ver) && fs::is_regular_file(tools / T_PL_DISK) && fs::is_regular_file(tools / "SDL2.dll") &&
+           Get(tools / okayver::EditorExeName()) == EditorOf(ver) && Get(tools / T_PL_DISK) == Body(ver, T_PL_IDX);
 }
 
 // The old launcher's own comparison, kept here as the reference for "behaviour for every current caller".
@@ -234,7 +251,7 @@ int main() {
         CHECK(idx.archive == kArchive && idx.bucketPath == "v{version}/{file}");
         const Entry* e = idx.Find("v2.850.1");
         CHECK(e && e->channel == "lts" && e->inBucket && e->date == "2026-11-10" && e->files.size() == 3);
-        CHECK(e && e->files.at("OkayEngine.exe").size == EditorOf("2.850.1").size() && e->files.at("OkayEngine.exe").sha256 == Sha(EditorOf("2.850.1")));
+        CHECK(e && e->files.at(T_ED_IDX "").size == EditorOf("2.850.1").size() && e->files.at(T_ED_IDX "").sha256 == Sha(EditorOf("2.850.1")));
         CHECK(idx.Find("2.855") && !idx.Find("2.855")->inBucket && !idx.Find("9.9.9") && !idx.Find("junk") && !idx.Find(""));
         CHECK(ParseIndex("\xEF\xBB\xBF" + json).ok);                                  // a BOM
         CHECK(ParseIndex(json + "\n\n").ok);
@@ -264,7 +281,7 @@ int main() {
                                 "7, null, \"x\", [], {}, {\"version\": 5}, {\"version\": \"nope\"}, {\"version\": \"\"}, {\"version\": \"dev\"}, {\"version\": \"v2.856.0\"}, "
                                 "{\"version\": \"2.856.0-evil\"}, {\"version\": \"2.856.0 (x)\"}, "
                                 "{\"version\": \"2.856.0\", \"channel\": \"banana\", \"date\": \"2026-11-10\", \"extra\": 1, \"inBucket\": \"yes\", \"files\": {"
-                                "\"OkayEngine.exe\": {\"size\": 10, \"sha256\": \"" + std::string(64, 'A') + "\", \"future\": true}, "
+                                "\"" T_ED_IDX "\": {\"size\": 10, \"sha256\": \"" + std::string(64, 'A') + "\", \"future\": true}, "
                                 "\"../evil\": {\"size\": 10}, \"a/b.exe\": {\"size\": 10}, \"\": {\"size\": 10}, \"x y.exe\": {\"size\": 10}, "
                                 "\"neg.exe\": {\"size\": -5}, \"huge.exe\": {\"size\": 1e30}, \"big.exe\": {\"size\": 99999999999999}, \"zero.exe\": {\"size\": 0}, "
                                 "\"str.exe\": {\"size\": \"10\"}, \"frac.exe\": {\"size\": 10.5}, \"nosize.exe\": {\"sha256\": \"" + std::string(64, 'b') + "\"}, "
@@ -277,9 +294,9 @@ int main() {
         CHECK(o.latest == "2.856.0" && o.lts == "2.850.1");                              // "dev" is no head: the lts head is derived from the entries
         const Entry* oe = o.Find("2.856.0");
         CHECK(oe && oe->channel == "" && !oe->inBucket && oe->date == "2026-11-10");
-        CHECK(oe && oe->files.size() == 3 && oe->files.count("OkayEngine.exe") && oe->files.count("badsha.exe") && oe->files.count("Player.exe"));
+        CHECK(oe && oe->files.size() == 3 && oe->files.count(T_ED_IDX "") && oe->files.count("badsha.exe") && oe->files.count("Player.exe"));
         CHECK(oe && !oe->files.count("big.exe") && !oe->files.count("frac.exe") && !oe->files.count("nosize.exe") && !oe->files.count("notobj.exe"));
-        CHECK(oe && oe->files.at("OkayEngine.exe").sha256 == std::string(64, 'a'));      // upper-case hex is lowered
+        CHECK(oe && oe->files.at(T_ED_IDX "").sha256 == std::string(64, 'a'));      // upper-case hex is lowered
         CHECK(oe && oe->files.at("Player.exe").sha256.empty() && oe->files.at("Player.exe").size == 20);
         CHECK(oe && !oe->files.count("../evil") && !oe->files.count("neg.exe") && !oe->files.count("huge.exe") && !oe->files.count("zero.exe") && !oe->files.count("str.exe"));
         CHECK(oe && oe->files.count("badsha.exe") == 1 && oe->files.at("badsha.exe").sha256.empty());   // a bad checksum is dropped from the entry, the size alone stays
@@ -302,9 +319,9 @@ int main() {
         for (int i = 0; i < 700; ++i) many += std::string(i ? "," : "") + "{\"version\": \"2." + std::to_string(i + 1) + ".0\"}";
         CHECK(ParseIndex(many + "]}").versions.size() == kMaxIndexVersions);
 
-        CHECK(ExpandTemplate("v{version}/{file}", "2.850.1", "OkayEngine.exe") == "v2.850.1/OkayEngine.exe");
+        CHECK(ExpandTemplate("v{version}/{file}", "2.850.1", T_ED_IDX) == "v2.850.1/" T_ED_IDX);
         CHECK(ExpandTemplate("{file}{file}{version}{x}", "1.0.0", "a") == "aa1.0.0{x}");
-        CHECK(IsSafeFileName("OkayEngine.exe") && IsSafeFileName("SDL2.dll") && !IsSafeFileName("") && !IsSafeFileName("..") && !IsSafeFileName(".") &&
+        CHECK(IsSafeFileName(T_ED_IDX "") && IsSafeFileName("SDL2.dll") && !IsSafeFileName("") && !IsSafeFileName("..") && !IsSafeFileName(".") &&
               !IsSafeFileName("a/b") && !IsSafeFileName("a\\b") && !IsSafeFileName("a b") && !IsSafeFileName(std::string(65, 'a')));
         CHECK(IsAcceptableUrl("https://x.example/a/b.exe") && IsAcceptableUrl("http://127.0.0.1:8080/x") && IsAcceptableUrl("http://localhost/x"));
         CHECK(!IsAcceptableUrl("http://x.example/a") && !IsAcceptableUrl("ftp://x.example/a") && !IsAcceptableUrl("file:///etc/passwd") &&
@@ -418,19 +435,19 @@ int main() {
 
         InstallPlan p = PlanFor(idx, "2.850.1", launcher);
         CHECK(p.ok && p.version == "2.850.1" && p.files.size() == 3);
-        CHECK(p.files[0].asset == Asset::Editor && p.files[0].indexName == "OkayEngine.exe" && p.files[0].diskName == okayver::EditorExeName());
-        CHECK(p.files[0].urls.size() == 2 && p.files[0].urls[0] == std::string(kBucket) + "v2.850.1/OkayEngine.exe" &&
-              p.files[0].urls[1] == "https://github.example/o/r/releases/download/v2.850.1/OkayEngine.exe");   // the bucket first, GitHub after it
+        CHECK(p.files[0].asset == Asset::Editor && p.files[0].indexName == T_ED_IDX && p.files[0].diskName == okayver::EditorExeName());
+        CHECK(p.files[0].urls.size() == 2 && p.files[0].urls[0] == std::string(kBucket) + "v2.850.1/" T_ED_IDX &&
+              p.files[0].urls[1] == "https://github.example/o/r/releases/download/v2.850.1/" T_ED_IDX);   // the bucket first, GitHub after it
         CHECK(p.files[0].verified && p.files[0].sha256 == Sha(EditorOf("2.850.1")) && p.files[0].size == EditorOf("2.850.1").size());
         CHECK(p.files[2].asset == Asset::Sdl && p.files[2].localCopy == launcher / "Tools" / "SDL2.dll" && p.files[2].verified && p.files[2].urls.empty());   // not in the index: the launcher's own copy
-        CHECK(p.totalBytes() == EditorOf("2.850.1").size() + Body("2.850.1", "OkaySpacePlayer.exe").size() + Body("sdl", "SDL2.dll").size());
+        CHECK(p.totalBytes() == EditorOf("2.850.1").size() + Body("2.850.1", T_PL_IDX).size() + Body("sdl", "SDL2.dll").size());
 
         const InstallPlan old = PlanFor(idx, "2.800.0", launcher);                                    // left the bucket: GitHub only
-        CHECK(old.ok && old.files[0].urls.size() == 1 && old.files[0].urls[0] == "https://github.example/o/r/releases/download/v2.800.0/OkayEngine.exe");
+        CHECK(old.ok && old.files[0].urls.size() == 1 && old.files[0].urls[0] == "https://github.example/o/r/releases/download/v2.800.0/" T_ED_IDX);
         const InstallPlan nobucket = PlanFor(idx, "2.850.1", launcher, false);                        // no bucket at all (no account server): GitHub
         CHECK(nobucket.ok && nobucket.files[0].urls.size() == 1 && nobucket.files[0].urls[0].rfind("https://github.example/", 0) == 0);
         const InstallPlan slash = PlanInstall(idx, "2.850.1", "https://example.test/releases", launcher / "Tools" / "SDL2.dll", true);   // base without its slash
-        CHECK(slash.ok && slash.files[0].urls[0] == "https://example.test/releases/v2.850.1/OkayEngine.exe");
+        CHECK(slash.ok && slash.files[0].urls[0] == "https://example.test/releases/v2.850.1/" T_ED_IDX);
 
         Index noArchive = idx;
         noArchive.archive.clear();
@@ -457,9 +474,9 @@ int main() {
         // A listed file whose checksum is missing or not 64 hex digits is refused too.
         for (const char* bad : {"", "abc", "ZZ", "0123456789012345678901234567890123456789012345678901234567890123x"}) {
             Index weak = idx;
-            for (Entry& e : weak.versions) if (e.version == "2.850.1") e.files["OkayEngine.exe"].sha256 = bad;
+            for (Entry& e : weak.versions) if (e.version == "2.850.1") e.files[T_ED_IDX ""].sha256 = bad;
             const InstallPlan wp = PlanFor(weak, "2.850.1", launcher);
-            CHECK(!wp.ok && Has(wp.error, "OkayEngine.exe has no checksum"));
+            CHECK(!wp.ok && Has(wp.error, T_ED_IDX " has no checksum"));
         }
     }
 
@@ -525,7 +542,7 @@ int main() {
         TempDir t;
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
         const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", true)}, "2.856.0", "2.850.1"));
-        const std::string bucketEditor = std::string(kBucket) + "v2.850.1/OkayEngine.exe", gitEditor = "https://github.example/o/r/releases/download/v2.850.1/OkayEngine.exe";
+        const std::string bucketEditor = std::string(kBucket) + "v2.850.1/" T_ED_IDX, gitEditor = "https://github.example/o/r/releases/download/v2.850.1/" T_ED_IDX;
 
         // The bucket serves a damaged editor, GitHub has the right one: the bad file is never kept, GitHub's is used.
         Server srv;
@@ -542,7 +559,7 @@ int main() {
         bad.files[bucketEditor] = std::string(EditorOf("2.850.1").size(), 'Z');
         bad.files[gitEditor] = std::string(EditorOf("2.850.1").size(), 'Y');
         const Result rb = Install(l2, PlanFor(idx, "2.850.1", l2), {}, MakeIO(bad));
-        CHECK(rb.outcome == Outcome::Failed && Has(rb.message, "did not match its checksum") && Has(rb.message, "OkayEngine.exe") && Has(rb.message, "was not installed"));
+        CHECK(rb.outcome == Outcome::Failed && Has(rb.message, "did not match its checksum") && Has(rb.message, T_ED_IDX) && Has(rb.message, "was not installed"));
         CHECK(!okayver::IsInstalled(l2, "2.850.1") && !fs::exists(okayver::VersionsDir(l2) / "2.850.1") && NoScratch(l2) && NoPartFiles(l2));
         CHECK(ListInstalled(l2).empty());
 
@@ -569,8 +586,8 @@ int main() {
         // The second file is the damaged one: the first (good) file does not make a half-installed folder.
         Server second;
         second.AddRelease("2.850.1", true, true);
-        second.files[std::string(kBucket) + "v2.850.1/OkaySpacePlayer.exe"] = "wrong";
-        second.files["https://github.example/o/r/releases/download/v2.850.1/OkaySpacePlayer.exe"] = "wrong";
+        second.files[std::string(kBucket) + "v2.850.1/" T_PL_IDX] = "wrong";
+        second.files["https://github.example/o/r/releases/download/v2.850.1/" T_PL_IDX] = "wrong";
         CHECK(!Install(l2, PlanFor(idx, "2.850.1", l2), {}, MakeIO(second)).ok() && !fs::exists(okayver::VersionsDir(l2) / "2.850.1") && NoScratch(l2));
     }
 
@@ -662,8 +679,8 @@ int main() {
             CHECK(Install(l4, PlanFor(idx, "2.850.1", l4), {}, io).ok());
         }
         CHECK(steps.size() == 13);                                                                     // create, space, scratch, 2 x (download/verify/move), copy + move of SDL2.dll, marker, commit
-        for (const char* must : {"create-versions", "space", "create-scratch", "download:OkayEngine.exe", "verify:OkayEngine.exe", "move:OkayEngine.exe",
-                                 "download:OkaySpacePlayer.exe", "copy:SDL2.dll", "move:SDL2.dll", "marker", "commit"})
+        for (const char* must : {"create-versions", "space", "create-scratch", "download:" T_ED_IDX, "verify:" T_ED_IDX, "move:" T_ED_IDX,
+                                 "download:" T_PL_IDX, "copy:SDL2.dll", "move:SDL2.dll", "marker", "commit"})
             CHECK(std::find(steps.begin(), steps.end(), must) != steps.end());
         for (std::size_t failAt = 0; failAt < steps.size(); ++failAt) {
             Server s2 = srv.Clone();
@@ -689,8 +706,8 @@ int main() {
         // A hand-built plan (the struct is plain data) that lists a downloaded file without a checksum or size: Install refuses, fetches nothing.
         InstallPlan plan = PlanFor(Index{}, "2.850.1", launcher);
         plan.ok = true; plan.version = "2.850.1";
-        PlanFile pf; pf.asset = Asset::Editor; pf.indexName = "OkayEngine.exe"; pf.diskName = "OkayEngine.exe";
-        pf.urls = {std::string(kBucket) + "v2.850.1/OkayEngine.exe"}; pf.size = 1234; pf.verified = false;
+        PlanFile pf; pf.asset = Asset::Editor; pf.indexName = T_ED_IDX; pf.diskName = T_ED_IDX;
+        pf.urls = {std::string(kBucket) + "v2.850.1/" T_ED_IDX}; pf.size = 1234; pf.verified = false;
         plan.files = {pf};
         Result r = Install(launcher, plan, {}, MakeIO(srv));
         CHECK(r.outcome == Outcome::Refused && Has(r.message, "no checksum") && srv.requested.empty() && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1") && NoScratch(launcher));
@@ -772,7 +789,7 @@ int main() {
         IO io;
         io.availableSpace = [](const fs::path&, std::error_code& ec) { ec.clear(); return (std::uintmax_t)64 * 1024 * kMiB; };
         const CurrentInstall cur = FindCurrentInstall(launcher);
-        CHECK(cur.editor == launcher / "Tools" / okayver::EditorExeName() && cur.player == launcher / "Tools" / "OkaySpacePlayer.exe" && cur.sdl == launcher / "Tools" / "SDL2.dll");
+        CHECK(cur.editor == launcher / "Tools" / okayver::EditorExeName() && cur.player == launcher / "Tools" / T_PL_DISK && cur.sdl == launcher / "Tools" / "SDL2.dll");
         const auto before = Snapshot(launcher);
 
         Result r = KeepCurrent(launcher, "2.855.0", cur, 1, true, io);
@@ -1113,7 +1130,7 @@ int main() {
               HumanSize(41 * kMiB + 300 * 1024) == "41.3 MB" && HumanSize(2048 * kMiB) == "2.0 GB" && HumanSize(~0ull).find("GB") != std::string::npos);
         CHECK(LtsSentence("2.850.1") == "v2.850.x is the long-term-support version: it only gets fixes." && !LtsSentence("junk").empty());
         CHECK(std::string(OutcomeName(Outcome::Installed)) == "Installed" && std::string(OutcomeName(Outcome::Skipped)) == "Skipped");
-        CHECK(std::string(IndexName(Asset::Editor)) == "OkayEngine.exe" && DiskName(Asset::Editor) == okayver::EditorExeName() && DiskName(Asset::Sdl) == "SDL2.dll");
+        CHECK(std::string(IndexName(Asset::Editor)) == T_ED_IDX && DiskName(Asset::Editor) == okayver::EditorExeName() && DiskName(Asset::Sdl) == "SDL2.dll");
         CHECK(DirectorySize("/no/such/dir/at/all") == 0 && DiskUsage("/no/such/launcher") == 0);
     }
 
@@ -1137,8 +1154,8 @@ int main() {
         auto onBytes = [&](std::uint64_t b) { bytes.push_back(b); };
 
         stub(prelude + "printf 'hello %s' \"$url\" > \"$dest\"\nexit 0\n");
-        DownloadResult r = DownloadFile("https://example.test/v2.850.1/OkayEngine.exe", dest, 1000, onBytes, [] { return false; });
-        CHECK(r.status == DownloadStatus::Ok && Get(dest) == "hello https://example.test/v2.850.1/OkayEngine.exe" && !bytes.empty() && bytes.back() == Get(dest).size());
+        DownloadResult r = DownloadFile("https://example.test/v2.850.1/" T_ED_IDX, dest, 1000, onBytes, [] { return false; });
+        CHECK(r.status == DownloadStatus::Ok && Get(dest) == "hello https://example.test/v2.850.1/" T_ED_IDX && !bytes.empty() && bytes.back() == Get(dest).size());
         stub("echo \"$@\" > \"" + (t.path / "args.txt").string() + "\"\n" + prelude + "printf x > \"$dest\"\n");
         r = DownloadFile("https://example.test/a.exe", dest, 1000, onBytes, [] { return false; });
         std::string args = Get(t.path / "args.txt");
@@ -1178,14 +1195,14 @@ int main() {
         const fs::path launcher = MakeLauncher(t.path, "2.856.0");
         const Index idx = ParseIndex(IndexJson({EntryJson("2.850.1", "lts", true)}, "2.856.0", "2.850.1"));
         const fs::path serve = t.path / "serve";
-        for (const char* f : {"OkayEngine.exe", "OkaySpacePlayer.exe"}) Put(serve / f, Body("2.850.1", f));
+        for (const char* f : {T_ED_IDX "", T_PL_IDX}) Put(serve / f, Body("2.850.1", f));
         stub(prelude + "cp \"" + serve.string() + "/${url##*/}\" \"$dest\"\n");
         IO io;
         io.download = &DownloadFile;
         CHECK(Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, io).ok() && Complete(launcher, "2.850.1") && NoScratch(launcher));
         // ...and with a tampered file on the "server": refused, nothing kept.
         fs::remove_all(okayver::VersionsDir(launcher));
-        Put(serve / "OkayEngine.exe", std::string(Body("2.850.1", "OkayEngine.exe").size(), 'Q'));
+        Put(serve / T_ED_IDX, std::string(Body("2.850.1", T_ED_IDX).size(), 'Q'));
         const Result bad = Install(launcher, PlanFor(idx, "2.850.1", launcher), {}, io);
         CHECK(bad.outcome == Outcome::Failed && Has(bad.message, "checksum") && !fs::exists(okayver::VersionsDir(launcher) / "2.850.1") && NoScratch(launcher));
 
@@ -1207,7 +1224,7 @@ int main() {
     RUN_SUITE("updater requires checksums and fails loudly");
     {
         TempDir t;
-        const fs::path dest = t.path / "Tools" / "OkayEngine.exe";
+        const fs::path dest = t.path / "Tools" / T_ED_IDX;
         const std::string oldBody(200, 'O'), newBody(300, 'N');
         auto reset = [&] { std::error_code ec; fs::remove_all(t.path / "Tools", ec); Put(dest, oldBody); };
         auto untouched = [&] {
@@ -1222,66 +1239,66 @@ int main() {
             return true;
         };
         FileInfo good; good.size = newBody.size(); good.sha256 = Sha(newBody);
-        const std::string url = "https://example.invalid/v/OkayEngine.exe";
+        const std::string url = "https://example.invalid/v/" T_ED_IDX;
 
         // 1. the happy path: staged, verified, swapped, old file kept aside only when asked.
         reset(); server[url] = newBody;
-        okayupdater::Outcome st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        okayupdater::Outcome st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
         CHECK(st.ok && Get(dest) == oldBody);                                   // staging alone never replaces
-        okayupdater::Outcome cm = okayupdater::Commit("OkayEngine.exe", dest, 1, false);
+        okayupdater::Outcome cm = okayupdater::Commit(T_ED_IDX "", dest, 1, false);
         CHECK(cm.ok && Get(dest) == newBody);
 
         // 2. checksum mismatch (right size, wrong bytes: a corrupt or swapped file)
         reset(); server[url] = std::string(newBody.size(), 'X');
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
-        CHECK(!st.ok && Has(st.reason, "OkayEngine.exe") && Has(st.reason, "checksum does not match") && Has(st.reason, "unchanged") && untouched());
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
+        CHECK(!st.ok && Has(st.reason, T_ED_IDX) && Has(st.reason, "checksum does not match") && Has(st.reason, "unchanged") && untouched());
 
         // 3. truncated download (size mismatch)
         reset(); server[url] = newBody.substr(0, 120);
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
         CHECK(!st.ok && Has(st.reason, "120 bytes") && Has(st.reason, "300") && untouched());
 
         // 4. 404 / unreachable: the reason from the server is in the message
         reset(); server.erase(url);
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
-        CHECK(!st.ok && Has(st.reason, "Could not download OkayEngine.exe") && Has(st.reason, "404") && untouched());
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
+        CHECK(!st.ok && Has(st.reason, "Could not download " T_ED_IDX) && Has(st.reason, "404") && untouched());
 
         // 5. missing checksum: refused BEFORE any download (the fake server must not even be asked)
         reset(); server[url] = newBody;
         int asked = 0;
         okayupdater::FetchFn counting = [&](const std::string& u, const fs::path& to, std::string& e) { ++asked; return fetch(u, to, e); };
         FileInfo noHash; noHash.size = newBody.size();
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &noHash, counting);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &noHash, counting);
         CHECK(!st.ok && Has(st.reason, "no valid SHA-256") && Has(st.reason, "publish-supabase.sh") && asked == 0 && untouched());
         FileInfo badHash = noHash; badHash.sha256 = "abc123";                    // not 64 hex digits
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &badHash, counting);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &badHash, counting);
         CHECK(!st.ok && asked == 0 && untouched());
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, nullptr, counting);   // the file is not in the index at all
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, nullptr, counting);   // the file is not in the index at all
         CHECK(!st.ok && Has(st.reason, "does not list this file") && asked == 0 && untouched());
 
         // 6. a hash with the right size but nothing else is still refused when the size is unlisted (0) and bytes differ
         reset(); server[url] = std::string(300, 'Z');
         FileInfo hashOnly; hashOnly.sha256 = Sha(newBody);
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &hashOnly, fetch);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &hashOnly, fetch);
         CHECK(!st.ok && Has(st.reason, "checksum does not match") && untouched());
 
         // 7. a corrupt / empty archive body served with a 200
         reset(); server[url] = "";
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
         CHECK(!st.ok && untouched());
 
         // 8. the replace itself fails: the old file is put back, the reason is reported
         reset(); server[url] = newBody;
-        st = okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch);
+        st = okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch);
         CHECK(st.ok);
-        cm = okayupdater::Commit("OkayEngine.exe", dest, 100000, false);          // staged file is below the minimum size: refused
-        CHECK(!cm.ok && Has(cm.reason, "Could not replace OkayEngine.exe") && Has(cm.reason, "too small") && Get(dest) == oldBody);
+        cm = okayupdater::Commit(T_ED_IDX "", dest, 100000, false);          // staged file is below the minimum size: refused
+        CHECK(!cm.ok && Has(cm.reason, "Could not replace " T_ED_IDX) && Has(cm.reason, "too small") && Get(dest) == oldBody);
         CHECK(!fs::exists(fs::path(dest.string() + ".new")));
 #if !defined(_WIN32)
         reset(); server[url] = newBody;
-        CHECK(okayupdater::Stage("OkayEngine.exe", url, dest, &good, fetch).ok);
+        CHECK(okayupdater::Stage(T_ED_IDX "", url, dest, &good, fetch).ok);
         setenv(okay::restart::kFailAfterBackupEnv, "1", 1);                       // fail after the old file was moved aside
-        cm = okayupdater::Commit("OkayEngine.exe", dest, 1, true);
+        cm = okayupdater::Commit(T_ED_IDX "", dest, 1, true);
         unsetenv(okay::restart::kFailAfterBackupEnv);
         CHECK(!cm.ok && Has(cm.reason, "previous") && Get(dest) == oldBody && !fs::exists(fs::path(dest.string() + ".old")));
         okayupdater::Discard(dest);
@@ -1292,12 +1309,12 @@ int main() {
         Index none;                                                                // ok = false
         none.error = "no versions.json";
         CHECK(Has(okayupdater::IndexProblem(none, nullptr, "2.9.0"), "never installed without checksums"));
-        const Index good_idx = ParseIndex("{\"schema\":1,\"latest\":\"2.9.0\",\"versions\":[{\"version\":\"2.9.0\",\"files\":{\"OkayEngine.exe\":{\"size\":300,\"sha256\":\"" + Sha(newBody) + "\"}}}]}");
+        const Index good_idx = ParseIndex("{\"schema\":1,\"latest\":\"2.9.0\",\"versions\":[{\"version\":\"2.9.0\",\"files\":{\"" T_ED_IDX "\":{\"size\":300,\"sha256\":\"" + Sha(newBody) + "\"}}}]}");
         CHECK(good_idx.ok && okayupdater::IndexProblem(good_idx, good_idx.Find("2.9.0"), "2.9.0").empty());
         CHECK(Has(okayupdater::IndexProblem(good_idx, good_idx.Find("9.9.9"), "9.9.9"), "does not list v9.9.9"));
         const Index fb = FallbackIndex("2.9.0\n", "", "", false);                   // built from VERSION.txt: no checksums
         const Entry* fe = fb.Find("2.9.0");
-        CHECK(!fb.ok || !fe || !okayupdater::RequireChecksum("OkayEngine.exe", fe->files.count("OkayEngine.exe") ? &fe->files.at("OkayEngine.exe") : nullptr).empty());
+        CHECK(!fb.ok || !fe || !okayupdater::RequireChecksum(T_ED_IDX "", fe->files.count(T_ED_IDX "") ? &fe->files.at(T_ED_IDX "") : nullptr).empty());
     }
 
 

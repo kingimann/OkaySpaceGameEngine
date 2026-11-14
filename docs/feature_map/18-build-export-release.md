@@ -78,11 +78,12 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.4.4 GitHub Release - `windows-exe` - `softprops/action-gh-release` uploads the zip, installer and the individual files the in-app updater downloads by name (`OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `SDL2.dll`, `VERSION.txt`, symbols, `dist/CHANGELOG.txt`); tags the commit the run built
   - 18.4.5 Supabase publish step - `windows-exe` - runs `scripts/publish-supabase.sh` only when the secret `SUPABASE_SERVICE_KEY` exists (18.5)
   - 18.4.6 Linux game server job - `linux-server` - Ubuntu 22.04, libsodium on, builds `okay-player`, strips it and attaches `okay-server-linux-x64` to the release (what the editor's Server export downloads, 18.7)
-- **Code:** `.github/workflows/release.yml`, `dist/CHANGELOG.txt`, `ROADMAP.md`
+  - 18.4.7 Linux client job - `linux-client` - Ubuntu 22.04 after `windows-exe`; `scripts/build-linux-dist.sh` builds launcher, editor, player (and relay) in Release with libsodium, checks the version and shared libraries and the editor `--selftest`, attaches `OkaySpace-linux-x64-v<ver>.tar.gz` + `.sha256` and the updater files `OkaySpace-linux-x64`, `OkayEngine-linux-x64`, `OkaySpacePlayer-linux-x64`, then `PLATFORM=linux scripts/publish-supabase.sh` adds their checksums to `versions.json`; `finalize` requires those checksums only when this job published them. Not yet run in CI (docs/releasing.md "Linux files")
+- **Code:** `.github/workflows/release.yml`, `scripts/build-linux-dist.sh`, `shared/ReleaseAssets.hpp`, `dist/CHANGELOG.txt`, `ROADMAP.md`
 - **API:** tags `v<major>.<minor>.<patch>`, assets `OkaySpace-Setup.exe`, `okay-server-linux-x64`, secret `SUPABASE_SERVICE_KEY`, variable `OKAY_AC_TRUSTED_KEYS`
 - **Editor:** none
 - **Docs:** `docs/releasing.md`, `docs/packaging.md`
-- **Tests:** none in the workflow (no ctest); `publish_supabase_checks` tests the publish script
+- **Tests:** none in the workflow (no ctest); `publish_supabase_checks` tests the publish script; `publish_linux` and `release_assets` cover the Linux publish and names
 - **Status:** Works - the workflow file is read in full; 2.851.0 is the latest release (published 2026-11-09)
 - **Open:** the header comment says the manual run releases "the version in dist/VERSION.txt" but the code uses `build-win-dist/VERSION.txt` (stale comment; `dist/VERSION.txt` says 2.412.0); the release runs no tests of its own; real Steamworks is not built in; a missing `OKAY_AC_TRUSTED_KEYS` is only a warning (planned to become a failure); the 2.852.0 release (PR #588) is not cut yet
 - **Related:** 18.5, 18.1, 41.8, 41.9, 39.7

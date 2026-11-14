@@ -122,13 +122,20 @@ void SetExecutable(const fs::path& p) {
 
 const char* IndexName(Asset a) {
     switch (a) {
-        case Asset::Editor: return "OkayEngine.exe";
-        case Asset::Player: return "OkaySpacePlayer.exe";
+        case Asset::Editor: return okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Editor);    // per platform: shared/ReleaseAssets.hpp
+        case Asset::Player: return okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Player);
         case Asset::Sdl: return "SDL2.dll";
     }
     return "";
 }
-std::string DiskName(Asset a) { return a == Asset::Editor ? std::string(okayver::EditorExeName()) : std::string(IndexName(a)); }
+std::string DiskName(Asset a) {
+    switch (a) {
+        case Asset::Editor: return okayver::EditorExeName();
+        case Asset::Player: return okayrel::DiskName(okayrel::HostPlatform(), okayrel::Role::Player);
+        case Asset::Sdl: return "SDL2.dll";
+    }
+    return "";
+}
 
 bool IsSafeFileName(const std::string& name) {
     if (name.empty() || name.size() > 64) return false;
@@ -406,6 +413,8 @@ InstallPlan PlanInstall(const Index& index, const std::string& versionIn, const 
         f.asset = a;
         f.indexName = IndexName(a);
         f.diskName = DiskName(a);
+        if (f.indexName.empty())                                // a platform with no release files (macOS for now): never ask for a Windows program instead
+            return fail(std::string("There is no ") + okayrel::PlatformName(okayrel::HostPlatform()) + " build of OkaySpace to install yet.");
         const auto it = e->files.find(f.indexName);
         const bool listed = it != e->files.end();
         if (listed) { f.size = it->second.size; f.sha256 = it->second.sha256; }

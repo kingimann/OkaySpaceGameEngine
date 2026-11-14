@@ -2296,6 +2296,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - LINQ (13.1, 13.2)
 - Linux (56.1.2)
 - Linux build (56.1)
+- Linux client job (18.4.7)
 - Linux game server job (18.4.6)
 - Linux runtime asset (18.7.2)
 - linux-server (18.4)

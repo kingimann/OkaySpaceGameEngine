@@ -17,6 +17,49 @@ Tools/
   accounts.md
 ```
 
+## Linux (x86-64)
+
+Linux is a release target: every release carries a Linux tarball and the three programs the in-app updater downloads. The layout
+mirrors the Windows zip (the launcher at the top, the rest in `Tools/`), with plain program names and no DLLs:
+
+```
+OkaySpace            <- the launcher: start here
+README.txt  VERSION.txt
+Assets/              starter textures and fonts, as in the Windows zip
+Tools/
+  OkayEngine            the editor
+  OkaySpacePlayer       standalone runtime (also the dedicated server: --server)
+  okayspace-relay       optional multiplayer relay (when it built)
+  VERSION.txt  accounts.md
+```
+
+`scripts/build-linux-dist.sh` builds it natively (CMake + Ninja, `CMAKE_BUILD_TYPE=Release`, libsodium required: the script stops
+rather than ship an unencrypted build) and writes `build-linux-dist/`, the tarball `OkaySpace-linux-x64-v<ver>.tar.gz` (one top folder
+of the same name), its `.sha256` file and `build-linux-symbols/OkayEngine-linux-x64.debug` (the editor's debug info, never
+downloaded by the launcher). The release workflow's `linux-client` job runs it on **Ubuntu 22.04**, so the programs need glibc 2.35 or
+newer. They link SDL2 and libsodium dynamically: the machine needs `libsdl2-2.0-0`, `libsodium23` and `curl` (Debian / Ubuntu names);
+`zenity` or `kdialog` are optional (file dialogs). The script prints each program's shared-library needs at the end.
+
+**Release file names.** The updater downloads individual files by name (GitHub release asset, `v<ver>/<name>` in the Supabase bucket, key
+in `versions.json`), so each platform has its own non-colliding set (`shared/ReleaseAssets.hpp`):
+
+| | launcher | editor | player |
+|---|---|---|---|
+| Windows (unchanged) | `OkaySpace.exe` | `OkayEngine.exe` | `OkaySpacePlayer.exe` |
+| Linux | `OkaySpace-linux-x64` | `OkayEngine-linux-x64` | `OkaySpacePlayer-linux-x64` |
+| installed on disk (Linux) | `OkaySpace` | `Tools/OkayEngine` | `Tools/OkaySpacePlayer` |
+
+macOS has no release files yet: its launcher says there is no macOS build instead of downloading a Windows program.
+
+Checksums: the SHA-256 of the three Linux files go into `versions.json` exactly like the Windows ones (the updater refuses a file without
+one). `scripts/publish-supabase.sh` with `PLATFORM=linux` adds them to the version's existing entry, after the Windows publish; see
+[releasing.md](releasing.md). The tarball's own checksum is the `.sha256` asset (`sha256sum -c`); the launcher never downloads the
+tarball. Linux programs are not code-signed (there is no equivalent of Authenticode here); integrity rests on the checksums, and on the
+signed `versions.json` once a signing key exists ([updater.md](updater.md#signed-releases)).
+
+Not covered: AppImage, `.deb`/`.rpm`, ARM64, a desktop entry or icon install, musl. (`okay-server-linux-x64`, the headless server runtime,
+is a separate asset and unchanged.)
+
 ## Why SDL2.dll appears twice
 
 Windows resolves a load-time-linked DLL from the **directory of the executable

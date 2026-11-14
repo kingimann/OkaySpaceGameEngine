@@ -1625,6 +1625,12 @@ target_compile_features(test_project_version PRIVATE cxx_std_17)
 target_include_directories(test_project_version PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_version COMMAND test_project_version)
 
+# Release file names per platform (shared/ReleaseAssets.hpp): Windows unchanged, Linux names, macOS none, the no-build / missing-checksum decisions. Header-only: no engine link.
+add_executable(test_release_assets test_release_assets.cpp)
+target_compile_features(test_release_assets PRIVATE cxx_std_17)
+target_include_directories(test_release_assets PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME release_assets COMMAND test_release_assets)
+
 # The launcher's Versions page logic (launcher/VersionsManager.cpp, VersionsNet.cpp): versions.json, install / remove / prune on a temp folder with an injected downloader,
 # keeping the current editor on update, the Latest / LTS channel, project badges and "Open with" command lines, the `--versions` hand-off. No SDL, ImGui, engine link or network.
 find_package(Threads REQUIRED)
@@ -1694,6 +1700,8 @@ add_test(NAME official_publish COMMAND test_official_publish)
 if(UNIX)
     add_test(NAME publish_official_cleanup COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_official_cleanup.sh)
     add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
+    # PLATFORM=linux publish (adds the Linux files and checksums to versions.json), the Linux dist script and the name lists, against a local stand-in for Supabase Storage.
+    add_test(NAME publish_linux COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_linux.sh)
 endif()
 
 # The hosted password-reset page (supabase/auth-pages/reset-password): its pure logic, under node (skipped when node is absent).

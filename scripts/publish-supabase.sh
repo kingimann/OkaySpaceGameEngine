@@ -31,7 +31,15 @@
 #            promotes that line to LTS; within a line the patch must not go backwards.
 #   Versions in the LTS line are never pruned. See docs/release_channels.md.
 #
+# Linux (PLATFORM=linux, run AFTER the Windows publish of the same version): uploads v<ver>/OkaySpace-linux-x64,
+#   OkayEngine-linux-x64, OkaySpacePlayer-linux-x64 and ADDS their size and SHA-256 to that version's existing entry in
+#   versions.json (scripts/versions_index.py merge --extend: the Windows entries stay as they are), re-signs and reads it back.
+#   It never writes VERSION.txt / LTS.txt / NOTES, never prunes and never moves a channel: the Windows publish owns those. It
+#   refuses to run when versions.json has no entry (with Windows checksums) for the version. DIST_DIR defaults to
+#   build-linux-dist (scripts/build-linux-dist.sh).
+#
 # Options (environment):
+#   PLATFORM     windows (default) or linux (see above)
 #   CHANNEL      latest (default) or lts
 #   DIST_DIR     build output to publish (default build-win-dist)
 #   NOTES_FILE   bullet lines for NOTES.txt (default: the last 6 commit subjects)
@@ -46,7 +54,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DIST_DIR="${DIST_DIR:-build-win-dist}"
+PLATFORM="${PLATFORM:-windows}"
+case "$PLATFORM" in
+    windows) DIST_DIR="${DIST_DIR:-build-win-dist}" ;;
+    linux)   DIST_DIR="${DIST_DIR:-build-linux-dist}" ;;
+    *) echo "publish-supabase: PLATFORM must be windows or linux (got '$PLATFORM')" >&2; exit 1 ;;
+esac
 KEEP="${KEEP:-3}"
 BUCKET="${BUCKET:-releases}"
 SUPABASE_URL="${SUPABASE_URL:-$(grep -m1 '^set(OKAY_DEFAULT_ACCOUNT_URL' CMakeLists.txt | grep -oE 'https://[a-z0-9]+\.supabase\.co')}"
@@ -70,18 +83,33 @@ VER="$(head -n1 "$DIST_DIR/VERSION.txt" 2>/dev/null | tr -d '\r ' || true)"   # 
 [[ "$VER" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "no version in $DIST_DIR/VERSION.txt (run scripts/build-windows-dist.sh first)"
 
 # name in the bucket -> file on disk
-declare -a NAMES=(OkaySpace.exe OkayEngine.exe OkaySpacePlayer.exe)
-declare -A SRC=(
-    [OkaySpace.exe]="$DIST_DIR/OkaySpace.exe"
-    [OkayEngine.exe]="$DIST_DIR/Tools/OkayEngine.exe"
-    [OkaySpacePlayer.exe]="$DIST_DIR/Tools/OkaySpacePlayer.exe"
-)
+if [ "$PLATFORM" = linux ]; then
+    declare -a NAMES=(OkaySpace-linux-x64 OkayEngine-linux-x64 OkaySpacePlayer-linux-x64)
+    declare -A SRC=(
+        [OkaySpace-linux-x64]="$DIST_DIR/OkaySpace"
+        [OkayEngine-linux-x64]="$DIST_DIR/Tools/OkayEngine"
+        [OkaySpacePlayer-linux-x64]="$DIST_DIR/Tools/OkaySpacePlayer"
+    )
+    MAGIC_WHAT="a Linux program"
+else
+    declare -a NAMES=(OkaySpace.exe OkayEngine.exe OkaySpacePlayer.exe)
+    declare -A SRC=(
+        [OkaySpace.exe]="$DIST_DIR/OkaySpace.exe"
+        [OkayEngine.exe]="$DIST_DIR/Tools/OkayEngine.exe"
+        [OkaySpacePlayer.exe]="$DIST_DIR/Tools/OkaySpacePlayer.exe"
+    )
+    MAGIC_WHAT="a Windows program"
+fi
 for n in "${NAMES[@]}"; do
     f="${SRC[$n]}"
     [ -f "$f" ] || die "missing $f"
     sz=$(stat -c %s "$f")
     [ "$sz" -le "$MAX_BYTES" ] || die "$n is $((sz / 1048576)) MB, over the $MAX_MB MB file limit (is its debug info split off, or raise MAX_MB and the Supabase storage limit?)"
-    head -c2 "$f" | grep -q '^MZ' || die "$f isn't a Windows program"
+    if [ "$PLATFORM" = linux ]; then
+        [ "$(head -c4 "$f" | od -An -c | tr -d ' ')" = '177ELF' ] || die "$f isn't $MAGIC_WHAT (not an ELF file)"
+    else
+        head -c2 "$f" | grep -q '^MZ' || die "$f isn't $MAGIC_WHAT"
+    fi
 done
 
 # ---- Channel -------------------------------------------------------------------
@@ -98,7 +126,9 @@ fetch_version() {
 }
 CUR_LTS="$(fetch_version LTS.txt)"
 CUR_LATEST="$(fetch_version VERSION.txt)"
-if [ "$CHANNEL" = latest ]; then
+if [ "$PLATFORM" = linux ]; then
+    :   # the Windows publish of this version already passed the channel checks, and owns VERSION.txt / LTS.txt
+elif [ "$CHANNEL" = latest ]; then
     if [ -n "$CUR_LTS" ] && [ "$(line_of "$VER")" = "$(line_of "$CUR_LTS")" ]; then
         die "v$VER is in the LTS line $(line_of "$CUR_LTS"): publish it with CHANNEL=lts, not as the latest version"
     fi
@@ -126,7 +156,7 @@ RESP="$(mktemp)"; trap 'rm -f "$RESP"' EXIT
 
 # ---- Checksums: the updater refuses files without one, so refuse to publish without them -----------------------
 # (runs before DRY_RUN returns and before anything is uploaded; no network)
-PRE=(merge --version "$VER" --channel "$CHANNEL" --repo "$ARCHIVE_REPO" --out "$RESP.preflight")
+PRE=(merge --version "$VER" --channel "$CHANNEL" --repo "$ARCHIVE_REPO" --platform "$PLATFORM" --out "$RESP.preflight")
 for n in "${NAMES[@]}"; do PRE+=(--file "$n=${SRC[$n]}"); done
 python3 scripts/versions_index.py "${PRE[@]}" ||
     die "cannot compute a size and SHA-256 for every file; the launcher would refuse this release"
@@ -154,14 +184,16 @@ upload() {
 
 for n in "${NAMES[@]}"; do upload "${SRC[$n]}" "v$VER/$n" application/octet-stream 3600; done
 
-NOTES="$(mktemp)"; trap 'rm -f "$RESP" "$NOTES"' EXIT
-if [ -n "${NOTES_FILE:-}" ]; then cp "$NOTES_FILE" "$NOTES"
-else git log -6 --no-merges --pretty='- %s' > "$NOTES" 2>/dev/null || echo "- OkaySpace v$VER" > "$NOTES"; fi
-CHANGELOG="$NOTES"   # the editor's update dialog shows this
-[ -f "$DIST_DIR/CHANGELOG.txt" ] && CHANGELOG="$DIST_DIR/CHANGELOG.txt"   # (dist/CHANGELOG.txt is years stale: not used)
-upload "$CHANGELOG" "v$VER/CHANGELOG.txt" "text/plain; charset=utf-8" 3600
-if [ "$CHANNEL" = lts ]; then NOTES_NAME=NOTES-LTS.txt; VERSION_NAME=LTS.txt; else NOTES_NAME=NOTES.txt; VERSION_NAME=VERSION.txt; fi
-upload "$NOTES" "$NOTES_NAME" "text/plain; charset=utf-8" 30
+if [ "$PLATFORM" = windows ]; then
+    NOTES="$(mktemp)"; trap 'rm -f "$RESP" "$NOTES"' EXIT
+    if [ -n "${NOTES_FILE:-}" ]; then cp "$NOTES_FILE" "$NOTES"
+    else git log -6 --no-merges --pretty='- %s' > "$NOTES" 2>/dev/null || echo "- OkaySpace v$VER" > "$NOTES"; fi
+    CHANGELOG="$NOTES"   # the editor's update dialog shows this
+    [ -f "$DIST_DIR/CHANGELOG.txt" ] && CHANGELOG="$DIST_DIR/CHANGELOG.txt"   # (dist/CHANGELOG.txt is years stale: not used)
+    upload "$CHANGELOG" "v$VER/CHANGELOG.txt" "text/plain; charset=utf-8" 3600
+    if [ "$CHANNEL" = lts ]; then NOTES_NAME=NOTES-LTS.txt; VERSION_NAME=LTS.txt; else NOTES_NAME=NOTES.txt; VERSION_NAME=VERSION.txt; fi
+    upload "$NOTES" "$NOTES_NAME" "text/plain; charset=utf-8" 30
+fi
 
 list() {   # list <prefix>  -> one name per line
     curl -sS -X POST "$SUPABASE_URL/storage/v1/object/list/$BUCKET" "${AUTH[@]}" -H "Content-Type: application/json" \
@@ -169,7 +201,7 @@ list() {   # list <prefix>  -> one name per line
 }
 # Which old versions go (latest channel only; the LTS line is never pruned: its versions are what "stay on LTS" installs).
 OLD=()
-if [ "$CHANNEL" = latest ]; then
+if [ "$PLATFORM" = windows ] && [ "$CHANNEL" = latest ]; then
     LTS_RE='^$'   # matches no version: nothing is protected
     if [ -n "$CUR_LTS" ]; then LTS_RE="^$(line_of "$CUR_LTS" | sed 's/\./\\./g')\\."; fi
     mapfile -t OLD < <(list "" | grep -E '^v[0-9.]+$' | sed 's/^v//' | { grep -vE "$LTS_RE" || true; } |
@@ -213,6 +245,12 @@ update_index() {
                 --repo "$ARCHIVE_REPO" --bucket-versions "$inbucket" --out "$new")
     [ -n "$latest" ] && args+=(--latest "$latest")
     [ -n "$lts" ] && args+=(--lts "$lts")
+    # Linux: add this build's files to the entry the Windows publish made (its channel, date, latest / lts stay as they are).
+    # The old index is required: an add to an index that cannot be read would drop every other version.
+    if [ "$PLATFORM" = linux ]; then
+        [ -f "$old" ] || die "versions.json cannot be read from the bucket: publish the Windows build of v$VER first"
+        args=(merge --existing "$old" --version "$VER" --channel "$CHANNEL" --repo "$ARCHIVE_REPO" --platform linux --extend --out "$new")
+    fi
     local fargs=()
     for n in "${NAMES[@]}"; do args+=(--file "$n=${SRC[$n]}"); fargs+=(--file "$n=${SRC[$n]}"); done
     python3 scripts/versions_index.py "${args[@]}" || die "versions.json could not be built with a checksum for every file"
@@ -220,11 +258,16 @@ update_index() {
     sign_and_upload_index "$new"
     curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$PUBLIC/versions.json?nocache=$(date +%s)" -o "$back" ||
         die "versions.json cannot be read back from the bucket"
-    python3 scripts/versions_index.py check --index "$back" --version "$VER" "${fargs[@]}" ||
+    python3 scripts/versions_index.py check --index "$back" --version "$VER" --platform "$PLATFORM" "${fargs[@]}" ||
         die "the published versions.json does not carry the checksums of the uploaded files"
     rm -f "$old" "$new" "$back"
 }
 update_index   # (die exits the whole script: no VERSION.txt, no pruning)
+
+if [ "$PLATFORM" = linux ]; then
+    echo "Done: the Linux files of v$VER are published and listed (with checksums) in $PUBLIC/versions.json"
+    exit 0
+fi
 
 printf '%s\n' "$VER" > "$RESP.ver"
 upload "$RESP.ver" "$VERSION_NAME" text/plain 30

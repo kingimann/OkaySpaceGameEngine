@@ -39,6 +39,10 @@ _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 # The files the launcher's updater downloads. It REFUSES to install a file that has no checksum in the index
 # (launcher/UpdaterCore.hpp), so a publish that cannot list a size and SHA-256 for every one of these must fail.
 REQUIRED_FILES = ("OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe")
+# The same three programs for Linux (shared/ReleaseAssets.hpp has the C++ copy of these names; a test keeps the two equal).
+# A release is published for Windows first; the Linux files are then ADDED to that version's entry (merge --extend).
+LINUX_FILES = ("OkayEngine-linux-x64", "OkaySpacePlayer-linux-x64", "OkaySpace-linux-x64")
+PLATFORM_FILES = {"windows": REQUIRED_FILES, "linux": LINUX_FILES}
 
 
 def parse_version(text):
@@ -110,9 +114,12 @@ def missing_checksums(files, required=REQUIRED_FILES):
     return bad
 
 
-def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo, required=REQUIRED_FILES):
+def merge(existing, version, channel, files, date, bucket_versions, latest, lts, repo, required=REQUIRED_FILES, extend=False):
     """Return the new index (a dict). `existing` may be None or garbage.
-    Raises ValueError unless `files` has a size and SHA-256 for every name in `required`."""
+    Raises ValueError unless `files` has a size and SHA-256 for every name in `required`.
+    extend=True adds `files` to the entry the index already has for `version` (the other platform's files, its channel, date
+    and inBucket flag stay as they are); it refuses when there is no such entry, or when that entry lacks a valid checksum for
+    any Windows file, so a Linux build is never attached to a release the updater would refuse anyway."""
     ver = canonical(version)
     if ver is None:
         raise ValueError("bad version: %r" % (version,))
@@ -135,8 +142,18 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
         c = _clean_entry(e)
         if c is not None:
             entries[c["version"]] = c
-    entries[ver] = {"version": ver, "channel": channel, "date": date or "",
-                    "inBucket": True, "files": dict(sorted(files.items()))}
+    if extend:
+        base = entries.get(ver)
+        if base is None:
+            raise ValueError("v%s is not in the index yet: publish the Windows build first, then add the other platform's files" % ver)
+        lacking_base = missing_checksums(base["files"])
+        if lacking_base:
+            raise ValueError("v%s has no checksum for %s in the index: refusing to add files to a release the updater would refuse"
+                             % (ver, ", ".join(lacking_base)))
+        base["files"] = dict(sorted({**base["files"], **files}.items()))
+    else:
+        entries[ver] = {"version": ver, "channel": channel, "date": date or "",
+                        "inBucket": True, "files": dict(sorted(files.items()))}
 
     if bucket_versions is not None:
         present = set(filter(None, (canonical(v) for v in bucket_versions)))
@@ -187,7 +204,8 @@ def _cmd_check(a):
         sys.stderr.write("versions_index: %s does not list v%s\n" % (a.index, a.version))
         return 1
     listed = entry.get("files") if isinstance(entry.get("files"), dict) else {}
-    problems = ["%s is missing, or has no valid size/SHA-256" % n for n in missing_checksums(listed)]
+    required = PLATFORM_FILES[getattr(a, "platform", "windows") or "windows"]
+    problems = ["%s is missing, or has no valid size/SHA-256" % n for n in missing_checksums(listed, required)]
     for spec in a.file or []:
         name, _, path = spec.partition("=")
         if name in listed and os.path.isfile(path) and listed[name] != file_entry(path) and name not in [x.split()[0] for x in problems]:
@@ -207,8 +225,10 @@ def _cmd_merge(a):
         files[name] = file_entry(path)
     bucket = a.bucket_versions.split() if a.bucket_versions is not None else None
     try:
+        platform = getattr(a, "platform", "windows") or "windows"
         out = merge(_read_json(a.existing), a.version, a.channel, files, a.date,
-                    bucket, a.latest, a.lts, a.repo)
+                    bucket, a.latest, a.lts, a.repo, required=PLATFORM_FILES[platform],
+                    extend=bool(getattr(a, "extend", False)))
     except ValueError as err:
         sys.stderr.write("versions_index: %s\n" % err)
         return 2
@@ -306,6 +326,42 @@ def _self_test():
         except ValueError as err:
             check("checksum" in str(err) or "sha256" in str(err), "says why for " + what)
 
+    # Linux files are ADDED to the version's existing entry; the Windows files, channel and date stay exactly as they were.
+    lf = {n: {"size": 20, "sha256": "c" * 64} for n in LINUX_FILES}
+    win_only = merge(None, "2.9.5", "latest", f1, "2026-12-01", ["2.9.5"], "2.9.5", None, "o/n")
+    both = merge(win_only, "2.9.5", "latest", lf, "ignored", None, None, None, "o/n", required=LINUX_FILES, extend=True)
+    e = both["versions"][0]
+    check(set(e["files"]) == set(REQUIRED_FILES) | set(LINUX_FILES), "extend keeps both platforms' files")
+    check(e["files"]["OkayEngine.exe"] == win_only["versions"][0]["files"]["OkayEngine.exe"], "extend leaves the Windows checksum alone")
+    check(e["date"] == "2026-12-01" and e["channel"] == "latest" and e["inBucket"] is True and both["latest"] == "2.9.5", "extend keeps the entry's own data")
+    check(len(both["versions"]) == 1, "extend adds no second entry")
+    for bad_lf, what in ((dict(list(lf.items())[:2]), "a Linux file missing"), ({**lf, "OkaySpace-linux-x64": {"size": 20, "sha256": ""}}, "an empty Linux sha")):
+        try:
+            merge(win_only, "2.9.5", "latest", bad_lf, "", None, None, None, "o/n", required=LINUX_FILES, extend=True)
+            check(False, "extend refuses " + what)
+        except ValueError:
+            pass
+    try:
+        merge(win_only, "2.9.6", "latest", lf, "", None, None, None, "o/n", required=LINUX_FILES, extend=True)
+        check(False, "extend refuses a version that was not published for Windows")
+    except ValueError as err:
+        check("Windows" in str(err), "extend says to publish Windows first")
+    try:
+        merge(None, "2.9.5", "latest", lf, "", None, None, None, "o/n", required=LINUX_FILES, extend=True)
+        check(False, "extend refuses an empty index")
+    except ValueError:
+        pass
+    nowin = merge(None, "2.9.7", "latest", f1, "", None, None, None, "o/n")
+    del nowin["versions"][0]["files"]["OkaySpace.exe"]
+    try:
+        merge(nowin, "2.9.7", "latest", lf, "", None, None, None, "o/n", required=LINUX_FILES, extend=True)
+        check(False, "extend refuses a base entry without Windows checksums")
+    except ValueError:
+        pass
+    # A Windows publish without Linux files is still fine, and a Linux-checked index needs the Linux files.
+    check(missing_checksums(win_only["versions"][0]["files"], LINUX_FILES) == list(LINUX_FILES), "check: Windows-only lacks Linux files")
+    check(missing_checksums(e["files"], LINUX_FILES) == [] and missing_checksums(e["files"]) == [], "check: both platforms complete")
+
     # Round trip through JSON text and the CLI on real files.
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -365,6 +421,7 @@ def main(argv):
     c.add_argument("--index", required=True)
     c.add_argument("--version", required=True)
     c.add_argument("--file", action="append")
+    c.add_argument("--platform", choices=sorted(PLATFORM_FILES), default="windows")
     m = sub.add_parser("merge")
     m.add_argument("--existing", default="")
     m.add_argument("--version", required=True)
@@ -376,6 +433,10 @@ def main(argv):
     m.add_argument("--lts", default="")
     m.add_argument("--repo", required=True)
     m.add_argument("--out", required=True)
+    m.add_argument("--platform", choices=sorted(PLATFORM_FILES), default="windows",
+                   help="whose files must all have a checksum (default windows)")
+    m.add_argument("--extend", action="store_true",
+                   help="add --file entries to the existing entry for --version instead of replacing it (the Linux files after the Windows publish)")
     a = p.parse_args(argv)
     if a.self_test:
         return _self_test()

@@ -590,7 +590,7 @@ void DrawAvailable(const Host& h) {
             std::string sub = e.date.empty() ? std::string() : e.date;
             const std::uint64_t listed = ListedSize(e);
             if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
-            const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
+            const bool checkable = !e.files.empty() && e.files.count(IndexName(Asset::Editor)) && !e.files.at(IndexName(Asset::Editor)).sha256.empty();
             sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "from GitHub");
             if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
             if (lts) sub += "  \xC2\xB7  only gets fixes";

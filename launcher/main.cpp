@@ -1047,6 +1047,22 @@ int RunUpdateCheck(void*) {
         SetState(Up_Failed);
         return 0;
     }
+    const std::string launcherIdx = okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Launcher);
+    // A release that carries no files for THIS platform (a Windows-only release seen from Linux, or macOS, which has no build yet) is
+    // refused in plain words before anything is downloaded. Never true on Windows.
+    {
+        std::map<std::string, std::string> shaByName;
+        if (ventry) for (const auto& kv : ventry->files) shaByName[kv.first] = kv.second.sha256;
+        const std::string why = okayrel::PlatformBuildProblem(okayrel::HostPlatform(), shaByName, latest);
+        if (!why.empty()) {
+            UpFail(why);
+            if (newer) RecordSelfUpdate(local, latest, false, why);
+            SetUpMsg("Update refused. " + why);
+            SetUpStep("Update refused: no build for this system", 0, kSteps);
+            SetState(Up_Failed);
+            return 0;
+        }
+    }
     // Keep the editor this update replaces, so projects made with it can still be opened (Versions page). Never blocks the update.
     std::string keepNote;
     bool keptNow = false;
@@ -1069,18 +1085,23 @@ int RunUpdateCheck(void*) {
             std::string found = FindExe({name});
             return found.empty() ? (dir / name) : fs::path(found);
         };
-        if (!repair || FindExe({"OkayEngine.exe"}).empty()) {
+        // The file names come from the platform (shared/ReleaseAssets.hpp): on Windows exactly the names used before.
+        const char* const edIdx = okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Editor);
+        const char* const edDisk = okayrel::DiskName(okayrel::HostPlatform(), okayrel::Role::Editor);
+        const char* const plIdx = okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Player);
+        const char* const plDisk = okayrel::DiskName(okayrel::HostPlatform(), okayrel::Role::Player);
+        if (!repair || FindExe({edDisk}).empty()) {
             SetUpMsg("Downloading engine v" + latest + "...");
             SetUpStep("Downloading editor (OkayEngine)", 0, kSteps);
-            const fs::path d = destOf("OkayEngine.exe");
-            if (StageFile("OkayEngine.exe", base + "OkayEngine.exe", d, true, checkFor("OkayEngine.exe"))) items.push_back({"OkayEngine.exe", d, false});
+            const fs::path d = destOf(edDisk);
+            if (StageFile(edIdx, base + edIdx, d, true, checkFor(edIdx))) items.push_back({edIdx, d, false});
             else ok = false;
         }
-        if (ok && (!repair || FindExe({"OkaySpacePlayer.exe"}).empty())) {
+        if (ok && (!repair || FindExe({plDisk}).empty())) {
             SetUpMsg("Downloading player runtime v" + latest + "...");
             SetUpStep("Downloading game runtime (OkaySpacePlayer)", 1, kSteps);
-            const fs::path d = destOf("OkaySpacePlayer.exe");
-            if (StageFile("OkaySpacePlayer.exe", base + "OkaySpacePlayer.exe", d, true, checkFor("OkaySpacePlayer.exe"))) items.push_back({"OkaySpacePlayer.exe", d, false});
+            const fs::path d = destOf(plDisk);
+            if (StageFile(plIdx, base + plIdx, d, true, checkFor(plIdx))) items.push_back({plIdx, d, false});
             else ok = false;
         }
     }
@@ -1092,8 +1113,8 @@ int RunUpdateCheck(void*) {
         if (selfExe.empty()) {
             UpFail("Could not find the launcher's own file to update. Nothing was installed and your current version is unchanged.");
             ok = false;
-        } else if (StageFile("OkaySpace.exe", base + "OkaySpace.exe", selfExe, true, checkFor("OkaySpace.exe"))) {
-            items.push_back({"OkaySpace.exe", selfExe, true});
+        } else if (StageFile(launcherIdx, base + launcherIdx, selfExe, true, checkFor(launcherIdx))) {
+            items.push_back({launcherIdx, selfExe, true});
         } else ok = false;
     }
     if (!ok) {
@@ -1110,7 +1131,7 @@ int RunUpdateCheck(void*) {
             UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
             ok = false;
         } else {
-            for (const Item& it : items) if (it.name == "OkaySpace.exe") launcherOk = true;
+            for (const Item& it : items) if (it.name == launcherIdx) launcherOk = true;
         }
     }
 

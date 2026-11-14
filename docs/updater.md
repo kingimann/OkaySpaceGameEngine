@@ -3,7 +3,7 @@
 How the launcher (and the editor) replace their own files, what is checked before anything is replaced, what the person sees when it
 does not work, and what is still open. The Versions page (installing other editors next to the running one) is described in
 [launcher_versions.md](launcher_versions.md); this page is about the **in-place update** of `OkaySpace.exe`, `OkayEngine.exe` and
-`OkaySpacePlayer.exe`.
+`OkaySpacePlayer.exe` (on Linux: `OkaySpace-linux-x64`, `OkayEngine-linux-x64`, `OkaySpacePlayer-linux-x64`, see below).
 
 Code: `launcher/UpdaterCore.hpp` (stage, verify, all-or-nothing swap), `shared/SelfUpdate.hpp` (state file, start-up verdict, retry
 rule, self-check, rollback), `shared/AppRestart.hpp` (the detached helper), `launcher/main.cpp` (`RunUpdateCheck`,
@@ -31,6 +31,31 @@ Signing: `shared/UpdateSignature.hpp`, `scripts/sign_index.py`, [Signed releases
    `okay_update.log`, and counted per target version in `okay_selfupdate.state`. The automatic check at launch stops trying a version after
    2 failures ("failed 2 times, so it is not tried again automatically. Use Retry"); a click on Retry always tries once more. A
    newer release is a new chance. After a rollback `VERSION.txt` is reset so the next check still sees the update.
+
+## Per platform: which files are downloaded
+
+The updater does not hard-code `.exe` names. `shared/ReleaseAssets.hpp` maps (platform, role) to the name in `versions.json` and on the
+servers and to the name on disk; the Versions page (`launcher/VersionsManager.cpp`) and the in-place update (`launcher/main.cpp`,
+`RunUpdateCheck`) both use it:
+
+| Platform | launcher | editor | player | on disk |
+|---|---|---|---|---|
+| Windows | `OkaySpace.exe` | `OkayEngine.exe` | `OkaySpacePlayer.exe` | the same names (unchanged) |
+| Linux | `OkaySpace-linux-x64` | `OkayEngine-linux-x64` | `OkaySpacePlayer-linux-x64` | `OkaySpace`, `Tools/OkayEngine`, `Tools/OkaySpacePlayer` |
+| macOS | none | none | none | refuses: "There is no macOS build of OkaySpace to update to yet" |
+
+The rules above apply unchanged to the Linux files: a file with no checksum in `versions.json` is refused. Two additions, both only off
+Windows: a release whose entry lists none of this platform's files is refused up front with "v<ver> has no Linux build ... a Linux build may
+be published a little later, so try again" (`PlatformBuildProblem`), before anything is downloaded, rather than a per-file "not listed"; a
+release that lists some but not all of them is refused file by file as before. On Windows `PlatformBuildProblem` is always empty, so
+nothing changes. The Linux files are added to a version's `versions.json` entry after the Windows ones (see
+[releasing.md](releasing.md#linux-files)); until then a Linux launcher sees a Windows-only entry. On Linux the launcher swaps its own
+running file with a rename (like Windows), and `SDL2.dll` is not a Linux asset (the system library is used).
+
+Tests: `release_assets` (names, no collisions, the refusal), `launcher_versions` and `self_update` (the plan and the index use the host's
+names, so they run on both), `versions_index` (`--extend`), `publish_linux` (the whole Linux publish against a local stand-in server).
+**Not run:** the Linux launcher's real update (download, swap, restart) against a real release; `RunUpdateCheck` compiles on Linux but has
+no automated test of its own, on any platform.
 
 ## What the person sees
 

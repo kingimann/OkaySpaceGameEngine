@@ -263,7 +263,7 @@ int main() {
                    "\"versions\":[{\"version\":\"2.856.0\",\"channel\":\"latest\",\"inBucket\":true,\"files\":{" + files + "}}]}";
         };
         const std::string okFile = "{\"size\":120000,\"sha256\":\"" + sha + "\"}";
-        const std::string three = file("OkayEngine.exe", okFile) + "," + file("OkaySpacePlayer.exe", okFile) + "," + file("OkaySpace.exe", okFile);
+        const std::string three = file(okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Editor), okFile) + "," + file(okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Player), okFile) + "," + file(okayrel::IndexName(okayrel::HostPlatform(), okayrel::Role::Launcher), okFile);   // the host's names (Windows: the .exe files);
         const std::string bucket = "https://b.test/releases/";
         // The invariant for ANY text: a plan that is ok has a 64-hex checksum and a size for every downloaded file.
         auto invariant = [&](const std::string& text) {

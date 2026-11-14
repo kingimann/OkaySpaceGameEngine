@@ -94,7 +94,14 @@ struct Material {
             else if (tok == "rim")     in >> m.rimStrength >> m.rimPower >> m.rimColor.r >> m.rimColor.g >> m.rimColor.b;
             else if (tok == "outline") { int o = 0; in >> o >> m.outlineWidth >> m.outlineColor.r >> m.outlineColor.g >> m.outlineColor.b; m.outline = o != 0; }
             else if (tok == "uvanim")  { int tp = 0; in >> m.uvScroll.x >> m.uvScroll.y >> tp; m.triplanar = tp != 0; }
-            else if (tok == "texture") { std::string t; in >> t; m.texture = (t == "-") ? "" : t; }
+            else if (tok == "texture") {
+                // The rest of the line: a path may contain spaces ("My Textures/brick wall.png").
+                std::string t;
+                in >> std::ws;
+                std::getline(in, t);
+                while (!t.empty() && (t.back() == '\r' || t.back() == ' ' || t.back() == '\t')) t.pop_back();
+                m.texture = (t == "-") ? "" : t;
+            }
         }
         return m;
     }

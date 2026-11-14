@@ -35,6 +35,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
+| Renderer audit, suspicions not proven | Unverified, no code changed | `ParticleGradient::Evaluate` and `ParticleCurve::Evaluate` read `stops[-1]` if `t` is NaN (a zero life particle); frustum culling caches a mesh by pointer, count and three probe vertices, so an in-place edit of a middle vertex keeps stale bounds; `Visibility::Build` sorts blended meshes by object origin, not by triangle, so one big transparent mesh can still blend wrongly; the baked-light winding for a mirrored (negative scale) object was not checked |
 
 ## Planned: visual-script core upgrade
 

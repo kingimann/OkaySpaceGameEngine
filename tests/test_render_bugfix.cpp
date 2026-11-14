@@ -162,5 +162,14 @@ int main() {
         SceneLights::Clear();
     }
 
+    RUN_SUITE("material text keeps a texture path with spaces");
+    {
+        Material m;
+        m.texture = "My Textures/brick wall.png";
+        m.color = Color(0.123456789f, 0.5f, 0.25f, 1.0f);
+        Material back = Material::FromText(m.ToText());
+        CHECK(back.texture == m.texture);
+    }
+
     TEST_MAIN_RESULT();
 }

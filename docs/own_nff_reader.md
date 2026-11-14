@@ -16,6 +16,7 @@ NFF, the "Neutral File Format", is Eric Haines' text format for ray-tracing test
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 26 (extensions `.nff`, `.enff`) |
 | `tests/test_nff_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`nff_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
+| `tests/test_batchd_budget.cpp` | The `mtable` path rules (`batchd_budget`) |
 
 ## What it reads
 
@@ -29,7 +30,7 @@ Lights, the viewpoint, the background and the resolution; the diffuse, specular,
 
 ## Limits
 
-File 256 MiB; 1,000,000 vertices per polygon; 10,000,000 vertices in a Sense8 list and 10,000,000 polygons; 2,000,000 primitives; 40,000,000 output vertices; `tess` at most 6. Counts must be whole numbers within the caps and the text must really hold that many lines, or the file is refused before anything large is allocated. Numbers go through `NumParse.hpp` (finite, within 1e15, locale independent). The `mtable` file is read from the model's folder only (16 MiB at most); a name that climbs out of it is read like any other path but cannot do more than fail.
+File 256 MiB; 1,000,000 vertices per polygon; 10,000,000 vertices in a Sense8 list and 10,000,000 polygons; 2,000,000 primitives; 40,000,000 output vertices; `tess` at most 6. Counts must be whole numbers within the caps and the text must really hold that many lines, or the file is refused before anything large is allocated. Numbers go through `NumParse.hpp` (finite, within 1e15, locale independent). The `mtable` file is read from the model's folder tree only (16 MiB at most): an absolute path, a drive letter, a `..` that climbs out and a path through a link that leads outside are refused (the polygons still read, a note says the table was refused).
 
 ## Tests and what was checked
 

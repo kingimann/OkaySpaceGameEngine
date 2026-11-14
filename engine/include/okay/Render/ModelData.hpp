@@ -239,7 +239,7 @@ bool ReadXBuffer(const std::string& bytes, const std::string& baseDir, ImportedM
 /// (poly object, material, shading) with its polygons triangulated, triangle strips (surface type 4) unrolled, per-vertex
 /// normals when the vertex lines carry them and smooth normals (the object's crease angle) for surfaces flagged shaded,
 /// the object's texture and texrep / texoff on the texture coordinates, MATERIAL rgb / emis / shi / trans as the material.
-/// Line surfaces, lights, `subdiv` (subdivision) and extra texture layers are not read (reported in `out.notes`).
+/// `subdiv` is read (Catmull-Clark, within a per-file budget of subdivided corners); line surfaces, lights and extra texture layers are not read (reported in `out.notes`).
 /// `baseDir` ends with a slash or is empty (it prefixes relative texture paths).
 bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// OGRE XML mesh (.mesh.xml): one part per submesh (shared or own vertex buffers; position, normal and the first texture
@@ -314,6 +314,11 @@ bool SetImportBackend(const std::string& ext, ImportBackend which);
 /// The backend a read of `ext` will actually use right now, after defaults and
 /// fallbacks: Own, Assimp, or Default when no backend reads that format.
 ImportBackend EffectiveImportBackend(const std::string& ext);
+
+/// Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
+/// (false, with the reason in `err`), so no hostile file can end the program through an exception. ImportModelData wraps every
+/// own reader in it; it is public so a test can check it with a reader that throws.
+bool RunReaderGuarded(const std::function<bool()>& read, std::string& err);
 
 /// The single entry point for every Assimp / own-reader read. Reads `path` with
 /// the chosen backend (`which` = Default: per-format switch). `flatten` is

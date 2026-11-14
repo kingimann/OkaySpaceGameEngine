@@ -14,6 +14,7 @@ XGL is a small XML scene format (written by 3D Studio exporters, Truespace and o
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 24 (extensions `.xgl`, `.zgl`) |
 | `tests/test_xgl_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`xgl_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
+| `tests/test_batchd_budget.cpp` | Budgets: a 0.45 MB file that names one 2,000-triangle mesh 6,000 times (`batchd_budget`) |
 
 ## What it reads
 
@@ -28,7 +29,7 @@ Faces that point at missing points (skipped and counted), line and patch element
 
 ## Limits
 
-File and inflated text 256 MiB; 8,000,000 points, normals or texture coordinates per mesh; 20,000,000 faces; 10,000 corners per face; 1,000,000 objects; 40,000,000 output vertices; the XML reader's caps. Numbers go through `NumParse.hpp` (finite, within 1e15). (While testing this reader the shared XML reader was found to be quadratic on files with many elements and no `&` in them; fixed in `XmlLite.hpp`: a 40,000-face file went from 4.3 s to 0.1 s. Every XML-based reader benefits.)
+File and inflated text 256 MiB; 8,000,000 points, normals or texture coordinates per mesh; 20,000,000 faces; 10,000 corners per face; 1,000,000 objects; per file 4,000,000 output vertices, 4,000,000 triangles in the meshes built and 4,000,000 triangles placed in the scene (each `<MESH>` is built once however many objects name it, and every placement is a copy that counts against the placed budget; a file over a budget is refused with a message that names it); the XML reader's caps. Numbers go through `NumParse.hpp` (finite, within 1e15). (While testing this reader the shared XML reader was found to be quadratic on files with many elements and no `&` in them; fixed in `XmlLite.hpp`: a 40,000-face file went from 4.3 s to 0.1 s. Every XML-based reader benefits.)
 
 ## Tests and what was checked
 

@@ -13,11 +13,12 @@ OGRE is an open 3D engine; its tools write meshes as a binary `.mesh` file and, 
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 23 of the opt-in table; the extension is the last **two** parts, `.mesh.xml` (`ExtensionOf` was taught this; other `.xml` files are not routed here) |
 | `tests/test_ogre_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`ogre_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
+| `tests/test_batchd_budget.cpp` | Strips and fans with hand-computed triangles, per-file budgets, scene paths (`batchd_budget`) |
 
 ## What it reads
 
 - **Geometry.** `<sharedgeometry>` and each submesh's `<geometry>`: `vertexcount` and any number of `<vertexbuffer>` elements. Vertex `k` of every buffer is vertex `k` of the geometry, so positions and normals in one buffer and texture coordinates in another work (the usual layout). `<position>`, `<normal>`, the first `<texcoord>`. The `vertexcount` must equal the number of `<vertex>` elements, or the file is refused before anything is allocated.
-- **Submeshes.** One part per `<submesh>` that has faces. `usesharedvertices` picks the shared or the own geometry; `<face v1 v2 v3>` are triangles (lists, strips and fans are all written as triangles by the converter); an index past the vertex list skips that triangle. Line and point lists are skipped. The part is named after `<submeshname>` or the material.
+- **Submeshes.** One part per `<submesh>` that has faces. `usesharedvertices` picks the shared or the own geometry; `operationtype` picks how the `<face>` elements are read: `triangle_list` (default) needs `v1 v2 v3` on every face; `triangle_strip` and `triangle_fan` read an index sequence (the first face gives its indices, every later face adds its last one, which is `v3` when a face carries all three and `v1` when it carries only the new index) and unroll it: a strip alternates its winding (triangle i is `s[i] s[i+1] s[i+2]` for even i and `s[i+1] s[i] s[i+2]` for odd i), a fan shares the first vertex (`s[0] s[i+1] s[i+2]`); repeated indices make degenerate triangles, which are dropped as before. (An earlier version read every face as an independent triangle whatever the operation type, which flipped every second triangle of a strip written as sliding triples; `tests/test_batchd_budget.cpp` now checks strips and fans against hand-computed triangles in both ways of writing them.) An index past the vertex list skips that triangle. Line and point lists are skipped. The part is named after `<submeshname>` or the material.
 - **Materials.** The submesh's `material` name is the material name. When `.material` scripts are given (`ReadOgreXmlFile` reads the ones next to the mesh: the one named like the mesh first, at most 32 files of 4 MB) the first pass's `diffuse`, `emissive` and `specular`'s shininess and the first texture unit's `texture` are read (the script language's `material name : parent { technique { pass { texture_unit { ... } } } }`; names after block keywords, comments and quoted strings are handled).
 - Coordinates, winding and texture coordinates **as written** (OGRE is right-handed and Y-up; the engine's Assimp path flips v on top of Assimp's own flip, which is the file's value).
 
@@ -44,7 +45,7 @@ File 256 MiB; 8,000,000 vertices per geometry; 20,000,000 faces; 100,000 submesh
 
 Assimp's tree has `fish`, `ninja`, `razor` (`.mesh.xml` and binary `.mesh`, `OgreSDK`) and `TheThing/Mesh.mesh.xml`. **All 4 `.mesh.xml` files read and equal Assimp on triangles, mesh count, surface area and bounding box** (fish 815 triangles area 34.8947; ninja 1,008, 2 meshes, 25,219.6177; razor 468, 29,764.2994; TheThing 2,656, 1.3468), and each gets the texture its `.material` names (`fish.jpg`, `Wrinkles.jpg`, ...). Not compared: skeletons and animation (Assimp reads them, ours does not).
 
-Unverified: a mesh with several uv sets, 32-bit-index meshes, strips and fans on a real file, files from exporters other than the SDK converter and the Blender exporter, a run on real Windows.
+Unverified: a mesh with several uv sets, 32-bit-index meshes, strips and fans on a real exporter file (the two ways of writing the face elements are an assumption from the format description, checked on synthetic data only), files from exporters other than the SDK converter and the Blender exporter, a run on real Windows.
 
 ## Provenance (what this file was written from)
 

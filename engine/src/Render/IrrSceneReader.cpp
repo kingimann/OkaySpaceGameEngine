@@ -7,6 +7,7 @@
 // recursion. See okay/Render/ModelData.hpp and docs/own_irr_reader.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
+#include "SceneRefPath.hpp"
 #include "XmlLite.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -23,7 +24,10 @@ namespace {
 namespace irrs {
 
 constexpr std::size_t kMaxFileBytes = 256u * 1024u * 1024u;
-constexpr std::size_t kMaxNodes = 1000000, kMaxOutVerts = 40000000, kMaxLoadedFiles = 1000;
+constexpr std::size_t kMaxNodes = 1000000, kMaxLoadedFiles = 1000;
+// Per-file budgets, so a small scene cannot ask for gigabytes: what the output may hold in all (spheres, and every copy of every
+// referenced mesh), and what all the referenced mesh files may hold once loaded (they are kept until the end).
+constexpr std::size_t kMaxOutVerts = 4000000, kMaxOutTris = 4000000, kMaxLoadedVerts = 4000000, kMaxLoadedTris = 4000000;
 constexpr int kMaxDepth = 256;
 constexpr double kPi = 3.14159265358979323846;
 
@@ -77,6 +81,8 @@ Quat EulerQuat(double rx, double ry, double rz) {
     return (q(0, 0, 1, rz * d) * q(0, 1, 0, ry * d) * q(1, 0, 0, rx * d)).Normalized();
 }
 
+std::size_t TriCount(const Mesh& m) { return m.triangles.size() / 3; }
+
 ImportedMaterial ReadMaterial(const detail::xml::Doc& d, int attrs, const std::string& baseDir) {
     ImportedMaterial m;
     m.name = "material";
@@ -117,16 +123,16 @@ void MakeCube(double size, Mesh& m) {
 }
 
 // A sphere of radius r with `px` segments around Y and `py` rings from pole to pole; texture coordinates u around, v from the north pole down.
-bool MakeSphere(double r, long px, long py, Mesh& m) {
-    px = std::max(3L, std::min(px, 512L)); py = std::max(2L, std::min(py, 512L));
-    for (long j = 0; j <= py; ++j) for (long i = 0; i <= px; ++i) {
+bool MakeSphere(double r, std::int64_t px, std::int64_t py, Mesh& m) {
+    px = std::max<std::int64_t>(3, std::min<std::int64_t>(px, 512)); py = std::max<std::int64_t>(2, std::min<std::int64_t>(py, 512));
+    for (std::int64_t j = 0; j <= py; ++j) for (std::int64_t i = 0; i <= px; ++i) {
         const double th = kPi * (double)j / (double)py, ph = 2 * kPi * (double)i / (double)px;
         const Vec3 n{(float)(std::sin(th) * std::cos(ph)), (float)std::cos(th), (float)(std::sin(th) * std::sin(ph))};
         m.vertices.push_back(Vec3{(float)(n.x * r), (float)(n.y * r), (float)(n.z * r)});
         m.normals.push_back(n);
         m.uvs.push_back(Vec2{(float)i / (float)px, (float)j / (float)py});
     }
-    for (long j = 0; j < py; ++j) for (long i = 0; i < px; ++i) {
+    for (std::int64_t j = 0; j < py; ++j) for (std::int64_t i = 0; i < px; ++i) {
         const int a = (int)(j * (px + 1) + i), b = a + 1, c = a + (int)(px + 1), d = c + 1;
         if (j != 0) { m.triangles.push_back(a); m.triangles.push_back(c); m.triangles.push_back(b); }
         if (j != py - 1) { m.triangles.push_back(b); m.triangles.push_back(c); m.triangles.push_back(d); }
@@ -160,7 +166,8 @@ static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDi
     std::map<std::string, std::unique_ptr<Loaded>> loadedFiles;
     std::map<std::string, int> typeCount;
     int nodes = 0, animators = 0, unreadable = 0, noLoader = 0, droppedClips = 0, badTransform = 0, matOverrides = 0;
-    std::size_t outVerts = 0;
+    std::size_t outVerts = 0, outTris = 0, loadedVerts = 0, loadedTris = 0;
+    int refused = 0;
     std::string firstMissing;
 
     while (!work.empty()) {
@@ -205,10 +212,13 @@ static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDi
                 if (const std::string* v = Value(doc, attrs, "Radius")) { if (!detail::rc::ParseNumber(*v, rad) || !(rad > 0)) rad = 5; }
                 if (const std::string* v = Value(doc, attrs, "PolyCountX")) { if (!detail::rc::ParseNumber(*v, px)) px = 16; }
                 if (const std::string* v = Value(doc, attrs, "PolyCountY")) { if (!detail::rc::ParseNumber(*v, py)) py = 16; }
-                MakeSphere(rad, (long)px, (long)py, part.mesh);
+                                // clamp as doubles first: a (long) cast of a huge value is undefined, and long is 32 bits on Windows
+                auto seg = [](double v) -> std::int64_t { return !(v >= 3) ? 3 : v > 512 ? 512 : (std::int64_t)v; };
+                MakeSphere(rad, seg(px), seg(py), part.mesh);
             }
             outVerts += part.mesh.vertices.size();
-            if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");
+            outTris += TriCount(part.mesh);
+            if (outVerts > kMaxOutVerts || outTris > kMaxOutTris) return Fail(err, "over the budget of " + std::to_string(kMaxOutTris) + " triangles or " + std::to_string(kMaxOutVerts) + " vertices for the whole scene (spheres, and meshes counted once per node that uses them)");
             if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
             part.mesh.name = ltype;
             part.node = me;
@@ -219,22 +229,30 @@ static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDi
             if (!mp || mp->empty()) { ++unreadable; if (firstMissing.empty()) firstMissing = "(no Mesh attribute)"; }
             else if (!loader || !*loader) ++noLoader;
             else {
-                const std::string path = FixPath(*mp, baseDir);
-                auto f = loadedFiles.find(path);
-                if (f == loadedFiles.end()) {
+                std::string path, whyNot;
+                const bool allowed = detail::ResolveInsideDir(baseDir, *mp, path, whyNot);
+                auto f = allowed ? loadedFiles.find(path) : loadedFiles.end();
+                if (!allowed) { ++unreadable; ++refused; if (firstMissing.empty()) firstMissing = *mp + " (refused: " + whyNot + ")"; }
+                else if (f == loadedFiles.end()) {
                     if (loadedFiles.size() >= kMaxLoadedFiles) return Fail(err, "more than " + std::to_string(kMaxLoadedFiles) + " different mesh files");
                     auto l = std::make_unique<Loaded>();
                     std::string e;
                     l->ok = (*loader)(path, l->m, &e) && !l->m.parts.empty();
                     if (l->ok && l->m.nodes.empty()) l->m.nodes.push_back(ImportedNode{});   // a static mesh with no node tree (OBJ, STL): one root for its parts
+                    if (l->ok) {
+                        for (const ImportedPart& lp : l->m.parts) { loadedVerts += lp.mesh.vertices.size(); loadedTris += TriCount(lp.mesh); }
+                        if (loadedVerts > kMaxLoadedVerts || loadedTris > kMaxLoadedTris) return Fail(err, "the mesh files this scene names hold more than " + std::to_string(kMaxLoadedTris) + " triangles or " + std::to_string(kMaxLoadedVerts) + " vertices in all");
+                    }
                     if (!l->ok) { ++unreadable; if (firstMissing.empty()) firstMissing = *mp + (e.empty() ? std::string() : " (" + e + ")"); l->m = ImportedModel{}; }
                     l->matMap.assign(l->m.materials.size(), -1);
                     f = loadedFiles.emplace(path, std::move(l)).first;
                 } else if (!f->second->ok) { ++unreadable; if (firstMissing.empty()) firstMissing = *mp; }
-                Loaded& L = *f->second;
-                if (L.ok) {
+                Loaded* Lp = allowed ? f->second.get() : nullptr;
+                if (Lp && Lp->ok) {
+                    Loaded& L = *Lp;
                     if (!L.m.clips.empty()) droppedClips += (int)L.m.clips.size();
                     // copy the mesh's nodes under this node, its parts and (once per file) its materials
+                    if (out.nodes.size() + L.m.nodes.size() > kMaxNodes) return Fail(err, "too many nodes");
                     const int base = (int)out.nodes.size();
                     for (std::size_t i = 0; i < L.m.nodes.size(); ++i) {
                         ImportedNode c = L.m.nodes[i];
@@ -244,7 +262,9 @@ static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDi
                     if (out.nodes.size() > kMaxNodes) return Fail(err, "too many nodes");
                     for (const ImportedPart& sp : L.m.parts) {
                         outVerts += sp.mesh.vertices.size();
-                        if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");
+                        outTris += TriCount(sp.mesh);
+                        if (outVerts > kMaxOutVerts || outTris > kMaxOutTris) return Fail(err, "over the budget of " + std::to_string(kMaxOutTris) + " triangles or " + std::to_string(kMaxOutVerts) + " vertices for the whole scene (spheres, and meshes counted once per node that uses them)");
+                        if (out.parts.size() >= kMaxNodes) return Fail(err, "too many parts");
                         ImportedPart q = sp;
                         q.node = base + std::max(0, std::min(sp.node, (int)L.m.nodes.size() - 1));
                         if (sp.material >= 0 && (std::size_t)sp.material < L.matMap.size()) {
@@ -268,6 +288,7 @@ static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDi
 
     auto note = [&](const std::string& s) { out.notes.push_back("IRR: " + s); };
     note("Irrlicht is left-handed: coordinates and winding are kept as written (like Assimp); rotations are Euler degrees applied as Rz * Ry * Rx (like Assimp), which is unchecked against Irrlicht itself");
+    if (refused) note(std::to_string(refused) + " mesh node(s) refused: a scene may only name files inside its own folder (no absolute path, no .. out of it, no link out of it)");
     if (unreadable) note(std::to_string(unreadable) + " mesh node(s) whose file could not be read, first: " + firstMissing);
     if (noLoader) note(std::to_string(noLoader) + " mesh node(s) not loaded: this call had no mesh loader");
     if (animators) note(std::to_string(animators) + " animator(s) (rotation, fly circle, spline, ...) not imported");

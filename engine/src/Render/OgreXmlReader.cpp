@@ -32,7 +32,7 @@ struct Geom {
     std::vector<Vec3> pos, nrm;
     std::vector<Vec2> uv;
     std::vector<char> hasPos, hasNrm, hasUv;
-    long count = 0;
+    std::int64_t count = 0;
 };
 
 bool Dbl(const std::string* s, double& v) { return s && detail::rc::ParseNumber(*s, v); }
@@ -43,7 +43,7 @@ bool ReadGeometry(const detail::xml::Doc& d, int g, Geom& out, std::string* err,
     double vc;
     if (!Dbl(d.Attr(g, "vertexcount"), vc) || vc < 0 || vc > (double)kMaxVerts || vc != std::floor(vc))
         return Fail(err, "bad vertexcount '" + d.AttrOr(g, "vertexcount", "") + "'");
-    out.count = (long)vc;
+    out.count = (std::int64_t)vc;
     const std::size_t n = (std::size_t)vc;
     {   // the claimed count must be backed by <vertex> elements before anything is allocated from it
         std::size_t most = 0;
@@ -221,13 +221,39 @@ static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, I
         bool anyUv = false, anyNrm = false;
         std::vector<std::uint32_t> faceIdx;   // 3 per triangle
         std::size_t seen = 0;
+        const bool strip = op == "triangle_strip", fan = op == "triangle_fan";
+        std::vector<std::uint32_t> seq;   // strip and fan: the index sequence, the first face's indices then each later face's newest one
+        auto toIdx = [](double v) { return (std::uint32_t)std::min(v, 4294967295.0); };
         for (int f : doc.Kids(fi)) {
             if (doc.Name(f) != "face") continue;
-            if (++seen > (std::size_t)fc) return Fail(err, "more <face> elements than the faces count " + std::to_string((long)fc));
-            double a, b, c;
-            if (!Dbl(doc.Attr(f, "v1"), a) || !Dbl(doc.Attr(f, "v2"), b) || !Dbl(doc.Attr(f, "v3"), c) || a < 0 || b < 0 || c < 0 || a != std::floor(a) || b != std::floor(b) || c != std::floor(c))
-                return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
-            faceIdx.push_back((std::uint32_t)std::min(a, 4294967295.0)); faceIdx.push_back((std::uint32_t)std::min(b, 4294967295.0)); faceIdx.push_back((std::uint32_t)std::min(c, 4294967295.0));
+            if (++seen > (std::size_t)fc) return Fail(err, "more <face> elements than the faces count " + std::to_string((std::int64_t)fc));
+            double v[3] = {0, 0, 0};
+            bool has[3] = {false, false, false};
+            static const char* const names[3] = {"v1", "v2", "v3"};
+            for (int k = 0; k < 3; ++k) {
+                const std::string* at = doc.Attr(f, names[k]);
+                if (!at) continue;
+                if (!Dbl(at, v[k]) || v[k] < 0 || v[k] != std::floor(v[k])) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
+                has[k] = true;
+            }
+            if (!strip && !fan) {
+                if (!has[0] || !has[1] || !has[2]) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
+                faceIdx.push_back(toIdx(v[0])); faceIdx.push_back(toIdx(v[1])); faceIdx.push_back(toIdx(v[2]));
+                continue;
+            }
+            // A strip or fan face element may carry all three indices of its triangle (v3 is the new one) or only the new index
+            // (the files that write the sequence once). The first face starts the sequence; every later one adds its last index.
+            if (!has[0] && !has[1] && !has[2]) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
+            if (seq.empty()) { for (int k = 0; k < 3; ++k) if (has[k]) seq.push_back(toIdx(v[k])); }
+            else { const int last = has[2] ? 2 : has[1] ? 1 : 0; seq.push_back(toIdx(v[last])); }
+        }
+        if (strip || fan) {
+            // a strip alternates its winding: triangle i is (s[i], s[i+1], s[i+2]) for even i and (s[i+1], s[i], s[i+2]) for odd i;
+            // a fan shares its first vertex: (s[0], s[i+1], s[i+2]). Repeated indices make degenerate triangles, which are dropped below.
+            for (std::size_t i = 0; i + 2 < seq.size(); ++i) {
+                if (strip) { faceIdx.push_back(seq[i + (i & 1)]); faceIdx.push_back(seq[i + 1 - (i & 1)]); faceIdx.push_back(seq[i + 2]); }
+                else { faceIdx.push_back(seq[0]); faceIdx.push_back(seq[i + 1]); faceIdx.push_back(seq[i + 2]); }
+            }
         }
         (void)partialStrips; (void)badFaces;
         for (std::size_t t = 0; t + 2 < faceIdx.size(); t += 3) {

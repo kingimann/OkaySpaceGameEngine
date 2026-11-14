@@ -3198,6 +3198,20 @@ target_compile_definitions(test_batchd_hostile PRIVATE OKAY_STANDALONE_TEST OKAY
 add_test(NAME batchd_hostile COMMAND test_batchd_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchd_hostile PROPERTIES TIMEOUT 600)
 
+# Budgets, OGRE strips and fans, and where a scene may point (counting operator new inside; reader sources only).
+add_executable(test_batchd_budget test_batchd_budget.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/Ac3dReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/XglReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/IrrSceneReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/NffReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_batchd_budget PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batchd_budget PROPERTIES TIMEOUT 300)
+
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)

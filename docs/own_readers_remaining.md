@@ -70,7 +70,7 @@ on, so removing Assimp does not remove anything a user has today for them.
 
 Order of what to write next, by (how likely a user meets it) x (how small it is) x (whether real files exist to check against):
 
-Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real files compared), and the XML half of OGRE.
+Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real files compared), and the XML half of OGRE. After an outside review the batch has per-file budgets (triangles, vertices, subdivided corners), exception-to-refusal at the import seam, OGRE strips and fans read as strips and fans, and scene files that may only name files inside their own folder (`tests/test_batchd_budget.cpp`).
 
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).

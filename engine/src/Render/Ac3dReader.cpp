@@ -89,7 +89,9 @@ bool Hex(const std::string& t, unsigned& v) {
 
 
 struct OTri { std::uint32_t p[3] = {0, 0, 0}; Vec2 uv[3] = {{0, 0}, {0, 0}, {0, 0}}; int mat = 0; bool smooth = false; };
-constexpr std::size_t kMaxSubdivQuads = 1000000;
+// Subdivision budget for the whole file: the corners all subdivided objects may produce in all (each level makes four corners
+// out of every one), and one object's share of it. Past the budget an object keeps the levels it has.
+constexpr std::size_t kMaxSubdivCornersFile = 2000000, kMaxSubdivCornersObject = 2000000;
 
 // The polygons of one object: corner position indices and texture coordinates, flat, with the start of each face.
 struct Faces {
@@ -113,12 +115,12 @@ struct Faces {
 // two face points beside it (the midpoint on a boundary edge), an old vertex (F + 2R + (n-3)P) / n with F the mean of its face
 // points, R the mean of its edge midpoints and n its valence (boundary: 3/4 P and 1/8 of each of the two boundary neighbours;
 // a corner of the boundary stays). Corner texture coordinates are subdivided the same way inside each face, so seams stay where
-// they are. Stops before a level that would pass `maxQuads`; returns the levels done.
-long CatmullClark(std::vector<Vec3>& pos, Faces& F, long levels, std::size_t maxQuads) {
+// they are. Stops before a level whose result would pass `maxCorners` corners; returns the levels done.
+long CatmullClark(std::vector<Vec3>& pos, Faces& F, long levels, std::size_t maxCorners) {
     long done = 0;
     for (; done < levels; ++done) {
         const std::size_t nf = F.Count(), nc = F.p.size();
-        if (nc > maxQuads) break;
+        if (nc > maxCorners / 4) break;   // a level turns every corner into four
         const std::size_t nv = pos.size();
         // edges
         struct Edge { std::uint32_t a, b; int faces = 0; std::uint32_t f[2] = {0, 0}; };
@@ -433,6 +435,7 @@ static bool ReadAc3dImpl(const std::string& input, const std::string& baseDir, I
 
     std::size_t outVerts = 0;
     int degenerate = 0, subdivCut = 0;
+    std::size_t subdivCorners = 0;
     std::vector<std::array<int, 3>> tri;
     std::vector<Vec3> poly;
     for (Obj& o : objs) {
@@ -480,8 +483,10 @@ static bool ReadAc3dImpl(const std::string& input, const std::string& baseDir, I
         if (o.subdiv > 0) {
             ++subdivs;
             useNrm = false;   // the stored normals belong to the control mesh
-            const long done = CatmullClark(pos, faces, std::min<long>(o.subdiv, 8), kMaxSubdivQuads);
+            const std::size_t room = subdivCorners >= kMaxSubdivCornersFile ? 0 : kMaxSubdivCornersFile - subdivCorners;
+            const long done = CatmullClark(pos, faces, std::min<long>(o.subdiv, 8), std::min(room, kMaxSubdivCornersObject));
             if (done < o.subdiv) ++subdivCut;
+            if (done > 0) subdivCorners += faces.p.size();   // what this object now holds counts against the file's budget
         }
         // ---- triangles ----
         std::vector<OTri> tris;
@@ -538,7 +543,7 @@ static bool ReadAc3dImpl(const std::string& input, const std::string& baseDir, I
     out.backend = "own";
 
     auto note = [&](const std::string& s) { out.notes.push_back("AC3D: " + s); };
-    if (subdivs) note(std::to_string(subdivs) + " object(s) with subdivision (subdiv): Catmull-Clark subdivision applied to the polygons" + (subdivCut ? std::string("; ") + std::to_string(subdivCut) + " object(s) stopped early (more than 1,000,000 corners or 8 levels)" : std::string()) + "; stored per-vertex normals are replaced by smooth ones");
+    if (subdivs) note(std::to_string(subdivs) + " object(s) with subdivision (subdiv): Catmull-Clark subdivision applied to the polygons" + (subdivCut ? std::string("; ") + std::to_string(subdivCut) + " object(s) stopped early (8 levels, or the file-wide budget of 2,000,000 subdivided corners)" : std::string()) + "; stored per-vertex normals are replaced by smooth ones");
     if (lineSurfs) note(std::to_string(lineSurfs) + " line surface(s) (open or closed lines) skipped: the engine's meshes hold triangles only");
     if (lights) note(std::to_string(lights) + " light object(s) kept as empty nodes: lights are not imported");
     if (extraLayers) note(std::to_string(extraLayers) + " extra texture layer(s) (tiled, skids, shad) not imported");

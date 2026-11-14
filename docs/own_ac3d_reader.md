@@ -13,6 +13,7 @@ AC3D is a small 3D modeller; its text format ("AC3Db") is the exchange format of
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 22 of the opt-in table (extensions `.ac`, `.acc`, `.ac3d`) |
 | `tests/test_ac3d_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`ac3d_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
+| `tests/test_batchd_budget.cpp` | The subdivision budget on a small hostile file (`batchd_budget`) |
 
 ## What it reads
 
@@ -22,7 +23,7 @@ AC3D is a small 3D modeller; its text format ("AC3Db") is the exchange format of
 - **Surfaces.** `SURF` flags (hex): type 0 polygon (any number of corners, triangulated: convex ones as a fan, concave ones ear-clipped), type 4 triangle strip (unrolled, every second triangle turned over), types 1 and 2 (closed and open lines) are skipped and counted. Bit `0x10` (shaded) asks for smooth normals made with the object's `crease` angle (45 degrees when the file gives none); flat surfaces keep face normals; the two-sided bit `0x20` has no counterpart in the engine's meshes and is ignored. One part per (object, material, shaded or flat).
 - **Materials.** `MATERIAL "name" rgb ... emis ... shi ... trans ...`: `rgb` is the diffuse colour, `emis` the emissive colour, `shi` the shininess, `trans` becomes alpha (1 - trans). `amb` and `spec` are read and not used. A surface's `mat` picks one; the object's `texture` is joined to the model's folder and becomes the material's texture (one material per (colour set, texture) pair).
 - **Texture coordinates.** Each `refs` line is `index u v` (the extended files add more pairs for the extra layers; only the first is read). `texrep` and `texoff` are applied as `u * rep + off`. An untextured object gets no coordinates (the files write zeros there).
-- **Subdivision.** `subdiv N` is applied: **Catmull-Clark subdivision** (Catmull and Clark, 1978) of the object's polygons, N levels (at most 8, and it stops early before the object would pass 1,000,000 corners). Texture coordinates are subdivided inside each face so seams stay. Stored per-vertex normals belong to the control mesh and are replaced by smooth ones.
+- **Subdivision.** `subdiv N` is applied: **Catmull-Clark subdivision** (Catmull and Clark, 1978) of the object's polygons, N levels (at most 8, and it stops early before the result would pass the file-wide budget of 2,000,000 corners). Texture coordinates are subdivided inside each face so seams stay. Stored per-vertex normals belong to the control mesh and are replaced by smooth ones.
 
 ## Not handled (each is a line in `out.notes`)
 
@@ -30,7 +31,7 @@ Line surfaces (open and closed lines) and files that have **only** lines or no s
 
 ## Limits
 
-File 256 MiB; per object 5,000,000 vertices, 5,000,000 surfaces, 1,000,000 corners per surface, 40,000,000 corners in all; 1,000,000 objects; 100,000 materials; nesting 512. Counts (`numvert`, `numsurf`, `refs`, `kids`) must be whole numbers within the caps and the text must really hold that many lines, or the file is refused before anything large is allocated. Numbers go through `NumParse.hpp` (finite, within 1e15, locale independent). Subdivision stops at 1,000,000 corners.
+File 256 MiB; per object 5,000,000 vertices, 5,000,000 surfaces, 1,000,000 corners per surface, 40,000,000 corners in all; 1,000,000 objects; 100,000 materials; nesting 512. Counts (`numvert`, `numsurf`, `refs`, `kids`) must be whole numbers within the caps and the text must really hold that many lines, or the file is refused before anything large is allocated. Numbers go through `NumParse.hpp` (finite, within 1e15, locale independent). Subdivision has a budget for the whole file of 2,000,000 output corners (each level makes four corners out of one) and no object may pass it alone; an object that would pass it keeps the levels it has and a note says so (a 8 KB file of 60 objects with `subdiv 8` took 3.2 s and 327 MB before the budget; now about 0.5 s).
 
 ## Tests and what was checked
 

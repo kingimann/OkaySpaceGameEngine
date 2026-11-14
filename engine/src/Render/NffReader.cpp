@@ -6,6 +6,7 @@
 // capped, no recursion. See okay/Render/ModelData.hpp and docs/own_nff_reader.md.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
+#include "SceneRefPath.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -181,6 +182,7 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
     int tess = 4;
     std::size_t outVerts = 0;
     int skipped = 0, lights = 0, viewpoint = 0, badPolys = 0, twoSided = 0, colorWords = 0, unknownKeys = 0, extraNums = 0, noMtable = 0;
+    std::string tableRefused;
     std::string firstUnknown;
 
     auto matIndex = [&]() -> int {
@@ -430,10 +432,10 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
             // load the material table when there is one
             if (!mtable.empty() && table.empty()) {
                 std::string mt, e2;
-                std::string path = mtable;
-                for (char& c : path) if (c == '\\') c = '/';
-                if (!baseDir.empty() && path[0] != '/' && path.find(':') == std::string::npos) path = baseDir + path;
-                if (detail::txt::ReadFileCapped(path, 16u * 1024u * 1024u, mt, &e2)) {
+                // the table must lie inside the folder of the NFF file (no absolute path, no .. out of it, no link out of it)
+                std::string path, whyNot;
+                if (!detail::ResolveInsideDir(baseDir, mtable, path, whyNot)) { tableRefused = "material table '" + mtable + "' refused: " + whyNot; mtable.clear(); }
+                else if (detail::txt::ReadFileCapped(path, 16u * 1024u * 1024u, mt, &e2)) {
                     bool dummy; std::string w2;
                     detail::txt::NormalizeEncoding(mt, dummy, w2, 64u * 1024u * 1024u);
                     detail::txt::Lines ml(mt);
@@ -568,6 +570,7 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
     if (badPolys) note(std::to_string(badPolys) + " polygon(s) with fewer than 3 vertices skipped");
     if (twoSided) note(std::to_string(twoSided) + " polygon(s) marked 'both' (two-sided): the engine's meshes are one-sided");
     if (colorWords) note(std::to_string(colorWords) + " polygon colour word(s) (0x...) not imported");
+    if (!tableRefused.empty()) note(tableRefused);
     if (noMtable) note("the material table file (mtable) could not be read");
     if (unknownKeys) note(std::to_string(unknownKeys) + " unknown keyword line(s) skipped (first: " + firstUnknown + ")");
     if (degenerate) note(std::to_string(degenerate) + " degenerate triangle(s) skipped");

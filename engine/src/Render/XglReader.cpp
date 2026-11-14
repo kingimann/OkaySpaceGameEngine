@@ -23,7 +23,10 @@ namespace {
 namespace xgl {
 
 constexpr std::size_t kMaxFileBytes = 256u * 1024u * 1024u;       // the file, and the text after inflating it
-constexpr std::size_t kMaxVectors = 8000000, kMaxFaces = 20000000, kMaxObjects = 1000000, kMaxOutVerts = 40000000;
+constexpr std::size_t kMaxVectors = 8000000, kMaxFaces = 20000000, kMaxObjects = 1000000;
+// Per-file budgets: the triangles and vertices of all the meshes built (each <MESH> is built once, however often it is named), and
+// the triangles of everything placed in the scene (a mesh named by many objects is copied once per object).
+constexpr std::size_t kMaxOutVerts = 4000000, kMaxBuiltTris = 4000000, kMaxPlacedTris = 4000000;
 constexpr int kMaxDepth = 256;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "XGL: " + m; return false; }
@@ -139,12 +142,13 @@ static bool ReadXglImpl(const std::string& input, const std::string& baseDir, Im
     rootNode.name = "XGL";
     out.nodes.push_back(rootNode);
 
-    std::size_t outVerts = 0;
+    std::size_t outVerts = 0, builtTris = 0, placedTris = 0;
+    std::map<int, std::vector<ImportedPart>> built;   // doc node of a <MESH> -> its parts (node not set), built once
     int degenerate = 0, badRefs = 0, lines = 0, noFaces = 0, badMeshRef = 0, lights = 0, patches = 0;
     std::map<std::pair<int, long>, int> matOut;   // (mesh node, matref) -> output material index, per use is not needed: materials are per mesh
 
-    // Builds the parts of one <MESH> on `node`.
-    auto buildMesh = [&](int mesh, int node) -> bool {
+    // Builds the parts of one <MESH> once, into `built`.
+    auto buildOnly = [&](int mesh, std::vector<ImportedPart>& dst) -> bool {
         MeshDef md;
         md.node = mesh;
         // gather the arrays
@@ -232,9 +236,10 @@ static bool ReadXglImpl(const std::string& input, const std::string& baseDir, Im
             if (!detail::rc::BuildMesh(g.soup, 180.0, part.mesh, &st, kMaxOutVerts - std::min(outVerts, kMaxOutVerts))) return Fail(err, "too many output vertices");
             degenerate += st.degenerate;
             outVerts += part.mesh.vertices.size();
+            builtTris += part.mesh.triangles.size() / 3;
+            if (builtTris > kMaxBuiltTris) return Fail(err, "over the budget of " + std::to_string(kMaxBuiltTris) + " triangles for the meshes of one file");
             if (part.mesh.triangles.empty()) continue;
             if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
-            part.node = node;
             // material: the mesh's own, else the world's
             const ImportedMaterial* src = nullptr;
             auto mi = md.mats.find(g.mat);
@@ -246,7 +251,25 @@ static bool ReadXglImpl(const std::string& input, const std::string& baseDir, Im
                 if (it == matOut.end()) { out.materials.push_back(*src); it = matOut.emplace(key, (int)out.materials.size() - 1).first; }
                 part.material = it->second;
             }
-            out.parts.push_back(std::move(part));
+            dst.push_back(std::move(part));
+        }
+        return true;
+    };
+    // Puts the parts of one <MESH> on `node`: builds the mesh the first time, copies it after that, within the budget.
+    auto buildMesh = [&](int mesh, int node) -> bool {
+        auto b = built.find(mesh);
+        if (b == built.end()) {
+            std::vector<ImportedPart> parts;
+            if (!buildOnly(mesh, parts)) return false;
+            b = built.emplace(mesh, std::move(parts)).first;
+        }
+        for (const ImportedPart& sp : b->second) {
+            placedTris += sp.mesh.triangles.size() / 3;
+            if (placedTris > kMaxPlacedTris) return Fail(err, "over the budget of " + std::to_string(kMaxPlacedTris) + " triangles for everything placed in the scene (a mesh that many objects name counts once per object)");
+            if (out.parts.size() >= kMaxObjects) return Fail(err, "too many parts");
+            ImportedPart q = sp;
+            q.node = node;
+            out.parts.push_back(std::move(q));
         }
         return true;
     };

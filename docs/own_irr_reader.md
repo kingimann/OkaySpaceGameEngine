@@ -13,6 +13,7 @@ Status: **side by side, off by default** (`OKAY_OWN_IRR`, same rules as `docs/ow
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 25 (extension `.irr`); it also gives the reader its **mesh loader** (below) |
 | `tests/test_irr_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files with a test loader (`irr_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |
+| `tests/test_batchd_budget.cpp` | Budgets (100 big spheres, one mesh copied 3,000 times, 400 big files) and the path rules (`batchd_budget`) |
 
 ## What it reads
 
@@ -32,7 +33,7 @@ Assimp's cube reaches `Size / sqrt(3)` from the centre (a half-edge of 5.774 for
 
 ## Limits
 
-File 256 MiB; 1,000,000 nodes; 40,000,000 output vertices (counting every instance of a loaded mesh); 1,000 different mesh files per scene; nesting 256; the XML reader's caps.
+File 256 MiB; 1,000,000 nodes; per file 4,000,000 output triangles and 4,000,000 output vertices (spheres, and every copy of a loaded mesh, one per node that names it) and 4,000,000 triangles / vertices in all the mesh files loaded (they are kept until the end); a file over a budget is refused with a message that names it; 1,000 different mesh files per scene; nesting 256; the XML reader's caps. **A scene may only name mesh files inside its own folder:** an absolute path, a drive letter, `//host`, a `..` that climbs out, and a path that goes through a link (symbolic link, junction) to somewhere outside are refused for that node (a note says so; if nothing else gives geometry the scene is refused with the reason). Texture names are not read by the reader and are kept as written. `PolyCountX` and `PolyCountY` are clamped as doubles into 3..512 and held in 64-bit integers (a `long` is 32 bits on Windows).
 
 ## Tests and what was checked
 

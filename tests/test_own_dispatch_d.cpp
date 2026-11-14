@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <new>
+#include <stdexcept>
 #include <string>
 
 using namespace okay;
@@ -47,6 +49,18 @@ static bool DNf(const std::string& p, ImportedModel& m, std::string* e) { return
 
 int main() {
     RUN_SUITE("own_dispatch_d");
+    {   // the guard the seam puts around every own reader: an exception from a reader becomes a refusal, a normal result passes through
+        std::string e;
+        CHECK(RunReaderGuarded([] { return true; }, e) && e.empty());
+        CHECK(!RunReaderGuarded([] { return false; }, e) && e.empty());
+        CHECK(!RunReaderGuarded([]() -> bool { throw std::bad_alloc(); }, e) && e.find("memory") != std::string::npos);
+        e.clear();
+        CHECK(!RunReaderGuarded([]() -> bool { throw std::length_error("vector"); }, e) && e.find("larger buffer") != std::string::npos);
+        e.clear();
+        CHECK(!RunReaderGuarded([]() -> bool { throw std::runtime_error("boom"); }, e) && e.find("boom") != std::string::npos);
+        e.clear();
+        CHECK(!RunReaderGuarded([]() -> bool { throw 7; }, e) && e.find("unknown") != std::string::npos);
+    }
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch_d";
     fs::create_directories(dir);
     const Case cases[] = {
@@ -157,6 +171,17 @@ int main() {
         CHECK(ImportModelData((dir / "scene4.irr").string(), m4, ImportBackend::Own, false, &err) && fx::TriCount(m4) == 60);
         bool noted = false; for (const std::string& n : m4.notes) if (n.find("may not load another scene") != std::string::npos) noted = true;
         CHECK(noted);
+        // a scene that names a model file outside its own folder (by an absolute path, or with "..") is refused for that node
+        fs::create_directories(dir / "inner");
+        WriteFile(dir / "inner" / "scene5.irr", fx::BuildIrrScene());   // names tri.irrmesh: next to it, not there
+        for (const std::string& ref : {(dir / "obj.obj").string(), std::string("../obj.obj")}) {
+            s = fx::BuildIrrScene(); s.replace(s.find("tri.irrmesh"), 11, ref);
+            WriteFile(dir / "inner" / "scene6.irr", s);
+            ImportedModel m6;
+            CHECK(ImportModelData((dir / "inner" / "scene6.irr").string(), m6, ImportBackend::Own, false, &err) && fx::TriCount(m6) == 60);
+            bool refused = false; for (const std::string& n : m6.notes) if (n.find("refused") != std::string::npos) refused = true;
+            CHECK(refused);
+        }
     }
     SetImportBackend("*", ImportBackend::Default);
     std::error_code ec; fs::remove_all(dir, ec);

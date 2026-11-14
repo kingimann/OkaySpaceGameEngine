@@ -1,4 +1,8 @@
 #include <set>
+#include <exception>
+#include <functional>
+#include <new>
+#include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
 #include "okay/Render/ModelImport.hpp"
@@ -679,6 +683,21 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     return ImportBackend::Assimp;
 }
 
+bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
+    try {
+        return read();
+    } catch (const std::bad_alloc&) {
+        err = "the file needs more memory than this machine can give (refused)";
+    } catch (const std::length_error&) {
+        err = "the file asks for a larger buffer than is allowed (refused)";
+    } catch (const std::exception& e) {
+        err = std::string("the reader failed with an error (refused): ") + e.what();
+    } catch (...) {
+        err = "the reader failed with an unknown error (refused)";
+    }
+    return false;
+}
+
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
@@ -714,7 +733,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
             --loaderDepth;
             return r;
         };
-        bool good = s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
+        bool good = RunReaderGuarded([&]() -> bool { return s == 0 ? ReadObjFile(path, out, &e1) : s == 1 ? ReadStlFile(path, out, &e1) : s == 2 ? ReadPlyFile(path, out, &e1)
                   : s == 3 ? ReadColladaFile(path, out, &e1, flatten) : s == 4 ? Read3dsFile(path, out, &e1, flatten)
                   : s == 5 ? ReadBvhFile(path, out, &e1)
                   : s == 6 ? ReadOffFile(path, out, &e1)
@@ -737,7 +756,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1);   // 26
+                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+        if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);

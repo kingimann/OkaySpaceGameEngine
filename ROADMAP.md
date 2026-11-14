@@ -118,7 +118,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 4. [x] The hit origin isn't taken from positions the client can bank (#355).
 5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
 6. [ ] Tickets bound to one server, one client key and one connection.
-7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, so keep legacy hellos on.
+7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, legacy hellos are now off by default (#733); `--legacy-hello=on` re-allows them.
 8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
 9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
 10. [ ] SyncVar, message and spawn limits.

@@ -126,7 +126,7 @@ private:
     int m_ssaoW = 0, m_ssaoH = 0;
     int m_usdMVP = -1, m_usdModel = -1, m_usdEye = -1, m_usdFar = -1;   // depth pass
     int m_usDepth = -1, m_usTexel = -1, m_usRadius = -1, m_usFar = -1;  // AO pass
-    int m_umSrc = -1, m_umStrength = -1;                                // multiply
+    int m_umSrc = -1, m_umStrength = -1, m_umPower = -1;                                // multiply
     int m_w = 0, m_h = 0, m_samples = 0;
     bool m_hdr = false;               // the live target set is RGBA16F (post chain active)
     bool m_hdrUnsupported = false;    // float targets failed to build once: stay on RGBA8
@@ -144,7 +144,7 @@ private:
         m_uuVignette = -1, m_uuVignetteSmooth = -1, m_uuAspect = -1;
     int m_ufSrc = -1, m_ufTexel = -1;                                   // FXAA
     int m_udfSrc = -1, m_udfBlur = -1, m_udfDepth = -1, m_udfFocus = -1, m_udfRange = -1, m_udfFar = -1;   // DoF
-    int m_udnSrc = -1, m_udnTexel = -1, m_udnThresh = -1, m_udnRadius = -1;                                 // downsample
+    int m_udnSrc = -1, m_udnTexel = -1, m_udnThresh = -1, m_udnRadius = -1, m_udnSoft = -1;                                 // downsample
     unsigned int m_outFbo = 0, m_outTex = 0;                            // RGBA8 result of the chain
     unsigned int m_pingFbo[2] = {0, 0}, m_pingTex[2] = {0, 0};          // full-res RGBA8 pair (DoF / FXAA)
     unsigned int m_bloomFboC = 0, m_bloomTexC = 0, m_bloomFboD = 0, m_bloomTexD = 0;   // quarter-res bloom pair

@@ -32,7 +32,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.2.1 Loading and context - `Render/GLRenderer` - `LoadGL(getProc)` resolves modern GL functions at run time (no link-time GL dependency); the host makes a hidden SDL window with a 3.2 compatibility context; shaders are `#version 120`
   - 38.2.2 Main pass - `Render/GLRenderer` - depth-tested MSAA target resolved to one sample; up to 16 lights, textures with normal, specular and AO maps, 9 shader modes, fog, reflections, emissive and alpha
   - 38.2.3 Shadows - `Render/GLRenderer`, `Render/ShadowSetup` - sun cascade atlas and a local-light tile atlas, 12-tap filtered compare
-  - 38.2.4 Sky and post chain - `Render/GLRenderer` - procedural sky pass, HDR targets, SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA (the only backend with SSAO and depth of field)
+  - 38.2.4 Sky and post chain - `Render/GLRenderer` - procedural sky pass, HDR targets, SSAO, bloom, exposure/tonemap/grade/vignette, depth of field, FXAA (the reference for SSAO and depth of field)
   - 38.2.5 GPU skinning - `Render/GLRenderer` - bone rows in the vertex shader (`SupportsGpuSkinning`, `GpuSkinJoints`)
   - 38.2.6 Cleanup - `Render/GLRenderer` - `Destroy()` frees every GL object with the context current
 - **Code:** `Render/GLRenderer`
@@ -53,7 +53,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.3.1 Device - `Render/D3D11Renderer` - `Init()` makes an isolated device with an offscreen target; `InitShared(device)` builds on SDL's own device
   - 38.3.2 Main pass - `Render/D3D11Renderer` - HLSL compiled at start with d3dcompiler (vs_4_0, ps_4_0), up to 4x MSAA resolved before read-back, lighting, textures, fog and 9 shader modes
   - 38.3.3 Shadows - `Render/D3D11Renderer`, `Render/ShadowSetup` - sun cascades and local tiles from the shared plan, plus a planar ground shadow
-  - 38.3.4 Post chain - `Render/D3D11Renderer` - bloom, tonemap, grading, vignette and FXAA, plus an ambient occlusion pass (`SsaoMath.hpp`, compile-checked only, UNVERIFIED on a GPU); no depth of field
+  - 38.3.4 Post chain - `Render/D3D11Renderer` - bloom, tonemap, grading, vignette and FXAA, plus an ambient occlusion pass (`SsaoMath.hpp`, compile-checked only, UNVERIFIED on a GPU), plus a depth of field pass (`DofMath.hpp`, same status)
   - 38.3.5 Zero-copy and pipelined read-back - `Render/D3D11Renderer` - `RenderToTexture` resolves into an SDL texture; `SetReadbackStream(id)` shows the previous frame to avoid a GPU stall
   - 38.3.6 GPU skinning and sky - `Render/D3D11Renderer` - 256-joint bone palette; procedural sky and clouds
 - **Code:** `Render/D3D11Renderer`
@@ -62,11 +62,11 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
 - **Tests:** -
 - **Status:** Works - read the header, the effect counts in `D3D11Renderer.cpp` (2k lines) and the editor and player call sites; compiled only on Windows (guarded by `_WIN32`) and never run by a ctest
-- **Open:** no depth of field; the new SSAO pass has never run on a GPU (only the shared maths is unit tested, `ssao_math`); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
+- **Open:** the new SSAO and depth of field passes have never run on a GPU (only the shared maths is unit tested, `ssao_math`, `dof_math`); no automated runtime test; the editor's direct path falls back to read-back after 5 failures
 - **Related:** 38.1, 38.8, 38.9, 38.10, 2.3, 2.5
 - **Words:** D3D11, Direct3D 11, DirectX 11, HLSL, shared device, RenderToTexture, readback stream, zero-copy, Windows renderer
 - **Seen as:** Windows-only black view or driver crash; GPU stall in the editor view; ambient occlusion looking wrong or missing on Windows (the pass is unrun)
-- **Ask me like:** "Check the Direct3D 11 SSAO pass on a real GPU"; "Port depth of field from OpenGL to Direct3D 11"
+- **Ask me like:** "Check the Direct3D 11 SSAO pass on a real GPU"; "Check the Direct3D 11 depth of field pass on a real GPU"
 
 ### 38.4 Direct3D 12 backend
 - **What:** An opt-in explicit-API sibling of the Direct3D 11 backend, used only by the player when Build Game asks for it.

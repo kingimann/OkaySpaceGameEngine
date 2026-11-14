@@ -180,6 +180,7 @@ inline bool PostSet(Scene::RenderSettings& rs, const std::string& name, float va
     else if (name == "bloom_threshold") p.bloomThreshold = Mathf::Clamp(value, 0.0f, 4.0f);
     else if (name == "bloom_intensity") p.bloomIntensity = Mathf::Clamp(value, 0.0f, 4.0f);
     else if (name == "bloom_radius")   p.bloomRadius = Mathf::Clamp(value, 0.25f, 3.0f);
+    else if (name == "bloom_softness") p.bloomSoftness = Mathf::Clamp(value, 0.0f, 1.0f);
     else if (name == "grading")        p.grading = on;
     else if (name == "temperature")    p.temperature = Mathf::Clamp(value, -1.0f, 1.0f);
     else if (name == "tint")           p.tint = Mathf::Clamp(value, -1.0f, 1.0f);
@@ -191,6 +192,7 @@ inline bool PostSet(Scene::RenderSettings& rs, const std::string& name, float va
     else if (name == "ssao")           p.ssao = on;
     else if (name == "ssao_radius")    p.ssaoRadius = Mathf::Clamp(value, 0.05f, 4.0f);
     else if (name == "ssao_intensity") p.ssaoIntensity = Mathf::Clamp(value, 0.0f, 2.0f);
+    else if (name == "ssao_power")     p.ssaoPower = Mathf::Clamp(value, 0.25f, 4.0f);
     else if (name == "dof")            p.dof = on;
     else if (name == "dof_focus")      p.dofFocus = Mathf::Clamp(value, 0.1f, 1000.0f);
     else if (name == "dof_range")      p.dofRange = Mathf::Clamp(value, 0.1f, 1000.0f);

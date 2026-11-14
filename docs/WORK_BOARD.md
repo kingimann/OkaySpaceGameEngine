@@ -129,6 +129,7 @@ Nothing user-visible, nothing default.
 | Localization tools in the Localization window | John | `john/localization-window` |
 | Mesh Collider 3D: convex hull so a mesh can be a dynamic body, and collision callbacks when a body lands on it | John | `john/mesh-collider-convex` |
 | Visual script export: Wait and Delay emit after(t, fn) | John | `john/vs-export-wait-delay` |
+| Weapon definitions, melee hit window, ranged weapon | John | `john/weapon-definitions` |
 | Game clipboard: copy and paste text in fields, scripts and visual script | John | `john/game-clipboard` |
 | 2D box and capsule casts, and 2D explosion force | John | `john/physics2d-casts-explosion` (#771, draft) |
 | Renderer feature notes: which lighting, post, fog, sky and spot/point shadow switches do nothing on each backend | John | `john/renderer-feature-notes` (#772) |

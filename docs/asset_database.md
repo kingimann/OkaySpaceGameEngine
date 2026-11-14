@@ -120,7 +120,7 @@ Built-in extractors:
 |---|---|---|
 | `scene` | `okayscene`, `okayprefab` | Quoted strings that end in a known asset extension, and the paths on `prefab`, `srcscene`, `netprefab` and `visualscriptpath` lines. `gameobject`, `name` and `tag` lines are skipped, so a name like `"hero.png"` is not a reference. The scene writer quotes every path field (`CollectAssetPaths` reads the same fields from a live scene), and a test checks both agree on a scene that uses 17 component types. |
 | `material` | `okaymat` | The `texture <path>` line. |
-| `text` | `okayanim`, `okayclip`, `okaydialog`, `okayquest`, `okaybt`, `okayvs`, `okayseq`, `okayloot`, `okayitems`, `okayrecipes`, `okaydata`, `okaynav`, `gltf` | Quoted strings, `key=value` values and bare words that end in a known asset extension (dialogue portraits and sounds, behavior tree parameters, cutscene audio cues, glTF `uri`s). |
+| `text` | `okayanim`, `okayclip`, `okaydialog`, `okayquest`, `okaybt`, `okayvs`, `okayseq`, `okayloot`, `okayitems`, `okayweapon`, `okayrecipes`, `okaydata`, `okaynav`, `gltf` | Quoted strings, `key=value` values and bare words that end in a known asset extension (dialogue portraits and sounds, behavior tree parameters, cutscene audio cues, glTF `uri`s). |
 
 A value counts as an asset path only when its extension belongs to a known asset type (`AssetTypeFromExtension`),
 it has no control characters, is not a URL or `data:` URI, and a value with spaces has a folder part (so a

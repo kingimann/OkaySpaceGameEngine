@@ -15884,6 +15884,89 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
     }
     {
         VsNodeDoc d;
+        d.type = "SwingWeapon";
+        d.title = "Swing Weapon";
+        d.description = "Starts a swing on this object's Melee Attacker. Swung is true when that component is there. A weapon with a hit window lands during the window, not on this node.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Swing Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "swing weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Swing Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Swing Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Swung", "Bool", "What Swing Weapon produces on Swung. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "FireWeapon";
+        d.title = "Fire Weapon";
+        d.description = "Fires this object's gun once, if the fire rate, the reload and the rounds allow it. Fired is true when a shot left the gun.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Fire Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "fire weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Fire Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Fire Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Fired", "Bool", "What Fire Weapon produces on Fired. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "ReloadWeapon";
+        d.title = "Reload Weapon";
+        d.description = "Starts reloading this object's gun from its spare rounds. Started is true when the object has a gun.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Reload Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "reload weapon";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Reload Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Reload Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Started", "Bool", "What Reload Weapon produces on Started. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "WeaponAmmo";
+        d.title = "Get Ammo";
+        d.description = "How many rounds are left in this object's gun.";
+        d.requirements = "No component is required. It only computes a value from its inputs.";
+        d.component = "";
+        d.example = "Wire Get Ammo's Rounds output into another node's input. It has no flow of its own.";
+        d.related = "";
+        d.keywords = "get ammo";
+        d.setting = "";
+        d.settingDefault = "";
+        d.pins.push_back({false, false, "Rounds", "Number", "What Get Ammo produces on Rounds. It is a Number. Wire it into an input that expects a Number.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
+        d.type = "SetWeapon";
+        d.title = "Set Weapon";
+        d.description = "Points the Melee Attacker, the gun and the top-down shooter on this object at this weapon id. Set is true when this object exists.";
+        d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
+        d.component = "";
+        d.example = "Put Set Weapon on the flow after an event such as On Start. The chain runs when that event fires.";
+        d.related = "";
+        d.keywords = "set weapon";
+        d.setting = "weapon. The value typed into the node.";
+        d.settingDefault = "";
+        d.pins.push_back({true, true, "", "Flow", "The flow arrives here. Set Weapon runs when a wire reaches this pin.", ""});
+        d.pins.push_back({false, true, "", "Flow", "After Set Weapon finishes, the flow continues from here to the next step.", ""});
+        d.pins.push_back({false, false, "Set", "Bool", "What Set Weapon produces on Set. It is a Bool. Wire it into an input that expects a Bool.", ""});
+        add(std::move(d));
+    }
+    {
+        VsNodeDoc d;
         d.type = "SetObjectVar";
         d.title = "Set Object Var";
         d.description = "Stores Value in a variable on another object, named in Target.";

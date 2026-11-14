@@ -1450,3 +1450,8 @@ node 1524 Fn.ui_set_time
 node 1525 Fn.ui_sheet_close
 node 1526 Fn.ui_sheet_open
 node 1527 Fn.ui_sheet_open_state
+node 1528 Fn.weapon_ammo
+node 1529 Fn.weapon_fire
+node 1530 Fn.weapon_reload
+node 1531 Fn.weapon_set
+node 1532 Fn.weapon_swing

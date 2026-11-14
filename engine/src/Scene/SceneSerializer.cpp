@@ -67,6 +67,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
@@ -2404,7 +2405,21 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* c : go->GetComponents<MeleeAttacker>()) {
         out << "  melee " << c->damage << " " << c->range << " " << c->arc << " " << c->cooldown
-            << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0) << "\n";
+            << " " << (int)(unsigned char)c->attackKey << " " << (c->useMouse ? 1 : 0)
+            << " " << c->swingTime << " " << c->hitStart << " " << c->hitEnd << " " << c->knockback
+            << " " << c->comboSteps << " " << c->comboWindow << " " << c->comboBonus
+            << " " << (c->useHitbox ? 1 : 0) << " " << c->hitboxWidth << " " << c->hitboxHeight
+            << " " << c->hitboxDepth << " " << Quote(c->weapon) << " " << Quote(c->weaponFile) << "\n";
+    }
+    if (auto* g = go->GetComponent<RangedWeapon>()) {
+        out << "  gun";
+        KvOut k{out};
+        k("dmg", g->damage)("rate", g->fireRate)("range", g->range)("mag", g->magazine)("ammo", g->reserve)
+         ("reload", g->reloadTime)("kb", g->knockback)("spread", g->spread).b("hitscan", g->hitscan)
+         .b("auto", g->autoReload).key("fireKey", g->fireKey)("fireBtn", g->fireButton).key("reloadKey", g->reloadKey)
+         ("muz", g->muzzleHeight)("speed", g->projectileSpeed).str("weapon", g->weapon).str("file", g->weaponFile)
+         .str("proj", g->projectile);
+        out << "\n";
     }
     for (auto* c : go->GetComponents<Spawner>()) {   // every instance: one manager object spawns enemies and pickups
         out << "  spawner " << Quote(c->templateName) << " " << c->interval << " " << c->maxAlive
@@ -2610,6 +2625,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        if (!ts->weapon.empty()) k.str("weapon", ts->weapon);
         out << "\n";
     }
     for (auto* rd : go->GetComponents<Ragdoll>()) {
@@ -6300,6 +6316,32 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int key = 'f', um = 1;
                     in >> c->damage >> c->range >> c->arc >> c->cooldown >> key >> um;
                     c->attackKey = (char)key; c->useMouse = (um != 0);
+                    if (LooksNumeric(in)) {
+                        int combo = c->comboSteps, hb = c->useHitbox ? 1 : 0;
+                        float swing = c->swingTime, hs = c->hitStart, he = c->hitEnd, kb = c->knockback;
+                        float cw = c->comboWindow, cb = c->comboBonus;
+                        float bw = c->hitboxWidth, bh = c->hitboxHeight, bd = c->hitboxDepth;
+                        if (in >> swing >> hs >> he >> kb >> combo >> cw >> cb >> hb >> bw >> bh >> bd) {
+                            c->swingTime = swing; c->hitStart = hs; c->hitEnd = he; c->knockback = kb;
+                            c->comboSteps = combo; c->comboWindow = cw; c->comboBonus = cb;
+                            c->useHitbox = hb != 0; c->hitboxWidth = bw; c->hitboxHeight = bh; c->hitboxDepth = bd;
+                        }
+                    }
+                    in >> std::ws;
+                    if (in.peek() == '"') {
+                        c->weapon = ReadQuoted(in);
+                        in >> std::ws;
+                        if (in.peek() == '"') c->weaponFile = ReadQuoted(in);
+                    }
+                } else if (field == "gun") {
+                    auto* g = go->AddComponent<RangedWeapon>();
+                    KvIn k(in);
+                    k.f("dmg", g->damage); k.f("rate", g->fireRate); k.f("range", g->range);
+                    k.i("mag", g->magazine); k.i("ammo", g->reserve); k.f("reload", g->reloadTime);
+                    k.f("kb", g->knockback); k.f("spread", g->spread); k.b("hitscan", g->hitscan);
+                    k.b("auto", g->autoReload); k.key("fireKey", g->fireKey); k.i("fireBtn", g->fireButton);
+                    k.key("reloadKey", g->reloadKey); k.f("muz", g->muzzleHeight); k.f("speed", g->projectileSpeed);
+                    k.str("weapon", g->weapon); k.str("file", g->weaponFile); k.str("proj", g->projectile);
                 } else if (field == "spawner") {
                     auto* c = go->AddComponent<Spawner>();
                     c->templateName = ReadQuoted(in);
@@ -6639,7 +6681,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("camDist", ts->cameraDistance); k.f("camPitch", ts->cameraPitch); k.f("camYaw", ts->cameraYaw);
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
-                    k.f("shake", ts->fireShake); k.str("proj", ts->projectile);
+                    k.f("shake", ts->fireShake); k.str("proj", ts->projectile); k.str("weapon", ts->weapon);
                 } else if (field == "ragdoll") {
                     auto* rd = go->AddComponent<Ragdoll>();
                     KvIn k(in);

@@ -143,7 +143,7 @@ No open PR touches this area.
 - **Docs:** `docs/npcs_and_crafting.md` (Melee Attacker)
 - **Tests:** `npc_crafting`
 - **Status:** Works for melee (MeleeAttacker.hpp read; covered by `npc_crafting`); Basic for dodge and dive (headers read; used by the player controllers in area 4, no dedicated test file found)
-- **Open:** melee hits NPCController targets only per its header; no hit detection on arbitrary HealthStat objects, no weapon definitions tied to items, no ranged weapon component besides Projectile3D (6.6) and the shooter controllers (4.4)
+- **Open:** dodge and dive still have no test of their own. Melee now hits Health, survival health, RPG stats and NPCs, and only during its hit window and arc or hit box. Weapon definitions live in `.okayweapon` (View > Editors & Tools > Weapons), name the item they belong to, and drive Melee Attacker, Ranged Weapon and the top-down shooter. See `docs/weapons.md`.
 - **Related:** 9.5, 6.6, 4.2, 4.4, 11.4, 8.6
 - **Words:** melee, attack, sword swing, MeleeAttacker, hit arc, cooldown, dodge, roll, dive, dolphin dive, combat, weapon, player_attack
 - **Seen as:** swinging hits nothing; hits through walls; dodge does nothing because it is off by default; the player dives when it should slide

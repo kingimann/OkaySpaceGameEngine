@@ -367,6 +367,9 @@ inline VsPlace VsPlaceForNode(const char* type) {
     if (VsIs(type, "HasItem") || VsIs(type, "ItemCount") || VsIs(type, "AddItem") || VsIs(type, "RemoveItem") ||
         VsIs(type, "EquipItem") || VsIs(type, "CraftItem") || VsIs(type, "LootRoll") || VsIs(type, "SpawnPickup"))
         return VsAt("Objects", "Items");
+    if (VsIs(type, "SwingWeapon") || VsIs(type, "FireWeapon") || VsIs(type, "ReloadWeapon") ||
+        VsIs(type, "WeaponAmmo") || VsIs(type, "SetWeapon"))
+        return VsAt("Objects", "Combat");
     if (VsIs(type, "Spawn") || VsIs(type, "Destroy") || VsIs(type, "SetActive") || VsIs(type, "SetVisible") ||
         VsIs(type, "SetColor") || VsPre(type, "Particle") || VsIs(type, "SetLinePoints") || VsIs(type, "ClearTrail") ||
         VsIs(type, "GetSplinePoint") || VsIs(type, "SplineLength") || VsIs(type, "ObjectExists") ||

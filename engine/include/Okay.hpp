@@ -295,6 +295,8 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
 // Dialogue and quests

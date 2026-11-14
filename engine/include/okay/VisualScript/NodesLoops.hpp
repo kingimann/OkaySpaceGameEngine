@@ -317,6 +317,69 @@ struct ListCopyNode : VsNode {   // in0 = list, in1 = deep? -> a new list
     }
 };
 
+// List Append: add every item of Other to the end of List (Other is read first, so appending a list
+// to itself doubles it instead of running away).
+struct ListAppendNode : VsNode {   // in0 = list, in1 = other list
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return 0;
+        const VsValue ov = In(1, g, ctx);
+        auto o = ov.AsArray();
+        if (!o) { g.Error(this, ctx, "its Other input isn't a list; nothing was added"); return 0; }
+        const VsValue::Array items = *o;
+        a->insert(a->end(), items.begin(), items.end());
+        return 0;
+    }
+};
+
+// List Slice: a new list of Count items starting at Start. No Count wired = everything from Start.
+// Start 0..length is fine (length gives an empty list); Count past the end stops at the end.
+struct ListSliceNode : VsNode {   // in0 = list, in1 = start, in2 = count -> a new list
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        VsValue out = VsValue::MakeArray();
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a) return out;
+        const VsValue sv = In(1, g, ctx);
+        long start = 0;
+        if (!VsIndexFrom(sv, start) || start < 0 || start > (long)a->size()) {
+            g.Error(this, ctx, "start " + VsIndexText(sv) + " is outside the list (it has " + std::to_string(a->size()) +
+                               " item(s), numbered from 0); the slice is empty");
+            return out;
+        }
+        long count = (long)a->size() - start;
+        if (HasInput(2)) {
+            const VsValue cv = In(2, g, ctx);
+            long c = 0;
+            if (!VsIndexFrom(cv, c) || c < 0) {
+                g.Error(this, ctx, "count " + VsIndexText(cv) + " isn't a whole number of zero or more; the slice is empty");
+                return out;
+            }
+            count = std::min(count, c);
+        }
+        out.AsArray()->assign(a->begin() + start, a->begin() + start + count);
+        return out;
+    }
+};
+
+// List Pop: remove the last item and give it back. An empty list is not an error: Popped is false.
+struct ListPopNode : VsNode {   // in0 = list -> out0 item, out1 popped?
+    VsValue item;
+    bool popped = false;
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int pin, NodeGraph&, VsContext&) override { return pin == 0 ? item : VsValue(popped); }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        item = VsValue{};
+        popped = false;
+        auto a = VsListIn(this, In(0, g, ctx), g, ctx);
+        if (!a || a->empty()) return 0;
+        item = a->back();
+        a->pop_back();
+        popped = true;
+        return 0;
+    }
+};
+
 // ---- Colors --------------------------------------------------------------------
 struct MakeColorNode : VsNode {   // in0..in3 = r, g, b, a (0..1; a defaults to 1)
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {

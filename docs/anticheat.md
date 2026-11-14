@@ -526,6 +526,20 @@ detect.evidenceCap 48               # also snapshotSeconds, snapshotCap, evidenc
 detect.graceTeleport 1              # also graceRespawn, graceMigration, graceJoin, lagSpikeGap, graceLag, maxLagGracesPerMinute, pingTolerance, maxToleratedRtt
 ```
 
+### The editor inspector
+
+Anti-Cheat Config > **Detection engine** (editor) shows the `detect.*` settings of the component's inline rules: the master switch, an
+**Observe mode** checkbox, about thirty numbers grouped as Movement, Combat, Economy, Network, Risk, Responses and False positives (each with
+a tooltip taken from this page), and a text box with every `detect.*` line (so weapons, abilities, economy counters and weights, which are
+lists, can be edited too; **Apply text** checks the whole text and changes nothing on an error, naming the line). The scene file stores the same
+lines (`anticheatdetect`), so nothing is lost on save and load.
+
+- **Observe mode** sets `kickAt`, `banAt`, `shadowAt` and `rateLimitAt` to 0 (log and flag stay on): the detectors score and keep their evidence,
+  nothing is done to a player. Unticking brings back the values that were there (the defaults if a file had them at 0). This is the "start in
+  observe mode" advice of [Tuning](#tuning) as one click.
+- The logic (field table, tooltips, observe mode, text round trip) is `okay/Net/DetectInspector.hpp`, unit tested in `anticheat_wiring`.
+  A rules file (`file`) replaces the inline settings when it loads, so edit the file instead when one is set.
+
 ### Tuning
 
 - **Start in observe mode**: set `kickAt 0` and `banAt 0` (and `shadowAt 0`, `rateLimitAt 0`), run real matches, and read the evidence
@@ -567,7 +581,15 @@ detect.graceTeleport 1              # also graceRespawn, graceMigration, graceJo
 - **Parsing**: `EvidenceBundle::Parse` is built for hostile input: at most 256 KB, depth 8, 512 array items, 64 keys per object, strings of 512
   characters, finite numbers only, a known version and known detector names; unknown keys are ignored and a failed parse leaves the output untouched.
   It is fuzzed in `cheat_detect`.
-- The code that sends a report (backend, launcher) is separate; it only has to attach `bundle.ToJson(cap)`.
+- **Sending it**: `KickReporter` (the dedicated server's `--report-kicks`) attaches the kick's bundle to the `ac_reports` row it files
+  (`kind = 'server_kick'`, in the `evidence` column), for a kick and for a ban request alike (the reason then reads "ban requested by the
+  server's anti-cheat"; nothing is banned automatically, an admin decides). Before it goes out the bundle is parsed again and re-written with
+  its account and address cleared (`KickReporter::includeIdentifiers` is the opt-in, off by default), cut to 16 KiB, and checked to be a JSON
+  object (`okayac::backend::ValidEvidence`). A bundle that doesn't parse, or an engine that is off, leaves it out and the report is still filed.
+  The report throttle (one per account an hour, 20 an hour) is unchanged. On the backend an `ac_reports.evidence jsonb` column holds it:
+  a JSON object of at most 16 KiB (a check constraint), kept only when a `ac_report_servers` account files the row (anyone else's is dropped, not
+  refused), unchangeable by a review, and readable through the existing "admins read reports" policy only (no other policy on the table lets
+  anyone select). The launcher's Reports list does not fetch it; "Evidence" on a selected `server_kick` report loads that one bundle.
 
 ### Simulation harness: what was measured
 
@@ -851,6 +873,7 @@ new key, re-sign your builds with the new one, and then drop the old one.
 |---|---|---|
 | `ac_reports` | a player reporting another player, a player's own game reporting what its anti-cheat found (`kind = 'client_check'`), or a game server reporting an anti-cheat kick (`kind = 'server_kick'`) | anyone signed in can file a player report (20 an hour); only `ac_report_servers` accounts file `server_kick` ones; admins read and review |
 | `ac_report_servers` | the accounts game servers file their kick reports with | admins only |
+| `ac_devices` | which machines (salted hardware hashes) an account used, written when a session ticket is issued | admins only |
 | `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift, but never a ban on their own account |
 | `ac_appeals` | a player's appeal against one of their bans | players file through `ac_file_appeal` (one waiting at a time, 3 per ban) and see their own; admins decide |
 
@@ -861,6 +884,20 @@ change to a ban's end, reason or lift reason (`ac_ban_edit`), a report review,
 an appeal decision, and deleting a report, ban or appeal (`ac_report_delete`,
 `ac_ban_delete`, `ac_appeal_delete`). `ac_purge_old()` logs one summary line
 (`ac_purge`) instead of a line per row.
+
+#### Admin views: linked accounts and ban with devices
+
+Launcher > Admin > Anti-cheat uses the two device helpers of `anticheat.sql`:
+
+- **Linked accounts** (button on a selected report): calls `ac_linked_accounts(p_user)` for the reported account (for a client check, the
+  reporter's own) and lists the other accounts that used a machine this one used: how many machines they share, when one was last seen, and
+  whether the other account is already banned. It is a lead, not proof: machines are shared (family PCs, internet cafes). Admins only.
+- **Also ban every machine this account used** (checkbox in the Ban dialog): calls `ac_ban_with_devices` instead of a plain ban. It makes
+  the account's ban plus one machine ban per machine not already banned, in one step under the admin's own rights (the ban policy and guard apply
+  to every row, so an admin still can't ban themselves), and the launcher reports how many ban rows it made.
+
+The requests and the row parsing are plain functions in `shared/AntiCheatAdminTools.hpp` (`LinkedAccounts`, `ParseLinkedAccounts`,
+`BanWithDevices`, `ParseBanCount`, `ReportEvidence`, `ParseReportEvidence`), unit tested in `anticheat_wiring`; the launcher only sends them.
 
 Anti-cheat bans are separate from site bans (`site_bans`). They're enforced
 when a ticket is issued: the ticket service asks

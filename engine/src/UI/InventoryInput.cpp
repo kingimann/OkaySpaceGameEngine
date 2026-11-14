@@ -10,8 +10,9 @@ namespace InventoryInput {
 // ---- Hotbar + backpack ----
 
 float HotbarLayout::RowY(int row) const {
-    return anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                     : hy - 14.0f - (rows - row) * (sz + gap);
+    const float y = anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                              : hy - 14.0f - (rows - row) * (sz + gap);
+    return y + bagScroll;
 }
 
 void HotbarLayout::SlotXY(int idx, float& x, float& y) const {
@@ -84,11 +85,28 @@ HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
             L.ex = L.hx - L.sz - colGap;                              // left of the bag...
             if (L.ex < 0.0f) L.ex = L.hx + L.rowW + colGap;           // ...or right when docked left
         }
+    // A backpack taller than the screen scrolls. One that fits keeps bagScroll at 0,
+    // so a closed bag and every existing layout stay put.
+    if (ui.open && L.rows > 0) {
+        const float step = L.sz + L.gap;
+        float overflow = 0.0f;
+        if (!L.anchorTop) overflow = 8.0f - (L.hy - 14.0f - (float)L.rows * step);          // top of the far row
+        else overflow = (L.hy + L.sz + 14.0f + (float)(L.rows - 1) * step + L.sz) - (H - 8.0f);   // bottom of the last row
+        if (overflow > 0.0f) {
+            L.maxScroll = overflow;
+            const float s = std::min(std::max(ui.scroll, 0.0f), overflow);
+            L.bagScroll = L.anchorTop ? -s : s;
+        }
+    }
     return L;
 }
 
 HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     HotbarFrame f;
+    if (ui.open && L.maxScroll > 0.0f) {
+        const float w = Input::MouseWheel();
+        if (w > 0.01f || w < -0.01f) ui.scroll = std::min(std::max(ui.scroll - w * 36.0f, 0.0f), L.maxScroll);
+    }
     Inventory* inv = ui.Inv();
     if (!ui.open || !ui.dragItems || !inv) { ui.dragIndex = -1; ui.dragAmount = 0; ui.equipDrag = -1; return f; }
     const int eq = L.PickEquip(mouse.x, mouse.y);
@@ -168,10 +186,19 @@ ChestLayout LayoutChest(ChestInventory& ch, float W, float H) {
     L.player = ch.PlayerInv();
     // The chest grid uses the chest's size; the player grid uses the player's own
     // inventory UI size/columns, so resizing the chest doesn't resize your inventory.
+    // The sizes are authored for the reference height, like the hotbar: scale with the screen.
     L.cs = ch.slotSize; L.cg = ch.gap; L.cc = ch.cols < 1 ? 1 : ch.cols;
     const InventoryUI* pui = ch.PlayerUI();
     L.ps = pui ? pui->slotSize : L.cs;
     L.pg = pui ? pui->slotGap : L.cg;
+    {
+        float ref = 720.0f;
+        if (pui && pui->scaleToScreen && pui->referenceHeight > 1.0f) ref = pui->referenceHeight;
+        float sc = H > 1.0f ? H / ref : 1.0f;
+        if (!(sc > 0.05f)) sc = 1.0f;
+        L.scale = sc;
+        L.cs *= sc; L.cg *= sc; L.ps *= sc; L.pg *= sc;
+    }
     L.pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : L.cc;
     {
         const float raw = std::max(L.cc * L.cs + (L.cc - 1) * L.cg, L.pc * L.ps + (L.pc - 1) * L.pg);
@@ -179,6 +206,7 @@ ChestLayout LayoutChest(ChestInventory& ch, float W, float H) {
         if (raw > maxW && raw > 1.0f) {
             const float fit = maxW / raw;
             L.cs *= fit; L.cg *= fit; L.ps *= fit; L.pg *= fit;
+            L.scale *= fit;
         }
     }
     L.chestN = L.chest ? (L.chest->capacity > 0 ? L.chest->capacity : (int)L.chest->slots.size()) : 0;
@@ -272,17 +300,20 @@ bool GridLayout::Pick(float px, float py, int& panel, int& cx, int& cy) const {
 
 GridLayout LayoutGrid(GridInventoryUI& ui, GridInventory& primary, float W, float H) {
     GridLayout L;
-    // Honour the configured sizes (just a minimal sane floor).
-    L.cs = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
-    L.gp = ui.gap < 0.0f ? 0.0f : ui.gap;
     if (ui.multiContainer) ui.CollectContainers(L.equipped, L.nearby);
     else L.equipped.push_back(&primary);
-    L.labelH = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
-    const float vspace = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
-    L.colGap = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
-    L.pad = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
-    L.headH = ui.showMasterTitle ? 30.0f : 0.0f;
-    L.headGap = ui.showMasterTitle ? 18.0f : 6.0f;
+    // Authored pixels are for 720 high; scale with the screen, shrink to fit the width.
+    float scale = H > 1.0f ? H / 720.0f : 1.0f;
+    if (!(scale > 0.05f)) scale = 1.0f;
+    const float cs0 = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
+    const float gp0 = ui.gap < 0.0f ? 0.0f : ui.gap;
+    const float label0 = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
+    const float vspace0 = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
+    const float colGap0 = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
+    const float pad0 = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
+    const float head0 = ui.showMasterTitle ? 30.0f : 0.0f;
+    const float headGap0 = ui.showMasterTitle ? 18.0f : 6.0f;
+    float vspace = vspace0;
     auto colSize = [&](const std::vector<GridInventory*>& list, float& cw, float& ch) {
         cw = 0; ch = 0;
         for (auto* g : list) {
@@ -291,12 +322,34 @@ GridLayout LayoutGrid(GridInventoryUI& ui, GridInventory& primary, float W, floa
         }
         if (!list.empty()) ch -= vspace;
     };
-    colSize(L.equipped, L.lw, L.lh);
-    colSize(L.nearby, L.rw, L.rh);
+    auto measure = [&](float s) {
+        L.scale = s;
+        L.cs = cs0 * s; L.gp = gp0 * s; L.labelH = label0 * s;
+        L.colGap = colGap0 * s; L.pad = pad0 * s; L.headH = head0 * s; L.headGap = headGap0 * s;
+        vspace = vspace0 * s;
+        colSize(L.equipped, L.lw, L.lh);
+        colSize(L.nearby, L.rw, L.rh);
+    };
     L.hasNear = !L.nearby.empty();
-    const float totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f), totalH = std::max(L.lh, L.rh);
+    measure(scale);
+    float totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f);
+    if (totalW > W - 24.0f && totalW > 1.0f) {
+        measure(scale * ((W - 24.0f) / totalW));
+        totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f);
+    }
+    const float totalH = std::max(L.lh, L.rh);
     L.startX = (W - totalW) * 0.5f;
-    L.startY = (H - totalH) * 0.5f + 14.0f + L.headH + L.headGap;
+    const float block = totalH + L.headH + L.headGap;
+    if (block > H - 80.0f) {
+        L.scrolling = true;
+        L.maxScroll = block - (H - 80.0f);
+        ui.scroll = std::min(std::max(ui.scroll, 0.0f), L.maxScroll);
+        L.scroll = ui.scroll;
+        L.startY = 40.0f - L.scroll + L.headH + L.headGap;
+    } else {
+        ui.scroll = 0.0f;
+        L.startY = (H - totalH) * 0.5f + 14.0f * L.scale + L.headH + L.headGap;
+    }
     auto placeCol = [&](const std::vector<GridInventory*>& list, float colX, float colW, bool ground) {
         float y = L.startY;
         for (auto* g : list) {
@@ -354,6 +407,10 @@ void TakeAllInto(GridInventory& src, const std::vector<GridInventory*>& dests) {
 } // namespace
 
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
+    if (L.maxScroll > 0.0f) {
+        const float w = Input::MouseWheel();
+        if (w > 0.01f || w < -0.01f) ui.scroll = std::min(std::max(ui.scroll - w * 36.0f, 0.0f), L.maxScroll);
+    }
     if (ui.rotateKey && ui.dragInv && Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();   // applied only on a good drop
     GridInventory* under = h.panel >= 0 ? L.panels[h.panel].inv : nullptr;
     if (!ui.dragInv && Input::GetMouseButtonDown(0)) {

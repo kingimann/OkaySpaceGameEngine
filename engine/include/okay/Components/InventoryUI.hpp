@@ -35,6 +35,7 @@ public:
     bool  scrollSelect  = true;   ///< mouse wheel cycles the selection
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
+    float scroll        = 0.0f;   ///< backpack scroll while open, pixels (runtime, not saved)
     int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
     int   navSlot       = -1;     ///< keyboard / gamepad cursor while the bag is open (-1 = none)
     bool  gamepadNav    = true;   ///< d-pad / WASD moves navSlot; A picks up and drops, X splits, B cancels
@@ -312,7 +313,8 @@ public:
             for (int k = 0; k < hotbarSlots && k < 9; ++k)
                 if (Input::GetKeyDown((char)('1' + k))) selected = k;
         }
-        if (!keysBlocked && scrollSelect && hotbarSlots > 0) {
+        // While the backpack is open the wheel scrolls it (HandleHotbar); closed, it picks the slot.
+        if (!keysBlocked && scrollSelect && !open && hotbarSlots > 0) {
             float w = Input::MouseWheel();
             if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
@@ -332,6 +334,7 @@ public:
         if (!keysBlocked && ((useKey && Input::GetKeyDown(useKey)) || useClick)) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
+        if (!open) scroll = 0.0f;
         if (!keysBlocked && open && gamepadNav) Navigate();
         else navSlot = -1;
     }

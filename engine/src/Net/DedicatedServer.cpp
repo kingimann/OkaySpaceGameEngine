@@ -89,6 +89,17 @@ std::string Uptime(double secs) {
 }
 } // namespace
 
+std::string KickReporter::EvidenceFor(const NetworkManager::AntiCheatKick& k) const {
+    if (k.evidence.empty()) return {};
+    EvidenceBundle b;
+    if (!EvidenceBundle::Parse(k.evidence, b)) return {};
+    if (!includeIdentifiers) { b.account.clear(); b.address.clear(); }
+    if (b.action.empty()) b.action = k.banRequested ? "ban" : "kick";
+    if (b.risk <= 0.0f) b.risk = k.risk;
+    const std::string json = b.ToJson(okayac::backend::kMaxEvidenceBytes);
+    return okayac::backend::ValidEvidence(json) ? json : std::string();
+}
+
 bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
     if (k.userId.empty() || !m_send) return false;   // anonymous: nobody to name
     if (auto it = m_lastByUser.find(k.userId); it != m_lastByUser.end() && now - it->second < 3600.0) return false;
@@ -100,9 +111,9 @@ bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
         if (kinds.find(kind) == std::string::npos) kinds += (kinds.empty() ? "" : ", ") + kind;
         details += kind + (r.detail.empty() ? std::string() : ": " + r.detail) + "\n";
     }
-    const std::string reason = "[server check] kicked by the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
+    const std::string reason = std::string("[server check] ") + (k.banRequested ? "ban requested by" : "kicked by") + " the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
     okayac::backend::Request q;
-    if (!okayac::backend::FileServerKick(k.userId, m_game, reason, "player: " + k.name + "\n" + details, q)) return false;
+    if (!okayac::backend::FileServerKick(k.userId, m_game, reason, "player: " + k.name + "\n" + details, q, nullptr, EvidenceFor(k))) return false;
     m_lastByUser[k.userId] = now;
     m_sent.push_back(now);
     m_send(q.path, q.method, q.body, q.header);

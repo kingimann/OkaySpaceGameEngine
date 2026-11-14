@@ -336,8 +336,15 @@ find_package(Threads REQUIRED)
 target_link_libraries(okay_engine PUBLIC Threads::Threads)
 
 # Opt-in own HTTP client for NativeHttp on POSIX (libssl is dlopen'ed at run time, nothing linked but libdl).
+if(OKAY_OWN_STACK)
+    target_compile_definitions(okay_engine PUBLIC OKAY_OWN_STACK_BUILD)   # tests and the startup helper can tell a dogfood build
+endif()
 if(OKAY_OWN_HTTP AND NOT WIN32 AND NOT APPLE)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP=1)
+    if(OKAY_OWN_STACK)
+        # Dogfood build: own HTTP is ON unless OKAY_OWN_HTTP=0 (otherwise it needs OKAY_OWN_HTTP=1 at run time).
+        target_compile_definitions(okay_engine PUBLIC OKAY_OWN_HTTP_DEFAULT_ON=1)
+    endif()
     target_link_libraries(okay_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
@@ -396,6 +403,9 @@ endif()
 target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 if(OKAY_OWN_CRYPTO)
     target_compile_definitions(okay_engine PUBLIC OKAY_OWN_CRYPTO OKAY_NET_CRYPTO)
+    if(OKAY_OWN_STACK_CRYPTO_TEST)
+        target_compile_definitions(okay_engine PUBLIC OKAY_OWN_STACK_CRYPTO_TEST)   # the startup line says "own(test)"
+    endif()
     message(STATUS "OkaySpace: packet encryption ENABLED (OUR OWN crypto, unreviewed; OKAY_OWN_CRYPTO=ON)")
 elseif(OKAY_USE_SODIUM)
     set(_okay_sodium FALSE)

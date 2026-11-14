@@ -990,6 +990,15 @@ add_executable(test_ui_backend test_ui_backend.cpp)
 target_include_directories(test_ui_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME ui_backend COMMAND test_ui_backend)
 
+# The own-stack dogfood switch (OKAY_OWN_STACK build option, OKAY_OWN_STACK=1 at run time) and the one-line startup stack report.
+# Two entries because the platform and FBX choices are cached on first use: what the build does alone, and what the variable does.
+add_executable(test_own_stack test_own_stack.cpp)
+target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_own_stack PRIVATE okay::engine)
+add_test(NAME own_stack COMMAND test_own_stack)
+add_test(NAME own_stack_env COMMAND test_own_stack env)
+add_test(NAME release_refuses_own_crypto COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/check_release_own_stack.sh --self-test)
+
 add_executable(test_character_parts test_character_parts.cpp)
 target_link_libraries(test_character_parts PRIVATE okay::engine)
 add_test(NAME character_parts COMMAND test_character_parts)

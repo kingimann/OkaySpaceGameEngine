@@ -60,6 +60,35 @@ option(OKAY_OWN_X         "Read .x (DirectX models) with our own X reader by def
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 
+# ---- One switch to dogfood the whole own stack (docs/own_stack_rollout.md) -------------------------------------
+# -DOKAY_OWN_STACK=ON turns on every own backend that is safe to try in a developer or CI build: our own model readers
+# (FBX and every format that has one), our own HTTP client (Linux), our own okay::platform backend as the default (Linux),
+# and OkayUI as the launcher / editor UI default. Each is still an ordinary option or run-time switch underneath and each
+# keeps its third-party fallback. It changes only the build DEFAULTS; the run-time switches (OKAY_OWN_<FMT>=0, OKAY_OWN_HTTP=0,
+# OKAY_PLATFORM_BACKEND=sdl2, OKAY_UI_BACKEND=imgui) still win. NOT turned on, ever, by this switch: our own cryptography
+# (owner rule: needs an outside review first). OKAY_OWN_STACK_CRYPTO_TEST=ON (or that variable set to 1 in the environment at
+# configure time) additionally turns on OKAY_OWN_CRYPTO, for TEST builds and the CI own-stack job only. Releases refuse both
+# (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
+option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/own_stack_rollout.md). NEVER for releases" OFF)
+option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
+if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
+    set(OKAY_OWN_STACK_CRYPTO_TEST ON)
+endif()
+if(OKAY_OWN_STACK_CRYPTO_TEST AND NOT OKAY_OWN_STACK)
+    message(FATAL_ERROR "OKAY_OWN_STACK_CRYPTO_TEST needs OKAY_OWN_STACK=ON (it is a test-build extra of the dogfood switch)")
+endif()
+if(OKAY_OWN_STACK)
+    foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X FBX)
+        set(OKAY_OWN_${_f} ON)
+    endforeach()
+    set(OKAY_OWN_HTTP ON)   # Linux only in effect (the engine adds the define only for non-Windows, non-Apple)
+    if(OKAY_OWN_STACK_CRYPTO_TEST)
+        set(OKAY_OWN_CRYPTO ON)
+        message(WARNING "OkaySpace: OKAY_OWN_STACK_CRYPTO_TEST=ON uses our own UNREVIEWED crypto. Test build only: do not ship it")
+    endif()
+    message(STATUS "OkaySpace: OKAY_OWN_STACK=ON (dogfood build: own readers, HTTP, platform backend and OkayUI by default; crypto ${OKAY_OWN_CRYPTO})")
+endif()
+
 if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()

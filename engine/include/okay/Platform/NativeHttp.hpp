@@ -82,7 +82,12 @@ inline bool NativeAvailable() {
     return detail::Session() != nullptr && !std::getenv("OKAY_HTTP_CURL");
 #elif defined(OKAY_OWN_HTTP_ACTIVE)
     const char* on = std::getenv("OKAY_OWN_HTTP");
-    return on && on[0] == '1' && on[1] == '\0' && !std::getenv("OKAY_HTTP_CURL");
+#if defined(OKAY_OWN_HTTP_DEFAULT_ON)   // -DOKAY_OWN_STACK=ON (dogfood build): on unless OKAY_OWN_HTTP=0 (or anything but 1)
+    const bool want = on ? (on[0] == '1' && on[1] == '\0') : true;
+#else
+    const bool want = on && on[0] == '1' && on[1] == '\0';
+#endif
+    return want && !std::getenv("OKAY_HTTP_CURL");
 #else
     return false;
 #endif

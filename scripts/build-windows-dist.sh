@@ -68,6 +68,9 @@ if [ -n "${STEAMWORKS_SDK_PATH:-}" ]; then
     EXTRA+=("-DOKAY_WITH_STEAM=ON" "-DSTEAMWORKS_SDK_PATH=$STEAMWORKS_SDK_PATH")
 fi
 
+# A release never carries our own unreviewed crypto or the own-stack dogfood switch (CLAUDE.md rule 18, docs/own_stack_rollout.md).
+scripts/check_release_own_stack.sh -- "${EXTRA[@]}"
+
 cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake \
       -DCMAKE_BUILD_TYPE=Release \
@@ -77,6 +80,7 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
+scripts/check_release_own_stack.sh --cache "$BUILD_DIR"   # the configured tree too (a stale cache keeps old -D values)
 # One job per core: a bare -j lets make start every editor file at once, and the
 # big ones (editor and player main.cpp) together run a CI runner out of memory.
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"

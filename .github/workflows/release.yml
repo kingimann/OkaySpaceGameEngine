@@ -138,6 +138,11 @@ jobs:
           key: ccache-mingw-${{ github.sha }}
           restore-keys: ccache-mingw-
 
+      # A release never carries our own unreviewed crypto (OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST) or the own-stack
+      # dogfood switch (OKAY_OWN_STACK). Checked here on the environment, and again by build-windows-dist.sh on the cmake cache.
+      - name: Refuse own crypto and the own-stack switch
+        run: scripts/check_release_own_stack.sh
+
       - name: Build Windows distribution
         # The account server + public key are baked into the build as the CMake
         # defaults (see the top-level CMakeLists), pointing at the OkaySpace
@@ -274,6 +279,7 @@ jobs:
           cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
                 -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF \
                 -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF
+          scripts/check_release_own_stack.sh --cache build-linux
           cmake --build build-linux --target okay-player
           cp build-linux/bin/okay-player okay-server-linux-x64
           strip okay-server-linux-x64

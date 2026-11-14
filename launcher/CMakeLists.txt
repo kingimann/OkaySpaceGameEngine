@@ -82,7 +82,7 @@ if(TARGET okay_ui_screens)
     target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
-if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui")
+if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
 endif()
 # okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.

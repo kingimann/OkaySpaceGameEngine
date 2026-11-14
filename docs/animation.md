@@ -705,6 +705,20 @@ authored `.okayanim` clips — everything the blocky character can do —
 with its bones matched by name (Mixamo and common humanoid naming) and
 its rest stance aligned, so a T-pose rig stands and moves naturally.
 
+**Limits of the rest-pose alignment (read before trusting a rig).** The alignment is
+**swing only** (`Components/HumanoidRetarget.hpp`): for each bone it computes one
+`FromToRotation` from the direction of the rig's child bone to the direction of the
+engine bone's child. That fixes where a limb points. It does **not** correct roll or twist
+about the bone's own axis, so a rig whose bones are rolled differently from the engine's
+can bend wrongly at elbows, knees and wrists. Twist bones are ignored. Leaf bones (hands,
+feet, head) have no child to measure and inherit their parent's alignment. The rig sweep
+test (`tests/test_rig_sweep.cpp`) puts every sample rig through idle, walk, run, jump,
+crouch and turn and checks only that the skeleton stays finite, does not spike from one
+frame to the next, stands on the ground and swings the legs. It does not check that the
+pose looks right. The ROADMAP humanoid items are still open: item 6 (rest-pose
+normalisation and retargeting by avatar slot) and item 8 (one-click humanoid import on any
+rig).
+
 - Works out of the box on **Set Character Model** / drag-drop for any
   humanoid skeleton the bone names map (8 or more of the 15 engine bones):
   every locomotion slot the file has no clip for plays the built-in

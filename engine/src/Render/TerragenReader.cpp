@@ -24,7 +24,7 @@ namespace ter {
 
 constexpr std::size_t kMaxFileBytes = 64u * 1024u * 1024u;
 constexpr std::size_t kMaxSide      = 4097;                   // points along one side (Terragen's own largest terrains)
-constexpr std::uint64_t kMaxPoints  = 2049ull * 2049ull;      // whole grid: about 4.2 million points, ~240 MB of mesh
+constexpr std::uint64_t kMaxPoints  = 2049ull * 2049ull;      // whole grid: about 4.2 million points, about 270 MB while reading
 constexpr double kMinScale          = 1e-6;                   // metres per terrain unit: with both limits every slope,
 constexpr double kMaxScale          = 1e6;                    // and so every normal, stays inside float range
 constexpr double kDefaultScale      = 30.0;                   // the specification's default

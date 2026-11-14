@@ -42,6 +42,11 @@ struct Result {
     long        status = 0;
     std::string body;              ///< response body (empty when written to outFile)
     std::string error;             ///< own client only: why no response was obtained (for logs)
+    /// Only meaningful when reached is false: the request may have reached the server (the own client wrote request bytes to an
+    /// open connection; WinHTTP: ANY failure after WinHttpSendRequest succeeded, including a failed body read). Callers must NOT send a POST, PUT, PATCH or DELETE again by
+    /// another route (the curl fallback) then; a GET or HEAD may be repeated. A clean "not reached" (DNS failure,
+    /// connection refused, TLS refused, bad URL) leaves this false.
+    bool        maybeSent = false;
 };
 
 #if defined(_WIN32)
@@ -92,8 +97,9 @@ inline bool NativeAvailable() {
 /// One request. `headers` are full "Name: value" lines. The body is `body`, or
 /// the contents of `bodyFile` when set. With `outFile` the response streams to
 /// that file (downloads) instead of `Result::body`. Follows redirects.
-/// `timeoutMs` > 0 limits the whole call (the own client: connect, silence and total; WinHTTP: resolve, connect,
-/// send and receive each), so a stalled server cannot hang the caller; 0 keeps the defaults.
+/// `timeoutMs` > 0 limits the whole call on the own client (connect, silence and total), so a stalled server cannot
+/// hang the caller; 0 keeps the defaults. On Windows it is ignored: WinHTTP keeps the session timeouts set above
+/// (a per-step limit that cannot bound the whole call, and Windows was deliberately left as it was).
 inline Result Request(const std::string& method, const std::string& url,
                       const std::vector<std::string>& headers,
                       const std::string& body = std::string(),
@@ -122,7 +128,7 @@ inline Result Request(const std::string& method, const std::string& url,
     HINTERNET req = WinHttpOpenRequest(con, wmethod.c_str(), object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                        WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
     if (!req) { WinHttpCloseHandle(con); return r; }
-    if (timeoutMs > 0) WinHttpSetTimeouts(req, timeoutMs, timeoutMs < 5000 ? timeoutMs : 5000, timeoutMs, timeoutMs);
+    (void)timeoutMs;   // Windows keeps the session timeouts (see above); a per-request limit is not applied here
 
     std::wstring hdrs;
     for (const std::string& h : headers) { hdrs += detail::Widen(h); hdrs += L"\r\n"; }
@@ -135,25 +141,46 @@ inline Result Request(const std::string& method, const std::string& url,
                                  hdrs.empty() ? 0 : (DWORD)-1L,
                                  payload.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)payload.data(),
                                  (DWORD)payload.size(), (DWORD)payload.size(), 0);
+    const bool sent = ok != FALSE;
     if (ok) ok = WinHttpReceiveResponse(req, nullptr);
+    // Any failure after WinHttpSendRequest succeeded (timeout, reset, invalid reply, read error) may have reached the
+    // server, so the caller must not re-send a POST/PUT/PATCH/DELETE by curl. Only failures before the send
+    // (crack url, connect, open) leave maybeSent false.
+    if (sent && !ok) { r.maybeSent = true; r.error = "winhttp error " + std::to_string((unsigned long)GetLastError()); }
     if (ok) {
         DWORD code = 0, sz = sizeof(code);
         if (WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                                 WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz, WINHTTP_NO_HEADER_INDEX)) {
-            r.status = (long)code;
-            r.reached = true;
-        }
-        std::ofstream out;
-        if (!outFile.empty()) out.open(outFile, std::ios::binary | std::ios::trunc);
-        std::vector<char> buf(64 * 1024);
-        for (;;) {
-            DWORD avail = 0;
-            if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
-            if (avail > buf.size()) buf.resize(avail);
-            DWORD got = 0;
-            if (!WinHttpReadData(req, buf.data(), avail, &got) || got == 0) break;
-            if (out.is_open()) out.write(buf.data(), got);
-            else r.body.append(buf.data(), got);
+            DWORD clen = 0, csz = sizeof(clen);
+            const bool haveLen = method != "HEAD" &&
+                WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX, &clen, &csz, WINHTTP_NO_HEADER_INDEX) != FALSE;
+            std::ofstream out;
+            if (!outFile.empty()) out.open(outFile, std::ios::binary | std::ios::trunc);
+            std::vector<char> buf(64 * 1024);
+            unsigned long long total = 0;
+            bool cut = false;
+            for (;;) {
+                DWORD avail = 0;
+                if (!WinHttpQueryDataAvailable(req, &avail)) { cut = true; break; }
+                if (avail == 0) break;
+                if (avail > buf.size()) buf.resize(avail);
+                DWORD got = 0;
+                if (!WinHttpReadData(req, buf.data(), avail, &got)) { cut = true; break; }
+                if (got == 0) break;
+                total += got;
+                if (out.is_open()) out.write(buf.data(), got);
+                else r.body.append(buf.data(), got);
+            }
+            // A read error, or fewer bytes than Content-Length announced, is a failed call (never a 200 with a cut body).
+            if (!cut && haveLen && total < clen) cut = true;
+            if (cut) {
+                r.reached = false; r.status = 0; r.body.clear(); r.maybeSent = true;
+                r.error = "response body cut short";
+            } else {
+                r.status = (long)code;
+                r.reached = true;
+            }
         }
     }
     WinHttpCloseHandle(req);
@@ -193,11 +220,22 @@ inline Result Request(const std::string& method, const std::string& url,
         r.body = std::move(fr.response.body);
     } else {
         r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
+        r.maybeSent = fr.requestSent;
     }
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)timeoutMs;
 #endif
     return r;
+}
+
+/// The no-re-send decision, kept here so it can be tested. After a failed native call, may the caller try the same
+/// request again through curl? A success never needs it. A clean not-reached (maybeSent false) always may. If the
+/// request may have reached the server, only GET and HEAD may be repeated; POST, PUT, PATCH, DELETE (and any other
+/// method) must not, or the action could happen twice.
+inline bool ShouldFallBackToCurl(const std::string& method, const Result& nativeResult) {
+    if (nativeResult.reached) return false;
+    if (!nativeResult.maybeSent) return true;
+    return method == "GET" || method == "HEAD";
 }
 
 /// Extra controls for downloads (own client only; on Windows and without OKAY_OWN_HTTP this returns reached=false
@@ -295,6 +333,7 @@ inline ExResult RequestEx(const std::string& method, const std::string& url,
         }
     } else {
         r.error = std::string(okay::ownhttp::ErrName(fr.err)) + ": " + fr.message;
+        r.maybeSent = fr.requestSent;
     }
 #else
     (void)method; (void)url; (void)headers; (void)body; (void)bodyFile; (void)outFile; (void)ro;

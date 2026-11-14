@@ -11,9 +11,9 @@ A Terragen terrain file is a height field: a regular grid of 16-bit elevations w
 | File | What |
 |---|---|
 | `engine/src/Render/TerragenReader.cpp` | `okay::ReadTerragenBuffer` / `okay::ReadTerragenFile` (declared in `ModelData.hpp`) |
-| `engine/src/Render/ModelImport.cpp` | The seam: slot 22 of the opt-in table |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 27 of the opt-in table, run through `RunReaderGuarded` like every own reader (an allocation failure or other exception becomes a refusal) |
 | `tests/test_terragen_reader.cpp`, `tests/terragen_test_build.hpp` | Hand-computed checks on files built in memory, and the seam (`terragen_reader`) |
-| `tests/test_terragen_hostile.cpp` | Hostile input and mutation fuzz; builds without the engine library (`terragen_hostile`) |
+| `tests/test_terragen_hostile.cpp` | Hostile input, mutation fuzz, time and memory limits; builds without the engine library (`terragen_hostile`) |
 
 Switch it on like the other readers: `SetImportBackend(".ter", ImportBackend::Own)`, the environment variable `OKAY_OWN_TER=1` (or `0` to force it off), or `-DOKAY_OWN_TER=ON` at build time.
 
@@ -37,7 +37,9 @@ A file that does not start with `TERRAGENTERRAIN `; no `SIZE` or no `ALTW`; `ALT
 
 ## Limits
 
-File 64 MiB; at most 4,097 points on a side and 2049 x 2049 points (about 4.2 million) in all, which is about 240 MB of mesh. The scale limits (1e-6 to 1e6) keep every slope, and so every normal, inside float range.
+File 64 MiB; at most 4,097 points on a side and 2049 x 2049 points (about 4.2 million) in all. The largest grid takes about 270 MB while it is read: an independent review measured a 267 MB peak including the 8.4 MB file, and `terragen_hostile` holds it under 320 MB with a counting allocator.
+
+Why 8.4 million triangles, when the XGL and Irrlicht readers stop at 4 million: a terrain's triangle count is fixed by the grid it stores (two per cell). Nothing in the format multiplies it: no references, no instancing, no subdivision. So the mesh can only be as big as the elevation data the file really contains (2 bytes per point; a file that claims a bigger grid than it holds is refused before anything is built). 2049 x 2049 is a common Terragen export size, and memory grows in step with the file, about 32 bytes of mesh per byte of file. The scale limits (1e-6 to 1e6) keep every slope, and so every normal, inside float range.
 
 ## Tests and what was checked
 

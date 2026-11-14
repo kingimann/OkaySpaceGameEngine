@@ -34,6 +34,7 @@ int main() {
     socklen_t l = sizeof a; ::getsockname(fd, (sockaddr*)&a, &l);
     const std::string base = "http://127.0.0.1:" + std::to_string(ntohs(a.sin_port));
     std::atomic<bool> stop{false};
+    std::atomic<int> loopHits{0};
     std::string body(2000, 'd');
     std::thread srv([&] {
         std::vector<std::thread> w;
@@ -47,6 +48,7 @@ int main() {
                 if (path == "/ok") SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 2000\r\n\r\n" + body);
                 else if (path == "/big") SendAll(c, "HTTP/1.1 200 OK\r\nContent-Length: 2000\r\n\r\n" + body);
                 else if (path == "/redir") SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /ok\r\nContent-Length: 0\r\n\r\n");
+                else if (path == "/loop") { ++loopHits; SendAll(c, "HTTP/1.1 302 Found\r\nLocation: /loop\r\nContent-Length: 0\r\n\r\n"); }
                 else if (path == "/missing") SendAll(c, "HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\nnope");
                 else if (path == "/garbage") SendAll(c, "not http\r\n\r\n");
                 else if (path == "/hang") { while (!stop) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
@@ -70,6 +72,9 @@ int main() {
     CHECK(r.status == DownloadStatus::Failed && r.error.find("more data") != std::string::npos && !fs::exists(dest));
     r = DownloadFile(base + "/garbage", dest, 100000, onBytes, never);   // no usable answer: falls to curl, which is not there
     CHECK(r.status == DownloadStatus::Failed && !fs::exists(dest));
+    // A server that redirects forever: DownloadFile asks for 5 redirects at most, so 6 requests are made, then it fails.
+    r = DownloadFile(base + "/loop", dest, 100000, onBytes, never);
+    CHECK(r.status == DownloadStatus::Failed && !fs::exists(dest) && loopHits == 6);
     {   std::atomic<int> polls{0};
         auto t0 = std::chrono::steady_clock::now();
         r = DownloadFile(base + "/hang", dest, 100000, onBytes, [&] { return ++polls > 5; });

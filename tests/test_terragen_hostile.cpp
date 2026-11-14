@@ -8,7 +8,10 @@
 #include "test_framework.hpp"
 #include "reader_hostile_common.hpp"
 #include "terragen_test_build.hpp"
+#include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <new>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -16,6 +19,38 @@
 using namespace okay;
 using namespace hostile;
 using namespace terbuild;
+
+// ---- a counting allocator: bytes live now and the peak since the last reset ---------------------------------------------
+static std::atomic<std::size_t> g_live{0}, g_peak{0};
+static void* CountedAlloc(std::size_t n) {
+    void* raw = std::malloc(n + 16);
+    if (!raw) throw std::bad_alloc();
+    *static_cast<std::size_t*>(raw) = n;
+    const std::size_t now = g_live.fetch_add(n) + n;
+    std::size_t p = g_peak.load();
+    while (now > p && !g_peak.compare_exchange_weak(p, now)) {}
+    return static_cast<char*>(raw) + 16;
+}
+static void CountedFree(void* q) noexcept {
+    if (!q) return;
+    void* raw = static_cast<char*>(q) - 16;
+    g_live.fetch_sub(*static_cast<std::size_t*>(raw));
+    std::free(raw);
+}
+void* operator new(std::size_t n) { return CountedAlloc(n); }
+void* operator new[](std::size_t n) { return CountedAlloc(n); }
+void operator delete(void* p) noexcept { CountedFree(p); }
+void operator delete[](void* p) noexcept { CountedFree(p); }
+void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
+void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
+
+// Peak bytes the reader holds at once while reading `bytes` (the file itself is already allocated by the caller).
+static std::size_t PeakWhileReading(const std::string& bytes, bool& ok) {
+    const std::size_t base = g_live.load();
+    g_peak.store(base);
+    { ImportedModel m; std::string err; ok = ReadTerragenBuffer(bytes, m, &err); }
+    return g_peak.load() - base;
+}
 
 static long g_ok = 0, g_refused = 0;
 
@@ -92,6 +127,19 @@ int main() {
         TryTer(Header() + Dim("SIZE", 2048) + Altw(1, 0, std::vector<std::int16_t>(2049u * 2049u, 3)) + Eof());
         TryTer(Header() + Dim("SIZE", 1) + Dim("XPTS", 2050) + Dim("YPTS", 2049) + Altw(1, 0, std::vector<std::int16_t>(2050u * 2049u, 3)) + Eof());
         CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 30.0); }
+    {   // memory: the largest grid stays under 320 MB while it is read (about 270 MB of mesh and working heights); a grid
+        // over the cap and a file that claims a huge grid but holds little data are refused before any of it is built
+        const std::string largest = Header() + Dim("SIZE", 2048) + Altw(1, 0, std::vector<std::int16_t>(2049u * 2049u, 3)) + Eof();
+        const std::string over = Header() + Dim("SIZE", 1) + Dim("XPTS", 2050) + Dim("YPTS", 2049) + Altw(1, 0, std::vector<std::int16_t>(2050u * 2049u, 3)) + Eof();
+        const std::string claims = Header() + Dim("SIZE", 2048) + Altw(1, 0, std::vector<std::int16_t>(16, 3)) + Eof();
+        bool ok = false;
+        const std::size_t big = PeakWhileReading(largest, ok);
+        std::printf("  largest grid: %s, peak %zu MB\n", ok ? "read" : "refused", big >> 20);
+        CHECK(ok && big < 320u * 1024u * 1024u && big > 100u * 1024u * 1024u);   // the lower bound shows the counter sees the mesh
+        const std::size_t refusedOver = PeakWhileReading(over, ok);
+        CHECK(!ok && refusedOver < 1024u * 1024u);
+        const std::size_t refusedClaim = PeakWhileReading(claims, ok);
+        CHECK(!ok && refusedClaim < 1024u * 1024u); }
 
     // ---------------- mutation fuzz ----------------
     {

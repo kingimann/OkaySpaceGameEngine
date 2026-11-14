@@ -7,7 +7,7 @@
 //   * ImportModelData() is the single entry point that picks a backend for a
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
-//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA) are
+//   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -123,6 +123,11 @@ bool ReadStlBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// flipped (v = 1 - v) like the other bottom-up formats. Without normals,
 /// smooth normals are generated.
 bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// True when `path` is a PLY whose header declares `element vertex` more than once.
+/// Our reader rejects that file. Assimp still loads it, and the two blocks' normals
+/// and UVs no longer line up with positions, so the import seam refuses it before
+/// either backend runs. A missing file, or a PLY with one vertex element, is false.
+bool PlyFileDeclaresDuplicateVertex(const std::string& path);
 
 /// COLLADA (.dae) 1.4 / 1.5. Reads geometry (triangles, polylist, polygons; fan-triangulated,
 /// welded per position+normal+uv, smooth normals when the file has none), materials (phong /
@@ -137,24 +142,40 @@ bool ReadPlyBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// cameras, lights ...) is reported in `out.notes`. `baseDir` ends with a slash or is empty.
 bool ReadColladaBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 
+/// 3D Studio (.3ds), chunk format. Meshes (points, faces, UVs, smoothing groups -> smooth normals,
+/// per-face material groups -> one part per material), materials (diffuse, specular and bump
+/// textures, colours, shininess, self illumination), the keyframe node hierarchy with position /
+/// rotation / scale tracks (30 frames per second), and the master scale. The root node carries the
+/// master scale and the Z-up to Y-up rotation. UV v is flipped. `flatten` bakes that into the vertices
+/// and returns one root node, no clips. What was not read (lights, cameras, opacity / reflection maps,
+/// texture tiling, material transparency ...) is in `out.notes`. `baseDir` ends with a slash or is empty.
+bool Read3dsBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+/// BVH motion capture (.bvh): the joint hierarchy as nodes (position = OFFSET, no meshes) and the
+/// motion as one clip with a position and rotation key per frame and joint. Rotation channels are
+/// composed in the file's channel order. Units are kept (BVH has none); the Y-up right-handed
+/// convention of the common exporters is assumed.
+bool ReadBvhBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 
 enum class ImportBackend {
     Default,   ///< the format's default (see docs/model_import.md)
-    Own,       ///< our reader; only .obj .stl .ply .dae have one
+    Own,       ///< our reader; only .obj .stl .ply .dae .3ds .bvh have one
     Assimp     ///< Assimp; only when AssimpAvailable()
 };
 
 /// True when `ext` (".stl", any case) has one of our own readers.
-/// Collada (.dae) is the odd one out: its reader is off by default (docs/model_import.md);
-/// it runs when SetImportBackend(".dae", Own), the environment variable OKAY_OWN_COLLADA=1
-/// or the CMake option OKAY_OWN_COLLADA says so (run-time choice beats the variable, which
-/// beats CMake; OKAY_OWN_COLLADA=0 forces it off).
+/// Collada (.dae), 3DS (.3ds) and BVH (.bvh) are the odd ones out: their readers are off by default
+/// (docs/model_import.md); each runs when SetImportBackend(ext, Own), the environment variable
+/// OKAY_OWN_COLLADA=1 / OKAY_OWN_3DS=1 / OKAY_OWN_BVH=1 or the matching CMake option says so
+/// (run-time choice beats the variable, which beats CMake; =0 forces it off).
 bool HasOwnReader(const std::string& ext);
 /// Choose the backend for one extension (".stl"), or for every format with
 /// an own reader when `ext` is "*". Returns false for an extension without an own

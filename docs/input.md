@@ -199,6 +199,67 @@ Values passed to the older `FeedGamepad` / `FeedGamepadExtra` are taken as given
 `Input.Rumble(low, high, seconds)` shakes the controller. `low` drives the heavy
 motor and `high` the light one.
 
+## Touch
+
+A finger is a real touch, not a stand-in for the mouse. The player (desktop and the
+web build) reads SDL finger events and keeps every finger that is down. The first
+finger still moves the mouse, which is how a tap hits an ordinary button. The extra
+fingers are for the controls and the gestures below.
+
+`Input.TouchScreen` (OkayScript `is_touch_screen()`) becomes true when the machine
+reports a touch screen, or when a finger first lands. It stays true for the rest
+of the run.
+
+### Gestures
+
+| Gesture | What it is |
+| --- | --- |
+| Tap | a finger down and up, without moving, inside a third of a second |
+| Double tap | two taps close together. The single tap is held back until it is clear this is not a double tap |
+| Long press | a finger held still for half a second |
+| Swipe | a quick flick. The direction is up, down, left or right |
+| Pinch | two fingers moving apart or together. The scale is 1 where the pinch began |
+| Rotate | two fingers twisting. The angle is in degrees, positive counter-clockwise |
+
+OkayScript, true on the frame it happens:
+
+```
+if gesture("tap"):        set_text("Tap")
+if gesture("swipe up"):   set_text(swipe_direction())
+scale = pinch_scale()
+angle = twist_degrees()
+```
+
+`gesture` also takes `"double tap"`, `"long press"`, `"swipe"`, `"swipe down"`,
+`"swipe left"`, `"swipe right"`, `"pinch"` and `"rotate"`.
+
+C#-style scripts use `Input.Gesture("tap")`, `Input.swipeDirection`,
+`Input.pinchScale` and `Input.twistDegrees`.
+
+A visual script has **On Tap**, **On Double Tap**, **On Long Press**, **On Swipe**
+(the box can say up, down, left, right, or stay empty for any direction),
+**On Pinch** and **On Two Finger Rotate**. **Get Swipe Direction**, **Get Pinch Scale**
+and **Get Twist Angle** read the same values. A finger that is on a virtual stick,
+a D-pad or a touch button is that control, not a swipe.
+
+### On-screen controls
+
+Add Component > UI, or GameObject > UI:
+
+| Control | Drives | Notes |
+| --- | --- | --- |
+| Virtual Joystick | a direction action, Move by default | Fixed, or floating (it appears under the finger inside its rectangle) |
+| D-Pad | a direction action, Move by default | Up, down, left, right. Diagonals can be turned off |
+| Touch Button | a button action, Jump by default | Held while the finger is down. The label is drawn on it |
+
+Each one has **Only On Touch**. On, the control is hidden and ignores the mouse
+until a touch screen is in use, so a desktop game is not covered in buttons. Off,
+it is always drawn, and a mouse can press it. The keyboard and controller bindings
+of the same action keep working: the stick adds to Move, it does not replace W A S D.
+
+`examples/touch_controls` is a small scene: a stick, a D-pad and a Jump button,
+a marker that walks with Move, and a line of text that names the latest gesture.
+
 ## Your own actions
 
 A game can add actions or change a built-in one's defaults, usually from a

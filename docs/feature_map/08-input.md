@@ -78,7 +78,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Docs:** `docs/input.md`, `docs/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `uicapture_look`, `ui_touch_scroll`
 - **Status:** Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`)
-- **Open:** no gesture recognition (pinch, swipe, long press, rotate); `docs/web_mobile.md` still says to read `SDL_FINGER*` yourself although the player and the editor already call `Input::FeedTouch`; no on-screen virtual stick or touch buttons
+- **Open:** none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised (`Input/GestureRecognizer`, `Gestures`). A virtual joystick, D-pad and touch button drive the action map and can hide until a touch screen is present (`Components/TouchControls`). `docs/input.md` and `docs/web_mobile.md` describe them.
 - **Related:** 8.5, 12.9, 18.2, 37.1
 - **Words:** cursor, lock cursor, hide cursor, mouse capture, relative mouse, touch, touchscreen, finger, tap, drag, fling, mobile, phone, multi-touch, gestures, pinch
 - **Seen as:** the cursor stays visible during mouse-look or escapes the window; a tap does nothing on a phone; scrolling a list with a finger also presses buttons; the cursor does not come back after Esc

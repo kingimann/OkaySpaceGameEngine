@@ -640,25 +640,29 @@ int main(int argc, char** argv) {
     // --- ColorPicker3: hue bar and SV square edit the color. ---
     {
         float rgb[3] = {1.0f, 0.0f, 0.0f};   // start red
-        auto click = [&](float mx, float my) {
-            release();
-            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
-            OkayUI::BeginFrame(a);
-            OkayUI::Begin("CPW", 10, 10, 260, 230);
-            OkayUI::ColorPicker3("##c", rgb);
-            OkayUI::End(); OkayUI::EndFrame(r);
-            a.mouseDown = false;
-            OkayUI::BeginFrame(a);
-            OkayUI::Begin("CPW", 10, 10, 260, 230);
+        float svx = 0, svy = 0, side = 0;     // the square's top-left and side, read from the layout as the picker lays it out
+        auto picker = [&]() {
+            OkayUI::Begin("CPW", 10, 10, 260, 400);
+            const OkayUI::Vec2 cp = OkayUI::GetCursorScreenPos();
+            svx = cp.x; svy = cp.y;
+            side = std::max(48.0f, std::min(OkayUI::GetContentRegionAvail().x - 26.0f, OkayUI::GetFrameHeight() * 7.0f));
             OkayUI::ColorPicker3("##c", rgb);
             OkayUI::End(); OkayUI::EndFrame(r);
         };
-        // Hue bar (right strip, x~205) about a third down -> green range.
-        click(205.0f, 103.0f);
+        auto click = [&](float mx, float my) {
+            release();
+            OkayUI::Input a; a.mouseX = mx; a.mouseY = my; a.mouseDown = true;
+            OkayUI::BeginFrame(a); picker();
+            a.mouseDown = false;
+            OkayUI::BeginFrame(a); picker();
+        };
+        { OkayUI::Input a; OkayUI::BeginFrame(a); picker(); }   // lay out once to learn the geometry
+        // Hue bar (right of the square, 18 px wide) about a third down -> green range.
+        click(svx + side + 8.0f + 9.0f, svy + side * 0.33f);
         CHECK(rgb[1] > rgb[0]);
         CHECK(rgb[1] > rgb[2]);
         // SV square top-left (low saturation, high value) -> desaturated/bright: blue rises.
-        click(24.0f, 50.0f);
+        click(svx + side * 0.1f, svy + side * 0.1f);
         CHECK(rgb[2] > 0.4f);
     }
 

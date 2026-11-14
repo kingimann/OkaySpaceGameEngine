@@ -67,9 +67,13 @@ Vec3 Camera::ScreenToWorldPoint(float screenX, float screenY, float viewDepth,
 Mat4 Camera::EyeMatrix() const {
     if (!transform) return Mat4{};
     Mat4 m = transform->LocalToWorldMatrix();
-    const bool rolled = std::fabs(dutch) > 1e-4f || m_trauma > 0.0f;
+    const Vec3 shakePos = m_shakePos + m_cutPos;
+    const Vec3 shakeRot = m_shakeRot + m_cutRot;
+    const bool moved = std::fabs(shakePos.x) + std::fabs(shakePos.y) + std::fabs(shakePos.z)
+                     + std::fabs(shakeRot.x) + std::fabs(shakeRot.y) + std::fabs(shakeRot.z) > 1e-5f;
+    const bool rolled = std::fabs(dutch) > 1e-4f || moved;
     if (rolled)
-        m = m * Mat4::Translate(m_shakePos) * Mat4::Rotate(Quat::Euler(m_shakeRot.x, m_shakeRot.y, m_shakeRot.z + dutch));
+        m = m * Mat4::Translate(shakePos) * Mat4::Rotate(Quat::Euler(shakeRot.x, shakeRot.y, shakeRot.z + dutch));
     if (pixelPerfect && projection == Projection::Orthographic && pixelsPerUnit > 0.0f) {
         m.at(3, 0) = std::round(m.at(3, 0) * pixelsPerUnit) / pixelsPerUnit;
         m.at(3, 1) = std::round(m.at(3, 1) * pixelsPerUnit) / pixelsPerUnit;
@@ -97,6 +101,9 @@ void Camera::Shake(float strength) {
     if (Accessibility::MotionScale() <= 0.0f) return;   // the player turned off screen shake
     m_trauma = Mathf::Clamp(m_trauma + strength, 0.0f, 1.0f);
 }
+
+void Camera::SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg) { m_cutPos = pos; m_cutRot = rotDeg; }
+void Camera::ClearCutsceneShake() { m_cutPos = {0, 0, 0}; m_cutRot = {0, 0, 0}; }
 
 void Camera::ZoomTo(float target, float seconds) {
     target = target > 0.01f ? target : 0.01f;

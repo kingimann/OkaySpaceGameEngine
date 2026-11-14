@@ -27,6 +27,7 @@ inline void CollectEditorPlayKeys(std::vector<char>& down, const Uint8* ks, int 
     if (on(SDL_SCANCODE_SPACE)) down.push_back(' ');
     if (on(SDL_SCANCODE_LSHIFT) || on(SDL_SCANCODE_RSHIFT)) down.push_back(okay::Input::KeyShift);
     if (on(SDL_SCANCODE_LCTRL) || on(SDL_SCANCODE_RCTRL)) down.push_back(okay::Input::KeyCtrl);
+    if (on(SDL_SCANCODE_LGUI) || on(SDL_SCANCODE_RGUI)) down.push_back(okay::Input::KeyCmd);
     if (on(SDL_SCANCODE_BACKSPACE)) down.push_back((char)8);
     if (on(SDL_SCANCODE_RETURN) || on(SDL_SCANCODE_KP_ENTER)) down.push_back('\r');
     if (on(SDL_SCANCODE_ESCAPE)) down.push_back((char)27);

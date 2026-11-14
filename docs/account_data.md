@@ -71,7 +71,7 @@ Every table in `docs/sql/*.sql` and `docs/supabase-backend.md` that references
 `cloud_saves`, `leaderboards`, `player_stats`, `match_players`, `match_tickets`,
 `party_members`, `parties`, `game_sessions`, `ac_reports` (filed by or about
 you), `reports` (user reports you filed, and reports about you or your content;
-their snapshot holds your words), `ac_appeals`, `ac_report_servers`, `profiles`; every file under
+their snapshot holds your words), `ac_devices` (machines your account used), `ac_appeals`, `ac_report_servers`, `profiles`; every file under
 `<your id>/` in the `chat` and `workshop` storage buckets; then the auth user.
 
 **Consequences the launcher warns about:** forum threads you started disappear

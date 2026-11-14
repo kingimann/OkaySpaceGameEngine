@@ -1,7 +1,9 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Math/Vec3.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/AudioStream.hpp"
+#include "okay/Core/Subtitles.hpp"
 #include <cmath>
 #include <memory>
 #include <string>
@@ -49,6 +51,9 @@ public:
     AudioGroup group = AudioGroup::SFX;
     bool  loop = false;
     bool  playOnAwake = false;
+    /// Shown as a sound caption ("[door slams]") when this source plays, and only
+    /// while the player's sound captions are on. Empty means no caption.
+    std::string caption;
     /// 3D positional audio: when true, the mixer fades the source by its
     /// distance to the listener (AudioMixer::SetListener) and pans it to the
     /// side it is on. Full volume within minDistance, silent past maxDistance.
@@ -60,6 +65,23 @@ public:
     /// kLowPassOff or above leaves the sound untouched.
     float lowPass = kLowPassOff;
     static constexpr float kLowPassOff = 22000.0f;
+    /// Pitch follows speed: on, the pitch rises when this sound or the listener
+    /// is moving closer and falls when they move apart. Off (the default) leaves
+    /// `pitch` as the only pitch. `dopplerScale` 1 matches real speed, 0 is no
+    /// shift, higher exaggerates it. Only 3D sources use it.
+    bool  doppler = false;
+    float dopplerScale = 1.0f;
+    /// A solid wall between this and the listener makes the sound quieter
+    /// (`occlusionVolume`, 1 = no quieter) and muffled (`occlusionLowPass` Hz).
+    /// Off (the default) ignores the walls. Triggers do not count. 3D only.
+    bool  occlude = false;
+    float occlusionVolume = 0.25f;
+    float occlusionLowPass = 800.0f;
+    /// Far sounds get muffled, along a curve that stays bright up close and
+    /// reaches `distanceLowPassHz` at maxDistance. Off (the default) keeps the
+    /// tone the same at every distance. 3D only.
+    bool  distanceLowPass = false;
+    float distanceLowPassHz = 2000.0f;
 
     bool  IsPlaying() const { return m_playing; }
     /// Seconds left in the clip at the current pitch (0 when stopped).
@@ -122,7 +144,10 @@ public:
     /// One-shots still sounding (PlayOneShot), not counting the main clip.
     std::size_t ActiveOneShots() const { return m_shots.size(); }
 
-    void Play()  { m_playing = true; m_pos = 0.0; RewindStream(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false; }
+    void Play()  {
+        m_playing = true; m_pos = 0.0; RewindStream(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false;
+        if (!caption.empty()) CaptionManager::Main().Sound(caption, Duration());
+    }
     void Stop()  { m_playing = false; m_pos = 0.0; m_shots.clear(); m_fade = 1.0f; m_fadeTarget = 1.0f; m_fadeStop = false; }
 
     /// Start from silence and rise to full volume over `seconds` (restarts the
@@ -171,6 +196,9 @@ private:
     float m_fade = 1.0f, m_fadeTarget = 1.0f, m_fadeRate = 0.0f;   // fade level, its target, change per second
     bool  m_fadeStop = false;   // stop once a fade reaches silence
     float m_lowPassState = 0.0f, m_lowPassStateR = 0.0f;   // one-pole filter memory, left and right
+    Vec3  m_spatialPos{};          // last mixed world position, for doppler
+    bool  m_hasSpatialPos = false;
+    float m_occlusion = 0.0f;      // 0 clear .. 1 fully behind a wall, smoothed
     std::shared_ptr<AudioStream> m_stream;   // the streamed sound, when `clip` is empty
     void RewindStream() { if (IsStreaming()) { m_stream->loop = loop; m_stream->Seek(0); } }
     std::vector<Shot> m_shots;

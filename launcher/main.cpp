@@ -24,6 +24,7 @@
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for downloads, size probes and previews (only with OKAY_OWN_HTTP)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -442,6 +443,9 @@ void ProcKill(Proc* p) {
 // redirect chain reports the final resource's size).
 long long HeadSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    { std::string own; if (okay::http::OwnHeadDump(url, "OkaySpace-Launcher", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
+#endif
     std::error_code ec;
     fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
 #if defined(_WIN32)
@@ -693,6 +697,9 @@ long long RemoteSize(const std::string& url) {
     std::error_code ec;
     fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
     std::string u = BustCache(url);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    { std::string own; if (okay::http::OwnHeadDump(u, "", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
+#endif
 #if defined(_WIN32)
     std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\"";
 #else

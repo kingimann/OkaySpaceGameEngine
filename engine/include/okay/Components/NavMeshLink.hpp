@@ -34,20 +34,30 @@ public:
     /// Is this link in play (component on, object active)?
     bool Usable() const { return enabled && gameObject && gameObject->active; }
 
+    /// The arc height a Jump really uses: a NaN or infinite arcHeight counts as 0 (no arc), and a
+    /// finite one is kept within +-100000 m, so the arc can neither be NaN nor overflow to infinity
+    /// (Grok finding 29: `arc=nan` / `arc=1e999` in a scene file left every jumper at a NaN height).
+    float ArcHeightUsed() const {
+        if (!std::isfinite(arcHeight)) return 0.0f;
+        return std::clamp(arcHeight, -kMaxArcHeight, kMaxArcHeight);
+    }
+    static constexpr float kMaxArcHeight = 100000.0f;
+
     /// Where an agent is `t` (0..1) of the way across from `a` to `b`: a Jump follows a
     /// parabola, a Drop falls (slow first, then accelerating), a Ladder climbs in a straight line.
     Vec3 PointAt(const Vec3& a, const Vec3& b, float t) const {
         t = std::clamp(t, 0.0f, 1.0f);
         Vec3 p = a + (b - a) * t;
-        if (type == Type::Jump) p.y += arcHeight * 4.0f * t * (1.0f - t);
+        if (type == Type::Jump) p.y += ArcHeightUsed() * 4.0f * t * (1.0f - t);
         else if (type == Type::Drop) p.y = a.y + (b.y - a.y) * t * t;
         return p;
     }
     /// Seconds the crossing from `a` to `b` takes for an agent whose own speed is `agentSpeed`.
     float Duration(const Vec3& a, const Vec3& b, float agentSpeed) const {
-        const float v = speed > 0.0f ? speed : agentSpeed;
-        const float d = (b - a).Magnitude();
-        return std::max(d / std::max(v, 0.01f), 0.05f);
+        float v = speed > 0.0f ? speed : agentSpeed;
+        if (!(v >= 0.01f)) v = 0.01f;            // also a NaN agent speed
+        const float dur = (b - a).Magnitude() / v;
+        return dur >= 0.05f ? dur : 0.05f;       // also a NaN distance
     }
 
 private:

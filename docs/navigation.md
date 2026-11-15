@@ -172,6 +172,13 @@ two ends in that order, for an animation hook; Action Lists get `nav_link_start`
 `IsTraversingLink()`, `CurrentLink()` and `LinkProgress()` report the crossing. An agent driven by an
 NPC or click-to-move controller does not use links.
 
+A Jump link whose **arcHeight** is NaN or infinite (a scene file line `arc=nan`, `arc=inf` or
+`arc=1e999`, which reads as infinite) jumps with no arc (height 0), and a finite arcHeight is
+kept between -100000 and 100000 m. Before this, every agent that jumped such a link was left at a
+NaN height for good and never arrived (Grok finding 29, issue #888). A NaN agent speed gives a
+finite crossing time too. How to try it: the gap scene of `tests/test_navmesh_areas.cpp` with
+`arcHeight` set to infinity: the agent crosses and arrives at (6, 0, 0). Test: `grok_nan_navmesh`.
+
 ## Obstacle carving
 
 A **Nav Mesh Obstacle** with **Carve** on cuts its footprint out of the navigation mesh while the scene
@@ -261,6 +268,26 @@ moves the Transform projected to the mesh height. On an object that has an
 `NPCController` or `ClickToMoveController` it hands the destination to that
 controller (`CommandGoTo` / `MoveTo`) and only reports. Broadcasts
 `nav_arrived` to Action Lists when it gets there.
+
+Bad numbers (NaN, infinity, a value below zero) never reach the object's position (Grok finding 23,
+issue #888):
+
+- A destination that is not finite is refused. The agent drops any destination it had, stays where
+  it is, and reports `HasPath()` false and `Arrived()` false, the same as a goal it cannot reach. On
+  an NPC or click-to-move controller it cancels that controller's order instead of passing it on.
+- `Navigation::FindPath` and `FindPathForAgent` return no path for a start or goal that is not
+  finite. (Without a baked mesh they used to fall back to a straight line to it.)
+- **speed** NaN or below 0 counts as 0: the agent stands still and keeps its destination. An
+  infinite speed still moves it straight to the next corner.
+- **stopping distance** NaN or below 0 counts as 0, and an agent counts as arrived within 1 mm of
+  the goal, so a stopping distance of 0 also arrives (it could sit a few micrometres short for
+  ever before).
+- **angular speed** NaN counts as 0 (snap to face the way it goes), like a value of 0 or below.
+- **base offset** that is not finite counts as 0.
+
+The fields themselves are not rewritten: a script that reads them back sees what it set. How to try
+it: a script that sets an agent's destination to a point with `sqrt(-1)` in it, or its speed to
+`sqrt(-1)`, leaves the agent standing where it is. Test: `grok_nan_navmesh`.
 
 **Nav Mesh Obstacle** - a box or capsule agents go around (a cart, a sliding door, a barrel). It is never
 baked, so it may move every frame; agents always steer around it locally. With **Carve** on it also cuts a hole

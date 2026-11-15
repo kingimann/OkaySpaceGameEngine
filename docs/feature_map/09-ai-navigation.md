@@ -39,7 +39,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **API:** `NavMeshAgent`, `NavMeshObstacle`, `Carve`, `Carving`, `NavMesh::Carve`, `Navigation::CarveGeneration`, `SetDestination`, `Arrived`, `RemainingDistance`, `HasPath`, script `nav_move_to`, `nav_arrived`, `nav_stop`, visual-script Nav Move To, Nav Stop, Nav Arrived
 - **Editor:** Add Component > Gameplay > Nav Mesh Agent and Nav Mesh Obstacle (box or capsule, Carve fields, red carve footprint in the Scene view); Navigation window Send Selected Agent To Click; paths drawn as cyan lines in the Scene view
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`, `grok_nan_navmesh`
 - **Status:** Works - NavMeshAgent.hpp and the function layout of NavMeshAgent.cpp read (Replan, Avoid, Move, Face, Animate, Update); behaviour covered by `navmesh` per its agent cases
 - **Open:** agents only avoid each other and obstacles locally; there is no crowd-wide planner; carving is run time only (the editor previews the footprint), is a hole in the shared mesh for every agent and rebuilds the carved copy whole; area costs and links are 9.6
 - **Related:** 9.1, 9.4, 9.5, 4.4
@@ -78,7 +78,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **API:** `BehaviorTree`, `BehaviorTreeRunner`, `Blackboard`, `BtValue`, `BtStatus`, `BtNodeType`, script `bt_set`, `bt_get`, `bt_run`, `bt_stop`, `on_bt_event`, C# `BehaviorTree.Set`, visual-script Set Blackboard, Get Blackboard, Run Tree
 - **Editor:** View > Editors & Tools > Behavior Tree; Add Component > Gameplay > Behavior Tree Runner; double-click a `.okaybt` in the Project panel
 - **Docs:** `docs/behavior_trees.md`
-- **Tests:** `behavior_tree`
+- **Tests:** `behavior_tree`, `grok_nan_navmesh`
 - **Status:** Works - BehaviorTreeRunner.hpp and the tick structure in BehaviorTreeRunner.cpp read; node behaviour covered by the 826-line `behavior_tree` test
 - **Open:** no step-over or step-into (a breakpoint pauses Play, and the toolbar step runs one frame); Start Dialogue is the only task that links to story (10.2); perception is still a separate copy of the NPC controller's sight (9.5)
 - **Related:** 9.2, 9.5, 10.2, 11.7, 7.3
@@ -119,7 +119,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **API:** `NavMeshModifier`, `NavMeshLink`, `NavArea`, `NavQueryFilter`, `NavMeshAgent::areaMask`, `NavMeshAgent::onLinkStart`, `NavMeshAgent::onLinkEnd`, `NavMeshAgent::IsTraversingLink`, `Navigation::FindPathForAgent`, `NavMeshSurface::areaCost`
 - **Editor:** Add Component > Gameplay > Nav Mesh Modifier and Nav Mesh Link; Nav Mesh Agent > Area Mask; Navigation window > Areas, Show Links; Scene view colours the mesh by area and draws links
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh_areas`, `navmesh`
+- **Tests:** `navmesh_areas`, `navmesh`, `grok_nan_navmesh`
 - **Status:** Works - covered by `navmesh_areas` (cheaper road over shorter swamp, blocked area never entered, per-agent mask, link used / ignored when disabled, masked or too costly, one-way and two-way, crossing ends on the end point with events in order, scene round trip)
 - **Open:** area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against geometry; link ends must be within 1.5 m of the mesh
 - **Related:** 9.1, 9.2

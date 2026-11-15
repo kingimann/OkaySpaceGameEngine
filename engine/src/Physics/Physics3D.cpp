@@ -7,6 +7,8 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Math/JointLimit.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Physics/JointSpring.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1164,7 +1166,8 @@ void Physics3D::Step(Scene& scene, float dt) {
             Vec3 va = ra->velocity, vb = rbB ? rbB->velocity : Vec3::Zero;
             float vrelN = Vec3::Dot(vb - va, n);
             if (m == Joint3D::Mode::Spring) {
-                float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
+                // restore + damp, along n (A->B), capped to what one step can follow (JointSpring.hpp)
+                float f = JointSpringForce(j->spring, j->damper, C, vrelN, imSum, dt);
                 Vec3 imp = n * (f * dt);
                 ra->velocity = ra->velocity + imp * imA;
                 if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity - imp * imB;
@@ -1460,6 +1463,8 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
                                 std::uint32_t layerMask, bool queryTriggers) {
     RaycastHit3D best;
     best.distance = maxDistance;
+    // A NaN or infinite origin or direction, or a NaN reach, is no ray: no hit (Grok finding 20).
+    if (!Finite(origin) || !Finite(direction) || std::isnan(maxDistance)) return best;
     Vec3 dir = direction.Normalized();
     const QueryCache& q = QueryLists(scene);
     for (Collider3D* c : q.colliders) {
@@ -1485,6 +1490,7 @@ std::vector<RaycastHit3D> Physics3D::RaycastAll(Scene& scene, const Vec3& origin
                                                 float maxDistance, GameObject* ignore,
                                                 std::uint32_t layerMask, bool queryTriggers) {
     std::vector<RaycastHit3D> hits;
+    if (!Finite(origin) || !Finite(direction) || std::isnan(maxDistance)) return hits;   // see Raycast
     Vec3 dir = direction.Normalized();
     auto add = [&](Collider3D* c, GameObject* go, float t, const Vec3& n) {
         RaycastHit3D h;
@@ -1576,6 +1582,14 @@ struct QueryShape {
             return {Mathf::Abs(b.x - a.x) * 0.5f + r, Mathf::Abs(b.y - a.y) * 0.5f + r, Mathf::Abs(b.z - a.z) * 0.5f + r};
         return {r, r, r};
     }
+    /// Every number that places or sizes the shape is finite. A query with a NaN or infinite
+    /// centre, end, radius, half-size or axis is no shape at all: it hits and overlaps nothing.
+    bool AllFinite() const {
+        if (kind == Box) return okay::Finite(box.c) && okay::Finite(box.h) && okay::Finite(box.ax) &&
+                                okay::Finite(box.ay) && okay::Finite(box.az);
+        if (kind == Capsule) return okay::Finite(a) && okay::Finite(b) && std::isfinite(r);
+        return okay::Finite(c) && std::isfinite(r);
+    }
     /// The smallest "thickness" — sets the sweep's step so nothing slips between samples.
     float Thinnest() const {
         if (kind == Box) return Mathf::Min(box.h.x, Mathf::Min(box.h.y, box.h.z));
@@ -1644,6 +1658,7 @@ bool ShapeTouch(Collider3D* col, const QueryShape& q, Vec3& n, Vec3& point) {
 std::vector<Collider3D*> Overlap(Scene& scene, const QueryShape& q, std::uint32_t mask,
                                  bool queryTriggers, GameObject* ignore) {
     std::vector<Collider3D*> out;
+    if (!q.AllFinite()) return out;   // a NaN / infinite centre or size overlaps nothing
     for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         Vec3 n, p;
@@ -1663,6 +1678,9 @@ RaycastHit3D Sweep(Scene& scene, const QueryShape& q, const Vec3& dir, float max
                    GameObject* ignore, std::uint32_t mask, bool queryTriggers,
                    bool skipStartOverlaps, bool skipTriMeshes = false) {
     RaycastHit3D best;
+    // A shape, direction or reach that is not a number used to slip through the slab test as a
+    // clean [0, maxDist] span and "hit" at distance 0 with a NaN point (Grok finding 20): no hit.
+    if (!q.AllFinite() || !Finite(dir) || std::isnan(maxDist)) return best;
     struct Cand { Collider3D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec3 o = q.Center(), ext = q.Extent();
@@ -1759,6 +1777,7 @@ Physics3D::IgnoreHierarchy::~IgnoreHierarchy() { g_ignoreTree = m_prev; }
 RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
                                    float radius, float maxDistance, GameObject* ignore,
                                    std::uint32_t layerMask, bool queryTriggers) {
+    if (!std::isfinite(radius)) return RaycastHit3D{};   // NaN / infinite radius: no sphere, no hit
     Vec3 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
     return Sweep(scene, SphereShape(origin, radius), dir, maxDistance, ignore, layerMask,

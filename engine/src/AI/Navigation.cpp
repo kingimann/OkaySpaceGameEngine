@@ -6,6 +6,7 @@
 #include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Math/IKMath.hpp"
 #include "okay/Scene/Scene.hpp"
 
 #include <algorithm>
@@ -81,6 +82,9 @@ std::uint32_t Navigation::CarveGeneration(Scene& scene) {
 bool Navigation::FindPath(Scene& scene, const Vec3& from, const Vec3& to, std::vector<Vec3>& out,
                           float agentRadius, GameObject* self) {
     out.clear();
+    // A start or goal that is not finite has no path. Without a mesh the straight-line fallback
+    // below used to hand back {from, to} and walk the agent to NaN (Grok finding 23).
+    if (!Finite(from) || !Finite(to)) return false;
     if (const NavMesh* mesh = Mesh(scene)) {
         Vec3 s, e;
         if (mesh->FindNearestPoly(from, kSnap, &s) < 0 || mesh->FindNearestPoly(to, kSnap, &e) < 0) return false;
@@ -97,6 +101,7 @@ bool Navigation::FindPathForAgent(Scene& scene, const Vec3& from, const Vec3& to
                                   std::vector<NavMeshLink*>& legLinks, std::uint32_t areaMask,
                                   float agentRadius, GameObject* self) {
     legLinks.clear();
+    if (!Finite(from) || !Finite(to)) { out.clear(); return false; }   // see FindPath
     const NavMesh* mesh = Mesh(scene);
     if (!mesh) {
         if (!FindPath(scene, from, to, out, agentRadius, self)) return false;

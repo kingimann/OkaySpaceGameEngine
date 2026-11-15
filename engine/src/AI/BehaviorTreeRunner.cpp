@@ -21,6 +21,7 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Math/IKMath.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -895,7 +896,10 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
                 if (n.Flag("once")) return BtStatus::Success;
             }
             if (!r.hasGoal) {
-                const float radius = std::max(0.1f, n.Num("radius"));
+                // 0.1 m .. 100 km: `radius = inf` (or 1e999) used to make a NaN goal (Grok finding 23).
+                float radius = n.Num("radius");
+                if (!(radius >= 0.1f)) radius = 0.1f;
+                if (radius > 100000.0f) radius = 100000.0f;
                 Vec3 p;
                 if (!(sc && Navigation::RandomPoint(*sc, m_home, radius, m_seed, p))) {
                     const float a = Rand() * 6.2831853f, rr = std::sqrt(Rand()) * radius;
@@ -1173,6 +1177,8 @@ void BehaviorTreeRunner::FaceToward(const Vec3& dir, float degPerSec, float dt) 
 BehaviorTreeRunner::Move BehaviorTreeRunner::MoveToward(const Vec3& goal, float stop, float speed, bool run, float dt) {
     Scene* sc = SceneOf();
     if (!sc || !transform) return Move::Blocked;
+    // A goal that is not a finite point (a waypoint at NaN) is not a place: blocked, never walked to.
+    if (!Finite(goal)) { StopMoving(); return Move::Blocked; }
     const Vec3 pos = Position();
     if (Dist2D(pos, goal) <= std::max(0.05f, stop)) { StopMoving(); return Move::Arrived; }
     if (m_agent && !m_npc) {

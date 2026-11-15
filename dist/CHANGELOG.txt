@@ -44,11 +44,11 @@ v2.875.0
 
   Download
   - The examples folder is now part of the Windows download. It has the
-    vehicle test scene, five tiny sample model files for our older own
-    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae,
-    cube_gzip.blend, cube_compressed_arrays.fbx) and one sound sample for our
-    own WAV reader (examples/own_wav). There is also a "Vehicle (get in and
-    drive)" template and a plain how-to-try-it guide (docs/try_it.md).
+    vehicle test scene, three tiny sample model files for our older own
+    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae) and
+    one sound sample for our own WAV reader (examples/own_wav). There is also
+    a "Vehicle (get in and drive)" template and a plain how-to-try-it guide
+    (docs/try_it.md).
 
   Our own code, off by default (nothing changes unless you switch it on)
   - Ten more of our own model readers: Terragen, MDC, HMP, CSM, Q3D, RAW,
@@ -65,13 +65,13 @@ v2.875.0
   Under the hood
   - Importing an OBJ model with absurdly large face numbers can no longer
     overflow while it is read.
-  - One SHA-256 (with HMAC and PBKDF2) instead of three copies, and one
-    DEFLATE (zlib, gzip) decoder instead of three. Nothing should look
-    different: sign-in, the update check, anti-cheat servers, PNG textures and
-    .blend, .x, 3MF, AMF and FBX files should work exactly as before. The new
-    code was compared byte for byte with the old copies. Tell us if any of
-    those break. The hashing code was read by an AI only, not by an outside
-    reviewer. libsodium is still what protects the network.
+  - One SHA-256 (with HMAC and PBKDF2) instead of three copies. Nothing
+    should look different: signing in with an existing local account, the
+    update check, anti-cheat servers and voice rooms should work exactly as
+    before, a little faster. The new code was compared byte for byte with the
+    old copies. Tell us if any of those break. The hashing code was read by an
+    AI only, not by an outside reviewer. libsodium is still what protects the
+    network.
 
   Team tooling
   - New checks that stop two people building the same thing and catch common

@@ -289,7 +289,7 @@ item lists the fields the engine reads: `cooldown`, `maxDurability`, `breakActio
 functions are there as nodes whose title is the function name in words: VS_NODE_TITLES. Search the box for `grid`, `cooldown` or
 `wear` to find them. Each takes the arguments the text function takes (`docs/inventory.md`).
 
-**What is not there.** No durability bar or "broken" tint in the bag (the tooltip shows the number). In the sample the **X**
+**What is not there.** No durability bar or "broken" tint in the bag (an item's tooltip shows `Durability N` once it has been worn; the line above the hotbar is the live display). In the sample the **X**
 key stands in for fighting; a real melee swing, a shot or a hit wears an item through its fields `wearPerStrike`,
 `wearPerShot` and `wearPerHit`, with no script. Cooldowns and slot-to-grid moves are not networked. A visual script cannot
 listen for a refused use yet.

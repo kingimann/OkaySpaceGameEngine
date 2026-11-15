@@ -20,6 +20,7 @@ glTF 1.0 is the first version of Khronos's transmission format (2015). It was re
 | `tests/test_gltf1_reader.cpp`, `tests/gltf1_test_build.hpp` | Hand-computed checks on files built in memory, files on disk, refusals and the seam (`gltf1_reader`) |
 | `tests/test_gltf1_hostile.cpp` | Hostile input, a memory and time budget, mutation fuzz; builds without the engine library (`gltf1_hostile`) |
 | `tests/test_own_gltf1_default.cpp` | Fails if `-DOKAY_OWN_GLTF1=ON` stops making this reader the default (`own_gltf1_default`) |
+| `tests/test_own_gltf1_samples.cpp`, `examples/own_readers/box_v1.gltf`, `box_v1.glb`, `scripts/gen_gltf1_samples.py` | The shipped sample files (an orange box, JSON and binary) import through the seam with the reader switched on (`own_gltf1_samples`) |
 
 Switch it on with `SetImportBackend(".gltf1", ImportBackend::Own)`, the environment variable `OKAY_OWN_GLTF1=1` (or `0` to force it off), or `-DOKAY_OWN_GLTF1=ON` at build time. Only when it is on does the importer parse a `.gltf` / `.glb` file a second time to see its version, so a default import costs nothing more.
 

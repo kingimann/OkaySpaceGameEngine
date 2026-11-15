@@ -25,10 +25,12 @@ The editor is `Tools\OkayEngine.exe` in the same folder (or start it from the la
 asks for a scene path: type or paste it, or press **Browse...**. A scene finds the files it uses (sounds, scripts,
 sequences) next to itself, so the folder works from any install path.
 
-What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
-Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
-`visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
+What is in `examples\` (about 1 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`, and
+`visual_script\playground` (the 40 scenes behind File > Examples > Visual Script Node Playground; earlier releases left this
+folder out, so that menu said "scenes not found"). Left out on purpose: `account-server` (a Python server), `netdemo` and
+`physicsdemo` (C++ sources), `editor-plugins`, and the loose graphs in `visual_script` itself (not scenes). The packaging is
+checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
 release job or the installer build for this change.
 
@@ -50,6 +52,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 
 ---
 
@@ -345,6 +348,44 @@ environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup
 Nothing to try.
 
 ---
+
+## Every template is tested (and what was fixed)
+
+The two tests `templates_work` and `examples_work` run every New Project template and every example scene the way a person
+does (keys, mouse, Play, Stop, save, reopen) and fail when one is broken. What each one checks, how to add a template or an
+example, and the one known failure are in [templates_check.md](templates_check.md).
+
+**Commands** (a Linux checkout):
+
+```
+cmake --build build --target test_templates_work test_examples_work
+ctest --test-dir build -R "templates_work|examples_work" --output-on-failure
+build/tests/test_templates_work      # prints the table: 22 templates by 7 checks, and what was measured
+build/tests/test_examples_work       # prints one line per example scene
+```
+
+**What changed in the templates and examples, and how to see it in the release.** Nothing here was run in a real window:
+the checks are headless, so every "you should see" line is unverified until you look.
+
+1. **Main Menu.** New Project > Main Menu, press Play, click **Start**. You should see the menu disappear and the text "Your
+   game starts here" with a **Back to menu** button; Back brings the menu again. (Before: Start tried to load `game.okayscene`,
+   which a new project does not have, so nothing happened and the Console showed an error.) To load your own level, change
+   the Start button's script to `load_scene("<path of your scene>")`.
+2. **Third Person Shooter.** New Project > Third Person Shooter, press Play, hold the **left mouse button** facing the red
+   balls. They lose health, vanish after a few hits and come back three seconds later. R reloads. (Before: nothing fired.)
+3. **Top-Down.** New Project > Top-Down, press Play, hold **D**. The player stops at the grey wall on the right instead of
+   walking through it.
+4. **Humanoid and Sandbox.** New Project > Humanoid (or Sandbox), press Play, then Stop. The title bar must not show unsaved
+   changes and the editor must not ask to save when you close it. (Before: it did.)
+5. **Examples.** File > Examples > Visual Script Node Playground > any demo, then Play. The coloured shapes are now in the
+   picture (before, the camera looked away and only the on-screen text showed). The same for `examples\behavior_trees\*`,
+   `examples\weapons\arena.okayscene`, `examples\spatial_audio\spatial_audio.okayscene`, `examples\own_wav\own_wav_test.okayscene`,
+   `examples\physics\step_and_parent.okayscene` (it now has a camera, a light and a crate that falls onto a floor) and
+   `examples\touch_controls`.
+6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
+
+Status: tested on Linux (headless, 4 seconds). Not run: a real window, the launcher, Windows. Headless renders of the changed
+example scenes (`RenderSceneToImage`, meshes only) were looked at; they are not stored in the repo.
 
 ## How the packaging was checked (and what was not)
 

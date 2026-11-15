@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, IQM, COB, NDO) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -267,6 +267,24 @@ bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, Imp
 /// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
 /// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
 bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// IQM (Inter-Quake Model, version 2, binary): one skinned part per mesh (positions, normals, the first texture coordinate set,
+/// four joint weights per vertex; smooth normals when the file has none), the joint hierarchy as nodes under a root that turns
+/// Z-up into Y-up, the material name as the material (an image file name is its texture, resolved inside `baseDir`), and each
+/// animation as one clip (translation / rotation / scale keys per joint and frame, from the pose channel masks, at the animation's
+/// framerate). Winding and texture coordinates as written. Tangents, colours, custom arrays, bounds, adjacency, comments and
+/// extensions are not read (reported in `out.notes`). Version 1 files are refused. `baseDir` ends with a slash or is empty.
+bool ReadIqmBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// COB (Caligari trueSpace, binary "B" and ASCII "A" files): the Grou / PolH object tree as nodes (each object's stored world
+/// matrix, made relative to its parent), one part per (polygon object, material) with faces triangulated (convex ones fanned,
+/// concave ones ear clipped), per-corner texture coordinates, smoothing from the material's facet setting, and the Mat1 / ShBx
+/// materials (colour, alpha, the texture file of a "texture map" shader). trueSpace is
+/// left-handed and Z-up: y and z are swapped (a reflection, so the winding stays as written). Animation channels, bones, characters,
+/// cameras, lights, holes, bitmaps and the rest are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
+bool ReadCobBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
+/// public description of it exists that our rules let us follow and no real file was available. Always returns false, with a message
+/// that says which it is (not a Nendo file / Nendo file not read). See docs/own_ndo_reader.md.
+bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -292,6 +310,9 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadIqmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadNdoFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

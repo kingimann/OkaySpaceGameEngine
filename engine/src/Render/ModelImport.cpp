@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".iqm", ".cob", ".ndo"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,24 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_IQM_DEFAULT
+constexpr bool kOwnIqmDefault = true;
+#else
+constexpr bool kOwnIqmDefault = false;
+#endif
+
+#ifdef OKAY_OWN_COB_DEFAULT
+constexpr bool kOwnCobDefault = true;
+#else
+constexpr bool kOwnCobDefault = false;
+#endif
+
+#ifdef OKAY_OWN_NDO_DEFAULT
+constexpr bool kOwnNdoDefault = true;
+#else
+constexpr bool kOwnNdoDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -558,8 +576,14 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
+    // Slots 27 to 33 belong to other branches (claude/terragen-fix: 27 and kOwnSlots 28; claude/readers-e1: 28 to 30; claude/readers-e2:
+    // 31 to 33). The empty rows keep the table indexed by slot here; when those branches merge, their real rows replace these.
+    {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false},   // 27 to 33
+    {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
+    {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
+    {"OKAY_OWN_NDO",     "NDO",     kOwnNdoDefault},       // 36
 };
-constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
+constexpr int kOwnSlots = 37;   // slots 22 to 26 are batch D, 34 to 36 batch E3; raise this (and add rows above) when a reader needs a slot beyond 36
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -591,6 +615,9 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".iqm") return 34;
+    if (e == ".cob") return 35;
+    if (e == ".ndo") return 36;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -756,7 +783,10 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+                  : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 34 ? ReadIqmFile(path, out, &e1)
+                  : s == 35 ? ReadCobFile(path, out, &e1)
+                  : ReadNdoFile(path, out, &e1); }, e1);   // 36
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

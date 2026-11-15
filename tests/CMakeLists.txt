@@ -3243,6 +3243,36 @@ add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
 add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# Batch E3 own readers (IQM / COB / NDO seam): one test per reader on SYNTHETIC fixtures built in memory (tests/e3_fixtures.hpp), each with its own
+# hostile-input sweeps, budget refusals and a counting operator new for the worst allowed file; reader sources only (no engine library), so they
+# can also be built by hand under -fsanitize=address,undefined. OKAY_E3_SAMPLES (a folder with the real mrfixit.iqm and *.cob files, not in this repo)
+# adds the real-file checks; without it they say "skipped".
+function(okay_e3_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(${fmt}_reader PROPERTIES TIMEOUT 600)
+endfunction()
+okay_e3_reader_test(iqm IqmReader.cpp)
+okay_e3_reader_test(cob CobReader.cpp)
+okay_e3_reader_test(ndo NdoReader.cpp)
+
+# The import seam routes the batch-E3 formats (slots 34 to 36) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_e3 test_own_dispatch_e3.cpp)
+target_link_libraries(test_own_dispatch_e3 PRIVATE okay::engine)
+add_test(NAME own_dispatch_e3 COMMAND test_own_dispatch_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Fails when OKAY_OWN_IQM / OKAY_OWN_COB / OKAY_OWN_NDO is ON but the engine did not get the matching OKAY_OWN_<FMT>_DEFAULT (see engine/CMakeLists.txt).
+add_executable(test_own_default_e3 test_own_default_e3.cpp)
+target_link_libraries(test_own_default_e3 PRIVATE okay::engine)
+foreach(_fmt IQM COB NDO)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(test_own_default_e3 PRIVATE OKAY_EXPECT_OWN_${_fmt})
+    endif()
+endforeach()
+add_test(NAME own_default_e3 COMMAND test_own_default_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)

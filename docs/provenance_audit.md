@@ -179,3 +179,15 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 3. `Fe25519_16.hpp` (F4): only after the owner's answer and the reviewer's view.
 4. The TweetNaCl port (F2): done (deleted on the owner's say-so, replaced by `okay::crypto`; the outside review of `okay::crypto` is still open).
 5. Packaging notices (F6): not a rewrite, but it is a licence obligation that exists today.
+
+## Addendum (batch E3 readers: IQM, COB, NDO)
+
+Date: 2026-11-15, branch `claude/readers-e3`. Checked by hand when written; **not** run through `scripts/provenance_scan.py`.
+
+| Reader | Written from | Not used |
+|---|---|---|
+| `IqmReader.cpp` | The IQM specification text (header and record layouts, vertex-array types and formats, frame-channel packing) and a hex dump of the one real file, `mrfixit.iqm` | Any importer or engine source (no look at Assimp or any other project) |
+| `CobReader.cpp` | The public description of the chunk structure plus my own reading of the 8 real `.cob` files (hex dump, text viewer) | Any importer source. The Assimp tree was opened only to copy sample data files (`test/models/COB`, `test/models/IQM`) to a private folder |
+| `NdoReader.cpp` | Nothing but the header text `nendo `. It reads no geometry | The only descriptions of the Nendo body are importer source code, which was deliberately **not** read. A web search for a spec returned an importer summary; its passing facts (the `nendo 1.x` header, big endian, a count-width change at 1.2) are disclosed in `docs/own_ndo_reader.md`; only the header text is used |
+
+The shared helpers they use (`BinReader.hpp`, `ReaderCommon.hpp`, `PolygonTriangulate.hpp`, `TextReaderUtil.hpp`, `SceneRefPath.hpp`) are the project's own earlier files. The test files are hand-built from the structure; no real file is committed.

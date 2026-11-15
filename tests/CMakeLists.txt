@@ -3545,3 +3545,7 @@ add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
 add_executable(test_unequip_weight test_unequip_weight.cpp)
 target_link_libraries(test_unequip_weight PRIVATE okay::engine)
 add_test(NAME unequip_weight COMMAND test_unequip_weight)
+
+add_executable(test_inv_grid_script test_inv_grid_script.cpp)
+target_link_libraries(test_inv_grid_script PRIVATE okay::engine)
+add_test(NAME inv_grid_script COMMAND test_inv_grid_script)

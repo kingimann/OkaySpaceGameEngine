@@ -7265,6 +7265,33 @@ struct OkayScriptVM::Impl {
             GameObject* g = invObj(a, k);
             return g ? g->GetComponent<GridInventory>() : nullptr;
         };
+        // Slot bag <-> grid bag (InventoryOps::ToGrid / FromGrid). The slot bag is this object's inventory; the grid is
+        // this object's GridInventory, or the named object's. Local moves: they send no network request.
+        b["inv_to_grid"] = [invHost, gridAt, intArg](std::vector<Value>& a) {   // (slot, x, y, [rotated], [n = all], [grid]) -> moved
+            Inventory* inv = ItemPickup::InventoryOf(invHost());
+            GridInventory* g = gridAt(a, 5);
+            if (!inv || !g) return Value{0.0f};
+            const bool rotated = a.size() > 3 && a[3].AsFloat() != 0.0f;
+            const InvResult r = InventoryOps::ToGrid(inv, intArg(a, 0, -1), g, intArg(a, 1, 0), intArg(a, 2, 0), rotated, intArg(a, 4, 0));
+            return Value{r.Ok() ? (float)r.moved : 0.0f};
+        };
+        b["inv_from_grid"] = [invHost, gridAt, intArg](std::vector<Value>& a) {  // (index, [slot = any], [n = all], [grid]) -> moved
+            Inventory* inv = ItemPickup::InventoryOf(invHost());
+            GridInventory* g = gridAt(a, 3);
+            if (!inv || !g) return Value{0.0f};
+            const int index = intArg(a, 0, -1);
+            int slot = intArg(a, 1, -1);
+            if (slot < 0 && index >= 0 && index < (int)g->items.size()) {   // any: a stack of the same item, else an empty slot
+                const int usable = InventoryOps::UsableSlots(*inv);
+                const int n = usable > 0 ? std::min(usable, (int)inv->slots.size()) : (int)inv->slots.size();
+                for (int k = 0; k < n && slot < 0; ++k)
+                    if (!Inventory::Empty(inv->slots[k]) && inv->slots[k].item == g->items[index].name) slot = k;
+                for (int k = 0; k < n && slot < 0; ++k) if (Inventory::Empty(inv->slots[k])) slot = k;
+                if (slot < 0 && (usable <= 0 || (int)inv->slots.size() < usable)) slot = (int)inv->slots.size();
+            }
+            const InvResult r = InventoryOps::FromGrid(g, index, inv, slot, intArg(a, 2, 0), InventoryOps::UsableSlots(*inv));
+            return Value{r.Ok() ? (float)r.moved : 0.0f};
+        };
         b["grid_add"] = [gridAt, itemArg, intArg](std::vector<Value>& a) {   // (item, n = 1) -> bool, all or nothing
             GridInventory* g = gridAt(a, 2);
             return Value{g && g->AddDefined(itemArg(a, 0), std::max(1, intArg(a, 1, 1))) >= 0 ? 1.0f : 0.0f};

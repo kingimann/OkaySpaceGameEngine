@@ -65,30 +65,53 @@ int main() {
         now = 6.0; c.Add(L::Warning, "A");                            // same text, other level: separate row
         now = 7.0; c.Add(L::Warning, "A", "net");                     // other category: separate row
 
+        // Identical level + category + message merge into one row wherever they are in the log
+        // (a row sits where its first occurrence was), so two lines spamming in turn are two rows.
         std::vector<ConsoleRow> rows = c.Rows();
-        CHECK(rows.size() == 5);
-        if (rows.size() == 5) {
-            CHECK(rows[0].entry.message == "A" && rows[0].repeat == 3);
+        CHECK(rows.size() == 4);
+        if (rows.size() == 4) {
+            CHECK(rows[0].entry.message == "A" && rows[0].repeat == 4);
             CHECK_NEAR(rows[0].entry.timeSec, 1.0, 1e-9);            // first occurrence
-            CHECK_NEAR(rows[0].lastTimeSec, 3.0, 1e-9);              // and the last
+            CHECK_NEAR(rows[0].lastTimeSec, 5.0, 1e-9);              // and the last (the panel shows this one)
             CHECK(rows[0].entry.frame == 10 && rows[0].lastFrame == 11);
-            CHECK(rows[0].lastSeq == 2 && rows[0].entry.seq == 0);
+            CHECK(rows[0].lastSeq == 4 && rows[0].entry.seq == 0);
             CHECK(rows[1].entry.message == "B" && rows[1].repeat == 1);
-            CHECK(rows[2].entry.message == "A" && rows[2].repeat == 1);   // a run, not a global count
-            CHECK(rows[3].entry.level == L::Warning && rows[3].repeat == 1);
-            CHECK(rows[4].entry.category == "net" && rows[4].repeat == 1);
+            CHECK(rows[2].entry.level == L::Warning && rows[2].repeat == 1);
+            CHECK(rows[3].entry.category == "net" && rows[3].repeat == 1);
         }
+        // the count keeps growing while more duplicates arrive, and counts per level stay per entry
+        now = 8.0; c.Add(L::Info, "A");
+        rows = c.Rows();
+        CHECK(rows.size() == 4 && rows[0].repeat == 5 && rows[0].lastSeq == 7);
+        CHECK(c.Counts().info == 6 && c.Counts().warning == 2);      // the pills count entries, not rows
+        // alternating spam (A B A B ...) is two rows, not one row per line
+        ConsoleModel alt;
+        for (int i = 0; i < 50; ++i) { alt.Add(L::Info, "tick"); alt.Add(L::Warning, "slow frame"); }
+        std::vector<ConsoleRow> ar = alt.Rows();
+        CHECK(ar.size() == 2 && ar[0].repeat == 50 && ar[1].repeat == 50);
+        // different text is never merged (changing numbers are different messages)
+        ConsoleModel num;
+        num.Add(L::Info, "hp 10"); num.Add(L::Info, "hp 9"); num.Add(L::Info, "hp 10");
+        CHECK(num.Rows().size() == 2);
+        // clear starts over; a search that hides the other lines still counts the shown duplicates
+        alt.Clear();
+        CHECK(alt.Rows().empty());
+        alt.Add(L::Info, "tick"); alt.Add(L::Info, "tock"); alt.Add(L::Info, "tick");
+        ConsoleFilter tf; tf.text = "tick";
+        alt.SetFilter(tf);
+        CHECK(alt.Rows().size() == 1 && alt.Rows()[0].repeat == 2);
+        CHECK(alt.CopyAll().find("(x2)") != std::string::npos);
         c.SetCollapse(false);
-        CHECK(!c.Collapse() && c.Rows().size() == 7);
+        CHECK(!c.Collapse() && c.Rows().size() == 8);
         c.SetCollapse(true);
-        CHECK(c.Rows().size() == 5);
-        CHECK(c.Rows(ConsoleFilter(), false).size() == 7);           // explicit view, settings untouched
+        CHECK(c.Rows().size() == 4);
+        CHECK(c.Rows(ConsoleFilter(), false).size() == 8);           // explicit view, settings untouched
         CHECK(c.Collapse());
 
-        // collapsing happens after filtering: Error X, Info Y, Error X shows one row with an error filter
+        // collapsing happens after filtering: Error X, Info Y, Error X is two rows, and one row with an error filter
         ConsoleModel d;
         d.Add(L::Error, "X"); d.Add(L::Info, "Y"); d.Add(L::Error, "X");
-        CHECK(d.Rows().size() == 3);
+        CHECK(d.Rows().size() == 2);
         ConsoleFilter f; f.levelMask = ConsoleModel::LevelBit(L::Error);
         d.SetFilter(f);
         std::vector<ConsoleRow> er = d.Rows();

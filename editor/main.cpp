@@ -2318,6 +2318,7 @@ static void FinishFrozenTick() {
     d.enabled = was;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
+bool g_consoleCollapse = false;   // the Console's Collapse toggle (okay_settings.txt "consolecollapse")
 // The UI backend setting (okay_settings.txt "uibackend 0|1"; absent = never chosen). OKAY_UI_BACKEND overrides it. Today the
 // Console panel has an OkayUI port; everything else is Dear ImGui either way.
 std::string g_uiBackendSetting;
@@ -2607,6 +2608,7 @@ void LoadSettings() {
         else if (k == "sidetabs") g_sideTabs = (v < 0 || v > 2) ? 0 : v;
         else if (k == "docautosave") g_docAutosaveSec = (float)(v < 5 ? 5 : (v > 600 ? 600 : v));
         else if (k == "autosavetofile") g_autosaveToFile = (v != 0);
+        else if (k == "consolecollapse") g_consoleCollapse = (v != 0);
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
@@ -2665,7 +2667,8 @@ void SaveSettings() {
       << "uisubdivy " << g_uiSubdivY << "\n"
       << "sidetabs " << g_sideTabs << "\n"
       << "docautosave " << (int)(g_docAutosaveSec + 0.5f) << "\n"
-      << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n";
+      << "autosavetofile " << (g_autosaveToFile ? 1 : 0) << "\n"
+      << "consolecollapse " << (g_consoleCollapse ? 1 : 0) << "\n";
     okayproj::WriteTextAtomic("okay_settings.txt", f.str());   // whole or not at all: a crash never leaves a cut-off file
 }
 

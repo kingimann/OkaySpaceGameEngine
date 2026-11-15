@@ -61,6 +61,14 @@ struct Canvas2D {
     }
 };
 
+// The font atlas textures are kept per font for the whole process (SDLFontAtlas: "one renderer per process, as in the player"),
+// so every picture is drawn on the same surface and renderer; a renderer made per picture would leave the later pictures
+// pointing at textures of a renderer that is gone, and their smooth text would not show.
+Canvas2D& SharedCanvas() {
+    static Canvas2D cv;
+    return cv;
+}
+
 // How many pixels of an image are within `tol` of a colour (inside a rectangle).
 int CountPixels(const Image& img, int r, int g, int b, int tol = 6, int x0 = 0, int y0 = 0, int x1 = W, int y1 = H) {
     int n = 0;
@@ -115,7 +123,7 @@ Image Plates3D(bool scaled) {
     ApplySceneLight(s);
     Raster r; r.Resize(W, H); r.Clear(0xFF3A2A22u);
     RenderMeshes(r, s, vp, eye);
-    Canvas2D cv;
+    Canvas2D& cv = SharedCanvas();
     Image empty(W, H);
     if (!cv.Ok()) return empty;
     for (int y = 0; y < H; ++y) std::memcpy((unsigned char*)cv.surf->pixels + y * cv.surf->pitch, &r.color[(size_t)y * W], W * 4);
@@ -143,7 +151,7 @@ Image Sign(bool coloured) {
     tr->text = coloured
         ? "Welcome to [b]Okay Town[/b]\n[color=#ff5050]Danger:[/color] [i]wolves[/i] ahead\n[size=60]tiny[/size] and [size=150][color=#80ff80]larger[/color][/size] text\n[b][i][color=#ffd040]bold italic gold[/color][/i][/b]"
         : "Welcome to [b]Okay Town[/b]\n[color=#ff5050]Danger:[/color] [i]wolves[/i] ahead\n[size=60]tiny[/size] and [size=150]larger[/size] text\n[b][i][color=#ffd040]bold italic gold[/color][/i][/b]";
-    Canvas2D cv;
+    Canvas2D& cv = SharedCanvas();
     Image empty(W, H);
     if (!cv.Ok()) return empty;
     cv.Clear(120, 170, 220);                                                       // sky
@@ -158,7 +166,7 @@ Image Sign(bool coloured) {
 
 // ---- the shipped sample scene, drawn the way the flat (2D) player draws a frame: sprites, world text, then the UI pass ---------
 Image Example(Scene& s, float camY = 0.0f) {
-    Canvas2D cv;
+    Canvas2D& cv = SharedCanvas();
     Image empty(W, H);
     if (!cv.Ok()) return empty;
     Camera* cam = s.FindObjectOfType<Camera>();

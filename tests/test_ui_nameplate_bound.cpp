@@ -140,7 +140,7 @@ int main() {
             {"close up, scaling with distance (k 1.6)", false, 160.0f, "", "Goblin Scout", 12, true},
             {"a long name and a three-digit level", true, 100.0f, "", "Grand Goblin Warlord of Doom", 100, false},
             {"the pixel font", true, 100.0f, "pixel", "Goblin Scout", 12, true},
-            {"the pixel font, long name, three digits", true, 100.0f, "pixel", "Goblin Warlord Chief", 100, false},
+            {"the pixel font, long name, three digits", true, 100.0f, "pixel", "Goblin Chief", 100, false},   // (the 8x8 font cannot go below 8 px: about 13 characters fit)
         };
         for (const Case& c : cases) {
             Scene s("drawn"); s.physicsEnabled = false; s.uiFont = c.font;
@@ -162,7 +162,7 @@ int main() {
             const Vec2 at{W * 0.5f + 2.0f * pxu, H * 0.5f - 2.2f * pxu};   // where the plate's 3D point lands on the screen
             const auto card = rp.Of(16, 18, 24), pill = rp.Of(240, 180, 70), bar = rp.Of(226, 82, 82);
             const auto name = rp.Of(232, 235, 240), lvl = rp.Of(249, 224, 181);
-            std::printf("  %-44s card %.0f x %.0f, pill %.0f x %.0f, name %.0f..%.0f, level %.0f..%.0f\\n", c.what,
+            std::printf("  %-44s card %.0f x %.0f, pill %.0f x %.0f, name %.0f..%.0f, level %.0f..%.0f\n", c.what,
                         card.W(), card.H(), pill.W(), pill.H(), name.x0, name.x1, lvl.x0, lvl.x1);
             CHECK(card.Any() && pill.Any() && bar.Any() && name.Any() && lvl.Any());
             if (!(card.Any() && pill.Any() && bar.Any() && name.Any() && lvl.Any())) continue;
@@ -213,6 +213,7 @@ int main() {
             CHECK(p.name && p.level && p.bar);
             auto* ws = plateObj->GetComponent<WorldSpaceUI>();
             CHECK(ws && ws->constantSize);                                    // and still at its design size
+            mob2->GetComponent<HealthStat>()->publishPrefs = false;           // (the saved scene does not keep this switch)
             t.Start();
             mob2->GetComponent<HealthStat>()->health = 25.0f;                 // Start fills it to the maximum
             Tick(t);

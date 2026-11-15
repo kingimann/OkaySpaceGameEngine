@@ -101,7 +101,7 @@ std::wstring Env(const wchar_t* name) {
     if (n == 0 || n > 32768) return {};   // (Windows limits a variable to 32767 characters)
     std::wstring v(static_cast<std::size_t>(n), L'\0');
     n = GetEnvironmentVariableW(name, &v[0], n);
-    v.resize(n);
+    v.resize(n);   // lint-allow: alloc-before-check (n is the length Windows wrote into the buffer sized above: this only cuts the trailing NUL)
     return v;
 }
 std::wstring SystemDir() {

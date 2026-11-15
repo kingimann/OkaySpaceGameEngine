@@ -11,7 +11,10 @@ then this file gets updated. Keep this file short and true.
 2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have Claude 2
    work on unfinished features, you only work on third party".)
    - **Claude 2 (`claude2/*`, issue #422)** works on unfinished features (`docs/UNFINISHED.md` and its audits) and
-     bugs.
+     bugs. It improves what we already have before it builds anything new: search the feature map and the code
+     first, extend and finish the existing feature (no second copy), and say in every claim what exists and what
+     the gap is. (Owner, 2026-11-15: "make sure Claude 2 is developing features we already have, but improving
+     them where we already have them".)
    - **The coordinator session and its agents** work on building our own replacements for third-party libraries
      (`docs/own_code_roadmap.md`) and on coordinating: checking on Claude 2 (reading its reports, answering it,
      reviewing its branches), reviews, merges and releases. The coordinator finishes a feature or bug branch that is

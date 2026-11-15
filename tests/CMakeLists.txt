@@ -3416,3 +3416,7 @@ add_test(NAME own_reader_cmake_defaults
 add_executable(test_vs_net_nodes test_vs_net_nodes.cpp)
 target_link_libraries(test_vs_net_nodes PRIVATE okay::engine)
 add_test(NAME vs_net_nodes COMMAND test_vs_net_nodes)
+
+add_executable(test_vs_api_silent test_vs_api_silent.cpp)
+target_link_libraries(test_vs_api_silent PRIVATE okay::engine)
+add_test(NAME vs_api_silent COMMAND test_vs_api_silent)

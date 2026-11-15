@@ -314,8 +314,8 @@ tooltip, is a bug: tell us which item.
 **Status.** The item lists, labels, greyed reasons, Copy Text, which file types run code, the Move to... rule, the path helpers (nested selections, the nearest folder that exists),
 Set as Start Scene, the dates and the Properties rows are tested headlessly (`project_context_model`, `project_menu_ops`). The new story and AI files are read back with the engine's parsers,
 and Standard Folders, Duplicate of a selection and the tags a menu lists are tested on temp folders, in `project_menu_ops`. The launcher that starts Notepad, the default app or Explorer
-(`editor/LaunchFile.cpp`) was run on Linux against stand-in programs to prove that a hostile file name reaches the program as one untouched argument and that program and script types are
-refused; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
+(`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
+refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows.
 No screenshots: the editor cannot be built and run on the machine that wrote this (see the report of the change); the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
 

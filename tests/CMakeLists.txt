@@ -907,6 +907,14 @@ target_include_directories(test_project_menu_ops PRIVATE ${PROJECT_SOURCE_DIR}/e
 target_link_libraries(test_project_menu_ops PRIVATE okay::engine)
 add_test(NAME project_menu_ops COMMAND test_project_menu_ops)
 
+# The editor's launcher (editor/LaunchFile.cpp: Open with Default App, Open in External Editor, Show in Explorer) with fake programs on PATH: a hostile file name arrives as one argument, a name that starts with "-" is not an option, programs and scripts are refused, nothing goes through a shell. Linux only (fork + execv); the Windows half uses ShellExecuteW and is only compile-checked.
+if(NOT WIN32)
+    add_executable(test_launch_file test_launch_file.cpp ${PROJECT_SOURCE_DIR}/editor/LaunchFile.cpp)
+    target_compile_features(test_launch_file PRIVATE cxx_std_17)
+    target_include_directories(test_launch_file PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+    add_test(NAME launch_file COMMAND test_launch_file)
+endif()
+
 # Import settings that really change behaviour: texture Filter / Wrap / Mipmaps (software sampler + sidecar read by the OpenGL path), model Normals / Smoothing angle / Import animations.
 add_executable(test_import_settings_real test_import_settings_real.cpp)
 target_link_libraries(test_import_settings_real PRIVATE okay::engine)

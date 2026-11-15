@@ -96,7 +96,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
 - **Docs:** `docs/editor.md` (Drag & drop from Project), `docs/project_panel.md` (Right-click menus), `docs/try_it.md`
-- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`
 - **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
 - **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget; the right-click menus have no Export Package (no package exporter exists), no Select Dependencies (a selection cannot reach into other folders), no Localization table or Animation in Create, and their drawing, the Move to... and Properties windows and the Explorer and default-app launches were never seen in a running editor
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2

@@ -210,7 +210,7 @@ int main() {
         o.extraTopLevel = ",\n  \"textures\": { \"tex\": { \"source\": \"img\" } },\n  \"images\": { \"img\": { \"uri\": \"pics/my%20wood.png\" } }";
         WriteFile(dir / "pct.gltf", QuadJson(o));
         CHECK(ReadGltf1File((dir / "pct.gltf").u8string(), m, &err));
-        if (m.materials.size() == 1) CHECK(m.materials[0].texture == (dir / "pics" / "my wood.png").u8string());
+        if (m.materials.size() == 1) CHECK(fs::u8path(m.materials[0].texture).lexically_normal() == (dir / "pics" / "my wood.png").lexically_normal());
         // an escaped ".." or NUL is decoded first and then refused by the folder rule, as the plain forms are
         o.bufferUri = "%2e%2e/outside.bin";
         WriteFile(dir / "pct_dots.gltf", QuadJson(o));

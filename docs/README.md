@@ -34,6 +34,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [steam_release.md](steam_release.md): releasing on Steam.
 - [release_channels.md](release_channels.md): the latest and LTS channels, the update bucket, versions.json, how to cut an LTS.
 - [launcher_versions.md](launcher_versions.md): the launcher's Versions page: install, remove and keep other editor versions next to the running one, the Latest / LTS channel setting, project version badges and Open with, `--versions`.
+- [install_audit.md](install_audit.md): audit and plan for how OkaySpace and its editor versions are installed, updated and removed: file map, installer scenarios, Versions page cases, ranked findings, 12-item plan and the owner's decisions; [install_comparison.md](install_comparison.md) compares it with three well-known launchers.
 
 ## Scripting
 - [scripting.md](scripting.md): the OkayScript language guide.

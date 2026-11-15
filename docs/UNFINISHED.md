@@ -12,6 +12,8 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 - [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
+- [Install, uninstall and editor versions audit](install_audit.md): a file map of everything Setup, the launcher and the editor write, the installer scenarios (run under wine), the Versions page cases, 24 ranked findings and a 12-item plan (phase 1, audit only; nothing in the program changed). The worst: an old kept editor can update itself in place and reopen an old project without asking, "Remove version" can delete a project made inside the version folder, Setup says projects are in Documents (they are in the install folder), and uninstall leaves most of what the launcher made. Owner decisions are listed in its section 7. A comparison with three well-known launchers is [install_comparison.md](install_comparison.md).
+
 ## Hidden, removed or limited today
 
 | What | State | What is missing |

@@ -11,6 +11,9 @@
 #include "okay/Components/AutoSave.hpp"
 #include "okay/Components/Cable.hpp"
 #include "okay/Components/Decal.hpp"
+#include "okay/Components/DollyPath.hpp"
+#include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/Spline.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TurnManager.hpp"
@@ -898,6 +901,49 @@ void RegisterCable() {
     b.Commit();
 }
 
+// SplineFollower (record "splinefollower")
+void RegisterSplineFollower() {
+    PropertyBuilder<SplineFollower> b("SplineFollower", "splinefollower", "Gameplay");
+    b.AddString("spline", &SplineFollower::spline).Tooltip("The object holding the Spline")
+     .AddEnum("drive", &SplineFollower::drive, {"Speed", "Time"}).Tooltip("Move at a speed, or take a set time per pass")
+     .AddEnum("wrap", &SplineFollower::wrap, {"Loop", "PingPong", "Once"}).Tooltip("What happens at the end")
+     .AddFloat("speed", &SplineFollower::speed).Range(-kBig, kBig, 0.1).Tooltip("Units per second along the curve (negative runs backwards)")
+     .AddFloat("duration", &SplineFollower::duration).Range(0, 1e6, 0.1).Tooltip("Seconds for one pass (Drive: Time)")
+     .AddFloat("startAt", &SplineFollower::startAt).Range(0, 1, 0.01).Tooltip("Where it starts, as a fraction of the length")
+     .AddBool("playOnStart", &SplineFollower::playOnStart).Tooltip("Start moving when the scene starts")
+     .AddBool("orient", &SplineFollower::orient).Tooltip("Turn forward (+Z) the way it travels")
+     .AddVec3("offset", &SplineFollower::offset).Range(-kBig, kBig, 0.01).Tooltip("From the curve, in its frame: x right, y up, z forward");
+    b.Commit();
+}
+
+// DollyCart (record "dollycart")
+void RegisterDollyCart() {
+    PropertyBuilder<DollyCart> b("DollyCart", "dollycart", "Cameras");
+    b.AddString("path", &DollyCart::path).Tooltip("Name of the object holding the DollyPath")
+     .AddFloat("position", &DollyCart::position).Range(0, 1, 0.01).Tooltip("Position along the path, 0 to 1")
+     .AddFloat("speed", &DollyCart::speed).Range(-1000, 1000, 0.01).Tooltip("Path fractions per second (when Auto Move is on)")
+     .AddBool("autoMove", &DollyCart::autoMove).Tooltip("Advance automatically each frame");
+    b.Commit();
+}
+
+// LineRenderer (record "linerenderer"; its points, width curve and colour gradient are lists, not properties)
+void RegisterLineRenderer() {
+    PropertyBuilder<LineRenderer> b("LineRenderer", "linerenderer", "Rendering");
+    b.AddBool("useWorldSpace", &LineRenderer::useWorldSpace).Tooltip("Points in world space (off: in this object's space)")
+     .AddBool("loop", &LineRenderer::loop).Tooltip("Join the last point back to the first")
+     .AddFloat("width", &LineRenderer::width).Range(0, 1000, 0.005).Tooltip("Line width, world units")
+     .AddColor("color", &LineRenderer::color).Range(0, 1, 0.01).Tooltip("Line colour")
+     .AddInt("cornerVertices", &LineRenderer::cornerVertices).Range(0, 90, 1).Tooltip("Above 0: round each bend with this many steps")
+     .AddInt("capVertices", &LineRenderer::capVertices).Range(0, 90, 1).Tooltip("Above 0: round both ends of an open line")
+     .AddEnum("alignment", &LineRenderer::alignment, {"View", "Flat"}).Tooltip("Face the camera, or lie flat")
+     .AddEnum("textureMode", &LineRenderer::textureMode, {"Stretch", "Tile"}).Tooltip("Stretch the texture over the line, or repeat it")
+     .AddFloat("tileLength", &LineRenderer::tileLength).Range(0.0001, 1e6, 0.1).Tooltip("Tile: units per repeat of the texture")
+     .AddAssetPath("texture", &LineRenderer::texture, "texture").Tooltip("Optional image, tinted by the colour")
+     .AddString("spline", &LineRenderer::spline).Tooltip("Draw this object's Spline instead of the points")
+     .AddInt("splineSamples", &LineRenderer::splineSamples).Range(2, 4096, 1).Tooltip("Points taken along the Spline");
+    b.Commit();
+}
+
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
@@ -1455,6 +1501,9 @@ void RegisterGameplayProperties() {
     RegisterTurnManager();
     RegisterDecal();
     RegisterCable();
+    RegisterSplineFollower();
+    RegisterDollyCart();
+    RegisterLineRenderer();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

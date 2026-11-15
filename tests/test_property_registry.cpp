@@ -377,7 +377,8 @@ static void TestRegistryBasics() {
         "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
         "UIPagination", "UISkeleton", "UIBottomSheet", "Seat", "Stats", "WorldUI", "LootSource",
         "ItemPickup", "SurvivalZone", "QuestTrigger", "HoldPrompt", "Occluder",
-        "Ragdoll", "AutoSave", "TurnManager", "Decal", "Cable"};
+        "Ragdoll", "AutoSave", "TurnManager", "Decal", "Cable",
+        "SplineFollower", "DollyCart", "LineRenderer"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

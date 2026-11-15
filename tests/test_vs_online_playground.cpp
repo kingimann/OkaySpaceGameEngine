@@ -149,6 +149,8 @@ int main() {
     CHECK(port > 0);
     std::printf("  host on port %d: %s\n", port, TextOf(host.scene, "Status").c_str());
     CHECK(TextOf(host.scene, "Status") == "Host on UDP 47777: 1");       // (the label keeps the demo's own port)
+    host.scene.Update(0.02f);
+    CHECK(TextOf(host.scene, "Live") == "Hosting: 1   Connected: 1   Players: 0");   // hosting, nobody has joined yet
     const std::string guestGraph = ReplaceAll(graphText, "127.0.0.1:47777\"", "127.0.0.1:" + std::to_string(port) + "\"");
     Window guest(guestGraph);
     Key(guest, 'j');

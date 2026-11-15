@@ -282,7 +282,7 @@ started with a host key, `docs/anticheat.md`); the demo only clears the pin. The
 pinned, encrypted join (the right key joins sealed, a wrong key never joins) when the build has a crypto backend.
 
 **Tested here (Linux, headless).** `vs_online_playground` loads this scene from disk, plays it, and runs its graph in
-two scenes in one process (H hosts, J joins by link, the blue lines read as above): 39 checks, 0 failures. `vs_net_link_pin`
+two scenes in one process (H hosts, J joins by link, the blue lines read as above): 40 checks, 0 failures. `vs_net_link_pin`
 (31 checks) runs the two nodes against a loopback server, including the sealed join with the right key and the refusal of
 a wrong key. `vs_net_nodes` (41 checks) runs 16 other online nodes (host, join, name, room, state, send, poll, leave) the
 same way. **Unverified:** the real editor window, clicking H and J in two windows, the File > Examples menu finding the

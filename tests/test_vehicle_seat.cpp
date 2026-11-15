@@ -439,6 +439,91 @@ int main() {
         CHECK_NEAR(w.v->SteerAngle(), 0.0f, 1.0f);          // straight again
     }
 
+    // --- A seat moved to another car (re-parented) and `driver` unticked while seated ------------
+    {
+        struct Two {
+            Scene s{"reparent"};
+            GameObject *a = nullptr, *b = nullptr, *seatObj = nullptr, *seat2Obj = nullptr, *p = nullptr;
+            VehicleController *va = nullptr, *vb = nullptr;
+            VehicleSeat *seat = nullptr;
+            GameObject* MakeCar(const char* name, Vec3 pos) {
+                GameObject* c = s.CreateGameObject(name);
+                c->transform->SetPosition(pos);
+                c->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
+                auto* v = c->AddComponent<VehicleController>();
+                v->maxSpeed = 20.0f; v->acceleration = 60.0f;
+                return c;
+            }
+            Two(bool secondSeatOnA) {
+                a = MakeCar("A", {0, 0, 0}); b = MakeCar("B", {100, 0, 0});
+                va = a->GetComponent<VehicleController>(); vb = b->GetComponent<VehicleController>();
+                seatObj = s.CreateGameObject("Seat");
+                seatObj->transform->SetParent(a->transform, false);
+                seat = seatObj->AddComponent<VehicleSeat>();
+                if (secondSeatOnA) {
+                    seat2Obj = s.CreateGameObject("Seat2");
+                    seat2Obj->transform->SetParent(a->transform, false);
+                    seat2Obj->AddComponent<VehicleSeat>();
+                }
+                p = s.CreateGameObject("P");
+                p->transform->SetPosition({-1.0f, 0.0f, 0.0f});
+                p->AddComponent<ThirdPersonController>();
+                s.Start();
+            }
+            void Run(std::vector<char> k, int n) { for (int i = 0; i < n; ++i) { Input::FeedKeys(k); s.Update(DT); } }
+            void Press(char k) { Run({}, 1); Run({k}, 1); Run({}, 1); }
+        };
+        {   // (5a) nobody seated: the old car stops counting the seat, the new one counts it
+            Two t(false);
+            t.Run({}, 3);
+            CHECK(t.va->HasDriverSeat() && !t.vb->HasDriverSeat());
+            t.p->transform->SetPosition({500, 0, 0});          // keep the player out of the way
+            t.seatObj->transform->SetParent(t.b->transform, false);
+            t.Run({}, 3);
+            CHECK(!t.va->HasDriverSeat());                     // A has no driver seat any more
+            CHECK(t.vb->HasDriverSeat());
+            t.Run({'w'}, 30);
+            CHECK(t.va->Speed() > 5.0f);                       // and A, with no seat, reads the keys again
+            CHECK_NEAR(t.vb->Speed(), 0.0f, 1e-3f);            // B waits for a driver
+        }
+        {   // (5b) seated, then re-parented, then E: nobody is left as A's driver; A does not drive empty
+            Two t(true);                                        // A keeps a second driver seat
+            t.Run({}, 3);
+            t.Press('e');
+            CHECK(t.seat->Occupant() == t.p);
+            CHECK(t.va->Driver() == t.p);
+            t.seatObj->transform->SetParent(t.b->transform, false);
+            t.Run({}, 3);
+            t.Press('e');                                       // get out
+            CHECK(!t.seat->occupied);
+            CHECK(t.va->Driver() == nullptr);                  // the car the person drove is freed
+            CHECK(t.vb->Driver() == nullptr);
+            CHECK(t.va->HasDriverSeat());                      // seat 2 still counts on A
+            t.p->transform->SetPosition({-300, 0, 0});          // away from every seat, so W cannot board
+            t.Run({'w'}, 60);
+            CHECK_NEAR(t.va->Speed(), 0.0f, 1e-2f);            // nobody inside: A does not drive
+            CHECK_NEAR(t.vb->Speed(), 0.0f, 1e-2f);
+        }
+        {   // (6) untick `driver` while seated: exit still frees the car's driver place
+            Two t(true);
+            t.Run({}, 3);
+            t.Press('e');
+            CHECK(t.va->Driver() == t.p);
+            t.seat->driver = false;
+            t.Run({}, 2);
+            t.Press('e');                                       // get out
+            CHECK(!t.seat->occupied);
+            CHECK(t.va->Driver() == nullptr);
+            CHECK(t.va->HasDriverSeat());                      // seat 2
+            VehicleSeat* s2 = t.seat2Obj->GetComponent<VehicleSeat>();
+            t.p->transform->SetPosition({-300, 0, 0});
+            t.Run({'w'}, 60);
+            CHECK_NEAR(t.va->Speed(), 0.0f, 1e-2f);            // empty car does not drive
+            CHECK(s2->Enter(t.p));                              // and seat 2 can be taken
+            CHECK(t.va->Driver() == t.p);
+        }
+    }
+
     // --- Sit clips: the pose height is pinned (a drop from the standing hip height, 0.92 m) ----
     {
         const float kRest = 0.92f;

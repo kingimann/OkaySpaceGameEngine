@@ -102,6 +102,7 @@ public:
             if (v->Driver()) return false;                       // one driver per vehicle
         }
         m_who = who;
+        m_driverCar = (driver && v) ? v : nullptr;      // the car this seat makes `who` the driver of (cleared exactly this on exit)
         occupied = true;
         m_off.clear(); m_offColliders.clear();
         for (Behaviour* b : who->GetComponents<Behaviour>())     // player controllers: off while seated
@@ -195,6 +196,8 @@ public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_who && dying.count(m_who)) Forget();        // the person is going away: free the seat
+        if (m_driverCar && m_driverCar->gameObject && dying.count(m_driverCar->gameObject)) m_driverCar = nullptr;   // never keep a freed car
+        if (m_reg && m_reg->gameObject && dying.count(m_reg->gameObject)) m_reg = nullptr;
     }
 
 private:
@@ -211,7 +214,7 @@ private:
         if (want && !m_reg) { v->AddDriverSeat(); m_reg = v; }
     }
     void Unregister() {
-        if (m_reg && Vehicle() == m_reg) m_reg->RemoveDriverSeat();   // m_reg is only compared unless it is still live
+        if (m_reg) m_reg->RemoveDriverSeat();   // the car this seat was counted on, even if the seat has been moved to another car since
         m_reg = nullptr;
     }
 
@@ -355,9 +358,9 @@ private:
 
     // Free the seat without touching the (maybe gone) person.
     void Forget() {
-        if (driver)
-            if (VehicleController* v = Vehicle())
-                if (v->Driver() == m_who) v->SetDriver(nullptr);
+        // Free the car this seat put the person at the wheel of, whatever the seat's parent or `driver` flag is now.
+        if (m_driverCar && m_driverCar->Driver() == m_who) m_driverCar->SetDriver(nullptr);
+        m_driverCar = nullptr;
         auto& occ = Occupied();
         for (size_t i = 0; i < occ.size(); ++i) if (occ[i] == this) { occ.erase(occ.begin() + (long)i); break; }
         if (m_who && !m_who->IsDestroyed()) GiveCameraBack();
@@ -372,7 +375,8 @@ private:
     }
 
     GameObject* m_who = nullptr;
-    VehicleController* m_reg = nullptr;     // the car this seat is counted on (compared, not followed)
+    VehicleController* m_reg = nullptr;     // the car this seat is counted on (nulled when that car is destroyed)
+    VehicleController* m_driverCar = nullptr; // the car whose driver this seat set at Enter (nulled when that car is destroyed)
     std::vector<Behaviour*> m_off;
     std::vector<Collider3D*> m_offColliders;
     float m_savedGravity = 1.0f;

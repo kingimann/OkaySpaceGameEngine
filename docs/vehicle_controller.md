@@ -127,6 +127,12 @@ player gets in and out instead of the car always listening to the keyboard.
 - **From C++:** `VehicleSeat::Enter(go)` (returns false if refused), `Exit()`,
   `Occupant()`, `VehicleController::Driver()`.
 
+**Fixed in this branch (found by an outside review of the merged seat code):**
+- A seat **moved to another car** (re-parented, for example dragged in the Hierarchy during Play) used to leave the old car counting a driver seat that was gone, so it never drove again. If someone was seated, getting out left them as the old car's driver and that car then drove itself with nobody inside. The seat now remembers the car it was counted on and the car it made the person driver of, and frees exactly those.
+- **Unticking `driver` while someone sits** used to leave them as the car's driver after they got out. Same fix.
+- Still true: moving an occupied seat to another car does **not** put the person out. They keep sitting in it (now on the new car) until they press E.
+- Tested: `tests/test_vehicle_seat.cpp` (nobody seated; seated then re-parent then E; two driver seats with `driver` unticked). Try it by hand: press Play, drive or sit in the car, drag the seat object onto another car in the Hierarchy.
+
 Not done: no script or visual-script node for enter / exit / driver yet; **multiplayer
 does not replicate seat state** (each machine decides on its own); no hands on the wheel and
 no steering animation on the character; no mouse look from the seat in first person; the camera

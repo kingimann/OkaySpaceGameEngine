@@ -19,9 +19,12 @@ then this file gets updated. Keep this file short and true.
 
 ## Pull requests and CI
 
-6. **Merge whatever is green.** Squash-merge with the title `<PR title> (#N)` and the exact head sha. Do not wait
-   for the slow "Build & test (Ubuntu)" job. A docs-only or version-only change may merge without waiting for the
-   rest of CI.
+6. **Merge only a PR with no problems.** Every CI job must be finished and green, including the slow "Build & test
+   (Ubuntu)" job. Wait for it; do not merge while any job is running, red or cancelled, and do not merge a PR whose
+   own text lists a failing or unrun test that CI could have run. Squash-merge with the title `<PR title> (#N)` and
+   the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
+   PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
+   whose only jobs are docs checks may merge once those are green.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).

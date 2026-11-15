@@ -909,6 +909,10 @@ target_link_libraries(test_unsaved_fields PRIVATE okay::engine)
 target_compile_definitions(test_unsaved_fields PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME unsaved_fields COMMAND test_unsaved_fields)
 
+add_executable(test_registry_large_values test_registry_large_values.cpp)
+target_link_libraries(test_registry_large_values PRIVATE okay::engine)
+add_test(NAME registry_large_values COMMAND test_registry_large_values)
+
 # Two of every serializable component, plus prefab apply, undo deltas, diff/merge, copy and export.
 add_executable(test_duplicate_components test_duplicate_components.cpp)
 target_link_libraries(test_duplicate_components PRIVATE okay::engine)

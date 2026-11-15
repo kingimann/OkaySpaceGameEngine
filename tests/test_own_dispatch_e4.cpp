@@ -34,7 +34,20 @@ static void UnsetEnv(const char* n) {
 static void Write(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
 static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
 
-struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris; bool (*direct)(const std::string&, ImportedModel&, std::string*); };
+// True when the build was configured with -DOKAY_OWN_OPENGEX=ON / -DOKAY_OWN_MDL=ON (tests/CMakeLists.txt then defines OKAY_EXPECT_OWN_<FMT> for this
+// test): the format is then ON by default, so the "off by default" checks below must not run for it (they failed on such a build before this was added).
+#ifdef OKAY_EXPECT_OWN_OPENGEX
+static const bool kOgexOnByDefault = true;
+#else
+static const bool kOgexOnByDefault = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_MDL
+static const bool kMdlOnByDefault = true;
+#else
+static const bool kMdlOnByDefault = false;
+#endif
+
+struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris; bool (*direct)(const std::string&, ImportedModel&, std::string*); bool onByDefault; };
 static bool DOg(const std::string& p, ImportedModel& m, std::string* e) { return ReadOgexFile(p, m, e); }
 static bool DMd(const std::string& p, ImportedModel& m, std::string* e) { return ReadMdlFile(p, m, e); }
 
@@ -43,9 +56,9 @@ int main() {
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch_e4";
     fs::create_directories(dir);
     const Case cases[] = {
-        {"t.ogex", ".ogex", "OKAY_OWN_OPENGEX", e4::OgexQuad(), 2, DOg},
-        {"q.mdl", ".mdl", "OKAY_OWN_MDL", e4::QuakeMdl(), 2, DMd},
-        {"h.mdl", ".mdl", "OKAY_OWN_MDL", e4::HalfLifeMdl(), 1, DMd},
+        {"t.ogex", ".ogex", "OKAY_OWN_OPENGEX", e4::OgexQuad(), 2, DOg, kOgexOnByDefault},
+        {"q.mdl", ".mdl", "OKAY_OWN_MDL", e4::QuakeMdl(), 2, DMd, kMdlOnByDefault},
+        {"h.mdl", ".mdl", "OKAY_OWN_MDL", e4::HalfLifeMdl(), 1, DMd, kMdlOnByDefault},
     };
     for (const Case& c : cases) {
         const std::string path = (dir / c.file).string();
@@ -74,8 +87,14 @@ int main() {
         SetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         UnsetEnv(c.env);
+        if (c.onByDefault) {   // a build with -DOKAY_OWN_<FMT>=ON: ours is the default with nothing set at run time
+            CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
+            CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") != std::string::npos);
+            ImportedModel d; std::string e2;
+            CHECK(ImportModelData(path, d, ImportBackend::Default, false, &e2) && d.backend == "own");
+        }
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable()) {
+        if (!AssimpAvailable() && !c.onByDefault) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

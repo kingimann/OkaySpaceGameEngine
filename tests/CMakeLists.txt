@@ -3543,6 +3543,12 @@ set_tests_properties(e4_hostile PROPERTIES TIMEOUT 600)
 # The import seam routes .ogex (slot 37) and .mdl (slot 38) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_e4 test_own_dispatch_e4.cpp)
 target_link_libraries(test_own_dispatch_e4 PRIVATE okay::engine)
+if(OKAY_OWN_OPENGEX)
+    target_compile_definitions(test_own_dispatch_e4 PRIVATE OKAY_EXPECT_OWN_OPENGEX)
+endif()
+if(OKAY_OWN_MDL)
+    target_compile_definitions(test_own_dispatch_e4 PRIVATE OKAY_EXPECT_OWN_MDL)
+endif()
 add_test(NAME own_dispatch_e4 COMMAND test_own_dispatch_e4 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # -DOKAY_OWN_OPENGEX=ON / -DOKAY_OWN_MDL=ON must make our reader the default for that format (fails if the option is not forwarded to the engine).

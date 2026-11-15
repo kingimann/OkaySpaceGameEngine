@@ -147,6 +147,11 @@ want numbers: select `Player` in the Hierarchy and watch **Box Collider 3D > Siz
 Controller's **Crouch / prone** fold (Toggle Stance, Allow Prone, speeds, heights). Gamepad: tap **B** to crouch, hold it
 for prone. Careful: running (**Shift**) and then pressing **Z** is a dive, not a crawl.
 
+**Pictures (headless software renders of this scene, not the editor window; no on-screen help text).** The course from the
+side ([overview](images/stance/stance_course_overview.png)), the character crouched under the orange beam
+([crouch](images/stance/stance_crouch_under_beam.png)) and lying in the red tunnel with the near wall hidden so you can see
+it ([prone](images/stance/stance_prone_in_tunnel.png)). They show the crouch and prone poses the built-in character plays.
+
 **What has no animation.** The built-in blocky character has crouch, crouch walk, prone, crawl and get-up clips, so you
 see it go down. A character with your own imported model needs its own **Prone**, **Crawl** and **Get up** clips
 (Model Animator, `docs/animation.md` "Crouch and prone for imported characters"). Without them the model keeps its

@@ -154,6 +154,25 @@ int main() {
         fs::remove_all(dir);
     }
 
+    // ---- guards: PBKDF2 output length cap, FinalWith32 on a partly filled object ----
+    {
+        std::uint8_t one[1] = {0x55};
+        if (sizeof(std::size_t) >= 8) {   // 2^32 blocks of 32 bytes can only be asked for with a 64-bit size_t
+            const std::size_t tooBig = (std::size_t)32 * 0xFFFFFFFFull + 1;
+            CHECK(!nw::Pbkdf2HmacSha256(one, tooBig, one, 1, one, 1, 1));
+            CHECK(one[0] == 0x55);                                          // nothing was written
+        }
+        CHECK(nw::Pbkdf2HmacSha256(one, 0, one, 1, one, 1, 1));              // zero bytes: fine, nothing to do
+        // FinalWith32 / FinalWith32Words on an object with a partial block pending equals hashing prefix || 32 bytes.
+        for (std::size_t pre : {0u, 1u, 33u, 64u, 70u, 128u}) {
+            Bytes p = Pat(pre), in = Pat(32);
+            nw::Sha256 a; a.Update(p.data(), p.size());
+            std::uint8_t got[32]; a.FinalWith32(in.data(), got);
+            Bytes all = p; all.insert(all.end(), in.begin(), in.end());
+            CHECK(Hex(got, 32) == NewHex(all));
+        }
+    }
+
     // ---- hygiene and shape ----
     {
         nw::Sha256 s; s.Update((const std::uint8_t*)"secret", 6);

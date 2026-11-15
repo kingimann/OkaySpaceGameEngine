@@ -74,6 +74,22 @@ Copy 1 was the base as expected, and it was verified (it is correct and it is th
 2. `scripts/sha256_python_diff.py` with `tests/sha256_compare check`: 2,000 digests (all four implementations plus streaming), 1,000 HMACs and 400 PBKDF2 outputs against Python `hashlib` / `hmac` / `hashlib.pbkdf2_hmac`: 0 mismatches (run for three seeds on the way, final run with the Release build).
 3. The existing suites that use these functions pass on the new code: `account`, `official_game`, `official_publish`, `launcher_versions`, `self_update`, `update_signature`, `anticheat_integrity`, `anticheat_golden`, `anticheat_checks`, `anticheat_backend`, `crypto`, `crypto_fe16`, `embedded_font`, `net_crypto_own`, `voice_races`, and the engine library (which holds `DedicatedServer.cpp` and `RelayServer.cpp`) builds and links.
 
+## How to try it
+
+Nothing looks different on screen; the point is that nothing breaks and updates hash faster.
+
+1. **Sign in with an existing local account** (launcher, Account tab). An account made by an older version must sign in as before; a record from before the PBKDF2 change is upgraded on that sign-in. Exercised by tests only (`sha256_unify`, `account`) with records made by the old code. Not tried in the real launcher.
+2. **Launcher update check** (launcher > Settings or the startup check). Downloaded files are checked against the SHA-256 in `versions.json`; a wrong checksum is refused. Tests only (`launcher_versions`, `self_update`, `official_game`).
+3. **Anti-cheat checked server**: join one; the file manifest and the clock tag must still be accepted. Tests only (`anticheat_integrity`, `anticheat_checks`, `anticheat_golden`, `anticheat_backend`).
+4. **Voice room**: join the same room from two launchers; they must hear each other (the room key is `SHA-256("okayspace-voice-v1|" + key)`, so both sides must agree). `voice_races` compiles it; the key itself has no direct test. Not tried.
+5. **The checks themselves** (a developer machine): build `test_sha256_unify` and `sha256_compare` (`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`, then `ninja test_sha256_unify sha256_compare`), run `ctest -R sha256_unify` (expect "0 failures"), `python3 scripts/sha256_python_diff.py build/tests/sha256_compare` (expect "0 mismatches"), `build/tests/sha256_compare bench` (speed table) and `build/tests/sha256_compare big` (a 4.3 GB stream, 45 s).
+
+## Guards added after review
+
+- `Pbkdf2HmacSha256` returns false and writes nothing if `dkLen` needs more than 2^32-1 blocks (the block counter is 32 bits); tested.
+- `FinalWith32Words` / `FinalWith32` write the full 64-bit bit count and fall back to the ordinary path when a partial block is pending, so they are correct for any state; tested with prefixes of 0, 1, 33, 64, 70, 128 bytes.
+- The valgrind constant-time target and the sanitised fuzz script no longer list the deleted `Sha256.cpp`; their driver programs (`tests/crypto_ct_valgrind.cpp`, `tests/fuzz_crypto.cpp`) include `Crypto.hpp` and call the header's `Sha256`, so the header is still exercised. Run: `scripts/crypto_fuzz_sanitized.sh 20000 1` (no property violated, ASan+UBSan) and the valgrind harness for g++ and clang++ at -O0 and -O2 ("all cases as expected"). The full matrix script was not run.
+
 ## Not verified
 
 - Windows / MinGW: not built here. The header uses only standard C++17, no intrinsics, no `<mutex>`/`<thread>`. A first CI run on Windows is the check.

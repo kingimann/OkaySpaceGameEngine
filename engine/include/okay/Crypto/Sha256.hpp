@@ -97,13 +97,32 @@ public:
     }
 
     /// Same as FinalWith32, with the 32 input bytes and the 32 output bytes as eight big-endian words each (no byte shuffling:
-    /// this is what the PBKDF2 loop calls).
+    /// this is what the PBKDF2 loop calls). Fast path: the object holds whole blocks only (m_fill == 0, as after an HMAC pad);
+    /// the 64-bit bit count is written in full. If a partial block is pending it still gives the right answer, by hashing a copy
+    /// the ordinary way (slower, never used by HMAC/PBKDF2).
     void FinalWith32Words(const std::uint32_t in[8], std::uint32_t out[8]) const {
+        if (m_fill != 0) {
+            std::uint8_t b[32], d[32];
+            for (int i = 0; i < 8; ++i) {
+                b[4 * i] = static_cast<std::uint8_t>(in[i] >> 24); b[4 * i + 1] = static_cast<std::uint8_t>(in[i] >> 16);
+                b[4 * i + 2] = static_cast<std::uint8_t>(in[i] >> 8); b[4 * i + 3] = static_cast<std::uint8_t>(in[i]);
+            }
+            Sha256 t = *this;
+            t.Update(b, 32);
+            t.Final(d);
+            for (int i = 0; i < 8; ++i)
+                out[i] = static_cast<std::uint32_t>(d[4 * i]) << 24 | static_cast<std::uint32_t>(d[4 * i + 1]) << 16 |
+                         static_cast<std::uint32_t>(d[4 * i + 2]) << 8 | static_cast<std::uint32_t>(d[4 * i + 3]);
+            sha256_detail::Wipe(b, sizeof b); sha256_detail::Wipe(d, sizeof d);
+            return;
+        }
         std::uint32_t w[16];
         for (int i = 0; i < 8; ++i) w[i] = in[i];
         w[8] = 0x80000000u;
-        for (int i = 9; i < 15; ++i) w[i] = 0;
-        w[15] = static_cast<std::uint32_t>((m_len + 32) * 8);          // the bit count (below 2^32 for a key pad plus 32 bytes)
+        for (int i = 9; i < 14; ++i) w[i] = 0;
+        const std::uint64_t bits = (m_len + 32) * 8;
+        w[14] = static_cast<std::uint32_t>(bits >> 32);
+        w[15] = static_cast<std::uint32_t>(bits);
         for (int i = 0; i < 8; ++i) out[i] = m_h[i];
         CompressWords(out, w);
     }
@@ -238,10 +257,12 @@ inline void HmacSha256Mac(std::uint8_t out[32], const std::uint8_t* key, std::si
 }
 
 /// PBKDF2-HMAC-SHA256 (RFC 8018 section 5.2): writes `dkLen` bytes (any length up to 2^32-1 blocks of 32 bytes; 0 writes
-/// nothing). `iterations` below 1 is treated as 1. The two pad states are computed once, so each iteration costs exactly two
+/// nothing; returns false and writes nothing when dkLen needs more than 2^32-1 blocks, which the 32-bit block counter cannot
+/// number: RFC 8018 caps dkLen at (2^32-1) * 32 bytes). `iterations` below 1 is treated as 1. The two pad states are computed once, so each iteration costs exactly two
 /// SHA-256 compressions. Everything secret on the stack is wiped on return.
-inline void Pbkdf2HmacSha256(std::uint8_t* out, std::size_t dkLen, const std::uint8_t* password, std::size_t passwordLen,
+inline bool Pbkdf2HmacSha256(std::uint8_t* out, std::size_t dkLen, const std::uint8_t* password, std::size_t passwordLen,
                              const std::uint8_t* salt, std::size_t saltLen, std::uint32_t iterations) {
+    if (static_cast<unsigned long long>(dkLen) > 32ull * 0xFFFFFFFFull) return false;
     if (iterations < 1) iterations = 1;
     const HmacSha256 keyed(password, passwordLen);
     for (std::uint32_t block = 1; dkLen > 0; ++block) {
@@ -275,6 +296,7 @@ inline void Pbkdf2HmacSha256(std::uint8_t* out, std::size_t dkLen, const std::ui
         sha256_detail::Wipe(t, sizeof t); sha256_detail::Wipe(inD, sizeof inD); sha256_detail::Wipe(tB, sizeof tB);
         out += take; dkLen -= take;
     }
+    return true;
 }
 
 } // namespace okay::crypto

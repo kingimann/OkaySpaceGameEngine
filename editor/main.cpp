@@ -34,6 +34,7 @@
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -37571,8 +37572,9 @@ void DrawInspector(EditorState& ed) {
             {
                 if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.");
+                    ImGui::SetTooltip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.\n[size=N] is a percent (25 to 400); a line is as tall as the biggest size on it.");
             }
+            if (!tr->screenSpace) ImGui::TextDisabled("World text: drawn at this object's place in flat (2D) scenes.");
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             oked::FieldTip("Letter Spacing##txt");
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
@@ -38793,9 +38795,18 @@ void DrawInspector(EditorState& ed) {
             char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
             if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
             oked::FieldTip("Format##utbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The text shown, filled in every frame. {name} is a visual-script variable or a saved value;\n"
+                                  "{name|default} shows the default when it is empty; {{ and }} are literal braces.\n"
+                                  "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n"
+                                  "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n"
+                                  "Controller or Character). A nameplate on a character shows that character.");
             ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
             ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
             ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
+            ImGui::TextDisabled("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
+            if (const GameObject* ow = uiowner::Find(tb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
         }
     }
@@ -38804,12 +38815,21 @@ void DrawInspector(EditorState& ed) {
             char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
             if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
             oked::FieldTip("Variable##ubbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The visual-script variable or saved value the bar follows (0 is Min, 1 is Max).\n"
+                                  "owner.healthFrac (or owner.health, owner.maxHealth, owner.healthPct, owner.level) reads the\n"
+                                  "character this bar is a child of: the nearest parent with a Health Stat, Stats, Survival Stats,\n"
+                                  "NPC Controller or Character. With no such parent it follows the variable without \"owner.\"\n"
+                                  "(healthFrac is the player's health).");
             if (ImGui::DragFloat("Min (empty)##ubbind", &bb->min, 0.5f)) ed.dirty = true;
             oked::FieldTip("Min (empty)##ubbind");
             if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
             oked::FieldTip("Max (full)##ubbind");
             ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
             ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
+            ImGui::TextDisabled("Under a character: owner.healthFrac is that character's health (0 to 1).");
+            if (const GameObject* ow = uiowner::Find(bb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
         }
     }

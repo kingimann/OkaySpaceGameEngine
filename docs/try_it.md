@@ -26,7 +26,8 @@ asks for a scene path: type or paste it, or press **Browse...**. A scene finds t
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`,
+`ui_text`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
@@ -44,6 +45,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7c | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
@@ -233,6 +235,61 @@ you did not open since they were made are safe to remove; check the path before 
 **Status.** Tested on main once merged: `test_project_create` (289 checks) covers the rule that a template shortcut opens
 the Details step and cannot start a second create. Unverified: the launcher screens themselves (the launcher was not
 compiled or run on this machine).
+
+---
+
+## 7c. Nameplates that show their own character, and a sign with rich text
+
+**What it is.** A small flat scene with two characters, a Goblin Scout and an Orc Chief. Above each one is a nameplate (a
+dark card with the name, a gold level pill and a red health bar). Each plate is a child of its character and shows **that**
+character's name, level and health, live. The Goblin loses a little health by itself soon after Play starts, so you can see
+its bar drop. Behind them is a wooden sign whose text uses the rich-text tags: a big bold title, a gold line, red bold and
+italic words and a small line. Code: `UIOwnerData` (the `owner.` keys), `UIGallery::AddNameplate`, `ui2d::DrawWorldText`
+(`docs/ui_runtime.md`, `docs/ui_world_space.md`).
+
+**Steps.**
+1. Open the editor (`Tools\OkayEngine.exe`, or start it from the launcher). **File > Open...**, paste
+   `<install folder>\examples\ui_text\ui_text.okayscene` (installer: `%LOCALAPPDATA%\OkaySpace\examples\ui_text\ui_text.okayscene`),
+   press Open.
+2. The Hierarchy lists `Main Camera`, `Ground`, `Sign Post`, `Sign Board`, `Sign Text`, `Goblin Scout`, `Orc Chief`,
+   `Canvas` (with `Hints`) and `Director`. Expand `Goblin Scout`: it has a child `Nameplate`.
+3. The scene is flat (2D). In the **Scene** view header the button next to the view name says **3D** or **2D**: if it says
+   3D, click it once so it says 2D. Look at the **Game** tab for the plates (see "Known rough").
+4. Press **Play**. In the Game view you should see a blue sky, green ground, the brown sign at the top, a green box at the
+   left (the Goblin) and a red-brown box at the right (the Orc). Above each box is a plate: the name on the left
+   ("Goblin Scout", "Orc Chief"), a gold pill on the right ("Lv 3", "Lv 12"), and a red bar under them, full at the start.
+5. About a second after Play the Goblin's bar drops, then drops again every 1.2 seconds, four times. The Orc's bar does not move.
+6. Click once in the Game view so it has the keyboard, then press **1** (the Goblin loses 8 health), **2** (the Orc loses 12),
+   **3** (the Goblin gains 100 experience: the pill changes to "Lv 4" and its bar fills up again) and **H** (both are healed).
+   Each plate changes only for its own character.
+7. Stop Play. Expand `Goblin Scout > Nameplate > SwatchPlate`, select `Name` and look at **UI Text Bind** in the Inspector.
+   The **Format** row is `{owner.name|Goblin}`; hover it for the list of keys; the line under the rows says
+   `Owner: Goblin Scout`. Select `SwatchLevel > Label` (format `Lv {owner.level|1}`) and `Health` (UI Bar Bind, variable
+   `owner.healthFrac`).
+8. Select `Sign Text`. In its **Text** section **Rich Text** is ticked (hover it for the tags). In the text box, wrap a word
+   in `[size=250]` ... `[/size]` and look at the Scene or Game view: the lines under it move down and never overlap (before this
+   change the big letters climbed into the line above).
+
+9. Make your own (optional): select any object that has a **Stats** component (**Add Component > Stats** on a new sprite or
+   cube works), then **GameObject > UI > Prebuilt Screens > Nameplate (in the world)**. The new `Nameplate` becomes that
+   object's child, above its head, and shows its name, level and health when you press Play. With nothing suitable
+   selected it is made at the scene root and you drag it onto a character in the Hierarchy yourself.
+
+**How you know it worked.** The two plates show different names, levels and bars, and a key press moves only the plate of
+the character it hurts. The title line of the sign is on its own line and the lines under it start below it. The level pill is
+inside the card at any size of the window.
+
+**Known rough.** World text (the sign) is drawn in flat scenes only; a 3D scene does not draw it. The nameplate is a
+World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
+the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
+
+**Pictures** (headless renders made by the tests, not a real window): `docs/images/ui_text/` (see the list at the end of this
+section).
+
+**Status.** Tested here on Linux (the numbers are in "Checks run for this page"): `ui_nameplate_bound`, `world_text_rich`,
+`ui_text_example` (loads this scene from disk and plays it: ticks, the script and key presses), `runtime_ui`, `ui_text_shots`.
+**Unverified:** the real editor window and menus (steps 1, 3, 7, 8), the Game view drawing of the plates in the editor, the
+Windows exe and the installer copy of the folder. The editor code for the new Inspector rows was only syntax-checked.
 
 ---
 

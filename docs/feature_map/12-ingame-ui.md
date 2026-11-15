@@ -50,9 +50,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `UIButton`, `UIPanel`, `TextRenderer`, `UIImage`, `UIRawImage`, `UIProgressBar`, `UIRadialProgress`, `UIRating`, `Crosshair`; script: `ui_set_text`, `ui_get_text`, `ui_clicked`, `ui_set_progress`, `ui_set_fill`, `ui_set_interactable`
 - **Editor:** GameObject > Create > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair
 - **Docs:** `docs/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
-- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`
+- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`, `world_text_rich` (rich text on world text, `[size=N]`, line heights)
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
-- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui_runtime.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); sized runs do not change line height, centring or wrapping; no rating or progress "data source" beyond the Bar Bind (12.13)
+- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui_runtime.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); a line is as tall as its largest size, but a line's width is not measured with `[size]` (wrapping and centring ignore it); world text is drawn in flat (2D) scenes only; no rating or progress "data source" beyond the Bar Bind (12.13)
 - **Related:** 12.3, 12.7, 12.11, 2.9, 1.8
 - **Words:** button, panel, label, text, TextRenderer, image, UIImage, raw image, nine-slice, 9-slice, progress bar, health bar, radial, cooldown, rating, stars, crosshair, reticle, shape, rounded corners, pill, shadow, gradient
 - **Seen as:** a button does nothing on click; text is blurry or too small; an image shows a red box or "can't load"; a bar does not fill; corners are square when they should be round; text does not update when the language changes
@@ -133,9 +133,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `WorldUI`, `WorldSpaceUI`, `UIWorldCtx`, `GetUIScreenRect`
 - **Editor:** Create > UI > 3D UI (in-world); Inspector headers World UI (3D label), World Space UI (3D), Canvas > World Space
 - **Docs:** `docs/ui_world_space.md`
-- **Tests:** `worldcanvas`, `worldtoscreen`, `ui_renderer_options`
+- **Tests:** `worldcanvas`, `worldtoscreen`, `ui_renderer_options`, `ui_nameplate_bound` (what is drawn: card, pill, bar and texts at five sizes and two fonts), `ui_text_example` (the shipped sample), `ui_text_shots` (headless pictures)
 - **Status:** Works - implemented; `worldcanvas` checks widgets projecting through the camera context
-- **Open:** per `docs/ui_world_space.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view)
+- **Open:** per `docs/ui_world_space.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view); panels, progress bars and text scale with the projection and text honours its alignment (the other widget kinds in world space were not checked: they may still draw at design size)
 - **Related:** 12.1, 12.11, 4.8
 - **Words:** world space UI, 3D UI, nameplate, health bar over head, floating text, damage numbers, billboard, world canvas, in-world menu, terminal
 - **Seen as:** a nameplate does not follow its object; in-world text is mirrored or too big far away; a button in a world panel cannot be clicked; the panel does not show in the Scene view

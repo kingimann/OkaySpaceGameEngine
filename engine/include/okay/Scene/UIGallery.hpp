@@ -192,23 +192,55 @@ inline void BindNameplateHealth(GameObject* bar) {
     b->var = "owner.healthFrac"; b->min = 0.0f; b->max = 1.0f;
 }
 
-/// A nameplate: a name, a level badge and a thin health bar, all bound to the character it belongs to (UIOwnerData:
+/// The nameplate's measurements in design pixels, in one place so the pieces cannot drift apart: the card, the level
+/// pill (sized for "Lv 99") and the text heights. Everything sits inside the card with kPad to spare.
+namespace nameplate {
+constexpr float kCardW = 220.0f, kCardH = 62.0f, kPad = 12.0f;
+constexpr float kBadgeW = 64.0f, kBadgeH = 26.0f, kBadgeTop = 9.0f;
+constexpr float kNameTop = 6.0f, kNameH = 30.0f, kNameFont = 20.0f, kLevelFont = 15.0f;   // text heights in px
+constexpr float kBarTop = 44.0f, kBarH = 10.0f;
+constexpr float kNameW = kCardW - 2.0f * kPad - kBadgeW - 8.0f;    // the name stops 8 px short of the level pill
+}
+
+/// Best Fit for a nameplate label: it keeps `px` (its text height) and shrinks only when the text would not fit its box, so a
+/// long name or a three-digit level, or a wider font, never runs out of the card or the pill.
+inline void FitNameplateText(GameObject* g, float px) {
+    auto* tr = g->GetComponent<TextRenderer>();
+    tr->autoSize = true; tr->autoSizeMax = px / 8.0f; tr->autoSizeMin = 0.75f;
+}
+
+/// A nameplate: a name, a level pill and a thin health bar, all bound to the character it belongs to (UIOwnerData:
 /// the nearest parent with health, stats or a Character). Add it as a world-space UI object and make it a child of
 /// the character: it follows, faces the camera and shows that character's name, Stats level and health. Without
 /// such a parent it shows "Goblin", "Lv 1" (or the global `name` and `level` variables) and the player's health, as a preview. A
 /// character with no Stats shows level 1.
+///
+/// In the world the plate keeps its design size at any distance (World Space UI "Constant size": the text stays readable
+/// far away) and hangs above its object's point, centred on it. On the canvas it starts at the top-left corner.
 inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
+    using namespace nameplate;
     GameObject* root = inWorld ? scene.CreateGameObject("Nameplate") : Child(scene, EnsureCanvas(scene), "Nameplate");
-    if (inWorld) root->AddComponent<WorldSpaceUI>();
-    GameObject* card = Panel(scene, root, "SwatchPlate", UIAnchor::TopLeft, {0, 0}, {180, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
-    GameObject* name = Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {110, 22}, 15.0f, slate::Text(), 0, true);
+    if (inWorld) {
+        auto* ws = root->AddComponent<WorldSpaceUI>();
+        ws->constantSize = true; ws->constantScale = 1.0f;
+    }
+    const Vec2 at = inWorld ? Vec2{-kCardW * 0.5f, -kCardH} : Vec2{0.0f, 0.0f};
+    GameObject* card = Panel(scene, root, "SwatchPlate", UIAnchor::TopLeft, at, {kCardW, kCardH}, Color::FromBytes(16, 18, 24, 190), 12.0f);
+    GameObject* name = Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {kPad, kNameTop}, {kNameW, kNameH}, kNameFont, slate::Text(), 0, true);
+    FitNameplateText(name, kNameFont);
     name->AddComponent<UITextBind>()->format = "{owner.name|Goblin}";
-    GameObject* badge = Badge(scene, card, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-8, 4}, slate::Warning());
-    if (badge && badge->transform)
-        for (Transform* t : badge->transform->Children())
-            if (t && t->gameObject && t->gameObject->GetComponent<TextRenderer>())
-                t->gameObject->AddComponent<UITextBind>()->format = "Lv {owner.level|1}";
-    BindNameplateHealth(gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
+    // The level pill, anchored to the card's right edge. Its label is centred in it and shrinks to fit.
+    const Color warn = slate::Warning();
+    GameObject* pill = Panel(scene, card, "SwatchLevel", UIAnchor::TopRight, {-kPad, kBadgeTop}, {kBadgeW, kBadgeH}, Color(warn.r, warn.g, warn.b, 0.22f), kBadgeH * 0.5f);
+    {
+        auto* pp = pill->GetComponent<UIPanel>();
+        pp->shape = UIShape::Pill; pp->borderWidth = 1.0f; pp->borderColor = Color(warn.r, warn.g, warn.b, 0.55f);
+    }
+    GameObject* level = Text(scene, pill, "Label", "Lv 7", UIAnchor::TopLeft, {0, 0}, {kBadgeW, kBadgeH}, kLevelFont,
+                             Color(warn.r * 0.4f + 0.6f, warn.g * 0.4f + 0.6f, warn.b * 0.4f + 0.6f, 1.0f), 1);
+    FitNameplateText(level, kLevelFont);
+    level->AddComponent<UITextBind>()->format = "Lv {owner.level|1}";
+    BindNameplateHealth(gx::Bar(scene, card, "Health", {kPad, kBarTop}, {kCardW - 2.0f * kPad, kBarH}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
     return root;
 }
 

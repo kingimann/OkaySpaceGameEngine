@@ -171,5 +171,82 @@ int main() {
         CHECK(rp.Of(255, 0, 0).n > 0 && rp.Of(0, 255, 0).n > 0);
     }
 
+    {   // a line is as tall as the largest [size] on it: the pure rules
+        const RichText rt = ParseRichText("a\n[size=200]b[/size] c\n[size=50]d[/size]\n\n[size=150]e[/size][size=300]f[/size]");
+        const std::vector<float> sc = RichLineScales(rt.plain, rt.styles);
+        CHECK(sc.size() == 5);                                                  // one per line
+        if (sc.size() == 5) {
+            CHECK_NEAR(sc[0], 1.0f, 1e-6f);                                      // plain
+            CHECK_NEAR(sc[1], 2.0f, 1e-6f);                                      // the big run sets the line (the space is no glyph)
+            CHECK_NEAR(sc[2], 0.5f, 1e-6f);                                      // a line of only small text is a small line
+            CHECK_NEAR(sc[3], 1.0f, 1e-6f);                                      // an empty line
+            CHECK_NEAR(sc[4], 3.0f, 1e-6f);                                      // the largest of two runs
+        }
+        CHECK(RichLineScales("", {}).size() == 1 && RichLineScales("", {})[0] == 1.0f);
+        CHECK(RichLineScales("x\n", {}).size() == 2);                            // a trailing line break starts an empty line
+        CHECK(RichLineAdvance(9.0f, 0.0f, 1.0f) == 9.0f);                        // scale 1: exactly the plain advance (old text unchanged)
+        CHECK(RichLineAdvance(10.0f, 1.0f, 1.0f) == 10.0f);
+        CHECK_NEAR(RichLineAdvance(9.0f, 0.0f, 2.0f), 18.0f, 1e-5f);             // glyphs and gap grow with the size
+        CHECK_NEAR(RichLineAdvance(10.0f, 1.0f, 2.0f), 19.0f, 1e-5f);            // the Line Spacing setting does not
+        const std::vector<RichRun> runs = RichTextRuns(ParseRichText("a\n[size=200]b[/size]\nc"));
+        CHECK(runs.size() == 3);
+        if (runs.size() == 3) CHECK(runs[0].lineScale == 1.0f && runs[1].lineScale == 2.0f && runs[2].lineScale == 1.0f);
+    }
+
+    {   // drawn: a big run no longer climbs into the line above, and the line under it starts below it
+        tr->shadow = false; tr->outline = false; tr->bold = false; tr->italic = false; tr->richText = true;
+        const float f = 2.0f;                                                    // screen pixels per font pixel
+        // the same letters in every line, a colour each, so the boxes can be told apart
+        tr->text = "[color=#ff0000]BBB[/color]\n[size=200][color=#00ff00]BBB[/color][/size]\n[color=#0000ff]BBB[/color]";
+        RecordPainter rp;
+        ui2d::DrawWorldText(rp, *tr, 100.0f, 100.0f, f);
+        const auto l1 = rp.Of(255, 0, 0), l2 = rp.Of(0, 255, 0), l3 = rp.Of(0, 0, 255);
+        CHECK(l1.n > 0 && l2.n > 0 && l3.n > 0);
+        std::printf("  lines: y %d..%d, %d..%d, %d..%d (big line is %.2f times the height of line 1)\n", l1.y0, l1.y1, l2.y0, l2.y1, l3.y0, l3.y1,
+                    (double)(l2.y1 - l2.y0) / (double)std::max(1, l1.y1 - l1.y0));
+        CHECK(l2.y0 >= l1.y1);                                                   // the big line starts under the first one (it used to start 8 font px above its place)
+        CHECK(l3.y0 >= l2.y1);                                                   // and the last line under the big one
+        CHECK(l1.y0 >= 100);                                                     // nothing above the text's top
+        CHECK(std::abs((l2.y1 - l2.y0) - 2 * (l1.y1 - l1.y0)) <= 2);             // the big run is twice as tall
+        // the pitch: line 1's top to line 2's top is one plain advance (9 font px) plus what the big letters' blank top rows add (none:
+        // they start on the line's top), line 2's top to line 3's top is two advances (18 font px)
+        const int pitch12 = l2.y0 - l1.y0, pitch23 = l3.y0 - l2.y0;
+        CHECK(std::abs(pitch12 - (int)std::lround(9.0f * f)) <= 2);
+        CHECK(std::abs(pitch23 - (int)std::lround(18.0f * f)) <= 2);
+        // the same text with no [size] lays out as before, line for line (rich on and off agree)
+        tr->text = "[color=#ff0000]BBB[/color]\n[color=#00ff00]BBB[/color]\n[color=#0000ff]BBB[/color]";
+        RecordPainter on;
+        ui2d::DrawWorldText(on, *tr, 100.0f, 100.0f, f);
+        tr->richText = false; tr->text = "BBB\nBBB\nBBB"; tr->color = Color::FromBytes(255, 0, 0);
+        RecordPainter off;
+        ui2d::DrawWorldText(off, *tr, 100.0f, 100.0f, f);
+        CHECK(on.Of(255, 0, 0).y0 == off.Of(255, 0, 0).y0);                      // line 1 at the same place
+        CHECK(on.Of(0, 255, 0).y0 - on.Of(255, 0, 0).y0 == (int)std::lround(9.0f * f));   // the plain pitch
+        CHECK(on.Of(0, 0, 255).y0 - on.Of(0, 255, 0).y0 == (int)std::lround(9.0f * f));
+        tr->richText = true; tr->color = Color::FromBytes(0, 255, 0);
+        // a small-only line is a small line: the last line below it moves up
+        tr->text = "[color=#ff0000]BBB[/color]\n[size=50][color=#00ff00]BBB[/color][/size]\n[color=#0000ff]BBB[/color]";
+        RecordPainter small;
+        ui2d::DrawWorldText(small, *tr, 100.0f, 100.0f, f);
+        const auto s1 = small.Of(255, 0, 0), s2 = small.Of(0, 255, 0), s3 = small.Of(0, 0, 255);
+        CHECK(s2.y0 >= s1.y1 && s3.y0 >= s2.y1);
+        CHECK(std::abs((s3.y0 - s2.y0) - (int)std::lround(4.5f * f)) <= 2);       // half a line (4.5 font px) under the small one
+    }
+
+    {   // the measured height counts it too (centring and Best Fit see the real block)
+        tr->screenSpace = false; tr->richText = true; tr->shadow = false;
+        tr->text = "a\n[size=200]b[/size]\nc";
+        const int plain = 2 * 9 + 8;                                             // three lines at size 1: (3 - 1) * 9 + 8
+        CHECK(tr->PixelHeight() == 9 * 1 + 9 * 2 + 8 * 1);                       // 9 + 18 + 8 = 35
+        CHECK(tr->PixelHeight() > plain);
+        tr->richText = false;
+        CHECK(tr->PixelHeight() == plain);                                       // rich off: three plain lines, the tags are ordinary text
+        tr->richText = true; tr->lineSpacing = 1.0f;
+        CHECK(tr->PixelHeight() == (int)std::ceil(10.0f * 1 + (9.0f * 2 + 1.0f) + 8.0f));   // spacing is added, never multiplied
+        tr->lineSpacing = 0.0f;
+        tr->text = "x\ny";
+        CHECK(tr->PixelHeight() == 9 + 8);                                       // no [size]: the old height, exactly
+    }
+
     TEST_MAIN_RESULT();
 }

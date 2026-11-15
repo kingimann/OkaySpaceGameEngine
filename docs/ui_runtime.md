@@ -75,7 +75,7 @@ widgets; nothing moves.
 | Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). The window carries its own Canvas one step above the page, so it and its contents draw above the page and take clicks first; dragging a window brings it in front of other windows. |
 | Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
-| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level and a health bar, bound to the character it belongs to. Make the "in the world" version (a 3D object that faces the camera) a child of a character: it shows that character's object name, its Stats level (level 1 without Stats) and its health (Health Stat, Stats, Survival Stats or NPC Controller), live. With no such parent it is a preview: "Goblin", "Lv 1" and the player's published health. The bindings are ordinary UI Text Bind / UI Bar Bind keys (`{owner.name}`, `Lv {owner.level|1}`, `owner.healthFrac`), so you can edit them. |
+| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level pill and a health bar, bound to the character it belongs to. Make the "in the world" version (a World Space UI object that faces the camera) a child of a character (with a character selected, the menu item does it for you and puts the plate above its head): it shows that character's object name, its Stats level (level 1 without Stats) and its health (Health Stat, Stats, Survival Stats or NPC Controller), live. With no such parent it is a preview: "Goblin", "Lv 1" and the player's published health. The bindings are ordinary UI Text Bind / UI Bar Bind keys (`{owner.name}`, `Lv {owner.level|1}`, `owner.healthFrac`), so you can edit them. The plate is 220 x 62 design pixels (name 20 px, level 15 px, all inside the card with 12 px to spare). Both texts use Best Fit, so a long name or a three-digit level shrinks to fit instead of running out of the card or the pill. In the world it keeps this size at any distance (World Space UI **Constant size** is on, so the text stays readable far away) and hangs above the object's point, centred on it: put the plate object at the character's head. Turn Constant size off and it scales with distance like any world UI. |
 | Inventory | Prebuilt Screens > Inventory | A bag screen with a slot grid you can click. A **UI Inventory Bind** on the grid shows the real Inventory: the Player's, else the one named in **Inventory Name**, else the first in the scene. Each slot shows its item and stack size ("Potion 7"), empty places stay blank, and the grid gets as many rows as the bag has room for. `SelectedItem()` and `SelectedCount()` say what is in the clicked slot. With no Inventory in the scene the grid keeps its sample names. It shows the bag; moving items between bags is done by the Inventory itself. |
 | Rich text | Text > **Rich Text** | See below. |
 
@@ -99,11 +99,17 @@ editor's 2D Scene view draw at its place in the world): the player draws world t
 bold and italic). With Rich Text **off**, world text looks exactly as before (italic is not drawn on world text, bold
 is a second copy one step to the right). With it **on**, the Text's own Italic now slants world text too. Limits for
 every rich text: text over 2,000 bytes is not parsed (shown as written), at most 16 tags may be open at once, and
-nested sizes are held to 25..400 percent. A sized run sits on
-the same bottom line as the rest of its line and pushes what follows to the right; the line height stays the
-text's own, and centring and wrapping still measure the plain text at its own size (so a centred line with a big
-run leans right). The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui` (screen text),
-`world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline).
+nested sizes are held to 25..400 percent. **A line is as tall as the largest size on it**: a sized run sits on the
+bottom of its line and pushes what follows to the right, the line below it starts under the big run (it used to
+start at the plain line height and the big letters climbed into the line above), and a line made only of small text
+is a small line. `TextRenderer::PixelHeight()` counts it, so centring and Best Fit see the real height. The Line
+Spacing setting is added once per line, never multiplied. Text with no `[size]` lays out exactly as before. The
+**width** of a line is still measured at the text's own size, so wrapping is not changed by `[size]` and a centred
+line with a big run leans right. The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui`
+(screen text), `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline, and the line
+heights drawn and measured). World text is drawn by the **flat (2D) player pass and the editor's 2D views only**:
+a 3D scene does not draw a Text whose Screen Space is off (use a Text under a World Space UI object there); the font
+is the 8x8 bitmap font unless the Text has a font file.
 
 **Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
 what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when
@@ -214,6 +220,10 @@ Character (`okay/Components/UIOwnerData.hpp`).
 With no owner at all, a key falls back to the global variable of the same name without `owner.` (so a nameplate on its
 own still follows the player's `healthFrac`). An owner that lacks the data gives nothing: a text shows its `|default`, a
 bar keeps its fill. It never shows the player's value on another character. Test: `ui_nameplate_bound`.
+
+In the editor, select the nameplate's Name label or its Level label and look at **UI Text Bind** in the Inspector (the **Format** row), or select the
+Health bar and look at **UI Bar Bind** (the **Variable** row). Hover either row for the list of keys. Under them a line says
+`Owner: <the character's name>`, or that there is none (then an owner key reads the variable without `owner.`, the player's).
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
 
@@ -233,7 +243,7 @@ once; with no project open it stays an unsaved scene.
 | UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
 | UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
-| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's) | yes, with Hit / Heal buttons |
+| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health; every piece inside the card at any size | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's; what is drawn stays inside the card at five sizes and two fonts), `ui_text_example` (the shipped sample), `ui_text_shots` (pictures) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |
 
 ## Dropdown: long lists

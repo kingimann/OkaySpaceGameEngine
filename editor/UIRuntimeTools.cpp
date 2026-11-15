@@ -3,6 +3,7 @@
 #include "ExampleScenes.hpp"
 #include "imgui.h"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Components/UIOwnerData.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <algorithm>
 #include <cstring>
@@ -379,7 +380,20 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
         return g;
     });
     add("Nameplate", "A name, level and a health bar. On its own it is a preview that follows the player's Health Stat; as a child of a character it shows that character's name, level and health.", [&] { return UIGallery::AddNameplate(sc, false); });
-    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera: make it a child of a character and it shows that character's name, Stats level and health.", [&] { return UIGallery::AddNameplate(sc, true); });
+    add("Nameplate (in the world)", "The same plate as a 3D object that faces the camera and keeps its size at any distance. With a character selected (an object with a Health Stat, Stats, Survival Stats, NPC Controller or Character) it becomes that character's child, above its head, and shows its name, Stats level and health. Otherwise make it a child of a character yourself and move it to the head.", [&] {
+        GameObject* plate = UIGallery::AddNameplate(sc, true);
+        if (GameObject* sel = ed.selected(); sel && sel != plate && sel->transform) {
+            plate->transform->SetParent(sel->transform, false);
+            if (uiowner::Find(plate) == sel) {            // a character: the plate hangs above it
+                float up = 1.3f;
+                if (auto* sr = sel->GetComponent<SpriteRenderer>()) up = sr->size.y * 0.5f + 0.25f;
+                plate->transform->localPosition = {0.0f, up, 0.0f};
+            } else {
+                plate->transform->SetParent(nullptr, false);   // not a character: leave the plate where it was made
+            }
+        }
+        return plate;
+    });
     add("Inventory", "A bag screen with a grid of slots.", [&] { return UIGallery::AddInventoryScreen(sc); });
     add("Dialogue", "Speaker, typing text and choice buttons. Scripts call ui_dialogue_show().", [&] { return UIGallery::AddDialogueScreen(sc); });
 }

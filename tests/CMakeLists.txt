@@ -2094,6 +2094,15 @@ if(SDL2_FOUND)
     target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
+
+    # Pictures of the nameplate, the rich-text sign and the shipped sample scene (examples/ui_text), drawn headless
+    # through the same UI pass as the game. They are written to OKAY_SHOT_DIR (or argv[1]) and checked for what they show.
+    add_executable(test_ui_text_shots test_ui_text_shots.cpp)
+    target_link_libraries(test_ui_text_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_text_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_text_shots COMMAND test_ui_text_shots)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -3549,3 +3558,9 @@ add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)
 add_executable(test_world_text_rich test_world_text_rich.cpp)
 target_link_libraries(test_world_text_rich PRIVATE okay::engine)
 add_test(NAME world_text_rich COMMAND test_world_text_rich)
+
+# The shipped sample scene (examples/ui_text): two characters with bound nameplates and a rich-text world sign
+add_executable(test_ui_text_example test_ui_text_example.cpp)
+target_link_libraries(test_ui_text_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_text_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_text_example COMMAND test_ui_text_example)

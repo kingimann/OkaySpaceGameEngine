@@ -22,11 +22,12 @@ below were made by counting those files by extension; where I could not check so
 | Terragen (`.ter`, `docs/own_terragen_reader.md`), after batch D | 1 (**30** of the 45 switched on) |
 | Importers batch E adds (MDC, HMP, CSM; `docs/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`) | 3 (**33** of the 45 switched on, with Terragen) |
 | Importers batch E adds (Q3D and RAW, written from public format descriptions, unverified against real files; SIB was not written, see row 9) | 2 (**35** of the 45 switched on, with Terragen and MDC, HMP, CSM) |
-| Switched on in our build and still **without an own reader** | **10** (rows 2 to 17 below, except rows 8, 10 to 14: Q3D, CSM, MDC, HMP, Terragen, RAW) plus OGRE's half |
+| Switched on in our build and still **without an own reader** | **8** (rows 2, 3, 6, 7, 9, 15, 16, 17 below, with Nendo's row 16 still open) plus OGRE's half; hand-derived from the merged tables, not computed |
+| Importers batch E3 adds (IQM, COB; **Nendo is a seam only, no geometry**) | 2 (**37** of the 45 switched on, hand-derived: 35 from main plus 2; Nendo not counted) |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 35 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 37 are (hand-derived): glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
 AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E MDC, HMP, CSM, Q3D and RAW. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
@@ -45,8 +46,8 @@ none were invented.
 | 1 | **Ogre, the rest** (`.mesh`, `.skeleton`, `.skeleton.xml`) | OGRE3D: the binary mesh, and the skeleton in both forms with bones, bind pose and animations (the XML mesh geometry and materials are done, batch D) | medium-high | binary `.mesh`: medium; skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
 | 2 | **OpenGEX** (`.ogex`) | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes |
 | 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
-| 4 | **IQM** (`.iqm`) | Inter-Quake Model: binary, skeleton, animation; used by Cube 2, Sauerbraten, open engines | low-medium | medium | 1 (`mrfixit.iqm`, skinned and animated) | yes |
-| 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
+| 4 | ~~**IQM** (`.iqm`)~~ **DONE in batch E3, off by default** (`docs/own_iqm_reader.md`): skeleton, skin and animation; read on the real `mrfixit.iqm` (numbers match its header); not compared with Assimp's output | low-medium | done | 1 (`mrfixit.iqm`, skinned and animated) | yes |
+| 5 | ~~**COB** (`.cob`)~~ **DONE in batch E3, off by default** (`docs/own_cob_reader.md`): binary and ASCII, objects, materials, textures; all 8 real files read and the two encodings agree; **no animation, bones or lights**; not compared with Assimp's output | low (old) | done (geometry only) | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
 | 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
 | 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
 | 8 | ~~**Q3D** (`.q3o` `.q3s`)~~ **done, off by default** (`docs/own_q3d_reader.md`, unverified against real files) | Quick3D | very low | easy | 4 | yes |
@@ -57,7 +58,7 @@ none were invented.
 | 13 | **Terragen** (`.ter`): **own reader written, off by default** (`OKAY_OWN_TER`, `docs/own_terragen_reader.md`) | Terragen heightfield | low | easy | 2 (both read and equal Assimp) | yes |
 | 14 | ~~**RAW** (`.raw`)~~ **done, off by default** (`docs/own_raw_reader.md`; text form only, unverified against real files) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
-| 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
+| 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes. **Batch E3 added only the seam and the header check** (`docs/own_ndo_reader.md`): the body is not read, because no description of it exists that rule 19a lets us follow; it still needs a spec or real files |
 | 17 | **glTF 1.0** (`.gltf`, `.glb`) | the old glTF; our glTF reader reads 2.0 only | low (legacy, but real models exist) | medium | 7 (inside the 54 glTF files of the corpus, they fail in our reader on purpose) | yes |
 | 18 | **M3D** (`.m3d` `.a3d`) | Model 3D: a newer compact binary and ASCII format | low | medium | 8 | no |
 | 19 | **Unreal** (`.3d` `.uc`) | Unreal Engine 1 mesh pair (`_a.3d` / `_d.3d` and `.uc`) | very low | easy-medium | 6 | no |

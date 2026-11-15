@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Scene.hpp"
 #include <cmath>
+#include <string>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Camera.hpp"
@@ -921,10 +922,14 @@ inline void Vehicle3D(Scene& scene) {
     camObj->transform->localPosition = {0, 4, -8};         // the controller keeps it behind the car
 }
 
-/// "Vehicle Test": a third-person player standing next to a car with a driver seat and a passenger
-/// seat, on a flat ground. Walk to the car, press E to get in (driver seat), drive with WASD / arrows
-/// (Space = handbrake), press E to get out. The car only drives while someone sits in the driver seat.
-/// Body, four wheels (looks only; the VehicleController slides the body, it does not spin wheels).
+/// "Vehicle Test": a third-person player standing in the road next to a small car (about 4.1 m long,
+/// 1.8 m wide) that has a driver seat and a passenger seat. Walk to the car's driver door (the -X side), press E to get in: you sit
+/// (the chair sit clip), the camera swings behind the car, drive with WASD / arrows (Space = handbrake),
+/// press E to get out. The car only drives while someone sits in the driver seat.
+/// The car faces +Z. Its wheels roll with the speed and the front two turn (VehicleController reads
+/// the objects named "Wheel ..." with a child "Tire"). A road with lane lines and a slalom of cones
+/// and crates lies ahead. examples/vehicle/vehicle_test.okayscene is this scene saved to a file
+/// (regenerate it with SceneSerializer after changing this).
 inline void VehicleSeats3D(Scene& scene) {
     scene.Clear();
     scene.SetName("Vehicle Test");
@@ -933,50 +938,163 @@ inline void VehicleSeats3D(Scene& scene) {
     light->AddComponent<Light>();
     light->transform->localRotation = Quat::Euler({50, -30, 0});
 
+    // A plain look-only block: no collider.
+    auto block = [&](const char* name, Transform* parent, Vec3 pos, Vec3 size, Color col, Vec3 rot = {0, 0, 0}) {
+        GameObject* o = scene.CreateGameObject(name);
+        if (parent) o->transform->SetParent(parent, false);
+        o->transform->localPosition = pos;
+        o->transform->localScale = size;
+        o->transform->localRotation = Quat::Euler(rot);
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = col;
+        return o;
+    };
+    auto rgb = [](int r, int g, int b, int a = 255) { return Color::FromBytes(r, g, b, a); };
+
     GameObject* ground = scene.CreateGameObject("Ground");
     ground->transform->localPosition = {0, -0.5f, 0};
-    ground->transform->localScale = {120, 1, 120};
+    ground->transform->localScale = {300, 1, 300};
     auto* gmr = ground->AddComponent<MeshRenderer>();
-    gmr->mesh = Mesh::Cube(); gmr->color = Color::FromBytes(80, 84, 92);
+    gmr->mesh = Mesh::Cube(); gmr->color = rgb(84, 128, 70);
     ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
     ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
 
-    // The car root is unscaled so seat points are in metres. Its box rests on the ground.
+    // Road along +Z: asphalt (a look-only slab on the ground), edge lines and a dashed centre line.
+    block("Road", nullptr, {0, 0.01f, 40}, {9.0f, 0.04f, 150}, rgb(58, 60, 66));
+    block("Road Edge Left", nullptr, {-4.2f, 0.03f, 40}, {0.15f, 0.02f, 150}, rgb(225, 225, 220));
+    block("Road Edge Right", nullptr, {4.2f, 0.03f, 40}, {0.15f, 0.02f, 150}, rgb(225, 225, 220));
+    for (int i = 0; i < 24; ++i)
+        block("Lane Dash", nullptr, {0, 0.03f, -20.0f + 6.0f * (float)i}, {0.18f, 0.02f, 2.6f}, rgb(235, 215, 90));
+
+    // Slalom cones and a pair of crates to drive around (solid, they do not move).
+    const Vec2 cones[] = {{1.8f, 46}, {3.4f, 53}, {1.8f, 60}, {3.4f, 67}, {-1.8f, 74}, {-3.4f, 81}};
+    for (const Vec2& c : cones) {
+        GameObject* o = scene.CreateGameObject("Cone");
+        o->transform->localPosition = {c.x, 0.35f, c.y};
+        o->transform->localScale = {0.4f, 0.7f, 0.4f};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cone(); mr->color = rgb(238, 120, 30);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        block("Cone Base", o->transform, {0, -0.5f, 0}, {1.5f, 0.06f, 1.5f}, rgb(40, 40, 44));   // child of the cone: scales with it
+    }
+    const Vec3 crates[] = {{-3.2f, 0.4f, 92}, {-3.2f, 1.2f, 92}, {3.0f, 0.4f, 94}};
+    for (const Vec3& c : crates) {
+        GameObject* o = scene.CreateGameObject("Crate");
+        o->transform->localPosition = c;
+        o->transform->localScale = {0.8f, 0.8f, 0.8f};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = rgb(176, 122, 72);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    }
+
+    // ---- The car. The root is unscaled, so everything below is in metres. Local axes: +Z forward, +X toward the car's LEFT side seen from behind (the engine is right-handed, so a car driving +Z has -X on its right). Object names "Left"/"Right" below mean -X/+X, not the driver's view.
+    // Y = 0 at the wheel axles (the root sits one wheel radius, 0.35 m, above the road).
+    // Cabin floor is at y = 0.10. A seated person's hip joint is 0.57 m above their feet (sit clip), the seat cushion top 0.45 m.
     GameObject* car = scene.CreateGameObject("Car");
-    car->transform->localPosition = {0, 0.3f, 0};
+    car->transform->localPosition = {2.2f, 0.35f, 0};
+    Transform* ct = car->transform;
     car->AddComponent<Rigidbody3D>();
-    car->AddComponent<BoxCollider3D>()->size = {1.6f, 0.6f, 3.0f};
-    car->AddComponent<VehicleController>();
-    auto* driverSeat = car->AddComponent<VehicleSeat>();     // left front: get in here to drive
-    driverSeat->sitPoint = {-0.4f, 0.5f, 0.3f};
-    driverSeat->exitPoint = {-1.8f, 0.0f, 0.3f};
+    car->AddComponent<BoxCollider3D>()->size = {1.8f, 0.7f, 4.1f};   // wheels to hood line; the roof is for looks
+    auto* vc = car->AddComponent<VehicleController>();
+    vc->camDistance = 6.0f; vc->camHeight = 1.9f; vc->camLerp = 5.0f;
+    auto* driverSeat = car->AddComponent<VehicleSeat>();     // the -X front seat (the car's right side seen from behind): get in here to drive
+    driverSeat->sitPoint = {-0.45f, 0.10f, -0.20f};
+    driverSeat->exitPoint = {-1.6f, -0.30f, -0.20f};
+    driverSeat->useRadius = 2.3f;
     driverSeat->prompt = "Drive";
 
-    GameObject* body = scene.CreateGameObject("Car Body");
-    body->transform->SetParent(car->transform, false);
-    body->transform->localScale = {1.6f, 0.6f, 3.0f};
-    auto* bmr = body->AddComponent<MeshRenderer>();
-    bmr->mesh = Mesh::Cube(); bmr->color = Color::FromBytes(205, 60, 55);
+    const Color paint = rgb(205, 60, 55), dark = rgb(38, 38, 42), trim = rgb(52, 54, 60);
+    GameObject* body = block("Car Body", ct, {0, -0.01f, 0}, {1.8f, 0.22f, 4.0f}, dark);          // floor slab
+    block("Hood", ct, {0, 0.325f, 1.375f}, {1.8f, 0.45f, 1.25f}, paint);
+    block("Trunk", ct, {0, 0.325f, -1.675f}, {1.8f, 0.45f, 0.65f}, paint);
+    block("Dashboard", ct, {0, 0.38f, 0.66f}, {1.56f, 0.56f, 0.22f}, trim);
+    block("Door Left", ct, {-0.85f, 0.35f, -0.3f}, {0.1f, 0.5f, 2.1f}, paint);
+    block("Door Right", ct, {0.85f, 0.35f, -0.3f}, {0.1f, 0.5f, 2.1f}, paint);
+    block("Bumper Front", ct, {0, 0.0f, 2.04f}, {1.84f, 0.22f, 0.12f}, dark);
+    block("Bumper Rear", ct, {0, 0.0f, -2.04f}, {1.84f, 0.22f, 0.12f}, dark);
+    {
+        auto* hl = block("Headlight Left", ct, {-0.6f, 0.4f, 2.01f}, {0.34f, 0.13f, 0.06f}, rgb(250, 240, 190));
+        hl->GetComponent<MeshRenderer>()->emissive = rgb(120, 110, 70);
+        auto* hr = block("Headlight Right", ct, {0.6f, 0.4f, 2.01f}, {0.34f, 0.13f, 0.06f}, rgb(250, 240, 190));
+        hr->GetComponent<MeshRenderer>()->emissive = rgb(120, 110, 70);
+        auto* tl = block("Taillight Left", ct, {-0.65f, 0.4f, -2.01f}, {0.3f, 0.12f, 0.06f}, rgb(220, 30, 30));
+        tl->GetComponent<MeshRenderer>()->emissive = rgb(110, 10, 10);
+        auto* tr = block("Taillight Right", ct, {0.65f, 0.4f, -2.01f}, {0.3f, 0.12f, 0.06f}, rgb(220, 30, 30));
+        tr->GetComponent<MeshRenderer>()->emissive = rgb(110, 10, 10);
+    }
 
-    const float wx[4] = {-0.85f, 0.85f, -0.85f, 0.85f}, wz[4] = {1.0f, 1.0f, -1.0f, -1.0f};
+    // Seats: cushion (top at floor + 0.45), backrest, headrest. The driver's is at -X.
+    for (int i = 0; i < 2; ++i) {
+        const float x = i == 0 ? -0.45f : 0.45f;
+        const char* side = i == 0 ? "Driver" : "Passenger";
+        block((std::string(side) + " Seat Cushion").c_str(), ct, {x, 0.325f, -0.20f}, {0.5f, 0.45f, 0.5f}, rgb(70, 74, 86));
+        block((std::string(side) + " Seat Back").c_str(), ct, {x, 0.85f, -0.46f}, {0.5f, 0.62f, 0.1f}, rgb(70, 74, 86), {-6, 0, 0});
+        block((std::string(side) + " Headrest").c_str(), ct, {x, 1.27f, -0.47f}, {0.2f, 0.2f, 0.09f}, rgb(60, 64, 76));
+    }
+    // Steering wheel (a ring, tilted to face the driver) on a short column.
+    {
+        GameObject* sw = scene.CreateGameObject("Steering Wheel");
+        sw->transform->SetParent(ct, false);
+        sw->transform->localPosition = {-0.45f, 0.93f, 0.28f};
+        sw->transform->localRotation = Quat::Euler(-62.0f, 0.0f, 0.0f);
+        sw->transform->localScale = {0.3f, 0.3f, 0.3f};
+        auto* smr = sw->AddComponent<MeshRenderer>();
+        smr->mesh = Mesh::Torus(); smr->color = rgb(22, 22, 24);
+        block("Steering Column", ct, {-0.45f, 0.8f, 0.43f}, {0.06f, 0.06f, 0.4f}, rgb(30, 30, 32), {35, 0, 0});
+    }
+
+    // Wheels, 0.35 m radius, 0.25 m wide, tucked at the corners. A "Wheel" is an empty at the axle
+    // (it turns for steering); its "Tire" is the cylinder lying on its side (it rolls). The rim and
+    // the dark bar across it are children of the tyre so the roll can be seen.
+    const char* wname[4] = {"Wheel Front Left", "Wheel Front Right", "Wheel Rear Left", "Wheel Rear Right"};
+    const float wx[4] = {-0.84f, 0.84f, -0.84f, 0.84f}, wz[4] = {1.3f, 1.3f, -1.3f, -1.3f};
     for (int i = 0; i < 4; ++i) {
-        GameObject* w = scene.CreateGameObject("Wheel");
-        w->transform->SetParent(car->transform, false);
+        GameObject* w = scene.CreateGameObject(wname[i]);
+        w->transform->SetParent(ct, false);
         w->transform->localPosition = {wx[i], 0.0f, wz[i]};
-        w->transform->localRotation = Quat::Euler({0, 0, 90});     // axle along X
-        auto* wmr = w->AddComponent<MeshRenderer>();
-        wmr->mesh = Mesh::Cylinder(0.3f, 0.25f); wmr->color = Color::FromBytes(30, 30, 34);
+        GameObject* tire = scene.CreateGameObject("Tire");
+        tire->transform->SetParent(w->transform, false);
+        tire->transform->localScale = {0.7f, 0.25f, 0.7f};           // Cylinder is radius 0.5, height 1 along Y
+        tire->transform->localRotation = Quat::Euler(0.0f, 0.0f, 90.0f);   // axle along X
+        auto* tmr = tire->AddComponent<MeshRenderer>();
+        tmr->mesh = Mesh::Cylinder(); tmr->color = rgb(24, 24, 27);
+        GameObject* rim = scene.CreateGameObject("Rim");
+        rim->transform->SetParent(tire->transform, false);
+        rim->transform->localScale = {0.62f, 1.06f, 0.62f};
+        auto* rmr = rim->AddComponent<MeshRenderer>();
+        rmr->mesh = Mesh::Cylinder(); rmr->color = rgb(190, 192, 198);
+        block("Rim Bar", tire->transform, {0, 0, 0}, {0.95f, 1.1f, 0.14f}, rgb(70, 72, 80));
     }
 
     GameObject* passenger = scene.CreateGameObject("Passenger Seat");
-    passenger->transform->SetParent(car->transform, false);
-    auto* ps = passenger->AddComponent<VehicleSeat>();       // right front: rides along, does not drive
+    passenger->transform->SetParent(ct, false);
+    auto* ps = passenger->AddComponent<VehicleSeat>();       // the +X front seat: rides along, does not drive
     ps->driver = false;
-    ps->sitPoint = {0.4f, 0.5f, 0.3f};
-    ps->exitPoint = {1.8f, 0.0f, 0.3f};
+    ps->sitPoint = {0.45f, 0.10f, -0.20f};
+    ps->exitPoint = {1.6f, -0.30f, -0.20f};
+    ps->useRadius = 2.3f;
     ps->prompt = "Ride";
+    (void)body;
 
-    AddThirdPersonPlayer(scene, {-2.2f, 1.0f, 0.3f});        // standing by the driver door
+    AddThirdPersonPlayer(scene, {-0.25f, 1.0f, 0.0f});       // standing in the road by the driver door
+
+    // Glass last: see-through objects blend over what was drawn before them, so the seated people show through.
+    const Color glass = rgb(150, 205, 235, 48);
+    auto pane = [&](const char* name, Vec3 pos, Vec3 size, Vec3 rot = {0, 0, 0}) {
+        GameObject* g = block(name, ct, pos, size, glass, rot);
+        return g;
+    };
+    pane("Windshield", {0, 1.075f, 0.525f}, {1.6f, 1.05f, 0.03f}, {-25, 0, 0});
+    pane("Window Left", {-0.86f, 1.07f, -0.45f}, {0.03f, 0.95f, 1.7f});
+    pane("Window Right", {0.86f, 1.07f, -0.45f}, {0.03f, 0.95f, 1.7f});
+    pane("Rear Window", {0, 1.07f, -1.33f}, {1.6f, 0.95f, 0.03f});
+    pane("Roof", {0, 1.57f, -0.45f}, {1.78f, 0.05f, 1.75f});
+    block("Pillar Left Front", ct, {-0.83f, 1.075f, 0.525f}, {0.07f, 1.05f, 0.05f}, trim, {-25, 0, 0});
+    block("Pillar Right Front", ct, {0.83f, 1.075f, 0.525f}, {0.07f, 1.05f, 0.05f}, trim, {-25, 0, 0});
+    block("Pillar Left Rear", ct, {-0.83f, 1.07f, -1.32f}, {0.07f, 1.0f, 0.07f}, trim);
+    block("Pillar Right Rear", ct, {0.83f, 1.07f, -1.32f}, {0.07f, 1.0f, 0.07f}, trim);
 }
 
 /// A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,

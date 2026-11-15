@@ -10,7 +10,10 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
+#include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace okay {
 
@@ -32,6 +35,23 @@ namespace okay {
 /// rolls/pitches from per-wheel compression plus accel/cornering lean.
 class VehicleController : public Behaviour {
 public:
+    VehicleController() { m_uid = ++NextUid(); Live().push_back({this, m_uid}); }
+    ~VehicleController() override {
+        auto& l = Live();
+        for (size_t i = 0; i < l.size(); ++i) if (l[i].first == this) { l.erase(l.begin() + (long)i); break; }
+    }
+    VehicleController(const VehicleController&) = delete;
+    VehicleController& operator=(const VehicleController&) = delete;
+    /// True while `p` is a live VehicleController with this `uid` (Uid()). A seat keeps (pointer, uid) pairs and
+    /// checks them here, so a controller that was removed (even with another one later made at the same address)
+    /// is never touched.
+    static bool IsLive(const VehicleController* p, unsigned uid) {
+        if (!p) return false;
+        for (const auto& e : Live()) if (e.first == p) return e.second == uid;
+        return false;
+    }
+    unsigned Uid() const { return m_uid; }
+
     float acceleration = 18.0f;          // how quickly it reaches top speed (units/s^2)
     float maxSpeed     = 22.0f;          // forward top speed (units/s)
     float reverseSpeed = 8.0f;           // top reverse speed
@@ -77,9 +97,24 @@ public:
     float Speed() const { return m_speed; }              // signed forward speed (units/s)
     bool  IsGrounded() const { return m_grounded; }
 
+    /// ---- Wheel visuals (looks only; nothing here is saved) ----
+    /// Every descendant named "Wheel..." that has a child named "Tire" is animated: the wheel object
+    /// is turned about Y for steering (only if its name contains "Front"; D turns it right), and the Tire is spun about
+    /// the car's X axis by distance / radius. The radius is half the Tire's local X scale (a Cylinder
+    /// mesh has radius 0.5). So the Tire is the cylinder (scaled to the tyre size, laid on its side:
+    /// local rotation Euler(0, 0, 90) when not spinning), and the "Wheel" object is an empty at the axle.
+    static constexpr float kMaxSteerAngle = 30.0f;       ///< degrees the front wheels turn at full lock
+    float WheelSpin() const { return m_wheelSpin; }      ///< degrees the wheels have rolled (0..360), + = forward
+    float SteerAngle() const { return m_steerAngle; }    ///< degrees the front wheels are turned, + = right
+    int   WheelCount() const { return (int)m_wheels.size(); }
+    /// The Seat that sits in this car moves the main camera (a seated rider's camera). While it does, the
+    /// chase camera of `followCamera` stays out of its way. Called by VehicleSeat only.
+    void  SetCameraDrivenBySeat(bool on) { m_seatCamera = on; }
+    bool  CameraDrivenBySeat() const { return m_seatCamera; }
+
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
-        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (!IsLocallyControlled(gameObject)) { ProxyWheels(dt); return; }   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
         // With a driver seat, only a seated driver's keys count; empty = no input.
@@ -104,8 +139,10 @@ public:
         // ---- Steering: scales in as you gain speed; reverses when backing up ----
         float steerScale = Mathf::Clamp(std::fabs(speedF) / 4.0f, 0.0f, 1.0f);
         float dirSign = (speedF >= -0.05f) ? 1.0f : -1.0f;
+        // A positive yaw is counter-clockwise seen from above, which is a LEFT turn for any heading. D (steer > 0)
+        // must turn right, so the yaw is the negative of the steering.
         float yawDelta = (std::fabs(steer) > 0.001f && steerScale > 0.001f)
-                       ? steer * turnSpeed * steerScale * dirSign * dt : 0.0f;
+                       ? -steer * turnSpeed * steerScale * dirSign * dt : 0.0f;
         if (suspension) {
             // Suspension owns the full orientation (yaw + pitch/roll), so track yaw
             // as a scalar and rebuild the rotation rather than accumulating quats.
@@ -136,6 +173,7 @@ public:
         // ---- Reassemble velocity (keep vertical for gravity) ----
         Vec3 planar = fp * speedF + rp * lat;
         m_speed = speedF;
+        AnimateWheels(dt, speedF, steer);
         if (suspension) {
             ApplySuspension(dt, rb, fp, rp, planar, speedF, lat);
         } else {
@@ -150,11 +188,15 @@ public:
             }
         }
 
-        if (followCamera && !unmanned) UpdateCamera(dt);
+        if (followCamera && !unmanned && !m_seatCamera) UpdateCamera(dt);
     }
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_driver && dying.count(m_driver)) m_driver = nullptr;   // never keep a freed driver
+        m_wheelScanT = 0.0f;                                          // re-scan the wheels soon
+        for (size_t i = m_wheels.size(); i-- > 0;)
+            if (dying.count(m_wheels[i].root) || dying.count(m_wheels[i].tire))
+                m_wheels.erase(m_wheels.begin() + (long)i);
     }
 
 private:
@@ -167,6 +209,67 @@ private:
         float d = b - a;
         if (std::fabs(d) <= maxDelta) return b;
         return a + (d > 0.0f ? maxDelta : -maxDelta);
+    }
+    struct Wheel { GameObject* root = nullptr; GameObject* tire = nullptr; bool front = false; float radius = 0.35f; float spin = 0.0f; };
+    static bool StartsWith(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
+    void FindWheels(Transform* t) {
+        for (Transform* c : t->Children()) {
+            if (!c || !c->gameObject) continue;
+            const std::string& n = c->gameObject->name;
+            if (StartsWith(n, "Wheel")) {
+                for (Transform* k : c->Children()) {
+                    if (k && k->gameObject && k->gameObject->name == "Tire") {
+                        Wheel w;
+                        w.root = c->gameObject; w.tire = k->gameObject;
+                        w.front = n.find("Front") != std::string::npos;
+                        const float r = std::fabs(k->localScale.x) * 0.5f;
+                        if (r > 0.01f) w.radius = r;
+                        m_wheels.push_back(w);
+                        break;
+                    }
+                }
+            }
+            FindWheels(c);
+        }
+    }
+    // Roll and steer the wheel objects. `steer` is the -1..1 steering input (0 with nobody at the wheel).
+    void AnimateWheels(float dt, float speed, float steer) {
+        // Look for wheels on the first call and then twice a second, so wheels added later are found.
+        m_wheelScanT -= dt;
+        if (transform && (!m_wheelsFound || m_wheelScanT <= 0.0f)) {
+            std::vector<Wheel> old;
+            old.swap(m_wheels);
+            FindWheels(transform);
+            for (Wheel& w : m_wheels)
+                for (const Wheel& o : old) if (o.root == w.root) { w.spin = o.spin; break; }
+            m_wheelsFound = true;
+            m_wheelScanT = 0.5f;
+        }
+        const float k = 1.0f - std::exp(-12.0f * dt);
+        m_steerAngle += (steer * kMaxSteerAngle - m_steerAngle) * k;
+        if (m_wheels.empty()) {   // still track the roll angle so WheelSpin() works with no wheel objects
+            m_wheelSpin = std::fmod(m_wheelSpin + speed / 0.35f * dt * 57.2957795f, 360.0f);
+            return;
+        }
+        for (Wheel& w : m_wheels) {
+            w.spin = std::fmod(w.spin + speed / w.radius * dt * 57.2957795f, 360.0f);
+            if (w.root->transform) w.root->transform->localRotation = Quat::Euler(0.0f, w.front ? -m_steerAngle : 0.0f, 0.0f);   // + steer = right = clockwise from above = negative yaw
+            if (w.tire->transform)
+                w.tire->transform->localRotation = (Quat::AngleAxis(w.spin, Vec3{1, 0, 0}) * Quat::Euler(0.0f, 0.0f, 90.0f)).Normalized();
+        }
+        m_wheelSpin = m_wheels[0].spin;
+    }
+    // A car driven by someone else (a network proxy): roll the wheels from how far it moved along its heading.
+    // Steering is not known here, so the front wheels stay straight.
+    void ProxyWheels(float dt) {
+        if (!transform) return;
+        const Vec3 pos = transform->Position();
+        if (m_proxyInit) {
+            const Vec3 fp = Planar(transform->Forward());
+            const Vec3 d = pos - m_proxyPos;
+            AnimateWheels(dt, (d.x * fp.x + d.z * fp.z) / dt, 0.0f);
+        }
+        m_proxyPos = pos; m_proxyInit = true;
     }
     void UpdateGrounded() {
         m_grounded = true;
@@ -259,7 +362,7 @@ private:
         Vec3 lookAt = carPos + Vec3{0, camHeight * 0.45f, 0} + fp * (camDistance * 0.35f);
         Vec3 look = lookAt - np;
         if (look.x * look.x + look.y * look.y + look.z * look.z > 1e-6f)
-            ct->localRotation = Quat::LookRotation(look);   // orient +Z (engine forward) at the target
+            ct->SetRotation(Quat::LookRotation(look * -1.0f));   // a camera looks down its -Z
     }
 
     GameObject* m_driver = nullptr;      // runtime only, set by VehicleSeat
@@ -270,6 +373,20 @@ private:
     // Suspension state: scalar yaw (so pitch/roll compose), smoothed tilt.
     float m_yaw = 0.0f, m_pitch = 0.0f, m_roll = 0.0f, m_prevSpeedF = 0.0f;
     bool  m_yawInit = false;
+    // Wheel visuals (runtime only).
+    std::vector<Wheel> m_wheels;
+    bool  m_wheelsFound = false;
+    float m_wheelSpin = 0.0f, m_steerAngle = 0.0f;
+    bool  m_seatCamera = false;
+    float m_wheelScanT = 0.0f;
+    Vec3  m_proxyPos{0, 0, 0};
+    bool  m_proxyInit = false;
+    unsigned m_uid = 0;
+    static unsigned& NextUid() { static unsigned n = 0; return n; }
+    static std::vector<std::pair<const VehicleController*, unsigned>>& Live() {
+        static std::vector<std::pair<const VehicleController*, unsigned>> v;
+        return v;
+    }
 };
 
 } // namespace okay

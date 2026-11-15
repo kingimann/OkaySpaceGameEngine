@@ -13,6 +13,8 @@
 #include "okay/Components/Decal.hpp"
 #include "okay/Components/DollyPath.hpp"
 #include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/AimIK.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
@@ -1184,6 +1186,59 @@ void RegisterStatusEffectStat() {
     b.Commit();
 }
 
+// TrailRenderer (record "trailrenderer"). The width curve and colour gradient are
+// lists, not properties.
+void RegisterTrailRenderer() {
+    PropertyBuilder<TrailRenderer> b("TrailRenderer", "trailrenderer", "Rendering");
+    b.AddFloat("time", &TrailRenderer::time).Range(0, 1e6, 0.05).Tooltip("Seconds a point of the trail lives")
+     .AddFloat("minVertexDistance", &TrailRenderer::minVertexDistance).Range(0, kBig, 0.01).Tooltip("Add a new point once the object moved this far")
+     .AddFloat("width", &TrailRenderer::width).Range(0, kBig, 0.01).Tooltip("Width of the trail")
+     .AddColor("color", &TrailRenderer::color).Range(0, 1, 0.01).Tooltip("Colour when there is no gradient")
+     .AddBool("emitting", &TrailRenderer::emitting).Tooltip("Add new points while the object moves")
+     .AddEnum("alignment", &TrailRenderer::alignment, {"View", "Flat"}).Tooltip("Face the camera, or lie flat")
+     .AddEnum("textureMode", &TrailRenderer::textureMode, {"Stretch", "Tile"}).Tooltip("Stretch the texture over the trail, or repeat it")
+     .AddFloat("tileLength", &TrailRenderer::tileLength).Range(0.0001, 1e6, 0.1).Tooltip("Tile: units per repeat of the texture")
+     .AddAssetPath("texture", &TrailRenderer::texture, "texture").Tooltip("Optional image, tinted by the colour")
+     .AddFloat("teleportDistance", &TrailRenderer::teleportDistance).Range(0, kBig, 0.1).Tooltip("A jump longer than this starts a new trail instead of a long streak");
+    b.Commit();
+}
+
+// MinimapBlip (record "minimapblip"). The old square switch is kept only for old
+// files; the shape replaces it.
+void RegisterMinimapBlip() {
+    PropertyBuilder<MinimapBlip> b("MinimapBlip", "minimapblip", "UI");
+    b.AddColor("color", &MinimapBlip::color).Range(0, 1, 0.01).Tooltip("Colour of the mark on the minimap")
+     .AddFloat("size", &MinimapBlip::size).Range(0, 1e4, 0.5).Tooltip("Half-size of the mark in pixels")
+     .AddEnum("shape", &MinimapBlip::shape, {"Square", "Dot", "Triangle", "Arrow"}).Tooltip("Shape of the mark")
+     .AddBool("rotateWithObject", &MinimapBlip::rotateWithObject).Tooltip("Turn the triangle or arrow with the object's heading")
+     .AddAssetPath("icon", &MinimapBlip::icon, "texture").Tooltip("Optional icon image used instead of the shape")
+     .AddString("label", &MinimapBlip::label).Tooltip("Name shown when the minimap's labels are on");
+    b.Commit();
+}
+
+// AimIK (record "aimik")
+void RegisterAimIK() {
+    PropertyBuilder<AimIK> b("AimIK", "aimik", "Animation");
+    b.AddString("boneName", &AimIK::boneName).Tooltip("Bone to aim, found by name (empty = this object)")
+     .AddString("targetName", &AimIK::targetName).Tooltip("Object to aim at, found by name (empty = the fixed target point)")
+     .AddVec3("target", &AimIK::target).Range(-kBig, kBig, 0.1).Tooltip("Fixed point to aim at when there is no target object")
+     .AddVec3("aimAxis", &AimIK::aimAxis).Range(-1, 1, 0.01).Tooltip("The bone's own axis that should point at the target")
+     .AddVec3("upAxis", &AimIK::upAxis).Range(-1, 1, 0.01).Tooltip("Keeps the bone from rolling around the aim axis")
+     .AddFloat("weight", &AimIK::weight).Range(0, 1, 0.01).Tooltip("How much of the aim is applied")
+     .AddFloat("maxAngle", &AimIK::maxAngle).Range(0, 180, 1).Tooltip("Largest turn from the rest pose, in degrees")
+     .AddFloat("smoothing", &AimIK::smoothing).Range(0, 1e4, 0.1).Tooltip("Ease toward the aim (0 = instant)");
+    b.Commit();
+}
+
+// SurvivalSave (record "survivalsave")
+void RegisterSurvivalSave() {
+    PropertyBuilder<SurvivalSave> b("SurvivalSave", "survivalsave", "Gameplay");
+    b.AddString("saveKey", &SurvivalSave::saveKey).Tooltip("Name of the save file (saveKey.okayprefs)")
+     .AddBool("loadOnStart", &SurvivalSave::loadOnStart).Tooltip("Restore the saved stats on the first frame")
+     .AddBool("saveContinuously", &SurvivalSave::saveContinuously).Tooltip("Write the current stats to Prefs every frame");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -1798,6 +1853,10 @@ void RegisterGameplayProperties() {
     RegisterWetnessStat();
     RegisterCarryWeightStat();
     RegisterStatusEffectStat();
+    RegisterTrailRenderer();
+    RegisterMinimapBlip();
+    RegisterAimIK();
+    RegisterSurvivalSave();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

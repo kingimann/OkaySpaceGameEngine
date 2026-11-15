@@ -26,6 +26,17 @@ asks for a scene path: type or paste it, or press **Browse...**. You can also gi
 `Tools\OkayEngine.exe examples\vehicle\vehicle_test.okayscene` opens the car scene. A scene finds the files it uses (sounds, scripts,
 sequences) next to itself, so the folder works from any install path.
 
+How to try it (the command line): open a Command Prompt in the unzipped folder and type
+`Tools\OkayEngine.exe examples\vehicle\vehicle_test.okayscene`, or drag `vehicle_test.okayscene` onto
+`OkayEngine.exe`. The editor opens with **Vehicle Test** in the Hierarchy (Ground, Car with its body and four wheels,
+Player) and `vehicle / vehicle_test.okayscene` in the status bar, not an empty Untitled scene. `--open <scene>` still
+works the same.
+
+![The editor started with a bare scene path: the Hierarchy shows Vehicle Test](images/editor_open_arg/bare_path.png)
+
+*Linux build, run with `OkayEngine <path>/examples/vehicle/vehicle_test.okayscene` (no `--open`). Not yet tried on
+Windows.*
+
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
 `spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and

@@ -86,11 +86,11 @@ public:
     bool  uppercase = false;
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
-    /// Read [color=#rrggbb]...[/color], [b]...[/b] and [i]...[/i] in the text (screen space; see
-    /// okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
-    /// plain text. Bold thickens the strokes (the font has no bold weight); italic slants every glyph.
-    /// Screen-space text only: 3D (world) text is drawn by the scene renderers, which do not read tags, so
-    /// the switch has no effect there (and the editor disables it).
+    /// Read [color=#rrggbb]...[/color], [b]...[/b], [i]...[/i] and [size=N]...[/size] (N a percent) in the
+    /// text (okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
+    /// plain text at its own size. Bold thickens the strokes (the font has no bold weight); italic slants every
+    /// glyph. Screen-space text and world text (screenSpace off: the player's 2D world-text pass through
+    /// ui2d::DrawWorldText, and the editor's 2D Scene view) both read them.
     bool  richText = false;
 
     /// Best Fit: auto-scale the text so it fills its `size` box — big
@@ -145,7 +145,7 @@ public:
     const std::string& DisplayText(std::string& scratch) const {
         thread_local std::string plainTags;   // the text without its tags (rich text only)
         const std::string* srcp = &text;
-        if (richText && screenSpace && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
+        if (richText && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
         const std::string& src = *srcp;
         int vis = EffectiveVisible();
         const std::size_t cutAt = vis >= 0 ? utf8::Offset(src, (std::size_t)vis) : src.size();   // whole characters

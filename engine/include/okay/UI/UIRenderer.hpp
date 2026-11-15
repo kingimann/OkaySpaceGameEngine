@@ -13,6 +13,7 @@
 
 namespace okay {
 class Scene;
+class TextRenderer;
 
 namespace ui2d {
 
@@ -88,6 +89,11 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp = 0.0f, float lineSp = 0.0f,
                 bool italic = false, bool gradient = false, RGBA col2 = RGBA{0, 0, 0, 0},
                 TtfFont* ttf = nullptr, bool bold = false);
+
+/// Draw a world-anchored TextRenderer (screenSpace off) at screen point (`x`, `y`) with font pixel `px`: its
+/// shadow, outline, bold and italic, and, when `richText` is on, its colour, bold, italic and size tags
+/// (okay/UI/RichText.hpp). `opacity` multiplies every colour's alpha. The player's 2D world-text pass uses it.
+void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float px, float opacity = 1.0f);
 
 } // namespace ui2d
 } // namespace okay

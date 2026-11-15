@@ -85,15 +85,21 @@ field, scroll view with masking and scroll bars, list view, tabs, tooltip, modal
 crosshair, minimap, slot grid, layout groups, UI Frame (anchors, pivot), safe area and the Canvas scaler
 (Constant Pixel Size, Scale With Screen Size with Expand, Shrink or Match).
 
-**Rich text.** Turn on **Rich Text** on a screen-space Text (or `ui_set_rich("Label", true)`) and write tags
-in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/b]`, `[i]italic[/i]`. Colours are
+**Rich text.** Turn on **Rich Text** on a Text (or `ui_set_rich("Label", true)`) and write tags
+in the text: `[color=#ffcc33]gold[/color]`, `[color=red]red[/color]`, `[b]bold[/b]`, `[i]italic[/i]`,
+`[size=150]big[/size]` (a percent of the text's size, 25 to 400; nested sizes multiply). Colours are
 `#rgb`, `#rrggbb`, `#rrggbbaa` or a name (white, black, red, green, blue, yellow, orange, gold, cyan, magenta,
 purple, pink, gray). Tags nest. A tag that is not one of these is shown as plain text, and `[[` shows a `[`.
 The tags take no room: wrapping, alignment, upper-casing and the typing effect all work on the plain text.
 On a font file (TTF) italic really slants every glyph (the quads are sheared about the baseline) and bold
 thickens the strokes with a three-tap smear; the built-in pixel font leans for italic and draws twice for bold.
-Rich Text works on **screen-space** text only: on world (3D) text the checkbox is greyed out with a note, and
-`ui_set_rich` ignores it. The tooltip's own `<b>` and `#rrggbb` tags are unchanged.
+It works on screen-space text and on **world text** (a Text with Screen Space off, which the 2D player and the
+editor's 2D Scene view draw at its place in the world): the player draws world text through
+`ui2d::DrawWorldText`, which reads the same tags, and the shadow and outline follow the runs. A sized run sits on
+the same bottom line as the rest of its line and pushes what follows to the right; the line height stays the
+text's own, and centring and wrapping still measure the plain text at its own size (so a centred line with a big
+run leans right). The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui` (screen text),
+`world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline).
 
 **Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
 what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when

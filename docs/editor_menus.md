@@ -9,7 +9,7 @@ and tested**. The Inspector and Project panel menus are separate pieces of work 
 The owner typed "inspector" twice; this was read as: the main menu bar plus the Hierarchy panel's menus (the Inspector and Project
 menus went to the other two agents).
 
-How to try everything below in the Windows editor is in [try_it.md](try_it.md) (rows 14 and 15).
+How to try everything below in the Windows editor is in [try_it.md](try_it.md) (rows 16 and 17).
 
 ## 1. The map: the menu bar now
 

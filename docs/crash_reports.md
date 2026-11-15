@@ -56,7 +56,12 @@ exception has the same few frames whatever caused it, so for those the last step
   one go), so it can run when the program is in a bad state. A fault inside the handler ends the program; it never loops.
 * On Windows the full report with raw `module + offset` frames is on disk **before** dbghelp is loaded. Function names are a second pass that
   replaces the file only if it works, so a hang or a fault inside dbghelp costs the names, not the report.
-* A stack overflow is reported too: on Windows the work runs on a thread with its own stack, on Linux on an alternate signal stack.
+* A stack overflow is reported too: on Windows the work (and the message box) runs on a thread with its own stack, on Linux on an alternate
+  signal stack (set up for the thread that starts the handlers).
+* If two threads fault at the same moment, the first writes the report and the second waits (up to 20 seconds) instead of ending the
+  program under it; a fault inside the handler itself ends the program at once.
+* On Windows the second pass (function names) runs on its own thread and the crash waits for it at most 8 seconds, so a slow or stuck
+  dbghelp cannot hold the "OkaySpace crashed" box up; the first report is already saved.
 * It also catches `std::terminate` and `abort()`: an uncaught C++ exception (for example from a worker thread) never used to leave a report.
 
 ## What is removed before anything is sent
@@ -124,6 +129,9 @@ after 90 days.
   `Crash: Access violation in OkayEngine.exe!DrawFields (v2.874.0)`, a table of the facts, the backtrace, the last steps, the Console in a
   collapsed block, and a **How to reproduce** stub for a person to fill in.
 * A row is marked processed (with the issue number) only after GitHub accepted the issue or comment.
+* Windows names in the backtrace come out mangled (`_ZN4okay5Scene6UpdateEf`); where binutils' `c++filt` is on the machine (it is on GitHub's
+  Ubuntu runners) they are shown readable in the issue and its title. The signature is made from the original names by the launcher and is
+  not affected; with no `c++filt` the names stay as they are.
 * **Try it with no network and no secret:** `python3 scripts/crash_to_issue.py --rows-file tests/data/crash_rows_sample.json --dry-run`
   prints the issues the three sample rows would make (the third sample row was "sent by an old client" with a name, an email, an address and a
   token left in; the output shows them removed).
@@ -163,20 +171,27 @@ with `-rdynamic` so the tests can name the faulting functions.
 [`docs/try_it.md`](try_it.md), section 14, has the exact steps for the Windows release: a real crash on purpose with `OKAY_TEST_CRASH_LATE`,
 where `okay_crash.txt` appears, what the launcher shows, the preview, the GitHub button, and how to see the row and the issue.
 
+**Why an environment variable and not a menu item.** `OKAY_TEST_CRASH=<step>` (it existed before) crashes the editor right after it starts;
+`OKAY_TEST_CRASH_LATE=<step>` crashes it on the 120th frame of the running editor, so the report has the graphics card, the scene and the
+Console. Neither can be triggered by accident, they need no new UI in the 50,000-line `editor/main.cpp`, and a release build ships them
+unchanged (the crash is a real null write, not a simulated one). A hidden "Simulate crash" menu item would be one more way to lose work by
+mistake. The editor's and the launcher's pages see the same folder if you set `OKAY_CRASH_DIR` for both.
+
 ## Tested (and not)
 
 Run on Linux for this change, all passing:
 
 * `test_crash_context` (84 checks): the context, the bounded text writer, the report layout, truncation, the `OKAY_*` switch list.
 * `test_crash_reports` (55): parsing both formats and the new sections, the signature (same crash same name, different crash different).
-* `test_crash_handler` (42): a child process **really faults** (segmentation fault, divide by zero, `abort()`, an uncaught C++ exception, a stack
-  overflow) and the parent reads back the files the handler wrote, with the launcher's parser. POSIX only.
+* `test_crash_handler` (46): a child process **really faults** (segmentation fault, divide by zero, `abort()`, an uncaught C++ exception, a stack
+  overflow, two threads at once) and the parent reads back the files the handler wrote, with the launcher's parser; the real report is also run
+  through the scrubber and the row builder. POSIX only.
 * `test_crash_scrub` (72): hostile text for every rule above, idempotence, 200 KB runs.
 * `test_crash_upload` (95): the switch, the row, the 100 KB limit, the ledger, every server answer, the 5-a-day limit, offline and retry,
   the prefilled GitHub address.
 * `tests/scripts/test_crash_reports_sql.sh` (43 checks) against a throwaway PostgreSQL 16: insert-only for `anon`, no reads, the row checks,
   the flood cap, loading the SQL twice. CI's `sql-tests` job runs it.
-* `tests/scripts/test_crash_to_issue.py` (40 tests): issue text, hostile input, dedupe, failures, the green no-op without the secret.
+* `tests/scripts/test_crash_to_issue.py` (47 tests): issue text, hostile input, dedupe, failures, the green no-op without the secret.
 * `editor/main.cpp`, `editor/ConsolePanel.cpp` and `launcher/main.cpp` with `g++ -fsyntax-only`; every new header with the MinGW win32
   compiler (x86-64 and i686); a small Windows program that installs the handler was cross-linked.
 

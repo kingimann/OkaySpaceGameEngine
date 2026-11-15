@@ -200,17 +200,45 @@ struct Details {
     unsigned long threadId;
 };
 
-inline void FillFault(ctx::Fault& f, const Details& d, char* whenBuf, std::size_t whenCap, ctx::Out*) {
+// Everything the two passes need, in static storage: the second pass runs on a thread that may outlive its timeout, and must never
+// read a stack frame that has gone.
+struct Pending {
+    Details d;
+    ctx::Fault f;
+    char when[40];
+    unsigned long long pcs[48];
+    std::size_t n;
+    bool exactFirst;
+    char crashPath[1300], logPath[1300], mark[160];
+    unsigned long long histStart;
+};
+inline Pending g_pending;
+inline std::atomic<unsigned long> g_handlingThread{0};   // the thread that owns the crash being reported
+inline std::atomic<int> g_done{0};                       // set once the report is on disk
+
+// True: this thread owns the crash and writes the report. False: another crash is already being reported; if it is on ANOTHER thread
+// this waits (up to 20 s) for its report to reach the disk, so the process is not ended under it; a fault on the SAME thread (inside
+// the handler) just returns.
+inline bool BeginCrash() {
+    const unsigned long me = GetCurrentThreadId();
+    if (!g_entered.exchange(1)) { g_handlingThread.store(me); return true; }
+    if (g_handlingThread.load() != me) for (int i = 0; i < 200 && !g_done.load(); ++i) Sleep(100);
+    return false;
+}
+
+inline void FillFault(Pending& p) {
     SYSTEMTIME st; GetLocalTime(&st);
-    ctx::Out w(whenBuf, whenCap);
+    ctx::Out w(p.when, sizeof(p.when));
     w.U(st.wYear).C('-').D2(st.wMonth).C('-').D2(st.wDay).C(' ').D2(st.wHour).C(':').D2(st.wMinute).C(':').D2(st.wSecond);
+    ctx::Fault& f = p.f;
+    f = ctx::Fault();
     f.version = g_cfg.version;
-    f.when = whenBuf;
+    f.when = p.when;
     f.exe = g_cfg.exe;
-    f.exception = d.exception;
-    f.faultModule = d.faultModule[0] ? d.faultModule : nullptr;
-    f.detail = d.detail[0] ? d.detail : nullptr;
-    f.thread = d.threadId == g_cfg.mainThread ? "main" : "worker";
+    f.exception = p.d.exception;
+    f.faultModule = p.d.faultModule[0] ? p.d.faultModule : nullptr;
+    f.detail = p.d.detail[0] ? p.d.detail : nullptr;
+    f.thread = p.d.threadId == g_cfg.mainThread ? "main" : "worker";
     f.now = (std::int64_t)std::time(nullptr);
     if (g_getMem) {
         PROCESS_MEMORY_COUNTERS pmc; std::memset(&pmc, 0, sizeof(pmc)); pmc.cb = sizeof(pmc);
@@ -220,7 +248,7 @@ inline void FillFault(ctx::Fault& f, const Details& d, char* whenBuf, std::size_
     if (GlobalMemoryStatusEx(&ms)) f.ramFreeMb = (long long)(ms.ullAvailPhys >> 20);
 }
 
-// Compose, then write. `symbolize`: ask dbghelp for function names and file:line (the second pass).
+// Compose the whole report into g_buf. `symbolize`: ask dbghelp for function names and file:line (the second pass).
 inline std::size_t Compose(const ctx::Fault& f, const unsigned long long* pcs, std::size_t n, bool symbolize, bool exactFirst) {
     ctx::Out o(g_buf, sizeof(g_buf));
     ctx::ComposeHead(o, f);
@@ -252,39 +280,54 @@ inline std::size_t Compose(const ctx::Fault& f, const unsigned long long* pcs, s
     return o.size();
 }
 
-// Two passes: raw frames (on disk before dbghelp is loaded), then names. The history keeps the better of the two.
-inline void WriteReport(const Details& d, const CONTEXT* from, std::size_t skip, bool allowSymbols, bool exactFirst) {
-    unsigned long long pcs[48];
-    const std::size_t n = from ? Unwind(from, pcs, 48, skip) : 0;
-    ctx::Fault f; char when[40];
-    FillFault(f, d, when, sizeof(when), nullptr);
-    char crashPath[1300], logPath[1300];
-    PathIn(crashPath, sizeof(crashPath), kCrashFile);
-    PathIn(logPath, sizeof(logPath), kLogFile);
+// The history entry: marker, report, a blank line.
+inline std::size_t HistoryEntry(char* out, std::size_t cap, const Pending& p) {
+    ctx::Out e(out, cap);
+    e.S(p.mark).S(g_buf).C('\n');
+    return e.size();
+}
 
-    std::size_t len = Compose(f, pcs, n, false, exactFirst);
-    WriteFileAt(crashPath, g_buf, len, false);
-    char mark[160];
-    { ctx::Out m(mark, sizeof(mark)); m.S("\n========== crash @ ").S(when).S(" (v").S(g_cfg.version).S(") ==========\n"); }
-    unsigned long long histStart = 0;
-    {   // history: marker + report + a blank line, appended
+// The second pass, on a thread of its own so a hang in dbghelp (a slow symbol path, a lock) cannot hold the crash up: names for the frames,
+// then okay_crash.txt is replaced and the history entry is swapped for the better one. If it never finishes the raw report stays.
+inline DWORD WINAPI SymbolPass(LPVOID) {
+    Pending& p = g_pending;
+    const std::size_t len = Compose(p.f, p.pcs, p.n, true, p.exactFirst);
+    WriteFileAt(p.crashPath, g_buf, len, false);
+    static char entry[sizeof(g_buf) + 256];
+    const std::size_t en = HistoryEntry(entry, sizeof(entry), p);
+    WriteFileAt(p.logPath, entry, en, true, p.histStart);
+    return 0;
+}
+
+// Two passes: raw frames (on disk before dbghelp is loaded), then names (at most 8 seconds of waiting for them).
+inline void WriteReport(const Details& d, const CONTEXT* from, std::size_t skip, bool allowSymbols, bool exactFirst) {
+    Pending& p = g_pending;
+    p.d = d;
+    p.n = from ? Unwind(from, p.pcs, 48, skip) : 0;
+    p.exactFirst = exactFirst;
+    FillFault(p);
+    PathIn(p.crashPath, sizeof(p.crashPath), kCrashFile);
+    PathIn(p.logPath, sizeof(p.logPath), kLogFile);
+    { ctx::Out m(p.mark, sizeof(p.mark)); m.S("\n========== crash @ ").S(p.when).S(" (v").S(g_cfg.version).S(") ==========\n"); }
+
+    const std::size_t len = Compose(p.f, p.pcs, p.n, false, exactFirst);
+    WriteFileAt(p.crashPath, g_buf, len, false);
+    p.histStart = 0;
+    {   // history: appended; where it started is kept so the second pass can replace it
         static char entry[sizeof(g_buf) + 256];
-        ctx::Out e(entry, sizeof(entry));
-        e.S(mark).S(g_buf).C('\n');
-        WriteFileAt(logPath, e.data(), e.size(), true, (unsigned long long)-1, &histStart);
+        const std::size_t en = HistoryEntry(entry, sizeof(entry), p);
+        WriteFileAt(p.logPath, entry, en, true, (unsigned long long)-1, &p.histStart);
     }
-    if (!allowSymbols || n == 0) return;
-    len = Compose(f, pcs, n, true, exactFirst);
-    WriteFileAt(crashPath, g_buf, len, false);
-    {
-        static char entry[sizeof(g_buf) + 256];
-        ctx::Out e(entry, sizeof(entry));
-        e.S(mark).S(g_buf).C('\n');
-        WriteFileAt(logPath, e.data(), e.size(), true, histStart);
-    }
+    g_done.store(1);   // the report is on disk: another crashing thread may go on to end the process now
+    if (!allowSymbols || p.n == 0) return;
+    g_done.store(0);   // (the second pass rewrites the files: a waiting thread waits for it too, within its own 20 s)
+    HANDLE h = CreateThread(nullptr, 1024 * 1024, SymbolPass, nullptr, 0, nullptr);
+    if (h) { WaitForSingleObject(h, 8000); CloseHandle(h); }
+    g_done.store(1);
 }
 
 struct SehJob { EXCEPTION_POINTERS* ep; Details d; };
+inline void ShowBox(const char* exception, const char* step);
 inline void FromException(const SehJob& job) {
     const EXCEPTION_RECORD* er = job.ep ? job.ep->ExceptionRecord : nullptr;
     Details d = job.d;
@@ -299,8 +342,9 @@ inline void FromException(const SehJob& job) {
         o.S(er->ExceptionInformation[0] == 0 ? "read from address 0x" : er->ExceptionInformation[0] == 1 ? "write to address 0x" : "execute at address 0x")
          .H((unsigned long long)er->ExceptionInformation[1]);
     }
-    const bool stackOverflow = code == 0xC00000FD;   // little stack is left: no dbghelp (it needs more than is there)
+    const bool stackOverflow = code == 0xC00000FD;   // little stack is left: no dbghelp thread either (it needs more than is there)
     WriteReport(d, job.ep ? job.ep->ContextRecord : nullptr, 0, !stackOverflow, true);
+    ShowBox(d.exception, ctx::LastStep());
 }
 inline DWORD WINAPI SehWorker(LPVOID p) { FromException(*static_cast<SehJob*>(p)); return 0; }
 
@@ -315,28 +359,27 @@ inline void ShowBox(const char* exception, const char* step) {
 }
 
 inline LONG WINAPI Filter(EXCEPTION_POINTERS* ep) {
-    if (g_entered.exchange(1)) return EXCEPTION_EXECUTE_HANDLER;   // a fault while reporting: end the process
-    SehJob job; std::memset(&job, 0, sizeof(job));
+    if (!BeginCrash()) return EXCEPTION_EXECUTE_HANDLER;   // another crash is being reported (this thread waited for it), or a fault inside the handler: end the process
+    static SehJob job;
+    std::memset(&job, 0, sizeof(job));
     job.ep = ep; job.d.threadId = GetCurrentThreadId();
     if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == 0xC00000FD) {
-        // The stack is used up: do the work on a thread with a stack of its own.
+        // The stack is used up: report (and show the box) on a thread with a stack of its own.
         HANDLE h = CreateThread(nullptr, 1024 * 1024, SehWorker, &job, 0, nullptr);
-        if (h) { WaitForSingleObject(h, 30000); CloseHandle(h); }
+        if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); }
     } else {
         FromException(job);
     }
-    char exc[64]; { ctx::Out o(exc, sizeof(exc)); o.S("0x").H(ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0, 8); }
-    ShowBox(exc, ctx::LastStep());
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
 // abort() and std::terminate have no exception record: capture where we are.
 __attribute__((noinline)) inline void ReportHere(const char* what, std::size_t skip) {
-    if (g_entered.exchange(1)) return;
-    Details d; std::memset(&d, 0, sizeof(d));
+    if (!BeginCrash()) return;
+    static Details d; std::memset(&d, 0, sizeof(d));
     d.threadId = GetCurrentThreadId();
     CopyStr(d.exception, sizeof(d.exception), what);
-    CONTEXT c; std::memset(&c, 0, sizeof(c));
+    static CONTEXT c; std::memset(&c, 0, sizeof(c));
     RtlCaptureContext(&c);
     WriteReport(d, &c, skip, true, false);
     ShowBox(d.exception, ctx::LastStep());
@@ -511,13 +554,29 @@ inline void WriteReport(const char* exception, void** frames, int nframes, bool 
     WriteAll(2, c, std::strlen(c)); WriteAll(2, crashPath, std::strlen(crashPath)); WriteAll(2, "\n", 1);
 }
 
+inline std::atomic<unsigned long> g_handlingThread{0};   // the thread that owns the crash being reported
+inline std::atomic<int> g_done{0};                       // set once the report is on disk
+
+// True: this thread owns the crash and writes the report. False: another crash is already being reported; if it is on ANOTHER thread
+// this waits (up to 20 s) for its report to reach the disk, so the process is not ended under it; a fault on the SAME thread (inside
+// the handler) returns at once.
+inline bool BeginCrash() {
+    const unsigned long me = (unsigned long)::pthread_self();
+    if (!g_entered.exchange(1)) { g_handlingThread.store(me); return true; }
+    if (g_handlingThread.load() != me) {
+        struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 100L * 1000 * 1000;
+        for (int i = 0; i < 200 && !g_done.load(); ++i) ::nanosleep(&ts, nullptr);
+    }
+    return false;
+}
+
 inline const char* SignalName(int sig) {
     return sig == SIGSEGV ? "SIGSEGV (signal 11)" : sig == SIGABRT ? "SIGABRT (signal 6)" : sig == SIGFPE ? "SIGFPE (signal 8)"
          : sig == SIGILL ? "SIGILL (signal 4)" : sig == SIGBUS ? "SIGBUS (signal 7)" : "signal";
 }
 
 inline void OnSignal(int sig, siginfo_t*, void* uctx) {
-    if (g_entered.exchange(1)) { ::signal(sig, SIG_DFL); ::raise(sig); return; }
+    if (!BeginCrash()) { ::signal(sig, SIG_DFL); ::raise(sig); return; }
     ::signal(sig, SIG_DFL);   // a fault while reporting ends the process with the default action
     void* frames[64];
     int n = ::backtrace(frames, 64);
@@ -532,15 +591,17 @@ inline void OnSignal(int sig, siginfo_t*, void* uctx) {
 #endif
     if (skip > n) skip = n;
     WriteReport(SignalName(sig), frames + skip, n - skip, true);
+    g_done.store(1);
     ::raise(sig);
 }
 
 __attribute__((noinline)) inline void ReportHere(const char* what, int skip) {
-    if (g_entered.exchange(1)) return;
+    if (!BeginCrash()) return;
     void* frames[64];
     int n = ::backtrace(frames, 64);
     if (skip > n) skip = n;
     WriteReport(what, frames + skip, n - skip, false);
+    g_done.store(1);
 }
 inline void TerminateHook() {
     char text[600]; TerminateText(text, sizeof(text));

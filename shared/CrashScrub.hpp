@@ -388,10 +388,10 @@ inline std::string StripControl(const std::string& in) {
 
 } // namespace scrub_detail
 
-// The report text with the personal parts taken out.
-inline std::string Scrub(const std::string& text, const ScrubContext& ctx = ScrubContext()) {
+// One round of every rule, in order.
+inline std::string ScrubOnce(const std::string& in, const ScrubContext& ctx) {
     using namespace scrub_detail;
-    std::string s = StripControl(text);
+    std::string s = in;
     for (const std::string& h : ctx.homeDirs) s = ReplaceFolder(s, h, h.find(':') != std::string::npos || h.compare(0, 2, "\\\\") == 0 ? "%USERPROFILE%" : "~");
     s = UserFolders(s);
     s = UrlCredentials(s);
@@ -409,6 +409,19 @@ inline std::string Scrub(const std::string& text, const ScrubContext& ctx = Scru
     for (const std::string& u : ctx.usernames) names.push_back({&u, "<user>"});
     std::stable_sort(names.begin(), names.end(), [](const Named& a, const Named& b) { return a.name->size() > b.name->size(); });
     for (const Named& n : names) s = ReplaceWord(s, *n.name, n.with);
+    return s;
+}
+
+// The report text with the personal parts taken out. A replacement can leave two pieces next to each other that now match a rule that ran
+// earlier (a token taken out of "name0\\SERVER\share" exposes a network path), so the rules run again until nothing changes (at most four
+// rounds): scrubbing scrubbed text then changes nothing.
+inline std::string Scrub(const std::string& text, const ScrubContext& ctx = ScrubContext()) {
+    std::string s = scrub_detail::StripControl(text);
+    for (int round = 0; round < 4; ++round) {
+        std::string next = ScrubOnce(s, ctx);
+        if (next == s) break;
+        s.swap(next);
+    }
     return s;
 }
 

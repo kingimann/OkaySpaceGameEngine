@@ -1708,8 +1708,10 @@ target_include_directories(test_crash_scrub PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_scrub COMMAND test_crash_scrub)
 
 if(NOT WIN32 AND NOT EMSCRIPTEN AND NOT OKAY_SANITIZE)   # (a sanitizer installs its own fault handlers and reports the null write itself)
+    find_package(Threads REQUIRED)
     add_executable(test_crash_handler test_crash_handler.cpp)
     target_include_directories(test_crash_handler PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_link_libraries(test_crash_handler PRIVATE Threads::Threads)   # (the test starts a second thread that faults too)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
         target_link_options(test_crash_handler PRIVATE -rdynamic)   # so backtrace_symbols names the faulting functions
     endif()

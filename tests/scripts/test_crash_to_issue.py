@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -203,6 +204,60 @@ class Body(unittest.TestCase):
 
     def test_neutralize(self):
         self.assertEqual(c.neutralize("hi @alice and #12 and owner/repo#3 `x`"), "hi `@alice` and `#12` and owner/repo`#3` 'x'")
+
+
+class Demangle(unittest.TestCase):
+    FAKE = staticmethod(lambda t: t.replace("_ZN4okay5Scene6UpdateEf", "okay::Scene::Update(float)"))
+
+    def test_names_are_made_readable(self):
+        self.assertEqual(c.demangle("#00 OkayEngine.exe + 0x1  _ZN4okay5Scene6UpdateEf +0x40", self.FAKE), "#00 OkayEngine.exe + 0x1  okay::Scene::Update(float) +0x40")
+        self.assertEqual(c.demangle_lines(["a _ZN4okay5Scene6UpdateEf", "b"], self.FAKE), ["a okay::Scene::Update(float)", "b"])
+
+    def test_nothing_to_do_means_no_call(self):
+        def boom(_): raise AssertionError("must not be called")
+        self.assertEqual(c.demangle("plain text", boom), "plain text")
+        self.assertEqual(c.demangle("", boom), "")
+        self.assertEqual(c.demangle_lines([], boom), [])
+
+    def test_any_failure_leaves_the_text_alone(self):
+        t = "x _ZN4okay5Scene6UpdateEf\ny"
+        def fails(_): raise RuntimeError("no c++filt")
+        self.assertEqual(c.demangle(t, fails), t)
+        self.assertEqual(c.demangle(t, lambda _: ""), t)                    # empty answer
+        self.assertEqual(c.demangle(t, lambda _: "one line only"), t)       # a different number of lines
+        self.assertEqual(c.demangle(t, lambda _: None), t)
+        self.assertEqual(c.demangle_lines(["x _ZN4okay5Scene6UpdateEf", "y"], lambda _: "just one line"), ["x _ZN4okay5Scene6UpdateEf", "y"])
+
+    def test_title_and_body_use_it(self):
+        old = c._cxxfilt
+        c._cxxfilt = self.FAKE
+        try:
+            r = row(top_frame="OkayEngine.exe!_ZN4okay5Scene6UpdateEf", report=report(frames=["#00 OkayEngine.exe + 0x1  _ZN4okay5Scene6UpdateEf +0x40"]))
+            self.assertEqual(c.issue_title(r), "Crash: Access violation in OkayEngine.exe!okay::Scene::Update(float) (v2.874.0)")
+            self.assertIn("okay::Scene::Update(float) +0x40", c.issue_body(r))
+            self.assertNotIn("_ZN4okay", c.issue_body(r))
+        finally:
+            c._cxxfilt = old
+
+    @unittest.skipUnless(shutil.which("c++filt"), "binutils c++filt is not installed")
+    def test_with_the_real_c_plus_plus_filt(self):
+        out = c.demangle("a _ZN4okay5Scene6UpdateEf b\n_ZNSt6vectorIiSaIiEE9push_backERKi")
+        self.assertIn("okay::Scene::Update(float)", out)
+        self.assertIn("std::vector<int, std::allocator<int> >::push_back(int const&)", out)
+        self.assertEqual(c.demangle("x _Zbad_not_a_name y"), "x _Zbad_not_a_name y")   # what c++filt cannot read passes through
+
+    def test_hostile_output_still_goes_through_the_fence(self):
+        evil = lambda t: t.replace("_ZN4okay5Scene6UpdateEf", "```\n@everyone <script>x</script>")
+        # (the demangler's answer has a different line count here, so it is refused; and the fence logic covers the rest)
+        r = row(report=report(frames=["#00 _ZN4okay5Scene6UpdateEf"]))
+        old = c._cxxfilt
+        c._cxxfilt = evil
+        try:
+            live = outside_code(c.issue_body(r))
+        finally:
+            c._cxxfilt = old
+        self.assertNotIn("@", live)
+        self.assertNotIn("<script", live)
 
 
 class Planning(unittest.TestCase):

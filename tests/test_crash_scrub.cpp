@@ -107,6 +107,11 @@ int main() {
         CHECK(!Has(once, "alice@x") && !Has(once, "10.1.2.3") && !Has(once, "ghp_") && !Has(once, "ALICE-PC") && !Has(once, "abc "));
         CHECK(S(once) == once);
     }
+    {   // found by fuzzing: taking a token out exposed a network path next to it; the rules run again until nothing changes
+        const std::string t = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc0\\\\HOST\\share";   // lint-allow: secret (a made-up token shape)
+        const std::string once = S(t);
+        CHECK(once == "<token>\\\\<host>\\share" && S(once) == once);
+    }
     {   // a big report scrubs in reasonable time and keeps its size order
         std::string big;
         for (int i = 0; i < 4000; ++i) big += "[-" + std::to_string(i) + "s] I Loaded C:\\Users\\alice\\assets\\tex" + std::to_string(i) + ".png (12 ms) from 10.0." + std::to_string(i % 200) + ".5\n";

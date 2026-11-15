@@ -28,6 +28,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -195,12 +197,41 @@ def parse_report(text):
     return out
 
 
+def _cxxfilt(text):
+    exe = shutil.which("c++filt")
+    if not exe:
+        raise RuntimeError("c++filt is not installed")
+    done = subprocess.run([exe], input=text.encode("utf-8", "replace"), capture_output=True, timeout=10, check=True)
+    return done.stdout.decode("utf-8", "replace")
+
+
+def demangle(text, run=None):
+    """A Windows MinGW build names functions the Itanium way (_ZN4okay5Scene6UpdateEf); with binutils' c++filt on the machine they are
+    shown readable (okay::Scene::Update(float)). Only ever a convenience: no c++filt, a failure, or an answer with a different number
+    of lines leaves the text exactly as it was. The signature is made by the launcher from the original names and is not affected."""
+    if not text or "_Z" not in text:
+        return text
+    try:
+        out = (run or _cxxfilt)(text)
+    except Exception:
+        return text
+    if not isinstance(out, str) or not out.strip() or out.count("\n") != text.count("\n"):
+        return text
+    return out
+
+
+def demangle_lines(lines, run=None):
+    lines = [l[:MAX_LINE] for l in lines]
+    out = demangle("\n".join(lines), run)
+    return out.split("\n") if out.count("\n") == len(lines) - 1 else lines
+
+
 def valid_signature(sig):
     return isinstance(sig, str) and bool(SIG_RE.match(sig))
 
 
 def issue_title(row):
-    top = title_text(row.get("top_frame") or "", 60)
+    top = title_text(demangle(clean(row.get("top_frame") or "")), 60)
     exc = exception_name(row.get("exception") or "")
     version = title_text(row.get("version") or "?", 20)
     title = "Crash: %s%s (v%s)" % (exc, " in " + top if top else "", version)
@@ -214,6 +245,7 @@ _ORDER = ["Version", "Build", "When", "Last step", "Exception", "Fault module", 
 def issue_body(row, max_body=MAX_BODY):
     """The issue's Markdown for one row. Everything from the row sits in a code span or a code block."""
     report = parse_report(scrub(row.get("report") or ""))
+    report["backtrace"] = demangle_lines(report["backtrace"][:MAX_BACKTRACE_LINES])
     sig = row["signature"]
     head = OrderedDict()
     for k, v in report["header"]:

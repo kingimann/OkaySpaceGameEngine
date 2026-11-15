@@ -2164,17 +2164,6 @@ okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
 
-// What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
-// of stores, no allocation). `slow` also re-reads the things that need a file or a lookup.
-static void UpdateCrashContext(EditorState& ed, bool slow) {
-    okaycrash::ctx::SetMode(ed.isPlaying(), ed.InPrefabMode());
-    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), (int)okay::AssetManager::Instance().CachedCount());
-    if (!slow) return;
-    okaycrash::ctx::SetSceneName(ed.path().c_str());
-    okaycrash::ctx::SetUiBackend(UseOkayUIBackend() ? "okayui" : "imgui");
-    std::error_code ec;
-    okaycrash::ctx::SetAutosave(ed.path().empty() ? -1 : std::filesystem::exists(ed.path() + ".autosave", ec) ? 1 : 0);
-}
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
 okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
@@ -47579,6 +47568,20 @@ static int RunBuildGameCli(int argc, char** argv) {
         if (!reportFile.empty()) { std::ofstream rf(reportFile, std::ios::binary); rf << rep.r.ToText(); }
     }
     return rep.ok ? 0 : 1;
+}
+
+// What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
+// of stores, no allocation). `slow` also re-reads the things that need a file or a lookup.
+static void UpdateCrashContext(EditorState& ed, bool slow) {
+    okaycrash::ctx::SetMode(ed.isPlaying(), ed.InPrefabMode());
+    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), (int)okay::AssetManager::Instance().CachedCount());
+    if (!slow) return;
+    okaycrash::ctx::SetSceneName(ed.path().c_str());
+    okaycrash::ctx::SetUiBackend(UseOkayUIBackend() ? "okayui" : "imgui");
+    // "Recovery copy": did this session write a recovery autosave (the recovery folder), or does the scene have an older-style .autosave beside it?
+    std::error_code ec;
+    const bool recovered = DocRecovery().AutosaveCount() > 0 || (!ed.path().empty() && std::filesystem::exists(ed.path() + ".autosave", ec));
+    okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
 }
 
 int RunVsGraphShot(int argc, char** argv);

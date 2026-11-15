@@ -259,7 +259,7 @@ name in it; with sending off nothing is ever sent; one crash makes one issue, th
 
 **Status.** Verified here (Linux): the report builder, the parser and signature, the handler (a child process really faults: segmentation fault,
 divide by zero, abort, uncaught exception, stack overflow), the scrubber, the upload logic against a fake server, the SQL against a local PostgreSQL
-(insert-only, no reads, flood cap), the issue script (41 tests). **Unverified:** everything that needs Windows (the Windows handler, the message box,
+(insert-only, no reads, flood cap), the issue script (47 tests). **Unverified:** everything that needs Windows (the Windows handler, the message box,
 function names from dbghelp), the editor and launcher as running programs (they were only syntax-checked), the upload to the real Supabase, the
 GitHub workflow, the browser page of step 10, and `OKAY_TEST_CRASH_LATE` in a running editor.
 

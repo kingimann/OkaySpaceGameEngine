@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <csignal>
+#include <pthread.h>
 
 using namespace okaycrash;
 namespace fs = std::filesystem;
@@ -30,7 +31,9 @@ extern "C" __attribute__((noinline)) void CrashHereAbort() { std::abort(); }
 extern "C" __attribute__((noinline)) void CrashHereThrow() { throw std::out_of_range("index 7 is out of range for C:\\Users\\alice\\data.bin"); }
 extern "C" __attribute__((noinline)) int CrashHereRecurse(int n) { volatile char pad[512]; pad[0] = (char)n; if (pad[0] == 127 && n < 0) return 0; return CrashHereRecurse(n + 1) + pad[0]; }
 
-enum class Kind { Segv, Fpe, Abort, Throw, Overflow };
+static void* ThreadCrash(void*) { usleep(1500); CrashHereSegv(); return nullptr; }
+
+enum class Kind { Segv, Fpe, Abort, Throw, Overflow, TwoThreads };
 
 // The child: install, describe, fault. Never returns.
 static void Child(Kind kind, const char* step, int lines) {
@@ -51,6 +54,7 @@ static void Child(Kind kind, const char* step, int lines) {
         case Kind::Abort: CrashHereAbort(); break;
         case Kind::Throw: CrashHereThrow(); break;
         case Kind::Overflow: CrashHereRecurse(0); break;
+        case Kind::TwoThreads: { pthread_t t; pthread_create(&t, nullptr, ThreadCrash, nullptr); usleep(1500); CrashHereSegv(); break; }   // two threads fault at about the same moment
     }
     _exit(0);   // not reached: the fault killed the process
 }
@@ -165,6 +169,16 @@ int main() {
     CHECK(RunChild(d5, Kind::Overflow, "Hierarchy.Recurse") == SIGSEGV);
     const auto so = okaycrash::Load(d5);
     CHECK(so.size() == 1 && so[0].exception == "SIGSEGV (signal 11)" && so[0].lastStep == "Hierarchy.Recurse" && TopFrame(so[0]) == exe + "!CrashHereRecurse");
+
+    // ---- Two threads fault at once: ONE complete report (the second thread waits for the first, it does not cut it short) ----------------
+    const fs::path d6 = base / "twothreads"; fs::create_directories(d6);
+    CHECK(RunChild(d6, Kind::TwoThreads, "Physics.Step") == SIGSEGV);
+    const auto tt = okaycrash::Load(d6);
+    CHECK(tt.size() == 1);
+    if (tt.size() == 1) {
+        CHECK(tt[0].text.find("--- End of report ---") != std::string::npos && tt[0].frames >= 3 && TopFrame(tt[0]) == exe + "!CrashHereSegv");
+        CHECK(tt[0].console.size() == 5);
+    }
 
     // ---- A folder that does not exist: the report goes beside the program instead of being lost (here: nothing to check but no crash) ----
     // (OKAY_CRASH_DIR that is not a directory is ignored: covered by the dir check in Install.)

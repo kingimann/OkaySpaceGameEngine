@@ -35,6 +35,9 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UIModal.hpp"
 #include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/WorldSpaceUI.hpp"
+#include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/ChestInventory.hpp"
 
 namespace okay {
 namespace detail {
@@ -566,6 +569,71 @@ void RegisterUIDamageNumbers() {
     b.Commit();
 }
 
+// WorldSpaceUI (record "worldui3d")
+void RegisterWorldSpaceUI() {
+    PropertyBuilder<WorldSpaceUI> b("WorldSpaceUI", "worldui3d", "UI");
+    b.AddFloat("pixelsPerUnit", &WorldSpaceUI::pixelsPerUnit).Range(0.001, 1e6, 1).Tooltip("Design pixels per world unit (bigger = smaller in the world)")
+     .AddBool("billboard", &WorldSpaceUI::billboard).Tooltip("Always face the camera (off = use the object's rotation)")
+     .AddBool("constantSize", &WorldSpaceUI::constantSize).Tooltip("Keep the same size on screen at any distance")
+     .AddFloat("constantScale", &WorldSpaceUI::constantScale).Range(0, 1e3, 0.05).Tooltip("Constant size: 1 draws the widget at its design pixels");
+    b.Commit();
+}
+
+// PauseMenu (record "pausemenu"). Only the fields the record saves.
+void RegisterPauseMenu() {
+    PropertyBuilder<PauseMenu> b("PauseMenu", "pausemenu", "UI");
+    b.AddKey("toggleKey", &PauseMenu::toggleKey).Tooltip("Key that opens and closes the menu (Escape by default)")
+     .AddString("title", &PauseMenu::title).Tooltip("Heading of the menu")
+     .AddBool("showResume", &PauseMenu::showResume).Tooltip("Show the Resume button")
+     .AddBool("showQuit", &PauseMenu::showQuit).Tooltip("Show the Quit button")
+     .AddString("mainMenuScene", &PauseMenu::mainMenuScene).Tooltip("Scene the Main Menu button loads (empty = no button)")
+     .AddColor("dimColor", &PauseMenu::dimColor).Range(0, 1, 0.01).Tooltip("Tint laid over the game")
+     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card");
+    b.Commit();
+}
+
+// ChestInventory (record "chestinventory"). `open` and the drag state are runtime.
+void RegisterChestInventory() {
+    PropertyBuilder<ChestInventory> b("ChestInventory", "chestinventory", "UI");
+    b.Section("Chest")
+     .AddKey("openKey", &ChestInventory::openKey).Tooltip("Opens and closes the chest when in range")
+     .AddFloat("range", &ChestInventory::range).Range(0, kBig, 0.1).Tooltip("How close the player must be (0 = any distance)")
+     .AddString("playerName", &ChestInventory::playerName).Tooltip("Who counts as the player (empty = the default player)")
+     .AddString("title", &ChestInventory::title).Tooltip("Heading of the chest window")
+     .AddInt("cols", &ChestInventory::cols).Range(1, 256, 1).Tooltip("Columns in the chest grid")
+     .AddBool("darkenWhenOpen", &ChestInventory::darkenWhenOpen).Tooltip("Darken the game while the chest is open")
+     .Section("Style")
+     .AddFloat("slotSize", &ChestInventory::slotSize).Range(1, 1e3, 1).Tooltip("Slot size in pixels")
+     .AddFloat("gap", &ChestInventory::gap).Range(0, 1e3, 1).Tooltip("Pixels between slots")
+     .AddFloat("cornerRadius", &ChestInventory::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius of the slots")
+     .AddString("iconFolder", &ChestInventory::iconFolder).Tooltip("Folder the item icons are loaded from")
+     .AddColor("panelColor", &ChestInventory::panelColor).Range(0, 1, 0.01).Tooltip("Window colour")
+     .AddColor("titleBar", &ChestInventory::titleBar).Range(0, 1, 0.01).Tooltip("Title bar colour")
+     .AddColor("slotColor", &ChestInventory::slotColor).Range(0, 1, 0.01).Tooltip("Slot colour")
+     .AddColor("slotBorder", &ChestInventory::slotBorder).Range(0, 1, 0.01).Tooltip("Slot border colour")
+     .AddColor("textColor", &ChestInventory::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("hoverColor", &ChestInventory::hoverColor).Range(0, 1, 0.01).Tooltip("Tint on the slot under the pointer");
+    b.Commit();
+}
+
+// UIDropTarget (record "uidroptarget")
+void RegisterUIDropTarget() {
+    PropertyBuilder<UIDropTarget> b("UIDropTarget", "uidroptarget", "UI");
+    b.AddString("acceptTag", &UIDropTarget::acceptTag).Tooltip("Only items with this tag are accepted (empty = any)")
+     .Section("Background")
+     .AddBool("drawBackground", &UIDropTarget::drawBackground).Tooltip("Draw a slot box behind the items")
+     .AddColor("background", &UIDropTarget::background).Range(0, 1, 0.01).Tooltip("Slot box colour")
+     .AddFloat("cornerRadius", &UIDropTarget::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius of the slot box")
+     .AddFloat("borderWidth", &UIDropTarget::borderWidth).Range(0, 1e3, 0.5).Tooltip("Outline thickness in pixels (0 = none)")
+     .AddColor("borderColor", &UIDropTarget::borderColor).Range(0, 1, 0.01).Tooltip("Outline colour")
+     .Section("Hover")
+     .AddBool("showHighlight", &UIDropTarget::showHighlight).Tooltip("Tint the slot while an item hovers over it")
+     .AddColor("highlight", &UIDropTarget::highlight).Range(0, 1, 0.01).Tooltip("Tint when the item is accepted")
+     .AddColor("rejectHighlight", &UIDropTarget::rejectHighlight).Range(0, 1, 0.01).Tooltip("Tint when the item has the wrong tag")
+     .AddBool("snapToCenter", &UIDropTarget::snapToCenter).Tooltip("Centre a dropped item in the slot");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -839,6 +907,10 @@ void RegisterUIProperties() {
     RegisterUITooltip();
     RegisterUIModal();
     RegisterUIContextMenu();
+    RegisterWorldSpaceUI();
+    RegisterPauseMenu();
+    RegisterChestInventory();
+    RegisterUIDropTarget();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

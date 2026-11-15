@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.872.0
+  Launcher
+  - The Admin page no longer disappears when the launcher has been open for
+    a long time. The launcher checks your role every few minutes; when that
+    check failed (for example your sign-in had expired or the network
+    dropped) it wrongly treated you as having no role. It now keeps your last
+    known role, tries again after a minute and renews an old sign-in first.
+    This was found by reading the code and has not been reproduced with a
+    real expired sign-in.
+
 v2.871.0
   Editor
   - Pressing Play: the first game frame no longer jumps, and the editor takes

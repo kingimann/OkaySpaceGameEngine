@@ -444,9 +444,12 @@ void Print(const SceneDef& def, const Options& o, const Result& r) {
         if (kv.first == "light gather" && med == 0.0 && mx == 0.0) continue;
         std::printf("   %-34s %10.3f %10.3f %10.3f\n", kv.first.c_str(), med, p95, mx);
     }
-    for (const auto& kv : r.phase)
-        if (kv.first[0] != ' ' && !kv.second.v.empty())
-            std::printf("BENCH,%s,%s,%.4f,%.4f\n", def.name, kv.first.c_str(), kv.second.Pct(0.5), kv.second.Pct(0.95));
+    for (const auto& kv : r.phase) {   // machine readable rows: BENCH,scene,phase,median_ms,p95_ms
+        if (kv.second.v.empty()) continue;
+        const char* name = kv.first.c_str();
+        while (*name == ' ') ++name;
+        std::printf("BENCH,%s,%s,%.4f,%.4f\n", def.name, name, kv.second.Pct(0.5), kv.second.Pct(0.95));
+    }
     std::printf("   frame_hash=%016llx state_hash=%016llx\n", (unsigned long long)r.frameHash, (unsigned long long)r.stateHash);
 }
 

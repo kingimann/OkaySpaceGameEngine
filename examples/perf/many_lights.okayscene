@@ -1,0 +1,3677 @@
+okayscene 3
+name "lights"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Ground"
+  guid "7df5abcfcd4fc13a42feeb5a8ab07df6"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 120 1 120
+  mesh "Cube" 0.35 0.5 0.3 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 1 "Prop"
+  guid "3ffbeffdf8cfad602ea790765d470a1c"
+  active 1
+  parent -1
+  transform -30 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.304342 0.6465453 0.5945436 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Prop"
+  guid "5df898634ab7cd42149a57837f1fa8bf"
+  active 1
+  parent -1
+  transform -27 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.66975987 0.44623905 0.4849163 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Prop"
+  guid "3c07e926413658be32b988d53b379f3a"
+  active 1
+  parent -1
+  transform -24 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.8158056 0.8941712 0.57535744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Prop"
+  guid "e8cea07b76bc1b2edcef4e9dc2d5b96c"
+  active 1
+  parent -1
+  transform -21 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.444884 0.44915155 0.8262632 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Prop"
+  guid "fca1ab75a169bc7cbdd8a6a86d5bc7b6"
+  active 1
+  parent -1
+  transform -18 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.778599 0.8019369 0.58958507 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Prop"
+  guid "1bf89e4f1d70acb310c02033ad0eab9f"
+  active 1
+  parent -1
+  transform -15 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40750334 0.6819281 0.514727 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Prop"
+  guid "9ca703ffdc4246d2795410ed115a9aac"
+  active 1
+  parent -1
+  transform -12 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.61162627 0.87997144 0.65335035 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Prop"
+  guid "ca7f02538a9377a47eec533d69ee96de"
+  active 1
+  parent -1
+  transform -9 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4359313 0.50370467 0.5374717 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Prop"
+  guid "d92325012d483617e2757b86c4d53776"
+  active 1
+  parent -1
+  transform -6 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.4649464 0.70190376 0.6581142 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Prop"
+  guid "328518975bbd77ed47837b14310e1ed9"
+  active 1
+  parent -1
+  transform -3 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.83592135 0.3500867 0.78621554 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Prop"
+  guid "b15e1e8ae5d5d0e80c2cc34ced6ef442"
+  active 1
+  parent -1
+  transform 0 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.43138388 0.44236988 0.3402562 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Prop"
+  guid "b21f52e6725c761e99cb3616568050df"
+  active 1
+  parent -1
+  transform 3 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47696775 0.6735481 0.48455685 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Prop"
+  guid "d72162cb8142fe29a559a1e627e7ed75"
+  active 1
+  parent -1
+  transform 6 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.79431343 0.8610357 0.76369834 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Prop"
+  guid "430210e1a62dce5f6b7a2d006e227441"
+  active 1
+  parent -1
+  transform 9 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.61061513 0.7706131 0.8845326 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Prop"
+  guid "889a689080c0ea7b20354a530cd93483"
+  active 1
+  parent -1
+  transform 12 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.89412165 0.7349444 0.5074927 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Prop"
+  guid "b165dc611cc7a0ee78cd01c579693842"
+  active 1
+  parent -1
+  transform 15 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.30270284 0.30861902 0.74781823 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Prop"
+  guid "9f2130bb240b0aae752b3ae24ca5e38c"
+  active 1
+  parent -1
+  transform 18 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.6293695 0.4518755 0.59034026 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Prop"
+  guid "0af0eea71e45a7841eda709eab637a46"
+  active 1
+  parent -1
+  transform 21 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8181721 0.3941071 0.7745062 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Prop"
+  guid "1fb03d3db1bc2db106c109e30606aac3"
+  active 1
+  parent -1
+  transform 24 0.6 -30 0 0 0 1 1 1 1
+  mesh "Cube" 0.79636973 0.4355808 0.76075923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Prop"
+  guid "89d3b643fa39ef47c8a11b1651de45d2"
+  active 1
+  parent -1
+  transform 27 0.6 -30 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6985839 0.467046 0.6758424 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Prop"
+  guid "95a9ec83869ebd4c88aca66e3fb5d971"
+  active 1
+  parent -1
+  transform -30 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.84621596 0.74339926 0.7601416 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Prop"
+  guid "78b67938f57d06ce486132db630c0cde"
+  active 1
+  parent -1
+  transform -27 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.73996824 0.43533224 0.7957943 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Prop"
+  guid "a3c9bf191ff39ef569cf5af24677e292"
+  active 1
+  parent -1
+  transform -24 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.69267195 0.85612684 0.4383552 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Prop"
+  guid "35118310d4a427b6e5d7339f53ac4ec9"
+  active 1
+  parent -1
+  transform -21 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32896537 0.4159391 0.31082135 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Prop"
+  guid "a5761f28f3da389fb3d72bec59c67665"
+  active 1
+  parent -1
+  transform -18 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.57636905 0.8731212 0.8005224 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Prop"
+  guid "8652c86c28280a1433b35ebbdbe7e068"
+  active 1
+  parent -1
+  transform -15 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3777268 0.4104922 0.4780299 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Prop"
+  guid "4c3b8fbf01fb2c69ef4f2534cba568a8"
+  active 1
+  parent -1
+  transform -12 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.34962058 0.3493462 0.8782858 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Prop"
+  guid "8ebef6399da4d70efd2d8c0a1db9793e"
+  active 1
+  parent -1
+  transform -9 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.73399603 0.7351618 0.88476646 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Prop"
+  guid "982481247d9defff02e25312fb97b059"
+  active 1
+  parent -1
+  transform -6 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.73315305 0.42738688 0.34886846 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 30 "Prop"
+  guid "aad7986d14c7ea655262b17ef46423f0"
+  active 1
+  parent -1
+  transform -3 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6372802 0.3409397 0.7737663 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 31 "Prop"
+  guid "44b5c1c0641c5954361cbd191115d8ce"
+  active 1
+  parent -1
+  transform 0 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.44182545 0.48900703 0.7371335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 32 "Prop"
+  guid "a299bd162054662418212ee3bc0e076c"
+  active 1
+  parent -1
+  transform 3 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7047876 0.3096065 0.555197 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 33 "Prop"
+  guid "cb5efc6f5d5742b6731defd98505a8b5"
+  active 1
+  parent -1
+  transform 6 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.68380535 0.33317703 0.45571688 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 34 "Prop"
+  guid "43320d2601624d0f19dfc22f914e5e6a"
+  active 1
+  parent -1
+  transform 9 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32175663 0.78358793 0.362804 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 35 "Prop"
+  guid "0a59e23ec9206457d2e1363ce8e45c1d"
+  active 1
+  parent -1
+  transform 12 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.69431573 0.72909224 0.54251367 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 36 "Prop"
+  guid "e921c724c6303f9c82f69e04db79e96e"
+  active 1
+  parent -1
+  transform 15 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.46332166 0.7515018 0.339231 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 37 "Prop"
+  guid "51011b685dd2287b29ad1fb06cbac781"
+  active 1
+  parent -1
+  transform 18 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.65135825 0.6650839 0.82581204 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 38 "Prop"
+  guid "8f04dc9ee081662c22445ebb4735e155"
+  active 1
+  parent -1
+  transform 21 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.66344655 0.55111504 0.62127733 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 39 "Prop"
+  guid "bbf7d79f605589129fca9443b144327b"
+  active 1
+  parent -1
+  transform 24 0.6 -27 0 0 0 1 1 1 1
+  mesh "Cube" 0.42682716 0.6671622 0.47798175 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 40 "Prop"
+  guid "df7b9ae43276318d3438b4e4abc953d5"
+  active 1
+  parent -1
+  transform 27 0.6 -27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43694964 0.5657836 0.85482454 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 41 "Prop"
+  guid "7ed85a6381f660460c8ba5e39a303d72"
+  active 1
+  parent -1
+  transform -30 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.7498523 0.5259907 0.61095226 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 42 "Prop"
+  guid "04c57d27865dc80f1e1fba9834f11d94"
+  active 1
+  parent -1
+  transform -27 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5234512 0.54498494 0.48624957 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 43 "Prop"
+  guid "d0f8a3b730f50417dec0f7655d670a56"
+  active 1
+  parent -1
+  transform -24 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.6813709 0.44034475 0.35521206 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 44 "Prop"
+  guid "068c652846e796b4e9e87b440c66c553"
+  active 1
+  parent -1
+  transform -21 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.35655385 0.54498965 0.7664718 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 45 "Prop"
+  guid "2e5c3f2656745c469fcf5d7e8bb4283c"
+  active 1
+  parent -1
+  transform -18 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.82935923 0.48671123 0.36624736 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 46 "Prop"
+  guid "757f3f9f03abac97715b8fc4c8c89eb9"
+  active 1
+  parent -1
+  transform -15 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.48975116 0.47919756 0.5761885 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 47 "Prop"
+  guid "fabd784e30e65353e432fe3439afa36e"
+  active 1
+  parent -1
+  transform -12 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.66969573 0.4165225 0.6781744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 48 "Prop"
+  guid "bb9e51ace49a76b5e98d68dc33f90a7c"
+  active 1
+  parent -1
+  transform -9 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.73622274 0.73533 0.8691534 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 49 "Prop"
+  guid "9ad850aae4d4bea0d188acf5befa4b52"
+  active 1
+  parent -1
+  transform -6 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.6382145 0.8907348 0.5142619 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 50 "Prop"
+  guid "5f72a41d351a1cabd8057bec240aa12b"
+  active 1
+  parent -1
+  transform -3 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6191157 0.8445652 0.35140222 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 51 "Prop"
+  guid "53e10b6ad87c5d459cfc9ae043b2c77e"
+  active 1
+  parent -1
+  transform 0 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.8319732 0.39827314 0.62549365 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 52 "Prop"
+  guid "54e75cba81b2cf3741231a879ef32bae"
+  active 1
+  parent -1
+  transform 3 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.54426545 0.37496334 0.87272304 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 53 "Prop"
+  guid "a36fa616f4554c5e2e1d2ec8a8245140"
+  active 1
+  parent -1
+  transform 6 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.73621106 0.8072533 0.447068 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 54 "Prop"
+  guid "903ab118f686e67073db1280f01314c5"
+  active 1
+  parent -1
+  transform 9 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4788326 0.45209664 0.87799925 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 55 "Prop"
+  guid "e3a3052ec76c303745ec8fa4cf744d23"
+  active 1
+  parent -1
+  transform 12 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.4805197 0.7120806 0.6663184 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 56 "Prop"
+  guid "5b33d42c84f2c9230899cfe5e904bcd6"
+  active 1
+  parent -1
+  transform 15 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.61607295 0.51597035 0.4672084 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 57 "Prop"
+  guid "3a1f963950518e055d0eb28693710a31"
+  active 1
+  parent -1
+  transform 18 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.3275086 0.6241557 0.72303617 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 58 "Prop"
+  guid "3b5a4735b8fa613853095e0bd82b2740"
+  active 1
+  parent -1
+  transform 21 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8075399 0.5414859 0.5698719 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 59 "Prop"
+  guid "bd087b4fc377d90070422c2103ff2de5"
+  active 1
+  parent -1
+  transform 24 0.6 -24 0 0 0 1 1 1 1
+  mesh "Cube" 0.7363372 0.44954073 0.7753113 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 60 "Prop"
+  guid "d0411b1a437dfb8611d22ed0d009e345"
+  active 1
+  parent -1
+  transform 27 0.6 -24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.84970355 0.86421025 0.6176168 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 61 "Prop"
+  guid "e40dc82314d1cc1bba245ed460e35115"
+  active 1
+  parent -1
+  transform -30 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.7903111 0.78920823 0.7286835 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 62 "Prop"
+  guid "f8edc5946337cb11438ecc6abbcd14b6"
+  active 1
+  parent -1
+  transform -27 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7043482 0.6395898 0.746069 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 63 "Prop"
+  guid "a2fd0543dc2c0f8ee69d22f66d9099d7"
+  active 1
+  parent -1
+  transform -24 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.7785566 0.8331926 0.65127206 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 64 "Prop"
+  guid "57914c6cce7204d0e7e56d50333e6a14"
+  active 1
+  parent -1
+  transform -21 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.31171268 0.85411334 0.8489333 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 65 "Prop"
+  guid "75b982e82ff1122c3fc7ad8c9e56425b"
+  active 1
+  parent -1
+  transform -18 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.7615584 0.8867477 0.65953326 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 66 "Prop"
+  guid "3b358d67e6926665a147ba7b9a76ca02"
+  active 1
+  parent -1
+  transform -15 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8192653 0.5776658 0.70329785 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 67 "Prop"
+  guid "deabeccf89a5a1c7c6f7d9a3445a2468"
+  active 1
+  parent -1
+  transform -12 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.5005687 0.85232043 0.5022227 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 68 "Prop"
+  guid "865f5ee0de8d1558fa5af97bd9a6b6f5"
+  active 1
+  parent -1
+  transform -9 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3875486 0.5836175 0.87763625 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 69 "Prop"
+  guid "beb6472a6d43cf5b71b6f60ebad825e2"
+  active 1
+  parent -1
+  transform -6 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.48981702 0.45242187 0.6006381 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 70 "Prop"
+  guid "2dd5b1a46284706ae2ccde36a24a44a0"
+  active 1
+  parent -1
+  transform -3 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62201536 0.40416086 0.84874725 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 71 "Prop"
+  guid "8481bd770a9025c5e34d7b812d20a4d7"
+  active 1
+  parent -1
+  transform 0 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.81428045 0.69246435 0.74903834 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 72 "Prop"
+  guid "2085267bbc3ae0fa0834cc96a82cc558"
+  active 1
+  parent -1
+  transform 3 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40723458 0.5133583 0.33550245 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 73 "Prop"
+  guid "ad652ac1d315240370b0ad615b60775c"
+  active 1
+  parent -1
+  transform 6 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.8244566 0.75225735 0.31639153 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 74 "Prop"
+  guid "1997c82b6bc70097000b2b7bb725a991"
+  active 1
+  parent -1
+  transform 9 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6657796 0.3419278 0.59696674 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 75 "Prop"
+  guid "8b7a1e4ae9788c7aaaf0f68b5bb1d73a"
+  active 1
+  parent -1
+  transform 12 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.57629395 0.81668335 0.772068 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 76 "Prop"
+  guid "80bd21e7515698d68a5b4f866dc294c3"
+  active 1
+  parent -1
+  transform 15 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.79790294 0.6806927 0.5100681 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 77 "Prop"
+  guid "3e7fb027ca088ab1d43d3efa2fb6d750"
+  active 1
+  parent -1
+  transform 18 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.4725899 0.35004836 0.35303187 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 78 "Prop"
+  guid "6b78f248d434c1d8cedcbaa97b5b9ad9"
+  active 1
+  parent -1
+  transform 21 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7096658 0.456187 0.6696335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 79 "Prop"
+  guid "9c913c746b7c02b5967cfb30b0c19c0a"
+  active 1
+  parent -1
+  transform 24 0.6 -21 0 0 0 1 1 1 1
+  mesh "Cube" 0.5747563 0.4376728 0.39143616 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 80 "Prop"
+  guid "28c92d85ad7e78f21b32b942b438f268"
+  active 1
+  parent -1
+  transform 27 0.6 -21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40662742 0.79513896 0.3526689 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 81 "Prop"
+  guid "d4a39e812c8a19a5306901fea4745a9f"
+  active 1
+  parent -1
+  transform -30 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.48271602 0.6002358 0.79413176 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 82 "Prop"
+  guid "cca3dc19dbf188de5fd51bdc0b87330b"
+  active 1
+  parent -1
+  transform -27 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43162632 0.7457966 0.4841863 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 83 "Prop"
+  guid "e43a4f446c731deec7a07e77c3a896ce"
+  active 1
+  parent -1
+  transform -24 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.38246518 0.38480908 0.75185966 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 84 "Prop"
+  guid "660dbdc4f557267602c7402c0738b707"
+  active 1
+  parent -1
+  transform -21 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.60626376 0.8861034 0.71928406 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 85 "Prop"
+  guid "9b3c429e6cbb5bb1e3a62f610d0e3f11"
+  active 1
+  parent -1
+  transform -18 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.65572083 0.39684004 0.3661368 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 86 "Prop"
+  guid "991368d7ccb23dd0b6e05585c217d28f"
+  active 1
+  parent -1
+  transform -15 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4569252 0.7272402 0.64915776 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 87 "Prop"
+  guid "1e67722cb8e22c5bde236dd37b71c07e"
+  active 1
+  parent -1
+  transform -12 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.44585663 0.75992715 0.36465684 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 88 "Prop"
+  guid "4dcd0557e83e10881bde0f114c1d38c8"
+  active 1
+  parent -1
+  transform -9 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33420795 0.44629946 0.7637423 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 89 "Prop"
+  guid "d02eaeb823622cdcb7f760168680073a"
+  active 1
+  parent -1
+  transform -6 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.79003775 0.8568491 0.7709209 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 90 "Prop"
+  guid "8a768e8e0117c7fac22e1c4ffbee54f1"
+  active 1
+  parent -1
+  transform -3 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45899004 0.31477052 0.87711716 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 91 "Prop"
+  guid "82470f2e417c51b29dcb9812566fd552"
+  active 1
+  parent -1
+  transform 0 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.56195855 0.5185199 0.33998287 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 92 "Prop"
+  guid "e6ceae775a90b128268c6546594759c4"
+  active 1
+  parent -1
+  transform 3 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8699979 0.5484667 0.4826107 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 93 "Prop"
+  guid "c7f6b9f12893330d4555a533a3523fa8"
+  active 1
+  parent -1
+  transform 6 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.82667786 0.30274788 0.5034691 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 94 "Prop"
+  guid "3396b65e525362aecbe89fb9fa4506dc"
+  active 1
+  parent -1
+  transform 9 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43542606 0.7345203 0.704087 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 95 "Prop"
+  guid "80e99333296505732986914bec26089a"
+  active 1
+  parent -1
+  transform 12 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.5136117 0.71048284 0.6262549 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 96 "Prop"
+  guid "c8be739b6c99c13d873ca594fddf0f91"
+  active 1
+  parent -1
+  transform 15 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.84633356 0.3508004 0.5194554 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 97 "Prop"
+  guid "91210e1a12ebef43c57de2e08d1601d1"
+  active 1
+  parent -1
+  transform 18 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.44400725 0.8167333 0.39176103 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 98 "Prop"
+  guid "d924c2c86b8eab189885510894300a10"
+  active 1
+  parent -1
+  transform 21 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.63003135 0.31693232 0.33272228 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 99 "Prop"
+  guid "5e87739fea18e2d011709ac1907c2d04"
+  active 1
+  parent -1
+  transform 24 0.6 -18 0 0 0 1 1 1 1
+  mesh "Cube" 0.4162362 0.4029287 0.30635643 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 100 "Prop"
+  guid "ccb5f59318626a6711c985ff3daecca1"
+  active 1
+  parent -1
+  transform 27 0.6 -18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.89033896 0.7312386 0.6178335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 101 "Prop"
+  guid "236be71a34f5ab6dbba7235b6fd49b7d"
+  active 1
+  parent -1
+  transform -30 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.44704986 0.40426278 0.5017481 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 102 "Prop"
+  guid "2fe21988e1dc85a90d350ef2c86ceca9"
+  active 1
+  parent -1
+  transform -27 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45986682 0.4984532 0.4243585 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 103 "Prop"
+  guid "bee2d873bd3fea24dd4edce5d98ba98e"
+  active 1
+  parent -1
+  transform -24 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.8536362 0.47196972 0.3065612 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 104 "Prop"
+  guid "c862da2fec0317cb15e532d9e66b0d64"
+  active 1
+  parent -1
+  transform -21 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.53660566 0.4528073 0.8913246 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 105 "Prop"
+  guid "af2a08e9e37efd4a772b524aba6b5355"
+  active 1
+  parent -1
+  transform -18 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.3867725 0.40763864 0.50376433 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 106 "Prop"
+  guid "b00741117cb1e72b1b79367e5fb4d176"
+  active 1
+  parent -1
+  transform -15 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42517108 0.83175474 0.7674803 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 107 "Prop"
+  guid "e5eeb8aa4b4975982e67584addd09ef9"
+  active 1
+  parent -1
+  transform -12 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.30092287 0.8644369 0.5816147 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 108 "Prop"
+  guid "a9202ef15d243466ed54f5b6fe040951"
+  active 1
+  parent -1
+  transform -9 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4498457 0.8125754 0.5853015 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 109 "Prop"
+  guid "90bd3806d169549cd18e313751a05c4d"
+  active 1
+  parent -1
+  transform -6 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.8353648 0.38359016 0.38986373 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 110 "Prop"
+  guid "5c0ec41b76c06ca4c61a925f27abdbe6"
+  active 1
+  parent -1
+  transform -3 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41305313 0.8522651 0.44823217 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 111 "Prop"
+  guid "783f1ee94ba741fc297f3af23722b6de"
+  active 1
+  parent -1
+  transform 0 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.484832 0.4984442 0.55829614 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 112 "Prop"
+  guid "988a5fbd0eb91a860cb964a46154f72a"
+  active 1
+  parent -1
+  transform 3 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.49105823 0.63324165 0.76619136 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 113 "Prop"
+  guid "dd13053fae4abf8c28af62d0643fb6fc"
+  active 1
+  parent -1
+  transform 6 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.48429894 0.38173783 0.3027548 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 114 "Prop"
+  guid "4716398888d8c8789f76ed1c7d46eb57"
+  active 1
+  parent -1
+  transform 9 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.88618624 0.49613523 0.48018345 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 115 "Prop"
+  guid "16a4836b3a4f76b08ab47458b5cb0064"
+  active 1
+  parent -1
+  transform 12 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.7776426 0.8463409 0.7562562 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 116 "Prop"
+  guid "8cd90d6fa5fe4a17cc93befa982ec086"
+  active 1
+  parent -1
+  transform 15 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.70476615 0.6778218 0.34397325 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 117 "Prop"
+  guid "b12a7ceeb749ce084428bc9359611169"
+  active 1
+  parent -1
+  transform 18 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.42963508 0.31967825 0.8159403 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 118 "Prop"
+  guid "25897114ca2982d59fc5bafca5777802"
+  active 1
+  parent -1
+  transform 21 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62107843 0.46835884 0.7680632 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 119 "Prop"
+  guid "e61c74f8e9fdfb6f86eb47618d55b319"
+  active 1
+  parent -1
+  transform 24 0.6 -15 0 0 0 1 1 1 1
+  mesh "Cube" 0.31666616 0.59630287 0.8821631 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 120 "Prop"
+  guid "f0e6f26de3fae7ace1d7722e83a514e4"
+  active 1
+  parent -1
+  transform 27 0.6 -15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3804702 0.56107664 0.5379848 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 121 "Prop"
+  guid "c2a408f326b32a1c4523b708113563b9"
+  active 1
+  parent -1
+  transform -30 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.5945066 0.4370807 0.30308563 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 122 "Prop"
+  guid "c654ba68c6a41b70a81e978f461195ad"
+  active 1
+  parent -1
+  transform -27 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7144414 0.8047971 0.82969356 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 123 "Prop"
+  guid "f031f2d2722924be8206ce4fec8ca38c"
+  active 1
+  parent -1
+  transform -24 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.89935064 0.50583094 0.8551695 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 124 "Prop"
+  guid "22881786cd05206e6a7f9b5355632097"
+  active 1
+  parent -1
+  transform -21 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4585145 0.5656812 0.46434623 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 125 "Prop"
+  guid "b931bdcfb72cc6cc9d258e5ebee453a2"
+  active 1
+  parent -1
+  transform -18 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.8677451 0.33585232 0.55703634 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 126 "Prop"
+  guid "aacf03233de7605b8bb734487d5d5e60"
+  active 1
+  parent -1
+  transform -15 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.30733526 0.7055615 0.57744884 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 127 "Prop"
+  guid "03611d871251685fac50c8da8201d0e7"
+  active 1
+  parent -1
+  transform -12 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.3260031 0.3408728 0.5947824 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 128 "Prop"
+  guid "40b86e911a162696a91d55e34a8c3f9d"
+  active 1
+  parent -1
+  transform -9 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.55886453 0.52635014 0.6864301 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 129 "Prop"
+  guid "7c8208c1720608a012c4c9b6e31b93c6"
+  active 1
+  parent -1
+  transform -6 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.7993336 0.8065523 0.8687636 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 130 "Prop"
+  guid "deb75cc45d813cadd968995fcf082afe"
+  active 1
+  parent -1
+  transform -3 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5723797 0.6034448 0.6176103 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 131 "Prop"
+  guid "846e5d724d6bdf8bc0a62ae854c2ff7c"
+  active 1
+  parent -1
+  transform 0 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.51666766 0.52461267 0.48959833 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 132 "Prop"
+  guid "c9ab8749a467edeb07e30368642a6378"
+  active 1
+  parent -1
+  transform 3 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8176623 0.6665044 0.6963594 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 133 "Prop"
+  guid "dcefdf8e988c077f4c3f52f697736773"
+  active 1
+  parent -1
+  transform 6 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.6016464 0.7194011 0.332718 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 134 "Prop"
+  guid "dd756fd7651ed21f6074a757a3b6cd90"
+  active 1
+  parent -1
+  transform 9 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.51787794 0.40026173 0.7060169 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 135 "Prop"
+  guid "6adab2c511e5e51244ad84e36b8927bb"
+  active 1
+  parent -1
+  transform 12 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.44995338 0.6000898 0.44933313 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 136 "Prop"
+  guid "a078ad73fe95a8875e746d6584494514"
+  active 1
+  parent -1
+  transform 15 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.87788796 0.85865283 0.74197984 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 137 "Prop"
+  guid "c1ca86bc0679412d1d4722d1a766682b"
+  active 1
+  parent -1
+  transform 18 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.74788904 0.8291337 0.6837114 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 138 "Prop"
+  guid "d56c7e4f6367ae752ad86c680020ce44"
+  active 1
+  parent -1
+  transform 21 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.82858413 0.87320805 0.8706088 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 139 "Prop"
+  guid "b5b6e34787ba4d7c0e332e8d2795f018"
+  active 1
+  parent -1
+  transform 24 0.6 -12 0 0 0 1 1 1 1
+  mesh "Cube" 0.4528613 0.50667155 0.76956654 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 140 "Prop"
+  guid "4fc32d06797d281ca0d09924bd5d353a"
+  active 1
+  parent -1
+  transform 27 0.6 -12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.34913847 0.88035274 0.6638306 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 141 "Prop"
+  guid "9fec39ab3570c3d251d42d3ec2591564"
+  active 1
+  parent -1
+  transform -30 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.3791833 0.62445176 0.806898 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 142 "Prop"
+  guid "167aa1030c4883533f9f6dc27d6b157d"
+  active 1
+  parent -1
+  transform -27 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6000887 0.8921024 0.8831239 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 143 "Prop"
+  guid "60b54c0b511324db5105c6cd83b35971"
+  active 1
+  parent -1
+  transform -24 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.528239 0.3682647 0.76206994 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 144 "Prop"
+  guid "15ffa8ae5e1c5949cf095947990aaab7"
+  active 1
+  parent -1
+  transform -21 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.74601805 0.32984275 0.4747157 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 145 "Prop"
+  guid "cbb0771da1561fbd21ed4b0b41070d06"
+  active 1
+  parent -1
+  transform -18 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.51822835 0.38107315 0.38876024 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 146 "Prop"
+  guid "32a74f9b3969f149ef57b216edcf989e"
+  active 1
+  parent -1
+  transform -15 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8038415 0.7041749 0.542381 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 147 "Prop"
+  guid "dc73f5c569d1fc83e0b16c3622db1c8b"
+  active 1
+  parent -1
+  transform -12 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.88910747 0.72825843 0.5596392 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 148 "Prop"
+  guid "7d984d1b61b77279c83a59f0c2d7f7b4"
+  active 1
+  parent -1
+  transform -9 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.39290634 0.5919074 0.788097 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 149 "Prop"
+  guid "226399df13eadbe231afc073da4949c7"
+  active 1
+  parent -1
+  transform -6 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.3473381 0.47891682 0.7696936 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 150 "Prop"
+  guid "ff1ccdcfc7b1ab725323e934f6e2788c"
+  active 1
+  parent -1
+  transform -3 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.748423 0.562714 0.42113486 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 151 "Prop"
+  guid "ba24bf9f88feb3cd1c91e815c8731bbb"
+  active 1
+  parent -1
+  transform 0 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.4873861 0.7131965 0.4953354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 152 "Prop"
+  guid "1acf889c39320003a90fb447588871be"
+  active 1
+  parent -1
+  transform 3 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6918484 0.5825418 0.39790726 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 153 "Prop"
+  guid "398b8246b76ad8c3f755ad02bff65502"
+  active 1
+  parent -1
+  transform 6 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.3972499 0.54703844 0.831733 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 154 "Prop"
+  guid "652a7748258f6f05fb0214101f752643"
+  active 1
+  parent -1
+  transform 9 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8607454 0.8969397 0.31185356 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 155 "Prop"
+  guid "dc6d75480bebd08ab73541234e90ef95"
+  active 1
+  parent -1
+  transform 12 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.5759853 0.876919 0.3167839 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 156 "Prop"
+  guid "00fca0a70bdd686f2227d6f96d899f34"
+  active 1
+  parent -1
+  transform 15 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5268958 0.6397703 0.7240565 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 157 "Prop"
+  guid "d3f5b863b5acfc9a59241b0664159099"
+  active 1
+  parent -1
+  transform 18 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.37737375 0.8597322 0.5328564 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 158 "Prop"
+  guid "c942252099af99bad458b25e1c9bc6a8"
+  active 1
+  parent -1
+  transform 21 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3345276 0.6079637 0.4201947 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 159 "Prop"
+  guid "7f7fe171d5ede041273dc11434f0d3c9"
+  active 1
+  parent -1
+  transform 24 0.6 -9 0 0 0 1 1 1 1
+  mesh "Cube" 0.80738294 0.53497565 0.81814945 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 160 "Prop"
+  guid "0437d18d3ef7b5edeb713a6cae765b10"
+  active 1
+  parent -1
+  transform 27 0.6 -9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.67697203 0.4287032 0.7423609 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 161 "Prop"
+  guid "9d1596d80f676326cc7196de9dea5580"
+  active 1
+  parent -1
+  transform -30 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.40765122 0.42024982 0.5862371 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 162 "Prop"
+  guid "cab455791c0343be7db88d50b09a0332"
+  active 1
+  parent -1
+  transform -27 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.56800234 0.4793089 0.40631872 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 163 "Prop"
+  guid "1e2d0cbfcf66c1a6c05b70d73df7a54c"
+  active 1
+  parent -1
+  transform -24 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.35080254 0.6507441 0.4605967 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 164 "Prop"
+  guid "876ca602c6720fcc3af1fdb2f79c1a4c"
+  active 1
+  parent -1
+  transform -21 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33160612 0.64259464 0.8260626 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 165 "Prop"
+  guid "b85cb1e859c48cae0ce1639914a94810"
+  active 1
+  parent -1
+  transform -18 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7728709 0.8510931 0.70128775 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 166 "Prop"
+  guid "2ab117f61e1b243b31bcb7fa50c3674a"
+  active 1
+  parent -1
+  transform -15 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45603007 0.45682526 0.6893815 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 167 "Prop"
+  guid "d71d92cabca3a77747aa94822b0efec3"
+  active 1
+  parent -1
+  transform -12 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.48951808 0.5634256 0.7897868 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 168 "Prop"
+  guid "d645dec5776998f7679f9b501b85b205"
+  active 1
+  parent -1
+  transform -9 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.60364616 0.39980102 0.3462029 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 169 "Prop"
+  guid "6a3bc79a85235415a3696138d9192239"
+  active 1
+  parent -1
+  transform -6 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.8461339 0.6152695 0.57852006 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 170 "Prop"
+  guid "1b1c872430f5bc121423d1b2608fc70e"
+  active 1
+  parent -1
+  transform -3 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7108121 0.30835152 0.5014755 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 171 "Prop"
+  guid "f7ae9a5287b5fa37aee2f3bdf20c2476"
+  active 1
+  parent -1
+  transform 0 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.46479008 0.68090594 0.65540814 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 172 "Prop"
+  guid "307c61470def8687fc9c568b97e9a7ce"
+  active 1
+  parent -1
+  transform 3 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37421474 0.34964526 0.86590075 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 173 "Prop"
+  guid "9c2f37796fc8688f022a8ec16e7f57e1"
+  active 1
+  parent -1
+  transform 6 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.3456151 0.6434643 0.61453235 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 174 "Prop"
+  guid "57e5a9d08cc1290a5533ddb2b86972c8"
+  active 1
+  parent -1
+  transform 9 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42308834 0.7522383 0.68629515 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 175 "Prop"
+  guid "54df3613a744efaf2a8b63280bc76c50"
+  active 1
+  parent -1
+  transform 12 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7546717 0.33440745 0.53331697 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 176 "Prop"
+  guid "ae2d1eee0bff5ba46ea6bfaf41208fff"
+  active 1
+  parent -1
+  transform 15 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44539896 0.8391029 0.73935306 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 177 "Prop"
+  guid "5e52f03e8d496abcfbababb16d661db6"
+  active 1
+  parent -1
+  transform 18 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.36898977 0.84935355 0.5664333 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 178 "Prop"
+  guid "0c9ec98bb67809fe01b0d5f1e4859e89"
+  active 1
+  parent -1
+  transform 21 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8710188 0.5360872 0.53381276 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 179 "Prop"
+  guid "6e3f5fc21242f3d5bfc5bb878b0b75da"
+  active 1
+  parent -1
+  transform 24 0.6 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.74343705 0.89738333 0.45537108 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 180 "Prop"
+  guid "c3c00f781eb28921f087e00ba574fe83"
+  active 1
+  parent -1
+  transform 27 0.6 -6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5524117 0.42719543 0.5296611 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 181 "Prop"
+  guid "824860bdbf267f46160763641c62e285"
+  active 1
+  parent -1
+  transform -30 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.7437984 0.5648549 0.36364686 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 182 "Prop"
+  guid "e7596f35fd79d1f9d32990267d2ba85d"
+  active 1
+  parent -1
+  transform -27 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.72116625 0.44270855 0.7433816 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 183 "Prop"
+  guid "edbc7bad4701212b1a662382061a44a0"
+  active 1
+  parent -1
+  transform -24 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.60960865 0.7468438 0.7907275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 184 "Prop"
+  guid "21ee5f6f21234bda1b2f5a8b3dd675e4"
+  active 1
+  parent -1
+  transform -21 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5774447 0.6066457 0.5182122 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 185 "Prop"
+  guid "7208f538245c2dde57d1a47e331bf411"
+  active 1
+  parent -1
+  transform -18 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.36317798 0.8023522 0.34918693 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 186 "Prop"
+  guid "86c02fef4c68caf4d29cde412275fe69"
+  active 1
+  parent -1
+  transform -15 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33822584 0.70300436 0.6054417 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 187 "Prop"
+  guid "98a374c8f66bf90797b456961423eb9f"
+  active 1
+  parent -1
+  transform -12 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.51374286 0.49949563 0.46468136 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 188 "Prop"
+  guid "a66bcc57a6d157a4440496543aac614c"
+  active 1
+  parent -1
+  transform -9 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6451974 0.8554581 0.76653326 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 189 "Prop"
+  guid "1750e3fdc3005e24cf1d3355609956c8"
+  active 1
+  parent -1
+  transform -6 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.56666607 0.5707419 0.4207304 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 190 "Prop"
+  guid "3115e5f432dc05badd3e4e54f1833d42"
+  active 1
+  parent -1
+  transform -3 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42174873 0.581877 0.33206427 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 191 "Prop"
+  guid "8c8b794b053a65234fec7b1f78bf4310"
+  active 1
+  parent -1
+  transform 0 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.85255045 0.38847417 0.3473475 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 192 "Prop"
+  guid "382826e2db55c67ff19e194c76a733be"
+  active 1
+  parent -1
+  transform 3 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.79314506 0.8810559 0.45205575 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 193 "Prop"
+  guid "dd378e5ea5975c8465f46ebe8b33e8be"
+  active 1
+  parent -1
+  transform 6 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.8288856 0.5178661 0.8226454 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 194 "Prop"
+  guid "4983dcacdab89a329b20689f06ca592f"
+  active 1
+  parent -1
+  transform 9 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4212757 0.40253052 0.7810744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 195 "Prop"
+  guid "cc9d034c6a05229d1cd088390453779c"
+  active 1
+  parent -1
+  transform 12 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.39292064 0.65187967 0.7451912 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 196 "Prop"
+  guid "79895d4745f3cb8e39cfeb8c56f87156"
+  active 1
+  parent -1
+  transform 15 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.36270255 0.7369037 0.60465765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 197 "Prop"
+  guid "2433f2e3a9449e46448617374a8c6c3a"
+  active 1
+  parent -1
+  transform 18 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.5366759 0.67815083 0.77339125 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 198 "Prop"
+  guid "ae4cb00fa676d615983d997c8dff85b6"
+  active 1
+  parent -1
+  transform 21 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4516452 0.34335154 0.38495785 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 199 "Prop"
+  guid "455c69cf45e1b19e36e82e6888a61e8f"
+  active 1
+  parent -1
+  transform 24 0.6 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.63871574 0.5177046 0.6116952 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 200 "Prop"
+  guid "7b0e0b12c0a3c37ab7388e61f066bc31"
+  active 1
+  parent -1
+  transform 27 0.6 -3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.77019835 0.41385123 0.89883566 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 201 "Prop"
+  guid "281edbdd5dda78a47946b252a7cf37b0"
+  active 1
+  parent -1
+  transform -30 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.5917045 0.48903173 0.56638837 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 202 "Prop"
+  guid "96989151a88c01b63240d308d921909c"
+  active 1
+  parent -1
+  transform -27 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7064706 0.40927458 0.79752374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 203 "Prop"
+  guid "62753696e833c7c83f85f9f0876f6c06"
+  active 1
+  parent -1
+  transform -24 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.6655884 0.8477729 0.3749635 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 204 "Prop"
+  guid "c73d2a49b3c605e8b28b6ef5f742a794"
+  active 1
+  parent -1
+  transform -21 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43338913 0.71167743 0.45399722 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 205 "Prop"
+  guid "0502b9786f81ecd9de41d2846ec006fa"
+  active 1
+  parent -1
+  transform -18 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.62404644 0.64831007 0.79976225 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 206 "Prop"
+  guid "6c2a107a3c90f6ff96576645f25ff45a"
+  active 1
+  parent -1
+  transform -15 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8804276 0.73872924 0.4345065 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 207 "Prop"
+  guid "838ce7b57b2cd5eb594cbe0daab2dc4f"
+  active 1
+  parent -1
+  transform -12 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.5443548 0.4026342 0.43093795 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 208 "Prop"
+  guid "9af31797ec8c5cb2e7cd0d1f0b9c4fdb"
+  active 1
+  parent -1
+  transform -9 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41568267 0.6084311 0.40760267 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 209 "Prop"
+  guid "e4b2493ba64adf8f9621a1381d336167"
+  active 1
+  parent -1
+  transform -6 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.43981826 0.8227144 0.752139 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 210 "Prop"
+  guid "f36caacf38e408fba38d3a20ce96e0b7"
+  active 1
+  parent -1
+  transform -3 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8651902 0.82454824 0.66653335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 211 "Prop"
+  guid "52434dad6ab39484fa88b9832b3e41cf"
+  active 1
+  parent -1
+  transform 0 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.6647105 0.72234154 0.39838153 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 212 "Prop"
+  guid "e67cce2f99b7cc520e0755d78b97283f"
+  active 1
+  parent -1
+  transform 3 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.79093915 0.7077658 0.3630148 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 213 "Prop"
+  guid "f04ab51610245f4742980ee8424fd6da"
+  active 1
+  parent -1
+  transform 6 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.39137405 0.6490178 0.47908688 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 214 "Prop"
+  guid "b2cfeee8824e2a78f176a1a32bb07c17"
+  active 1
+  parent -1
+  transform 9 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.66122586 0.7494209 0.42823625 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 215 "Prop"
+  guid "a182c11a81b76b83ac2a939be4d55087"
+  active 1
+  parent -1
+  transform 12 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.8692897 0.460098 0.46775502 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 216 "Prop"
+  guid "49cabec27c2f66fdb9b4c5b99214829c"
+  active 1
+  parent -1
+  transform 15 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40495116 0.30722967 0.7331059 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 217 "Prop"
+  guid "6a552aef758e885a09b8409c904ca9d2"
+  active 1
+  parent -1
+  transform 18 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.6873354 0.3503241 0.55741644 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 218 "Prop"
+  guid "ac32941f98e8b4face86f0a778a9e1e0"
+  active 1
+  parent -1
+  transform 21 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37220114 0.86710614 0.6031126 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 219 "Prop"
+  guid "c736f11463ba73562dddb32791b9a963"
+  active 1
+  parent -1
+  transform 24 0.6 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.461987 0.3292294 0.5483945 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 220 "Prop"
+  guid "001db3beff1f1db79bce66ffa75934a3"
+  active 1
+  parent -1
+  transform 27 0.6 0 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6134079 0.4534325 0.8765747 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 221 "Prop"
+  guid "e43ae8896088a36bad43c728effd4a88"
+  active 1
+  parent -1
+  transform -30 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.6723919 0.6229663 0.5986203 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 222 "Prop"
+  guid "cdeda43466fdf7d49be9db1c126642fb"
+  active 1
+  parent -1
+  transform -27 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.39183977 0.58161557 0.65386117 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 223 "Prop"
+  guid "dd86869e6e06ddbe4e524927982f5b60"
+  active 1
+  parent -1
+  transform -24 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.5808535 0.5335361 0.87986964 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 224 "Prop"
+  guid "d8dd28305c1099156f0064f9651a3ae9"
+  active 1
+  parent -1
+  transform -21 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7805867 0.78856647 0.48336244 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 225 "Prop"
+  guid "e6413f1e5aeacad1fb72fc47642729a0"
+  active 1
+  parent -1
+  transform -18 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.30497786 0.61874545 0.8748932 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 226 "Prop"
+  guid "c39e98076d3682028e063bfb106bf82d"
+  active 1
+  parent -1
+  transform -15 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.79249245 0.8904317 0.41751844 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 227 "Prop"
+  guid "673cfc99be04a2b50fd29121529e950a"
+  active 1
+  parent -1
+  transform -12 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.5750171 0.6959219 0.7639402 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 228 "Prop"
+  guid "2d8c3716b592ad6572758342c9ba6b68"
+  active 1
+  parent -1
+  transform -9 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5249789 0.5406 0.46121067 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 229 "Prop"
+  guid "b1398ad2a143f70a83970b00c992f529"
+  active 1
+  parent -1
+  transform -6 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.80604434 0.52478296 0.44235858 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 230 "Prop"
+  guid "7b1892dd0124a8c1e80b00ba9a203ee3"
+  active 1
+  parent -1
+  transform -3 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.692732 0.8249696 0.37166062 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 231 "Prop"
+  guid "915bc9f93e01f261ee7e4490fbec91ae"
+  active 1
+  parent -1
+  transform 0 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.46661925 0.5373528 0.4097457 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 232 "Prop"
+  guid "8fa7a90b2dbfc7f31e94828714ec1910"
+  active 1
+  parent -1
+  transform 3 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7516049 0.8742025 0.3736573 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 233 "Prop"
+  guid "a91a0266e46a22bcff0c5d2d090e5c47"
+  active 1
+  parent -1
+  transform 6 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.8021174 0.4302706 0.81090546 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 234 "Prop"
+  guid "b941277c7aac740f3a0a1032b03a2b0e"
+  active 1
+  parent -1
+  transform 9 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.676962 0.46799463 0.64576805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 235 "Prop"
+  guid "ba600df4b552f5536f1c3f71c03a4b11"
+  active 1
+  parent -1
+  transform 12 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.58287203 0.6428492 0.63266635 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 236 "Prop"
+  guid "d95ac914c584761866aa8a5f35a7ed89"
+  active 1
+  parent -1
+  transform 15 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6095846 0.4061679 0.43752623 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 237 "Prop"
+  guid "4b035c2f6a1d37e819ddb4f025fdedff"
+  active 1
+  parent -1
+  transform 18 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.86446834 0.6530323 0.8461546 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 238 "Prop"
+  guid "b5bc371b023c647350ccc93cb3c6aa80"
+  active 1
+  parent -1
+  transform 21 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4802285 0.6983532 0.83926845 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 239 "Prop"
+  guid "a37ce93b111dbb6ced77c5b74b1f4722"
+  active 1
+  parent -1
+  transform 24 0.6 3 0 0 0 1 1 1 1
+  mesh "Cube" 0.5321727 0.6283364 0.5522737 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 240 "Prop"
+  guid "5d4cb5dddccf1ca3ef0e53f23966d376"
+  active 1
+  parent -1
+  transform 27 0.6 3 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6997585 0.56659853 0.39358294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 241 "Prop"
+  guid "dd62c2cf1d45c846232b4d4b3bb7b8e7"
+  active 1
+  parent -1
+  transform -30 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.42047793 0.7977545 0.5123781 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 242 "Prop"
+  guid "81086d356987042004df9ac071a6b805"
+  active 1
+  parent -1
+  transform -27 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43626642 0.74493444 0.8497515 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 243 "Prop"
+  guid "7ce63c1e408ab0dc027a0462481a15b8"
+  active 1
+  parent -1
+  transform -24 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.34268072 0.39481008 0.6853672 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 244 "Prop"
+  guid "b4d8d6f12c92781eccea42432424d0e9"
+  active 1
+  parent -1
+  transform -21 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.53192085 0.41207695 0.41730505 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 245 "Prop"
+  guid "f6a7efe4f98cd6479dfb3339a0fa384f"
+  active 1
+  parent -1
+  transform -18 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.35331216 0.49192098 0.6548431 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 246 "Prop"
+  guid "5d107b609ffcfcc61688d9ddbb9d60e5"
+  active 1
+  parent -1
+  transform -15 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8139772 0.7217345 0.3702076 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 247 "Prop"
+  guid "3cf15855412a4281776f30384bcebcb9"
+  active 1
+  parent -1
+  transform -12 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.41863233 0.30534694 0.5285617 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 248 "Prop"
+  guid "7513777d28280f4b4295aa8f695cb7a1"
+  active 1
+  parent -1
+  transform -9 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.54157555 0.8709899 0.84290665 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 249 "Prop"
+  guid "73ac647b4cb9959dcb91d7a0b8792a63"
+  active 1
+  parent -1
+  transform -6 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.30307916 0.7447618 0.45904452 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 250 "Prop"
+  guid "9f9853ce81c01cf10da946e97e77e8f7"
+  active 1
+  parent -1
+  transform -3 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6106744 0.46132672 0.49482042 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 251 "Prop"
+  guid "b4d5202bef929dd3dd424230d14dc69b"
+  active 1
+  parent -1
+  transform 0 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.71395075 0.45120192 0.6411828 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 252 "Prop"
+  guid "92025e7a793f7ecda628d8e306ba09bd"
+  active 1
+  parent -1
+  transform 3 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7536514 0.53512025 0.72671366 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 253 "Prop"
+  guid "81a83da0aafdc0e26c5ebf79fb67e653"
+  active 1
+  parent -1
+  transform 6 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.49969637 0.60149884 0.46030623 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 254 "Prop"
+  guid "b2a0198d5cef4ab6fae7b909a8dbf445"
+  active 1
+  parent -1
+  transform 9 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.49668646 0.44599852 0.8495893 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 255 "Prop"
+  guid "6cadbf9d0796fc08b15db5f3f1fe1797"
+  active 1
+  parent -1
+  transform 12 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.35039914 0.86301154 0.32256702 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 256 "Prop"
+  guid "907c49a5937196f68617d70891f12660"
+  active 1
+  parent -1
+  transform 15 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.50657034 0.8737458 0.40530315 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 257 "Prop"
+  guid "c675e9dddd9ad3aee58db831a933c441"
+  active 1
+  parent -1
+  transform 18 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7880151 0.32704622 0.6787743 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 258 "Prop"
+  guid "d46ee3abdc5218b4878b6d84787d127b"
+  active 1
+  parent -1
+  transform 21 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.607388 0.82379466 0.82382184 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 259 "Prop"
+  guid "784bc974e21e7ab43ded02915062a4f4"
+  active 1
+  parent -1
+  transform 24 0.6 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.48359329 0.34612474 0.80117416 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 260 "Prop"
+  guid "4a5d840bb0d0d7b3f2464aa7a55a8675"
+  active 1
+  parent -1
+  transform 27 0.6 6 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7220532 0.56742233 0.46106458 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 261 "Prop"
+  guid "8dbc61126e75612195abae0f5ed4bef9"
+  active 1
+  parent -1
+  transform -30 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.31413865 0.6778158 0.537704 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 262 "Prop"
+  guid "d50b79832f7cbd2270894a5c50605be0"
+  active 1
+  parent -1
+  transform -27 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8931987 0.84867275 0.30829096 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 263 "Prop"
+  guid "10df5d6daf465e2745a9f7037e8eff3f"
+  active 1
+  parent -1
+  transform -24 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.34695828 0.5222743 0.46509808 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 264 "Prop"
+  guid "99cdcf27b2be5a88d496e3b04b2e587b"
+  active 1
+  parent -1
+  transform -21 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.78132826 0.66968197 0.56686646 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 265 "Prop"
+  guid "d912729ed4295baf250b353fd646acde"
+  active 1
+  parent -1
+  transform -18 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.7638286 0.310589 0.3220365 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 266 "Prop"
+  guid "73d2dcdb7b691b59f7470997993ccdb9"
+  active 1
+  parent -1
+  transform -15 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6335506 0.6164738 0.41810197 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 267 "Prop"
+  guid "1d86744d4700b55271485064a6d54794"
+  active 1
+  parent -1
+  transform -12 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.8644875 0.76559997 0.82450765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 268 "Prop"
+  guid "57e7a336bfbe0218942dffb561aa6409"
+  active 1
+  parent -1
+  transform -9 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.55865335 0.58401376 0.8277807 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 269 "Prop"
+  guid "4cf9a99425ed3ee2bfec6fb853148b53"
+  active 1
+  parent -1
+  transform -6 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.41753456 0.78130174 0.7956044 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 270 "Prop"
+  guid "774063c6bd0eb26bf209216e111974c9"
+  active 1
+  parent -1
+  transform -3 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5193224 0.57215744 0.5130625 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 271 "Prop"
+  guid "015b67df1b53fdb97ee4865acc73e260"
+  active 1
+  parent -1
+  transform 0 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.59618944 0.8314946 0.47005868 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 272 "Prop"
+  guid "c11e62ec4e014e1e528e583ee3196af5"
+  active 1
+  parent -1
+  transform 3 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4558044 0.54415065 0.8218532 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 273 "Prop"
+  guid "ba2bfaad92e6a0286f709adf2c06686f"
+  active 1
+  parent -1
+  transform 6 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.49239337 0.55442894 0.5635143 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 274 "Prop"
+  guid "c23057ae9d0fb6eacacf359aa0e9d5a7"
+  active 1
+  parent -1
+  transform 9 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32360345 0.63945615 0.30669427 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 275 "Prop"
+  guid "2857becb7d08fdd98467e64ac8a1ad46"
+  active 1
+  parent -1
+  transform 12 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.7978808 0.6543325 0.57075644 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 276 "Prop"
+  guid "c288ce60e7d788666e20fb12854b2660"
+  active 1
+  parent -1
+  transform 15 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.36273953 0.62338716 0.77175 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 277 "Prop"
+  guid "635359708c514e7344205d0c68fb4367"
+  active 1
+  parent -1
+  transform 18 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.52491605 0.65065646 0.5422114 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 278 "Prop"
+  guid "4d56c175987562ebe392b4be94f2dc02"
+  active 1
+  parent -1
+  transform 21 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5453718 0.61360466 0.65929484 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 279 "Prop"
+  guid "d20b6b53b86b7f520415dfb6577793e5"
+  active 1
+  parent -1
+  transform 24 0.6 9 0 0 0 1 1 1 1
+  mesh "Cube" 0.4058079 0.8900476 0.7965455 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 280 "Prop"
+  guid "b1a67ab11f0e1b2c2f22c0c156fa8548"
+  active 1
+  parent -1
+  transform 27 0.6 9 0 0 0 1 1 1 1
+  mesh "Sphere" 0.72460866 0.7704524 0.826871 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 281 "Prop"
+  guid "8ba8d3e16e917af4263d640b96cd9ed7"
+  active 1
+  parent -1
+  transform -30 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.69972837 0.86792374 0.5436314 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 282 "Prop"
+  guid "c2faa7319057d8f485c739497bd59378"
+  active 1
+  parent -1
+  transform -27 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8668265 0.74556756 0.6059 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 283 "Prop"
+  guid "b0ea90cc94dc78e7f5d13847622f47f1"
+  active 1
+  parent -1
+  transform -24 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.7714735 0.30857557 0.4908725 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 284 "Prop"
+  guid "c6f3838207847503f763342a0cadfda2"
+  active 1
+  parent -1
+  transform -21 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3576436 0.7811803 0.33298606 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 285 "Prop"
+  guid "febfef84af6b3f386972715494e2d8e4"
+  active 1
+  parent -1
+  transform -18 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.898814 0.64129233 0.33453438 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 286 "Prop"
+  guid "efb782a966d814fcd53d67b2810317e8"
+  active 1
+  parent -1
+  transform -15 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8943223 0.8060541 0.36305732 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 287 "Prop"
+  guid "8f97bc38b32a5f3dc68d774ab6bd059d"
+  active 1
+  parent -1
+  transform -12 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.40198606 0.31823382 0.34591195 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 288 "Prop"
+  guid "32598ebaa09158beaba78aac26ec8421"
+  active 1
+  parent -1
+  transform -9 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6872066 0.7915102 0.46474135 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 289 "Prop"
+  guid "6d84c4ff370cedcc12a93349de8aa7ce"
+  active 1
+  parent -1
+  transform -6 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.36088833 0.80870634 0.6417366 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 290 "Prop"
+  guid "ecc75aa89148a55e67960b129c05f699"
+  active 1
+  parent -1
+  transform -3 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42034736 0.3798989 0.6064406 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 291 "Prop"
+  guid "af93e5c5e6adbf26025d88145f69d5d9"
+  active 1
+  parent -1
+  transform 0 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.7796514 0.8971426 0.39780307 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 292 "Prop"
+  guid "3578dd5c2508867498fc417923c02fe9"
+  active 1
+  parent -1
+  transform 3 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.34759432 0.8295645 0.66471225 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 293 "Prop"
+  guid "94f1599d56e1da8d79d808bace5844b8"
+  active 1
+  parent -1
+  transform 6 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.5137321 0.52492744 0.47291386 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 294 "Prop"
+  guid "f0c837c166af79f49ce49872485ea765"
+  active 1
+  parent -1
+  transform 9 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43169206 0.45529217 0.459374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 295 "Prop"
+  guid "bba590e2c58d7a993aa49fde2e2c7f95"
+  active 1
+  parent -1
+  transform 12 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.7701334 0.42140803 0.8860295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 296 "Prop"
+  guid "65e85885bab12ebfebff9e9690c20aa0"
+  active 1
+  parent -1
+  transform 15 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3142584 0.39142367 0.8710972 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 297 "Prop"
+  guid "126415dadfee7e994865d4151db6a1f4"
+  active 1
+  parent -1
+  transform 18 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.8303749 0.33872116 0.569902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 298 "Prop"
+  guid "cf91be739ac03a65d669fddc6da54c20"
+  active 1
+  parent -1
+  transform 21 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8926808 0.33866173 0.6504822 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 299 "Prop"
+  guid "2996f62c44b3199fcbeb90f5b8d6cb02"
+  active 1
+  parent -1
+  transform 24 0.6 12 0 0 0 1 1 1 1
+  mesh "Cube" 0.3715013 0.6743814 0.6076368 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 300 "Prop"
+  guid "d357a3e268f248c641189c03fbbe2ba4"
+  active 1
+  parent -1
+  transform 27 0.6 12 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33336085 0.30136904 0.75745016 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 301 "Prop"
+  guid "75c230be0d4205a35220364ab6e94070"
+  active 1
+  parent -1
+  transform -30 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.65911436 0.44582242 0.5450394 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 302 "Prop"
+  guid "c7cd79fbf49771c8a1daeff8e5f33cee"
+  active 1
+  parent -1
+  transform -27 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.49799562 0.3751421 0.4570021 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 303 "Prop"
+  guid "a89e5e654a6637ce97111d54df5240fa"
+  active 1
+  parent -1
+  transform -24 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.43497267 0.42377588 0.7690799 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 304 "Prop"
+  guid "e728c2706b3a1cf6a64413d032653969"
+  active 1
+  parent -1
+  transform -21 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.77267706 0.56459445 0.783459 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 305 "Prop"
+  guid "ccb55d5d4e7ecf5d036bff986550c1bd"
+  active 1
+  parent -1
+  transform -18 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.42523468 0.7531531 0.7382102 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 306 "Prop"
+  guid "d336973da7d1a800b9c1f57f1ff71a91"
+  active 1
+  parent -1
+  transform -15 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3635041 0.5448892 0.34477147 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 307 "Prop"
+  guid "d581b7a6bd5af3fc4d705a7bd6815367"
+  active 1
+  parent -1
+  transform -12 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.589954 0.65439844 0.7381655 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 308 "Prop"
+  guid "dc9d5397a64ddca375993ab5c9ff0fa5"
+  active 1
+  parent -1
+  transform -9 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.88205385 0.43681544 0.40073788 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 309 "Prop"
+  guid "5fc4dcdb930e6d946523d53d63a9fbcb"
+  active 1
+  parent -1
+  transform -6 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.46335953 0.74743295 0.88920957 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 310 "Prop"
+  guid "75ebb57ee15d6bc427f9d84913b52363"
+  active 1
+  parent -1
+  transform -3 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6916853 0.6169986 0.321109 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 311 "Prop"
+  guid "790a3d9774217e1cc9cb505d15c5a2e2"
+  active 1
+  parent -1
+  transform 0 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.82067895 0.74194694 0.48014742 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 312 "Prop"
+  guid "aa573275188f03f458b24c98b53b3a90"
+  active 1
+  parent -1
+  transform 3 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7118317 0.8571864 0.7296208 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 313 "Prop"
+  guid "8deb5ac77ccbf8620f5661e73396f432"
+  active 1
+  parent -1
+  transform 6 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.547536 0.6450829 0.77802145 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 314 "Prop"
+  guid "2779502b20c31c42fc6ccc81afdf83f8"
+  active 1
+  parent -1
+  transform 9 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7399434 0.8410119 0.5400592 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 315 "Prop"
+  guid "5113132d95181a3a917f6b5e289d0afb"
+  active 1
+  parent -1
+  transform 12 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.49812758 0.62491894 0.6709631 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 316 "Prop"
+  guid "c932f0c854620bdffde8178a7adb0b65"
+  active 1
+  parent -1
+  transform 15 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3989723 0.46281812 0.81049585 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 317 "Prop"
+  guid "7a5f2d3804200de08ced75d29b4f1eab"
+  active 1
+  parent -1
+  transform 18 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.8205171 0.8714663 0.37631834 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 318 "Prop"
+  guid "1f80ee3f074a006ec61c1aaabfd53057"
+  active 1
+  parent -1
+  transform 21 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45019388 0.30137724 0.61164546 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 319 "Prop"
+  guid "451e20e1f61fc968de1c7c4889305ff4"
+  active 1
+  parent -1
+  transform 24 0.6 15 0 0 0 1 1 1 1
+  mesh "Cube" 0.64467406 0.40624425 0.3900156 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 320 "Prop"
+  guid "dfd5152cec3519cbdd5b8716d43fa201"
+  active 1
+  parent -1
+  transform 27 0.6 15 0 0 0 1 1 1 1
+  mesh "Sphere" 0.50256765 0.5498721 0.32771417 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 321 "Prop"
+  guid "ef6d3834493f477715e14123c7780285"
+  active 1
+  parent -1
+  transform -30 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.49208027 0.58412504 0.8905004 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 322 "Prop"
+  guid "a045fb2dc2d7e59d1555dbaba5d5a122"
+  active 1
+  parent -1
+  transform -27 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32367232 0.7376148 0.5845819 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 323 "Prop"
+  guid "c7162786fde1ea7980dda0b80e95c470"
+  active 1
+  parent -1
+  transform -24 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.37568197 0.6243151 0.77510357 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 324 "Prop"
+  guid "6332cc0788afea0dc94dfc5e73a8bb72"
+  active 1
+  parent -1
+  transform -21 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4584682 0.8034998 0.8111242 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 325 "Prop"
+  guid "af87041fcf1abc2111e34cdb43d007ed"
+  active 1
+  parent -1
+  transform -18 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.38139904 0.51252735 0.30664855 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 326 "Prop"
+  guid "10dff5b0f414e340034ed431a4059566"
+  active 1
+  parent -1
+  transform -15 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.39081788 0.5765396 0.7668016 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 327 "Prop"
+  guid "7ef7fbacbbef7ae0053b55ff6f13c9f7"
+  active 1
+  parent -1
+  transform -12 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.87093884 0.507631 0.7177669 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 328 "Prop"
+  guid "9029784f8cfb88ad96632f138a73eeef"
+  active 1
+  parent -1
+  transform -9 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5967996 0.79672277 0.7848525 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 329 "Prop"
+  guid "50ec54c252c9ca5bce41c6e6f543e5b1"
+  active 1
+  parent -1
+  transform -6 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.4423895 0.69940984 0.64763904 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 330 "Prop"
+  guid "87390514b09e196e8686d0c5863c4e9b"
+  active 1
+  parent -1
+  transform -3 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.874672 0.51148117 0.55680966 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 331 "Prop"
+  guid "65167ec9d0ecf9f261db8930a59930ad"
+  active 1
+  parent -1
+  transform 0 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.77022314 0.33144876 0.767593 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 332 "Prop"
+  guid "d56ed24e80ec0bdb367b87ff6e0eb051"
+  active 1
+  parent -1
+  transform 3 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6801049 0.31172013 0.7539305 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 333 "Prop"
+  guid "e898d1dbf0b108dacb2237b8a9d04c0b"
+  active 1
+  parent -1
+  transform 6 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.4315677 0.8212616 0.44623527 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 334 "Prop"
+  guid "282869d39b448a2b32f3359030ada525"
+  active 1
+  parent -1
+  transform 9 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8660266 0.66086453 0.37012956 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 335 "Prop"
+  guid "ef29f56d012d62c17e603426684b9a83"
+  active 1
+  parent -1
+  transform 12 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.6331371 0.35109034 0.7303927 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 336 "Prop"
+  guid "5304604dd49d930fd9e6ce6d655d5f18"
+  active 1
+  parent -1
+  transform 15 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.35825542 0.41983682 0.5278346 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 337 "Prop"
+  guid "cbfd6b2a0d7718ea1cfeea0bf34768f9"
+  active 1
+  parent -1
+  transform 18 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.6940577 0.80787575 0.40861335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 338 "Prop"
+  guid "8996854ca35426ac6e1f7b80710c6df5"
+  active 1
+  parent -1
+  transform 21 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.31709766 0.55457103 0.63861066 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 339 "Prop"
+  guid "af740352664d137e205a20cad8a8b9f0"
+  active 1
+  parent -1
+  transform 24 0.6 18 0 0 0 1 1 1 1
+  mesh "Cube" 0.7904965 0.7824831 0.32207292 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 340 "Prop"
+  guid "921e858be60425a0bd8477273e2477a9"
+  active 1
+  parent -1
+  transform 27 0.6 18 0 0 0 1 1 1 1
+  mesh "Sphere" 0.56209433 0.6333925 0.65676147 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 341 "Prop"
+  guid "115133ec9a3d3aa8510330ab53546a9c"
+  active 1
+  parent -1
+  transform -30 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.88212323 0.5352027 0.41607898 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 342 "Prop"
+  guid "1543419a4cb3e3db4367e112f3224311"
+  active 1
+  parent -1
+  transform -27 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3761517 0.7430502 0.67164844 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 343 "Prop"
+  guid "80e9fabaef0bdd03c797b04ccd54fb98"
+  active 1
+  parent -1
+  transform -24 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.5496883 0.84606117 0.87350357 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 344 "Prop"
+  guid "9be9aa5712046de05363eeb8ecc7de8e"
+  active 1
+  parent -1
+  transform -21 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7369565 0.43248126 0.66355354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 345 "Prop"
+  guid "bb8739b7add3a5fc70b8b1894e1b8f23"
+  active 1
+  parent -1
+  transform -18 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.80283564 0.37221897 0.58454263 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 346 "Prop"
+  guid "2f24f09da03051949558beb3832188f9"
+  active 1
+  parent -1
+  transform -15 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.76341105 0.541611 0.8556041 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 347 "Prop"
+  guid "1df4993bebf50df78f7a25f0418e8e9b"
+  active 1
+  parent -1
+  transform -12 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.6757728 0.8016333 0.5704782 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 348 "Prop"
+  guid "5985a86e8974cdcbcaff4b01b7209409"
+  active 1
+  parent -1
+  transform -9 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4947716 0.6000223 0.65553486 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 349 "Prop"
+  guid "e4a189d66a05cfdbe82021ef90967ac8"
+  active 1
+  parent -1
+  transform -6 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.77002466 0.8399535 0.6860596 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 350 "Prop"
+  guid "af80022e56d19b654b3c42936be4ea48"
+  active 1
+  parent -1
+  transform -3 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.69559705 0.55142975 0.7549304 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 351 "Prop"
+  guid "ad83d840a09ebc58cc78333c00b1665d"
+  active 1
+  parent -1
+  transform 0 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.4699043 0.38725993 0.75775456 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 352 "Prop"
+  guid "b15be26d4adaf21f86b1f4f5ccaffac6"
+  active 1
+  parent -1
+  transform 3 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8661115 0.7372452 0.6465627 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 353 "Prop"
+  guid "ccf115dbf022175509c58394cc2a0b50"
+  active 1
+  parent -1
+  transform 6 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.34118322 0.3758169 0.71107066 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 354 "Prop"
+  guid "04812141aeb912ef1591e8e376d183ea"
+  active 1
+  parent -1
+  transform 9 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.87029415 0.8727172 0.85045075 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 355 "Prop"
+  guid "4ff528fbeda2bc6ebb8974181056070f"
+  active 1
+  parent -1
+  transform 12 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.47843403 0.8963847 0.6717124 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 356 "Prop"
+  guid "c374113c50e1d747cb1bc3d646ef6ebc"
+  active 1
+  parent -1
+  transform 15 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5738882 0.58359694 0.77103996 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 357 "Prop"
+  guid "e275464f5a02e8ec7d03d06132a5ca4f"
+  active 1
+  parent -1
+  transform 18 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.7899419 0.59691447 0.7667724 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 358 "Prop"
+  guid "f9a9ceef981901becb7319a24e5afd33"
+  active 1
+  parent -1
+  transform 21 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44850415 0.75715816 0.4737258 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 359 "Prop"
+  guid "64527755de968209d43d41fa56df2649"
+  active 1
+  parent -1
+  transform 24 0.6 21 0 0 0 1 1 1 1
+  mesh "Cube" 0.35265878 0.3135802 0.70061 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 360 "Prop"
+  guid "f20985e207bfb6de12c083a9d20a5020"
+  active 1
+  parent -1
+  transform 27 0.6 21 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7077141 0.69459236 0.8372376 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 361 "Prop"
+  guid "71821b54f0101f9d4fd414708bd5fa37"
+  active 1
+  parent -1
+  transform -30 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.32984224 0.4437889 0.7546358 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 362 "Prop"
+  guid "f4df6b92ccc5216039ded3a6e6712e93"
+  active 1
+  parent -1
+  transform -27 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.83192223 0.3866675 0.74332833 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 363 "Prop"
+  guid "9a0ea1dd2d1a89bb73121d0fc6a5d6f2"
+  active 1
+  parent -1
+  transform -24 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.72580266 0.7169145 0.8091442 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 364 "Prop"
+  guid "b0db382fb7975e997a5ae1b3fc89bf88"
+  active 1
+  parent -1
+  transform -21 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33043808 0.797559 0.5306933 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 365 "Prop"
+  guid "b99f0b578f32e7254d1bc33bedf73e97"
+  active 1
+  parent -1
+  transform -18 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.3089693 0.7030833 0.45190626 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 366 "Prop"
+  guid "0d40e7019aa56c58f1535b68b3e1ee36"
+  active 1
+  parent -1
+  transform -15 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37052196 0.7047567 0.7555429 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 367 "Prop"
+  guid "a6a019aec5509753089759a4018c653e"
+  active 1
+  parent -1
+  transform -12 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.6895198 0.8299263 0.8859452 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 368 "Prop"
+  guid "1c0e6c09b95808d99d694742b291dd9e"
+  active 1
+  parent -1
+  transform -9 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.53218293 0.31835115 0.5891942 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 369 "Prop"
+  guid "3ed0e66ac3281520d89696c804859b4b"
+  active 1
+  parent -1
+  transform -6 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.5211009 0.611879 0.53132975 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 370 "Prop"
+  guid "584a77be07ab3ccf82f160c1434c2db4"
+  active 1
+  parent -1
+  transform -3 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6234807 0.5203238 0.4605336 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 371 "Prop"
+  guid "cc1d06c6cc7e81164014e170562292a9"
+  active 1
+  parent -1
+  transform 0 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.6167017 0.52174217 0.54943913 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 372 "Prop"
+  guid "4d8c1d1f6546f1f3bb92098b8bfd37ee"
+  active 1
+  parent -1
+  transform 3 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.81674993 0.4064545 0.37419295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 373 "Prop"
+  guid "35066c592d6adff38efc951a0ca7650c"
+  active 1
+  parent -1
+  transform 6 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.7610302 0.47150937 0.3189466 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 374 "Prop"
+  guid "6bdf504da19a7da28e28d8dfbf5c7554"
+  active 1
+  parent -1
+  transform 9 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.48174286 0.48896742 0.63067186 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 375 "Prop"
+  guid "fa379400013535211aad5dbcf718332c"
+  active 1
+  parent -1
+  transform 12 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.80807805 0.5004821 0.86056274 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 376 "Prop"
+  guid "65ae56bd2a7ef93892712a87a0ea8426"
+  active 1
+  parent -1
+  transform 15 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3702957 0.52771527 0.8446193 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 377 "Prop"
+  guid "5ac6af330b9d61775babc9b3a2b09529"
+  active 1
+  parent -1
+  transform 18 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.7412133 0.5523443 0.36584684 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 378 "Prop"
+  guid "a6cd67480edc6df3fad2541f82fa0f19"
+  active 1
+  parent -1
+  transform 21 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4034112 0.6630071 0.5782157 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 379 "Prop"
+  guid "2c271a87a0354dd21c1e3b33861d8623"
+  active 1
+  parent -1
+  transform 24 0.6 24 0 0 0 1 1 1 1
+  mesh "Cube" 0.85457957 0.6469276 0.73603535 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 380 "Prop"
+  guid "d0239ec850a156d52f6ad2a0df20cb42"
+  active 1
+  parent -1
+  transform 27 0.6 24 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5763609 0.8958254 0.75601566 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 381 "Prop"
+  guid "a8788bdda0034c03486085bbb2ff5d29"
+  active 1
+  parent -1
+  transform -30 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.6540975 0.44836798 0.68714964 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 382 "Prop"
+  guid "6389e756001660c39b35296d2596a89f"
+  active 1
+  parent -1
+  transform -27 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4512899 0.7030714 0.3508636 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 383 "Prop"
+  guid "8c8e2691f9a7b4f95ca4d11cec0ba385"
+  active 1
+  parent -1
+  transform -24 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.6560843 0.34820646 0.6053565 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 384 "Prop"
+  guid "11901b962e5d1e2cd769c2fbb8eb019b"
+  active 1
+  parent -1
+  transform -21 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.71735394 0.6323414 0.788993 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 385 "Prop"
+  guid "6458470e831891480adc5e5f59052147"
+  active 1
+  parent -1
+  transform -18 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.50675005 0.62529683 0.5336821 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 386 "Prop"
+  guid "57a1befcb4b83c85ded37d891cb2a625"
+  active 1
+  parent -1
+  transform -15 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5523132 0.5365847 0.34734854 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 387 "Prop"
+  guid "e28d86406ad00b9aea5132974a9b8753"
+  active 1
+  parent -1
+  transform -12 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.5812559 0.3768423 0.5510528 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 388 "Prop"
+  guid "daf9b39b3f7f6b5d4d4dc51d510ab836"
+  active 1
+  parent -1
+  transform -9 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4288928 0.3963788 0.8907302 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 389 "Prop"
+  guid "f609d8db6591a2e08a7b4c15dd4e3cd4"
+  active 1
+  parent -1
+  transform -6 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.68752944 0.3373467 0.56162584 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 390 "Prop"
+  guid "4215d3c21d931bcc42df8c521cb0dad6"
+  active 1
+  parent -1
+  transform -3 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4482612 0.41722143 0.7821483 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 391 "Prop"
+  guid "1bf228ffccd42a2c849b128cf055fb99"
+  active 1
+  parent -1
+  transform 0 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.3632002 0.31296182 0.8304436 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 392 "Prop"
+  guid "4b3575e78c45ca254e32f6308dcda1da"
+  active 1
+  parent -1
+  transform 3 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4074164 0.77274954 0.6828761 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 393 "Prop"
+  guid "2cb5bef283f72d07959c149ccf0aa892"
+  active 1
+  parent -1
+  transform 6 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.63185644 0.56428045 0.5464263 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 394 "Prop"
+  guid "d10a0dc385d64e448893a0d2db63a06c"
+  active 1
+  parent -1
+  transform 9 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6677532 0.50037855 0.7643611 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 395 "Prop"
+  guid "337d62ebaa983c0a9540fb7980eae8d6"
+  active 1
+  parent -1
+  transform 12 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.57493794 0.3056003 0.67170805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 396 "Prop"
+  guid "23ae7d4c4b43134a9cc49b1a46f7398f"
+  active 1
+  parent -1
+  transform 15 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.48446548 0.3582567 0.73597157 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 397 "Prop"
+  guid "140c30bea212fac5ab303533135f2bb6"
+  active 1
+  parent -1
+  transform 18 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.56850743 0.5196718 0.82623553 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 398 "Prop"
+  guid "e7dc42d4b43ae13cefbb013c899c7d99"
+  active 1
+  parent -1
+  transform 21 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.55105984 0.41494298 0.8735491 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 399 "Prop"
+  guid "599e2da8b9ae000cdee18790d18b32ab"
+  active 1
+  parent -1
+  transform 24 0.6 27 0 0 0 1 1 1 1
+  mesh "Cube" 0.45740336 0.6307849 0.3414632 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 400 "Prop"
+  guid "c07da35599b0bcb8d8a73052ab9f2447"
+  active 1
+  parent -1
+  transform 27 0.6 27 0 0 0 1 1 1 1
+  mesh "Sphere" 0.629455 0.36954793 0.8210461 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 401 "Lamp"
+  guid "1286a98811d708f989bfeaa36872ebcd"
+  active 1
+  parent -1
+  transform -25 3 -25 0 0 0 1 1 1 1
+  light 0.8808935 0.7787081 0.969483 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 402 "Lamp"
+  guid "4738d34db376f50177acf1685ab87fa6"
+  active 1
+  parent -1
+  transform -18 3 -25 0 0 0 1 1 1 1
+  light 0.9720007 0.7833133 0.91202927 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 403 "Lamp"
+  guid "f15597b999f9bc9015d53e35f1ac5828"
+  active 1
+  parent -1
+  transform -11 3 -25 0 0 0 1 1 1 1
+  light 0.93139696 0.87803733 0.69733113 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 404 "Lamp"
+  guid "5d74b01eaf5015b27dae86199125253c"
+  active 1
+  parent -1
+  transform -4 3 -25 0 0 0 1 1 1 1
+  light 0.8941769 0.66715336 0.6346065 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 405 "Lamp"
+  guid "7ffa81d002f7ea0a7f67ce91304e0ff9"
+  active 1
+  parent -1
+  transform 3 3 -25 0 0 0 1 1 1 1
+  light 0.6652379 0.6577917 0.6090405 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 406 "Lamp"
+  guid "5db108297380ddd58bde38febf363cc8"
+  active 1
+  parent -1
+  transform 10 3 -25 0 0 0 1 1 1 1
+  light 0.96290016 0.7288209 0.80841017 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 407 "Lamp"
+  guid "b66d904738ef55c634f5d9b54fdaf876"
+  active 1
+  parent -1
+  transform 17 3 -25 0 0 0 1 1 1 1
+  light 0.72840166 0.6087214 0.9761807 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 408 "Lamp"
+  guid "73c48592e6e3b5055dde703bc779780b"
+  active 1
+  parent -1
+  transform 24 3 -25 0 0 0 1 1 1 1
+  light 0.7065712 0.6677605 0.7025645 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 409 "Lamp"
+  guid "59fc6772d29d1c660a05125bc3614b4c"
+  active 1
+  parent -1
+  transform -25 3 -18 0 0 0 1 1 1 1
+  light 0.7610383 0.8073156 0.6067878 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 410 "Lamp"
+  guid "69daa211c6db905898cea50e7ae9c6e3"
+  active 1
+  parent -1
+  transform -18 3 -18 0 0 0 1 1 1 1
+  light 0.604633 0.8688719 0.8857337 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 411 "Lamp"
+  guid "c85442044ae61875bf8e4bb89501d9f0"
+  active 1
+  parent -1
+  transform -11 3 -18 0 0 0 1 1 1 1
+  light 0.77437234 0.6451907 0.83640945 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 412 "Lamp"
+  guid "e97c8b2f71bdda307fb63c35a6bcacd4"
+  active 1
+  parent -1
+  transform -4 3 -18 0 0 0 1 1 1 1
+  light 0.6689458 0.7004597 0.9379829 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 413 "Lamp"
+  guid "d5d8e8c2d49d2e4ce54dba850b26098f"
+  active 1
+  parent -1
+  transform 3 3 -18 0 0 0 1 1 1 1
+  light 0.9273654 0.6679857 0.6451461 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 414 "Lamp"
+  guid "7d26a8b91b5f3d3a9cb9b50043c4ebde"
+  active 1
+  parent -1
+  transform 10 3 -18 0 0 0 1 1 1 1
+  light 0.99952817 0.6337415 0.72479916 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 415 "Lamp"
+  guid "1ae2fbfd75202e01dc598357fc9fd74f"
+  active 1
+  parent -1
+  transform 17 3 -18 0 0 0 1 1 1 1
+  light 0.933701 0.9687565 0.6771979 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 416 "Lamp"
+  guid "2618502dc7416eb5bf8d86c1903c7206"
+  active 1
+  parent -1
+  transform 24 3 -18 0 0 0 1 1 1 1
+  light 0.92115486 0.96509 0.7601341 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 417 "Lamp"
+  guid "5041c2a1080e718f0b1424bbb769c54e"
+  active 1
+  parent -1
+  transform -25 3 -11 0 0 0 1 1 1 1
+  light 0.78871936 0.7789687 0.92681 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 418 "Lamp"
+  guid "7d41564921ea4d83ab8c118db61aacd2"
+  active 1
+  parent -1
+  transform -18 3 -11 0 0 0 1 1 1 1
+  light 0.96849906 0.99096465 0.80846184 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 419 "Lamp"
+  guid "916802456a3a544d3cd3825d7cd116fb"
+  active 1
+  parent -1
+  transform -11 3 -11 0 0 0 1 1 1 1
+  light 0.8431979 0.9427297 0.7409475 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 420 "Lamp"
+  guid "fc0531e21de876d395b2e0682999e777"
+  active 1
+  parent -1
+  transform -4 3 -11 0 0 0 1 1 1 1
+  light 0.9903121 0.94885075 0.9478247 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 421 "Lamp"
+  guid "3a7fc90048ce677907d5f45933b61a40"
+  active 1
+  parent -1
+  transform 3 3 -11 0 0 0 1 1 1 1
+  light 0.864683 0.703103 0.98530245 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 422 "Lamp"
+  guid "61274c790c34865150ca2f34fee15c91"
+  active 1
+  parent -1
+  transform 10 3 -11 0 0 0 1 1 1 1
+  light 0.6333995 0.829745 0.73376745 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 423 "Lamp"
+  guid "83bf48585691a781d5efcda785b1c072"
+  active 1
+  parent -1
+  transform 17 3 -11 0 0 0 1 1 1 1
+  light 0.702618 0.60461265 0.70049614 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 424 "Lamp"
+  guid "c29a6703f937d6bff7b2c5f282b0a0b9"
+  active 1
+  parent -1
+  transform 24 3 -11 0 0 0 1 1 1 1
+  light 0.67227787 0.7071718 0.66459453 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 425 "Lamp"
+  guid "cba91ba906ef1e557789a7e7276ee20b"
+  active 1
+  parent -1
+  transform -25 3 -4 0 0 0 1 1 1 1
+  light 0.96296954 0.84134215 0.98169017 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 426 "Lamp"
+  guid "a3ba9e70d4e717761ce3a2735ea9ae8a"
+  active 1
+  parent -1
+  transform -18 3 -4 0 0 0 1 1 1 1
+  light 0.98802054 0.8483254 0.9568024 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 427 "Lamp"
+  guid "fc2ab2d4593cb18bd5d4b6f25d4c1c01"
+  active 1
+  parent -1
+  transform -11 3 -4 0 0 0 1 1 1 1
+  light 0.6201572 0.6504876 0.76355636 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 428 "Lamp"
+  guid "83f34dffbf14ae65bc005843258260ac"
+  active 1
+  parent -1
+  transform -4 3 -4 0 0 0 1 1 1 1
+  light 0.6387916 0.63049126 0.6486797 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 429 "Lamp"
+  guid "ea5dc6dd3cf8a6b96e219c0b65b4b5c6"
+  active 1
+  parent -1
+  transform 3 3 -4 0 0 0 1 1 1 1
+  light 0.61685675 0.76008344 0.8086724 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 430 "Lamp"
+  guid "2c26f02d62023e1a9da72dd457c9111b"
+  active 1
+  parent -1
+  transform 10 3 -4 0 0 0 1 1 1 1
+  light 0.8017647 0.63623226 0.8446931 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 431 "Lamp"
+  guid "6421325281fdd625266594e3005e39cd"
+  active 1
+  parent -1
+  transform 17 3 -4 0 0 0 1 1 1 1
+  light 0.6807993 0.8913562 0.8936311 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 432 "Lamp"
+  guid "0977113064ee6e7a7c97b1affdca77f2"
+  active 1
+  parent -1
+  transform 24 3 -4 0 0 0 1 1 1 1
+  light 0.6641971 0.82855153 0.7916412 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 433 "Lamp"
+  guid "c3e51e2eeb5ca55c33d273e70d19aba2"
+  active 1
+  parent -1
+  transform -25 3 3 0 0 0 1 1 1 1
+  light 0.6706029 0.70031255 0.80005914 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 434 "Lamp"
+  guid "08dc9a4b47b80910f8412f8b58d4ecd5"
+  active 1
+  parent -1
+  transform -18 3 3 0 0 0 1 1 1 1
+  light 0.6337131 0.8874017 0.8885976 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 435 "Lamp"
+  guid "ca8e623f12423a565fd2e69ab7f9b5a0"
+  active 1
+  parent -1
+  transform -11 3 3 0 0 0 1 1 1 1
+  light 0.6104338 0.7220801 0.68462604 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 436 "Lamp"
+  guid "3e1169244168d9ad31ed8ca0266cd333"
+  active 1
+  parent -1
+  transform -4 3 3 0 0 0 1 1 1 1
+  light 0.84291345 0.7329819 0.9651847 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 437 "Lamp"
+  guid "7a24500250aef7979c879aeaa42efb73"
+  active 1
+  parent -1
+  transform 3 3 3 0 0 0 1 1 1 1
+  light 0.86833084 0.6050321 0.7373435 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 438 "Lamp"
+  guid "0ef9a7bb4bfd90311f7edfdf265aec45"
+  active 1
+  parent -1
+  transform 10 3 3 0 0 0 1 1 1 1
+  light 0.7370846 0.63775134 0.7259987 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 439 "Lamp"
+  guid "ae0ab3dbef45c311d964430f2fb6a363"
+  active 1
+  parent -1
+  transform 17 3 3 0 0 0 1 1 1 1
+  light 0.78193307 0.8241247 0.83828276 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 440 "Lamp"
+  guid "3b092e68553679b501929b925fc65579"
+  active 1
+  parent -1
+  transform 24 3 3 0 0 0 1 1 1 1
+  light 0.6020375 0.82454246 0.92800117 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 441 "Lamp"
+  guid "30e3fb7b473ac51aa93a2bc9975986ed"
+  active 1
+  parent -1
+  transform -25 3 10 0 0 0 1 1 1 1
+  light 0.81255794 0.6241615 0.65725434 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 442 "Lamp"
+  guid "e37db2b114c11970a872716d0ff5cd25"
+  active 1
+  parent -1
+  transform -18 3 10 0 0 0 1 1 1 1
+  light 0.8485668 0.7767512 0.87888896 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 443 "Lamp"
+  guid "b91191af3f4f9365f711be971296baee"
+  active 1
+  parent -1
+  transform -11 3 10 0 0 0 1 1 1 1
+  light 0.87175715 0.82091564 0.9603307 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 444 "Lamp"
+  guid "6e5655d99c1b8802fece57e114e87881"
+  active 1
+  parent -1
+  transform -4 3 10 0 0 0 1 1 1 1
+  light 0.6208411 0.95741296 0.721935 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 445 "Lamp"
+  guid "70d49890ab44c92ac4bd9e6d7a45de4f"
+  active 1
+  parent -1
+  transform 3 3 10 0 0 0 1 1 1 1
+  light 0.95225966 0.9697788 0.644798 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 446 "Lamp"
+  guid "c5cac464f9002d8fbae51e956573479e"
+  active 1
+  parent -1
+  transform 10 3 10 0 0 0 1 1 1 1
+  light 0.9072525 0.7997823 0.700575 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 447 "Lamp"
+  guid "216015f1fcaf0aeb788699691ae6da25"
+  active 1
+  parent -1
+  transform 17 3 10 0 0 0 1 1 1 1
+  light 0.72722006 0.7575616 0.61023843 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 448 "Lamp"
+  guid "da7326125c0075f6cead8b2829bf1b8e"
+  active 1
+  parent -1
+  transform 24 3 10 0 0 0 1 1 1 1
+  light 0.7444042 0.8882476 0.7094629 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 449 "Lamp"
+  guid "d1be49d9212bc136408a97b3f5dd78ec"
+  active 1
+  parent -1
+  transform -25 3 17 0 0 0 1 1 1 1
+  light 0.7116893 0.82244456 0.8977488 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 450 "Lamp"
+  guid "4f442c54b35d69e94789715b2505400e"
+  active 1
+  parent -1
+  transform -18 3 17 0 0 0 1 1 1 1
+  light 0.775254 0.8068968 0.672019 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 451 "Lamp"
+  guid "63f8df8f0a767f11766efbbe5eaa7dea"
+  active 1
+  parent -1
+  transform -11 3 17 0 0 0 1 1 1 1
+  light 0.959905 0.79710066 0.6706396 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 452 "Lamp"
+  guid "20bb1e7abc6421223430d0f6eb16e8e0"
+  active 1
+  parent -1
+  transform -4 3 17 0 0 0 1 1 1 1
+  light 0.8530922 0.70315135 0.60473454 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 453 "Lamp"
+  guid "9decf49dec3e88b23ee6ec2a69e3cf2d"
+  active 1
+  parent -1
+  transform 3 3 17 0 0 0 1 1 1 1
+  light 0.8826512 0.636021 0.62660235 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 454 "Lamp"
+  guid "c29836eda69abc534c937db6258b1905"
+  active 1
+  parent -1
+  transform 10 3 17 0 0 0 1 1 1 1
+  light 0.89257324 0.9885067 0.74247617 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 455 "Lamp"
+  guid "95d5b566dc89c4c75b40af1caa83d881"
+  active 1
+  parent -1
+  transform 17 3 17 0 0 0 1 1 1 1
+  light 0.7512395 0.76668537 0.7867865 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 456 "Lamp"
+  guid "b1c3ca1468654247b9fda43e2296ec1f"
+  active 1
+  parent -1
+  transform 24 3 17 0 0 0 1 1 1 1
+  light 0.6364033 0.7326998 0.98322606 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 457 "Lamp"
+  guid "bec5c85a240ac00452ad86b7df135c38"
+  active 1
+  parent -1
+  transform -25 3 24 0 0 0 1 1 1 1
+  light 0.85438746 0.9931804 0.6657084 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 458 "Lamp"
+  guid "9aba7d3a61360bf8bb1e357002562a8c"
+  active 1
+  parent -1
+  transform -18 3 24 0 0 0 1 1 1 1
+  light 0.7697945 0.82165086 0.9953313 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 459 "Lamp"
+  guid "31d2581cb989584a71d9e9db00bba94e"
+  active 1
+  parent -1
+  transform -11 3 24 0 0 0 1 1 1 1
+  light 0.82917464 0.9956102 0.6254827 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 460 "Lamp"
+  guid "8a359e0fbe479c622103f2df57cbbc7d"
+  active 1
+  parent -1
+  transform -4 3 24 0 0 0 1 1 1 1
+  light 0.8945714 0.67636895 0.98747015 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 461 "Lamp"
+  guid "45ad711d19ed73103022cf8ec4692f1b"
+  active 1
+  parent -1
+  transform 3 3 24 0 0 0 1 1 1 1
+  light 0.9751661 0.6634018 0.81967664 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 462 "Lamp"
+  guid "daa06fa8f91128277a122ac1dbdd8f65"
+  active 1
+  parent -1
+  transform 10 3 24 0 0 0 1 1 1 1
+  light 0.86799943 0.82192343 0.7061873 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 463 "Lamp"
+  guid "df40d2a586543a6cc875eaf67fd84d53"
+  active 1
+  parent -1
+  transform 17 3 24 0 0 0 1 1 1 1
+  light 0.9393366 0.98833585 0.61141944 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 464 "Lamp"
+  guid "c504aa0da63de34bec59131e16fd6c69"
+  active 1
+  parent -1
+  transform 24 3 24 0 0 0 1 1 1 1
+  light 0.9565129 0.6098587 0.9564881 1 0.3 0.8 1 9 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 465 "Sun"
+  guid "276b6cfa6dacbf344c7a90dd8c9a841d"
+  active 1
+  parent -1
+  transform 0 0 0 0.6303714 0.09251889 0.11192458 0.762591 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0 0 1 1 0 8 1
+end
+gameobject 466 "Camera"
+  guid "1e99bd97f6332c29f09a1fb030ae5938"
+  active 1
+  parent -1
+  transform 0 30 44 -0.29476488 -0 -0 0.95556986 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

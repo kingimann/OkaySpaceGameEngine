@@ -1171,18 +1171,19 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 58.2.1 UI render benchmark - `tests/test_ui_render_bench.cpp` - 500 widgets in a 10k-object scene must use under 1 ms CPU, under 20 draw calls and no allocations after warm-up (timing only in optimized builds)
   - 58.2.2 Perf dump hook - `editor/main.cpp` - `OKAY_PERF_DUMP` prints an average frame breakdown every two seconds
   - 58.2.3 Play-test harness (#572) - `Testing/PlayTest` - headless fixed-step runs, a base for scene benchmarks
+  - 58.2.5 Frame benchmark - `tests/bench_frame.cpp` - six fixed scenes (2,000 static cubes, 500 falling bodies, 100 skinned characters, 64 lights, 500 UI widgets, a mixed level) run as whole frames (scene update, physics, animation, software render, UI) and printed by phase, plus a hash of the last picture and of every object's position to show a speed-up changed nothing; opt-in, not a test; `docs/perf_log.md` is the log of what it found and fixed
   - 58.2.4 Frame statistics (#581, #585) - `Core/FrameStats` - average fps, 1% low, 0.1% low, worst frame and hitch count over a 240-frame window, a text or JSON summary of a recorded session, a CSV export (`ToCsv`, `SaveCsv`) and the console commands `time.stats` and `time.stats_csv` (`Core/LoopConsole`); can sync into `Debug/FrameHistory`
-- **Code:** `tests/test_ui_render_bench.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`, `Core/LoopConsole`
-- **API:** `OKAY_PERF_DUMP` environment variable
-- **Editor:** none
-- **Docs:** `docs/qa_workflow.md`
-- **Tests:** `ui_render_bench`
-- **Status:** Basic - one acceptance benchmark exists.
+- **Code:** `tests/test_ui_render_bench.cpp`, `tests/bench_frame.cpp`, `editor/main.cpp`, `Testing/PlayTest`, `Core/FrameStats`, `Core/LoopConsole`, `scripts/bench_ab.py`, `Physics/Broadphase`, `Render/TriangleSpan`, `Render/LightSubset`, `Scene/ComponentCache`
+- **API:** `OKAY_PERF_DUMP` environment variable; `bench_frame` (`--scene`, `--frames`, `--shadows`, `--scene-file`, `--legacy-sw`, `--legacy-physics`)
+- **Editor:** View > Panels > Profiler shows the same sections while playing (`Physics.3D`, `Render.*` for the software renderer)
+- **Docs:** `docs/qa_workflow.md`, `docs/perf_log.md`
+- **Tests:** `ui_render_bench`, `bench_frame_smoke`, `broadphase`, `triangle_span`, `software_perf_paths`, `component_cache`
+- **Status:** Partial - the UI acceptance benchmark and the opt-in frame benchmark `bench_frame` exist; CI does not run or compare the frame benchmark yet.
 - **Exists today:** Parts above.
 - **Suggested priority:** Medium.
-- **Open:** first step: benchmark scenes for 10k meshes, 100 lights, 200 agents and 1000 particles, run headless with the software renderer for repeatability.
+- **Open:** `bench_frame` has no agents or particles scene and no GPU path (it draws with the software renderer); next: those scenes, and CI storing its output (58.3).
 - **Related:** 33.1, 58.1, 52.5
-- **Words:** benchmark, perf test, stress test, frame time test, ui_render_bench, OKAY_PERF_DUMP
+- **Words:** benchmark, perf test, stress test, frame time test, ui_render_bench, OKAY_PERF_DUMP, bench_frame, perf log, frame hash
 - **Seen as:** cannot tell if a change made things slower
 - **Ask me like:** "add benchmark scenes for objects, lights and agents"
 

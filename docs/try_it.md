@@ -25,8 +25,8 @@ The editor is `Tools\OkayEngine.exe` in the same folder (or start it from the la
 asks for a scene path: type or paste it, or press **Browse...**. A scene finds the files it uses (sounds, scripts,
 sequences) next to itself, so the folder works from any install path.
 
-What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
+What is in `examples\` (about 1.3 MB: `perf` is 0.8 MB of generated scene text, the rest is small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`, `perf`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Faster frames: physics with many colliders, software renderer shadows and lights | `examples\perf\*.okayscene`, **View > Panels > Profiler** | New in this change; the numbers are from a Linux benchmark, not from Windows |
 
 ---
 
@@ -212,6 +213,45 @@ The before-and-after of the bug needs the old release to compare.
 
 ---
 
+## 14. Faster frames: physics with many colliders, software renderer
+
+**What it is.** A performance pass (log with every number: `docs/perf_log.md`). What got faster, measured on a Linux machine
+with a benchmark that runs whole frames:
+
+* **Physics with many colliders.** The physics step used to compare every collider with every other one. It now finds the
+  touching pairs by sorting and sweeping, answers the "is there floor under this falling body" rays from a grid, and keeps
+  lists of rigidbodies and colliders instead of walking the whole scene for each. A scene with 2,000 cubes with colliders spent
+  9.3 ms per frame in `Physics.3D` and now spends 0.46 ms; 500 falling bodies went from 4.9 ms to 0.45 ms. Bodies, contacts
+  and callbacks behave exactly as before (the tests compare them bit for bit). This part helps every renderer.
+* **The software renderer** (the one used when no GPU renderer starts: a virtual machine, remote desktop, or the player with
+  `gpu=0` in its `game.okayconfig`): the sun's shadow maps, the lights and the thread bands do less work. The pictures are
+  identical. On a normal Windows PC the Direct3D 11 renderer draws instead, so you will not see this part.
+
+**Steps (editor).**
+1. Open `Tools\OkayEngine.exe`. **File > Open...**, paste `<install folder>\examples\perf\many_colliders.okayscene`
+   (2,000 cubes with box colliders, a sun and a camera), then open **View > Panels > Profiler**.
+2. Press **Play**. In the Profiler table the row `Physics.3D` is the time the physics step takes each frame, in ms. Tick
+   **Pause** and drag the frame slider to look at single frames.
+3. Open `examples\perf\falling_bodies.okayscene` (500 boxes and balls falling onto a floor) and `many_lights.okayscene`
+   (64 point lights over 400 props) the same way. `many_lights` mainly exercises the software renderer (change 3 in
+   `docs/perf_log.md`); on a PC where a GPU renderer draws, it shows nothing new to compare.
+
+**How you know it worked.** On the Linux machine `Physics.3D` for `many_colliders` fell from 9.3 ms to 0.46 ms (and
+`falling_bodies` from 4.9 ms to 0.45 ms). On your PC the numbers will differ (another CPU, and the editor itself uses some
+time); what to look for is that `Physics.3D` is a small part of the frame in the 2,000 cube scene, well under 1 ms, not the
+biggest bar. To compare with the old build, open the same scene in the previous release and read the same row: it should be
+several times larger there. If you start the editor from a command prompt with the environment variable `OKAY_PERF_DUMP` set
+(any value), it also prints an average breakdown to that prompt every two seconds (an existing developer hook; unverified on
+Windows).
+
+**Status.** Verified here: the headless benchmark (`bench_frame`, see `docs/perf_log.md` for the command and every number) and the
+tests `broadphase`, `triangle_span`, `software_perf_paths`, `component_cache` (each compares the new code with the old code, pixel
+for pixel or bit for bit). **Unverified:** everything on Windows, every GPU renderer, the editor window and its Profiler (the
+menu path was read from `editor/main.cpp`, not clicked), and the three example scenes in the editor (they were loaded and run
+headless by the benchmark, not opened in the editor).
+
+---
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -343,6 +383,9 @@ Run on Linux, on the branch `claude/try-it`:
 * `python3 scripts/gen_feature_map.py` then `--check`: up to date.
 * The `examples` copy block of `scripts/build-windows-dist.sh`, run alone: 12 folders, 42 files, about 0.5 MB (472 KB on disk), no
   `.py`, `.cpp` or `__pycache__`. `bash -n` on the whole script.
+* Perf pass 1 added `perf` (three `.okayscene` files) to `EXAMPLE_DIRS`; the copy block, run alone again, copied 13 folders
+  (1.2 MB on disk) and `bash -n` on the script is clean. The three scenes were written by `bench_frame --save-scenes` and
+  loaded back by `bench_frame --scene-file` (the `many_colliders` file gives the same picture and state hashes as the built in scene).
 * `okay::wav::DecodeWav` on `mulaw_tone.wav` and `Mesh::LoadOBJ` on the three OBJ samples, as described above.
 
 **Not run:** `test_templates`, `vehicle_seat` and the other engine tests (the engine build was stopped; no engine

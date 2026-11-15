@@ -275,6 +275,11 @@ More of the builder:
 3. Change **Hint**, then press **Ctrl+Z**: it goes back. Press **Ctrl+Y** to redo.
 4. Press **Ctrl+D** to duplicate the object: the copy has the same hint and switches.
 5. Save the scene (**Ctrl+S**), close it and open it again: the values are still there.
+![The Pause Menu Inspector with the four saved fields; the Scene view shows the menu built from them](images/property_registry/pause_menu_inspector.png)
+
+Rendered headlessly from this branch's editor (Xvfb, software renderer): `OKAY_DEV=1 OKAY_UI_SELECT="Pause Menu"
+OKAY_UI_INSPSCROLL=1 OKAY_UI_SHOT=out.png OKAY_UI_QUIT=1 OkayEngine --open examples/property_registry/registry_try.okayscene`.
+
 6. Select **Player**: **Max Health** is 250000. Edit another Health field and undo it; Max Health stays 250000
    (before `kBig` was raised it became 100000 the first time it went through the registry).
 

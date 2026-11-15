@@ -66,12 +66,13 @@ public:
     /// ---- Driver seat (see VehicleSeat.hpp) ----
     /// A vehicle with a driver VehicleSeat only reads the keyboard while someone sits in it.
     /// With nobody at the wheel it brakes to a stop (brakeForce) and does not chase a camera.
-    /// A vehicle with no driver seat keeps the old behaviour: it always reads the keys.
+    /// A vehicle with no driver seat (or only passenger seats) keeps the old behaviour: it always reads the keys.
     GameObject* Driver() const { return m_driver; }
-    bool  HasDriverSeat() const { return m_hasDriverSeat; }
+    bool  HasDriverSeat() const { return m_driverSeats > 0; }
     /// Called by VehicleSeat only.
     void  SetDriver(GameObject* who) { m_driver = who; }
-    void  NoteDriverSeat() { m_hasDriverSeat = true; }
+    void  AddDriverSeat() { ++m_driverSeats; }
+    void  RemoveDriverSeat() { if (m_driverSeats > 0) --m_driverSeats; }
 
     float Speed() const { return m_speed; }              // signed forward speed (units/s)
     bool  IsGrounded() const { return m_grounded; }
@@ -82,7 +83,7 @@ public:
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
         // With a driver seat, only a seated driver's keys count; empty = no input.
-        const bool unmanned = m_hasDriverSeat && !m_driver;
+        const bool unmanned = m_driverSeats > 0 && !m_driver;
         float throttle = 0.0f, steer = 0.0f;
         bool handbrake = false;
         if (!unmanned) {
@@ -262,7 +263,7 @@ private:
     }
 
     GameObject* m_driver = nullptr;      // runtime only, set by VehicleSeat
-    bool  m_hasDriverSeat = false;       // runtime only, set by VehicleSeat
+    int   m_driverSeats = 0;             // runtime only: live driver seats (VehicleSeat)
     float m_speed = 0.0f;
     bool  m_grounded = true;
     Vec3  m_kinematicVel{0, 0, 0};

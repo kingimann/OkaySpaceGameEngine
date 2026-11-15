@@ -90,12 +90,48 @@ player gets in and out instead of the car always listening to the keyboard.
 - **Saved:** `driver`, `sitPoint`, `exitPoint`, `useRadius`, `enterKey`, `prompt`. The seat
   finds its car through the object hierarchy, so it survives save, load and scene copy.
   Who sits in it is runtime only and is not saved.
+- **Who can board:** a local player: an object with a player controller (first or third
+  person, character controller 2D / 3D, top-down 2D). AI objects (an NPC with a Character
+  component) cannot. A dead occupant is put out of the seat, and a dead body cannot get in.
+  Chair `Seat` and `VehicleSeat` do not mix: someone sitting in one cannot board the other.
+- **Two seats, one key:** E lets the player out of one seat; they do not get into another
+  seat of the same car on that same key press.
+- **Exit:** the player is stood upright (yaw kept, no pitch or roll from the car). Colliders on
+  the player and on its children switch off while seated and come back on exit.
+- **Seat on the player's own car:** a seat refuses its own object and its parents.
+- **Saving while seated:** a save, copy, prefab or undo snapshot made while someone sits writes
+  the player with their controller, colliders and gravity as before they got in. The seat takes
+  them again right after the save. The seat itself is not restored on load: the player stands
+  where the seat was, free.
+- **A car with only passenger seats** (or none) keeps the old behaviour: it always reads the keys.
+  Only an enabled driver seat makes the car wait for a driver. Remove the seat, or turn `driver`
+  off, and the car drives with the keys again.
+- **Input:** the raw `enterKey` only. Gamepad buttons and the input action map are not read, and
+  E is also first-person lean-right (change `enterKey` if that matters).
 - **From C++:** `VehicleSeat::Enter(go)` (returns false if refused), `Exit()`,
   `Occupant()`, `VehicleController::Driver()`.
 
 Not done: no script or visual-script node for enter / exit / driver yet; **multiplayer
 does not replicate seat state** (each machine decides on its own); no sit or steering
 animation on the character; no per-seat camera.
+
+### Try it yourself: the "Vehicle Test" scene
+
+A ready scene has a red car with a driver seat (left front) and a passenger seat (right front),
+four wheels, a flat ground, and a third-person player standing by the driver door.
+
+1. In the editor use *File ▸ Open* and pick `examples/vehicle/vehicle_test.okayscene` from the engine
+   folder. (It is not in the New Project chooser.) In code: `Templates::VehicleSeats3D(scene)`.
+2. Press **Play**.
+3. Walk to the driver door (WASD) and press **E**. You sit in the car.
+4. **W / S** = gas and brake / reverse, **A / D** = steer, **Space** = handbrake.
+5. Press **E** again to get out beside the car. The car then brakes to a stop and ignores the keys.
+6. Walk to the right side and press **E** to ride as a passenger (you are carried, the car does not drive).
+
+**Unverified in play:** I (the agent) ran none of this in a real editor or a window. What was run is the
+headless test `vehicle_seat`, which loads `examples/vehicle/vehicle_test.okayscene` from disk and plays
+steps 3 to 6 with simulated key presses, on Linux only. The editor Inspector block for the seat was added but never compiled.
+The wheels are for looks: they do not spin or turn.
 
 ## Roadmap
 

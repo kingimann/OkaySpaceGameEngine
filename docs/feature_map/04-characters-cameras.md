@@ -99,7 +99,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.5.4 Driver seat - `Components/VehicleSeat` - driver, sitPoint, exitPoint, useRadius, enterKey, prompt, Enter, Exit, Occupant
 - **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`
 - **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
-- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat
+- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat; File > Open examples/vehicle/vehicle_test.okayscene
 - **Docs:** `docs/vehicle_controller.md`
 - **Tests:** `vehicle`, `vehicle_seat`
 - **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, one driver, exit fallback, destroy and save

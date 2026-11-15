@@ -3860,7 +3860,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 }
 } // namespace
 
+namespace {
+// While a scene or object is written, whoever sits in a vehicle gets their own controller, colliders
+// and gravity back, so a copy, undo snapshot or save never holds a frozen player.
+struct VehicleSeatSaveGuard {
+    VehicleSeatSaveGuard() { VehicleSeat::SuspendAllForSave(); }
+    ~VehicleSeatSaveGuard() { VehicleSeat::ResumeAllAfterSave(); }
+};
+} // namespace
+
 std::string SceneSerializer::Serialize(const Scene& scene) {
+    VehicleSeatSaveGuard seatGuard;
     std::ostringstream out;
     UseRoundTripFloats(out);
     out << "okayscene 3\n";
@@ -9172,6 +9182,7 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
+    VehicleSeatSaveGuard seatGuard;
     // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
     // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
     // object is not written (see OwnSkipBits): inherited from its parent inside the subtree. Above

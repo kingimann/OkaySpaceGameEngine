@@ -3,6 +3,7 @@
 // with a one-line message on malformed input. See okay/Render/ModelData.hpp.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include "okay/Render/TexturePath.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "PolygonTriangulate.hpp"
 #include <algorithm>
@@ -61,31 +62,9 @@ std::string Trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
+// Inside the model's folder, or inside an allowed root (absolute and ".." paths): okay/Render/TexturePath.hpp (#753).
 std::string ResolveTexturePath(std::string tp, const std::string& baseDir) {
-    for (char& c : tp) if (c == '\\') c = '/';
-    const bool abs = tp.size() > 1 && (tp[0] == '/' || tp[1] == ':');
-    if (abs) return {};   // an absolute path would point the engine at any file on the machine (#753): drop it
-    // Stay inside the model's own directory tree: an untrusted model must not be able to point the
-    // engine at any file on the machine ("map_Kd ../../../../etc/passwd" used to be kept verbatim).
-    // The ".."s are resolved here; one that climbs out of the model's directory drops the texture.
-    std::vector<std::string> parts;
-    std::size_t i = 0;
-    while (i < tp.size()) {
-        std::size_t a = i;
-        while (a < tp.size() && tp[a] != '/') ++a;   // one path component
-        const std::string comp = tp.substr(i, a - i);
-        i = a + 1;
-        if (comp.empty() || comp == ".") continue;
-        if (comp == "..") {
-            if (parts.empty()) return {};
-            parts.pop_back();
-            continue;
-        }
-        parts.push_back(comp);
-    }
-    std::string out;
-    for (const std::string& p : parts) { if (!out.empty()) out += '/'; out += p; }
-    return baseDir + out;
+    return ResolveModelTexturePath(std::move(tp), baseDir);
 }
 
 // The file name of a texture statement ("map_Kd -s 1 1 1 wood.png"): skip the
@@ -277,14 +256,17 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     std::vector<ImportedMaterial> mtl;
     for (const std::string& lib : mtllibs) {
         std::string bytes;
-        std::string name = lib; for (char& c : name) if (c == '\\') c = '/';
-        if (ReadAllBytes(baseDir + name, kMaxMtlBytes, bytes, nullptr)) { ParseMtl(bytes, baseDir, mtl); continue; }
+        // The material file is held to the same place as textures (okay/Render/TexturePath.hpp): the model's folder, or
+        // an allowed root; a network path or one leading elsewhere is not opened.
+        const std::string whole = ResolveModelTexturePath(lib, baseDir);
+        if (!whole.empty() && ReadAllBytes(whole, kMaxMtlBytes, bytes, nullptr)) { ParseMtl(bytes, baseDir, mtl); continue; }
         // A name with spaces may list several files.
         std::size_t a = 0;
         while (a < lib.size()) {
             while (a < lib.size() && IsSpace(lib[a])) ++a;
             std::size_t b = a; while (b < lib.size() && !IsSpace(lib[b])) ++b;
-            if (b > a && ReadAllBytes(baseDir + lib.substr(a, b - a), kMaxMtlBytes, bytes, nullptr)) ParseMtl(bytes, baseDir, mtl);
+            const std::string one = b > a ? ResolveModelTexturePath(lib.substr(a, b - a), baseDir) : std::string();
+            if (!one.empty() && ReadAllBytes(one, kMaxMtlBytes, bytes, nullptr)) ParseMtl(bytes, baseDir, mtl);
             a = b;
         }
     }

@@ -191,6 +191,7 @@ add_library(okay_engine
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
     src/Audio/FlacDecoder.cpp
+    src/Audio/WavDecoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
@@ -263,6 +264,17 @@ add_library(okay_engine
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
+    src/Render/IqmReader.cpp
+    src/Render/CobReader.cpp
+    src/Render/NdoReader.cpp
+    src/Render/TerragenReader.cpp
+    src/Render/MdcReader.cpp
+    src/Render/HmpReader.cpp
+    src/Render/CsmReader.cpp
+    src/Render/Q3dReader.cpp
+    src/Render/RawReader.cpp
+    src/Render/PmxReader.cpp
+    src/Render/LwsReader.cpp
     src/Render/Gltf1Reader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
@@ -599,6 +611,12 @@ if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
+# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
+# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
+if(OKAY_OWN_WAV)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
+    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
+endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
@@ -637,8 +655,27 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
     endif()
 endforeach()
 
-# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C) and AC3D / OGRE / XGL / IRR / NFF (batch D), same opt-in rules as 3DS: default OFF.
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF)
+# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5), same opt-in rules as 3DS: default OFF.
+# Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in a
+# foreach(_fmt ...) list of this file (or have a literal OKAY_OWN_<FMT>_DEFAULT definition), or its default is silently never
+# defined (a merge once dropped Terragen from this loop that way). Add a new reader's name to the literal list below.
+file(STRINGS "${PROJECT_SOURCE_DIR}/CMakeLists.txt" _okay_own_opts REGEX "^option\\(OKAY_OWN_[A-Z0-9]+ +\"Read ")
+file(READ "${CMAKE_CURRENT_LIST_FILE}" _okay_this_file)
+string(REGEX MATCHALL "foreach\\(_fmt [A-Z0-9 ]+\\)" _okay_heads "${_okay_this_file}")
+set(_okay_looped "")
+foreach(_h IN LISTS _okay_heads)
+    string(REGEX REPLACE "^foreach\\(_fmt ([A-Z0-9 ]+)\\)$" "\\1" _h "${_h}")
+    string(REPLACE " " ";" _h "${_h}")
+    list(APPEND _okay_looped ${_h})
+endforeach()
+foreach(_line IN LISTS _okay_own_opts)
+    string(REGEX REPLACE "^option\\(OKAY_OWN_([A-Z0-9]+) .*$" "\\1" _name "${_line}")
+    string(FIND "${_okay_this_file}" "target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
+    if(NOT _name IN_LIST _okay_looped AND _okay_lit EQUAL -1)
+        message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
+    endif()
+endforeach()
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

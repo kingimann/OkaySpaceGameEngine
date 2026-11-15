@@ -85,6 +85,16 @@ struct AudioClip {
     /// decoded clip: twenty sources on one file decode it once. Null on failure.
     static std::shared_ptr<const AudioClip> LoadCached(const std::string& path, int rate = 0,
                                                        std::string* error = nullptr, bool downmix = false);
+    /// The cache remembers each file's size and write time: a file that changed on disk is decoded again on the
+    /// next LoadCached (clips already handed out keep their own copy). Safe to call from several threads.
+    /// Forget every cached clip (clips still held by sources stay alive until they let go).
+    static void ClearCache();
+    /// Decoded bytes the cache holds, and how many clips.
+    static std::size_t CacheBytes();
+    static std::size_t CacheCount();
+    /// Drop least recently used clips that nothing holds until the cache is within `maxBytes`. The editor calls
+    /// this when Play stops, so a long session does not keep every sound it ever played.
+    static void TrimCache(std::size_t maxBytes);
     /// Save as a 16-bit PCM WAV with this clip's channels. Returns false on failure.
     bool SaveWAV(const std::string& path) const;
 

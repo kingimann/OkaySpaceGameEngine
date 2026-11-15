@@ -550,7 +550,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 25.1 Templates
 - **What:** Starting points for a new project: a blank scene, a genre starter or a complete small game.
 - **Parts:**
-  - 25.1.1 Launcher Create page - `launcher/main.cpp` - 21 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
+  - 25.1.1 Launcher Create page - `launcher/main.cpp` - 22 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
   - 25.1.2 Editor starter content - `editor/main.cpp`, `Scene/SceneTemplates` - New Scene templates (3D, 2D) and built-in object templates
   - 25.1.3 Marketplace templates - `Platform/Workshop` - Workshop items of kind "template" that the launcher downloads
 - **Code:** `launcher/main.cpp`, `editor/main.cpp`, `Scene/SceneTemplates`, `Platform/Workshop`
@@ -559,7 +559,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/editor.md`, `docs/making_a_game.md`
 - **Tests:** `templates`, `humanoid_template`, `ui_templates`
 - **Status:** Works - creating a project from a template is used daily (read in `launcher/main.cpp`).
-- **Exists today:** 21 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, two Vehicles, Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
+- **Exists today:** 22 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
 - **Work packages:**
   1. M - "Save project as template" copies a project minus caches into a template folder the Create page lists. Depends on: 25.2.
   2. S - Template metadata file (name, description, engine version, thumbnail). Depends on: package 1.
@@ -1298,7 +1298,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
 - **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
-- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`, `reduce_motion_bob`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
 - **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
   1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).

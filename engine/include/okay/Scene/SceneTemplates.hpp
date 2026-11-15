@@ -34,6 +34,7 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIPanel.hpp"
@@ -887,6 +888,64 @@ inline void Vehicle3D(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->localPosition = {0, 4, -8};         // the controller keeps it behind the car
+}
+
+/// "Vehicle Test": a third-person player standing next to a car with a driver seat and a passenger
+/// seat, on a flat ground. Walk to the car, press E to get in (driver seat), drive with WASD / arrows
+/// (Space = handbrake), press E to get out. The car only drives while someone sits in the driver seat.
+/// Body, four wheels (looks only; the VehicleController slides the body, it does not spin wheels).
+inline void VehicleSeats3D(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Vehicle Test");
+
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* ground = scene.CreateGameObject("Ground");
+    ground->transform->localPosition = {0, -0.5f, 0};
+    ground->transform->localScale = {120, 1, 120};
+    auto* gmr = ground->AddComponent<MeshRenderer>();
+    gmr->mesh = Mesh::Cube(); gmr->color = Color::FromBytes(80, 84, 92);
+    ground->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+    ground->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+
+    // The car root is unscaled so seat points are in metres. Its box rests on the ground.
+    GameObject* car = scene.CreateGameObject("Car");
+    car->transform->localPosition = {0, 0.3f, 0};
+    car->AddComponent<Rigidbody3D>();
+    car->AddComponent<BoxCollider3D>()->size = {1.6f, 0.6f, 3.0f};
+    car->AddComponent<VehicleController>();
+    auto* driverSeat = car->AddComponent<VehicleSeat>();     // left front: get in here to drive
+    driverSeat->sitPoint = {-0.4f, 0.5f, 0.3f};
+    driverSeat->exitPoint = {-1.8f, 0.0f, 0.3f};
+    driverSeat->prompt = "Drive";
+
+    GameObject* body = scene.CreateGameObject("Car Body");
+    body->transform->SetParent(car->transform, false);
+    body->transform->localScale = {1.6f, 0.6f, 3.0f};
+    auto* bmr = body->AddComponent<MeshRenderer>();
+    bmr->mesh = Mesh::Cube(); bmr->color = Color::FromBytes(205, 60, 55);
+
+    const float wx[4] = {-0.85f, 0.85f, -0.85f, 0.85f}, wz[4] = {1.0f, 1.0f, -1.0f, -1.0f};
+    for (int i = 0; i < 4; ++i) {
+        GameObject* w = scene.CreateGameObject("Wheel");
+        w->transform->SetParent(car->transform, false);
+        w->transform->localPosition = {wx[i], 0.0f, wz[i]};
+        w->transform->localRotation = Quat::Euler({0, 0, 90});     // axle along X
+        auto* wmr = w->AddComponent<MeshRenderer>();
+        wmr->mesh = Mesh::Cylinder(0.3f, 0.25f); wmr->color = Color::FromBytes(30, 30, 34);
+    }
+
+    GameObject* passenger = scene.CreateGameObject("Passenger Seat");
+    passenger->transform->SetParent(car->transform, false);
+    auto* ps = passenger->AddComponent<VehicleSeat>();       // right front: rides along, does not drive
+    ps->driver = false;
+    ps->sitPoint = {0.4f, 0.5f, 0.3f};
+    ps->exitPoint = {1.8f, 0.0f, 0.3f};
+    ps->prompt = "Ride";
+
+    AddThirdPersonPlayer(scene, {-2.2f, 1.0f, 0.3f});        // standing by the driver door
 }
 
 /// A 2D top-down driving starter: a car you steer with WASD/arrows (throttle + turn,

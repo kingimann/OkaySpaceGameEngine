@@ -1,5 +1,68 @@
 OkaySpace Game Engine — Changelog
 
+v2.874.0
+  Gameplay
+  - Vehicles: a new Vehicle Seat component. Walk up to a car, press E to get
+    into the driver seat and drive; press E again to get out beside the car.
+    Only a player can get in (not an NPC), a dead driver is put out, and the
+    car only reads the driving keys while someone sits in the driver seat.
+    A test car scene is included (examples/vehicle/vehicle_test.okayscene,
+    open it with File > Open). In this release the driver does not yet sit
+    down (no sit pose), the wheels do not spin and it has not been tried in a
+    real window. Those come next.
+  - First person: head bob, sway and the landing dip now follow the Reduce
+    Motion accessibility setting. The arms and hands still bob.
+  - Saving a scene with a lone first or third person controller and loading
+    it again now gives the same text each time (this fix was already inside
+    2.873.0 but was not listed).
+  - Dropdown lists in the in-game UI scroll when you drag inside them, and a
+    tap still picks an item. A mouse pick on a scrolling list now happens
+    when you let go. Touch has not been tried on a real touch screen.
+
+  Editor
+  - Starting Play is a little lighter: scenes with many sounds share one
+    decoded copy of each audio file, and the navigation mesh is not rebuilt
+    when nothing about it changed.
+  - Navigation: a Mesh Collider now builds the navigation mesh from its real
+    triangles instead of its bounding box, with limits so a huge model cannot
+    freeze the editor. A mesh with a crack in it counts as two-sided (see
+    docs/navigation.md).
+
+  Safety
+  - OBJ model textures: network paths, Windows device names and paths that
+    escape the model folder are refused before the disk is touched.
+
+  Behind the scenes (switched off by default, nothing changes for you)
+  - Own model readers for Quick3D files (Q3D) and plain triangle text (RAW).
+
+v2.873.0
+  Gameplay
+  - Characters that turn while the game runs physics in fixed steps no
+    longer jitter on screen or lose most of their walking speed. When game
+    code turns a body, the drawn pose now keeps the physics position and the
+    game's rotation. Tested with the real third-person controller at 30, 60
+    and 144 frames per second; not checked in a real window or on Windows.
+
+  Behind the scenes (all switched off by default, nothing changes for you)
+  - A new audio file reader for WAV files written by us, instead of a
+    library. It was already inside 2.872.0 and stays off until we are sure
+    it is finished.
+  - New own readers for three more 3D model formats (MDC, HMP and CSM) and
+    for Terragen terrain files. They are off by default and were tested on
+    small sample files only.
+  - The project now has a live work board on GitHub (the "work-board"
+    branch) that shows what is being worked on.
+
+v2.872.0
+  Launcher
+  - The Admin page no longer disappears when the launcher has been open for
+    a long time. The launcher checks your role every few minutes; when that
+    check failed (for example your sign-in had expired or the network
+    dropped) it wrongly treated you as having no role. It now keeps your last
+    known role, tries again after a minute and renews an old sign-in first.
+    This was found by reading the code and has not been reproduced with a
+    real expired sign-in.
+
 v2.871.0
   Editor
   - Pressing Play: the first game frame no longer jumps, and the editor takes

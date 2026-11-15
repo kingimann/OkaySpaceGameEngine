@@ -139,3 +139,9 @@ Not done, said plainly:
 - The editor's own colours (`OkayScriptPalette`) and the code font (`g_codeFont`, zoom) are the ImGui editor's; the OkayUI editor uses `DefaultCodePalette()` and OkayUI's font at the editor's UI scale. `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
 
+
+## The model underneath (step 28)
+
+`CodeEdit` no longer keeps its own text model. Lines, edits, the undo log, search, bracket scanning, word movement, the highlighter's state cache and the line marks (breakpoints and error markers that move with the text) are `okay::text::Buffer` (`docs/own_code_editor.md`, "Slice 2"). The public API of `CodeEdit` is unchanged, as are `ScriptEditorCodeEdit` and `ScriptEditorWidget`; `Model()` gives read-only access to the buffer. The 407 checks of `test_okayui_codeedit` and the fuzzers are unchanged and pass; no check was edited.
+
+What this changes in the HAVE and GAP table above: breakpoints and markers "move with the text" is now implemented and tested in the library (`Buffer` line marks) as well as through the widget; multiple carets exist in `Buffer` but are NOT in the widget (one caret and one anchor). Small differences from before (find previous with overlapping matches, replace all with newlines in the replacement and markers inside the span, clamped out-of-range tokens) are listed in `docs/own_code_editor.md`.

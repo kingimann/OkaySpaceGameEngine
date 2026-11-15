@@ -29,6 +29,8 @@ inline int prevIdx(const std::string& s, int i) {
     return i;
 }
 inline int nextTab(int col, int tab) { return (col / tab + 1) * tab; }
+inline okay::text::Pos ToPos(CodePos p) { return okay::text::Pos{p.line < 0 ? 0u : (std::size_t)p.line, p.col < 0 ? 0u : (std::size_t)p.col}; }
+inline CodePos FromPos(okay::text::Pos p) { return CodePos{(int)p.line, (int)p.col}; }
 
 // 0 blank, 1 word, 2 punctuation
 inline int charClass(const std::string& s, int i) {
@@ -38,44 +40,18 @@ inline int charClass(const std::string& s, int i) {
     return 2;
 }
 
-// Valid UTF-8 only; "\r\n" and "\r" become "\n"; other control characters are dropped; bad bytes become '?'.
-std::string sanitize(const char* s, size_t n) {
-    std::string out;
-    if (!s) return out;
-    out.reserve(n);
-    for (size_t i = 0; i < n;) {
-        const unsigned char c = (unsigned char)s[i];
-        if (c == '\r') { out += '\n'; ++i; if (i < n && s[i] == '\n') ++i; continue; }
-        if (c == '\n' || c == '\t') { out += (char)c; ++i; continue; }
-        if (c < 0x20 || c == 0x7f) { ++i; continue; }
-        if (c < 0x80) { out += (char)c; ++i; continue; }
-        int len = 0;
-        if (c >= 0xC2 && c <= 0xDF) len = 2; else if (c >= 0xE0 && c <= 0xEF) len = 3; else if (c >= 0xF0 && c <= 0xF4) len = 4;
-        bool ok = len > 0 && i + (size_t)len <= n;
-        if (ok) for (int k = 1; k < len; ++k) if (!isCont((unsigned char)s[i + (size_t)k])) { ok = false; break; }
-        if (ok) {
-            const unsigned char b1 = (unsigned char)s[i + 1];
-            if ((c == 0xE0 && b1 < 0xA0) || (c == 0xED && b1 > 0x9F) || (c == 0xF0 && b1 < 0x90) || (c == 0xF4 && b1 > 0x8F)) ok = false;
-        }
-        if (ok) { out.append(s + i, (size_t)len); i += (size_t)len; } else { out += '?'; ++i; }
-    }
-    return out;
-}
-std::string sanitize(const char* s) { return s ? sanitize(s, std::strlen(s)) : std::string(); }
-
-bool isBracket(char c) { return c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'; }
 char partnerOf(char c) {
     switch (c) { case '(': return ')'; case ')': return '('; case '[': return ']'; case ']': return '['; case '{': return '}'; default: return '{'; }
 }
 bool isOpener(char c) { return c == '(' || c == '[' || c == '{'; }
 
-bool inSkipToken(const std::vector<CodeToken>& t, int j) {
+bool inSkipToken(const std::vector<okay::text::Token>& t, std::size_t j) {
     // tokens are sorted and disjoint: find the last one starting at or before j
     size_t lo = 0, hi = t.size();
-    while (lo < hi) { const size_t m = (lo + hi) / 2; if (t[m].start <= j) lo = m + 1; else hi = m; }
+    while (lo < hi) { const size_t m = (lo + hi) / 2; if (t[m].begin <= j) lo = m + 1; else hi = m; }
     if (lo == 0) return false;
-    const CodeToken& k = t[lo - 1];
-    return j < k.end && (k.color == CodeColor_String || k.color == CodeColor_Char || k.color == CodeColor_Comment);
+    const okay::text::Token& k = t[lo - 1];
+    return j < k.end && (k.kind == CodeColor_String || k.kind == CodeColor_Char || k.kind == CodeColor_Comment);
 }
 
 int digitsOf(int n) { int d = 1; while (n >= 10) { n /= 10; ++d; } return d; }
@@ -236,76 +212,49 @@ CodePalette DefaultCodePalette() {
 enum { Kind_Other = 0, Kind_TypeWord, Kind_TypeSpace, Kind_TypePunct, Kind_Backspace, Kind_Delete };
 
 CodeEdit::CodeEdit() {
-    lines_.assign(1, std::string());
     pal_ = DefaultCodePalette();
+    bpSet_ = buf_.NewMarkSet();
+    markSet_ = buf_.NewMarkSet();
+    updateModelOptions();
 }
 
-const std::string& CodeEdit::Line(int i) const {
-    static const std::string empty;
-    return (i >= 0 && i < (int)lines_.size()) ? lines_[(size_t)i] : empty;
+// The model repairs input the way this editor always did: bad bytes become '?', control characters are dropped. Edits are
+// unlimited in size, and the undo log keeps 2000 steps.
+void CodeEdit::updateModelOptions() {
+    okay::text::Options o = buf_.GetOptions();
+    o.tabSize = tabSize_;
+    o.insertSpaces = insertSpaces_;
+    o.maxBytes = (std::size_t)-1;
+    o.undoGroups = 2000;
+    o.badByte = "?";
+    o.dropControls = true;
+    buf_.SetOptions(o);
 }
 
-std::string CodeEdit::GetText() const {
-    std::string s;
-    for (size_t i = 0; i < lines_.size(); ++i) { if (i) s += '\n'; s += lines_[i]; }
-    return s;
-}
+const std::string& CodeEdit::Line(int i) const { return buf_.LineRef(i < 0 ? (std::size_t)-1 : (std::size_t)i); }
+
+std::string CodeEdit::GetText() const { return buf_.Text(); }
 
 void CodeEdit::SetText(const std::string& text) {
-    const std::string t = sanitize(text.data(), text.size());
-    lines_.clear();
-    size_t a = 0;
-    for (;;) {
-        const size_t e = t.find('\n', a);
-        if (e == std::string::npos) { lines_.push_back(t.substr(a)); break; }
-        lines_.push_back(t.substr(a, e - a));
-        a = e + 1;
-    }
+    buf_.SetText(text);
     caret_ = anchor_ = CodePos{};
-    undo_.clear(); redo_.clear(); groupOpen_ = false; breakGroup_ = true; compound_ = false;
-    desiredCol_ = -1; validTo_ = 0; maxDirty_ = true; ++version_;
+    groupOpen_ = false; breakGroup_ = true; compound_ = false;
+    desiredCol_ = -1; maxDirty_ = true;
     scrollX_ = scrollY_ = 0;
-    breakpoints_.erase(std::remove_if(breakpoints_.begin(), breakpoints_.end(), [&](int l) { return l < 0 || l >= (int)lines_.size(); }), breakpoints_.end());
+    breakpoints_.erase(std::remove_if(breakpoints_.begin(), breakpoints_.end(), [&](int l) { return l < 0 || l >= (int)buf_.LineCount(); }), breakpoints_.end());
+    mirrorBreakpoints();
+    mirrorMarkers();
 }
 
 CodePos CodeEdit::Clamp(CodePos p) const {
     if (p.line < 0) return CodePos{0, 0};
-    if (p.line >= (int)lines_.size()) return CodePos{(int)lines_.size() - 1, (int)lines_.back().size()};
-    const std::string& l = lines_[(size_t)p.line];
-    if (p.col < 0) p.col = 0;
-    if (p.col > (int)l.size()) p.col = (int)l.size();
-    while (p.col > 0 && p.col < (int)l.size() && isCont((unsigned char)l[(size_t)p.col])) --p.col;
-    return p;
+    return FromPos(buf_.Clamp(ToPos(p)));
 }
 
-std::string CodeEdit::textIn(CodePos a, CodePos b) const {
-    if (b < a) std::swap(a, b);
-    if (a.line == b.line) return lines_[(size_t)a.line].substr((size_t)a.col, (size_t)(b.col - a.col));
-    std::string s = lines_[(size_t)a.line].substr((size_t)a.col);
-    for (int l = a.line + 1; l < b.line; ++l) { s += '\n'; s += lines_[(size_t)l]; }
-    s += '\n';
-    s += lines_[(size_t)b.line].substr(0, (size_t)b.col);
-    return s;
-}
-
-std::string CodeEdit::SelectedText() const { return textIn(SelectionStart(), SelectionEnd()); }
-
-CodePos CodeEdit::endOf(CodePos from, const std::string& text) {
-    int nl = 0; size_t last = 0;
-    for (size_t i = 0; i < text.size(); ++i) if (text[i] == '\n') { ++nl; last = i + 1; }
-    if (nl == 0) return CodePos{from.line, from.col + (int)text.size()};
-    return CodePos{from.line + nl, (int)(text.size() - last)};
-}
+std::string CodeEdit::SelectedText() const { return buf_.Slice(ToPos(SelectionStart()), ToPos(SelectionEnd())); }
 
 int CodeEdit::ByteToColumn(int line, int byte) const {
-    const std::string& s = Line(line);
-    int col = 0;
-    const int n = (int)s.size();
-    for (int i = 0; i < byte && i < n;) {
-        col = s[(size_t)i] == '\t' ? nextTab(col, tabSize_) : col + 1;
-        i = nextIdx(s, i);
-    }
-    return col;
+    return line < 0 ? 0 : (int)buf_.DisplayColumn((std::size_t)line, byte < 0 ? 0u : (std::size_t)byte);
 }
 
 int CodeEdit::ColumnToByte(int line, float column) const {
@@ -322,92 +271,89 @@ int CodeEdit::ColumnToByte(int line, float column) const {
 }
 
 // ================================================================================================
-// Low-level edit and undo
+// Edits and undo (the model keeps the log; this class decides what one undo step is)
 // ================================================================================================
-void CodeEdit::invalidateFrom(int line) { if (validTo_ > line) validTo_ = line < 0 ? 0 : line; }
+// The model's undo steps remember the selection before and after, so hand it the caret first and update "after" at the end.
+void CodeEdit::syncCaretToModel() { buf_.SetSelections({okay::text::Selection{ToPos(anchor_), ToPos(caret_)}}); }
 
-void CodeEdit::applyRaw(CodePos from, CodePos to, const std::string& ins) {
-    const int oldN = to.line - from.line + 1;
-    for (int l = from.line; l <= to.line; ++l) if ((int)lines_[(size_t)l].size() >= maxBytes_) { maxDirty_ = true; break; }
-    const std::string prefix = lines_[(size_t)from.line].substr(0, (size_t)from.col);
-    const std::string suffix = lines_[(size_t)to.line].substr((size_t)to.col);
-    std::vector<std::string> parts;
-    size_t a = 0;
-    for (;;) {
-        const size_t e = ins.find('\n', a);
-        if (e == std::string::npos) { parts.push_back(ins.substr(a)); break; }
-        parts.push_back(ins.substr(a, e - a));
-        a = e + 1;
-    }
-    parts.front().insert(0, prefix);
-    parts.back() += suffix;
-    const int newN = (int)parts.size();
-    if (newN == oldN) {
-        for (int k = 0; k < newN; ++k) lines_[(size_t)(from.line + k)] = std::move(parts[(size_t)k]);
-    } else if (newN < oldN) {
-        for (int k = 0; k < newN; ++k) lines_[(size_t)(from.line + k)] = std::move(parts[(size_t)k]);
-        lines_.erase(lines_.begin() + from.line + newN, lines_.begin() + from.line + oldN);
-    } else {
-        for (int k = 0; k < oldN; ++k) lines_[(size_t)(from.line + k)] = std::move(parts[(size_t)k]);
-        lines_.insert(lines_.begin() + from.line + oldN, std::make_move_iterator(parts.begin() + oldN), std::make_move_iterator(parts.end()));
-    }
-    for (int k = 0; k < newN; ++k) maxBytes_ = std::max(maxBytes_, (int)lines_[(size_t)(from.line + k)].size());
-    if (newN != oldN) shiftLines(from.line, to.line, newN - oldN);
-    invalidateFrom(from.line);
-    ++version_;
+void CodeEdit::recordCaretInLastGroup() {
+    if (!groupOpen_) return;
+    syncCaretToModel();
+    buf_.RecordSelectionsInLastGroup();
 }
 
-// Lines moved: those after `removedTo` shift by delta; breakpoints on lines that vanished are dropped.
-void CodeEdit::shiftLines(int firstChanged, int removedTo, int delta) {
-    auto fix = [&](int l, int& out) {
-        if (l > removedTo) { out = l + delta; return true; }
-        if (delta < 0 && l >= removedTo + delta + 1) return false;   // one of the removed lines
-        out = l;
-        return true;
-    };
-    (void)firstChanged;
-    std::vector<int> nb;
-    for (int l : breakpoints_) { int o; if (fix(l, o)) nb.push_back(o); }
-    std::sort(nb.begin(), nb.end());
-    nb.erase(std::unique(nb.begin(), nb.end()), nb.end());
-    breakpoints_.swap(nb);
+// Breakpoints and markers live in the model as line marks, so they move with edits; this copies the moved lines back.
+void CodeEdit::mirrorBreakpoints() {
+    std::vector<okay::text::LineMark> m;
+    for (int l : breakpoints_) m.push_back(okay::text::LineMark{(std::size_t)l, 0});
+    buf_.SetMarks(bpSet_, std::move(m));
+}
+
+void CodeEdit::mirrorMarkers() {
+    std::vector<okay::text::LineMark> m;
+    for (std::size_t i = 0; i < markers_.size(); ++i)
+        if (markers_[i].line >= 0) m.push_back(okay::text::LineMark{(std::size_t)markers_[i].line, (std::uint32_t)i});
+    buf_.SetMarks(markSet_, std::move(m));
+}
+
+void CodeEdit::refreshMarks() {
+    if (breakpoints_.empty() && markers_.empty()) return;
+    breakpoints_.clear();
+    for (const okay::text::LineMark& m : buf_.Marks(bpSet_)) breakpoints_.push_back((int)m.line);
+    std::vector<int> line(markers_.size(), -2);                 // -2: dropped, -1 or more: the new line
+    for (const okay::text::LineMark& m : buf_.Marks(markSet_)) line[m.tag] = (int)m.line;
     std::vector<CodeMarker> nm;
-    for (CodeMarker& m : markers_) { int o; if (fix(m.line, o)) { m.line = o; nm.push_back(std::move(m)); } }
+    for (std::size_t i = 0; i < markers_.size(); ++i) {
+        if (markers_[i].line < 0) { nm.push_back(std::move(markers_[i])); continue; }   // never on a line: stays as it was
+        if (line[i] == -2) continue;
+        markers_[i].line = line[i];
+        nm.push_back(std::move(markers_[i]));
+    }
     markers_.swap(nm);
+    mirrorMarkers();
 }
 
 void CodeEdit::beginCompound() {
-    redo_.clear();
-    UndoGroup g; g.caretBefore = caret_; g.anchorBefore = anchor_; g.kind = Kind_Other;
-    undo_.push_back(std::move(g));
+    syncCaretToModel();
+    buf_.BeginGroup();
+    compoundV0_ = buf_.Version();
     groupOpen_ = true; compound_ = true; curKind_ = Kind_Other;
 }
 
 void CodeEdit::endCompound() {
     compound_ = false;
     breakGroup_ = true;
-    if (!undo_.empty() && undo_.back().edits.empty()) { undo_.pop_back(); groupOpen_ = false; }
+    buf_.EndGroup();
+    if (buf_.Version() == compoundV0_) groupOpen_ = false;      // an empty compound leaves no step behind
+    refreshMarks();
 }
 
 CodePos CodeEdit::edit(int kind, CodePos from, CodePos to, const std::string& ins) {
-    std::string removed = textIn(from, to);
-    if (removed.empty() && ins.empty()) return from;
+    from = Clamp(from); to = Clamp(to);
+    const okay::text::Pos a = ToPos(from), b = ToPos(to);
+    if (a == b && buf_.Repair(ins).empty()) return from;
     const bool newGroup = !groupOpen_ || (!compound_ && (breakGroup_ || kind != curKind_ || kind == Kind_Other));
-    if (newGroup) {
-        redo_.clear();
-        UndoGroup g; g.caretBefore = caret_; g.anchorBefore = anchor_; g.kind = kind;
-        undo_.push_back(std::move(g));
-        if (undo_.size() > 2000) undo_.erase(undo_.begin());
-        groupOpen_ = true; curKind_ = kind;
+    for (int l = from.line; l <= to.line; ++l) if ((int)Line(l).size() >= maxBytes_) { maxDirty_ = true; break; }
+    std::optional<okay::text::Pos> end;
+    if (compound_) {
+        end = buf_.Replace(a, b, ins);
+    } else {
+        bool reopened = false;
+        if (newGroup) { syncCaretToModel(); groupOpen_ = true; curKind_ = kind; }
+        else reopened = buf_.ReopenLastGroup();
+        if (!reopened) buf_.BeginGroup();
+        end = buf_.Replace(a, b, ins);
+        buf_.EndGroup();
     }
     breakGroup_ = false;
-    undo_.back().edits.push_back(UndoEdit{from, std::move(removed), ins});
-    applyRaw(from, to, ins);
-    return endOf(from, ins);
+    const CodePos e = end ? FromPos(*end) : from;
+    for (int l = from.line; l <= e.line && l < (int)buf_.LineCount(); ++l) maxBytes_ = std::max(maxBytes_, (int)Line(l).size());
+    if (!compound_) refreshMarks();
+    return e;
 }
 
 // Record where the caret ended up, so Redo can put it back.
-#define CE_FINISH() do { if (groupOpen_ && !undo_.empty()) { undo_.back().caretAfter = caret_; undo_.back().anchorAfter = anchor_; } } while (0)
+#define CE_FINISH() recordCaretInLastGroup()
 
 bool CodeEdit::replaceSelection(const std::string& ins, int kind) {
     if (readOnly_) return false;
@@ -424,7 +370,7 @@ bool CodeEdit::replaceSelection(const std::string& ins, int kind) {
 
 bool CodeEdit::InsertText(const char* text) {
     if (readOnly_) return false;
-    const std::string s = sanitize(text);
+    const std::string s = text ? buf_.Repair(text) : std::string();
     if (s.empty() && !HasSelection()) return false;
     int kind = Kind_Other;
     if (!s.empty() && s.size() <= 4 && s.find('\n') == std::string::npos && s.find('\t') == std::string::npos && nextIdx(s, 0) == (int)s.size())
@@ -436,10 +382,7 @@ bool CodeEdit::Backspace(bool word) {
     if (readOnly_) return false;
     if (HasSelection()) return replaceSelection("", Kind_Other);
     if (caret_.line == 0 && caret_.col == 0) return false;
-    CodePos from = caret_;
-    if (word) from = wordLeft(caret_);
-    else if (from.col > 0) from.col = prevIdx(lines_[(size_t)from.line], from.col);
-    else { from.line--; from.col = (int)lines_[(size_t)from.line].size(); }
+    const CodePos from = FromPos(word ? buf_.PrevWordStart(ToPos(caret_)) : buf_.Prev(ToPos(caret_)));
     edit(word ? Kind_Other : Kind_Backspace, from, caret_, "");
     caret_ = anchor_ = from; reveal_ = true; desiredCol_ = -1;
     CE_FINISH();
@@ -449,12 +392,7 @@ bool CodeEdit::Backspace(bool word) {
 bool CodeEdit::DeleteForward(bool word) {
     if (readOnly_) return false;
     if (HasSelection()) return replaceSelection("", Kind_Other);
-    const std::string& l = lines_[(size_t)caret_.line];
-    CodePos to = caret_;
-    if (word) to = wordRight(caret_);
-    else if (to.col < (int)l.size()) to.col = nextIdx(l, to.col);
-    else if (to.line + 1 < (int)lines_.size()) { to.line++; to.col = 0; }
-    else return false;
+    const CodePos to = FromPos(word ? buf_.NextWordEnd(ToPos(caret_)) : buf_.Next(ToPos(caret_)));
     if (to == caret_) return false;
     edit(word ? Kind_Other : Kind_Delete, caret_, to, "");
     anchor_ = caret_; reveal_ = true; desiredCol_ = -1;
@@ -467,31 +405,28 @@ bool CodeEdit::NewLine() {
     beginCompound();
     const CodePos a = SelectionStart(), b = SelectionEnd();
     if (a != b) edit(Kind_Other, a, b, "");
-    const std::string L = lines_[(size_t)a.line];
     std::string ins = "\n";
-    CodePos at;
     if (autoIndent_) {
-        int n = 0;
-        while (n < (int)L.size() && (L[(size_t)n] == ' ' || L[(size_t)n] == '\t')) ++n;
-        n = std::min(n, a.col);
-        const std::string indent = L.substr(0, (size_t)n);
+        const std::string& L = Line(a.line);
+        ins = buf_.NewlineText(ToPos(a));
         int bi = a.col - 1; while (bi >= 0 && (L[(size_t)bi] == ' ' || L[(size_t)bi] == '\t')) --bi;
         const char before = bi >= 0 ? L[(size_t)bi] : 0;
         int ai = a.col; while (ai < (int)L.size() && (L[(size_t)ai] == ' ' || L[(size_t)ai] == '\t')) ++ai;
         const char after = ai < (int)L.size() ? L[(size_t)ai] : 0;
-        const bool opener = isOpener(before);
-        ins += indent;
-        if (opener) ins += insertSpaces_ ? std::string((size_t)tabSize_, ' ') : std::string("\t");
-        at = endOf(a, ins);
-        if (opener && after == partnerOf(before)) ins += "\n" + indent;
-    } else at = endOf(a, ins);
-    edit(Kind_Other, a, a, ins);
-    endCompound();
-    caret_ = anchor_ = at; reveal_ = true; desiredCol_ = -1;
+        const CodePos at = FromPos(okay::text::Buffer::EndOfText(ToPos(a), ins));
+        if (isOpener(before) && after == partnerOf(before)) ins += "\n" + buf_.IndentOf((std::size_t)a.line).substr(0, (size_t)std::min(a.col, (int)buf_.IndentBytes((std::size_t)a.line)));
+        edit(Kind_Other, a, a, ins);
+        endCompound();
+        caret_ = anchor_ = at;
+    } else {
+        edit(Kind_Other, a, a, ins);
+        endCompound();
+        caret_ = anchor_ = CodePos{a.line + 1, 0};
+    }
+    reveal_ = true; desiredCol_ = -1;
     CE_FINISH();
     return true;
 }
-
 bool CodeEdit::Tab(bool outdent) {
     if (readOnly_) return false;
     const CodePos a = SelectionStart(), b = SelectionEnd();
@@ -507,11 +442,11 @@ bool CodeEdit::Tab(bool outdent) {
     int l0 = a.line, l1 = b.line;
     if (multi && b.col == 0) --l1;
     std::vector<int> delta((size_t)(l1 - l0 + 1), 0);
-    const unsigned v0 = version_;
+    const unsigned v0 = Version();
     beginCompound();
     const std::string unit = insertSpaces_ ? std::string((size_t)tabSize_, ' ') : std::string("\t");
     for (int l = l1; l >= l0; --l) {
-        const std::string& s = lines_[(size_t)l];
+        const std::string& s = buf_.LineRef((size_t)l);
         if (!outdent) {
             if (s.empty()) continue;
             edit(Kind_Other, CodePos{l, 0}, CodePos{l, 0}, unit);
@@ -525,7 +460,7 @@ bool CodeEdit::Tab(bool outdent) {
         }
     }
     endCompound();
-    if (version_ == v0) return false;
+    if (Version() == v0) return false;
     auto adj = [&](CodePos p) {
         if (p.line >= l0 && p.line <= l1) {
             const int d = delta[(size_t)(p.line - l0)];
@@ -556,32 +491,25 @@ bool CodeEdit::Paste() {
     if (readOnly_) return false;
     const char* c = GetClipboardText();
     if (!c || !*c) return false;
-    const std::string s = sanitize(c);
+    const std::string s = buf_.Repair(c);
     return replaceSelection(s, Kind_Other);
 }
 
 bool CodeEdit::Undo() {
-    if (undo_.empty()) return false;
-    UndoGroup g = std::move(undo_.back());
-    undo_.pop_back();
-    for (size_t i = g.edits.size(); i-- > 0;) {
-        const UndoEdit& e = g.edits[i];
-        applyRaw(e.from, endOf(e.from, e.inserted), e.removed);
-    }
-    caret_ = Clamp(g.caretBefore); anchor_ = Clamp(g.anchorBefore);
-    redo_.push_back(std::move(g));
-    groupOpen_ = false; breakGroup_ = true; reveal_ = true; desiredCol_ = -1;
+    if (!buf_.Undo()) return false;
+    const okay::text::Selection& sel = buf_.Selections().front();
+    caret_ = Clamp(FromPos(sel.head)); anchor_ = Clamp(FromPos(sel.anchor));
+    groupOpen_ = false; breakGroup_ = true; reveal_ = true; desiredCol_ = -1; maxDirty_ = true;
+    refreshMarks();
     return true;
 }
 
 bool CodeEdit::Redo() {
-    if (redo_.empty()) return false;
-    UndoGroup g = std::move(redo_.back());
-    redo_.pop_back();
-    for (const UndoEdit& e : g.edits) applyRaw(e.from, endOf(e.from, e.removed), e.inserted);
-    caret_ = Clamp(g.caretAfter); anchor_ = Clamp(g.anchorAfter);
-    undo_.push_back(std::move(g));
-    groupOpen_ = false; breakGroup_ = true; reveal_ = true; desiredCol_ = -1;
+    if (!buf_.Redo()) return false;
+    const okay::text::Selection& sel = buf_.Selections().front();
+    caret_ = Clamp(FromPos(sel.head)); anchor_ = Clamp(FromPos(sel.anchor));
+    groupOpen_ = false; breakGroup_ = true; reveal_ = true; desiredCol_ = -1; maxDirty_ = true;
+    refreshMarks();
     return true;
 }
 
@@ -604,20 +532,20 @@ void CodeEdit::SetSelection(CodePos anchor, CodePos caret) {
 
 void CodeEdit::SelectAll() {
     anchor_ = CodePos{0, 0};
-    caret_ = CodePos{(int)lines_.size() - 1, (int)lines_.back().size()};
+    caret_ = CodePos{(int)buf_.LineCount() - 1, (int)buf_.LineRef(buf_.LineCount() - 1).size()};
     desiredCol_ = -1; breakGroup_ = true; reveal_ = true;
 }
 
 void CodeEdit::SelectLine(int line) {
-    if (line < 0 || line >= (int)lines_.size()) return;
+    if (line < 0 || line >= (int)buf_.LineCount()) return;
     anchor_ = CodePos{line, 0};
-    caret_ = line + 1 < (int)lines_.size() ? CodePos{line + 1, 0} : CodePos{line, (int)lines_[(size_t)line].size()};
+    caret_ = line + 1 < (int)buf_.LineCount() ? CodePos{line + 1, 0} : CodePos{line, (int)buf_.LineRef((size_t)line).size()};
     desiredCol_ = -1; breakGroup_ = true; reveal_ = true;
 }
 
 bool CodeEdit::wordAt(CodePos p, CodePos& a, CodePos& b) const {
     p = Clamp(p);
-    const std::string& s = lines_[(size_t)p.line];
+    const std::string& s = buf_.LineRef((size_t)p.line);
     if (s.empty()) return false;
     int i = p.col;
     if (i >= (int)s.size()) i = prevIdx(s, (int)s.size());
@@ -635,102 +563,71 @@ void CodeEdit::SelectWordAt(CodePos p) {
     anchor_ = a; caret_ = b; desiredCol_ = -1; breakGroup_ = true; reveal_ = true;
 }
 
-CodePos CodeEdit::wordLeft(CodePos p) const {
-    p = Clamp(p);
-    if (p.col == 0) { if (p.line > 0) { p.line--; p.col = (int)lines_[(size_t)p.line].size(); } return p; }
-    const std::string& s = lines_[(size_t)p.line];
-    int i = p.col;
-    while (i > 0) { const int q = prevIdx(s, i); if (charClass(s, q) != 0) break; i = q; }
-    if (i > 0) {
-        const int c = charClass(s, prevIdx(s, i));
-        while (i > 0) { const int q = prevIdx(s, i); if (charClass(s, q) != c) break; i = q; }
-    }
-    p.col = i;
-    return p;
-}
-
-CodePos CodeEdit::wordRight(CodePos p) const {
-    p = Clamp(p);
-    const std::string& s = lines_[(size_t)p.line];
-    const int n = (int)s.size();
-    if (p.col >= n) { if (p.line + 1 < (int)lines_.size()) { p.line++; p.col = 0; } return p; }
-    int i = p.col;
-    const int c = charClass(s, i);
-    if (c != 0) while (i < n && charClass(s, i) == c) i = nextIdx(s, i);
-    while (i < n && charClass(s, i) == 0) i = nextIdx(s, i);
-    p.col = i;
-    return p;
-}
-
 void CodeEdit::Move(CodeMove m, bool extend) {
-    const int last = (int)lines_.size() - 1;
+    const int last = (int)buf_.LineCount() - 1;
     CodePos p = caret_;
     switch (m) {
         case CodeMove_Left:
             if (HasSelection() && !extend) { moveCaret(SelectionStart(), false); return; }
-            if (p.col > 0) p.col = prevIdx(lines_[(size_t)p.line], p.col); else if (p.line > 0) { p.line--; p.col = (int)lines_[(size_t)p.line].size(); }
-            moveCaret(p, extend); return;
+            moveCaret(FromPos(buf_.Prev(ToPos(p))), extend); return;
         case CodeMove_Right:
             if (HasSelection() && !extend) { moveCaret(SelectionEnd(), false); return; }
-            if (p.col < (int)lines_[(size_t)p.line].size()) p.col = nextIdx(lines_[(size_t)p.line], p.col); else if (p.line < last) { p.line++; p.col = 0; }
-            moveCaret(p, extend); return;
+            moveCaret(FromPos(buf_.Next(ToPos(p))), extend); return;
         case CodeMove_Up: case CodeMove_Down: case CodeMove_PageUp: case CodeMove_PageDown: {
             const int n = (m == CodeMove_PageUp || m == CodeMove_PageDown) ? std::max(1, visLines_ - 1) : 1;
             const int dir = (m == CodeMove_Up || m == CodeMove_PageUp) ? -1 : 1;
             if (desiredCol_ < 0) desiredCol_ = ByteToColumn(p.line, p.col);
             const int target = p.line + dir * n;
             if (target < 0) p = CodePos{0, 0};
-            else if (target > last) p = CodePos{last, (int)lines_[(size_t)last].size()};
+            else if (target > last) p = CodePos{last, (int)buf_.LineRef((size_t)last).size()};
             else p = CodePos{target, ColumnToByte(target, (float)desiredCol_)};
             moveCaret(p, extend, true);
             if (n > 1) { scrollY_ += (float)(dir * n) * lineH_; clampScroll(); }
             return;
         }
-        case CodeMove_WordLeft: moveCaret(wordLeft(p), extend); return;
-        case CodeMove_WordRight: moveCaret(wordRight(p), extend); return;
+        case CodeMove_WordLeft: moveCaret(FromPos(buf_.PrevWordStart(ToPos(p))), extend); return;
+        case CodeMove_WordRight: moveCaret(FromPos(buf_.NextWordEnd(ToPos(p))), extend); return;
         case CodeMove_LineStart: {
-            const std::string& s = lines_[(size_t)p.line];
+            const std::string& s = buf_.LineRef((size_t)p.line);
             int first = 0; while (first < (int)s.size() && (s[(size_t)first] == ' ' || s[(size_t)first] == '\t')) ++first;
             p.col = p.col != first ? first : 0;
             moveCaret(p, extend); return;
         }
-        case CodeMove_LineEnd: p.col = (int)lines_[(size_t)p.line].size(); moveCaret(p, extend); return;
+        case CodeMove_LineEnd: p.col = (int)buf_.LineRef((size_t)p.line).size(); moveCaret(p, extend); return;
         case CodeMove_DocStart: moveCaret(CodePos{0, 0}, extend); return;
-        case CodeMove_DocEnd: moveCaret(CodePos{last, (int)lines_[(size_t)last].size()}, extend); return;
+        case CodeMove_DocEnd: moveCaret(CodePos{last, (int)buf_.LineRef((size_t)last).size()}, extend); return;
     }
 }
 
 // ================================================================================================
 // Highlighter state cache
 // ================================================================================================
-void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); validTo_ = 0; haveLanguage_ = false; }
+// The highlighter is handed to the model as its tokenizer (the model caches the states and re-runs from the first changed line).
+// The tokenizer holds its own copy of the highlighter, so a copied CodeEdit never points at the original.
+void CodeEdit::installTokenizer() {
+    if (!highlighter_) { buf_.SetTokenizer(nullptr); return; }
+    buf_.SetTokenizer([h = highlighter_, tmp = std::vector<CodeToken>()](std::string_view line, std::uint32_t in, std::vector<okay::text::Token>& out) mutable -> std::uint32_t {
+        tmp.clear();
+        const int st = h(line.data(), (int)line.size(), (int)in, tmp);
+        for (const CodeToken& t : tmp) out.push_back(okay::text::Token{t.start < 0 ? 0u : (std::size_t)t.start, t.end < 0 ? 0u : (std::size_t)t.end, (int)t.color});
+        return (std::uint32_t)st;
+    });
+}
+
+void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); installTokenizer(); haveLanguage_ = false; }
 void CodeEdit::SetLanguage(const CodeLanguage& lang) { SetHighlighter(MakeCLikeHighlighter(lang)); language_ = lang; haveLanguage_ = true; }
 void CodeEdit::SetUserTypes(const std::vector<std::string>& names) {
     if (!haveLanguage_) return;
     CodeLanguage l = language_;
     for (const std::string& n : names) l.types.insert(n);
     highlighter_ = MakeCLikeHighlighter(l);
-    validTo_ = 0;
-}
-
-void CodeEdit::ensureStates(int line) {
-    if (!highlighter_) return;
-    if (stateIn_.size() != lines_.size() + 1) stateIn_.resize(lines_.size() + 1, 0);
-    if (line >= (int)lines_.size()) line = (int)lines_.size() - 1;
-    while (validTo_ < line) {
-        scratch_.clear();
-        const std::string& s = lines_[(size_t)validTo_];
-        stateIn_[(size_t)validTo_ + 1] = highlighter_(s.c_str(), (int)s.size(), stateIn_[(size_t)validTo_], scratch_);
-        ++validTo_;
-    }
+    installTokenizer();
 }
 
 void CodeEdit::LineTokens(int i, std::vector<CodeToken>& out) {
     out.clear();
-    if (!highlighter_ || i < 0 || i >= (int)lines_.size()) return;
-    ensureStates(i);
-    const std::string& s = lines_[(size_t)i];
-    highlighter_(s.c_str(), (int)s.size(), stateIn_[(size_t)i], out);
+    if (!highlighter_ || i < 0 || i >= (int)buf_.LineCount()) return;
+    for (const okay::text::Token& t : buf_.LineTokens((std::size_t)i)) out.push_back(CodeToken{(int)t.begin, (int)t.end, (unsigned char)t.kind});
 }
 
 // ================================================================================================
@@ -738,73 +635,31 @@ void CodeEdit::LineTokens(int i, std::vector<CodeToken>& out) {
 // ================================================================================================
 static inline char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 
-bool CodeEdit::findIn(int line, int from, int& start) const {
-    const std::string& s = lines_[(size_t)line];
-    const int n = (int)find_.size(), len = (int)s.size();
-    if (n == 0 || from < 0) from = from < 0 ? 0 : from;
-    for (int i = from; i + n <= len; ++i) {
-        if (isCont((unsigned char)s[(size_t)i])) continue;
-        int k = 0;
-        if (findCase_) while (k < n && s[(size_t)(i + k)] == find_[(size_t)k]) ++k;
-        else while (k < n && lower(s[(size_t)(i + k)]) == lower(find_[(size_t)k])) ++k;
-        if (k == n) { start = i; return true; }
-    }
-    return false;
-}
-
-// The last match on the line that starts before `limit`.
-bool CodeEdit::findBefore(int line, int limit, int& start) const {
-    int best = -1, from = 0, st;
-    while (from <= (int)lines_[(size_t)line].size() && findIn(line, from, st) && st < limit) { best = st; from = st + (int)find_.size(); }
-    if (best < 0) return false;
-    start = best;
-    return true;
-}
-
 void CodeEdit::SetFind(const std::string& needle, bool matchCase) {
     find_ = needle.find('\n') == std::string::npos ? needle : std::string();
     findCase_ = matchCase;
 }
 
+bool CodeEdit::selectMatch(const std::optional<okay::text::Range>& r) {
+    if (!r) return false;
+    anchor_ = FromPos(r->begin); caret_ = FromPos(r->end);
+    reveal_ = true; desiredCol_ = -1; breakGroup_ = true;
+    return true;
+}
+
 bool CodeEdit::FindNext() {
     if (find_.empty()) return false;
-    const CodePos s = HasSelection() ? SelectionEnd() : caret_;
-    const int n = (int)lines_.size(), len = (int)find_.size();
-    int st;
-    for (int k = 0; k <= n; ++k) {
-        const int l = (s.line + k) % n;
-        const int from = k == 0 ? s.col : 0;
-        if (k == n) { if (findIn(l, 0, st) && st < s.col) { anchor_ = CodePos{l, st}; caret_ = CodePos{l, st + len}; reveal_ = true; desiredCol_ = -1; breakGroup_ = true; return true; } break; }
-        if (findIn(l, from, st)) { anchor_ = CodePos{l, st}; caret_ = CodePos{l, st + len}; reveal_ = true; desiredCol_ = -1; breakGroup_ = true; return true; }
-    }
-    return false;
+    return selectMatch(buf_.Find(find_, ToPos(HasSelection() ? SelectionEnd() : caret_), findFlags(), false, true));
 }
 
 bool CodeEdit::FindPrev() {
     if (find_.empty()) return false;
-    const CodePos s = SelectionStart();
-    const int n = (int)lines_.size(), len = (int)find_.size();
-    int st;
-    for (int k = 0; k <= n; ++k) {
-        const int l = ((s.line - k) % n + n) % n;
-        const int limit = k == 0 ? s.col : (k == n ? INT_MAX : INT_MAX);
-        if (k == n) { // back on the start line: matches at or after the selection start (wrapped round)
-            int best = -1, from = s.col, q;
-            while (findIn(l, from, q)) { best = q; from = q + len; }
-            if (best >= 0) { st = best; anchor_ = CodePos{l, st}; caret_ = CodePos{l, st + len}; reveal_ = true; desiredCol_ = -1; breakGroup_ = true; return true; }
-            break;
-        }
-        if (findBefore(l, limit, st)) { anchor_ = CodePos{l, st}; caret_ = CodePos{l, st + len}; reveal_ = true; desiredCol_ = -1; breakGroup_ = true; return true; }
-    }
-    return false;
+    return selectMatch(buf_.Find(find_, ToPos(SelectionStart()), findFlags(), true, true));
 }
 
 int CodeEdit::FindCount() const {
     if (find_.empty()) return 0;
-    int c = 0, st;
-    for (int l = 0; l < (int)lines_.size(); ++l)
-        for (int from = 0; findIn(l, from, st); from = st + (int)find_.size()) ++c;
-    return c;
+    return (int)buf_.FindAll(find_, findFlags()).size();
 }
 
 bool CodeEdit::ReplaceCurrent(const std::string& with) {
@@ -813,70 +668,40 @@ bool CodeEdit::ReplaceCurrent(const std::string& with) {
     bool eq = sel.size() == find_.size();
     for (size_t i = 0; eq && i < sel.size(); ++i) eq = findCase_ ? sel[i] == find_[i] : lower(sel[i]) == lower(find_[i]);
     if (!eq) return false;
-    replaceSelection(sanitize(with.c_str()), Kind_Other);
+    replaceSelection(buf_.Repair(with), Kind_Other);
     FindNext();
     return true;
 }
 
 int CodeEdit::ReplaceAll(const std::string& with) {
     if (readOnly_ || find_.empty()) return 0;
-    const std::string w = sanitize(with.c_str());
-    const int len = (int)find_.size();
-    int count = 0, st;
-    beginCompound();
-    for (int l = (int)lines_.size() - 1; l >= 0; --l) {
-        std::vector<int> hits;
-        for (int from = 0; findIn(l, from, st); from = st + len) hits.push_back(st);
-        for (size_t k = hits.size(); k-- > 0;) { edit(Kind_Other, CodePos{l, hits[k]}, CodePos{l, hits[k] + len}, w); ++count; }
-    }
-    endCompound();
+    syncCaretToModel();
+    const std::size_t count = buf_.ReplaceAll(find_, with, findFlags());
+    if (!count) return 0;
+    groupOpen_ = true; breakGroup_ = true; compound_ = false; curKind_ = Kind_Other; maxDirty_ = true;
     caret_ = Clamp(caret_); anchor_ = Clamp(anchor_);
+    refreshMarks();
     CE_FINISH();
-    return count;
+    return (int)count;
 }
 
 // ================================================================================================
 // Brackets
 // ================================================================================================
 bool CodeEdit::matchBracketImpl(CodePos& ra, CodePos& rb) {
-    CodePos p = caret_;
-    const std::string& cl = lines_[(size_t)p.line];
-    if (p.col < (int)cl.size() && isBracket(cl[(size_t)p.col])) {}
-    else if (p.col > 0 && isBracket(cl[(size_t)p.col - 1])) p.col--;
-    else return false;
-    const char c = cl[(size_t)p.col], t = partnerOf(c);
-    std::vector<CodeToken> tok;
-    LineTokens(p.line, tok);
-    if (inSkipToken(tok, p.col)) return false;
-    int depth = 0;
-    const int last = (int)lines_.size() - 1;
-    if (isOpener(c)) {
-        for (int l = p.line; l <= last && l <= p.line + 2000; ++l) {
-            if (l != p.line) LineTokens(l, tok);
-            const std::string& s = lines_[(size_t)l];
-            for (int j = l == p.line ? p.col + 1 : 0; j < (int)s.size(); ++j) {
-                if (s[(size_t)j] != c && s[(size_t)j] != t) continue;
-                if (inSkipToken(tok, j)) continue;
-                if (s[(size_t)j] == c) ++depth; else if (depth-- == 0) { ra = p; rb = CodePos{l, j}; return true; }
-            }
-        }
-    } else {
-        for (int l = p.line; l >= 0 && l >= p.line - 2000; --l) {
-            if (l != p.line) LineTokens(l, tok);
-            const std::string& s = lines_[(size_t)l];
-            for (int j = (l == p.line ? p.col : (int)s.size()) - 1; j >= 0; --j) {
-                if (s[(size_t)j] != c && s[(size_t)j] != t) continue;
-                if (inSkipToken(tok, j)) continue;
-                if (s[(size_t)j] == c) ++depth; else if (depth-- == 0) { ra = p; rb = CodePos{l, j}; return true; }
-            }
-        }
-    }
-    return false;
+    // brackets inside strings, characters and comments do not count; the model asks which positions those are
+    const auto skip = [this](const okay::text::Pos& q) { return inSkipToken(buf_.LineTokens(q.line), q.col); };
+    const std::optional<okay::text::BracketPair> m = buf_.MatchBracket(ToPos(caret_), skip, (std::size_t)-1, 2000);
+    if (!m) return false;
+    const bool caretOnOpen = m->at == m->open;
+    ra = FromPos(caretOnOpen ? m->open : m->close);
+    rb = FromPos(caretOnOpen ? m->close : m->open);
+    return true;
 }
 
 bool CodeEdit::MatchBracket(CodePos& a, CodePos& b) {
-    if (bVersion_ != version_ || bCaret_ != caret_) {
-        bVersion_ = version_; bCaret_ = caret_;
+    if (bVersion_ != Version() || bCaret_ != caret_) {
+        bVersion_ = Version(); bCaret_ = caret_;
         bOk_ = matchBracketImpl(bA_, bB_);
     }
     if (bOk_) { a = bA_; b = bB_; }
@@ -891,12 +716,19 @@ void CodeEdit::SetBreakpoints(const std::vector<int>& lines) {
     breakpoints_.erase(std::remove_if(breakpoints_.begin(), breakpoints_.end(), [](int l) { return l < 0; }), breakpoints_.end());
     std::sort(breakpoints_.begin(), breakpoints_.end());
     breakpoints_.erase(std::unique(breakpoints_.begin(), breakpoints_.end()), breakpoints_.end());
+    mirrorBreakpoints();
 }
 bool CodeEdit::HasBreakpoint(int line) const { return std::binary_search(breakpoints_.begin(), breakpoints_.end(), line); }
 void CodeEdit::ToggleBreakpoint(int line) {
     if (line < 0) return;
     auto it = std::lower_bound(breakpoints_.begin(), breakpoints_.end(), line);
     if (it != breakpoints_.end() && *it == line) breakpoints_.erase(it); else breakpoints_.insert(it, line);
+    mirrorBreakpoints();
+}
+
+void CodeEdit::SetMarkers(const std::vector<CodeMarker>& m) {
+    markers_ = m;
+    mirrorMarkers();
 }
 
 // ================================================================================================
@@ -904,7 +736,7 @@ void CodeEdit::ToggleBreakpoint(int line) {
 // ================================================================================================
 void CodeEdit::recomputeMax() {
     maxBytes_ = 0;
-    for (const std::string& s : lines_) maxBytes_ = std::max(maxBytes_, (int)s.size());
+    for (std::size_t i = 0; i < buf_.LineCount(); ++i) maxBytes_ = std::max(maxBytes_, (int)buf_.LineRef(i).size());
     maxDirty_ = false;
 }
 
@@ -917,7 +749,7 @@ void CodeEdit::clampScroll() {
 }
 
 void CodeEdit::GoToLine(int line) {
-    line = std::min(std::max(line, 0), (int)lines_.size() - 1);
+    line = std::min(std::max(line, 0), (int)buf_.LineCount() - 1);
     moveCaret(CodePos{line, 0}, false);
     scrollY_ = (float)line * lineH_ - (view_.h - lineH_) * 0.5f;
     clampScroll();
@@ -930,7 +762,7 @@ Vec2 CodeEdit::PosToScreen(CodePos p) const {
 
 CodePos CodeEdit::ScreenToPos(float x, float y) const {
     int row = (int)std::floor((y - view_.y + scrollY_) / lineH_);
-    row = std::min(std::max(row, 0), (int)lines_.size() - 1);
+    row = std::min(std::max(row, 0), (int)buf_.LineCount() - 1);
     return CodePos{row, ColumnToByte(row, (x - textLeft_ + scrollX_) / charW_)};
 }
 
@@ -938,11 +770,11 @@ void CodeEdit::Focus() { /* needs the widget id: taken on the next Draw */ wantF
 
 void CodeEdit::layout(const Rect& item) {
     if (maxDirty_) recomputeMax();
-    const int caretCols = ByteToColumn(caret_.line, (int)lines_[(size_t)caret_.line].size());
-    gutterW_ = (showBreakpoints_ ? lineH_ : 0.0f) + (showLineNumbers_ ? (float)(digitsOf((int)lines_.size()) + 2) * charW_ : 4.0f);
+    const int caretCols = ByteToColumn(caret_.line, (int)buf_.LineRef((size_t)caret_.line).size());
+    gutterW_ = (showBreakpoints_ ? lineH_ : 0.0f) + (showLineNumbers_ ? (float)(digitsOf((int)buf_.LineCount()) + 2) * charW_ : 4.0f);
     if (gutterW_ > item.w * 0.5f) gutterW_ = item.w * 0.5f;
     const float sb = 10.0f;
-    contentH_ = (float)lines_.size() * lineH_;
+    contentH_ = (float)buf_.LineCount() * lineH_;
     contentW_ = (float)(std::max(maxBytes_, caretCols) + 3) * charW_ + 8.0f;
     const float vw = item.w - gutterW_, vh = item.h;
     needV_ = contentH_ > vh;
@@ -960,7 +792,7 @@ void CodeEdit::layout(const Rect& item) {
         const float tw = std::min(hTrack_.w, std::max(20.0f, hTrack_.w * (contentW_ > 0 ? view_.w / contentW_ : 1.0f)));
         hThumb_ = Rect{hTrack_.x + (maxX > 0 ? scrollX_ / maxX * (hTrack_.w - tw) : 0.0f), hTrack_.y + 1, tw, sb - 2};
     }
-    firstLine_ = std::min(std::max(0, (int)std::floor(scrollY_ / lineH_)), (int)lines_.size() - 1);
+    firstLine_ = std::min(std::max(0, (int)std::floor(scrollY_ / lineH_)), (int)buf_.LineCount() - 1);
     visLines_ = std::max(1, (int)(view_.h / lineH_));
 }
 
@@ -973,20 +805,20 @@ void CodeEdit::handleKeys(bool& changed) {
     const IO& io = GetIO();
     const bool ctrl = io.keyCtrl, shift = io.keyShift;
     bool any = false;
-    const unsigned v0 = version_;
+    const unsigned v0 = Version();
     if (in.commit && in.commit[0]) {   // what the input method finished: inserted like typed text, over the selection
-        std::string t = sanitize(in.commit);
+        std::string t = buf_.Repair(in.commit ? in.commit : "");
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
         if (!t.empty()) { InsertText(t.c_str()); any = true; }
     }
     if (in.text && in.text[0] && !ctrl) {
-        std::string t = sanitize(in.text);
+        std::string t = buf_.Repair(in.text ? in.text : "");
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
         if (!t.empty()) { InsertText(t.c_str()); any = true; }
     }
     if (comp_.active) {   // composing: the input method owns Backspace, the arrows, Enter and Escape
         if (any) lastActivity_ = GetTime();
-        if (version_ != v0) changed = true;
+        if (Version() != v0) changed = true;
         return;
     }
     if (in.selectAll) { SelectAll(); any = true; }
@@ -1009,7 +841,7 @@ void CodeEdit::handleKeys(bool& changed) {
     if (ctrl && IsKeyPressed(KeyId_Y)) { Redo(); any = true; }
     if (in.escape && HasSelection()) { moveCaret(caret_, false); any = true; }
     if (any) lastActivity_ = GetTime();
-    if (version_ != v0) changed = true;
+    if (Version() != v0) changed = true;
 }
 
 void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
@@ -1027,7 +859,7 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
             else { scrollX_ += (mx < hThumb_.x ? -1.0f : 1.0f) * view_.w; clampScroll(); }
         } else if (mx < view_.x) {
             const int line = (int)std::floor((my - view_.y + scrollY_) / lineH_);
-            if (line >= 0 && line < (int)lines_.size()) {
+            if (line >= 0 && line < (int)buf_.LineCount()) {
                 if (showBreakpoints_ && mx < item.x + lineH_) {
                     if (autoToggle_) ToggleBreakpoint(line);
                     if (onBreakpoint_) onBreakpoint_(line, HasBreakpoint(line));
@@ -1066,7 +898,7 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
 }
 
 bool CodeEdit::Draw(const char* id, float w, float h) {
-    const unsigned v0 = version_;
+    const unsigned v0 = Version();
     const Vec2 avail = GetContentRegionAvail();
     if (w <= 0.0f) w = avail.x;
     if (h <= 0.0f) h = avail.y;
@@ -1109,7 +941,7 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
         layout(item_);
     }
     drawAll(item_, hovered);
-    return version_ != v0;
+    return Version() != v0;
 }
 
 static unsigned colorFor(const CodePalette& p, unsigned char id) { return p.text[id < (unsigned char)CodeColor_COUNT ? (int)id : (int)CodeColor_Default]; }
@@ -1119,7 +951,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     const bool focused = Focused();
     const Input& in = GetFrameInput();
     const Vec2 i0{item.x, item.y}, i1{item.x + item.w, item.y + item.h};
-    const int n = (int)lines_.size();
+    const int n = (int)buf_.LineCount();
     const int first = firstLine_;
     const int last = std::min(n - 1, (int)std::floor((scrollY_ + view_.h) / lineH_));
     auto rowY = [&](int l) { return view_.y + (float)l * lineH_ - scrollY_; };
@@ -1154,7 +986,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     std::vector<CodeToken> toks;
     std::string run;
     for (int l = first; l <= last; ++l) {
-        const std::string& s = lines_[(size_t)l];
+        const std::string& s = buf_.LineRef((size_t)l);
         const float y = rowY(l);
         const Vec2 r0{view_.x, y}, r1{vend.x, y + lineH_};
         if (focused && !sel && l == caret_.line) dl.AddRectFilled(r0, r1, pal_.currentLine);
@@ -1166,9 +998,8 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             if (to > from) dl.AddRectFilled(Vec2{xOf(from), y}, Vec2{xOf(to), y + lineH_}, focused ? pal_.selection : pal_.selectionInactive);
         }
         if (!find_.empty()) {
-            int st;
-            for (int from = 0; findIn(l, from, st); from = st + (int)find_.size()) {
-                const int a = ByteToColumn(l, st), b = ByteToColumn(l, st + (int)find_.size());
+            for (const std::size_t st : buf_.FindInLine((std::size_t)l, find_, findFlags())) {
+                const int a = ByteToColumn(l, (int)st), b = ByteToColumn(l, (int)st + (int)find_.size());
                 if (xOf(b) < view_.x) continue;
                 if (xOf(a) > vend.x) break;
                 dl.AddRectFilled(Vec2{xOf(a), y}, Vec2{xOf(b), y + lineH_}, pal_.findMatch);

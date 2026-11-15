@@ -4,6 +4,9 @@
 // undo/redo with grouping, find, bracket matching, scrolling, a pluggable syntax highlighter (plus a built-in C-like and
 // OkayScript one), read-only mode and error markers. See docs/own_ui_code_editor.md.
 //
+// The text itself (lines, edits, undo, find, brackets, tokens, line marks) lives in okay::text::Buffer; this class adds the caret,
+// the keys, the mouse, scrolling and drawing on top (docs/own_code_editor.md).
+//
 // A CodeEdit is a plain object that owns its text and state (one per open script). Call Draw() once per frame inside an
 // OkayUI window; it reads the frame's input, edits, and draws the visible lines only. The editing operations are also
 // public methods, so they can be driven (and tested) without any input.
@@ -11,11 +14,13 @@
 // Columns are byte offsets into a line and always sit on UTF-8 character boundaries. The text is kept valid UTF-8
 // (invalid bytes become '?', "\r\n" and "\r" become "\n", other control characters are dropped). One character is one
 // cell wide; a tab advances to the next multiple of the tab size. The font should be monospaced.
+#include "okay/Text/TextBuffer.hpp"
 #include "okay/UI/OkayUI.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -93,13 +98,15 @@ public:
     /// Replace all text. Clears the undo history and puts the caret at the start. Markers and breakpoints are kept (lines past the end are dropped).
     void SetText(const std::string& text);
     std::string GetText() const;
-    int LineCount() const { return (int)lines_.size(); }
+    int LineCount() const { return (int)buf_.LineCount(); }
     int LineLength(int i) const { return (int)Line(i).size(); }   // bytes
     /// Line `i` without its newline ("" when out of range).
     const std::string& Line(int i) const;
     /// Counts every change to the text (edits, undo, redo, SetText).
-    unsigned Version() const { return version_; }
-    bool IsEmpty() const { return lines_.size() == 1 && lines_[0].empty(); }
+    unsigned Version() const { return (unsigned)buf_.Version(); }
+    bool IsEmpty() const { return buf_.LineCount() == 1 && buf_.LineRef(0).empty(); }
+    /// The text model underneath (read only), for callers that want its helpers (offsets, search, tokens).
+    const okay::text::Buffer& Model() const { return buf_; }
 
     // ---- caret and selection ----
     CodePos Caret() const { return caret_; }
@@ -131,8 +138,8 @@ public:
     bool Paste();
     bool Undo();
     bool Redo();
-    bool CanUndo() const { return !undo_.empty(); }
-    bool CanRedo() const { return !redo_.empty(); }
+    bool CanUndo() const { return buf_.CanUndo(); }
+    bool CanRedo() const { return buf_.CanRedo(); }
     /// Close the current undo group: the next edit starts a new one.
     void BreakUndoGroup() { breakGroup_ = true; }
 
@@ -159,9 +166,9 @@ public:
     /// false: Draw does not act on keys (the host's autocomplete popup owns them); the mouse still works.
     void SetHandleKeyboardInput(bool b) { handleKeys_ = b; }
     bool ReadOnly() const { return readOnly_; }
-    void SetTabSize(int n) { tabSize_ = n < 1 ? 1 : (n > 16 ? 16 : n); }
+    void SetTabSize(int n) { tabSize_ = n < 1 ? 1 : (n > 16 ? 16 : n); updateModelOptions(); }
     int TabSize() const { return tabSize_; }
-    void SetInsertSpaces(bool b) { insertSpaces_ = b; }     // Tab inserts spaces (default) or a tab character
+    void SetInsertSpaces(bool b) { insertSpaces_ = b; updateModelOptions(); }     // Tab inserts spaces (default) or a tab character
     void SetAutoIndent(bool b) { autoIndent_ = b; }
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
@@ -177,9 +184,9 @@ public:
     void LineTokens(int i, std::vector<CodeToken>& out);
 
     // ---- markers and breakpoints ----
-    void SetMarkers(const std::vector<CodeMarker>& m) { markers_ = m; }
+    void SetMarkers(const std::vector<CodeMarker>& m);
     const std::vector<CodeMarker>& Markers() const { return markers_; }
-    void ClearMarkers() { markers_.clear(); }
+    void ClearMarkers() { SetMarkers({}); }
     /// Breakpoint lines (kept sorted). They move with the text when lines are inserted or removed above them.
     void SetBreakpoints(const std::vector<int>& lines);
     const std::vector<int>& Breakpoints() const { return breakpoints_; }
@@ -230,26 +237,22 @@ public:
     int ColumnToByte(int line, float column) const;
 
 private:
-    struct UndoEdit { CodePos from; std::string removed, inserted; };
-    struct UndoGroup { std::vector<UndoEdit> edits; CodePos caretBefore, anchorBefore, caretAfter, anchorAfter; int kind = 0; };
-
-    void applyRaw(CodePos from, CodePos to, const std::string& ins);
     CodePos edit(int kind, CodePos from, CodePos to, const std::string& ins);
+    void updateModelOptions();
+    void syncCaretToModel();
+    void recordCaretInLastGroup();
+    void refreshMarks();
+    void mirrorBreakpoints();
+    void mirrorMarkers();
+    void installTokenizer();
+    bool selectMatch(const std::optional<okay::text::Range>& r);
+    okay::text::FindFlags findFlags() const { return findCase_ ? okay::text::FindFlags::MatchCase : okay::text::FindFlags::None; }
     void beginCompound();
     void endCompound();
     bool replaceSelection(const std::string& ins, int kind);
     bool deleteSelectionIfAny();
-    std::string textIn(CodePos a, CodePos b) const;
-    static CodePos endOf(CodePos from, const std::string& text);
     void setCaretKeep(CodePos c, CodePos a) { caret_ = c; anchor_ = a; reveal_ = true; }
     void moveCaret(CodePos p, bool extend, bool keepDesired = false);
-    CodePos wordLeft(CodePos p) const;
-    CodePos wordRight(CodePos p) const;
-    void ensureStates(int line);
-    void invalidateFrom(int line);
-    void shiftLines(int firstChanged, int removedTo, int delta);
-    bool findIn(int line, int from, int& start) const;
-    bool findBefore(int line, int limit, int& start) const;
     void clampScroll();
     void layout(const Rect& item);
     bool wordAt(CodePos p, CodePos& a, CodePos& b) const;
@@ -259,19 +262,16 @@ private:
     void drawAll(const Rect& item, bool hovered);
     bool matchBracketImpl(CodePos& a, CodePos& b);
 
-    std::vector<std::string> lines_;
+    okay::text::Buffer buf_;
+    std::size_t bpSet_ = 0, markSet_ = 0;      // the model's line-mark sets: breakpoints, markers
     CodePos caret_, anchor_;
     int desiredCol_ = -1;
-    unsigned version_ = 1;
 
-    std::vector<UndoGroup> undo_, redo_;
     bool groupOpen_ = false, breakGroup_ = true, compound_ = false;
+    std::uint64_t compoundV0_ = 0;
     int curKind_ = 0;
 
     CodeHighlighter highlighter_;
-    std::vector<int> stateIn_;         // stateIn_[i]: highlighter state at the start of line i, valid for i <= validTo_
-    int validTo_ = 0;
-    std::vector<CodeToken> scratch_;
 
     std::string find_; bool findCase_ = false;
     std::vector<CodeMarker> markers_;

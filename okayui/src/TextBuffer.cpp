@@ -95,16 +95,19 @@ bool Buffer::IsValidUtf8(std::string_view s) {
     return true;
 }
 
-std::string Buffer::Sanitize(std::string_view s) {
+std::string Buffer::Sanitize(std::string_view s) { return Buffer().Repair(s); }
+
+std::string Buffer::Repair(std::string_view s) const {
     std::string out;
     out.reserve(s.size());
     const unsigned char* p = (const unsigned char*)s.data();
     for (std::size_t i = 0; i < s.size();) {
         const unsigned char c = p[i];
         if (c == '\r') { out.push_back('\n'); i += (i + 1 < s.size() && p[i + 1] == '\n') ? 2 : 1; continue; }
-        if (c == 0) { out += "\xEF\xBF\xBD"; ++i; continue; }
+        if (opt_.dropControls && c != '\n' && c != '\t' && (c < 0x20 || c == 0x7f)) { ++i; continue; }
+        if (c == 0) { out += opt_.badByte; ++i; continue; }
         const std::size_t n = SeqLen(p + i, s.size() - i);
-        if (!n) { out += "\xEF\xBF\xBD"; ++i; continue; }
+        if (!n) { out += opt_.badByte; ++i; continue; }
         out.append((const char*)p + i, n);
         i += n;
     }
@@ -124,7 +127,7 @@ void Buffer::SetOptions(const Options& o) {
 }
 
 bool Buffer::SetText(std::string_view s) {
-    std::string t = Sanitize(s);
+    std::string t = Repair(s);
     if (t.size() > opt_.maxBytes) return false;
     lines_.clear();
     std::size_t start = 0;
@@ -139,6 +142,7 @@ bool Buffer::SetText(std::string_view s) {
     sel_.assign(1, Selection{});
     tokValid_ = 0;
     startsOk_ = false;
+    tokOutLine_ = (std::size_t)-1;
     ++version_;
     return true;
 }
@@ -152,6 +156,11 @@ std::string Buffer::Text() const {
 
 std::string_view Buffer::Line(std::size_t line) const {
     return line < lines_.size() ? std::string_view(lines_[line]) : std::string_view();
+}
+
+const std::string& Buffer::LineRef(std::size_t line) const {
+    static const std::string kEmpty;
+    return line < lines_.size() ? lines_[line] : kEmpty;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -268,6 +277,7 @@ void Buffer::Touch(std::size_t firstLine) {
     ++version_;
     startsOk_ = false;
     tokValid_ = std::min(tokValid_, firstLine);
+    tokOutLine_ = (std::size_t)-1;
 }
 
 Pos Buffer::RawInsert(Pos at, const std::string& s) {
@@ -302,6 +312,36 @@ std::string Buffer::RawErase(Pos a, Pos b) {
     lines_[a.line].append(lines_[b.line], b.col, std::string::npos);
     lines_.erase(lines_.begin() + (std::ptrdiff_t)a.line + 1, lines_.begin() + (std::ptrdiff_t)b.line + 1);
     return removed;
+}
+
+Pos Buffer::RawReplace(Pos a, Pos b, const std::string& ins, std::string* removed) {
+    std::string r;
+    if (a != b) r = RawErase(a, b);
+    Pos end = a;
+    if (!ins.empty()) end = RawInsert(a, ins);
+    // line marks: lines [a.line, b.line] became end.line - a.line + 1 lines
+    const long long oldN = (long long)(b.line - a.line) + 1, newN = (long long)(end.line - a.line) + 1, delta = newN - oldN;
+    if (delta != 0) {
+        for (std::vector<LineMark>& set : marks_) {
+            std::size_t w = 0;
+            for (std::size_t i = 0; i < set.size(); ++i) {
+                LineMark m = set[i];
+                if (m.line > b.line) m.line = (std::size_t)((long long)m.line + delta);
+                else if (delta < 0 && m.line >= a.line + (std::size_t)newN) continue;      // one of the removed lines
+                set[w++] = m;
+            }
+            set.resize(w);
+        }
+    }
+    if (removed) *removed = std::move(r);
+    return end;
+}
+
+std::size_t Buffer::NewMarkSet() { marks_.emplace_back(); return marks_.size() - 1; }
+void Buffer::SetMarks(std::size_t set, std::vector<LineMark> marks) { if (set < marks_.size()) marks_[set] = std::move(marks); }
+const std::vector<LineMark>& Buffer::Marks(std::size_t set) const {
+    static const std::vector<LineMark> kNone;
+    return set < marks_.size() ? marks_[set] : kNone;
 }
 
 void Buffer::AdjustForErase(Pos& p, Pos a, Pos b) const {
@@ -351,10 +391,24 @@ void Buffer::ClearHistory() {
     undo_.clear(); redo_.clear(); logBytes_ = 0;
 }
 
+bool Buffer::ReopenLastGroup() {
+    if (depth_ > 0 || undo_.empty()) return false;
+    open_ = std::move(undo_.back());
+    undo_.pop_back();
+    logBytes_ -= open_.bytes;
+    redo_.clear();
+    depth_ = 1;
+    return true;
+}
+
+void Buffer::RecordSelectionsInLastGroup() {
+    if (depth_ == 0 && !undo_.empty()) undo_.back().after = sel_;
+}
+
 bool Buffer::ApplyEdit(Pos a, Pos b, std::string_view s, std::optional<Pos>* endOut, bool adjustSel) {
     a = Clamp(a); b = Clamp(b);
     if (b < a) std::swap(a, b);
-    std::string ins = Sanitize(s);
+    std::string ins = Repair(s);
     const std::size_t removedLen = RangeBytes(a, b);
     if (removedLen == 0 && ins.empty()) return false;
     const std::size_t base = bytes_ - removedLen;
@@ -362,9 +416,7 @@ bool Buffer::ApplyEdit(Pos a, Pos b, std::string_view s, std::optional<Pos>* end
     BeginGroup();
     EditRec r;
     r.at = a;
-    if (removedLen) r.removed = RawErase(a, b);
-    Pos end = a;
-    if (!ins.empty()) end = RawInsert(a, ins);
+    const Pos end = RawReplace(a, b, ins, &r.removed);
     if (adjustSel) {
         for (Selection& x : sel_) {
             AdjustForErase(x.anchor, a, b); AdjustForErase(x.head, a, b);
@@ -406,8 +458,7 @@ bool Buffer::Undo() {
     logBytes_ -= g.bytes;
     for (std::size_t i = g.edits.size(); i-- > 0;) {
         const EditRec& e = g.edits[i];
-        if (!e.inserted.empty()) RawErase(e.at, EndOfText(e.at, e.inserted));
-        if (!e.removed.empty()) RawInsert(e.at, e.removed);
+        RawReplace(e.at, EndOfText(e.at, e.inserted), e.removed, nullptr);
     }
     sel_ = g.before;
     for (Selection& s : sel_) { s.anchor = Clamp(s.anchor); s.head = Clamp(s.head); }
@@ -420,8 +471,7 @@ bool Buffer::Redo() {
     Group g = std::move(redo_.back());
     redo_.pop_back();
     for (const EditRec& e : g.edits) {
-        if (!e.removed.empty()) RawErase(e.at, EndOfText(e.at, e.removed));
-        if (!e.inserted.empty()) RawInsert(e.at, e.inserted);
+        RawReplace(e.at, EndOfText(e.at, e.removed), e.inserted, nullptr);
     }
     sel_ = g.after;
     for (Selection& s : sel_) { s.anchor = Clamp(s.anchor); s.head = Clamp(s.head); }
@@ -474,7 +524,7 @@ std::string Buffer::SelectedText() const {
 }
 
 bool Buffer::EditEachSelection(int mode, std::string_view text) {
-    const std::string ins = mode == 0 ? Sanitize(text) : std::string();
+    const std::string ins = mode == 0 ? Repair(text) : std::string();
     const std::vector<Selection> s = sel_;
     const std::size_t n = s.size();
     std::vector<Range> rg(n);
@@ -623,7 +673,7 @@ bool Buffer::OutdentLines(std::size_t first, std::size_t last) {
 // ---------------------------------------------------------------------------------------------------------------------
 // brackets
 
-std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::size_t maxScan) const {
+std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::size_t maxScan, std::size_t maxLines) const {
     p = Clamp(p);
     auto kindAt = [&](Pos q, char& open, char& close, bool& isOpen) {
         const std::string& s = lines_[q.line];
@@ -645,7 +695,7 @@ std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::
         const Pos q = cand[ci];
         char open = 0, close = 0; bool isOpen = false;
         if (!kindAt(q, open, close, isOpen)) continue;
-        if (skip && skip(q)) continue;
+        if (skip && skip(q)) return std::nullopt;                // the bracket by the caret decides, even if it is rejected
         std::size_t depth = 1, scanned = 0;
         if (isOpen) {
             std::size_t l = q.line, c = q.col + 1;
@@ -656,9 +706,9 @@ std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::
                     if (s[c] != open && s[c] != close) continue;
                     if (skip && skip(Pos{l, c})) continue;
                     if (s[c] == open) ++depth;
-                    else if (--depth == 0) return BracketPair{q, Pos{l, c}};
+                    else if (--depth == 0) return BracketPair{q, Pos{l, c}, q};
                 }
-                if (++l >= lines_.size()) return std::nullopt;
+                if (++l >= lines_.size() || l - q.line > maxLines) return std::nullopt;
                 c = 0;
                 if (++scanned > maxScan) return std::nullopt;
             }
@@ -672,9 +722,9 @@ std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::
                     if (s[c] != open && s[c] != close) continue;
                     if (skip && skip(Pos{l, c})) continue;
                     if (s[c] == close) ++depth;
-                    else if (--depth == 0) return BracketPair{Pos{l, c}, q};
+                    else if (--depth == 0) return BracketPair{Pos{l, c}, q, q};
                 }
-                if (l == 0) return std::nullopt;
+                if (l == 0 || q.line - l >= maxLines) return std::nullopt;
                 --l;
                 c = lines_[l].size();
                 if (++scanned > maxScan) return std::nullopt;
@@ -688,7 +738,7 @@ std::optional<BracketPair> Buffer::MatchBracket(Pos p, const SkipFn& skip, std::
 // find and replace
 
 std::optional<Range> Buffer::Find(std::string_view needleIn, Pos from, FindFlags f, bool backward, bool wrap) const {
-    const std::string needle = Sanitize(needleIn);
+    const std::string needle = Repair(needleIn);
     if (needle.empty()) return std::nullopt;
     from = Clamp(from);
     const Matcher m(needle, f);
@@ -741,7 +791,7 @@ std::optional<Range> Buffer::Find(std::string_view needleIn, Pos from, FindFlags
 
 std::vector<Range> Buffer::FindAll(std::string_view needleIn, FindFlags f, std::size_t maxCount) const {
     std::vector<Range> out;
-    const std::string needle = Sanitize(needleIn);
+    const std::string needle = Repair(needleIn);
     if (needle.empty() || maxCount == 0) return out;
     const Matcher m(needle, f);
     if (needle.find('\n') != std::string::npos) {
@@ -767,9 +817,22 @@ std::vector<Range> Buffer::FindAll(std::string_view needleIn, FindFlags f, std::
     return out;
 }
 
+std::vector<std::size_t> Buffer::FindInLine(std::size_t line, std::string_view needleIn, FindFlags f) const {
+    std::vector<std::size_t> out;
+    const std::string needle = Repair(needleIn);
+    if (needle.empty() || needle.find('\n') != std::string::npos) return out;
+    const Matcher m(needle, f);
+    std::size_t lastEnd = 0;
+    m.Run(Line(line), [&](std::size_t st) {
+        if (st >= lastEnd) { out.push_back(st); lastEnd = st + needle.size(); }
+        return false;
+    });
+    return out;
+}
+
 std::size_t Buffer::ReplaceAll(std::string_view needleIn, std::string_view replIn, FindFlags f) {
-    const std::string needle = Sanitize(needleIn);
-    const std::string repl = Sanitize(replIn);
+    const std::string needle = Repair(needleIn);
+    const std::string repl = Repair(replIn);
     const std::vector<Range> hits = FindAll(needle, f);
     if (hits.empty()) return 0;
     // One edit over the span from the first match to the last: linear in the span, whatever the number of matches.
@@ -796,25 +859,29 @@ std::size_t Buffer::ReplaceAll(std::string_view needleIn, std::string_view replI
 void Buffer::SetTokenizer(Tokenizer t) {
     tok_ = std::move(t);
     tokValid_ = 0;
+    tokOutLine_ = (std::size_t)-1;
 }
 
 const std::vector<Token>& Buffer::LineTokens(std::size_t line) const {
     if (!tok_ || line >= lines_.size()) return kNoTokens;
-    if (tokCache_.size() != lines_.size()) tokCache_.resize(lines_.size());
+    if (tokState_.size() != lines_.size() + 1) tokState_.resize(lines_.size() + 1, 0);
     tokValid_ = std::min(tokValid_, lines_.size());
-    while (tokValid_ <= line) {
-        const std::size_t i = tokValid_;
-        TokLine& t = tokCache_[i];
-        t.tokens.clear();
-        const std::string_view s = lines_[i];
-        t.stateOut = tok_(s, i ? tokCache_[i - 1].stateOut : 0u, t.tokens);
-        for (Token& k : t.tokens) {                            // a careless tokenizer must not be able to break callers
-            k.end = std::min(k.end, s.size());
-            k.begin = std::min(k.begin, k.end);
-        }
+    while (tokValid_ < line) {                                  // the end states of the lines above, each computed once
+        tokOut_.clear();
+        tokOutLine_ = (std::size_t)-1;
+        tokState_[tokValid_ + 1] = tok_(lines_[tokValid_], tokState_[tokValid_], tokOut_);
         ++tokValid_;
     }
-    return tokCache_[line].tokens;
+    if (tokOutLine_ == line) return tokOut_;
+    tokOut_.clear();
+    const std::string& s = lines_[line];
+    tok_(s, tokState_[line], tokOut_);
+    for (Token& k : tokOut_) {                                  // a careless tokenizer must not be able to break callers
+        k.end = std::min(k.end, s.size());
+        k.begin = std::min(k.begin, k.end);
+    }
+    tokOutLine_ = line;
+    return tokOut_;
 }
 
 }  // namespace okay::text

@@ -40,7 +40,7 @@ if(NOT TARGET SDL2::SDL2)
     target_include_directories(okay_ui PUBLIC ${SDL2_INCLUDE_DIRS})
 endif()
 # okay::engine provides the 8x8 bitmap font used for button labels.
-target_link_libraries(okay_ui PUBLIC okay::engine ${_okayui_sdl})
+target_link_libraries(okay_ui PUBLIC okay::text okay::engine ${_okayui_sdl})
 target_compile_features(okay_ui PUBLIC cxx_std_17)
 # Direct3D 11 backend needs the D3D runtime + the HLSL compiler (Windows targets).
 if(WIN32)

@@ -60,6 +60,8 @@ struct Options {
     std::size_t maxBytes = 256u << 20;       // the text may not grow past this
     std::size_t undoGroups = 1000;           // oldest groups are dropped past this
     std::size_t undoBytes = 64u << 20;       // and past this many bytes held by the log (removed + inserted text)
+    std::string badByte = "\xEF\xBF\xBD";    // what each invalid byte becomes (a front end may prefer "?")
+    bool dropControls = false;               // drop C0 control characters other than tab and newline, and DEL, from input
 };
 
 enum class FindFlags : unsigned { None = 0, MatchCase = 1, WholeWord = 2 };
@@ -76,7 +78,10 @@ using Tokenizer = std::function<std::uint32_t(std::string_view line, std::uint32
 /// Used by bracket matching: return true for a position that must not count (inside a string or comment).
 using SkipFn = std::function<bool(const Pos&)>;
 
-struct BracketPair { Pos open, close; };     // each is the position OF the bracket character
+struct BracketPair { Pos open, close, at; };     // each is the position OF the bracket character; `at` is the one next to the caret
+
+/// A line number that follows the text as it is edited (a breakpoint, an error mark). `tag` is the caller's own number.
+struct LineMark { std::size_t line = 0; std::uint32_t tag = 0; };
 
 class Buffer {
 public:
@@ -94,11 +99,16 @@ public:
     std::size_t LineCount() const { return lines_.size(); }
     /// The line without its newline; an out-of-range line gives an empty view.
     std::string_view Line(std::size_t line) const;
+    /// The same as a reference to the stored line (an empty string when out of range). Good until the next change.
+    const std::string& LineRef(std::size_t line) const;
     std::size_t LineLength(std::size_t line) const { return Line(line).size(); }
     std::string Slice(Pos a, Pos b) const;   // text between two positions in either order
     std::uint64_t Version() const { return version_; }   // grows on every change, undo and redo included
 
-    /// The repair every input goes through: CRLF and CR to "\n", invalid UTF-8 bytes and NUL to U+FFFD.
+    /// The repair every input goes through: CRLF and CR to "\n", invalid UTF-8 bytes and NUL to Options::badByte
+    /// (U+FFFD by default); with Options::dropControls the other control characters are dropped too.
+    std::string Repair(std::string_view s) const;
+    /// The same with the default options.
     static std::string Sanitize(std::string_view s);
     static bool IsValidUtf8(std::string_view s);
 
@@ -123,6 +133,9 @@ public:
     /// Replace [a, b) with text. Returns the position after the new text, or nullopt if refused.
     std::optional<Pos> Replace(Pos a, Pos b, std::string_view s);
 
+    /// Where the text ends up if `s` (already clean) is inserted at `at`.
+    static Pos EndOfText(Pos at, std::string_view s);
+
     // ---- undo, redo, groups ----
     void BeginGroup();                       // nests; the outermost End closes one undo step
     void EndGroup();
@@ -134,6 +147,11 @@ public:
     std::size_t UndoDepth() const { return undo_.size(); }
     std::size_t RedoDepth() const { return redo_.size(); }
     void ClearHistory();
+    /// Take the newest undo step back into an open group, so the next edits join it (typing a word is one step).
+    /// False (nothing done) if a group is open or there is no step. Close it again with EndGroup().
+    bool ReopenLastGroup();
+    /// Make the newest undo step remember the current selections as "after" (what Redo restores).
+    void RecordSelectionsInLastGroup();
 
     // ---- cursors and selections (several allowed) ----
     const std::vector<Selection>& Selections() const { return sel_; }
@@ -150,6 +168,14 @@ public:
     bool DeleteForward();
     /// Delete the words before / after each caret (selections are deleted as they are).
     bool DeleteWord(bool forward);
+
+    // ---- line marks ----
+    /// A set of line marks that move with the text: after an edit that replaces lines [a, b] by n lines, marks below b move by
+    /// the difference and, when lines were removed, marks on the removed (last) lines of the range are dropped. Undo and redo
+    /// move them the same way and do not bring dropped ones back. Marks are kept in the order given. Returns the set number.
+    std::size_t NewMarkSet();
+    void SetMarks(std::size_t set, std::vector<LineMark> marks);     // stored as given, even past the end
+    const std::vector<LineMark>& Marks(std::size_t set) const;
 
     // ---- words ----
     /// Ctrl+Left: skip blanks, then a run of word characters or of punctuation; crosses to the previous line at column 0.
@@ -171,8 +197,10 @@ public:
     bool OutdentLines(std::size_t first, std::size_t last);
 
     // ---- brackets ----
-    /// If the character at p, or else the one before p, is one of ()[]{} give the pair. Scans at most `maxScan` bytes.
-    std::optional<BracketPair> MatchBracket(Pos p, const SkipFn& skip = SkipFn(), std::size_t maxScan = 1u << 20) const;
+    /// If the character at p, or else the one before p, is one of ()[]{} give the pair (a bracket the skip function rejects
+    /// gives no pair). Scans at most `maxScan` bytes and `maxLines` lines away from the bracket.
+    std::optional<BracketPair> MatchBracket(Pos p, const SkipFn& skip = SkipFn(), std::size_t maxScan = 1u << 20,
+                                            std::size_t maxLines = (std::size_t)-1) const;
 
     // ---- find and replace ----
     /// Next match starting at or after `from` (or the last one starting before it when `backward`). A needle may contain
@@ -181,12 +209,16 @@ public:
                               bool wrap = true) const;
     /// All non-overlapping matches in order, at most `maxCount`.
     std::vector<Range> FindAll(std::string_view needle, FindFlags f = FindFlags::MatchCase, std::size_t maxCount = 1000000) const;
+    /// Start columns of the non-overlapping matches of a needle without a newline on one line (for drawing).
+    std::vector<std::size_t> FindInLine(std::size_t line, std::string_view needle, FindFlags f = FindFlags::MatchCase) const;
     /// Replace all matches in one undo step. Returns how many; 0 also when refused (size limit).
     std::size_t ReplaceAll(std::string_view needle, std::string_view repl, FindFlags f = FindFlags::MatchCase);
 
     // ---- tokenizer hook ----
     void SetTokenizer(Tokenizer t);          // an empty function turns colouring off
-    /// Tokens of a line; runs the tokenizer from the first stale line. The reference is good until the next change.
+    /// Tokens of a line. The tokenizer runs over the lines above it once (their end states are cached until a change) and then
+    /// over the line itself; the last line asked for is kept, so asking for it again costs nothing. The reference is good until
+    /// the next call or change.
     const std::vector<Token>& LineTokens(std::size_t line) const;
 
 private:
@@ -195,7 +227,7 @@ private:
 
     Pos RawInsert(Pos at, const std::string& s);                 // s already sanitised, at already clamped
     std::string RawErase(Pos a, Pos b);                          // clamped and ordered
-    static Pos EndOfText(Pos at, std::string_view s);
+    Pos RawReplace(Pos a, Pos b, const std::string& ins, std::string* removed);   // erase, insert, move the line marks
     bool ApplyEdit(Pos a, Pos b, std::string_view s, std::optional<Pos>* endOut, bool adjustSel);
     void Touch(std::size_t firstLine);                           // version, caches
     void TrimHistory();
@@ -221,9 +253,11 @@ private:
     mutable bool startsOk_ = false;
 
     Tokenizer tok_;
-    struct TokLine { std::vector<Token> tokens; std::uint32_t stateOut = 0; };
-    mutable std::vector<TokLine> tokCache_;
-    mutable std::size_t tokValid_ = 0;                           // lines [0, tokValid_) are up to date
+    mutable std::vector<std::uint32_t> tokState_;                // tokState_[i]: tokenizer state at the start of line i, valid for i <= tokValid_
+    mutable std::size_t tokValid_ = 0;
+    mutable std::vector<Token> tokOut_;                          // the tokens of the last line asked for
+    mutable std::size_t tokOutLine_ = (std::size_t)-1;
+    std::vector<std::vector<LineMark>> marks_;
 };
 
 }  // namespace okay::text

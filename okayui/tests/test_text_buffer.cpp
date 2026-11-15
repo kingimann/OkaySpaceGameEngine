@@ -390,6 +390,101 @@ void TestFind() {
     CHECK(c.ReplaceAll("a", "bb") == 4 && c.Text() == "bb bb bb bb" && c.ByteSize() == 11);
 }
 
+void TestEditorSupport() {
+    RUN_SUITE("what a widget needs: options, reopen, line marks, search per line");
+    {   // input repair options
+        Options o; o.badByte = "?"; o.dropControls = true;
+        Buffer b(o);
+        b.SetText(std::string("a\x01\x7f" "b\xFF" "c\0d", 9));
+        CHECK(b.Text() == "ab?cd");
+        CHECK(b.Repair("x\ty\r\nz\x02") == "x\ty\nz");
+        CHECK(Buffer::Sanitize("a\x01") == "a\x01");                              // the defaults keep other controls
+    }
+    {   // reopen the newest step: typing a word is one undo step
+        Buffer b;
+        b.SetCursor(Pos{0, 0});
+        b.Insert(Pos{0, 0}, "a");
+        CHECK(b.ReopenLastGroup() && b.InGroup() && !b.ReopenLastGroup());
+        b.Insert(Pos{0, 1}, "b");
+        b.EndGroup();
+        CHECK(b.UndoDepth() == 1 && b.Text() == "ab");
+        CHECK(b.Undo() && b.Text().empty() && b.UndoDepth() == 0);
+        Buffer c;
+        CHECK(!c.ReopenLastGroup());
+        c.Insert(Pos{0, 0}, "x");
+        c.Undo();
+        CHECK(!c.ReopenLastGroup());                                              // nothing to reopen once undone
+        // the selections a step restores can be updated after the fact
+        Buffer d;
+        d.SetText("hello");
+        d.SetCursor(Pos{0, 5});
+        d.Insert(Pos{0, 5}, "!");
+        d.SetCursor(Pos{0, 2});
+        d.RecordSelectionsInLastGroup();
+        d.SetCursor(Pos{0, 0});
+        d.Undo();
+        d.Redo();
+        CHECK(d.Selections()[0].head == (Pos{0, 2}));
+    }
+    {   // line marks follow edits, undo and redo; dropped ones do not come back
+        Buffer b;
+        b.SetText("0\n1\n2\n3\n4\n5");
+        const std::size_t set = b.NewMarkSet();
+        b.SetMarks(set, {LineMark{1, 10}, LineMark{3, 11}, LineMark{3, 12}, LineMark{5, 13}});
+        b.Insert(Pos{2, 1}, "\nx\ny");                                           // two lines added after line 2
+        CHECK(b.Marks(set).size() == 4 && b.Marks(set)[0].line == 1 && b.Marks(set)[1].line == 5 && b.Marks(set)[2].line == 5 && b.Marks(set)[3].line == 7);
+        CHECK(b.Marks(set)[1].tag == 11 && b.Marks(set)[2].tag == 12);              // order and tags kept
+        b.Erase(Pos{2, 0}, Pos{4, 1});                                             // two lines removed
+        CHECK(b.Marks(set).size() == 4 && b.Marks(set)[1].line == 3 && b.Marks(set)[3].line == 5);
+        b.Erase(Pos{1, 0}, Pos{4, 0});                                             // three lines removed: marks on removed lines go
+        bool any1 = false; for (const LineMark& m : b.Marks(set)) if (m.tag == 11 || m.tag == 12) any1 = true;
+        CHECK(!any1 && b.Marks(set).size() == 2 && b.Marks(set)[0].line == 1 && b.Marks(set)[1].tag == 13);
+        const auto before = b.Marks(set);
+        b.Undo();                                                                  // undo adds the lines back; the dropped marks stay dropped
+        CHECK(b.Marks(set).size() == 2 && b.Marks(set)[1].line == before[1].line + 3);
+        b.Redo();
+        CHECK(b.Marks(set).size() == 2 && b.Marks(set)[1].line == before[1].line);
+        // a replace of three lines by one drops the marks on the last two of the range; by three, none
+        b.SetText("a\nb\nc\nd");
+        b.SetMarks(set, {LineMark{0, 1}, LineMark{1, 2}, LineMark{2, 3}, LineMark{3, 4}});
+        b.Replace(Pos{0, 0}, Pos{2, 1}, "z");
+        CHECK(b.Marks(set).size() == 2 && b.Marks(set)[0].tag == 1 && b.Marks(set)[1].tag == 4 && b.Marks(set)[1].line == 1);
+        b.SetText("a\nb\nc\nd");
+        b.SetMarks(set, {LineMark{0, 1}, LineMark{1, 2}, LineMark{2, 3}, LineMark{3, 4}});
+        b.Replace(Pos{0, 0}, Pos{2, 1}, "x\ny\nz");
+        CHECK(b.Marks(set).size() == 4 && b.Marks(set)[3].line == 3);
+        CHECK(b.Marks(99).empty());
+        b.SetMarks(99, {LineMark{1, 1}});                                          // an unknown set is ignored
+        // a second set is independent
+        const std::size_t s2 = b.NewMarkSet();
+        b.SetMarks(s2, {LineMark{2, 7}});
+        b.Insert(Pos{0, 0}, "\n");
+        CHECK(b.Marks(s2)[0].line == 3 && b.Marks(set)[0].line == 0 && b.Marks(set)[1].line == 2);
+    }
+    {   // bracket search limits and priority
+        Buffer b;
+        std::string t = "(\n";
+        for (int i = 0; i < 50; ++i) t += "x\n";
+        t += ")";
+        b.SetText(t);
+        CHECK(b.MatchBracket(Pos{0, 0}, SkipFn(), 1u << 20, 100));
+        CHECK(!b.MatchBracket(Pos{0, 0}, SkipFn(), 1u << 20, 10));
+        CHECK(b.MatchBracket(Pos{0, 0})->at == (Pos{0, 0}));
+        CHECK(b.MatchBracket(Pos{51, 1})->at == (Pos{51, 0}));
+        b.SetText("()");
+        // the bracket right at the caret wins even when it is rejected: no fallback to the one before it
+        CHECK(!b.MatchBracket(Pos{0, 1}, [](const Pos& p) { return p.col == 1; }));
+    }
+    {   // matches on one line for drawing
+        Buffer b;
+        b.SetText("aaaa ab AB\nab");
+        CHECK((b.FindInLine(0, "aa") == std::vector<std::size_t>{0, 2}));
+        CHECK((b.FindInLine(0, "ab", FindFlags::MatchCase) == std::vector<std::size_t>{5}));
+        CHECK((b.FindInLine(0, "ab", FindFlags::None) == std::vector<std::size_t>{5, 8}));
+        CHECK(b.FindInLine(0, "").empty() && b.FindInLine(0, "a\nb").empty() && b.FindInLine(9, "a").empty());
+    }
+}
+
 void TestTokenizer() {
     RUN_SUITE("tokenizer hook");
     Buffer b;
@@ -405,13 +500,18 @@ void TestTokenizer() {
     });
     b.SetText("a\n/* c\nb\n*/\nd");
     CHECK(b.LineTokens(0).size() == 1 && b.LineTokens(0)[0].kind == 1 && b.LineTokens(0)[0].end == 1);
+    calls = 0;
     CHECK(b.LineTokens(2)[0].kind == 2 && b.LineTokens(4)[0].kind == 1);
-    CHECK(calls == 5);
+    CHECK(calls == 3 + 3);                                                        // line 2: states of 0 and 1, then itself; line 4: states of 2 and 3, then itself
+    calls = 0;
     (void)b.LineTokens(4);
-    CHECK(calls == 5);                                                            // cached
-    b.Insert(Pos{3, 0}, "x");                                                     // lines 0..2 stay valid, 3 and below re-run
+    CHECK(calls == 0);                                                            // the last line asked for is kept
+    (void)b.LineTokens(2);
+    CHECK(calls == 1);                                                            // another line: states are cached, only the line runs
+    b.Insert(Pos{3, 0}, "x");                                                     // states of lines 0..3 stay valid, 3 and below re-run
+    calls = 0;
     (void)b.LineTokens(4);
-    CHECK(calls == 7);
+    CHECK(calls == 2);                                                            // the state of line 3, then line 4
     b.Erase(Pos{1, 0}, Pos{1, 2});                                                // the comment opener is gone
     CHECK(b.LineTokens(2)[0].kind == 1 && b.LineTokens(3)[0].kind == 1);
     b.Insert(Pos{0, 1}, "\n/*");                                                  // line count changed
@@ -663,6 +763,7 @@ int main() {
     TestBrackets();
     TestFind();
     TestTokenizer();
+    TestEditorSupport();
     TestHostile();
     TestDifferential();
     TEST_MAIN_RESULT();

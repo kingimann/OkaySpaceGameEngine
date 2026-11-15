@@ -7,6 +7,8 @@ and its groups, music, the player's volume settings, and scripting.
 ## Clips
 
 An AudioSource plays a **WAV, OGG, MP3 or FLAC** file. Set its file in the Inspector
+
+(Opt-in, off by default: `OKAY_OWN_WAV=1` makes WAV loading use our own decoder, which also reads MS ADPCM, IMA ADPCM, A-law, mu-law, 64-bit float and extensible files and refuses oversized or damaged ones; see `docs/own_wav_decoder.md`.)
 (Browse or type a path relative to the project). Files are decoded once when Play
 starts, resampled to the output rate, and shared between every source that uses
 them. Files that can't be read are listed in the Console. FLAC is lossless: the

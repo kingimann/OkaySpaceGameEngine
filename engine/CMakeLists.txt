@@ -191,6 +191,7 @@ add_library(okay_engine
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
     src/Audio/FlacDecoder.cpp
+    src/Audio/WavDecoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
@@ -597,6 +598,12 @@ endif()
 if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
+endif()
+# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
+# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
+if(OKAY_OWN_WAV)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
+    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
 endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)

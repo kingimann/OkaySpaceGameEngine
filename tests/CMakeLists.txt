@@ -73,6 +73,13 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): hand-computed values, hostile input, the opt-in switch, and an
+# IMA differential against Python's audioop (python3 optional: SKIP; OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure).
+add_executable(test_own_wav test_own_wav.cpp)
+target_link_libraries(test_own_wav PRIVATE okay::engine)
+add_test(NAME own_wav COMMAND test_own_wav WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_wav PROPERTIES TIMEOUT 240)
+
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)

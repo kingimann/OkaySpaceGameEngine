@@ -113,5 +113,34 @@ InvResult RepairEquipped(Equipment* eq, int slot, float amount) {
     return InvResult::Done(1);
 }
 
+void WearArmorOnHit(GameObject* who) {
+    Equipment* eq = who ? Equipment::Of(who) : nullptr;
+    if (!eq) return;
+    for (int i = 0; i < (int)eq->slots.size(); ++i) {
+        const Equipment::Slot& s = eq->slots[i];
+        if (s.item.empty() || Broken(s.item, s.data)) continue;
+        const ItemDefinition* d = ItemDatabase::Get().Find(s.item);
+        const std::string v = d ? d->Custom("wearPerHit") : std::string();
+        const float per = v.empty() ? 0.0f : (float)std::atof(v.c_str());
+        if (std::isfinite(per) && per > 0.0f) WearEquipped(eq, i, per);
+    }
+}
+
+namespace {
+void WearMainHand(GameObject* who, const char* key) {
+    Equipment* eq = who ? Equipment::Of(who) : nullptr;
+    if (!eq) return;
+    const int i = eq->Find("Main Hand");
+    if (i < 0 || eq->slots[i].item.empty() || Broken(eq->slots[i].item, eq->slots[i].data)) return;
+    const ItemDefinition* d = ItemDatabase::Get().Find(eq->slots[i].item);
+    const std::string v = d ? d->Custom(key) : std::string();
+    const float per = v.empty() ? 0.0f : (float)std::atof(v.c_str());
+    if (std::isfinite(per) && per > 0.0f) WearEquipped(eq, i, per);
+}
+} // namespace
+
+void WearWeaponOnStrike(GameObject* who) { WearMainHand(who, "wearPerStrike"); }
+void WearWeaponOnShot(GameObject* who) { WearMainHand(who, "wearPerShot"); }
+
 } // namespace durability
 } // namespace okay

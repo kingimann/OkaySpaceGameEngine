@@ -6,6 +6,9 @@
 #include <Okay.hpp>
 #include "okay/Components/Equipment.hpp"
 #include "okay/Inventory/Durability.hpp"
+#include "okay/Combat/WeaponDefinition.hpp"
+#include "okay/Components/MeleeAttacker.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -125,6 +128,81 @@ int main() {
         CHECK(durability::RepairEquipped(eq, head, 10.0f).Ok());
         CHECK(eq->ArmorBonus() == 5.0f && eq->DefenseBonus() == 3);
         CHECK(!durability::WearEquipped(eq, eq->Find("Feet"), 5.0f).Ok());   // nothing worn there
+    }
+    {   // wear on hit: a HealthStat hit wears worn pieces that set wearPerHit; the others never wear on their own
+        ItemDefinition plate; plate.id = plate.name = "plate"; plate.equip = EquipSlot::Chest;
+        plate.custom = {{"maxDurability", "5"}, {"armor", "4"}, {"wearPerHit", "2"}};
+        ItemDatabase::Get().Put(plate);
+        Scene hs("hits");
+        GameObject* knight = hs.CreateGameObject("Knight");
+        auto* hp = knight->AddComponent<HealthStat>();
+        hp->publishPrefs = false; hp->maxHealth = 100.0f;
+        auto* eq = knight->AddComponent<Equipment>();
+        const int head = eq->Find("Head"), chest = eq->Find("Chest");
+        CHECK(eq->Set(head, "helmet") && eq->Set(chest, "plate"));
+        hs.Start(); hs.Update(0.016f);
+        CHECK(hp->equipArmor == 9.0f);                                    // 5 + 4
+        hp->invincibleTime = 0.0f;
+        hp->Damage(20.0f);
+        CHECK(eq->slots[chest].data.durability == 3.0f);                  // plate wore by 2
+        CHECK(eq->slots[head].data.durability < 0.0f);                    // the helmet has no wearPerHit: untouched
+        hp->Damage(20.0f); hp->Damage(20.0f);                             // 3 -> 1 -> 0: broken
+        CHECK(durability::Broken("plate", eq->slots[chest].data));
+        hs.Update(0.016f);
+        CHECK(hp->equipArmor == 5.0f);                                    // only the helmet protects now
+        const float before = hp->health;
+        hp->Damage(20.0f);
+        CHECK(eq->slots[chest].data.durability == 0.0f);                  // a broken piece is not worn further
+        CHECK(before - hp->health == 15.0f);                              // 20 - 5
+    }
+    {   // weapon wear: one wear per swing that lands (not on a miss); a broken weapon is not used as a weapon
+        ItemDefinition sword; sword.id = sword.name = "sword"; sword.equip = EquipSlot::MainHand;
+        sword.custom = {{"maxDurability", "2"}, {"wearPerStrike", "1"}};
+        ItemDatabase::Get().Put(sword);
+        WeaponDefinition wd; wd.id = "sword_w"; wd.name = "Sword"; wd.item = "sword"; wd.swingTime = 0.0f; wd.damage = 12.0f;
+        WeaponBook::Get().Put(wd);
+        Scene ws("swing");
+        GameObject* fighter = ws.CreateGameObject("Fighter");
+        auto* eq = fighter->AddComponent<Equipment>();
+        const int hand = eq->Find("Main Hand");
+        CHECK(hand >= 0 && eq->Set(hand, "sword"));
+        auto* melee = fighter->AddComponent<MeleeAttacker>();
+        melee->cooldown = 0.0f; melee->attackKey = 0; melee->useMouse = false; melee->arc = 360.0f;
+        GameObject* dummy = ws.CreateGameObject("Dummy");
+        dummy->transform->localPosition = {0, 0, -1};
+        auto* dh = dummy->AddComponent<HealthStat>(); dh->publishPrefs = false;
+        ws.Start(); ws.Update(0.016f);
+        CHECK(WeaponForHolder(fighter) != nullptr);
+        melee->Swing(); ws.Update(0.016f);
+        CHECK(eq->slots[hand].data.durability == 1.0f);                   // one swing, one hit: worn by 1
+        dummy->transform->localPosition = {0, 0, -50};                    // out of reach
+        melee->Swing(); ws.Update(0.016f);
+        CHECK(eq->slots[hand].data.durability == 1.0f);                   // a miss does not wear it
+        dummy->transform->localPosition = {0, 0, -1};
+        melee->Swing(); ws.Update(0.016f);
+        CHECK(durability::Broken("sword", eq->slots[hand].data));
+        CHECK(WeaponForHolder(fighter) == nullptr);                       // broken: not a weapon until repaired
+        CHECK(durability::RepairEquipped(eq, hand).Ok());
+        CHECK(WeaponForHolder(fighter) != nullptr);
+        WeaponBook::Get().Clear();
+    }
+    {   // a gun wears per shot fired (RangedWeapon::Fire), hit or miss
+        ItemDefinition gun; gun.id = gun.name = "gun"; gun.equip = EquipSlot::MainHand;
+        gun.custom = {{"maxDurability", "3"}, {"wearPerShot", "1"}};
+        ItemDatabase::Get().Put(gun);
+        Scene gs("shots");
+        GameObject* shooter = gs.CreateGameObject("Shooter");
+        auto* eq = shooter->AddComponent<Equipment>();
+        const int hand = eq->Find("Main Hand");
+        CHECK(eq->Set(hand, "gun"));
+        auto* rw = shooter->AddComponent<RangedWeapon>();
+        rw->fireButton = -1; rw->magazine = 0;
+        gs.Start(); gs.Update(0.016f);
+        CHECK(rw->Fire());
+        CHECK(eq->slots[hand].data.durability == 2.0f);
+        gs.Update(1.0f);                                                  // past the fire-rate cooldown
+        CHECK(rw->Fire());
+        CHECK(eq->slots[hand].data.durability == 1.0f);
     }
     {   // the script functions: inv_durability, inv_broken, inv_wear, inv_repair (the visual-script Fn nodes too)
         Scene ss("script");

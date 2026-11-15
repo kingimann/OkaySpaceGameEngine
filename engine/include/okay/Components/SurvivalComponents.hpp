@@ -15,6 +15,15 @@
 #include <string>
 
 namespace okay {
+class GameObject;
+namespace durability {
+/// Wear every worn piece on `who` (its Equipment) whose definition has a custom "wearPerHit" by that amount
+/// (okay/Inventory/Durability.hpp). Called by HealthStat when a hit lands while worn armor counts.
+void WearArmorOnHit(GameObject* who);
+}
+}
+
+namespace okay {
 
 /// Individual native survival stats — the C++ siblings of the per-stat Survival Kit
 /// scripts (Health, Hunger, Thirst, Stamina, Oxygen, Temperature, Sleep, Sanity).
@@ -188,6 +197,7 @@ public:
         health -= dmg;
         m_timer = regenDelay;
         m_iframes = invincibleTime;
+        if (equipArmor > 0.0f) durability::WearArmorOnHit(gameObject);   // worn armor with wearPerHit wears down
         if (health <= 0.0f) OnDeath();
         else if (playHitAnim && hasLastHit)
             HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);

@@ -44,5 +44,17 @@ InvResult Repair(Inventory* inv, int slot, float amount = 0.0f, const std::vecto
 InvResult WearEquipped(Equipment* eq, int slot, float amount);
 InvResult RepairEquipped(Equipment* eq, int slot, float amount = 0.0f);
 
+/// A hit landed on `who` while its worn armor counted (HealthStat calls this): every worn piece whose definition has a
+/// custom "wearPerHit" above 0 wears by that much. Pieces without it never wear on their own (the default), and
+/// broken pieces are skipped.
+void WearArmorOnHit(GameObject* who);
+/// A melee swing by `who` landed (MeleeAttacker calls this once a swing): the worn Main Hand piece wears by its
+/// definition's custom "wearPerStrike" (0 or missing = never). A broken Main Hand weapon is not used as a weapon
+/// (WeaponForHolder returns none, so the attacker fights with its own numbers) until it is repaired.
+void WearWeaponOnStrike(GameObject* who);
+/// A ranged shot was fired by `who` (RangedWeapon calls this per shot): the worn Main Hand piece wears by its
+/// definition's custom "wearPerShot" (0 or missing = never).
+void WearWeaponOnShot(GameObject* who);
+
 } // namespace durability
 } // namespace okay

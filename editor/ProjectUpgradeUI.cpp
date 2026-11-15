@@ -8,6 +8,7 @@
 #include "ProjectUpgrade.hpp"
 #include "ProjectState.hpp"
 #include "AppRestart.hpp"
+#include "StartupModals.hpp"
 
 #include <optional>
 
@@ -168,7 +169,12 @@ void DrawGatePrompt() {
     using okayup::PromptKind;
     using okayup::Choice;
     const okayup::Prompt& pr = g_gate.prompt();
-    const bool wanted = pr.kind != PromptKind::None;
+    // One startup question at a time (StartupModals.hpp, issue #888). The version question goes first, so what else is due
+    // never holds it back; the others (recovery, "Save changes?", the chooser) wait for it.
+    namespace st = okay::editor::startup;
+    st::Pending due;
+    due.projectVersion = pr.kind != PromptKind::None;
+    const bool wanted = st::MayAsk(st::Modal::ProjectVersion, due);
     if (wanted && !ImGui::IsPopupOpen("Project version")) ImGui::OpenPopup("Project version");
     if (!wanted && !ImGui::IsPopupOpen("Project version")) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));

@@ -507,11 +507,35 @@ bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, 
 ### Autosave and recovery
 
 With **File > Autosave** on, dirty graphs, scripts and the scene (including ones that have never been saved) are
-copied into `okay_recovery` about every 30 seconds and when the window loses focus. The next start offers
-**Restore**, **Compare** or **Discard**, and keeps the copy until that choice. The real files are overwritten
+copied into the recovery folder about every 30 seconds and when the window loses focus. The recovery folder is
+`okay_recovery` in your user data folder (`%APPDATA%\OkaySpace\okay_recovery` on Windows,
+`~/.local/share/OkaySpace/okay_recovery` on Linux), so it is the same wherever the editor was started from. Copies an older
+editor left in `okay_recovery` next to where it was started are still found and offered once. The next start offers
+**Restore**, **Compare** or **Discard**, and keeps the copy until that choice; once you answer, the copy (with the older copies of
+the same session) is deleted, so the question does not come back. The real files are overwritten
 only when **Also save the real file** is on. A leftover `<scene>.autosave` from an older editor is still
 offered when it is newer than the scene; new sessions do not write that sidecar. The last five saves of a
 file are kept by `BackupManager` (see [undo_recovery.md](undo_recovery.md)).
+
+**One question at a time at startup** (issue #888). The startup questions take turns, in this order: the project-version
+question (and its progress and result), **Save changes?**, the **Open a project** chooser, an old `<scene>.autosave`, and last
+**Restore recovered work?**. A question also never opens over another window's question that is already on screen.
+`editor/StartupModals.hpp` holds the rule (no ImGui, tested by `startup_modals`). Before this, opening a project with no recorded
+version while a recovery copy was waiting made the version question and the recovery question close each other every frame: neither
+was drawn, the invisible window blocked all input, and the scene never opened.
+
+How to try it (Windows): open a scene, change something, wait 30 seconds (or switch to another window) so a recovery copy is written,
+then end `OkayEngine.exe` in Task Manager. Then run `OkayEngine.exe --open examples\vehicle\vehicle_test.okayscene` (a folder with
+no recorded version). The **Project version** question comes first, alone; answer **Upgrade project** and **Open project**, the car
+scene opens, and then **Restore recovered work?** asks. Answer it and it does not come back on the next start. (If the folder is not
+counted as a project, there is no version question: the scene opens and only the recovery question asks.)
+
+Screenshots from the Linux editor under Xvfb (`OKAY_UI_SHOT`, frame 160), a copy of `examples/vehicle` with no recorded version and one
+recovery copy: before the fix nothing is drawn and the scene stays "Untitled"
+([startup_freeze_before.png](images/upgrade/startup_freeze_before.png)); after it the version question is on screen
+([startup_freeze_after_1_version_question.png](images/upgrade/startup_freeze_after_1_version_question.png)), and once the project
+carries a version the car scene is open with the recovery question alone
+([startup_freeze_after_2_recovery_question.png](images/upgrade/startup_freeze_after_2_recovery_question.png)).
 
 ### Duplicate components
 

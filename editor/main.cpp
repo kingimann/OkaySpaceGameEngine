@@ -904,6 +904,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
+#include "StartupModals.hpp"       // which startup question may ask this frame (one at a time, issue #888)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
@@ -18975,10 +18976,15 @@ void DrawNewProjectPopup(EditorState& ed) {
     ConsoleLog("Created project \"" + plan.folder + "\" at " + r.root);
 }
 
+// What each startup question needs to know to take its turn (defined after the recovery list, below).
+static okay::editor::startup::Pending StartupPending(EditorState& ed);
+
 // Offer to restore a newer "<scene>.autosave" recovery copy after a crash or
 // unclean exit. Recover loads it (and overwrites the scene); Discard removes it.
 void DrawRecoveryPopup(EditorState& ed) {
-    if (!g_recoverPath.empty() && !ImGui::IsPopupOpen("Recover Autosave"))
+    namespace st = okay::editor::startup;
+    if (!g_recoverPath.empty() && !ImGui::IsPopupOpen("Recover Autosave") &&
+        st::MayAsk(st::Modal::SceneAutosave, StartupPending(ed)) && !ImGui::GetTopMostPopupModal())   // its turn, and no other question on screen
         ImGui::OpenPopup("Recover Autosave");
     if (ImGui::BeginPopupModal("Recover Autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("A newer autosave was found for this scene:");
@@ -46837,11 +46843,21 @@ static void SaveSceneCmd(EditorState& ed) {
     if (ed.path().empty()) { SaveSceneAsCmd(ed); return; }   // first save: choose where
     if (!SaveSceneTo(ed, ed.path())) ShowErrorPopup("Couldn't save the scene", g_lastSaveError + "\n\nNothing was lost: your changes are still open in the editor. Fix the problem (or use Save Scene As) and try again.");
 }
+// Where the recovery copies live: <user data folder>/okay_recovery (absolute, so the same wherever the editor was started
+// from), and the old relative "okay_recovery" of the start folder, which is read once for copies an older editor left there.
+static const okay::editor::startup::RecoveryFolders& RecoveryPlaces() {
+    static const okay::editor::startup::RecoveryFolders r = [] {
+        std::error_code ec;
+        const std::string start = std::filesystem::current_path(ec).string();
+        return okay::editor::startup::PlanRecoveryFolders(okay::Paths::UserDataDir(), ec ? std::string() : start);
+    }();
+    return r;
+}
 static okay::RecoveryManager& DocRecovery() {
     static okay::RecoveryManager* r = nullptr;
     if (!r) {
         okay::RecoveryManager::Config cfg;
-        cfg.directory = "okay_recovery";
+        cfg.directory = RecoveryPlaces().folder;
         cfg.baseName = "editor";
         cfg.intervalSeconds = 30.0f;
         cfg.slots = 3;
@@ -46851,6 +46867,33 @@ static okay::RecoveryManager& DocRecovery() {
 }
 static std::vector<okay::RecoveryManager::Candidate> g_docRecover;
 static int g_docCompare = -1;
+// The copies waiting for "Restore recovered work?": this folder's, and once, at startup, the old relative folder's (read in place:
+// nothing is written there; each copy is deleted when it is answered). Newest first.
+static std::vector<okay::RecoveryManager::Candidate> FindStartupRecoveries() {
+    std::vector<okay::RecoveryManager::Candidate> out;
+    if (DocRecovery().StartSession()) out = DocRecovery().FindRecoverable();
+    if (!RecoveryPlaces().legacy.empty()) {
+        okay::RecoveryManager::Config cfg;
+        cfg.directory = RecoveryPlaces().legacy;
+        cfg.baseName = "editor";
+        okay::RecoveryManager old(cfg);   // no StartSession: no lock or file is written in the old folder
+        for (auto& c : old.FindRecoverable()) out.push_back(std::move(c));
+        std::stable_sort(out.begin(), out.end(), [](const okay::RecoveryManager::Candidate& a, const okay::RecoveryManager::Candidate& b) {
+            return a.timestamp > b.timestamp;
+        });
+    }
+    return out;
+}
+static okay::editor::startup::Pending StartupPending(EditorState& ed) {
+    static const bool allowNoProject = std::getenv("OKAY_ALLOW_NO_PROJECT") != nullptr;
+    okay::editor::startup::Pending p;
+    p.projectVersion = ProjectGateBusy();
+    p.saveChanges = g_savePromptOpen;
+    p.projectChooser = !allowNoProject && ed.projectDir().empty();   // the chooser, or a project it is opening, comes first
+    p.sceneAutosave = !g_recoverPath.empty();
+    p.recovery = !g_docRecover.empty();
+    return p;
+}
 static okay::BackupManager& EditorBackups() {
     static okay::BackupManager* m = nullptr;
     if (!m) {
@@ -47117,7 +47160,16 @@ static void ApplyRecoveredBundle(EditorState& ed, const std::vector<okay::editor
 }
 static void DrawDocRecoveryPopup(EditorState& ed) {
     if (g_docRecover.empty()) return;
-    if (!ImGui::IsPopupOpen("Restore recovered work?")) ImGui::OpenPopup("Restore recovered work?");
+    // One startup question at a time (StartupModals.hpp, issue #888): it opens only when it is its turn: not while the
+    // project-version question is due (ProjectGateBusy()), "Save changes?" is open, no project is open yet, or a scene's old
+    // autosave asks, and never over another window's question. Two modals that each re-open themselves every frame close each
+    // other: neither is drawn and the editor stops taking input. (Once open it stays until answered, or until a question that
+    // comes first opens over it; it is then asked again when its turn comes back.)
+    namespace st = okay::editor::startup;
+    if (!ImGui::IsPopupOpen("Restore recovered work?")) {
+        if (!st::MayAsk(st::Modal::Recovery, StartupPending(ed)) || ImGui::GetTopMostPopupModal()) return;
+        ImGui::OpenPopup("Restore recovered work?");
+    }
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (!ImGui::BeginPopupModal("Restore recovered work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
@@ -47131,23 +47183,28 @@ static void DrawDocRecoveryPopup(EditorState& ed) {
     if (!ok) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "The copy could not be read: %s", err.c_str());
     else for (const auto& b : docs) ImGui::BulletText("%s  %s", b.kind.c_str(), b.key.c_str());
     ImGui::Spacing();
-    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
-        ApplyRecoveredBundle(ed, docs);
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
+    // An answer (Restore or Discard) deletes the copy and the older copies of the same session, so the question does not come back
+    // for them; an unreadable copy goes alone, and the next older one is offered.
+    auto answered = [&](bool readable) {
+        std::vector<std::string> sessions;
+        for (const auto& x : g_docRecover) sessions.push_back(x.sessionId);
+        const std::vector<std::size_t> drop = st::CopiesToDiscard(sessions, 0, readable);
+        for (auto it = drop.rbegin(); it != drop.rend(); ++it) {   // from the back, so the indices stay right
+            DocRecovery().Discard(g_docRecover[*it]);
+            g_docRecover.erase(g_docRecover.begin() + (std::ptrdiff_t)*it);
+        }
         g_docCompare = -1;
         ImGui::CloseCurrentPopup();
+    };
+    if (ImGui::Button("Restore", ImVec2(120, 0)) && ok) {
+        ApplyRecoveredBundle(ed, docs);
+        answered(true);
     }
     ImGui::SetItemDefaultFocus();
     ImGui::SameLine();
     if (ImGui::Button("Compare", ImVec2(120, 0))) g_docCompare = g_docCompare < 0 ? 0 : -1;
     ImGui::SameLine();
-    if (ImGui::Button("Discard", ImVec2(120, 0))) {
-        DocRecovery().Discard(c);
-        g_docRecover.erase(g_docRecover.begin());
-        g_docCompare = -1;
-        ImGui::CloseCurrentPopup();
-    }
+    if (ImGui::Button("Discard", ImVec2(120, 0))) answered(ok);
     if (g_docCompare >= 0 && ok) {
         ImGui::Separator();
         ImGui::BeginChild("##reccompare", ImVec2(600, 220), ImGuiChildFlags_Borders);
@@ -48244,7 +48301,7 @@ int main(int argc, char** argv) {
         label = std::to_string(docs.size()) + " unsaved";
         return true;
     });
-    if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
+    g_docRecover = FindStartupRecoveries();
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout

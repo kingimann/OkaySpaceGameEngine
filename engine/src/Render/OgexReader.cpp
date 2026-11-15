@@ -38,6 +38,9 @@ constexpr std::size_t kMaxPlacedVerts = 6000000, kMaxPlacedTris = 4000000;   // 
 constexpr std::size_t kMaxBones = 4096;
 constexpr std::size_t kMaxKeys = 4000000, kMaxClips = 4096, kMaxTracks = 1000000;
 constexpr std::size_t kMaxTextures = 4096;
+constexpr std::size_t kMaxFactors = 256;                  // transform structures read per node
+constexpr std::size_t kMaxPlacedBones = 1000000;          // bone entries copied into parts, over the whole file
+constexpr std::size_t kMaxEvals = 20000000;               // animation samples x transform structures, over the whole file
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "OpenGEX: " + m; return false; }
 
@@ -88,6 +91,7 @@ struct NInfo {
     int parent = -1;             // index into the info list, -1 for a top-level node
     std::string name;
     std::vector<Factor> f;
+    std::unordered_map<std::string, std::size_t> localIdx;   // local name -> index in f (first wins)
     rc::M4 local, world, objectM;
     bool hasObject = false;
 };
@@ -96,6 +100,7 @@ struct SkinData {
     bool has = false;
     rc::M4 bindShape;
     std::vector<std::uint32_t> boneDdl;
+    std::vector<rc::M4> boneBind;            // from Skeleton/Transform when the file has it: each bone's bind transform; empty = use the nodes' own
     std::vector<std::array<int, 4>> ji;      // per vertex, indices into boneDdl; boneDdl.size() = the extra root bone
     std::vector<std::array<float, 4>> jw;
     bool needRoot = false;
@@ -107,6 +112,8 @@ struct Geom {
     std::vector<PrimData> prims;
     SkinData skin;
     std::string name;
+    std::vector<ImportedBone> bones;         // the skin's bones, built once
+    bool bonesBuilt = false;
 };
 
 struct TrackData { std::size_t info = 0, factor = 0; std::vector<double> t, v; };
@@ -128,6 +135,8 @@ struct Reader {
     std::map<int, std::vector<TrackData>> clipTracks;
     double distance = 1, angle = 1, timeScale = 1;
     bool zUp = false;
+    std::vector<int> remapBuf;               // all -1 between uses; shared by every placement
+    std::size_t placedBones = 0, evals = 0;
     std::size_t builtVerts = 0, builtTris = 0, placedVerts = 0, placedTris = 0, keys = 0, tracks = 0, textures = 0;
     // notes
     std::map<std::string, int> counts;
@@ -360,7 +369,11 @@ struct Reader {
     }
 
     void ReadSkin(std::uint32_t sk, std::size_t nv, SkinData& s) {
-        const std::uint32_t bra = d.Child(sk, "BoneRefArray"), bca = d.Child(sk, "BoneCountArray"), bia = d.Child(sk, "BoneIndexArray"), bwa = d.Child(sk, "BoneWeightArray");
+        // The specification puts BoneRefArray and the per-bone bind Transform inside a Skeleton structure; files with BoneRefArray directly
+        // under the Skin are accepted too (the first layout this reader was written for).
+        const std::uint32_t skel = d.Child(sk, "Skeleton");
+        const std::uint32_t refHolder = skel != kNone && d.Child(skel, "BoneRefArray") != kNone ? skel : sk;
+        const std::uint32_t bra = d.Child(refHolder, "BoneRefArray"), bca = d.Child(sk, "BoneCountArray"), bia = d.Child(sk, "BoneIndexArray"), bwa = d.Child(sk, "BoneWeightArray");
         if (bra == kNone || bca == kNone || bia == kNone || bwa == kNone) { Count("a skin without all of BoneRefArray, BoneCountArray, BoneIndexArray and BoneWeightArray (not read)"); return; }
         const Node* refs = StrChild(bra, Prim::Ref);
         const Node* cnt = NumChild(bca);
@@ -371,7 +384,7 @@ struct Reader {
         if (cnt->dataCount != nv) { Count("a skin whose BoneCountArray length differs from the vertex count (not read)"); return; }
         if (idx->dataCount != wts->dataCount) { Count("a skin whose index and weight arrays differ in length (not read)"); return; }
         std::uint64_t total = 0;
-        for (std::uint64_t i = 0; i < cnt->dataCount; ++i) { const double c = d.nums[(std::size_t)(cnt->dataBegin + i)]; if (c < 0) { Count("a skin with a negative bone count (not read)"); return; } total += (std::uint64_t)c; if (total > idx->dataCount) break; }
+        for (std::uint64_t i = 0; i < cnt->dataCount; ++i) { const double c = d.nums[(std::size_t)(cnt->dataBegin + i)]; if (!(c >= 0) || c > 4294967295.0) { Count("a skin with a bone count that is negative or past 4294967295 (not read)"); return; } total += (std::uint64_t)c; if (total > idx->dataCount) break; }
         if (total != idx->dataCount) { Count("a skin whose bone counts do not add up to the index array length (not read)"); return; }
         const std::size_t nb = (std::size_t)refs->dataCount;
         for (std::uint64_t i = 0; i < refs->dataCount; ++i) s.boneDdl.push_back(kNone);
@@ -380,6 +393,17 @@ struct Reader {
         for (std::uint64_t i = 0; i < refs->dataCount; ++i) {
             auto f = global.find(d.strs[(std::size_t)(refs->dataBegin + i)]);
             s.boneDdl[(std::size_t)i] = f == global.end() ? kNone : f->second;
+        }
+        if (skel != kNone && refHolder == skel) {
+            const std::uint32_t bt = d.Child(skel, "Transform");
+            const Node* bm = bt != kNone ? NumChild(bt) : nullptr;
+            if (bm && bm->dataCount >= 16 * refs->dataCount) {
+                for (std::uint64_t i = 0; i < refs->dataCount; ++i) {
+                    rc::M4 m;
+                    for (int k = 0; k < 16; ++k) m.m[k] = d.nums[(std::size_t)(bm->dataBegin + 16 * i + (std::uint64_t)k)];
+                    s.boneBind.push_back(m);
+                }
+            } else Count("a Skeleton whose Transform does not hold one matrix per bone (the nodes' own transforms are used)");
         }
         const std::uint32_t tr = d.Child(sk, "Transform");
         if (tr != kNone) {
@@ -468,13 +492,15 @@ struct Reader {
                 if (d.Is(cn, "Name") && nm.empty()) nm = FirstString(c);
                 else if (d.Is(cn, "Transform") || d.Is(cn, "Translation") || d.Is(cn, "Rotation") || d.Is(cn, "Scale")) {
                     Factor f;
-                    if (ReadFactor(c, f)) ni.f.push_back(std::move(f)); else Count("a transform structure with missing or malformed values (ignored)");
+                    if (ni.f.size() >= kMaxFactors) Count("transform structures past " + std::to_string(kMaxFactors) + " on one node (ignored)");
+                    else if (ReadFactor(c, f)) { if (!f.local.empty()) ni.localIdx.emplace(f.local, ni.f.size()); ni.f.push_back(std::move(f)); }
+                    else Count("a transform structure with missing or malformed values (ignored)");
                 }
             }
             if (nm.empty() && n.name != kNone) nm = StripSigil(d.texts[n.name]);
             if (nm.empty()) nm = "node" + std::to_string(infos.size());
-            int& u = used[nm];
-            if (u++) { nm += "_" + std::to_string(u - 1); used[nm] = 1; }
+            if (used.count(nm)) { int k = 1; while (used.count(nm + "_" + std::to_string(k))) ++k; nm += "_" + std::to_string(k); }
+            used[nm] = 1;
             ni.name = nm;
             ni.local = rc::M4();
             ni.objectM = rc::M4();
@@ -541,14 +567,12 @@ struct Reader {
         return true;
     }
 
-    bool PlaceGeom(const Geom& g, const NInfo& ni, std::size_t ii, const std::vector<int>& mats) {
+    bool PlaceGeom(Geom& g, const NInfo& ni, std::size_t ii, const std::vector<int>& mats) {
         const std::size_t N = g.pos.size();
         const bool skinned = g.skin.has;
-        // bones of a skin: the nodes the references name
-        std::vector<ImportedBone> bones;
-        if (skinned) {
-            rc::M4 shapeInv;
-            (void)shapeInv;
+        // bones of a skin: built once per geometry (the nodes the references name, or the Skeleton's own bind transforms)
+        if (skinned && !g.bonesBuilt) {
+            g.bonesBuilt = true;
             for (std::size_t b = 0; b < g.skin.boneDdl.size(); ++b) {
                 ImportedBone ib;
                 auto f = g.skin.boneDdl[b] == kNone ? infoOfDdl.end() : infoOfDdl.find(g.skin.boneDdl[b]);
@@ -556,14 +580,17 @@ struct Reader {
                 else {
                     ib.name = infos[f->second].name;
                     rc::M4 inv;
-                    if (!rc::InvAffine(infos[f->second].world, inv)) { Count("a bone with a singular bind transform (identity used)"); ib.inverseBind = Mat4::Identity(); }
+                    const rc::M4& bind = b < g.skin.boneBind.size() ? g.skin.boneBind[b] : infos[f->second].world;
+                    if (!rc::InvAffine(bind, inv)) { Count("a bone with a singular bind transform (identity used)"); ib.inverseBind = Mat4::Identity(); }
                     else ib.inverseBind = ToMat4(rc::Mul(inv, g.skin.bindShape));
                 }
-                bones.push_back(std::move(ib));
+                g.bones.push_back(std::move(ib));
             }
-            if (g.skin.needRoot) { ImportedBone rb; rb.name = out.nodes[0].name; rb.inverseBind = Mat4::Identity(); bones.push_back(std::move(rb)); }
+            if (g.skin.needRoot) { ImportedBone rb; rb.name = out.nodes[0].name; rb.inverseBind = Mat4::Identity(); g.bones.push_back(std::move(rb)); }
         }
-        std::vector<int> remap(N, -1);
+        const std::vector<ImportedBone>& bones = g.bones;
+        if (remapBuf.size() < N) remapBuf.resize(N, -1);
+        std::vector<int>& remap = remapBuf;
         for (std::size_t pi = 0; pi < g.prims.size(); ++pi) {
             const PrimData& pr = g.prims[pi];
             const std::size_t tris = pr.tri.size() / 3;
@@ -608,7 +635,11 @@ struct Reader {
             }
             if (badNormal) { part.mesh.normals.clear(); part.mesh.ComputeSmoothNormals(); if (!g.nrm.empty()) Count("a mesh with zero or invalid normals (smooth normals made)"); }
             if (!rc::PartInRange(part)) return Fail(err, "a vertex is out of range after its transform");
-            if (skinned) part.bones = bones;
+            if (skinned) {
+                placedBones += bones.size();
+                if (placedBones > kMaxPlacedBones) return Fail(err, "more than " + std::to_string(kMaxPlacedBones) + " bone entries over all placed parts (budget: bones x placements)");
+                part.bones = bones;
+            }
             part.mesh.name = g.prims.size() > 1 ? ni.name + "_" + std::to_string(pi) : ni.name;
             part.node = skinned ? 0 : (int)ii + 1;
             part.material = pr.material >= 0 && (std::size_t)pr.material < mats.size() ? mats[(std::size_t)pr.material] : -1;
@@ -635,8 +666,10 @@ struct Reader {
             loc = ref.substr(pc);
         } else return false;
         const NInfo& ni = infos[inf];
-        for (std::size_t k = 0; k < ni.f.size(); ++k) if (ni.f[k].local == loc) { info = inf; factor = k; return true; }
-        return false;
+        auto it = ni.localIdx.find(loc);
+        if (it == ni.localIdx.end()) return false;
+        info = inf; factor = it->second;
+        return true;
     }
 
     bool ReadAnimations() {
@@ -744,14 +777,17 @@ struct Reader {
                 ch.node = ni.name;
                 Quat prev{0, 0, 0, 1};
                 bool havePrev = false;
+                std::vector<const TrackData*> trk(ni.f.size(), nullptr);
+                for (const TrackData* c : bi.second) if (!trk[c->factor]) trk[c->factor] = c;
+                evals += times.size() * (ni.f.size() + 1);
+                if (evals > kMaxEvals) return Fail(err, "more than " + std::to_string(kMaxEvals) + " animation samples x transforms (budget)");
                 for (double t : times) {
                     rc::M4 m;
                     for (std::size_t fi = 0; fi < ni.f.size(); ++fi) {
                         const Factor& f = ni.f[fi];
                         if (f.objectOnly) continue;
                         double v[16];
-                        const TrackData* tr = nullptr;
-                        for (const TrackData* c : bi.second) if (c->factor == fi) { tr = c; break; }
+                        const TrackData* tr = trk[fi];
                         if (tr) Eval(f, *tr, t, v); else for (std::size_t j = 0; j < f.base.size(); ++j) v[j] = f.base[j];
                         m = rc::Mul(m, FactorMatrix(f, v, angle));
                     }
@@ -800,7 +836,7 @@ bool ReadImpl(const std::string& text, const std::string& baseDir, ImportedModel
         const Node& n = doc.nodes[i];
         if (n.parent != kNone) continue;
         if (doc.Is(n, "Metric")) r.ReadMetrics(i);
-        else if (doc.Is(n, "Clip")) { const int idx = (int)doc.PropNum(n, "index", 0); const std::uint32_t nc = doc.Child(i, "Name"); if (nc != kNone) r.clipNames[idx] = r.FirstString(nc); }
+        else if (doc.Is(n, "Clip")) { const double dx = doc.PropNum(n, "index", 0); const int idx = dx >= 0 && dx < 1e6 ? (int)dx : 0; const std::uint32_t nc = doc.Child(i, "Name"); if (nc != kNone) r.clipNames[idx] = r.FirstString(nc); }
         else if (doc.Is(n, "Material")) { if (!r.ReadMaterial(i)) return false; }
         else if (Reader::IsNodeKind(doc, n)) ++topNodes;
         else if (doc.Is(n, "Extension")) ++extensions;

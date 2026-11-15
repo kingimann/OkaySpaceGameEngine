@@ -208,6 +208,28 @@ int main() {
         CHECK(Read("Node $first {} Node $first2 {Name {string {\"x\"}}} Node {Name {string {\"x\"}}} " + geo + "GeometryNode $n {ObjectRef {ref {$g}}}", n, err));
         CHECK(n.nodes.size() == 5 && n.nodes[1].name == "first" && n.nodes[2].name == "x" && n.nodes[3].name == "x_1");
         (void)node;
+        // a new name must not collide with a name that is already taken: a_1, a, a, a gives a_1, a, a_2, a_3 (not two a_1)
+        ImportedModel u;
+        CHECK(Read("Node {Name {string {\"a_1\"}}} Node {Name {string {\"a\"}}} Node {Name {string {\"a\"}}} Node {Name {string {\"a\"}}} " + geo + "GeometryNode {ObjectRef {ref {$g}}}", u, err));
+        std::string seen;
+        for (std::size_t i = 1; i < u.nodes.size(); ++i) { CHECK(seen.find("|" + u.nodes[i].name + "|") == std::string::npos); seen += "|" + u.nodes[i].name + "|"; }
+        CHECK(u.nodes[1].name == "a_1" && u.nodes[2].name == "a" && u.nodes[3].name == "a_2" && u.nodes[4].name == "a_3");
+    }
+    {   // numbers that do not fit the integer they are cast to: no undefined behaviour, a clean result
+        const std::string geo = "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}} IndexArray {unsigned_int8[3] {{0,1,2}}}}}\n";
+        ImportedModel m; std::string err;
+        for (const char* big : {"1e19", "18446744073709551615", "-5", "9223372036854775807"}) {
+            CHECK(Read(std::string("Clip (index = ") + big + ") {Name {string {\"x\"}}} " + geo + "GeometryNode {ObjectRef {ref {$g}}}", m, err) || !err.empty());
+            CHECK(Read(geo + "GeometryNode {ObjectRef {ref {$g}} MaterialRef (index = " + big + ") {ref {$g}}}", m, err) || !err.empty());
+            CHECK(Read(geo.substr(0, geo.find("IndexArray")) + "IndexArray (material = " + big + ") {unsigned_int8[3] {{0,1,2}}}}}\nGeometryNode {ObjectRef {ref {$g}}}", m, err) || !err.empty());
+        }
+        // a bone count of exactly 2^64 (18446744073709551616 does not parse as an integer; 18446744073709551615 is the largest)
+        std::string t = e4::OgexSkin();
+        t.replace(t.find("unsigned_int8 {1, 2, 1}"), 23, "unsigned_int64 {1, 18446744073709551615, 1}");
+        CHECK(Read(t, m, err) && m.parts[0].bones.empty() && HasNote(m, "bone count that is negative or past"));
+        t = e4::OgexSkin();
+        t.replace(t.find("unsigned_int8 {1, 2, 1}"), 23, "float {1, 18446744073709551616.0, 1}");
+        CHECK(!Read(t, m, err) || m.parts[0].bones.empty());   // 1.8e19 is past what a number may be (1e15): refused
     }
 
     // ---- skin ------------------------------------------------------------------------------------------------------------------
@@ -230,6 +252,15 @@ int main() {
         ImportedModel s;
         CHECK(Read(e4::OgexSkin("1,0,0,0, 0,1,0,0, 0,0,1,0, 5,0,0,1"), s, err));
         CHECK(Near(s.parts[0].bones[0].inverseBind.at(3, 0), 5) && Near(s.parts[0].bones[1].inverseBind.at(3, 0), 5) && Near(s.parts[0].bones[1].inverseBind.at(3, 1), -1));
+        // the older layout, BoneRefArray directly under the Skin, reads the same
+        ImportedModel lg;
+        CHECK(Read(e4::OgexSkin("1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1", true), lg, err) && lg.parts[0].bones.size() == 2 && Near(lg.parts[0].bones[1].inverseBind.at(3, 1), -1));
+        // Skeleton/Transform: one bind matrix per bone; when present it is the bind pose (here bone 1 is bound 2 up, the node sits 1 up)
+        ImportedModel sb;
+        CHECK(Read(e4::OgexSkin("1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1", false, "{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,2,0,1}"), sb, err));
+        CHECK(sb.parts[0].bones.size() == 2 && Near(sb.parts[0].bones[1].inverseBind.at(3, 1), -2));
+        ImportedModel sb2;   // too few matrices: the nodes' own transforms are used, with a note
+        CHECK(Read(e4::OgexSkin("1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1", false, "{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}"), sb2, err) && Near(sb2.parts[0].bones[1].inverseBind.at(3, 1), -1) && HasNote(sb2, "one matrix per bone"));
         // bone counts that do not add up: the skin is dropped with a note, the mesh stays rigid
         std::string t = e4::OgexSkin();
         t.replace(t.find("{1, 2, 1}"), 9, "{1, 2, 2}");

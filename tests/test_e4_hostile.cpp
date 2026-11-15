@@ -141,6 +141,41 @@ static void OgexBudgets() {
                         " Animation {Track (target = %s) {Time {Key {float {" + times + "}}} Value {Key {float {" + vals + "}}}}}}\n" + geo + "GeometryNode {ObjectRef {ref {$g}}}");
         CHECK(!r.ok && r.err.find("animation keys") != std::string::npos);
     }
+    {   // a skinned mesh with 4,096 bone references used by 50,000 nodes: the bone list was rebuilt and copied per node (20 GB)
+        std::string refs;
+        for (int i = 0; i < 4095; ++i) refs += "$nobody,";
+        refs += "$nobody";
+        const std::string t = "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}} IndexArray {unsigned_int8[3] {{0,1,2}}}\n"
+                              " Skin {Skeleton {BoneRefArray {ref {" + refs + "}}} BoneCountArray {unsigned_int8 {1,1,1}} BoneIndexArray {unsigned_int16 {0,1,2}} BoneWeightArray {float {1,1,1}}}}}\n"
+                              + Repeat("GeometryNode {ObjectRef {ref {$g}}}\n", 50000);
+        Run r = OgexRun("skinned mesh, 4,096 bones, 50,000 nodes", t);
+        CHECK(!r.ok && r.err.find("bones x placements") != std::string::npos);
+        CHECK(r.peakMB < 300);
+    }
+    {   // a mesh of 500,000 vertices and one triangle used by 100,000 nodes: a vertex-sized table was allocated per node
+        const std::string t = "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {" + Repeat("{0,0,0},", 499999) + "{0,0,0}}} IndexArray {unsigned_int32[3] {{0,1,2}}}}}\n" + Repeat("GeometryNode {ObjectRef {ref {$g}}}\n", 100000);
+        Run r = OgexRun("500,000-vertex mesh, 100,000 nodes", t);
+        CHECK(r.ok && r.m.parts.size() == 100000);
+    }
+    {   // 20,000 transform structures on one node, each animated by its own track with its own key times: quadratic lookups
+        std::string t = "Node {\n";
+        for (int i = 0; i < 20000; ++i) t += "Translation %t" + std::to_string(i) + " {float[3] {{0,0,0}}}\n";
+        t += " Animation {\n";
+        for (int i = 0; i < 20000; ++i) t += "Track (target = %t" + std::to_string(i) + ") {Time {Key {float {" + std::to_string(2 * i) + "," + std::to_string(2 * i + 1) + "}}} Value {Key {float[3] {{0,0,0},{1,1,1}}}}}\n";
+        t += "}}\nGeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}} IndexArray {unsigned_int8[3] {{0,1,2}}}}}\nGeometryNode {ObjectRef {ref {$g}}}";
+        Run r = OgexRun("20,000 transforms, 20,000 tracks", t);
+        CHECK(r.ok || !r.err.empty());
+    }
+    {   // 256 transform structures and one track of 300,000 keys: 77 million samples of 256 transforms
+        std::string times, vals;
+        for (int i = 0; i < 300000; ++i) { times += std::to_string(i) + ","; vals += "{0,0,0},"; }
+        std::string t = "Node {\n";
+        for (int i = 0; i < 256; ++i) t += "Translation %t" + std::to_string(i) + " {float[3] {{0,0,0}}}\n";
+        t += " Animation {Track (target = %t0) {Time {Key {float {" + times + "0}}} Value {Key {float[3] {" + vals + "{0,0,0}}}}}}}\n";
+        t += "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}} IndexArray {unsigned_int8[3] {{0,1,2}}}}}\nGeometryNode {ObjectRef {ref {$g}}}";
+        Run r = OgexRun("300,000 keys x 256 transforms", t);
+        CHECK(!r.ok && r.err.find("samples x transforms") != std::string::npos);
+    }
     {   // numbers at and past what a float can hold, and a texture path that is 3 MB long
         Run r = OgexRun("huge coordinates", "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{1e15,0,0},{0,1e15,0},{0,0,1e15}}} IndexArray {unsigned_int8[3] {{0,1,2}}}}}\nGeometryNode {ObjectRef {ref {$g}} Scale {float[3] {{1e15,1e15,1e15}}} }");
         CHECK(!r.ok || hostile::Sane(r.m));
@@ -207,6 +242,19 @@ static void MdlBudgets() {
         b += hl.substr(o.seq);   // the rest (its offsets are now wrong, which a refusal or a skipped sequence must handle)
         Run r = MdlRun("70 strips of 32,767 vertices", b);
         CHECK(!r.ok);
+    }
+    {   // 1,024 body parts naming one model of 4,096 meshes that all name one command list of 32,767 vertices with bad indices: 1.4e11 steps
+        // from about 400 KB if nothing bounds the work
+        Run r = MdlRun("shared offsets and bad indices", e4::HlStress(1, 1024, 4096, 32767, 60000));
+        CHECK(!r.ok && r.err.find("budget") != std::string::npos);
+    }
+    {   // 4,096 meshes x 1,024 bones: each part would carry its own copy of the bone list (4,000,000 entries)
+        std::string t = e4::HlStress(1024, 1, 4096, 3, 0);
+        Run r = MdlRun("4,096 parts x 1,024 bones", t);
+        CHECK(!r.ok && r.err.find("parts x bones") != std::string::npos);
+        CHECK(r.peakMB < 200);
+        Run ok = MdlRun("500 parts x 1,024 bones", e4::HlStress(1024, 1, 500, 3, 0));
+        CHECK(ok.ok && ok.m.parts.size() == 500);
     }
     {   // 4,096 meshes pointing at one command list, each welded separately
         std::string b = hl;

@@ -1,9 +1,8 @@
-// Our own MDL reader for the two documented 3D-model formats that use the .mdl extension in games: the Quake 1 model ("IDPO",
-// version 6) and the Half-Life 1 "studio" model ("IDST", version 10). Written from the public descriptions of these two
-// structures (the Quake model layout as documented in the Quake 1 file format notes, and the Half-Life studio model layout as
-// documented in the studio model format notes: header, bones, body parts, models, meshes, triangle command lists, texture table,
-// skin families, sequences and the run-length coded animation values). No code from any other importer was read, copied or
-// ported. The 3D GameStudio formats (MDL3, MDL4, MDL5, MDL7) are NOT read: they are refused with a message that says so.
+// Our own MDL reader for two of the formats that use the .mdl extension in games: the Quake 1 model ("IDPO", version 6) and the
+// Half-Life 1 "studio" model ("IDST", version 10). Written from memory of the two structures (header, bones, body parts, models,
+// meshes, triangle command lists, texture table, skin families, sequences, run-length coded animation values); no document was
+// consulted, so the layouts are unverified against any real file. No code from any other importer was read, copied or ported.
+// The 3D GameStudio formats (MDL3, MDL4, MDL5, MDL7) are NOT read: they are refused with a message that says so.
 // Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_mdl_reader.md.
 #include "AffineInverse.hpp"
 #include "BinReader.hpp"
@@ -16,6 +15,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -33,6 +33,9 @@ constexpr std::int32_t kMaxQVerts = 200000, kMaxQTris = 400000, kMaxQSkins = 409
 constexpr std::int32_t kMaxBones = 1024, kMaxBodyParts = 1024, kMaxModelsPerPart = 1024, kMaxMeshes = 4096, kMaxTextures = 4096, kMaxSeqs = 4096,
                        kMaxModelVerts = 200000, kMaxSkinRef = 4096, kMaxFramesPerSeq = 65536;
 constexpr std::size_t kMaxOutVerts = 2000000, kMaxOutTris = 2000000, kMaxKeys = 4000000;
+// File-wide work budget: every triangle-command vertex read (good or bad), every command and every mesh visited counts, so a hostile
+// file that points many meshes or body parts at the same data cannot multiply the work. Meshes and (parts x bones) are capped file-wide.
+constexpr std::size_t kMaxWork = 16000000, kMaxFileMeshes = 4096, kMaxPartBones = 1000000;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "MDL: " + m; return false; }
 
@@ -225,8 +228,8 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
         for (int bi : order) {
             const Bone& bn = bones[(std::size_t)bi];
             std::string nm = bn.name.empty() ? "bone" + std::to_string(bi) : bn.name;
-            int& u = used[nm];
-            if (u++) { nm += "_" + std::to_string(u - 1); used[nm] = 1; }
+            if (used.count(nm)) { int k = 1; while (used.count(nm + "_" + std::to_string(k))) ++k; nm += "_" + std::to_string(k); }
+            used[nm] = 1;
             nodeName[(std::size_t)bi] = nm;
             ImportedNode nd;
             nd.name = nm;
@@ -281,15 +284,23 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
     std::size_t outVerts = 0, outTris = 0;
     int badIdx = 0, badBone = 0, flipped = 0, skippedModels = 0, noTexMesh = 0;
     bool fatalVerts = false;
+    std::unordered_set<std::int32_t> seenModels;
+    std::size_t work = 0, fileMeshes = 0, partBones = 0;
+    int sharedModels = 0;
     for (const BodyPart& bp : parts) {
         if (bp.nModels < 0 || bp.nModels > kMaxModelsPerPart) return Fail(err, "a body part with a bad model count");
         if (bp.nModels == 0) continue;
         skippedModels += bp.nModels - 1;
+        if (!seenModels.insert(bp.modelIndex).second) { ++sharedModels; continue; }   // a body part naming a model that was already read: read once
         if (bp.modelIndex < 0 || !b.Seek((std::uint64_t)bp.modelIndex) || !b.Has(112)) return Fail(err, "a model lies outside the file");
         b.Skip(64 + 4 + 4);        // name, type, bounding radius
         const std::int32_t nMesh = b.I32(), meshIndex = b.I32(), nVerts = b.I32(), vertInfo = b.I32(), vertIdx = b.I32(), nNorms = b.I32(), normInfo = b.I32(), normIdx = b.I32();
         if (nMesh < 0 || nMesh > kMaxMeshes || nVerts < 0 || nVerts > kMaxModelVerts || nNorms < 0 || nNorms > kMaxModelVerts) return Fail(err, "a model with a bad mesh, vertex or normal count");
         if (nMesh == 0) continue;
+        fileMeshes += (std::size_t)nMesh;
+        if (fileMeshes > kMaxFileMeshes) return Fail(err, "more than " + std::to_string(kMaxFileMeshes) + " meshes in the file (budget)");
+        work += (std::size_t)nVerts + (std::size_t)nNorms;
+        if (work > kMaxWork) return Fail(err, "more than " + std::to_string(kMaxWork) + " units of work (budget)");
         if (nVerts == 0) return Fail(err, "a model with meshes and no vertices");
         // the vertex and normal tables, and the bone of each
         std::vector<Vec3> vtx((std::size_t)nVerts), nrm((std::size_t)nNorms);
@@ -310,6 +321,7 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
         for (MeshHdr& m : meshes) { m.nTris = b.I32(); m.triIndex = b.I32(); m.skinRef = b.I32(); b.Skip(8); }
         for (std::size_t mi = 0; mi < meshes.size(); ++mi) {
             const MeshHdr& mh = meshes[mi];
+            work += 16;
             if (mh.triIndex < 0 || !b.Seek((std::uint64_t)mh.triIndex)) return Fail(err, "a triangle command list starts outside the file");
             int texi = -1;
             if (mh.skinRef >= 0 && (std::size_t)mh.skinRef < skinTab.size()) texi = skinTab[(std::size_t)mh.skinRef];
@@ -351,6 +363,8 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
                 if (b.bad) return Fail(err, "a triangle command list that ends inside the file");
                 if (cnt == 0) break;
                 const std::uint32_t n = (std::uint32_t)(cnt < 0 ? -(int)cnt : (int)cnt);
+                work += (std::size_t)n + 1;
+                if (work > kMaxWork) return Fail(err, "more than " + std::to_string(kMaxWork) + " units of work in triangle commands (budget)");
                 if (!b.Fits(n, 8)) return Fail(err, "a triangle command list that ends inside the file");
                 std::vector<int> v(n, -1);
                 std::vector<char> ok(n, 0);
@@ -387,6 +401,8 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
                 }
                 if (neg > 2 * pos) { for (std::size_t t = 0; t + 2 < part.mesh.triangles.size(); t += 3) std::swap(part.mesh.triangles[t + 1], part.mesh.triangles[t + 2]); ++flipped; }
             }
+            partBones += iBones.size();
+            if (partBones > kMaxPartBones) return Fail(err, "more than " + std::to_string(kMaxPartBones) + " bone entries over all parts (budget: parts x bones)");
             part.bones = iBones;
             part.node = 0;
             part.material = texi;
@@ -482,6 +498,7 @@ bool ReadHalfLife(Br& b, const std::string& baseDir, ImportedModel& out, std::st
     auto note = [&](const std::string& s) { out.notes.push_back("MDL (Half-Life): " + s); };
     if (numTex == 0) note("the model has no textures in this file (Half-Life keeps them in a separate \"<name>T.mdl\" file)");
     else note(std::to_string(numTex) + " embedded 8-bit palette texture(s) are not extracted: the materials carry the texture names and no texture file");
+    if (sharedModels) note(std::to_string(sharedModels) + " body part(s) name a model that another part already named: read once");
     if (skippedModels) note(std::to_string(skippedModels) + " alternative sub-model(s) of the body parts not read (the first sub-model of each part is)");
     if (numSkinFamilies > 1) note(std::to_string(numSkinFamilies - 1) + " further skin famil(ies) not read");
     if (externalSeq) note(std::to_string(externalSeq) + " sequence(s) live in external sequence group files (name01.mdl ...) and were not read");

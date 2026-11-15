@@ -61,9 +61,13 @@ inline std::string OgexMesh(const std::string& primitive, const std::string& ind
 
 // A two-bone skin on one triangle (0,0,0) (1,0,0) (0,1,0): bone b0 at the origin, bone b1 its child at (0,1,0); counts 1, 2, 1;
 // the second vertex is 25 percent bone 0 and 75 percent bone 1. `skinTransform` is the text of the skin's Transform values.
-inline std::string OgexSkin(const std::string& skinTransform = "1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1") {
+inline std::string OgexSkin(const std::string& skinTransform = "1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1", bool legacy = false, const std::string& boneBind = "") {
+    // the layout as the specification describes it: Skin { Transform, Skeleton { BoneRefArray, Transform }, BoneCountArray, ... };
+    // `legacy` puts BoneRefArray directly under the Skin; `boneBind` is the text of the Skeleton's per-bone Transform matrices
+    const std::string refs = "BoneRefArray {ref {$b0, $b1}}";
+    const std::string skel = legacy ? refs : "Skeleton {" + refs + (boneBind.empty() ? "" : " Transform {float[16] {" + boneBind + "}}") + "}";
     return "GeometryObject $g {Mesh {VertexArray (attrib = \"position\") {float[3] {{0,0,0},{1,0,0},{0,1,0}}} IndexArray {unsigned_int32[3] {{0,1,2}}}\n"
-           "  Skin {Transform {float[16] {{" + skinTransform + "}}} BoneRefArray {ref {$b0, $b1}} BoneCountArray {unsigned_int8 {1, 2, 1}}\n"
+           "  Skin {Transform {float[16] {{" + skinTransform + "}}} " + skel + " BoneCountArray {unsigned_int8 {1, 2, 1}}\n"
            "    BoneIndexArray {unsigned_int8 {0, 0, 1, 1}} BoneWeightArray {float {1.0, 0.25, 0.75, 1.0}}}}}\n"
            "BoneNode $b0 {Name {string {\"b0\"}} BoneNode $b1 {Name {string {\"b1\"}} Translation {float[3] {{0, 1, 0}}}}}\n"
            "GeometryNode $n {Name {string {\"skin\"}} ObjectRef {ref {$g}}}\n";
@@ -241,6 +245,36 @@ inline std::string HalfLifeMdl(float normalZ = 1.0f, HlOffsets* o = nullptr, boo
     b.U8At(rle + 4, 2); b.U8At(rle + 5, 2); b.U16At(rle + 6, 300); b.U16At(rle + 8, 400);
     b.Pad(end);
     if (o) *o = {bones, tex, skin, body, model, vtx, vinfo, nrm, ninfo, mesh, cmds, seq, anim, rle, end};
+    return b.s;
+}
+
+// A Half-Life file built for budget tests: `nBones` bones (names from `names`, else "bN"; all roots, at the origin), `nBody` body parts that all
+// name the SAME model, one model of `nMesh` meshes that all name the SAME triangle command list: one strip of `cmdVerts` vertices whose vertex
+// index is `vertIndex` (0 to 2 are valid, anything else is out of range). No textures, no sequences.
+inline std::string HlStress(int nBones, int nBody, int nMesh, int cmdVerts, int vertIndex, const std::vector<std::string>* names = nullptr) {
+    Buf b;
+    const std::size_t bones = 244, body = bones + 112 * (std::size_t)nBones, model = body + 76 * (std::size_t)nBody, vtx = model + 112, vinfo = vtx + 36,
+                      nrm = vinfo + 4, ninfo = nrm + 12, mesh = ninfo + 4, cmds = mesh + 20 * (std::size_t)nMesh, end = cmds + 4 + 8 * (std::size_t)cmdVerts;
+    b.StrAt(0, "IDST", 4); b.I32At(4, 10);
+    b.I32At(140, nBones); b.I32At(144, (std::int32_t)bones);
+    b.I32At(204, nBody); b.I32At(208, (std::int32_t)body);
+    b.Pad(end);
+    for (int i = 0; i < nBones; ++i) {
+        const std::size_t o = bones + 112 * (std::size_t)i;
+        b.StrAt(o, names && (std::size_t)i < names->size() ? (*names)[(std::size_t)i] : "b" + std::to_string(i), 32);
+        b.I32At(o + 32, -1);
+        for (int k = 0; k < 6; ++k) b.F32At(o + 88 + 4 * (std::size_t)k, 1.0f);
+    }
+    for (int i = 0; i < nBody; ++i) { const std::size_t o = body + 76 * (std::size_t)i; b.I32At(o + 64, 1); b.I32At(o + 72, (std::int32_t)model); }
+    b.I32At(model + 72, nMesh); b.I32At(model + 76, (std::int32_t)mesh);
+    b.I32At(model + 80, 3); b.I32At(model + 84, (std::int32_t)vinfo); b.I32At(model + 88, (std::int32_t)vtx);
+    b.I32At(model + 92, 1); b.I32At(model + 96, (std::int32_t)ninfo); b.I32At(model + 100, (std::int32_t)nrm);
+    b.F32At(vtx + 12, 1.0f); b.F32At(vtx + 28, 1.0f);   // (0,0,0) (1,0,0) (0,1,0)
+    b.F32At(nrm + 8, 1.0f);
+    for (int i = 0; i < nMesh; ++i) { const std::size_t o = mesh + 20 * (std::size_t)i; b.I32At(o, 1); b.I32At(o + 4, (std::int32_t)cmds); }
+    b.U16At(cmds, (unsigned)cmdVerts);
+    for (int i = 0; i < cmdVerts; ++i) { const std::size_t q = cmds + 2 + 8 * (std::size_t)i; b.U16At(q, (unsigned)(vertIndex < 3 ? i % 3 : vertIndex)); b.U16At(q + 4, (unsigned)(i & 1023)); }
+    b.U16At(cmds + 2 + 8 * (std::size_t)cmdVerts, 0);
     return b.s;
 }
 

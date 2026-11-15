@@ -186,6 +186,17 @@ int main() {
         for (int i = 0; i < 6; ++i) CHECK(f.parts[0].mesh.triangles[(std::size_t)i] == flip[i]);
         CHECK(f.clips.size() == 1 && f.clips[0].channels[0].rotation.size() == 4);   // the sequence after the longer command list is still found
     }
+    {   // node names: bones named a_1, a, a, a must give four different names (a_1, a, a_1_1, a_2), not two a_1
+        const std::vector<std::string> names = {"a_1", "a", "a", "a"};
+        ImportedModel m; std::string err;
+        CHECK(Read(e4::HlStress(4, 1, 1, 3, 0, &names), m, err) && m.nodes.size() == 5);
+        CHECK(m.nodes[1].name == "a_1" && m.nodes[2].name == "a" && m.nodes[3].name == "a_2" && m.nodes[4].name == "a_3");
+        std::string seen;
+        for (std::size_t i = 1; i < m.nodes.size(); ++i) { CHECK(seen.find("|" + m.nodes[i].name + "|") == std::string::npos); seen += "|" + m.nodes[i].name + "|"; }
+        // two body parts naming the same model: read once, with a note
+        ImportedModel s;
+        CHECK(Read(e4::HlStress(1, 2, 1, 3, 0), s, err) && s.parts.size() == 1 && HasNote(s, "read once"));
+    }
     {   // no sequences: no clips
         ImportedModel m; std::string err;
         CHECK(Read(e4::HalfLifeMdl(1.0f, nullptr, false), m, err) && m.clips.empty());

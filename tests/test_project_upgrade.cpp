@@ -180,6 +180,73 @@ int main() {
         CHECK(RootKey(root) == RootKey(root + "/") && RootKey(root) == RootKey((p.root / "Assets" / "..").string()));
     }
 
+    // ---- a scene outside Assets/ still belongs to its project (issue #888, bug 1) -------------------------------------
+    // The project is the nearest folder above the scene that holds project.okayproj, so the version question is asked and
+    // File > Project Upgrade works on the whole project, wherever the scene sits in it.
+    {
+        TempDir td;
+        const fs::path root = td.path / "Game";
+        WriteFile(root / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(root / "Levels" / "World1" / "a.okayscene", Current("A", 1));
+        WriteFile(root / "Levels" / "b.okayscene", kV1);
+        const std::string deep = (root / "Levels" / "World1" / "a.okayscene").string();
+        std::cerr << "[bug1_scene_outside_assets] root='" << ProjectRootForScene(deep) << "'\n";
+        CHECK(ProjectRootForScene(deep) == root.string());                                       // two folders down, no Assets anywhere
+        CHECK(ProjectRootForScene((root / "Levels" / "b.okayscene").string()) == root.string());
+        WriteFile(root / "Tools" / "project.okayproj", "company=Inner\n");                       // a project inside a project: the nearest wins
+        CHECK(ProjectRootForScene((root / "Tools" / "Maps" / "c.okayscene").string()) == (root / "Tools").string());
+        WriteFile(td.path / "Loose" / "Deep" / "d.okayscene", Current("D", 1));                  // no project.okayproj above it: still a loose file
+        CHECK(ProjectRootForScene((td.path / "Loose" / "Deep" / "d.okayscene").string()).empty());
+
+        // The editor's working folder keeps the old shared project.okayproj (written while no project is open); it does not make
+        // every scene below the working folder part of a "project" (launch.sh / launch.bat start the editor in the repository).
+        {
+            const fs::path work = td.path / "Work";
+            WriteFile(work / "project.okayproj", "company=Shared\n");
+            WriteFile(work / "examples" / "vehicle" / "v.okayscene", Current("V", 1));
+            std::error_code ec;
+            const fs::path before = fs::current_path(ec);
+            fs::current_path(work, ec);
+            CHECK(!ec);
+            const std::string found = ProjectRootForScene((work / "examples" / "vehicle" / "v.okayscene").string());
+            fs::current_path(before, ec);
+            CHECK(found.empty());
+            CHECK(ProjectRootForScene((work / "examples" / "vehicle" / "v.okayscene").string()) == work.string());   // from elsewhere it is a project
+        }
+
+        // the gate asks, and its safety net refuses, for such a scene of an older project
+        GateEnv env;
+        env.running = "2.855.0";
+        {
+            ProjectGate g(env);
+            int go = 0;
+            g.Open(deep, [&] { ++go; });
+            CHECK(go == 0 && g.prompt().kind == PromptKind::Older && g.prompt().root == root.string() && g.prompt().projectName == "Game");
+            std::string why;
+            CHECK(!ProjectGate(env).MayLoad(deep, &why) && Has(why, "v2.850.0"));
+        }
+        // File > Project Upgrade... on that scene upgrades the whole project: the old scene in another folder, the stamp at the root
+        {
+            ProjectGate g(env);
+            g.MarkCleared(root.string());
+            int done = 0;
+            g.Upgrade(deep, [&] { ++done; });
+            CHECK(g.prompt().kind == PromptKind::Working);
+            for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+            CHECK(g.prompt().kind == PromptKind::Done && g.prompt().result.ok && g.prompt().result.scenes == 2 && g.prompt().result.rewritten == 1);
+            CHECK(okayver::ReadProjectVersion(root.string()) == "2.855.0");
+            CHECK(Has(ReadFile(root / "Levels" / "b.okayscene"), "okayscene 3"));
+            CHECK(fs::path(g.prompt().result.backupDir).filename() == "Game (backup v2.850.0)" && fs::path(g.prompt().result.backupDir).parent_path() == td.path);
+            g.Answer(Choice::Continue);
+            CHECK(done == 1 && !g.Busy());
+        }
+#if defined(_WIN32)
+        // Windows only (folder names ignore case there): a lower-case "assets" folder counts as the Assets folder
+        WriteFile(td.path / "Win" / "assets" / "Scenes" / "w.okayscene", Current("W", 1));
+        CHECK(ProjectRootForScene((td.path / "Win" / "assets" / "Scenes" / "w.okayscene").string()) == (td.path / "Win").string());
+#endif
+    }
+
     // ---- the keys project.okayproj's writer owns ---------------------------------------------------------------------
     {
         const std::string generated = oked::WriteProjectSettings(oked::ProjectSettings{}, "tag=Enemy\nstrict_tags=1\nlayer_name_3=Walls\n");

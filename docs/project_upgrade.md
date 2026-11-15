@@ -51,6 +51,27 @@ way of opening scenes that forgot the question cannot skip it.
 One question at a time. **Cancel** changes nothing and the editor stays where it was (or shows the project chooser, when nothing was open).
 Answering is remembered for the session: once a project is upgraded, opened anyway, or made in this session, it is not asked about again.
 
+### Which folder is the project
+
+`okayup::ProjectRootForScene` finds the project a scene belongs to, in this order:
+
+1. The nearest folder called `Assets` above the scene: the project is the folder that holds it. On Windows any spelling counts
+   (`assets`, `ASSETS`), because Windows folder names ignore case; elsewhere it must be `Assets` exactly. (The Windows rule is unverified:
+   it is only compiled and run on Windows.)
+2. The scene's own folder, when it is a project (the old flat layout).
+3. Otherwise the nearest folder above the scene that holds `project.okayproj`, so a scene in `Levels/` or `Scenes/World1/` belongs to its
+   project too. The editor's working folder is skipped here: while no project is open the editor keeps its settings in a
+   `project.okayproj` there (the old shared file), and that must not turn every scene below it into a "project".
+4. Nothing found: the scene is a loose file. No question is asked and File > Project Upgrade does nothing for it.
+
+Before issue #888 step 3 did not exist: a project's scene outside `Assets/` was treated as a loose file, so it opened with no version
+question, the safety net let it load, and File > Project Upgrade silently did nothing.
+
+**How to try it.** Make a project folder `Game` with a `project.okayproj` that says `engine_version=2.850.0` and a scene in
+`Game/Levels/a.okayscene` (no `Assets` folder). Open `a.okayscene` in the editor (File > Open, or `--open`). You now see the "Upgrade project
+to v..." question for **Game**; before the fix it opened with no question. Choose Upgrade: the backup `Game (backup v2.850.0)` appears next
+to `Game`, and `Game/project.okayproj` now has the editor's version. File > Project Upgrade... on that scene works on `Game` too.
+
 ### Older: upgrade or keep
 
 - **Upgrade project to v2.855.0** makes the backup, checks and rewrites, stamps, and shows the result (see below).
@@ -206,8 +227,10 @@ that version highlighted; a launcher that is already running is brought forward 
 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
-failing at every step in turn, damaged and read-only files, restore, the whole gate state machine) and `editor_hooks` (`EditorState::Load`
-under the gate).
+failing at every step in turn, damaged and read-only files, restore, the whole gate state machine, which folder is the project: a scene
+outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file) and `editor_hooks` (`EditorState::Load` under the gate).
+`upgrade_bug_project_upgrade` (`tests/test_upgrade_bugs.cpp`) holds the issue #888 known-bug checks; it only runs with
+`-DOKAY_RUN_KNOWN_BUG_TESTS=ON`.
 
 ## What changed
 

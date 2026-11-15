@@ -114,18 +114,61 @@ bool IsProjectRoot(const fs::path& dir) {
     return fs::is_directory(dir / "Assets", ec) || fs::exists(dir / okayproj::SettingsFileName(), ec) || fs::is_directory(dir / ".okay", ec);
 }
 
+namespace {
+
+// "Assets" as a folder name. Windows folder names ignore case (a project copied around may end up with "assets"), so
+// there any case counts; elsewhere the name must be exactly "Assets", as the editor makes it. Compared on the native
+// characters, so a name that has no narrow spelling on Windows can't throw.
+bool IsAssetsFolderName(const fs::path& name) {
+    const auto& n = name.native();
+#if defined(_WIN32)
+    static const char kWord[] = "assets";   // compared with the name in lower case (ASCII letters only)
+#else
+    static const char kWord[] = "Assets";
+#endif
+    if (n.size() != sizeof(kWord) - 1) return false;
+    for (std::size_t i = 0; i < n.size(); ++i) {
+        long c = static_cast<long>(n[i]);
+#if defined(_WIN32)
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+#endif
+        if (c != static_cast<long>(static_cast<unsigned char>(kWord[i]))) return false;
+    }
+    return true;
+}
+
+// The editor's working folder. When no project is open the editor keeps its settings in a project.okayproj there (the
+// old shared file), so that file does not make every folder below the working folder part of a project.
+bool IsWorkingFolder(const fs::path& dir) {
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);
+    return !ec && !cwd.empty() && PathKey(cwd) == PathKey(dir);
+}
+
+}  // namespace
+
 std::string ProjectRootForScene(const std::string& scene) {
     if (scene.empty()) return {};
     std::error_code ec;
     fs::path abs = fs::absolute(fs::path(scene), ec);
     if (ec) return {};
     abs = abs.lexically_normal();
+    // 1. The nearest Assets folder above the scene: the project is the folder that holds it.
     for (fs::path p = abs.parent_path(); !p.empty(); p = p.parent_path()) {
-        if (p.filename() == "Assets") return fs::is_directory(p, ec) ? p.parent_path().string() : std::string();
+        if (IsAssetsFolderName(p.filename())) return fs::is_directory(p, ec) ? p.parent_path().string() : std::string();
         if (p == p.parent_path()) break;
     }
+    // 2. The scene's own folder, when it is a project (the old flat layout: project.okayproj or Assets beside the scene).
     const fs::path dir = abs.parent_path();
-    return IsProjectRoot(dir) ? dir.string() : std::string();
+    if (IsProjectRoot(dir)) return dir.string();
+    // 3. A scene in some other folder of a project (Levels/, Scenes/, ...): the nearest folder above it that holds a
+    //    project.okayproj. The editor's working folder is skipped: its project.okayproj is the old shared settings file.
+    for (fs::path p = dir.parent_path(); !p.empty(); p = p.parent_path()) {
+        const fs::path pf = p / okayproj::SettingsFileName();
+        if (fs::is_regular_file(pf, ec) && !IsWorkingFolder(p)) return p.string();
+        if (p == p.parent_path()) break;
+    }
+    return {};
 }
 
 std::string RootKey(const std::string& root) {

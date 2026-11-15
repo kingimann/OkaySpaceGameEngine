@@ -165,6 +165,30 @@ inline std::string BuildPmxGrid(int nVerts, int nTris, int nMats = 1, int nBones
     return w.s;
 }
 
+// A PMX whose first material covers `bigTris` triangles over `nVerts` vertices and which then has `smallMats` materials of one triangle each
+// (no bones). The reader welds per material: a map that is cleared again and again after one big part would cost its bucket count each time.
+inline std::string BuildPmxManyMaterials(int nVerts, int bigTris, int smallMats) {
+    PmxOpts o; o.vsz = 4; o.bsz = 2; o.tsz = 1;
+    PmxW w(o);
+    w.Header();
+    w.I32(nVerts);
+    for (int i = 0; i < nVerts; ++i) w.Vertex((float)(i % 1000), (float)(i / 1000), 0, 0, 0, 1, 0, 0, 0, -1, -1, -1, -1, 1, 0, 0, 0);
+    const int tris = bigTris + smallMats;
+    w.I32(tris * 3);
+    for (int t = 0; t < tris; ++t) { const int a = (int)(((long long)t * 7) % (nVerts - 2)); w.Idx(4, a); w.Idx(4, a + 1); w.Idx(4, a + 2); }
+    w.I32(0);
+    w.I32(1 + smallMats);
+    for (int m = 0; m < 1 + smallMats; ++m) {
+        w.Text("m"); w.Text("");
+        w.V4(1, 1, 1, 1); w.V3(0, 0, 0); w.F(0); w.V3(0, 0, 0); w.U8(0); w.V4(0, 0, 0, 1); w.F(1);
+        w.Idx(1, -1); w.Idx(1, -1); w.U8(0); w.U8(1); w.U8(0); w.Text("");
+        w.I32(m == 0 ? bigTris * 3 : 3);
+    }
+    w.I32(0);
+    w.I32(0);
+    return w.s;
+}
+
 // ---- LWS / MOT ----------------------------------------------------------------------------------------------------
 inline std::string Env(const std::vector<std::pair<double, double>>& keys) {   // (time, value) pairs as one envelope block
     std::string s = "{ Envelope\n  " + std::to_string(keys.size()) + "\n";

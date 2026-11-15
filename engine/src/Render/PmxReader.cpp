@@ -360,11 +360,10 @@ static bool ReadPmxImpl(const std::string& bytes, const std::string& baseDir, Im
     int badTris = 0, degenerate = 0, badNormalParts = 0, unassigned = 0, badBoneIdx = 0, emptyParts = 0;
     bool needRootBone = false;
     std::vector<ImportedPart> parts;
-    std::unordered_map<std::uint32_t, int> weld;
     for (std::size_t mi = 0; mi < mats.size(); ++mi) {
         const std::size_t end = cursor + mats[mi].surfaceIdx;
         ImportedPart part;
-        weld.clear();
+        std::unordered_map<std::uint32_t, int> weld;   // a new map per part: clearing one that grew large would cost its bucket count again for every material
         bool badNormal = false;
         for (std::size_t f = cursor; f + 2 < end; f += 3) {
             const std::uint32_t t[3] = {faces[f], faces[f + 1], faces[f + 2]};
@@ -423,7 +422,7 @@ static bool ReadPmxImpl(const std::string& bytes, const std::string& baseDir, Im
     // faces no material covers are drawn without one
     if (cursor < ni) {
         ImportedPart part;
-        weld.clear();
+        std::unordered_map<std::uint32_t, int> weld;
         bool badNormal = false;
         for (std::size_t f = cursor; f + 2 < ni; f += 3) {
             const std::uint32_t t[3] = {faces[f], faces[f + 1], faces[f + 2]};

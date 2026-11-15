@@ -126,6 +126,12 @@ static void PmxHostile() {
         ImportedModel m2; std::string e2;
         CHECK(ReadPmxBuffer(ok, "", m2, &e2) && m2.parts.size() == 100 && m2.parts[0].bones.size() == 100);
     }
+    {   // one material of 300,000 triangles, then 99,000 materials of one triangle: 99,001 parts, each with its own weld map
+        const std::string s = fx::BuildPmxManyMaterials(400000, 300000, 99000);
+        ImportedModel m; std::string err;
+        const Run r = Measure("1 big + 99,000 small materials", kMaxSeconds * 3, [&] { return ReadPmxBuffer(s, "", m, &err); });
+        CHECK(r.ok && m.parts.size() == 99001 && fx::TriCount(m) == 399000);
+    }
     {   // a very long text: 1 MiB + 1 is over the limit
         std::string t = base;
         Put32(t, 17, (1u << 20) + 1);

@@ -1,5 +1,7 @@
 # Work board
 
+**Live version (rewritten every 10 minutes from GitHub, open PRs and CI state, branches, the #422 thread):** [WORK_BOARD.md on the work-board branch](https://github.com/kingimann/OkaySpaceGameEngine/blob/work-board/WORK_BOARD.md) (written by `scripts/work_board.py` and the workflow `.github/workflows/work-board.yml`). This page is the hand-written part: agents, owner decisions.
+
 A snapshot of what the main session, its agents and the second Claude (`claude2/*`) are doing. It does not update by
 itself: the main session rewrites it as work moves (the live copy is the "Engine Work Board" artifact). Snapshot time:
 **2026-11-15, about 02:10 UTC**. Anything here can be out of date by the time you read it; the pull request list and

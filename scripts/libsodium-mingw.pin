@@ -1,0 +1,9 @@
+# The libsodium MinGW prebuilt that every Windows release links (statically) into OkaySpace.exe, OkayEngine.exe and
+# OkaySpacePlayer.exe. Read by scripts/fetch-libsodium-mingw.sh. Format: <sha256> <url>   (the first non-comment line).
+#
+# PINNED ON FIRST FETCH (trust on first use) on 2026-11-14: the hash is of the file the URL served that day, NOT checked
+# against a published signature. The libsodium project also publishes a .minisig next to the file; it was downloaded but
+# NOT verified (no minisign tool and no independently obtained public key were available). The name says "-stable": the
+# project may re-publish that file; if the pin then fails, look at what changed before updating the hash.
+# A value that is not 64 hex digits (for example TODO) makes the fetch FAIL, never skip.
+19f7e5f814f62f5bfdf6ea2208244adbddb80e73362879ddb0e4844bc1f12c82 https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz

@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "ActionExport.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -60,6 +61,7 @@
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
+#include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
@@ -1951,6 +1953,15 @@ bool Download(const std::string& url, const fs::path& outPath) {
     std::error_code ec; fs::remove(outPath, ec);
     std::string u = BustCache(url);
     const std::string out = okay::restart::Utf8(outPath);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in); an unclear answer falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"};
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, out, sp);
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;   // a clear refusal (404, full disk): curl -f would fail the same way
+    }
+#endif
     // Arguments, not a shell line: a path with spaces, parentheses or '&' can't
     // be split or expanded the way the old quoted curl command was.
     const std::vector<std::string> curl = {
@@ -19034,6 +19045,7 @@ void DrawAboutPopup() {
         ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
@@ -47699,6 +47711,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
 #elif defined(__linux__) || defined(__APPLE__)

@@ -129,7 +129,25 @@ session; players set their own (below).
 
 A **Reverb** volume (GameObject > Volume, or Add Component > Volume: Reverb) puts an echo on **3D** sounds while the listener is inside it. 2D sounds, including music and UI, stay dry. There is no echo at all until a Reverb volume exists, so an old scene stays dry.
 
-The echo is a Schroeder reverberator: eight comb filters in parallel, each with a little damping in the feedback, then four all-pass filters in series. The right channel uses a slightly longer set of delays so the tail spreads in stereo. It is our own code, written from that public description.
+The echo is a **feedback delay network** (`RoomReverb` in `engine/src/Audio/SpatialFx.cpp`; the old name `SchroederReverb` still works). Eight delay lines feed back into each other through a lossless mixing matrix (an 8 x 8 Hadamard matrix divided by the square root of 8). Each line loses just enough on every pass to fall 60 dB in the decay time the room asks for, and a gentle low-pass in every loop makes high notes die sooner. Two all-pass filters smear a sound before it enters, so a click becomes a soft wash instead of a rattle. Left and right listen to the lines with two different sign patterns, so a wide tail is different in each ear.
+
+**Where it comes from.** The idea is from published papers, not from any program: Stautner and Puckette, "Designing Multi-Channel Reverberators" (Computer Music Journal, 1982), for the network; Jot and Chaigne, "Digital Delay Networks for Designing Artificial Reverberators" (AES, 1991), for setting each line's loss from the decay time and the low-pass in the loop; Schroeder, "Natural Sounding Artificial Reverberation" (JAES, 1962), for the all-pass diffusers. Every number is our own choice:
+
+- Line lengths: spread evenly on a log scale from 22 ms to 41 ms, each rounded up to a prime number of samples at the output rate so no two lines share a period.
+- Diffusers: 5.3 ms and 1.9 ms (also primes in samples), gain 0.62.
+- Decay time: `0.2 + 6.5 x room^2.5` seconds, so `room` 0 is 0.2 s and 1 is 6.7 s.
+- Damping: a one-pole low-pass from 0.05 (bright) to 0.65 (dark).
+- Level: the Room preset is as loud as the reverb this replaced (within 0.01 dB over the first second at 48 kHz; the test holds it to 0.05 dB), so the presets' `wet` values mean what they did.
+- Width: a mid and side blend.
+
+**What changed for players (2026-11-14).** The reverb before this was a comb-and-all-pass design whose delay lengths and gains were the published numbers of a well-known public-domain reverb. Under the rule that all our code and numbers are our own, it was replaced. The presets sound close to before. Measured on an impulse at 48 kHz:
+
+- Room: same loudness, its tail falls a little sooner.
+- Hall and Cave: within about 1 dB of before over the first second (an independent review measured Hall +0.56 dB, Cave -1.05 dB), and they ring a little longer.
+- Outdoor: about 0.4 dB quieter over the first second, and it dies away faster (a short 0.2 s decay, as open air should).
+- Stereo spread: follows `width` as before.
+
+`docs/UNFINISHED.md` needed no change for this: it has no reverb row, and the reverb's behaviour (one bus, four presets, on only inside a Reverb volume) is the same.
 
 | Echo | What you hear |
 | --- | --- |
